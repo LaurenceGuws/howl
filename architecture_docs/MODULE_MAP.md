@@ -15,7 +15,7 @@ It is the cross-repo ownership map.
 | `render/howl-render-gles` | OpenGL ES backend implementation | GLES backend API | `howl-render-core` | GPU draw execution for GLES targets |
 | `render/howl-render-metal` | Metal backend implementation | Metal backend API | `howl-render-core` | GPU draw execution for Metal targets |
 | `render/howl-render-vulkan` | Vulkan backend implementation | Vulkan backend API | `howl-render-core` | GPU draw execution for Vulkan targets |
-| `render/howl-render-software` | Software renderer backend implementation | software backend API | `howl-render-core` | CPU raster/render execution fallback path |
+| `render/howl-render-software` | Software renderer backend implementation | software backend API | `howl-render-core` | CPU raster/render execution and reference output |
 | `howl-hosts/howl-sdl-host` | Concrete Linux SDL host app (window/input/platform loop) | host app interface and wiring | `howl-term-surface`, renderer backend | runnable host application |
 | `howl-hosts` (container) | Workspace grouping for host repos only | none | none | organization only |
 

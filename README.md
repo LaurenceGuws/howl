@@ -18,5 +18,6 @@ Use parent architecture docs for cross-module ownership and dependency rules:
 - `architecture_docs/MODULE_MAP.md`
 - `architecture_docs/DEPENDENCY_RULES.md`
 - `architecture_docs/INTEGRATION_FLOW.md`
+- `architecture_docs/MILESTONES.md`
 
 Child repos should document local scope and invariants only.
