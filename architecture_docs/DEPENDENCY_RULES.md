@@ -21,6 +21,7 @@ Canonical direction:
 4. Render backends (`gl`, `gles`, `metal`, `vulkan`, `software`) depend on `howl-render-core` only.
 5. `howl-render-core` must not depend on platform host frameworks.
 6. Host apps (for example `howl-sdl-host`) consume surface + chosen renderer backend; they do not reach into lower-level internals.
+7. Utility repos consume public files, releases, local artifacts, and documented command surfaces; they do not become runtime dependencies of product modules.
 
 ## Forbidden Dependency Direction
 
@@ -29,6 +30,7 @@ Canonical direction:
 3. `render-core -> host frameworks (SDL, Cocoa, Android UI, etc.)`
 4. `render-backend -> host-specific app orchestration logic`
 5. `child module -> sibling internals` (only public APIs allowed)
+6. `product runtime module -> utility repo`
 
 ## Public API Boundary Rule
 

@@ -18,6 +18,10 @@ It is the cross-repo ownership map.
 | `render/howl-render-software` | Software renderer backend implementation | software backend API | `howl-render-core` | CPU raster/render execution and reference output |
 | `howl-hosts/howl-sdl-host` | Concrete Linux SDL host app (window/input/platform loop) | host app interface and wiring | `howl-term-surface`, renderer backend | runnable host application |
 | `howl-hosts` (container) | Workspace grouping for host repos only | none | none | organization only |
+| `utils/howl-docs` | User-facing documentation site | docs site content/build surface | released module docs and assets | public Howl documentation |
+| `utils/howl-microscope` | Local diagnostics and inspection tooling | probe/inspection commands | local module builds and artifacts | review evidence and diagnostic captures |
+| `utils/howl-pm` | Local package/release metadata tooling | package/release helper commands | module repos, tags, release metadata | release manifests and module version reports |
+| `utils/hygene` | Local hygiene scripts | script entrypoints | workspace files | local hygiene reports |
 
 ## Notes
 
