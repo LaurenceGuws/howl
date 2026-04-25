@@ -1,0 +1,40 @@
+# Howl Integration Flow
+
+This document defines runtime integration flow at the family level.
+It is intentionally host-framework agnostic.
+
+## High-Level Runtime Loop
+
+1. Host receives platform events (window/input/timer/process signals).
+2. Host forwards relevant events to `howl-term-surface`.
+3. Surface routes lifecycle and transport actions to `howl-session`.
+4. Session drives terminal processing via `howl-vt-core` behavior.
+5. Surface obtains render-ready frame model from composed state.
+6. Surface invokes `howl-render-core` to prepare backend-agnostic render work.
+7. Selected renderer backend executes GPU/CPU draw.
+8. Host presents frame.
+
+## Data and Control Split
+
+- Control/lifecycle path:
+  - host -> surface -> session -> vt_core
+- Render path:
+  - vt_core/session state -> surface frame model -> render-core -> render-backend -> host present
+
+## Multi-Widget Model
+
+- One surface/session instance per terminal widget/tab/pane.
+- Host/app manager orchestrates multiple instances.
+- Shared renderer resources are allowed via renderer-core/backend policies, not by merging session state machines.
+
+## Error Boundary Expectations
+
+- Transport and lifecycle errors are handled at session/surface boundaries.
+- Renderer failures are isolated to renderer path and reported to host without mutating terminal semantics.
+- Host platform errors stay host-owned and must not leak platform types into core/session contracts.
+
+## Latency and Quality Objectives (Family Level)
+
+- Stable input-to-frame latency under mixed feed/apply/render load.
+- Deterministic state transitions across reset/resize/control boundaries.
+- Replaceable renderer backend without changing terminal/session semantics.
