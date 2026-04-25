@@ -20,7 +20,7 @@ Canonical direction:
 3. `howl-term-surface` may consume `howl-session`, `howl-vt-core`, and render-facing APIs.
 4. Render backends (`gl`, `gles`, `metal`, `vulkan`, `software`) depend on `howl-render-core` only.
 5. `howl-render-core` must not depend on platform host frameworks.
-6. Host apps (for example `howl-sdl-host`) consume surface + chosen renderer backend; they do not reach into lower-level internals.
+6. Host apps (for example `howl-sdl-host` and `howl-android-host`) consume surface + chosen renderer backend; they do not reach into lower-level internals.
 7. Utility repos consume public files, releases, local artifacts, and documented command surfaces; they do not become runtime dependencies of product modules.
 
 ## Forbidden Dependency Direction

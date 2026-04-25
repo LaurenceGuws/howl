@@ -17,6 +17,7 @@ It is the cross-repo ownership map.
 | `render/howl-render-vulkan` | Vulkan backend implementation | Vulkan backend API | `howl-render-core` | GPU draw execution for Vulkan targets |
 | `render/howl-render-software` | Software renderer backend implementation | software backend API | `howl-render-core` | CPU raster/render execution and reference output |
 | `howl-hosts/howl-sdl-host` | Concrete Linux SDL host app (window/input/platform loop) | host app interface and wiring | `howl-term-surface`, renderer backend | runnable host application |
+| `howl-hosts/howl-android-host` | Concrete Android host app (Android lifecycle/input/surface integration) | Android host interface and platform bridge | `howl-term-surface`, mobile renderer backend, Android process/container bridge | Android terminal host application |
 | `howl-hosts` (container) | Workspace grouping for host repos only | none | none | organization only |
 | `utils/howl-docs` | User-facing documentation site | docs site content/build surface | released module docs and assets | public Howl documentation |
 | `utils/howl-microscope` | Local diagnostics and inspection tooling | probe/inspection commands | local module builds and artifacts | review evidence and diagnostic captures |

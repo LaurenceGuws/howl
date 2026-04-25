@@ -83,6 +83,7 @@ window/input and a decoupled OpenGL renderer path.
 | `SE-MVP-05` | `MVP` | Resize commits session dimensions, notifies PTY, and updates VT runtime dimensions in a documented order. |
 | `SE-MVP-06` | `MVP` | Failure boundaries are proven for PTY start/read/write/resize/stop without corrupting session state. |
 | `SE-MVP-07` | `MVP` | One interactive terminal session can run under surface/host control with deterministic shutdown. |
+| `SE-MVP-08` | `MVP` | Transport ownership separates POSIX PTY, Android container bridge, future Windows ConPTY, and future Apple container bridge behind host-neutral session contracts. |
 | `SE-LONG-01` | `LONG` | Multiple sessions can run concurrently without hidden shared state or allocator leaks. |
 | `SE-LONG-02` | `LONG` | Session diagnostics can capture process/runtime state for bug reports without becoming a telemetry dumping ground. |
 | `SE-LONG-03` | `LONG` | Snapshot/restore and operation counters remain stable under real host loops and multi-session orchestration. |
@@ -229,6 +230,22 @@ window/input and a decoupled OpenGL renderer path.
 | `SDL-LONG-04` | `LONG` | Host quality evidence covers input latency, scroll smoothness, CPU usage, memory, and release packaging. |
 | `SDL-LONG-05` | `LONG` | Linux SDL host becomes the reference host for future platform hosts. |
 
+### `howl-hosts/howl-android-host`
+
+| ID | Phase | Outcome |
+| --- | --- | --- |
+| `AND-POC-01` | `POC` | Android host scaffold owns Android lifecycle scope, platform bridge shape, and native package baseline. |
+| `AND-POC-02` | `POC` | Host boundary distinguishes Android UI lifecycle, input, surface creation, and process/container bridge ownership. |
+| `AND-POC-03` | `POC` | Android input events map to host-neutral action structs without leaking Android types into surface/session. |
+| `AND-POC-04` | `POC` | Alpine/container-backed process plan is documented as Android host/transport integration pressure, not Unix-only session policy. |
+| `AND-MVP-01` | `MVP` | Parked outside the Linux MVP critical path; scaffold exists to keep portability pressure visible. |
+| `AND-MVP-02` | `MVP` | Any session changes needed by Android are expressed as transport abstraction improvements, not Android imports in session core. |
+| `AND-LONG-01` | `LONG` | Android host owns activity/service lifecycle, surface lifecycle, soft keyboard/IME, clipboard, permissions, and packaging. |
+| `AND-LONG-02` | `LONG` | Android terminal process runs through an embedded container/process bridge behind the session transport API. |
+| `AND-LONG-03` | `LONG` | Android renderer path uses GLES or Vulkan through render-core contracts. |
+| `AND-LONG-04` | `LONG` | Android host participates in multi-host conformance, performance, power, and memory evidence. |
+| `AND-LONG-05` | `LONG` | Android host supports multiple terminal surfaces where platform UX requires tabs, splits, or embedded terminal widgets. |
+
 ### `utils/howl-docs`
 
 | ID | Phase | Outcome |
@@ -283,6 +300,36 @@ window/input and a decoupled OpenGL renderer path.
 6. `howl-vt-core`: fix only proven portable semantic gaps discovered by real host pressure.
 7. `utils/howl-docs` and `utils/howl-pm`: publish MVP docs and release metadata.
 8. Family release: lock MVP behavior with local evidence, tags, and release notes.
+
+## Linux MVP Completion Sequence
+
+This is the ordered path to the first Linux MVP. Architect queues should advance
+through this sequence unless a listed dependency is already complete.
+
+| Step | Milestones | Required Result |
+| --- | --- | --- |
+| `LMVP-01` | `SE-MVP-01`, `SE-MVP-08` | Session transport boundary is portable, while Linux uses POSIX PTY as the first concrete implementation. |
+| `LMVP-02` | `VT-MVP-01`, `SE-MVP-02` | Session owns a real `vt_core` engine instance and drives feed/apply through public APIs. |
+| `LMVP-03` | `SE-MVP-03`, `SE-MVP-04`, `SE-MVP-05`, `SE-MVP-06` | Session can run a shell loop: process output to VT, input to process, resize in documented order, deterministic failures. |
+| `LMVP-04` | `SF-POC-01` through `SF-POC-04` | Surface contract is explicit before render or host code depends on it. |
+| `LMVP-05` | `SF-MVP-01`, `SF-MVP-02`, `SF-MVP-03`, `SF-MVP-04` | Surface converts session/core state into host-neutral frame data and dirty state. |
+| `LMVP-06` | `RC-POC-01` through `RC-POC-04` | Render-core frame and draw plan model exists without GPU or host types. |
+| `LMVP-07` | `RC-MVP-01` through `RC-MVP-06` | Render-core can plan visible terminal frames and damage for GL consumption. |
+| `LMVP-08` | `GL-POC-01` through `GL-POC-04` | GL renderer resource boundary is proven without SDL ownership. |
+| `LMVP-09` | `GL-MVP-01` through `GL-MVP-06` | GL renderer draws MVP terminal frames from render-core output. |
+| `LMVP-10` | `SDL-POC-01` through `SDL-POC-04` | SDL host proves window, event, context, swap, and input mapping without terminal logic. |
+| `LMVP-11` | `SDL-MVP-01` through `SDL-MVP-07`, `SF-MVP-05`, `SE-MVP-07` | SDL host composes one interactive terminal surface end to end. |
+| `LMVP-12` | `VT-MVP-03`, `VT-MVP-04`, `VT-MVP-05`, `VT-MVP-06` | Portable VT gaps found by the host are fixed and the supported core surface is documented. |
+| `LMVP-13` | `DOCS-MVP-01`, `DOCS-MVP-02`, `PM-MVP-01`, `PM-MVP-02`, `HYG-MVP-01`, `HYG-MVP-02`, `SDL-MVP-08` | MVP release is documented, locally validated, packaged, and tagged with exact module versions. |
+
+## Transport Portability Rule
+
+Session owns a host-neutral transport contract, not a Unix-only PTY worldview.
+Linux MVP uses POSIX PTY first because it is the first host target. Android and
+Apple mobile/desktop hosts are expected to apply pressure through container or
+platform process bridges; Windows is expected to apply pressure through ConPTY.
+Those pressures should improve the session transport abstraction rather than
+introduce platform types into session core.
 
 ## Architect Steering Rules
 
