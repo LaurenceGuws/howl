@@ -24,12 +24,13 @@ Close architecture drift at the workspace level so repo intent cannot be mistake
 
 ### FHR-P2 — Renderer Lane Structural Closure
 
+Status: closed for current renderer repos.
+
 1. `render/howl-render-core`:
    - split monolithic `src/root.zig` into intentional modules:
      - `types.zig`
      - `theme.zig`
      - `planner.zig`
-     - `frame_adapter.zig`
      - thin `root.zig` exports/tests
    - remove direct dependency on `howl-term-surface`.
    - use plain core-owned input types at boundary.
@@ -76,4 +77,3 @@ Close architecture drift at the workspace level so repo intent cannot be mistake
 2. `render-core` no longer imports `howl-term-surface`.
 3. Host render/session policy duplication is removed or explicitly bounded and justified in authority docs.
 4. Every repo has explicit MVP structural layout and coupling boundaries in authority docs.
-

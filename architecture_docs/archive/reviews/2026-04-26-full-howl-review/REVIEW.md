@@ -58,6 +58,7 @@ Parent authorities/checkins reviewed:
 1. **MVP topology is under-specified for several repos.**
    - `render/howl-render-core` and all renderer backends remain single-file `src/root.zig` modules.
    - This was acceptable for scaffold, but not a clear MVP end-state for maintainable ownership.
+   - Current status: closed for renderer repos; see checkpoint FHR-P2.
 
 2. **Symbol/doc convention enforcement is partial.**
    - `utils/hygene/architecture_guard.sh` enforces headers/file names/test-name tags/pattern bans.
@@ -120,4 +121,3 @@ Parent authorities/checkins reviewed:
 
 4. Keep transport portability cohesive:
    - PTY/bridge/conpty as transport implementations behind session contract.
-

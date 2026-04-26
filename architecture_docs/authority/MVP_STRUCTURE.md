@@ -17,7 +17,7 @@ It is parent-level authority for repo intent, public API boundaries, and allowed
 | `howl-vt-core` | Portable VT semantics and deterministic terminal state | `vt_core` exports only | parser/event/model/screen/runtime split | no upstream module deps |
 | `howl-session` | Session lifecycle + transport orchestration around VT | `howl_session` exports only | session + transport split; test-support isolated | may depend on `vt_core` only |
 | `howl-term-surface` | Embeddable terminal composition seam | `howl_term_surface` exports only | lifecycle/input/frame composition split | may depend on `howl-session` + `vt_core` |
-| `render/howl-render-core` | Backend-neutral planning policy | `howl_render_core` exports only | split at least into planner/types/theme/frame-adapter modules; thin `root.zig` | must not depend on surface/session/host repos |
+| `render/howl-render-core` | Backend-neutral planning policy | `howl_render_core` exports only | split into types/theme/planner modules; thin `root.zig` | must not depend on surface/session/host repos |
 | `render/howl-render-gl` | GL backend executor | `howl_render_gl` exports only | backend lifecycle + execution modules; thin `root.zig` | may depend on `howl-render-core` only |
 | `render/howl-render-gles` | GLES backend executor | `howl_render_gles` exports only | same pattern as GL | may depend on `howl-render-core` only |
 | `render/howl-render-metal` | Metal backend executor | `howl_render_metal` exports only | same pattern as GL | may depend on `howl-render-core` only |
@@ -47,8 +47,13 @@ It is parent-level authority for repo intent, public API boundaries, and allowed
 
 The following are considered active debt until closed by checkpoint:
 
-1. `render/howl-render-core` monolithic `src/root.zig` beyond scaffold stage.
-2. Any reverse dependency from `render-core` to `howl-term-surface`.
-3. Any host-local duplication of render planning policy that should be core-owned.
-4. Missing public API doc coverage in scaffold backends and host stubs.
+1. Any reverse dependency from `render-core` to `howl-term-surface`.
+2. Any host-local duplication of render planning policy that should be core-owned.
+3. Missing public API doc coverage in scaffold backends and host stubs.
 
+## Closed Structural Debt
+
+1. Renderer repos no longer use single-file `src/root.zig` structure:
+   - `render/howl-render-core` owns `types.zig`, `theme.zig`, and `planner.zig`.
+   - `render/howl-render-gl` owns contract, backend, glyph raster, GL draw, and binding modules.
+   - scaffold renderer backends own types and execution modules with thin roots.
