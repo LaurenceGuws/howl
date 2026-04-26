@@ -30,8 +30,8 @@ Run only on product repos:
       CL-AND-1 address this per-repo; pending MVP-S1-A3 execution.)
 - [x] Naming/doc-comment/layout drift from prior partial sprints is reviewed and
       turned into explicit execution cuts. (MVP-S1-A2 audit complete 2026-04-27;
-      13 bounded correction tickets published to ACTIVE_QUEUE.md.)
-- [ ] Residual debt is recorded as bounded findings, not implied by silence.
+      12 bounded correction tickets published to ACTIVE_QUEUE.md.)
+- [x] Residual debt is recorded as bounded findings, not implied by silence.
       (Findings recorded in MVP-S1-A2 report; tickets CL-* are the execution cuts.)
 
 Sprint 1 closes only when the doc model, queue model, and reality model match.

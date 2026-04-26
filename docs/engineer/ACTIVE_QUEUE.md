@@ -100,35 +100,35 @@ Status: pending. Input: correction tickets from MVP-S1-A2 audit (see below).
 - **Required validation**: SURFACE_QUERY.md referenced in M0-A1 is either confirmed closed by FRAME_QUERY_MODEL.md or the gap is named explicitly
 
 ##### CL-RC-1: howl-render-core MILESTONE_PROGRESS reset to match code reality
-- **Intent**: Update MILESTONE_PROGRESS.md so M0 is marked done (scaffold reset complete per source topology) and M1 is next.
+- **Intent**: Align MILESTONE_PROGRESS.md to the current authority target (`M5` capability negotiation) and remove stale scaffold-reset language.
 - **Target files**: `render/howl-render-core/docs/architect/MILESTONE_PROGRESS.md`
 - **Change type**: Documentation correction
-- **Non-goals**: no scope change to MILESTONE.md current target
-- **Stop conditions**: claims M5 or above is done before implementation evidence exists
-- **Required validation**: MILESTONE_PROGRESS agrees with visible source file state (types.zig, theme.zig, planner.zig present and clean)
+- **Non-goals**: no scope change to `app_architecture/authorities/MILESTONE.md`
+- **Stop conditions**: progress board introduces a new target that conflicts with either parent `MILESTONES.md` or local MILESTONE authority
+- **Required validation**: MILESTONE_PROGRESS target text matches local and parent current-target language
 
 ##### CL-RC-2: howl-render-core ACTIVE_QUEUE unblock for M1 execution
-- **Intent**: Replace blocking "do not execute" notice with a concrete M1 queue entry, allowing the engineer to begin render plan contract work.
+- **Intent**: Replace blocking reset notice with a concrete bounded queue entry aligned to the active target (`M5` capability negotiation correction lane).
 - **Target files**: `render/howl-render-core/docs/engineer/ACTIVE_QUEUE.md`
 - **Change type**: Queue publication (documentation)
-- **Non-goals**: no implementation; no scope beyond M1 contract work
-- **Stop conditions**: queue scope exceeds M1 (render plan contract); implementation begins without queue entry
+- **Non-goals**: no implementation; no scope beyond architect-published target lane
+- **Stop conditions**: queue target conflicts with CL-RC-1 progress state
 - **Required validation**: architecture guard pass after any doc edits
 
 ##### CL-GL-1: howl-render-gl MILESTONE_PROGRESS reset to match code reality
-- **Intent**: Update MILESTONE_PROGRESS.md so M0 is done and M1 is marked active or done based on whether backend API contract is explicit.
+- **Intent**: Align MILESTONE_PROGRESS.md to the current authority target (`M6` capability conformance) and remove stale architectural-reset language.
 - **Target files**: `render/howl-render-gl/docs/architect/MILESTONE_PROGRESS.md`
 - **Change type**: Documentation correction
 - **Non-goals**: no milestone ladder changes; no code changes
-- **Stop conditions**: claims M6 is done before conformance fixtures exist
-- **Required validation**: progress board reflects honest code state (backend.zig at M3-M4 level)
+- **Stop conditions**: progress board claims completed conformance evidence without matching artifacts
+- **Required validation**: MILESTONE_PROGRESS target text matches local and parent current-target language
 
 ##### CL-GL-2: howl-render-gl ACTIVE_QUEUE unblock for next execution
-- **Intent**: Replace blocking "do not start" notice with a bounded queue entry for the next milestone slice once MILESTONE_PROGRESS is corrected.
+- **Intent**: Replace blocking notice with a bounded queue entry aligned to the active target (`M6` capability conformance correction lane).
 - **Target files**: `render/howl-render-gl/docs/engineer/ACTIVE_QUEUE.md`
 - **Change type**: Queue publication (documentation)
-- **Non-goals**: no implementation; architect must set the exact milestone target
-- **Stop conditions**: any work begins before honest progress state is established in CL-GL-1
+- **Non-goals**: no implementation; no target invention by engineers
+- **Stop conditions**: queue target conflicts with CL-GL-1 progress state
 - **Required validation**: architecture guard pass
 
 ##### CL-SDL-1: howl-sdl-host ACTIVE_QUEUE next-gate language correction
