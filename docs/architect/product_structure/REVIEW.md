@@ -161,12 +161,31 @@ The drift was not only code quality. It came from workflow ambiguity:
 3. Root-file and entrypoint-file responsibilities were not explicit enough.
 4. Backend repos had scaffold shape, but not enough backend-specific contract pressure.
 
-## Required Follow-up Sprint
+## Closeout Update
 
-The next sprint should not add product features. It should close structure maturity gaps:
+Status: closed for PSH-A scope.
 
-1. Make `root.zig` thin across product repos.
-2. Split SDL host `main.zig` into named runtime modules.
-3. Split session core by owned behavior without changing public API.
-4. Add backend-specific execution contract stubs for GLES/Metal/Software/Vulkan.
-5. Add guard or review checklist entries for root thickness and entrypoint ownership.
+Resolved in this sprint:
+
+1. `root.zig` files in product repos are now thin export/wiring surfaces with non-trivial tests moved into named test modules.
+2. `howl-hosts/howl-sdl-host/src/main.zig` is now a thin entrypoint and durable behavior is delegated to owned modules.
+3. `howl-session/src/session/core.zig` is split by behavior ownership (`lifecycle`, `io`, `resize_control`, `snapshot_ops`, `state`) with stable public API.
+4. `render/howl-render-gles|metal|software|vulkan` each now carry backend-specific execution constraints and render-core shape-consumption tests.
+5. Product guard scope and workflow wording are aligned to product repos only.
+
+Validation snapshot:
+
+- product guard passes for all product repos.
+- touched repos build and test green.
+- no forbidden compatibility wording in product Zig sources.
+
+Remaining maturity debt (explicit):
+
+- doc-comment semantic quality still relies on review discipline; guard enforcement is structural and vocabulary-based, not domain-semantic scoring.
+- android native-call contract freeze (`PSH-B1`) is the next gate before JNI/native symbol work resumes.
+
+Cause-of-drift notes (confirmed):
+
+1. Workflow previously allowed stale queue statuses after completion.
+2. Root/entrypoint ownership rules were documented but not consistently closed with checkpoint evidence.
+3. Backend scaffold repos previously had shape parity without backend-specific constraint pressure.

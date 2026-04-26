@@ -2,7 +2,7 @@
 
 ## Current State
 
-Product structure hygiene sprint is ready for dual-mode execution. Start with `PSH-A2`.
+Product structure hygiene sprint is closed. Next execution queue is `PSH-B1` (android host native-call contract and boundary tests).
 
 ## Read Before Execution
 
@@ -44,7 +44,7 @@ Closeout:
 
 ### PSH-A2: Thin Root Facades
 
-Status: active.
+Status: done.
 
 Intent:
 - make product `root.zig` files export/wiring/module-test only
@@ -67,7 +67,7 @@ Stop conditions:
 
 ### PSH-A3: SDL Host Entrypoint Ownership
 
-Status: pending.
+Status: done.
 
 Intent:
 - reduce `howl-hosts/howl-sdl-host/src/main.zig` to executable entrypoint ownership
@@ -94,7 +94,7 @@ Stop conditions:
 
 ### PSH-A4: Session Core Ownership Split
 
-Status: pending.
+Status: done.
 
 Intent:
 - split `howl-session/src/session/core.zig` by behavior ownership
@@ -119,7 +119,7 @@ Stop conditions:
 
 ### PSH-A5: Backend Scaffold Maturity
 
-Status: pending.
+Status: done.
 
 Intent:
 - ensure GLES, Metal, Software, and Vulkan backend repos each state backend-specific execution constraints
@@ -138,7 +138,7 @@ Non-goals:
 
 ### PSH-A6: Closeout Review
 
-Status: pending.
+Status: done.
 
 Intent:
 - update `docs/architect/product_structure/CHECKPOINTS.md`
@@ -149,3 +149,35 @@ Required validation:
 - product hygiene guard passes
 - builds/tests pass for touched repos
 - report lists unresolved findings High/Medium/Low
+
+Closeout evidence:
+- all PSH-A1..A6 tickets complete
+- product guard passes across all product repos
+- root facades and entrypoint ownership now match review rules
+- session ownership split complete with full test discovery (`158/158`)
+- backend scaffold repos carry backend-specific execution constraints and render-core shape-consumption tests
+
+## Next Queue
+
+### PSH-B1: Android Host Native Boundary Contract
+
+Status: active.
+
+Intent:
+- define and freeze the android host native-call contract before JNI/native symbol work resumes
+- enforce naming discipline at boundary methods and remove ambiguous native-call labels
+- add boundary tests that prove android host remains surface-consumer-only
+
+Primary targets:
+- `howl-hosts/howl-android-host/app_architecture/contracts/`
+- `howl-hosts/howl-android-host/src/root.zig`
+- `howl-hosts/howl-android-host/src/bridge.zig` (or equivalent boundary module)
+
+Non-goals:
+- no SDL host changes
+- no session/render-core API churn
+- no Java UI feature expansion
+
+Stop conditions:
+- JNI/generated symbol names appear in Zig source
+- android host starts owning session/transport policy

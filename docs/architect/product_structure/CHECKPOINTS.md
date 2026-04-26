@@ -21,15 +21,19 @@ Run only on product repos:
 
 ## Checkpoint List
 
-- [ ] Parent workflow lane is established in `docs/`.
-- [ ] Root files are thin export/wiring files.
-- [ ] Conformance tests have behavior-owned names and are not hidden in root unless they are trivial module wiring checks.
-- [ ] SDL executable entrypoint delegates durable behavior to named modules.
-- [ ] Session implementation is split by lifecycle, I/O, resize/control, and state ownership.
-- [ ] Renderer backends state backend-specific execution constraints in local contracts.
-- [ ] Android host adds no JNI/native symbols until native-call names are contract-approved.
-- [ ] No product repo active docs use vague boundary words banned by the guard.
-- [ ] All public declarations have useful consumer-facing `///` docs, not filler.
+- [x] Parent workflow lane is established in `docs/`.
+- [x] Root files are thin export/wiring files.
+- [x] Conformance tests have behavior-owned names and are not hidden in root unless they are trivial module wiring checks.
+- [x] SDL executable entrypoint delegates durable behavior to named modules.
+- [x] Session implementation is split by lifecycle, I/O, resize/control, and state ownership.
+- [x] Renderer backends state backend-specific execution constraints in local contracts.
+- [x] Android host adds no JNI/native symbols until native-call names are contract-approved.
+- [x] No product repo active docs use vague boundary words banned by the guard.
+- [x] All public declarations have useful consumer-facing `///` docs, not filler.
+
+## Residual Risk
+
+- Public-doc semantic depth is reviewed manually; the guard enforces presence and boundary vocabulary but cannot fully score domain clarity.
 
 ## Stop Conditions
 
