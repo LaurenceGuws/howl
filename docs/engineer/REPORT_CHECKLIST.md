@@ -5,9 +5,10 @@ Use this checklist for parent-level cross-repo execution queues.
 ## Before Execution
 
 - Read `architecture_docs/authority/ENGINEERING_CONVENTIONS.md`.
+- Read `architecture_docs/authority/MILESTONES.md`.
 - Read `architecture_docs/authority/MVP_STRUCTURE.md`.
-- Read `docs/architect/product_structure/REVIEW.md`.
-- Read `docs/architect/product_structure/CHECKPOINTS.md`.
+- Read `docs/architect/mvp_scope_alignment/REVIEW.md`.
+- Read `docs/architect/mvp_scope_alignment/CHECKPOINTS.md`.
 - Read the current ticket in `docs/engineer/ACTIVE_QUEUE.md`.
 
 ## Human Rules
@@ -22,6 +23,7 @@ Use this checklist for parent-level cross-repo execution queues.
 8. No platform types in shared modules.
 9. No renderer planning policy outside `howl-render-core`.
 10. No session/transport policy in host entrypoints.
+11. No host reclaiming one-terminal widget behavior that belongs in the primary terminal boundary.
 
 ## Required Report Format
 

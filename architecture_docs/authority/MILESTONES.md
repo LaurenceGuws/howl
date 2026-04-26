@@ -11,14 +11,15 @@ Howl is an embeddable terminal stack:
 
 - a portable VT engine
 - a session/process runtime
-- a terminal surface composition layer
+- a primary embeddable terminal boundary
 - backend-neutral render planning
 - replaceable renderer backends
 - concrete hosts that own windowing, input, app lifecycle, and packaging
 - supporting tools for docs, package/release work, inspection, and hygiene
 
 The first product target is a Linux desktop terminal host using SDL for
-window/input and a decoupled OpenGL renderer path.
+window/input and a decoupled OpenGL renderer path. Android remains a first
+proof host for boundary pressure, but not a blocker for the first Linux MVP.
 
 ## Phase Definitions
 
@@ -35,15 +36,15 @@ window/input and a decoupled OpenGL renderer path.
 | `F0` | `POC` | Workspace Authority | Parent module map, dependency rules, integration flow, and repo scopes are explicit. |
 | `F1` | `POC` | Package Baseline | Every planned module has a clean repo scaffold, local build/test, and matching remote. |
 | `F2` | `MVP` | Session-Core Integration | Session owns process lifecycle and drives VT core through public APIs. |
-| `F3` | `MVP` | Surface Contract | Surface composes session, input routing, viewport state, and frame production without host framework types. |
+| `F3` | `MVP` | Terminal Boundary Contract | The primary embeddable terminal boundary composes session, input routing, viewport state, frame production, and render orchestration without host framework types. |
 | `F4` | `MVP` | Render Core Contract | Backend-neutral render plan, glyph/cell layout model, damage model, and resource policy are defined. |
 | `F5` | `MVP` | First Renderer Path | OpenGL renderer consumes render-core plans and draws text/cursor in a host-owned context. |
-| `F6` | `MVP` | First Host Loop | SDL host owns window/input/context/present loop and runs one terminal surface. |
+| `F6` | `MVP` | First Host Loop | SDL host owns window/input/context/present loop and runs one terminal-boundary instance. |
 | `F7` | `MVP` | Interactive Terminal | Linux SDL host runs an interactive shell with resize, keyboard input, text rendering, scrollback path, and shutdown. |
 | `F8` | `MVP` | MVP Quality Lock | Local evidence covers latency-sensitive loops, resize/input/render stability, leaks, and release packaging. |
-| `F9` | `LONG` | Multi-Surface Runtime | Shared modules support multiple terminal surfaces without shared mutable state leaks. |
+| `F9` | `LONG` | Multi-Surface Runtime | Shared modules support multiple terminal-boundary instances without shared mutable state leaks. |
 | `F10` | `LONG` | Renderer Portability | GLES, Vulkan, Metal, and software paths share render-core contracts without duplicating terminal logic. |
-| `F11` | `LONG` | Host Expansion | Additional hosts integrate through surface/session/render contracts without lower-layer churn. |
+| `F11` | `LONG` | Host Expansion | Additional hosts integrate through terminal-boundary/session/render contracts without lower-layer churn. |
 | `F12` | `LONG` | Best-In-Class Terminal Stack | Competitive latency, throughput, resource discipline, protocol breadth, and UX quality are proven with evidence. |
 
 ## Module Milestones
@@ -57,10 +58,10 @@ window/input and a decoupled OpenGL renderer path.
 | `VT-POC-03` | `POC` | Replay tests cover deterministic core behavior across split input, cursor movement, erase, reset, modes, history, selection, input encoding, snapshot, and stress evidence. |
 | `VT-POC-04` | `POC` | Package identity is clean: repo is `howl-vt-core`, Zig module export is `vt_core`, and no legacy names remain in public API. |
 | `VT-MVP-01` | `MVP` | Session can instantiate and drive the runtime engine entirely through public API. |
-| `VT-MVP-02` | `MVP` | Surface can read all state needed for frame production without mutable escapes. |
+| `VT-MVP-02` | `MVP` | The primary terminal boundary can read all state needed for frame production without mutable escapes. |
 | `VT-MVP-03` | `MVP` | First-host pressure fixes only portable VT behavior, with replay tests before behavior changes. |
 | `VT-MVP-04` | `MVP` | Input encoding covers Linux SDL host keyboard requirements for shell/editor usage. |
-| `VT-MVP-05` | `MVP` | Snapshot/conformance evidence can be used by session/surface tests without importing internals. |
+| `VT-MVP-05` | `MVP` | Snapshot/conformance evidence can be used by session/terminal-boundary tests without importing internals. |
 | `VT-MVP-06` | `MVP` | MVP release documents exact supported protocol/input/history/selection/render-state scope. |
 | `VT-LONG-01` | `LONG` | Broader VT protocol coverage grows from real fixture failures and documented terminal compatibility goals. |
 | `VT-LONG-02` | `LONG` | Parser throughput and memory discipline are measured against reproducible fixture classes. |
@@ -78,11 +79,11 @@ window/input and a decoupled OpenGL renderer path.
 | `SE-POC-04` | `POC` | Source topology is intentional: session core, transport implementations, and test support are separated. |
 | `SE-MVP-01` | `MVP` | Unix PTY can start a shell, read output, write input, resize, signal, and stop deterministically. |
 | `SE-MVP-02` | `MVP` | Current pending-byte apply path is replaced by real VT engine feed/apply integration. |
-| `SE-MVP-03` | `MVP` | Session exposes a host-neutral terminal state source for surface frame production. |
+| `SE-MVP-03` | `MVP` | Session exposes a host-neutral terminal state source for terminal-boundary frame production. |
 | `SE-MVP-04` | `MVP` | Session input path writes encoded bytes to transport and advances VT state from process output. |
 | `SE-MVP-05` | `MVP` | Resize commits session dimensions, notifies PTY, and updates VT runtime dimensions in a documented order. |
 | `SE-MVP-06` | `MVP` | Failure boundaries are proven for PTY start/read/write/resize/stop without corrupting session state. |
-| `SE-MVP-07` | `MVP` | One interactive terminal session can run under surface/host control with deterministic shutdown. |
+| `SE-MVP-07` | `MVP` | One interactive terminal session can run under terminal-boundary/host control with deterministic shutdown. |
 | `SE-MVP-08` | `MVP` | Transport ownership separates POSIX PTY, Android container integration, future Windows ConPTY, and future Apple container integration behind host-neutral session contracts. |
 | `SE-LONG-01` | `LONG` | Multiple sessions can run concurrently without hidden shared state or allocator leaks. |
 | `SE-LONG-02` | `LONG` | Session diagnostics can capture process/runtime state for bug reports without becoming a telemetry dumping ground. |
@@ -94,16 +95,16 @@ window/input and a decoupled OpenGL renderer path.
 
 | ID | Phase | Outcome |
 | --- | --- | --- |
-| `SF-POC-01` | `POC` | Surface API defines lifecycle, dimensions, input entrypoints, frame query, and error reporting. |
-| `SF-POC-02` | `POC` | Surface composes one session and one renderer-facing frame path without importing SDL/OpenGL types. |
-| `SF-POC-03` | `POC` | Surface owns terminal-widget state: focus, viewport, dirty state, cursor blink phase, selection view state, and frame timing policy. |
+| `SF-POC-01` | `POC` | The current `howl-term-surface` repo defines the primary `howl-term` lifecycle, dimensions, input entrypoints, frame query, and error reporting. |
+| `SF-POC-02` | `POC` | The terminal boundary composes one session and one renderer-facing frame path without importing SDL/OpenGL types. |
+| `SF-POC-03` | `POC` | The terminal boundary owns widget-local state: focus, viewport, dirty state, cursor blink phase, selection view state, and frame timing policy. |
 | `SF-POC-04` | `POC` | Host actions and terminal actions are separate plain-data types. |
-| `SF-MVP-01` | `MVP` | Surface translates host key/text/control input into session/core calls. |
-| `SF-MVP-02` | `MVP` | Surface converts session/core state into a stable frame model for render-core. |
-| `SF-MVP-03` | `MVP` | Surface resize updates session dimensions and render viewport requirements coherently. |
-| `SF-MVP-04` | `MVP` | Surface exposes dirty/damage information so host render loops do not redraw blindly. |
-| `SF-MVP-05` | `MVP` | Surface owns one terminal widget lifecycle for the SDL host MVP. |
-| `SF-MVP-06` | `MVP` | Surface test evidence covers input/feed/render-frame/reset/resize ordering. |
+| `SF-MVP-01` | `MVP` | The terminal boundary translates host key/text/control input into session/core calls. |
+| `SF-MVP-02` | `MVP` | The terminal boundary converts session/core state into a stable frame model for render-core. |
+| `SF-MVP-03` | `MVP` | The terminal boundary resize path updates session dimensions and render viewport requirements coherently. |
+| `SF-MVP-04` | `MVP` | The terminal boundary exposes dirty/damage information so host render loops do not redraw blindly. |
+| `SF-MVP-05` | `MVP` | The terminal boundary owns one terminal widget lifecycle for the SDL host MVP. |
+| `SF-MVP-06` | `MVP` | Terminal boundary test evidence covers input/feed/render-frame/reset/resize ordering. |
 | `SF-LONG-01` | `LONG` | Multiple surfaces can represent tabs, panes, and embedded terminal widgets. |
 | `SF-LONG-02` | `LONG` | Surface supports scrollback viewport navigation, selection extraction, clipboard boundaries, and search hooks. |
 | `SF-LONG-03` | `LONG` | Surface coordinates shared renderer resources without owning backend-specific objects. |
@@ -118,7 +119,7 @@ window/input and a decoupled OpenGL renderer path.
 | `RC-POC-02` | `POC` | Render plan output is plain data and can be tested without GPU or host frameworks. |
 | `RC-POC-03` | `POC` | Font/shaping inputs are modeled without binding to one backend implementation. |
 | `RC-POC-04` | `POC` | Draw command ordering is deterministic for clear, glyph, cursor, selection, and decoration layers. |
-| `RC-MVP-01` | `MVP` | Surface frame model converts into render-core plans for visible terminal cells. |
+| `RC-MVP-01` | `MVP` | The terminal boundary frame model converts into render-core plans for visible terminal cells. |
 | `RC-MVP-02` | `MVP` | Damage model supports typing, cursor movement, line clear, full clear, resize, and scroll. |
 | `RC-MVP-03` | `MVP` | Glyph run planning handles ASCII, UTF-8 codepoints, wide cells, and blank/continuation cells at MVP level. |
 | `RC-MVP-04` | `MVP` | Atlas/cache policy interface lets GL own GPU resources while sharing planning decisions. |
@@ -171,7 +172,7 @@ window/input and a decoupled OpenGL renderer path.
 | `MTL-POC-02` | `POC` | Metal ownership boundaries are documented: device, command queue, pipelines, textures, buffers, and drawable ownership. |
 | `MTL-POC-03` | `POC` | Objective-C/Swift/C interop requirements are isolated from render-core contracts. |
 | `MTL-MVP-01` | `MVP` | Parked outside the Linux MVP critical path because Apple hosts are not part of the first release. |
-| `MTL-MVP-02` | `MVP` | If activated early, proves render-core plan consumption without changing the surface API. |
+| `MTL-MVP-02` | `MVP` | If activated early, proves render-core plan consumption without changing the terminal-boundary API. |
 | `MTL-LONG-01` | `LONG` | Metal backend supports macOS/iOS host rendering through backend-neutral plans. |
 | `MTL-LONG-02` | `LONG` | Metal output matches shared renderer fixtures for text, cursor, selection, damage, and resize. |
 | `MTL-LONG-03` | `LONG` | Apple platform renderer evidence covers high-DPI, color, power, and latency behavior. |
@@ -218,13 +219,13 @@ window/input and a decoupled OpenGL renderer path.
 | `SDL-POC-04` | `POC` | SDL keyboard/text/resize events map into host-neutral action structs. |
 | `SDL-MVP-01` | `MVP` | Host creates one window and one GL context and passes context ownership expectations to GL renderer. |
 | `SDL-MVP-02` | `MVP` | Host owns event loop timing, input polling, frame scheduling, and presentation. |
-| `SDL-MVP-03` | `MVP` | Host composes one terminal surface, one session, and one GL renderer. |
+| `SDL-MVP-03` | `MVP` | Host composes one or more terminal boundary instances and the selected GL backend path. |
 | `SDL-MVP-04` | `MVP` | Host starts an interactive shell through session and routes keyboard/text input to it. |
-| `SDL-MVP-05` | `MVP` | Host renders process output through surface, render-core, and GL renderer. |
-| `SDL-MVP-06` | `MVP` | Host resize updates SDL viewport, surface dimensions, session/PTY dimensions, render-core plan, and GL viewport. |
-| `SDL-MVP-07` | `MVP` | Host shutdown releases surface/session/renderer/window/process resources deterministically. |
+| `SDL-MVP-05` | `MVP` | Host renders process output through the terminal boundary, render-core, and GL renderer. |
+| `SDL-MVP-06` | `MVP` | Host resize updates SDL viewport, terminal-boundary dimensions, session/PTY dimensions, render-core plan, and GL viewport. |
+| `SDL-MVP-07` | `MVP` | Host shutdown releases terminal-boundary/session/renderer/window/process resources deterministically. |
 | `SDL-MVP-08` | `MVP` | MVP build/release instructions produce a runnable Linux binary. |
-| `SDL-LONG-01` | `LONG` | Host supports tabs, panes, multiple surfaces, and app-level orchestration. |
+| `SDL-LONG-01` | `LONG` | Host supports tabs, panes, multiple terminal-boundary instances, and app-level orchestration. |
 | `SDL-LONG-02` | `LONG` | Host supports renderer backend selection after GL plus at least one alternate backend are production-ready. |
 | `SDL-LONG-03` | `LONG` | Host supports clipboard, IME, drag/drop, config, font selection, themes, and window state persistence. |
 | `SDL-LONG-04` | `LONG` | Host quality evidence covers input latency, scroll smoothness, CPU usage, memory, and release packaging. |
@@ -235,8 +236,8 @@ window/input and a decoupled OpenGL renderer path.
 | ID | Phase | Outcome |
 | --- | --- | --- |
 | `AND-POC-01` | `POC` | Android host scaffold owns Android lifecycle scope, platform boundary shape, and native package baseline. |
-| `AND-POC-02` | `POC` | Host boundary distinguishes Android UI lifecycle, input, surface creation, and process/container integration ownership. |
-| `AND-POC-03` | `POC` | Android input events map to host-neutral action structs without leaking Android types into surface/session. |
+| `AND-POC-02` | `POC` | Host boundary distinguishes Android UI lifecycle, input, surface creation, process/container integration ownership, and its separation from the primary terminal boundary. |
+| `AND-POC-03` | `POC` | Android input events map to host-neutral action structs without leaking Android types into terminal-boundary/session layers. |
 | `AND-POC-04` | `POC` | Alpine/container-backed process plan is documented as Android host/transport integration pressure, not Unix-only session policy. |
 | `AND-MVP-01` | `MVP` | Parked outside the Linux MVP critical path; scaffold exists to keep portability pressure visible. |
 | `AND-MVP-02` | `MVP` | Any session changes needed by Android are expressed as transport abstraction improvements, not Android imports in session core. |
@@ -244,7 +245,7 @@ window/input and a decoupled OpenGL renderer path.
 | `AND-LONG-02` | `LONG` | Android terminal process runs through an embedded container/process bridge behind the session transport API. |
 | `AND-LONG-03` | `LONG` | Android renderer path uses GLES or Vulkan through render-core contracts. |
 | `AND-LONG-04` | `LONG` | Android host participates in multi-host conformance, performance, power, and memory evidence. |
-| `AND-LONG-05` | `LONG` | Android host supports multiple terminal surfaces where platform UX requires tabs, splits, or embedded terminal widgets. |
+| `AND-LONG-05` | `LONG` | Android host supports multiple terminal boundary instances where platform UX requires tabs, splits, or embedded terminal widgets. |
 
 ### `utils/howl-docs`
 
@@ -297,24 +298,24 @@ Queue advancement requires `Current Target` sync in the same commit set.
 | Repo | Current Target | Last Validated Checkpoint |
 | --- | --- | --- |
 | `howl-vt-core` | `M10` | Frozen `M10` baseline and quality doctrine |
-| `howl-session` | `M5` | `QH-1: enforce module ownership docs and tighten session API surface` |
-| `howl-term-surface` | `M3` | `MVP-S1: move terminal composition into surface module` |
-| `render/howl-render-core` | `M5` | `RC-M3-R2: align backend init contract with fallible resource load` |
-| `render/howl-render-gl` | `M6` | `RB-M3-R2: fix capacity truth claim and execute texture-state safety` |
+| `howl-session` | `Linux MVP live-host revalidation` | session/runtime structure is far ahead of the stale local target; live host pressure now decides the next real gaps |
+| `howl-term-surface` | `Primary terminal boundary realignment` | current repo name remains `howl-term-surface`; owned boundary is effectively `howl-term` |
+| `render/howl-render-core` | `M5` | capability negotiation is active, but docs and callers must now describe `howl-term` as the primary owner of render orchestration |
+| `render/howl-render-gl` | `M6` | capability conformance is in progress, but real text-path closure still decides true MVP readiness |
 | `render/howl-render-gles` | `M0` | Scaffold baseline |
 | `render/howl-render-metal` | `M0` | Scaffold baseline |
 | `render/howl-render-software` | `M0` | Scaffold baseline |
 | `render/howl-render-vulkan` | `M0` | Scaffold baseline |
-| `howl-hosts/howl-sdl-host` | `M9` | `M3-R2-A4: thread backend capability through host render contract` |
-| `howl-hosts/howl-android-host` | `M0` | `G1-HYGIENE: initialize Android host scaffold` |
+| `howl-hosts/howl-sdl-host` | `Renderer composition closure` | code is beyond scaffold, but live Linux MVP still hinges on real text rendering and interactive shell quality |
+| `howl-hosts/howl-android-host` | `Boundary and render bring-up` | code is beyond scaffold, but Android remains a proof host rather than a Linux MVP blocker |
 
 ## MVP Execution Order
 
 1. `howl-session`: complete Unix PTY lifecycle and replace current queue-only behavior with real VT core driving.
-2. `howl-term-surface`: define one-surface composition API around session, input routing, dimensions, dirty state, and frame model.
+2. `howl-term-surface`: define the one-terminal-instance composition API around session, input routing, dimensions, dirty state, and frame model.
 3. `render/howl-render-core`: define backend-neutral render frame/plan/damage/glyph data.
 4. `render/howl-render-gl`: render the first terminal frames from render-core output in a host-owned GL context.
-5. `howl-hosts/howl-sdl-host`: own SDL window/input/context/present and compose one terminal surface.
+5. `howl-hosts/howl-sdl-host`: own SDL window/input/context/present and compose one terminal-boundary instance.
 6. `howl-vt-core`: fix only proven portable semantic gaps discovered by real host pressure.
 7. `utils/howl-docs` and `utils/howl-pm`: publish MVP docs and release metadata.
 8. Family release: lock MVP behavior with local evidence, tags, and release notes.
@@ -336,8 +337,8 @@ through this sequence unless a listed dependency is already complete.
 | `LMVP-08` | `GL-POC-01` through `GL-POC-04` | GL renderer resource boundary is proven without SDL ownership. |
 | `LMVP-09` | `GL-MVP-01` through `GL-MVP-06` | GL renderer draws MVP terminal frames from render-core output. |
 | `LMVP-10` | `SDL-POC-01` through `SDL-POC-04` | SDL host proves window, event, context, swap, and input mapping without terminal logic. |
-| `LMVP-11` | `SDL-MVP-01` through `SDL-MVP-07`, `SF-MVP-05`, `SE-MVP-07` | SDL host composes one interactive terminal surface end to end. |
-| `LMVP-12` | `VT-MVP-03`, `VT-MVP-04`, `VT-MVP-05`, `VT-MVP-06` | Portable VT gaps found by the host are fixed and the supported core surface is documented. |
+| `LMVP-11` | `SDL-MVP-01` through `SDL-MVP-07`, `SF-MVP-05`, `SE-MVP-07` | SDL host composes one interactive terminal-boundary instance end to end. |
+| `LMVP-12` | `VT-MVP-03`, `VT-MVP-04`, `VT-MVP-05`, `VT-MVP-06` | Portable VT gaps found by the host are fixed and the supported core terminal state surface is documented. |
 | `LMVP-13` | `DOCS-MVP-01`, `DOCS-MVP-02`, `PM-MVP-01`, `PM-MVP-02`, `HYG-MVP-01`, `HYG-MVP-02`, `SDL-MVP-08` | MVP release is documented, locally validated, packaged, and tagged with exact module versions. |
 
 ## Transport Portability Rule
@@ -355,9 +356,9 @@ introduce platform types into session core.
 2. Child repos own local contracts, tests, and active queues.
 3. POC work proves shape; MVP work ships the first Linux terminal; LONG work is recorded but not pulled forward without a dependency reason.
 4. Renderer backend work must not duplicate render-core logic.
-5. Host work must not absorb session, VT, surface, or render-core responsibilities.
-6. Session work must not import host, surface, or renderer types.
-7. Surface work is the composition boundary, not a dumping ground for platform code or backend-specific rendering.
+5. Host work must not absorb session, VT, terminal-boundary, or render-core responsibilities.
+6. Session work must not import host, terminal-boundary, or renderer types.
+7. Terminal-boundary work is the composition boundary, not a dumping ground for platform code or backend-specific rendering.
 8. Utility tooling must support development and release work without becoming product runtime scope.
 9. New module dependencies require updates to `MODULE_MAP.md`, `DEPENDENCY_RULES.md`, and this milestone map in the same commit series.
 
@@ -368,9 +369,9 @@ The MVP is complete only when:
 - one SDL host binary opens a terminal window
 - a shell process runs through session-owned PTY transport
 - keyboard input reaches the process
-- process output reaches VT core and renders through surface, render-core, and GL
-- resize updates PTY, VT dimensions, surface frame, renderer viewport, and host presentation
-- shutdown releases process/session/surface/renderer/window resources deterministically
+- process output reaches VT core and renders through the terminal boundary, render-core, and GL
+- resize updates PTY, VT dimensions, terminal-boundary frame, renderer viewport, and host presentation
+- shutdown releases process/session/terminal-boundary/renderer/window resources deterministically
 - local build/test evidence passes in all participating repos
 - docs state install/run/debug steps and known missing long-term features
 - release metadata identifies exact module tags used by the MVP

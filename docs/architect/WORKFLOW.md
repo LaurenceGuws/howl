@@ -1,6 +1,8 @@
 # Parent Architect Workflow
 
-Purpose: drive cross-repo product direction, keep module boundaries coherent, and publish execution queues that are large enough for dual-mode engineering but still reviewable.
+Purpose: drive cross-repo product direction, keep module boundaries coherent,
+and publish execution queues that are large enough for dual-mode engineering but
+still reviewable.
 
 ## Document Lanes
 
@@ -21,10 +23,14 @@ Purpose: drive cross-repo product direction, keep module boundaries coherent, an
 ## Host Proof Rule
 
 - SDL host and Android host are the first abstraction proofs.
-- Both hosts must act as equivalent callers of `howl-term-surface`.
-- Host repos own platform/windowing code first; app-state features (for example multiplexing) come later.
-- `howl-session` owns PTY/platform process differences and must present first-class caller behavior by default.
-- `howl-render-core` owns backend abstraction and contract shape; backend repos must behave as first-class targets by default.
+- Both hosts must act as equivalent callers of the primary terminal boundary
+  (`howl-term`, currently housed in `howl-term-surface`).
+- Host repos own platform/windowing code first; app-state features (for example
+  multiplexing) come later.
+- `howl-session` owns PTY/platform process differences and must present
+  first-class caller behavior by default.
+- `howl-render-core` owns backend abstraction and contract shape; backend repos
+  must behave as first-class targets by default.
 
 ## Engineer Owns
 
@@ -55,6 +61,7 @@ Accept work only when all are true:
 - no platform types leak into shared modules
 - no render planning policy moves outside `howl-render-core`
 - no session/transport policy moves into host entrypoints
+- no host retakes ownership that belongs to the terminal boundary
 
 ## Product Hygiene Guard
 

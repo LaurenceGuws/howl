@@ -2,183 +2,134 @@
 
 ## Current State
 
-Product structure hygiene sprint is closed. Next execution queue is `PSH-B1` (android host platform-call contract and boundary tests).
+Active sprint is `MVP-S1` (MVP scope alignment and cleanup).
+Next sprint is `MVP-S2` (scoped MVP completion).
 
 ## Read Before Execution
 
 - `architecture_docs/authority/ENGINEERING_CONVENTIONS.md`
+- `architecture_docs/authority/MILESTONES.md`
 - `architecture_docs/authority/MVP_STRUCTURE.md`
 - `architecture_docs/authority/MODULE_MAP.md`
 - `architecture_docs/authority/DEPENDENCY_RULES.md`
+- `architecture_docs/authority/INTEGRATION_FLOW.md`
 - `docs/architect/WORKFLOW.md`
-- `docs/architect/product_structure/REVIEW.md`
-- `docs/architect/product_structure/CHECKPOINTS.md`
+- `docs/architect/mvp_scope_alignment/REVIEW.md`
+- `docs/architect/mvp_scope_alignment/CHECKPOINTS.md`
 - `docs/engineer/REPORT_CHECKLIST.md`
 
-## Sprint: Product Structure Hygiene
+## Sprint: MVP Scope Alignment and Cleanup
 
-Goal: align file/folder layout, symbol names, doc comments, root facade thickness, executable entrypoints, and module ownership across product repos before new feature work continues.
+Goal: align current module state, repo-local docs, naming, file ownership,
+layout, and queue reality to the corrected `howl-term` boundary model before
+claiming visible MVP completion.
 
-### PSH-A1: Parent Workflow Setup
+### MVP-S1-A1: Parent and Child Authority Sync
 
-Status: done.
-
-Intent:
-- create parent `docs/` workflow lane
-- move review/checkpoint docs out of `architecture_docs`
-- define dual-mode report and validation rules
-
-Target files:
-- `docs/architect/WORKFLOW.md`
-- `docs/architect/MILESTONE_PROGRESS.md`
-- `docs/architect/product_structure/REVIEW.md`
-- `docs/architect/product_structure/CHECKPOINTS.md`
-- `docs/engineer/ACTIVE_QUEUE.md`
-- `docs/engineer/REPORT_CHECKLIST.md`
-
-Closeout:
-- parent `docs/` workflow lane created
-- product-structure review/checkpoint docs moved out of `architecture_docs`
-- report checklist and sprint queue published
-- `architecture_docs/README.md` now points workflow readers to `docs/`
-
-### PSH-A2: Thin Root Facades
-
-Status: done.
+Status: done architect-side.
 
 Intent:
-- make product `root.zig` files export/wiring/module-test only
-- move non-trivial conformance tests out of root files into named test modules
-- preserve all public exports and test coverage
-
-Primary targets:
-- `howl-vt-core/src/root.zig`
-- `howl-session/src/root.zig`
-- `howl-term-surface/src/root.zig` if review finds non-trivial tests
-
-Non-goals:
-- no public API rename
-- no behavior change
-- no test deletion
-
-Stop conditions:
-- any public symbol must change
-- moved tests lose discovery under `zig build test --summary all`
-
-### PSH-A3: SDL Host Entrypoint Ownership
-
-Status: done.
-
-Intent:
-- reduce `howl-hosts/howl-sdl-host/src/main.zig` to executable entrypoint ownership
-- move durable frame loop, presentation, SDL app/event handling, and runtime config logic into named modules
-- preserve current runtime behavior
-
-Primary target:
-- `howl-hosts/howl-sdl-host/src/main.zig`
-
-Expected new modules may include:
-- `src/frame_loop.zig`
-- `src/presentation.zig`
-- `src/platform/sdl_app.zig`
-- `src/config/runtime_config.zig`
-
-Non-goals:
-- no renderer feature changes
-- no session/surface behavior changes
-- no SDL dependency change
-
-Stop conditions:
-- render-core planning policy appears in host modules beyond invocation
-- session/transport policy is introduced in host entrypoint code
-
-### PSH-A4: Session Core Ownership Split
-
-Status: done.
-
-Intent:
-- split `howl-session/src/session/core.zig` by behavior ownership
-- keep public `Session` API stable
-- preserve all tests
-
-Expected ownership lanes:
-- session data/config/state invariants
-- lifecycle start/stop/deinit
-- I/O feed/apply/feedProcessOutput
-- resize/control observability
-- VT engine integration
-
-Non-goals:
-- no API churn
-- no transport behavior change
-- no line-count-only movement
-
-Stop conditions:
-- any test requires weakening
-- transport/session boundary becomes less clear
-
-### PSH-A5: Backend Scaffold Maturity
-
-Status: done.
-
-Intent:
-- ensure GLES, Metal, Software, and Vulkan backend repos each state backend-specific execution constraints
-- add minimal tests proving public backend shape consumes render-core-facing config/capability model
+- update parent authority to the corrected terminal-boundary model
+- update participating MVP repo scope/boundary/milestone docs to match
+- record the decision trail in a new parent checkin
 
 Targets:
-- `render/howl-render-gles`
-- `render/howl-render-metal`
-- `render/howl-render-software`
-- `render/howl-render-vulkan`
+- `architecture_docs/authority/*`
+- `howl-session/app_architecture/authorities/*`
+- `howl-term-surface/app_architecture/authorities/*`
+- `render/howl-render-core/app_architecture/authorities/*`
+- `render/howl-render-gl/app_architecture/authorities/*`
+- `howl-hosts/howl-sdl-host/app_architecture/authorities/*`
+- `howl-hosts/howl-android-host/app_architecture/authorities/*`
 
-Non-goals:
-- no full renderer implementation
-- no host integration
-- no render-core API change unless a real contract gap is found and escalated
+### MVP-S1-A2: Repo Reality Audit and Cleanup Queue
 
-### PSH-A6: Closeout Review
-
-Status: done.
+Status: next.
 
 Intent:
-- update `docs/architect/product_structure/CHECKPOINTS.md`
-- record validation results
-- document any remaining maturity debt with cause and next gate
-
-Required validation:
-- product hygiene guard passes
-- builds/tests pass for touched repos
-- report lists unresolved findings High/Medium/Low
-
-Closeout evidence:
-- all PSH-A1..A6 tickets complete
-- product guard passes across all product repos
-- root facades and entrypoint ownership now match review rules
-- session ownership split complete with full test discovery (`158/158`)
-- backend scaffold repos carry backend-specific execution constraints and render-core shape-consumption tests
-
-## Next Queue
-
-### PSH-B1: Android Host Platform Boundary Contract
-
-Status: active.
-
-Intent:
-- define and freeze the android host platform-call contract before generated platform symbols work resumes
-- enforce naming discipline at boundary methods and remove ambiguous platform-call labels
-- keep Android and SDL as identical callers of `howl-term-surface` operations (`start`, `stop`, `feedBytes`, `feedKey`, `tick`, `resize`, `control`, `frameData`)
-- add boundary tests that prove android host remains surface-consumer-only
+- audit each MVP repo for stale milestone claims, stale queue claims, ambiguous
+  naming, and topology drift caused by previous half-finished sprints
+- publish only bounded correction tickets tied to specific repos/files
+- distinguish doc debt, topology debt, and real behavior debt
 
 Primary targets:
-- `howl-hosts/howl-android-host/app_architecture/contracts/`
-- `howl-hosts/howl-android-host/src/root.zig`
-- `howl-hosts/howl-android-host/src/bridge.zig` (or equivalent boundary module)
+- `howl-session`
+- `howl-term-surface`
+- `render/howl-render-core`
+- `render/howl-render-gl`
+- `howl-hosts/howl-sdl-host`
+- `howl-hosts/howl-android-host`
 
 Non-goals:
-- no SDL host changes
-- no session/render-core API churn
-- no Java UI feature expansion
+- no broad feature work yet
+- no optimistic MVP claims
 
 Stop conditions:
-- generated platform symbol names appear in Zig source
-- android host starts owning session/transport policy
+- audit findings are vague or not tied to files/contracts
+- queue invents new scope outside the corrected model
+
+### MVP-S1-A3: Naming and Ownership Corrections
+
+Status: pending.
+
+Intent:
+- execute bounded cleanup tickets from the audit
+- remove ambiguous or stale naming in files, symbols, doc comments, and local
+  workflow docs
+- tighten ownership signals where previous sprints left mixed language behind
+
+Non-goals:
+- no cross-module rearchitecture beyond the corrected boundary model
+- no hidden behavior changes under naming cleanup
+
+### MVP-S1-A4: Sprint Closeout
+
+Status: pending.
+
+Intent:
+- close Sprint 1 only when parent docs, child docs, queue state, and reported
+  runtime truth agree
+- publish the exact Sprint 2 execution lane for visible MVP closure
+
+Required validation:
+- product hygiene guard passes for reviewed product repos
+- handover reports cite real validation and real residual debt
+
+## Sprint: Scoped MVP Completion
+
+Goal: finish the first Linux MVP through runtime truth, not architectural wishful
+thinking.
+
+### MVP-S2-A1: SDL Text Path Closure
+
+Status: planned.
+
+Intent:
+- complete real text rendering through `howl-term` -> `render-core` ->
+  `howl-render-gl`
+- remove remaining block-only presentation gaps
+
+### MVP-S2-A2: SDL Interactive Shell Closure
+
+Status: planned.
+
+Intent:
+- close the shell loop: process output, keyboard/text input, resize, redraw,
+  and shutdown
+- prove the Linux host is actually usable
+
+### MVP-S2-A3: Android Proof-Host Closure
+
+Status: planned.
+
+Intent:
+- keep Android as a valid peer proof host over the same terminal boundary
+- do not let Android-specific work retake ownership from shared modules
+
+### MVP-S2-A4: MVP Quality Lock
+
+Status: planned.
+
+Intent:
+- publish participating-repo evidence, release steps, and known limits only
+  after runtime truth is closed
