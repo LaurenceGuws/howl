@@ -26,7 +26,8 @@ The guard checks:
 
 - `//!` file headers in `src/**/*.zig`
 - source filename shape in `src/` (`uppercase` and `-` are rejected)
-- new Zig test names for milestone/ticket labels
+- new Zig test names for milestone/ticket prefixes (`M*`, `RC-`, `RB-`, `HOST-`, `DS-`, `QH-`)
+- obvious cross-repo import direction violations for the active product repos
 - compatibility patterns: `compat[^ib]`, `fallback`, `workaround`, `shim`
 
 Expected output:

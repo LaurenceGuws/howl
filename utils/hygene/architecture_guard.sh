@@ -11,7 +11,8 @@ usage: architecture_guard.sh [--allowlist FILE] [repo ...]
 Checks each repo for:
   - missing //! file headers in src/**/*.zig
   - forbidden source filename patterns (uppercase or hyphen)
-  - forbidden milestone/ticket labels in new test names
+  - forbidden milestone/ticket prefixes in new test names
+  - forbidden cross-repo import directions
   - forbidden compatibility patterns: compat[^ib]|fallback|workaround|shim
 
 Exit codes:
@@ -70,12 +71,63 @@ check_test_names() {
     local test_name
     if [[ "$line_text" =~ ^[[:space:]]*test[[:space:]]+\"([^\"]+)\" ]]; then
       test_name="${BASH_REMATCH[1]}"
-      if [[ "$test_name" =~ (M[0-9]+|[A-Z]{2,}-[A-Z0-9-]+) ]] && ! allowlist_match "$file_path" "$test_name"; then
+      if [[ "$test_name" =~ (M[0-9]+([:-][A-Z0-9]+)*|RC-[A-Z0-9-]+|RB-[A-Z0-9-]+|HOST-[A-Z0-9-]+|DS-[A-Z0-9-]+|QH-[A-Z0-9-]+) ]] && ! allowlist_match "$file_path" "$test_name"; then
         echo "  $file_path:$line_no: forbidden ticket/milestone tag in test name: $test_name" >&2
         repo_violations=$((repo_violations + 1))
       fi
     fi
   done < <(rg -n --no-heading '^[[:space:]]*test[[:space:]]+"[^"]+"' "$file_path" || true)
+
+  printf '%s\n' "$repo_violations"
+}
+
+check_dependency_direction() {
+  local repo_path="$1"
+  local src_dir="$repo_path/src"
+  local repo_name
+  repo_name="$(basename "$repo_path")"
+  local pattern=""
+  local reason=""
+
+  case "$repo_path" in
+    howl-vt-core|*/howl-vt-core)
+      pattern='@import\("(howl_session|howl_term_surface|howl_render_[a-z_]+|howl_sdl_host|howl_android_host|vt_core)"'
+      reason="vt-core must not import session/surface/render/host modules"
+      ;;
+    howl-session|*/howl-session)
+      pattern='@import\("(howl_term_surface|howl_render_[a-z_]+|howl_sdl_host|howl_android_host)"'
+      reason="session must not import surface/render/host modules"
+      ;;
+    howl-term-surface|*/howl-term-surface)
+      pattern='@import\("(howl_render_[a-z_]+|howl_sdl_host|howl_android_host)"'
+      reason="surface must not import render-backend/host modules"
+      ;;
+    render/howl-render-core|*/render/howl-render-core)
+      pattern='@import\("(howl_session|howl_term_surface|howl_sdl_host|howl_android_host|vt_core)"'
+      reason="render-core must not import session/surface/host/vt_core modules"
+      ;;
+    render/howl-render-*|*/render/howl-render-*)
+      pattern='@import\("(howl_session|howl_term_surface|howl_sdl_host|howl_android_host|vt_core)"'
+      reason="renderer backends must not import session/surface/host/vt_core modules"
+      ;;
+    howl-hosts/howl-sdl-host|*/howl-hosts/howl-sdl-host)
+      pattern='@import\("(howl_android_host)"'
+      reason="SDL host must not import Android host internals"
+      ;;
+    howl-hosts/howl-android-host|*/howl-hosts/howl-android-host)
+      pattern='@import\("(howl_sdl_host)"'
+      reason="Android host must not import SDL host internals"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  local repo_violations=0
+  while IFS= read -r match_line; do
+    echo "  ${match_line#"$repo_path"/}: dependency direction violation: $reason" >&2
+    repo_violations=$((repo_violations + 1))
+  done < <(rg -n --no-heading -g '*.zig' -e "$pattern" "$src_dir" || true)
 
   printf '%s\n' "$repo_violations"
 }
@@ -115,6 +167,12 @@ check_repo() {
       repo_violations=$((repo_violations + test_violation_count))
     fi
   done < <(find "$src_dir" -type f -name '*.zig' -print0)
+
+  local dependency_violation_count
+  dependency_violation_count="$(check_dependency_direction "$repo_path")"
+  if [[ "$dependency_violation_count" != "0" ]]; then
+    repo_violations=$((repo_violations + dependency_violation_count))
+  fi
 
   while IFS= read -r match_line; do
     echo "  ${match_line#"$repo_path"/}"
