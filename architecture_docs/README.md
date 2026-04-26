@@ -1,29 +1,44 @@
 # Howl Architecture Docs
 
-Family-level architecture authority for cross-repo ownership, dependency direction, and integration flow.
+Cross-repo architecture authority for Howl.
 
-Repo-local architecture details stay in each repo's `app_architecture/`.
-This directory is for cross-module fit only.
+Repo-local implementation details stay in each repo's `app_architecture/`.
+This directory owns only family-level structure, dependency direction, and milestone sequencing.
 
-## Documents
+## Layout
 
-- `MODULE_MAP.md` — module ownership map (responsibility/API/consumes/produces)
-- `DEPENDENCY_RULES.md` — allowed and forbidden dependency direction
-- `INTEGRATION_FLOW.md` — runtime lifecycle/input/render flow across modules
-- `MILESTONES.md` — MVP and long-term milestone map across modules
-- `MVP_STRUCTURE.md` — required MVP structural layout and coupling per repo
-- `ENGINEERING_CONVENTIONS.md` — parent authority for Zig docs, naming, tests, and commit isolation
-- `CHECKIN_PROTOCOL.md` — required handover schema, validation fields, and residual-risk reporting
-- `HOWL_HOST_BACKEND_SPLIT.md` — legacy split note (kept for continuity)
+- `authority/` — active, normative architecture authority docs
+- `archive/` — dated checkins/reviews and legacy references
 
-## Checkins
+## Single Source Of Truth
 
-- `checkins/checkin4-architecture-discipline-2026-04-26.md` — latest architecture-discipline checkpoint
-- `checkins/checkin5-full-howl-review-2026-04-26.md` — full workspace MVP structure review checkpoint
+| Concern | Authority File |
+| --- | --- |
+| Module ownership, API boundary, consumes/produces | `authority/MODULE_MAP.md` |
+| Allowed and forbidden dependency direction | `authority/DEPENDENCY_RULES.md` |
+| Runtime integration sequence across modules | `authority/INTEGRATION_FLOW.md` |
+| Family milestone ladder and per-module milestones | `authority/MILESTONES.md` |
+| Required MVP repo structure and coupling rules | `authority/MVP_STRUCTURE.md` |
+| Naming, docs, tests, handover discipline rules | `authority/ENGINEERING_CONVENTIONS.md` |
+| Required handover/checkin validation schema | `authority/CHECKIN_PROTOCOL.md` |
 
-## Reviews
+## Active Authority Docs
 
-- `reviews/2026-04-26-architecture-discipline/REVIEW.md` — hygiene/drift audit and root-cause analysis
-- `reviews/2026-04-26-architecture-discipline/CHECKPOINTS.md` — long-sprint execution checklist
-- `reviews/2026-04-26-full-howl-review/REVIEW.md` — full workspace architecture audit
-- `reviews/2026-04-26-full-howl-review/CHECKPOINTS.md` — corrective execution sequence for MVP structure lock
+- `authority/MODULE_MAP.md`
+- `authority/DEPENDENCY_RULES.md`
+- `authority/INTEGRATION_FLOW.md`
+- `authority/MILESTONES.md`
+- `authority/MVP_STRUCTURE.md`
+- `authority/ENGINEERING_CONVENTIONS.md`
+- `authority/CHECKIN_PROTOCOL.md`
+
+## Archive
+
+- `archive/checkins/` — historical checkin logs
+- `archive/reviews/` — dated review + checkpoint snapshots
+- `archive/legacy/` — retained legacy notes not used as active authority
+
+## Hard Rule
+
+Remote CI remains forbidden.
+All architecture and hygiene gates run locally through `utils/hygene` and must be reported per `authority/CHECKIN_PROTOCOL.md`.

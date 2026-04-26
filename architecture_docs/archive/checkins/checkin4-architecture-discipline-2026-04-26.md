@@ -6,8 +6,8 @@ Record the post-correction architecture hygiene status and establish a formal di
 
 ## Linked Review
 
-- Review: `architecture_docs/reviews/2026-04-26-architecture-discipline/REVIEW.md`
-- Sprint checkpoints: `architecture_docs/reviews/2026-04-26-architecture-discipline/CHECKPOINTS.md`
+- Review: `architecture_docs/archive/reviews/2026-04-26-architecture-discipline/REVIEW.md`
+- Sprint checkpoints: `architecture_docs/archive/reviews/2026-04-26-architecture-discipline/CHECKPOINTS.md`
 
 ## Snapshot
 
@@ -27,7 +27,7 @@ The sprint objective is to make conventions and phase intent unmistakable and en
 Hard rule recorded: remote CI is forbidden for this workspace. Enforcement must run through
 local handover report gates using `utils/hygene`.
 
-Required validation shape: use the copy-paste block in `architecture_docs/CHECKIN_PROTOCOL.md`
+Required validation shape: use the copy-paste block in `architecture_docs/authority/CHECKIN_PROTOCOL.md`
 and include the `utils/hygene/architecture_guard.sh` result in every engineering handover.
 
 ## Next Handover Basis

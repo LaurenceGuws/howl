@@ -29,17 +29,17 @@ Repos audited:
 
 Parent authorities/checkins reviewed:
 
-- `architecture_docs/checkins/Transition.md`
-- `architecture_docs/checkins/checkin1.txt`
-- `architecture_docs/checkins/checkin2.txt`
-- `architecture_docs/checkins/checkin3.txt`
-- `architecture_docs/checkins/checkin4-architecture-discipline-2026-04-26.md`
-- `architecture_docs/MODULE_MAP.md`
-- `architecture_docs/DEPENDENCY_RULES.md`
-- `architecture_docs/INTEGRATION_FLOW.md`
-- `architecture_docs/MILESTONES.md`
-- `architecture_docs/ENGINEERING_CONVENTIONS.md`
-- `architecture_docs/CHECKIN_PROTOCOL.md`
+- `architecture_docs/archive/checkins/transition.md`
+- `architecture_docs/archive/checkins/checkin1.md`
+- `architecture_docs/archive/checkins/checkin2.md`
+- `architecture_docs/archive/checkins/checkin3.md`
+- `architecture_docs/archive/checkins/checkin4-architecture-discipline-2026-04-26.md`
+- `architecture_docs/authority/MODULE_MAP.md`
+- `architecture_docs/authority/DEPENDENCY_RULES.md`
+- `architecture_docs/authority/INTEGRATION_FLOW.md`
+- `architecture_docs/authority/MILESTONES.md`
+- `architecture_docs/authority/ENGINEERING_CONVENTIONS.md`
+- `architecture_docs/authority/CHECKIN_PROTOCOL.md`
 
 ## Findings (Ordered by Severity)
 

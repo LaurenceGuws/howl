@@ -7,12 +7,12 @@ publish a concrete correction path for MVP structure clarity.
 
 ## Linked Review
 
-- Review: `architecture_docs/reviews/2026-04-26-full-howl-review/REVIEW.md`
-- Checkpoints: `architecture_docs/reviews/2026-04-26-full-howl-review/CHECKPOINTS.md`
+- Review: `architecture_docs/archive/reviews/2026-04-26-full-howl-review/REVIEW.md`
+- Checkpoints: `architecture_docs/archive/reviews/2026-04-26-full-howl-review/CHECKPOINTS.md`
 
 ## Decision
 
-1. Parent-level MVP structure authority is now explicit in `architecture_docs/MVP_STRUCTURE.md`.
+1. Parent-level MVP structure authority is now explicit in `architecture_docs/authority/MVP_STRUCTURE.md`.
 2. Full-repo audit confirms high-priority drift still exists in renderer/host layering.
 3. Feature progression should follow checkpoint closure sequence (FHR-P0..FHR-P5), not ad-hoc local fixes.
 
@@ -26,5 +26,5 @@ publish a concrete correction path for MVP structure clarity.
 
 Remote CI remains forbidden.
 All enforcement and closeout gates must run through local `utils/hygene` workflow and
-the validation block in `architecture_docs/CHECKIN_PROTOCOL.md`.
+the validation block in `architecture_docs/authority/CHECKIN_PROTOCOL.md`.
 

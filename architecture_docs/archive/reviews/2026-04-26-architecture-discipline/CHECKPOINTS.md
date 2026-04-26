@@ -13,19 +13,19 @@ Lock conventions and milestone clarity so module layering and ownership cannot b
 
 2. Milestone target synchronization
 - Every child `app_architecture/authorities/MILESTONE.md` has a non-stale `Current Target`
-- Parent summary row added in `architecture_docs/MILESTONES.md` for active target per repo
+- Parent summary row added in `architecture_docs/authority/MILESTONES.md` for active target per repo
 
 3. Guardrail automation
 - Parent guard entry created under `utils/hygene/architecture_guard.sh` (no remote CI pipeline)
-- Guard checks naming/header/comment/policy surfaces listed in `architecture_docs/ENGINEERING_CONVENTIONS.md`
-- Guard wired into local handover report gates via `architecture_docs/CHECKIN_PROTOCOL.md`
+- Guard checks naming/header/comment/policy surfaces listed in `architecture_docs/authority/ENGINEERING_CONVENTIONS.md`
+- Guard wired into local handover report gates via `architecture_docs/authority/CHECKIN_PROTOCOL.md`
 
 4. Legacy normalization (minimum viable)
 - VT-core: rename an initial tranche of milestone-tagged tests to behavior-first names
 - Add migration note in repo docs to continue until complete
 
 5. Evidence and closeout
-- Publish evidence doc for this sprint in `architecture_docs/reviews/...`
+- Publish evidence doc for this sprint in `architecture_docs/archive/reviews/...`
 - Add new checkin entry with links to evidence and follow-up queue
 - Include the `utils/hygene` validation block in every engineering handover.
 

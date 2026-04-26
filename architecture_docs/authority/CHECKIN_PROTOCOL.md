@@ -18,7 +18,7 @@ Every checkin must include these sections in this order:
 
 1. Every checkin must link the active review artifact used to authorize the work.
 2. Every checkin must link the matching checkpoints artifact when one exists.
-3. If the checkin closes a discipline sprint, it must link the sprint review and checkpoint files from `architecture_docs/reviews/...`.
+3. If the checkin closes a discipline sprint, it must link the sprint review and checkpoint files from `architecture_docs/archive/reviews/...`.
 
 ## Required Residual Risk Statement
 

@@ -8,7 +8,7 @@ Close architecture drift at the workspace level so repo intent cannot be mistake
 
 ### FHR-P0 — Authority Lock
 
-1. Keep `architecture_docs/MVP_STRUCTURE.md` as parent authority.
+1. Keep `architecture_docs/authority/MVP_STRUCTURE.md` as parent authority.
 2. Ensure every future handover cites:
    - active review file
    - active checkpoints file

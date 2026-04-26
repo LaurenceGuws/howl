@@ -5,7 +5,7 @@
 This review is a checkpoint after the renderer-lane architectural correction pass.
 It focuses on drift prevention: milestone clarity, doc/code cohesion, naming/comment discipline, and workflow enforcement.
 
-Linked checkin: `architecture_docs/checkins/checkin4-architecture-discipline-2026-04-26.md`
+Linked checkin: `architecture_docs/archive/checkins/checkin4-architecture-discipline-2026-04-26.md`
 
 ## Audit Scope
 
@@ -20,9 +20,9 @@ Repos sampled for code hygiene and layering discipline:
 
 Family-level docs audited:
 
-- `architecture_docs/MILESTONES.md`
-- `architecture_docs/MODULE_MAP.md`
-- `architecture_docs/DEPENDENCY_RULES.md`
+- `architecture_docs/authority/MILESTONES.md`
+- `architecture_docs/authority/MODULE_MAP.md`
+- `architecture_docs/authority/DEPENDENCY_RULES.md`
 - child `app_architecture/authorities/MILESTONE.md`
 
 ## What Is Healthy
@@ -46,7 +46,7 @@ Evidence:
 - `howl-term-surface/app_architecture/authorities/MILESTONE.md` still says `Current target is M0 scaffold closure`.
 - `render/howl-render-core` and `render/howl-render-gl` still report `Current target is M0 scaffold reset closure` despite active M2/M3 work.
 - Other renderer backends also remain pinned at M0 targets regardless of parent map progression.
-- Parent `architecture_docs/MILESTONES.md` expresses a broader progression, but local current-target pointers do not consistently reflect real queue state.
+- Parent `architecture_docs/authority/MILESTONES.md` expresses a broader progression, but local current-target pointers do not consistently reflect real queue state.
 
 Impact:
 
@@ -99,12 +99,12 @@ Impact:
 
 ### P0 — Authority lock (must complete first)
 
-1. Add `architecture_docs/ENGINEERING_CONVENTIONS.md` with normative rules:
+1. Add `architecture_docs/authority/ENGINEERING_CONVENTIONS.md` with normative rules:
    - Zig file/module doc rules (`//!`, `///`, comment scope)
    - naming conventions for files/folders/symbols
    - test naming policy (behavior-first, no milestone tags in new tests)
    - ticket/commit isolation policy
-2. Add `architecture_docs/CHECKIN_PROTOCOL.md`:
+2. Add `architecture_docs/authority/CHECKIN_PROTOCOL.md`:
    - required checkin fields
    - required links to review artifacts
    - required residual-risk statement
@@ -148,5 +148,5 @@ Impact:
 
 - Treat this review as a discipline sprint, not a feature sprint.
 - Do not expand product scope while conventions are being locked.
-- Every engineering handover must include the `utils/hygene/architecture_guard.sh` result in the validation block defined by `architecture_docs/CHECKIN_PROTOCOL.md`.
+- Every engineering handover must include the `utils/hygene/architecture_guard.sh` result in the validation block defined by `architecture_docs/authority/CHECKIN_PROTOCOL.md`.
 - If a rule cannot be automated immediately, document why and add a temporary explicit review checklist item.
