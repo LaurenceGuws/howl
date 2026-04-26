@@ -11,6 +11,8 @@ usage: architecture_guard.sh [--allowlist FILE] [repo ...]
 Checks each repo for:
   - missing //! file headers in src/**/*.zig
   - forbidden source filename patterns (uppercase or hyphen)
+  - forbidden source directory patterns under src/ (uppercase or hyphen)
+  - missing /// docs on public declarations
   - forbidden milestone/ticket prefixes in new test names
   - forbidden cross-repo import directions
   - ambiguous terminology in source: adapter, bootstrap
@@ -62,6 +64,27 @@ check_file_header() {
   fi
 
   return 0
+}
+
+check_public_docs() {
+  local file_path="$1"
+  local repo_violations=0
+  local prev_nonempty=""
+
+  while IFS=: read -r line_no line_text; do
+    if [[ "$line_text" =~ ^[[:space:]]*pub[[:space:]]+(const|fn|var)[[:space:]] || "$line_text" =~ ^[[:space:]]+pub[[:space:]]+fn[[:space:]] ]]; then
+      if [[ "$prev_nonempty" != '///'* && ! "$prev_nonempty" =~ ^[[:space:]]*/// ]]; then
+        echo "  $file_path:$line_no: public declaration missing /// doc" >&2
+        repo_violations=$((repo_violations + 1))
+      fi
+    fi
+
+    if [[ "$line_text" =~ [^[:space:]] ]]; then
+      prev_nonempty="$line_text"
+    fi
+  done < <(nl -ba -w1 -s: "$file_path")
+
+  printf '%s\n' "$repo_violations"
 }
 
 check_test_names() {
@@ -159,6 +182,17 @@ check_repo() {
     return 1
   fi
 
+  while IFS= read -r -d '' dir_path; do
+    local rel_dir="${dir_path#"$repo_path"/}"
+    local dir_name
+    dir_name="$(basename "$dir_path")"
+
+    if [[ "$dir_name" =~ [A-Z-] ]]; then
+      echo "  $rel_dir: forbidden source directory pattern"
+      repo_violations=$((repo_violations + 1))
+    fi
+  done < <(find "$src_dir" -type d -print0)
+
   while IFS= read -r -d '' file_path; do
     file_count=$((file_count + 1))
 
@@ -173,6 +207,12 @@ check_repo() {
 
     if ! check_file_header "$file_path"; then
       repo_violations=$((repo_violations + 1))
+    fi
+
+    local public_doc_violation_count
+    public_doc_violation_count="$(check_public_docs "$file_path")"
+    if [[ "$public_doc_violation_count" != "0" ]]; then
+      repo_violations=$((repo_violations + public_doc_violation_count))
     fi
 
     local test_violation_count

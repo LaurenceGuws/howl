@@ -26,6 +26,8 @@ The guard checks:
 
 - `//!` file headers in `src/**/*.zig`
 - source filename shape in `src/` (`uppercase` and `-` are rejected)
+- source directory shape under `src/` (`uppercase` and `-` are rejected)
+- `///` docs immediately above public declarations
 - new Zig test names for milestone/ticket prefixes (`M*`, `RC-`, `RB-`, `HOST-`, `DS-`, `QH-`)
 - obvious cross-repo import direction violations for the active product repos
   - includes explicit allowance for `howl-term-surface -> howl-render-core`

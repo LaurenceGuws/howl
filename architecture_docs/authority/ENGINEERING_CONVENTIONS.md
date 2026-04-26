@@ -45,3 +45,15 @@ If a repo-local convention conflicts with this document, the parent rule wins.
 
 These conventions are mandatory for new code, new tests, and new handover evidence.
 If a rule cannot be satisfied automatically, the repo must document the exact limitation and the manual check that remains.
+
+## Local Guard Coverage
+
+`utils/hygene/architecture_guard.sh` enforces the current automated subset:
+
+1. `//!` file headers for Zig source files under `src/`.
+2. lowercase snake_case source file and directory names under `src/`.
+3. `///` comments immediately above public declarations.
+4. behavior-first test names with no ticket or milestone tags.
+5. dependency direction rules for active product repos.
+6. ambiguous source language bans for `adapter` and `bootstrap`.
+7. compatibility-language bans for `compat[^ib]`, `fallback`, `workaround`, and `shim`.

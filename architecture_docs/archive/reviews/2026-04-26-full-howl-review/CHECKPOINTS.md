@@ -51,6 +51,8 @@ Status: closed for current renderer repos.
 
 ### FHR-P4 — Naming and Docstring Enforcement
 
+Status: closed for active product repos.
+
 1. Add local hygiene checks for:
    - public symbol naming policy
    - required `///` docs for stable public symbols
