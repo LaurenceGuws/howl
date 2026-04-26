@@ -10,6 +10,11 @@ This directory owns only family-level structure, dependency direction, and miles
 - `authority/` — active, normative architecture authority docs
 - `archive/` — dated checkins/reviews and legacy references
 
+Parent workflow docs live outside this directory:
+
+- `../docs/architect/` — workflow, reviews, and milestone progress
+- `../docs/engineer/` — active queues and report checklists
+
 ## Single Source Of Truth
 
 | Concern | Authority File |
@@ -35,7 +40,6 @@ This directory owns only family-level structure, dependency direction, and miles
 ## Archive
 
 - `archive/checkins/` — historical checkin logs
-- `archive/reviews/` — dated review + checkpoint snapshots
 - `archive/legacy/` — retained legacy notes not used as active authority
 
 ## Hard Rule
