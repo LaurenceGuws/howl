@@ -290,6 +290,24 @@ window/input and a decoupled OpenGL renderer path.
 | `HYG-LONG-01` | `LONG` | Hygiene tooling grows into a local review companion for topology, docs placement, symbol naming, and test coverage shape. |
 | `HYG-LONG-02` | `LONG` | Hygiene tooling stays local and explicit; it does not become CI or hidden policy enforcement. |
 
+## Current Target Summary
+
+Queue advancement requires `Current Target` sync in the same commit set.
+
+| Repo | Current Target | Last Validated Checkpoint |
+| --- | --- | --- |
+| `howl-vt-core` | `M10` | Frozen `M10` baseline and quality doctrine |
+| `howl-session` | `M5` | `QH-1: enforce module ownership docs and tighten session API surface` |
+| `howl-term-surface` | `M3` | `MVP-S1: move terminal composition into surface module` |
+| `render/howl-render-core` | `M5` | `RC-M3-R2: align backend init contract with fallible resource load` |
+| `render/howl-render-gl` | `M6` | `RB-M3-R2: fix capacity truth claim and execute texture-state safety` |
+| `render/howl-render-gles` | `M0` | Scaffold baseline |
+| `render/howl-render-metal` | `M0` | Scaffold baseline |
+| `render/howl-render-software` | `M0` | Scaffold baseline |
+| `render/howl-render-vulkan` | `M0` | Scaffold baseline |
+| `howl-hosts/howl-sdl-host` | `M9` | `M3-R2-A4: thread backend capability through host seam` |
+| `howl-hosts/howl-android-host` | `M0` | `G1-HYGIENE: initialize Android host scaffold` |
+
 ## MVP Execution Order
 
 1. `howl-session`: complete Unix PTY lifecycle and replace current queue-only behavior with real VT core driving.
