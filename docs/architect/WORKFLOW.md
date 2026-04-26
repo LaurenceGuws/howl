@@ -18,6 +18,14 @@ Purpose: drive cross-repo product direction, keep module boundaries coherent, an
 - queue authoring and acceptance/rejection
 - naming/layout/doc-comment rules when they affect public API or module ownership
 
+## Host Proof Rule
+
+- SDL host and Android host are the first abstraction proofs.
+- Both hosts must act as equivalent callers of `howl-term-surface`.
+- Host repos own platform/windowing code first; app-state features (for example multiplexing) come later.
+- `howl-session` owns PTY/platform process differences and must present first-class caller behavior by default.
+- `howl-render-core` owns backend abstraction and contract shape; backend repos must behave as first-class targets by default.
+
 ## Engineer Owns
 
 - implementation of architect-issued execution cuts

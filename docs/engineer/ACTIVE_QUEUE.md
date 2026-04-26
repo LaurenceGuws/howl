@@ -2,7 +2,7 @@
 
 ## Current State
 
-Product structure hygiene sprint is closed. Next execution queue is `PSH-B1` (android host native-call contract and boundary tests).
+Product structure hygiene sprint is closed. Next execution queue is `PSH-B1` (android host platform-call contract and boundary tests).
 
 ## Read Before Execution
 
@@ -159,13 +159,14 @@ Closeout evidence:
 
 ## Next Queue
 
-### PSH-B1: Android Host Native Boundary Contract
+### PSH-B1: Android Host Platform Boundary Contract
 
 Status: active.
 
 Intent:
-- define and freeze the android host native-call contract before JNI/native symbol work resumes
-- enforce naming discipline at boundary methods and remove ambiguous native-call labels
+- define and freeze the android host platform-call contract before generated platform symbols work resumes
+- enforce naming discipline at boundary methods and remove ambiguous platform-call labels
+- keep Android and SDL as identical callers of `howl-term-surface` operations (`start`, `stop`, `feedBytes`, `feedKey`, `tick`, `resize`, `control`, `frameData`)
 - add boundary tests that prove android host remains surface-consumer-only
 
 Primary targets:
@@ -179,5 +180,5 @@ Non-goals:
 - no Java UI feature expansion
 
 Stop conditions:
-- JNI/generated symbol names appear in Zig source
+- generated platform symbol names appear in Zig source
 - android host starts owning session/transport policy

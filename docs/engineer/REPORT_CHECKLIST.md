@@ -54,3 +54,16 @@ Run the product hygiene guard from workspace root:
 Run `zig build` and `zig build test --summary all` in every product repo touched by code.
 Run `zig build package` when touching `howl-hosts/howl-sdl-host` package/runtime wiring.
 Run Gradle compile when touching Android Java/Gradle files.
+
+Run iteration naming grep on touched files and report every hit:
+
+```bash
+git diff --name-only -- '*.zig' '*.java' '*.kt' '*.md' \
+  | xargs -r rg -n -i '\b(adapter|bootstrap|bridge|native|terminal|host)\b' || true
+```
+
+Interpretation rule:
+
+- hits are not auto-fail by themselves.
+- every hit must be justified against module ownership and public contract language.
+- unowned filler naming (for example stacked boundary words with no behavior meaning) must be renamed before handover.
