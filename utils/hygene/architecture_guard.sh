@@ -13,6 +13,7 @@ Checks each repo for:
   - forbidden source filename patterns (uppercase or hyphen)
   - forbidden milestone/ticket prefixes in new test names
   - forbidden cross-repo import directions
+  - ambiguous terminology in source: adapter, bootstrap
   - forbidden compatibility patterns: compat[^ib]|fallback|workaround|shim
 
 Exit codes:
@@ -132,6 +133,19 @@ check_dependency_direction() {
   printf '%s\n' "$repo_violations"
 }
 
+check_ambiguous_terms() {
+  local repo_path="$1"
+  local src_dir="$repo_path/src"
+  local repo_violations=0
+
+  while IFS= read -r match_line; do
+    echo "  ${match_line#"$repo_path"/}: ambiguous term (use precise contract/api terminology)" >&2
+    repo_violations=$((repo_violations + 1))
+  done < <(rg -n --no-heading -g '*.zig' -e '\badapter(s)?\b|\bbootstrap(ping)?\b' "$src_dir" || true)
+
+  printf '%s\n' "$repo_violations"
+}
+
 check_repo() {
   local repo_path="$1"
   local src_dir="$repo_path/src"
@@ -172,6 +186,12 @@ check_repo() {
   dependency_violation_count="$(check_dependency_direction "$repo_path")"
   if [[ "$dependency_violation_count" != "0" ]]; then
     repo_violations=$((repo_violations + dependency_violation_count))
+  fi
+
+  local ambiguous_violation_count
+  ambiguous_violation_count="$(check_ambiguous_terms "$repo_path")"
+  if [[ "$ambiguous_violation_count" != "0" ]]; then
+    repo_violations=$((repo_violations + ambiguous_violation_count))
   fi
 
   while IFS= read -r match_line; do
