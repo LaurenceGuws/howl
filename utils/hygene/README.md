@@ -28,6 +28,7 @@ The guard checks:
 - source filename shape in `src/` (`uppercase` and `-` are rejected)
 - new Zig test names for milestone/ticket prefixes (`M*`, `RC-`, `RB-`, `HOST-`, `DS-`, `QH-`)
 - obvious cross-repo import direction violations for the active product repos
+  - includes explicit allowance for `howl-term-surface -> howl-render-core`
 - compatibility patterns: `compat[^ib]`, `fallback`, `workaround`, `shim`
 
 Expected output:

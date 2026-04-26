@@ -99,8 +99,8 @@ check_dependency_direction() {
       reason="session must not import surface/render/host modules"
       ;;
     howl-term-surface|*/howl-term-surface)
-      pattern='@import\("(howl_render_[a-z_]+|howl_sdl_host|howl_android_host)"'
-      reason="surface must not import render-backend/host modules"
+      pattern='@import\("(howl_render_(gl|gles|metal|vulkan|software)|howl_sdl_host|howl_android_host)"'
+      reason="surface may import render-core but must not import render backends/host modules"
       ;;
     render/howl-render-core|*/render/howl-render-core)
       pattern='@import\("(howl_session|howl_term_surface|howl_sdl_host|howl_android_host|vt_core)"'
