@@ -21,6 +21,7 @@ Run only on product repos:
 
 ## Checkpoint List
 
+- [ ] Parent workflow lane is established in `docs/`.
 - [ ] Root files are thin export/wiring files.
 - [ ] Conformance tests have behavior-owned names and are not hidden in root unless they are trivial module wiring checks.
 - [ ] SDL executable entrypoint delegates durable behavior to named modules.

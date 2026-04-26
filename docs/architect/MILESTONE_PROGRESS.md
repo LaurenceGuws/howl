@@ -4,7 +4,7 @@ This board tracks parent-level coordination state. Module-specific milestone sta
 
 | Sprint | Status | Authority | Review | Current Queue |
 | --- | --- | --- | --- | --- |
-| Product structure hygiene | planning | `architecture_docs/authority/ENGINEERING_CONVENTIONS.md`, `architecture_docs/authority/MVP_STRUCTURE.md` | `docs/architect/product_structure/REVIEW.md` | `docs/engineer/ACTIVE_QUEUE.md` |
+| Product structure hygiene | active | `architecture_docs/authority/ENGINEERING_CONVENTIONS.md`, `architecture_docs/authority/MVP_STRUCTURE.md` | `docs/architect/product_structure/REVIEW.md` | `docs/engineer/ACTIVE_QUEUE.md` |
 
 ## Product Structure Hygiene Goal
 

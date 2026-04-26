@@ -2,7 +2,7 @@
 
 ## Current State
 
-Product structure hygiene sprint is in planning. No engineer execution is unlocked until this queue is explicitly marked active by the architect.
+Product structure hygiene sprint is ready for dual-mode execution. Start with `PSH-A2`.
 
 ## Read Before Execution
 
@@ -21,7 +21,7 @@ Goal: align file/folder layout, symbol names, doc comments, root facade thicknes
 
 ### PSH-A1: Parent Workflow Setup
 
-Status: in progress locally.
+Status: done.
 
 Intent:
 - create parent `docs/` workflow lane
@@ -36,9 +36,15 @@ Target files:
 - `docs/engineer/ACTIVE_QUEUE.md`
 - `docs/engineer/REPORT_CHECKLIST.md`
 
+Closeout:
+- parent `docs/` workflow lane created
+- product-structure review/checkpoint docs moved out of `architecture_docs`
+- report checklist and sprint queue published
+- `architecture_docs/README.md` now points workflow readers to `docs/`
+
 ### PSH-A2: Thin Root Facades
 
-Status: pending.
+Status: active.
 
 Intent:
 - make product `root.zig` files export/wiring/module-test only
