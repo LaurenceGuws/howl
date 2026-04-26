@@ -31,8 +31,8 @@ The guard checks:
 - new Zig test names for milestone/ticket prefixes (`M*`, `RC-`, `RB-`, `HOST-`, `DS-`, `QH-`)
 - obvious cross-repo import direction violations for the active product repos
   - includes explicit allowance for `howl-term-surface -> howl-render-core`
-- ambiguous terminology in source (`adapter`, `bootstrap`)
-- compatibility patterns: `compat[^ib]`, `fallback`, `workaround`, `shim`
+- ambiguous terminology in source and active docs
+- compatibility language: `compat[^ib]`, `fallback`, `workaround`, `shim`
 
 Expected output:
 

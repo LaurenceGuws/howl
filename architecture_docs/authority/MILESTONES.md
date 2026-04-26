@@ -83,7 +83,7 @@ window/input and a decoupled OpenGL renderer path.
 | `SE-MVP-05` | `MVP` | Resize commits session dimensions, notifies PTY, and updates VT runtime dimensions in a documented order. |
 | `SE-MVP-06` | `MVP` | Failure boundaries are proven for PTY start/read/write/resize/stop without corrupting session state. |
 | `SE-MVP-07` | `MVP` | One interactive terminal session can run under surface/host control with deterministic shutdown. |
-| `SE-MVP-08` | `MVP` | Transport ownership separates POSIX PTY, Android container bridge, future Windows ConPTY, and future Apple container bridge behind host-neutral session contracts. |
+| `SE-MVP-08` | `MVP` | Transport ownership separates POSIX PTY, Android container integration, future Windows ConPTY, and future Apple container integration behind host-neutral session contracts. |
 | `SE-LONG-01` | `LONG` | Multiple sessions can run concurrently without hidden shared state or allocator leaks. |
 | `SE-LONG-02` | `LONG` | Session diagnostics can capture process/runtime state for bug reports without becoming a telemetry dumping ground. |
 | `SE-LONG-03` | `LONG` | Snapshot/restore and operation counters remain stable under real host loops and multi-session orchestration. |
@@ -169,7 +169,7 @@ window/input and a decoupled OpenGL renderer path.
 | --- | --- | --- |
 | `MTL-POC-01` | `POC` | Metal repo has clean package scaffold and backend API shape matching renderer backend rules. |
 | `MTL-POC-02` | `POC` | Metal ownership boundaries are documented: device, command queue, pipelines, textures, buffers, and drawable ownership. |
-| `MTL-POC-03` | `POC` | Objective-C/Swift/C bridge requirements are isolated from render-core contracts. |
+| `MTL-POC-03` | `POC` | Objective-C/Swift/C interop requirements are isolated from render-core contracts. |
 | `MTL-MVP-01` | `MVP` | Parked outside the Linux MVP critical path because Apple hosts are not part of the first release. |
 | `MTL-MVP-02` | `MVP` | If activated early, proves render-core plan consumption without changing the surface API. |
 | `MTL-LONG-01` | `LONG` | Metal backend supports macOS/iOS host rendering through backend-neutral plans. |
@@ -234,8 +234,8 @@ window/input and a decoupled OpenGL renderer path.
 
 | ID | Phase | Outcome |
 | --- | --- | --- |
-| `AND-POC-01` | `POC` | Android host scaffold owns Android lifecycle scope, platform bridge shape, and native package baseline. |
-| `AND-POC-02` | `POC` | Host boundary distinguishes Android UI lifecycle, input, surface creation, and process/container bridge ownership. |
+| `AND-POC-01` | `POC` | Android host scaffold owns Android lifecycle scope, platform boundary shape, and native package baseline. |
+| `AND-POC-02` | `POC` | Host boundary distinguishes Android UI lifecycle, input, surface creation, and process/container integration ownership. |
 | `AND-POC-03` | `POC` | Android input events map to host-neutral action structs without leaking Android types into surface/session. |
 | `AND-POC-04` | `POC` | Alpine/container-backed process plan is documented as Android host/transport integration pressure, not Unix-only session policy. |
 | `AND-MVP-01` | `MVP` | Parked outside the Linux MVP critical path; scaffold exists to keep portability pressure visible. |
@@ -286,7 +286,7 @@ window/input and a decoupled OpenGL renderer path.
 | `HYG-POC-01` | `POC` | Local hygiene scripts can inspect source layout, comments, line counts, and scaffold residue. |
 | `HYG-POC-02` | `POC` | Script output is stable enough for architect review and does not require external services. |
 | `HYG-MVP-01` | `MVP` | MVP release can run workspace hygiene checks across participating repos before tagging. |
-| `HYG-MVP-02` | `MVP` | Hygiene checks report forbidden patterns, scaffold leftovers, and file-structure drift without rewriting files. |
+| `HYG-MVP-02` | `MVP` | Hygiene checks report forbidden language, scaffold leftovers, and file-structure drift without rewriting files. |
 | `HYG-LONG-01` | `LONG` | Hygiene tooling grows into a local review companion for topology, docs placement, symbol naming, and test coverage shape. |
 | `HYG-LONG-02` | `LONG` | Hygiene tooling stays local and explicit; it does not become CI or hidden policy enforcement. |
 
@@ -305,7 +305,7 @@ Queue advancement requires `Current Target` sync in the same commit set.
 | `render/howl-render-metal` | `M0` | Scaffold baseline |
 | `render/howl-render-software` | `M0` | Scaffold baseline |
 | `render/howl-render-vulkan` | `M0` | Scaffold baseline |
-| `howl-hosts/howl-sdl-host` | `M9` | `M3-R2-A4: thread backend capability through host seam` |
+| `howl-hosts/howl-sdl-host` | `M9` | `M3-R2-A4: thread backend capability through host render contract` |
 | `howl-hosts/howl-android-host` | `M0` | `G1-HYGIENE: initialize Android host scaffold` |
 
 ## MVP Execution Order

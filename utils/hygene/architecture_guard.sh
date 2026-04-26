@@ -15,8 +15,8 @@ Checks each repo for:
   - missing /// docs on public declarations
   - forbidden milestone/ticket prefixes in new test names
   - forbidden cross-repo import directions
-  - ambiguous terminology in source: adapter, bootstrap
-  - forbidden compatibility patterns: compat[^ib]|fallback|workaround|shim
+  - ambiguous terminology in source and active docs
+  - forbidden compatibility language: compat[^ib]|fallback|workaround|shim
 
 Exit codes:
   0  no violations
@@ -164,7 +164,45 @@ check_ambiguous_terms() {
   while IFS= read -r match_line; do
     echo "  ${match_line#"$repo_path"/}: ambiguous term (use precise contract/api terminology)" >&2
     repo_violations=$((repo_violations + 1))
-  done < <(rg -n --no-heading -g '*.zig' -e '\badapter(s)?\b|\bbootstrap(ping)?\b' "$src_dir" || true)
+  done < <(rg -n --no-heading -i -g '*.zig' -e '\b(adapter|adapters|bootstrap|glue|seam|pattern|patterns)\b' "$src_dir" || true)
+
+  printf '%s\n' "$repo_violations"
+}
+
+check_active_doc_language() {
+  local repo_path="$1"
+  local repo_violations=0
+  local doc_files=()
+
+  [[ -f "$repo_path/README.md" ]] && doc_files+=("$repo_path/README.md")
+
+  while IFS= read -r -d '' doc_path; do
+    doc_files+=("$doc_path")
+  done < <(
+    find "$repo_path" \
+      \( -path '*/.git' -o -path '*/.zig-cache' -o -path '*/zig-out' -o -path '*/.gradle' -o -path '*/build' -o -path '*/app/build' -o -path '*/node_modules' -o -path '*/dev_references' \) -prune -o \
+      \( -path '*/app_architecture/authorities/*.md' -o \
+         -path '*/docs/engineer/ACTIVE_QUEUE.md' -o \
+         -path '*/docs/engineer/TEST_HYGIENE_MATRIX.md' -o \
+         -path '*/docs/engineer/REPORT_CHECKLIST.md' -o \
+         -path '*/docs/architect/MILESTONE_PROGRESS.md' -o \
+         -path '*/docs/architect/WORKFLOW.md' \) \
+      -type f -print0
+  )
+
+  if ((${#doc_files[@]} == 0)); then
+    printf '%s\n' 0
+    return
+  fi
+
+  while IFS= read -r match_line; do
+    echo "  ${match_line#"$repo_path"/}: ambiguous active-doc language" >&2
+    repo_violations=$((repo_violations + 1))
+  done < <(
+    rg -n --no-heading -i \
+      -e '\b(adapter|adapters|bootstrap|glue|seam|pattern|patterns)\b|SDL2|terminal_runtime|nativeHealth|bridgeHealth|Java_dev|howl_android_bridge' \
+      "${doc_files[@]}" || true
+  )
 
   printf '%s\n' "$repo_violations"
 }
@@ -178,7 +216,13 @@ check_repo() {
   local file_count=0
 
   if [[ ! -d "$src_dir" ]]; then
-    echo "[$repo_name] FAIL: missing src/ directory"
+    local doc_language_violation_count
+    doc_language_violation_count="$(check_active_doc_language "$repo_path")"
+    if [[ "$doc_language_violation_count" == "0" ]]; then
+      echo "[$repo_name] PASS: no Zig src/ directory; active docs checked, 0 violations"
+      return 0
+    fi
+    echo "[$repo_name] FAIL: $doc_language_violation_count active-doc violation(s); no Zig src/ directory"
     return 1
   fi
 
@@ -232,6 +276,12 @@ check_repo() {
   ambiguous_violation_count="$(check_ambiguous_terms "$repo_path")"
   if [[ "$ambiguous_violation_count" != "0" ]]; then
     repo_violations=$((repo_violations + ambiguous_violation_count))
+  fi
+
+  local doc_language_violation_count
+  doc_language_violation_count="$(check_active_doc_language "$repo_path")"
+  if [[ "$doc_language_violation_count" != "0" ]]; then
+    repo_violations=$((repo_violations + doc_language_violation_count))
   fi
 
   while IFS= read -r match_line; do

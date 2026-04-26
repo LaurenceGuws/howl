@@ -8,8 +8,8 @@ It is the cross-repo ownership map.
 | Module | Primary Responsibility | Owns API Surface | Consumes | Produces |
 | --- | --- | --- | --- | --- |
 | `howl-vt-core` | VT parser/model/runtime semantics and deterministic terminal state transitions | `vt_core` package/module API | none (foundational) | terminal state behavior, input/control encoding semantics, deterministic contracts |
-| `howl-session` | Session lifecycle and transport orchestration around terminal runtime | `howl-session` public session/transport API | `howl-vt-core` public API (current or planned seam) | host-callable lifecycle surface, transport boundaries, conformance/perf/reliability evidence |
-| `howl-term-surface` | Embeddable composition boundary for host integration | surface/widget API for host apps | `howl-session`, `howl-vt-core`, renderer-facing frame model | stable host integration seam (input + lifecycle + frame handoff) |
+| `howl-session` | Session lifecycle and transport orchestration around terminal runtime | `howl-session` public session/transport API | `howl-vt-core` public API | host-callable lifecycle surface, transport boundaries, conformance/perf/reliability evidence |
+| `howl-term-surface` | Embeddable composition boundary for host integration | surface/widget API for host apps | `howl-session`, `howl-vt-core`, renderer-facing frame model | stable host integration API (input + lifecycle + frame handoff) |
 | `render/howl-render-core` | Backend-agnostic render core logic (layout pipeline/draw list model/atlas policy hooks) | render-core API used by backend implementations | frame model from surface | backend-agnostic render plan/data |
 | `render/howl-render-gl` | OpenGL backend implementation | GL backend API | `howl-render-core` | GPU draw execution for GL targets |
 | `render/howl-render-gles` | OpenGL ES backend implementation | GLES backend API | `howl-render-core` | GPU draw execution for GLES targets |
@@ -17,7 +17,7 @@ It is the cross-repo ownership map.
 | `render/howl-render-vulkan` | Vulkan backend implementation | Vulkan backend API | `howl-render-core` | GPU draw execution for Vulkan targets |
 | `render/howl-render-software` | Software renderer backend implementation | software backend API | `howl-render-core` | CPU raster/render execution and reference output |
 | `howl-hosts/howl-sdl-host` | Concrete Linux SDL host app (window/input/platform loop) | host app interface and wiring | `howl-term-surface`, renderer backend | runnable host application |
-| `howl-hosts/howl-android-host` | Concrete Android host app (Android lifecycle/input/surface integration) | Android host interface and platform bridge | `howl-term-surface`, mobile renderer backend, Android process/container bridge | Android terminal host application |
+| `howl-hosts/howl-android-host` | Concrete Android host app (Android lifecycle/input/surface integration) | Android host interface and platform boundary | `howl-term-surface`, mobile renderer backend, Android process/container integration | Android terminal host application |
 | `howl-hosts` (container) | Workspace grouping for host repos only | none | none | organization only |
 | `utils/howl-docs` | User-facing documentation site | docs site content/build surface | released module docs and assets | public Howl documentation |
 | `utils/howl-microscope` | Local diagnostics and inspection tooling | probe/inspection commands | local module builds and artifacts | review evidence and diagnostic captures |

@@ -55,5 +55,6 @@ If a rule cannot be satisfied automatically, the repo must document the exact li
 3. `///` comments immediately above public declarations.
 4. behavior-first test names with no ticket or milestone tags.
 5. dependency direction rules for active product repos.
-6. ambiguous source language bans for `adapter` and `bootstrap`.
-7. compatibility-language bans for `compat[^ib]`, `fallback`, `workaround`, and `shim`.
+6. ambiguous source and active-doc language bans for vague boundary names and unqualified reuse labels.
+7. active-doc vocabulary checks for the same ambiguous terms.
+8. compatibility-language bans for `compat[^ib]`, `fallback`, `workaround`, and `shim`.
