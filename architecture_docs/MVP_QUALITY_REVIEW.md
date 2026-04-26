@@ -29,13 +29,14 @@ Do not treat current `howl-sdl-host` as the final MVP boundary until the remaini
 | Host composed session and surface directly | Added `TerminalSurface` in `howl-term-surface`; SDL host now delegates terminal orchestration to the surface module. |
 | `SurfaceConfig` carried `?*anyopaque` session placeholder | Removed the opaque session field; session ownership is explicit in `TerminalSurface`. |
 | `howl-render-gl` remained scaffold while host had local renderer code | `howl-render-gl` now owns the draw plan and GL execution surface used by the Linux host. |
+| Glyph rendering was SDL_ttf-based in host repo | `howl-render-gl` now owns FreeType glyph rasterization, GL texture upload, and text drawing; SDL_ttf was removed from the host. |
 
 ## Open Findings
 
 | Finding | Severity | Reason |
 | --- | --- | --- |
-| Glyph rendering is SDL_ttf-based in host repo | High | Good enough for visual proof, not best-in-class renderer architecture or performance. Target renderer should own glyph atlas/shaping/raster policy without SDL types. |
 | `main.zig` still owns too much runtime glue | Medium | Improved, but it still owns text renderer setup and PTY/surface/renderer sequencing in one file. |
+| Glyph rendering is renderer-owned but per-glyph texture cached | Medium | SDL ownership is fixed, but the text path still needs atlas batching, shaping, and system font fallback before performance work can be called mature. |
 | Renderer is immediate-mode GL | Medium | Correct as an MVP proof after recovery, but not a performance foundation. It must move toward retained buffers/atlas-backed draw batches. |
 
 ## Reference Lessons
@@ -52,9 +53,9 @@ From embeddable terminal references:
 
 ## Required Correction Sequence
 
-1. Move glyph rendering out of host-local SDL_ttf code into renderer-owned text/atlas policy.
-2. Reduce `main.zig` to SDL lifecycle, input translation, selected surface calls, selected renderer calls, and present.
-3. Replace immediate-mode GL with renderer-owned retained draw batches.
+1. Reduce `main.zig` to SDL lifecycle, input translation, selected surface calls, selected renderer calls, and present.
+2. Replace immediate-mode GL with renderer-owned retained draw batches.
+3. Replace per-glyph texture cache with atlas-backed glyph batches.
 4. Add renderer text/atlas tests that prove output planning without requiring an SDL window.
 
 ## MVP Completion Criteria
@@ -64,7 +65,7 @@ Linux MVP is complete only when:
 1. A shell runs visibly and accepts normal text input.
 2. SDL host does not import session directly except for explicitly host-owned transport construction.
 3. Renderer implementation is not local-only host code.
-4. Glyph rendering is renderer-owned or explicitly documented as a temporary proof layer with a removal milestone.
+4. Glyph rendering is renderer-owned and contains no SDL dependency.
 5. Build/test/package all pass.
 6. Parent dependency rules and child repo docs agree with actual imports.
 
@@ -73,6 +74,6 @@ Linux MVP is complete only when:
 The next work is not new feature scope.
 It is the remaining MVP architecture correction pass:
 
-- Replace `src/text_renderer.zig` in `howl-sdl-host` with a renderer-owned glyph path.
-- Keep SDL usage confined to window/input/context/present.
-- Re-check Zide text-stack lessons before choosing FreeType/HarfBuzz/fontconfig boundaries.
+- Shrink `howl-sdl-host/src/main.zig` around the stable surface/renderer seams.
+- Move GL execution toward retained batches and atlas-backed text drawing.
+- Re-check Zide text-stack lessons before adding HarfBuzz/fontconfig boundaries.
