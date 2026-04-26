@@ -24,12 +24,15 @@ Run only on product repos:
 - [x] Parent authority states the corrected terminal-boundary model.
 - [x] Session, terminal-boundary, render-core, render-gl, SDL host, and Android
       host repo-local scope/boundary/milestone docs match the corrected model.
-- [ ] Parent workflow/progress/queue docs point at the corrected sprint lane.
+- [x] Parent workflow/progress/queue docs point at the corrected sprint lane.
 - [ ] Current-target language is honest about runtime state, not stale milestone
-      optimism.
-- [ ] Naming/doc-comment/layout drift from prior partial sprints is reviewed and
-      turned into explicit execution cuts.
+      optimism. (Correction tickets CL-SE-1, CL-SE-2, CL-RC-1, CL-GL-1, CL-SDL-1,
+      CL-AND-1 address this per-repo; pending MVP-S1-A3 execution.)
+- [x] Naming/doc-comment/layout drift from prior partial sprints is reviewed and
+      turned into explicit execution cuts. (MVP-S1-A2 audit complete 2026-04-27;
+      13 bounded correction tickets published to ACTIVE_QUEUE.md.)
 - [ ] Residual debt is recorded as bounded findings, not implied by silence.
+      (Findings recorded in MVP-S1-A2 report; tickets CL-* are the execution cuts.)
 
 Sprint 1 closes only when the doc model, queue model, and reality model match.
 
