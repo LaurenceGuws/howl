@@ -1,0 +1,3 @@
+# Legacy exemption list for architecture_guard.sh.
+# Format: <repo-relative-file-regex>|<test-name-regex>
+# Leave empty until a repo needs a scoped legacy test-name exemption.
