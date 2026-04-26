@@ -30,7 +30,7 @@ Do not treat current `howl-sdl-host` as the final MVP boundary until the remaini
 | `SurfaceConfig` carried `?*anyopaque` session placeholder | Removed the opaque session field; session ownership is explicit in `TerminalSurface`. |
 | `howl-render-gl` remained scaffold while host had local renderer code | `howl-render-gl` now owns the draw plan and GL execution surface used by the Linux host. |
 | Glyph rendering was SDL_ttf-based in host repo | `howl-render-gl` now owns FreeType glyph rasterization, GL texture upload, and text drawing; SDL_ttf was removed from the host. |
-| Rectangle rendering used `glBegin`/`glEnd` immediate mode | Replaced with retained CPU vertex batches submitted through GL client arrays. |
+| Rectangle rendering used `glBegin`/`glEnd` immediate mode | Replaced with renderer-owned VBO submission for colored rectangle batches. |
 
 ## Open Findings
 
@@ -38,7 +38,6 @@ Do not treat current `howl-sdl-host` as the final MVP boundary until the remaini
 | --- | --- | --- |
 | `main.zig` still owns too much runtime glue | Medium | Improved, but it still owns text renderer setup and PTY/surface/renderer sequencing in one file. |
 | Glyph rendering is renderer-owned but per-glyph texture cached | Medium | SDL ownership is fixed, but the text path still needs atlas batching, shaping, and system font fallback before performance work can be called mature. |
-| Renderer uses CPU-retained client arrays, not VBO batches | Medium | Immediate-mode calls are removed, but the renderer still needs GPU buffer ownership and atlas-backed text batching for best-in-class performance. |
 
 ## Reference Lessons
 
@@ -55,9 +54,8 @@ From embeddable terminal references:
 ## Required Correction Sequence
 
 1. Reduce `main.zig` to SDL lifecycle, input translation, selected surface calls, selected renderer calls, and present.
-2. Replace client-array submission with renderer-owned VBO batches.
-3. Replace per-glyph texture cache with atlas-backed glyph batches.
-4. Add renderer text/atlas tests that prove output planning without requiring an SDL window.
+2. Replace per-glyph texture cache with atlas-backed glyph batches.
+3. Add renderer text/atlas tests that prove output planning without requiring an SDL window.
 
 ## MVP Completion Criteria
 
@@ -76,5 +74,5 @@ The next work is not new feature scope.
 It is the remaining MVP architecture correction pass:
 
 - Shrink `howl-sdl-host/src/main.zig` around the stable surface/renderer seams.
-- Move GL execution from client arrays to VBO batches and atlas-backed text drawing.
+- Move text drawing from per-glyph texture/client-array submission to atlas-backed VBO batches.
 - Re-check Zide text-stack lessons before adding HarfBuzz/fontconfig boundaries.
