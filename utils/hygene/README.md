@@ -4,10 +4,22 @@ Local hygiene tooling for Howl handover gates.
 
 ## `architecture_guard.sh`
 
-Run the guard against one or more repos from the workspace root or from inside `utils/hygene`:
+Run the guard against one or more repos from the workspace root:
 
 ```bash
-./utils/hygene/architecture_guard.sh howl-render-core howl-render-gl howl-sdl-host
+./utils/hygene/architecture_guard.sh \
+  render/howl-render-core \
+  render/howl-render-gl \
+  howl-hosts/howl-sdl-host
+```
+
+Or from inside `utils/hygene`:
+
+```bash
+./architecture_guard.sh \
+  ../../render/howl-render-core \
+  ../../render/howl-render-gl \
+  ../../howl-hosts/howl-sdl-host
 ```
 
 The guard checks:

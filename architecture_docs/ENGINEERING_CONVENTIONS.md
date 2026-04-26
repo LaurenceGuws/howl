@@ -29,7 +29,8 @@ If a repo-local convention conflicts with this document, the parent rule wins.
 3. Disallowed labels include `M0`-style milestone tags and batch/ticket prefixes such as `RC-`, `RB-`, `HOST-`, `DS-`, `QH-`, and similar process tags.
 4. Test names must describe the asserted behavior or regression condition in plain language.
 5. Legacy test names with milestone or ticket tags may remain only if they are listed in the explicit allowlist used by local hygiene tooling.
-6. Any new test added after this authority exists must follow the behavior-first rule; legacy exemptions are not a template for new work.
+6. Legacy cleanup may be staged repo-by-repo, but each handover must state which repos were guarded and whether an allowlist was used.
+7. Any new test added after this authority exists must follow the behavior-first rule; legacy exemptions are not a template for new work.
 
 ## Ticket-To-Commit Isolation
 

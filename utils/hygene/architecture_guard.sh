@@ -71,13 +71,13 @@ check_test_names() {
     if [[ "$line_text" =~ ^[[:space:]]*test[[:space:]]+\"([^\"]+)\" ]]; then
       test_name="${BASH_REMATCH[1]}"
       if [[ "$test_name" =~ (M[0-9]+|[A-Z]{2,}-[A-Z0-9-]+) ]] && ! allowlist_match "$file_path" "$test_name"; then
-        echo "  $file_path:$line_no: forbidden ticket/milestone tag in test name: $test_name"
+        echo "  $file_path:$line_no: forbidden ticket/milestone tag in test name: $test_name" >&2
         repo_violations=$((repo_violations + 1))
       fi
     fi
   done < <(rg -n --no-heading '^[[:space:]]*test[[:space:]]+"[^"]+"' "$file_path" || true)
 
-  echo "$repo_violations"
+  printf '%s\n' "$repo_violations"
 }
 
 check_repo() {
