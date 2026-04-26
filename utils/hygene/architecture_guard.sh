@@ -18,6 +18,9 @@ Checks each repo for:
   - ambiguous terminology in source and active docs
   - forbidden compatibility language: compat[^ib]|fallback|workaround|shim
 
+Scope:
+  product repos only. Repos under utils/ are skipped by this guard.
+
 Exit codes:
   0  no violations
   1  policy violation(s) found
@@ -214,6 +217,13 @@ check_repo() {
   repo_name="$(basename "$repo_path")"
   local repo_violations=0
   local file_count=0
+
+  case "$repo_path" in
+    utils|utils/*|*/utils|*/utils/*)
+      echo "[$repo_name] SKIP: utility repo outside product hygiene gate"
+      return 0
+      ;;
+  esac
 
   if [[ ! -d "$src_dir" ]]; then
     local doc_language_violation_count

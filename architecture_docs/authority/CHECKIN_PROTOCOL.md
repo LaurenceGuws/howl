@@ -46,7 +46,7 @@ Use this template in handovers and sprint checkins:
 - `zig build` — `<repo>` — `<exit status>` — `<short result>`
 - `zig build test --summary all` — `<repo>` — `<exit status>` — `<short result>`
 - `zig build package` — `<repo or n/a>` — `<exit status or n/a>` — `<short result>`
-- `utils/hygene/architecture_guard.sh <repo...>` — `<repo or repos>` — `<exit status>` — `<short result>`
+- `utils/hygene/architecture_guard.sh <product repo...>` — `<repo or repos>` — `<exit status>` — `<short result>`
 - `rg -n "compat[^ib]|fallback|workaround|shim" --glob '*.zig' src` — `<repo>` — `<exit status>` — `<short result>`
 ```
 

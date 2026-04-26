@@ -1,6 +1,6 @@
 # utils/hygene
 
-Local hygiene tooling for Howl handover gates.
+Local hygiene tooling for Howl product handover gates.
 
 ## `architecture_guard.sh`
 
@@ -34,9 +34,17 @@ The guard checks:
 - ambiguous terminology in source and active docs
 - compatibility language: `compat[^ib]`, `fallback`, `workaround`, `shim`
 
+Scope:
+
+- Product repos are checked.
+- Utility repos under `utils/` are intentionally skipped by this guard. They can
+  have separate tool-specific checks, but they are not part of the terminal MVP
+  architecture hygiene gate.
+
 Expected output:
 
 - one `PASS` or `FAIL` line per repo
+- `SKIP` for utility repos under `utils/`
 - a final `architecture_guard: PASS` or `architecture_guard: FAIL (...)` summary line
 
 Exit codes:

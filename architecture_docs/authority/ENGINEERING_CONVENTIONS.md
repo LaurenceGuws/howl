@@ -48,7 +48,8 @@ If a rule cannot be satisfied automatically, the repo must document the exact li
 
 ## Local Guard Coverage
 
-`utils/hygene/architecture_guard.sh` enforces the current automated subset:
+`utils/hygene/architecture_guard.sh` enforces the current automated subset for product repos only.
+Repos under `utils/` are outside this product hygiene gate.
 
 1. `//!` file headers for Zig source files under `src/`.
 2. lowercase snake_case source file and directory names under `src/`.
