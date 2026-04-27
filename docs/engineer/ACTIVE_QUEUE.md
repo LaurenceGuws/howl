@@ -208,6 +208,12 @@ Intent:
   `howl-render-gl`
 - remove remaining block-only presentation gaps in `howl-hosts/howl-sdl-host`
 
+Non-goals:
+- do not redesign `howl-vt-core` screen storage in A1
+- do not attempt color-model migration in A1 (current VT runtime `screen()` is
+  non-style at this milestone and exposes codepoint-first cells)
+- do not block text-legibility closure on ANSI color propagation
+
 Targets:
 - `render/howl-render-core` — M1 render plan contract (awaiting architect queue)
 - `render/howl-render-gl` — M5 formal damage/presentation evidence closure;
@@ -219,7 +225,13 @@ Stop conditions:
 - text rendering is claimed without confirmed glyph rasterization artifacts
 - render-core plan builder scope is invented by engineers without architect publication
 - presentation layer re-introduces render planning policy
+- engineer attempts to solve per-cell VT color persistence inside A1
 - SDL-MVP-01 through SDL-MVP-07 not verified by observation, only by test pass
+
+Color model rule for A1:
+- Use existing terminal-boundary/render theme path for readable text closure.
+- If color propagation remains incomplete after legibility closure, record it as
+  a bounded follow-up (`MVP-S2-COLOR-1`) instead of expanding A1 scope.
 
 Required validation:
 - `zig build test --summary all` in `render/howl-render-core`, `render/howl-render-gl`,
