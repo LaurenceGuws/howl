@@ -137,6 +137,18 @@ but does not yet run GLES text rendering. Closure trigger: first Android GLES te
 must ship with same-iteration PAR-R1 parity update in both `howl-render-gles` and
 `howl-android-host` ACTIVE_QUEUE docs, plus runtime evidence links.
 
+**MVP-S2-A3R1 closure (2026-04-27):** Android text-path catch-up runtime activated in
+`howl-hosts/howl-android-host` with deterministic evidence artifacts in
+`howl-hosts/howl-android-host/docs/engineer/EVIDENCE_S2_A3R1.md`.
+Captured evidence includes visible text output (`03_after_input.png`), resize-to-grid change
+(`09_logcat_dump.txt` lines 234/235/350/351), and clean shutdown stop evidence
+(`09_logcat_dump.txt:448`, `08_pid_after_force_stop.txt`).
+
+**PAR-A3R1-GLES (2026-04-27):** same-iteration parity note landed in
+`render/howl-render-gles/docs/engineer/ACTIVE_QUEUE.md`; `AH-GLES-1` is now closed.
+Freeze-release recommendation: eligible to lift GL/GLES freeze after architect approval of
+the attached evidence links; no GLES implementation movement occurred in the closure revision.
+
 ## Stop Conditions
 
 Stop and review if any cleanup or MVP ticket:
