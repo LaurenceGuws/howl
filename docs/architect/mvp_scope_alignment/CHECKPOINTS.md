@@ -123,6 +123,9 @@ checklist as a preface for any transport-adjacent work.
 **S2 freeze directive (2026-04-27):** No further GL/GLES execution movement until Android
 text-path runtime catch-up closes `AH-GLES-1`. Renderer lanes are restricted to emergency
 fixes/doc-truth edits while freeze is active.
+**S2 freeze release (2026-04-27):** `AH-GLES-1` closed in MVP-S2-A3R1 with runtime evidence
+(`howl-hosts/howl-android-host/docs/engineer/EVIDENCE_S2_A3R1.md`). Freeze lifted by architect;
+renderer lanes return to normal parity-gated execution.
 
 **MVP-S2-A3 closeout (2026-04-27):** Android AH-R2 + AH-R4 runtime shell closure and
 validation completed in `howl-hosts/howl-android-host`. Java activity/surface/input path now

@@ -31,7 +31,7 @@
 - `howl-hosts/howl-android-host` `bea7346` — A3R1-E2 runtime evidence artifacts + capture script
 - `howl-hosts/howl-android-host` `55962dc` — A3R1-E3 Android queue parity closure update
 - `render/howl-render-gles` `45700ad` — PAR-A3R1-GLES same-iteration parity note
-- `parent` `<this commit>` — A3R1 checkpoint + checkin12 archival update
+- `parent` `7851b74` — A3R1 checkpoint + checkin12 archival update
 
 ## validation results
 

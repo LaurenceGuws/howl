@@ -208,11 +208,14 @@ Hard freeze (architect directive, 2026-04-27):
   text-path activation evidence (`AH-GLES-1` closure trigger in Android queue).
 - Allowed renderer changes during freeze are limited to emergency regressions or doc truth fixes.
 - Any non-emergency GL/GLES implementation commit during freeze is a stop-condition violation.
+Freeze release (architect decision, 2026-04-27): `AH-GLES-1` is now closed via
+MVP-S2-A3R1 evidence (`EVIDENCE_S2_A3R1.md`). GL/GLES freeze is lifted; renderer work
+returns to parity-gated execution (GL and GLES must still move together).
 
 ### MVP-S2-A1: SDL Text Path Closure
 
-Status: constrained. Legibility/runtime closure complete on SDL host; further GL/GLES
-execution is frozen until Android text-path catch-up (`AH-GLES-1`) is closed.
+Status: done for scoped closure. SDL text-path + runtime gates are closed; further renderer
+work continues under parity gate (no independent GL/GLES movement).
 
 Intent:
 - complete real text rendering through `howl-term` -> `render-core` ->
