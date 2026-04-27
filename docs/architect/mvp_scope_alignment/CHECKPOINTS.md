@@ -96,8 +96,24 @@ Cross-link added to `howl-android-host` ACTIVE_QUEUE referencing session PAR-T1 
 
 **PAR-H1 (2026-04-27):** Host caller-shape parity checkpoint added to both `howl-sdl-host`
 and `howl-android-host` ACTIVE_QUEUEs. Canonical operations: `start`, `stop`, `feedBytes`,
-`feedKey`, `tick`, `resize`, `control`, `frameData`. SDL direct-session-call pattern recorded
+`feedKey`, `tick`, `resize`, `control`, `frameData`. SDL direct-session-call practice recorded
 as bounded debt. Android proof-scaffold state recorded; no new divergence permitted.
+
+**S2-RUNTIME-1 (2026-04-27):** SDL-MVP-02..07 runtime gate matrix added to `howl-sdl-host`
+ACTIVE_QUEUE. Each item has: required runtime observation, supporting test commands, failure
+signature, and current status. All items are `not-observed` or `partial` — none are confirmed.
+Text rendering is `partial` (legibility confirmed by screenshot; full interactive session not
+yet observed). This matrix is the execution target for MVP-S2-A2 closure.
+
+**S2-HOST-1 (2026-04-27):** SDL caller-shape containment rule added to `howl-sdl-host`
+ACTIVE_QUEUE: containment-only, no expansion of direct-session-call surface. Closure
+trigger defined: architect-published terminal-boundary composition cut. Android cross-link
+added to `howl-android-host` ACTIVE_QUEUE.
+
+**S2-TRANSPORT-1 (2026-04-27):** Session transport parity mini-checklist added to
+`howl-session` ACTIVE_QUEUE with three mandatory checkpoints (POSIX PTY, Android bridge,
+ConPTY). Android cross-link added to `howl-android-host` ACTIVE_QUEUE requiring the
+checklist as a preface for any transport-adjacent work.
 
 ## Stop Conditions
 
