@@ -55,8 +55,8 @@ None for this sprint pass. Residual risks:
 ## validation results
 
 - `zig build test --summary all` — `howl-hosts/howl-sdl-host` — n/a — docs-only ticket A/B; Zig not touched; prior baseline 45/45 unchanged
-- `zig build test --summary all` — `howl-session` — n/a — docs-only ticket C; prior baseline 140/140 unchanged
-- `zig build test --summary all` — `howl-hosts/howl-android-host` — n/a — docs-only; prior baseline passing unchanged
+- `zig build test --summary all` — `howl-session` — n/a — docs-only ticket C; prior baseline 158/158 unchanged
+- `zig build test --summary all` — `howl-hosts/howl-android-host` — n/a — docs-only; prior baseline 9/9 unchanged
 - `utils/hygene/architecture_guard.sh` (all 11 product repos) — workspace — exit 0 — PASS 11/11, 0 violations
 - Note: architecture guard ran twice during S2-HOST-1 (caught and fixed `\bpatterns\b` violation in android ACTIVE_QUEUE before final commit)
 
