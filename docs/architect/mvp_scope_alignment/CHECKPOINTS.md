@@ -52,11 +52,11 @@ These items are bounded and do not block Sprint 2 entry:
 
 ## Sprint 2 — Scoped MVP Completion
 
-- [ ] SDL host renders real text through `howl-term` -> `render-core` ->
+- [x] SDL host renders real text through `howl-term` -> `render-core` ->
       `howl-render-gl`.
 - [ ] GL and GLES text-path policy and capability evidence move in lockstep for Sprint 2 renderer work.
 - [ ] PTY-lane parity is accounted for in every transport-affecting iteration (Linux POSIX PTY, Android bridge pressure, future ConPTY expectation or bounded debt).
-- [ ] SDL host runs an interactive shell with correct input, resize, and
+- [x] SDL host runs an interactive shell with correct input, resize, and
       shutdown.
 - [ ] SDL and Android host caller-shape parity is preserved or bounded debt is recorded in the same iteration.
 - [ ] Render-core and GL evidence reflect runtime truth, not just contract
@@ -101,9 +101,14 @@ as bounded debt. Android proof-scaffold state recorded; no new divergence permit
 
 **S2-RUNTIME-1 (2026-04-27):** SDL-MVP-02..07 runtime gate matrix added to `howl-sdl-host`
 ACTIVE_QUEUE. Each item has: required runtime observation, supporting test commands, failure
-signature, and current status. All items are `not-observed` or `partial` — none are confirmed.
-Text rendering is `partial` (legibility confirmed by screenshot; full interactive session not
-yet observed). This matrix is the execution target for MVP-S2-A2 closure.
+signature, and current status.
+
+**S2-A2 runtime closure (2026-04-27):** Runtime observations recorded in
+`howl-hosts/howl-sdl-host/docs/engineer/EVIDENCE_S2_A2.md`:
+SDL-MVP-04 confirmed (input routing), SDL-MVP-05 confirmed (rendered output),
+SDL-MVP-06 confirmed (resize propagation, `stty size 34x52 -> 13x33`), SDL-MVP-07
+confirmed (deterministic shutdown, no zombie process). SDL-MVP-03 remains partial by
+design due PAR-H1 bounded debt (direct-session-call containment until terminal-boundary cut).
 
 **S2-HOST-1 (2026-04-27):** SDL caller-shape containment rule added to `howl-sdl-host`
 ACTIVE_QUEUE: containment-only, no expansion of direct-session-call surface. Closure

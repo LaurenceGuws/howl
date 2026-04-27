@@ -252,7 +252,8 @@ Required validation:
 
 ### MVP-S2-A2: SDL Interactive Shell Closure
 
-Status: pending. Depends on MVP-S2-A1 (text path must be live first).
+Status: done 2026-04-27. Runtime observations captured in
+`howl-hosts/howl-sdl-host/docs/engineer/EVIDENCE_S2_A2.md`.
 
 Intent:
 - close the shell loop: process output, keyboard/text input, resize, redraw,
@@ -279,6 +280,13 @@ Required validation:
   window/context ownership, event-loop/presentation ownership, terminal-boundary
   composition, interactive shell routing, rendered process output, resize
   propagation, and deterministic shutdown
+
+Delivered:
+- SDL-MVP-04 confirmed (interactive input routing): typed text, Ctrl-C, and arrow/navigation keys.
+- SDL-MVP-05 confirmed (rendered process output): legible prompt and command output with stable redraw.
+- SDL-MVP-06 confirmed (resize propagation): `stty size` observed changing `34 52` -> `13 33`.
+- SDL-MVP-07 confirmed (deterministic shutdown): close event exits cleanly with no zombie process.
+- Defect fixed during runtime closure: `mapSdlKeyToVt` expanded to include arrows/navigation/F1-F12 (`c62e2f4`).
 
 ### MVP-S2-A3: Android Proof-Host Closure
 
