@@ -28,7 +28,7 @@
 
 - `howl-hosts/howl-sdl-host` `c62e2f4` — fix: add arrow keys, navigation, F1-F12 to SDL key mapping
 - `howl-hosts/howl-sdl-host` `e7bd9e4` — docs: close S2-A2 SDL runtime matrix with observation evidence
-- `parent` `<pending>` — docs: mark MVP-S2-A2 done and record runtime closure in checkpoints/checkin10
+- `parent` `370430e` — docs: mark MVP-S2-A2 done and record runtime closure in checkpoints/checkin10
 
 ## validation results
 
