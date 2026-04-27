@@ -17,7 +17,7 @@ Close architecture drift at the workspace level so repo intent cannot be mistake
 ### FHR-P1 — Dependency Direction Enforcement (Local Only)
 
 1. Extend `utils/hygene/architecture_guard.sh` with import-direction checks:
-   - fail if `render-core` imports `howl-term-surface`.
+   - fail if `render-core` imports `howl-term`.
    - fail if backend repos import host/session/surface repos.
    - fail if core/session import renderer/host repos.
 2. Keep enforcement local-only (no remote CI).
@@ -32,7 +32,7 @@ Status: closed for current renderer repos.
      - `theme.zig`
      - `planner.zig`
      - thin `root.zig` exports/tests
-   - remove direct dependency on `howl-term-surface`.
+   - remove direct dependency on `howl-term`.
    - use plain core-owned input types at boundary.
 2. `render/howl-render-{gl,gles,metal,vulkan,software}`:
    - keep thin root exports
@@ -41,7 +41,7 @@ Status: closed for current renderer repos.
 
 ### FHR-P3 — Host/Surface Seam Closure
 
-1. `howl-term-surface` should own frame-to-plan adaptation seam (or an explicitly documented equivalent boundary).
+1. `howl-term` should own frame-to-plan adaptation seam (or an explicitly documented equivalent boundary).
 2. `howl-sdl-host` should be reduced to:
    - platform loop
    - input mapping
@@ -76,6 +76,6 @@ Status: closed for active product repos.
 ## Acceptance Criteria
 
 1. Full workspace guard passes for all active product repos.
-2. `render-core` no longer imports `howl-term-surface`.
+2. `render-core` no longer imports `howl-term`.
 3. Host render/session policy duplication is removed or explicitly bounded and justified in authority docs.
 4. Every repo has explicit MVP structural layout and coupling boundaries in authority docs.

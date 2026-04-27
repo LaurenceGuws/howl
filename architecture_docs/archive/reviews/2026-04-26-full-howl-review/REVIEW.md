@@ -14,7 +14,7 @@ Repos audited:
 
 - `howl-vt-core`
 - `howl-session`
-- `howl-term-surface`
+- `howl-term`
 - `render/howl-render-core`
 - `render/howl-render-gl`
 - `render/howl-render-gles`
@@ -78,7 +78,7 @@ Parent authorities/checkins reviewed:
 | --- | --- | --- | --- |
 | `howl-vt-core` | strong | strong | green |
 | `howl-session` | strong | medium (test-support mixed into `src/`) | yellow |
-| `howl-term-surface` | strong | medium | yellow |
+| `howl-term` | strong | medium | yellow |
 | `render/howl-render-core` | strong docs, weak code coupling alignment | weak (single-file monolith) | red |
 | `render/howl-render-gl` | medium | weak (single-file) | yellow |
 | `render/howl-render-gles` | medium | weak (single-file scaffold) | yellow |

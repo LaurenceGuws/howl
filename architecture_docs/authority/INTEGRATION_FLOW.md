@@ -6,7 +6,7 @@ It is intentionally host-framework agnostic.
 ## High-Level Runtime Loop
 
 1. Host receives platform events (window/input/timer/process signals).
-2. Host forwards relevant events to one or more `howl-term-surface` instances.
+2. Host forwards relevant events to one or more `howl-term` instances.
 3. Each terminal boundary routes lifecycle and transport actions to `howl-session`.
 4. Session drives terminal processing via `howl-vt-core` behavior.
 5. The terminal boundary obtains a render-ready frame model from composed state.

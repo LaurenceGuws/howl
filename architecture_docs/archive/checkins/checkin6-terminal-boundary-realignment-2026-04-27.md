@@ -2,7 +2,7 @@
 
 ## Intent
 
-Record the scope correction that the current `howl-term-surface` repo has
+Record the scope correction that the current `howl-term` repo has
 grown into the effective `howl-term` boundary, then realign parent and child
 MVP docs around that model before more feature work proceeds.
 
@@ -15,7 +15,7 @@ MVP docs around that model before more feature work proceeds.
 
 1. Hosts are platform shells and app containers, not primary terminal policy
    owners.
-2. The current `howl-term-surface` repo is the effective `howl-term` boundary:
+2. The current `howl-term` repo is the effective `howl-term` boundary:
    one embeddable terminal instance/widget that composes session, VT core,
    render-core, and a selected backend.
 3. App-level multiplexing remains host-owned.

@@ -21,7 +21,7 @@
 ## commits
 
 - `howl-session` `ec9b71a` — docs: align session progress/queue with transport parity gate
-- `howl-term-surface` `dba2d4e` — docs: refocus term-surface progress/queue for parity-gated M1 lane
+- `howl-term` `dba2d4e` — docs: refocus term-surface progress/queue for parity-gated M1 lane
 - `render/howl-render-core` `542ad0f` — docs: align render-core progress/queue with parity gate wording
 - `render/howl-render-gl` `e12df13` — docs: add GL/GLES parity gate note to GL milestone progress
 - `render/howl-render-gles` `46aa52d` — docs: refocus GLES milestone progress to lockstep parity lane
@@ -30,7 +30,7 @@
 
 ## validation results
 
-- `./utils/hygene/architecture_guard.sh howl-session howl-term-surface render/howl-render-core render/howl-render-gl render/howl-render-gles howl-hosts/howl-sdl-host howl-hosts/howl-android-host` — workspace — `exit 0` — PASS (`7/7` repos, `0` violations)
+- `./utils/hygene/architecture_guard.sh howl-session howl-term render/howl-render-core render/howl-render-gl render/howl-render-gles howl-hosts/howl-sdl-host howl-hosts/howl-android-host` — workspace — `exit 0` — PASS (`7/7` repos, `0` violations)
 - `zig build` — n/a (docs-only scope) — n/a — skipped by design
 - `zig build test --summary all` — n/a (docs-only scope) — n/a — skipped by design
 - `zig build package` — n/a (docs-only scope) — n/a — skipped by design
@@ -40,8 +40,8 @@
 
 - `howl-session/docs/architect/MILESTONE_PROGRESS.md`
 - `howl-session/docs/engineer/ACTIVE_QUEUE.md`
-- `howl-term-surface/docs/architect/MILESTONE_PROGRESS.md`
-- `howl-term-surface/docs/engineer/ACTIVE_QUEUE.md`
+- `howl-term/docs/architect/MILESTONE_PROGRESS.md`
+- `howl-term/docs/engineer/ACTIVE_QUEUE.md`
 - `render/howl-render-core/docs/architect/MILESTONE_PROGRESS.md`
 - `render/howl-render-core/docs/engineer/ACTIVE_QUEUE.md`
 - `render/howl-render-gl/docs/architect/MILESTONE_PROGRESS.md`

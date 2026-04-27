@@ -91,11 +91,11 @@ but architecture and module lanes must remain host-paired.
 | `SE-LONG-04` | `LONG` | Session supports richer process control where needed: environment setup, cwd, shell selection, and process groups. |
 | `SE-LONG-05` | `LONG` | Session becomes reusable by terminal hosts, editor terminals, test harnesses, and headless tools. |
 
-### `howl-term-surface`
+### `howl-term`
 
 | ID | Phase | Outcome |
 | --- | --- | --- |
-| `SF-POC-01` | `POC` | The current `howl-term-surface` repo defines the primary `howl-term` lifecycle, dimensions, input entrypoints, frame query, and error reporting. |
+| `SF-POC-01` | `POC` | The current `howl-term` repo defines the primary `howl-term` lifecycle, dimensions, input entrypoints, frame query, and error reporting. |
 | `SF-POC-02` | `POC` | The terminal boundary composes one session and one renderer-facing frame path without importing SDL/OpenGL types. |
 | `SF-POC-03` | `POC` | The terminal boundary owns widget-local state: focus, viewport, dirty state, cursor blink phase, selection view state, and frame timing policy. |
 | `SF-POC-04` | `POC` | Host actions and terminal actions are separate plain-data types. |
@@ -299,7 +299,7 @@ Queue advancement requires `Current Target` sync in the same commit set.
 | --- | --- | --- |
 | `howl-vt-core` | `M10` | Frozen `M10` baseline and quality doctrine |
 | `howl-session` | `Linux MVP live-host revalidation` | session/runtime structure is far ahead of the stale local target; live host pressure now decides the next real gaps |
-| `howl-term-surface` | `Primary terminal boundary realignment` | current repo name remains `howl-term-surface`; owned boundary is effectively `howl-term` |
+| `howl-term` | `Primary terminal boundary realignment` | current repo name remains `howl-term`; owned boundary is effectively `howl-term` |
 | `render/howl-render-core` | `M5` | capability negotiation is active, but docs and callers must now describe `howl-term` as the primary owner of render orchestration |
 | `render/howl-render-gl` | `M6` | capability conformance is in progress, but real text-path closure still decides true MVP readiness |
 | `render/howl-render-gles` | `MVP lockstep parity with GL` | keep text-path policy, capability semantics, and evidence cadence aligned with GL during scoped MVP |
@@ -312,7 +312,7 @@ Queue advancement requires `Current Target` sync in the same commit set.
 ## MVP Execution Order
 
 1. `howl-session`: complete Unix PTY lifecycle and replace current queue-only behavior with real VT core driving.
-2. `howl-term-surface`: define the one-terminal-instance composition API around session, input routing, dimensions, dirty state, and frame model.
+2. `howl-term`: define the one-terminal-instance composition API around session, input routing, dimensions, dirty state, and frame model.
 3. `render/howl-render-core`: define backend-neutral render frame/plan/damage/glyph data.
 4. `render/howl-render-gl` + `render/howl-render-gles`: advance text-path policy and capability semantics in lockstep from render-core output.
 5. `howl-hosts/howl-sdl-host`: own SDL window/input/context/present and compose one terminal-boundary instance.

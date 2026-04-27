@@ -41,7 +41,7 @@ this sprint; they are explicit future guard candidates.
 - `render/howl-render-gles` `9a1b675` — docs: PAR-R1 GLES parity evidence checkpoint tied to GL PAR-R1 revision
 - `howl-session` `3d4653c` — docs: PAR-T1 transport parity checkpoint (POSIX PTY truth, Android bridge pressure, ConPTY expectation)
 - `howl-hosts/howl-android-host` `2ae53b4` — docs: PAR-T1 transport parity cross-link to session checkpoint (Android bridge bounded debt)
-- `howl-hosts/howl-sdl-host` `d85b22f` — docs: PAR-H1 host caller-shape parity checkpoint (canonical howl-term-surface operations, bounded debt recorded)
+- `howl-hosts/howl-sdl-host` `d85b22f` — docs: PAR-H1 host caller-shape parity checkpoint (canonical howl-term operations, bounded debt recorded)
 - `howl-hosts/howl-android-host` `6a3a52f` — docs: PAR-H1 host caller-shape parity checkpoint (canonical operations, bounded debt recorded)
 
 ## validation results
@@ -73,7 +73,7 @@ High: none.
 Medium:
 - SDL host direct-session-call pattern is bounded debt against the PAR-H1 caller-shape
   invariant. `SdlHost` in `event_loop.zig` calls session operations directly rather than
-  through a composed `howl-term-surface` instance. This is a pre-existing structural gap,
+  through a composed `howl-term` instance. This is a pre-existing structural gap,
   not introduced in this sprint. It is now explicitly recorded and must not be extended.
 
 - GLES text execution is not active: `backend.execute()` in `howl-render-gles` accepts

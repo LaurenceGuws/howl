@@ -1,0 +1,18 @@
+ok here is my take
+  "architecture_docs/archive/checkins/checkin6-terminal-boundary-realignment-2026-04-27.md" should have been done a long time ago, idk why we moved back to
+  hosts before this was done omfg.
+  so after we do that, the
+  1. howl-term is the backend export module that wraps around all the other backend modules and provide a host facing object like ghostty, but with the
+  session and renderer modules as part of the object (we want to make this all batteries included but configurable later on).
+  2. howl-android-host is the module name as part of the howl faminly, its app identity to the end user is howl and it package is howl-term.
+
+
+  Milestones
+  1. eliminate "howl-term-surface" branding completly and properly, this module serves to build opt in/out of layer for host owned integration layers.
+    MVP is full howl owned path is proven
+    ch11-m1-1: I renamed howl-term-surface to howl-term, use gh to rename the repo and get gl sdl host stable.
+ch11-m1-2: Normalize docs/docstrings etc, remove all mentions of old branding and migration, this is the correct branding, the past does not need to be dragged along
+ch11-m1-3: sdl-host is only allowed to depend on howl-term and host vendors(lua atm)
+ch11-m1-4: howl_term is not allowed to know about pty or gl. pty is dynamic in howl session, and gl is dynamic in render-core
+ch11-m1-5: fully implement howl-session's android/unix split
+  2. normalize naming

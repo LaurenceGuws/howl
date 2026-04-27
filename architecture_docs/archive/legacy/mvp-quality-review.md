@@ -26,7 +26,7 @@ Do not treat current `howl-sdl-host` as the final MVP boundary until the remaini
 | Finding | Resolution |
 | --- | --- |
 | GL draw planning/execution lived in `howl-sdl-host` | Moved draw planning and immediate GL execution to `render/howl-render-gl`; SDL host now calls the renderer module. |
-| Host composed session and surface directly | Added `TerminalSurface` in `howl-term-surface`; SDL host now delegates terminal orchestration to the surface module. |
+| Host composed session and surface directly | Added `TerminalSurface` in `howl-term`; SDL host now delegates terminal orchestration to the surface module. |
 | `SurfaceConfig` carried `?*anyopaque` session placeholder | Removed the opaque session field; session ownership is explicit in `TerminalSurface`. |
 | `howl-render-gl` remained scaffold while host had local renderer code | `howl-render-gl` now owns the draw plan and GL execution surface used by the Linux host. |
 | Glyph rendering was SDL_ttf-based in host repo | `howl-render-gl` now owns FreeType glyph rasterization, GL texture upload, and text drawing; SDL_ttf was removed from the host. |

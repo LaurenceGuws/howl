@@ -13,7 +13,7 @@ Repos sampled for code hygiene and layering discipline:
 
 - `howl-vt-core`
 - `howl-session`
-- `howl-term-surface`
+- `howl-term`
 - `render/howl-render-core`
 - `render/howl-render-gl`
 - `howl-hosts/howl-sdl-host`
@@ -43,7 +43,7 @@ Family-level docs audited:
 
 Evidence:
 
-- `howl-term-surface/app_architecture/authorities/MILESTONE.md` still says `Current target is M0 scaffold closure`.
+- `howl-term/app_architecture/authorities/MILESTONE.md` still says `Current target is M0 scaffold closure`.
 - `render/howl-render-core` and `render/howl-render-gl` still report `Current target is M0 scaffold reset closure` despite active M2/M3 work.
 - Other renderer backends also remain pinned at M0 targets regardless of parent map progression.
 - Parent `architecture_docs/authority/MILESTONES.md` expresses a broader progression, but local current-target pointers do not consistently reflect real queue state.

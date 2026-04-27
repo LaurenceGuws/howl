@@ -17,11 +17,11 @@ Canonical direction:
 
 1. `howl-vt-core` depends on no higher-level Howl module.
 2. `howl-session` may consume `howl-vt-core` public API only.
-3. `howl-term-surface` is the current repo name for the primary `howl-term` boundary and may consume `howl-session`, `howl-vt-core`, and render-facing APIs.
+3. `howl-term` is the current repo name for the primary `howl-term` boundary and may consume `howl-session`, `howl-vt-core`, and render-facing APIs.
 4. Render backends (`gl`, `gles`, `metal`, `vulkan`, `software`) depend on `howl-render-core` only.
 5. `howl-render-core` must not depend on platform host frameworks.
-6. Host apps (for example `howl-sdl-host` and `howl-android-host`) consume one or more `howl-term-surface` instances plus a chosen renderer backend path; they do not reach into lower-level internals.
-7. `howl-sdl-host` and `howl-android-host` must remain equivalent callers of `howl-term-surface` operations (`start`, `stop`, `feedBytes`, `feedKey`, `tick`, `resize`, `control`, `frameData`) even if their platform event loops differ.
+6. Host apps (for example `howl-sdl-host` and `howl-android-host`) consume one or more `howl-term` instances plus a chosen renderer backend path; they do not reach into lower-level internals.
+7. `howl-sdl-host` and `howl-android-host` must remain equivalent callers of `howl-term` operations (`start`, `stop`, `feedBytes`, `feedKey`, `tick`, `resize`, `control`, `frameData`) even if their platform event loops differ.
 8. Utility repos consume public files, releases, local artifacts, and documented command surfaces; they do not become runtime dependencies of product modules.
 9. `howl-render-gl` and `howl-render-gles` text-path policy changes (glyph load flags, baseline/advance policy, capability semantics) must be advanced in lockstep or recorded as explicit bounded debt in the same iteration.
 10. Session transport policy changes must preserve PTY-lane parity: POSIX PTY (Linux), Android process/container bridge, and future ConPTY expectations are documented together, with bounded debt recorded in the same iteration when implementation parity is not possible.
