@@ -58,10 +58,10 @@ These items are bounded and do not block Sprint 2 entry:
 - [ ] PTY-lane parity is accounted for in every transport-affecting iteration (Linux POSIX PTY, Android bridge pressure, future ConPTY expectation or bounded debt).
 - [x] SDL host runs an interactive shell with correct input, resize, and
       shutdown.
-- [ ] SDL and Android host caller-shape parity is preserved or bounded debt is recorded in the same iteration.
+- [x] SDL and Android host caller-shape parity is preserved or bounded debt is recorded in the same iteration.
 - [ ] Render-core and GL evidence reflect runtime truth, not just contract
       structure.
-- [ ] Android remains a working proof host over the same terminal-boundary API.
+- [x] Android remains a working proof host over the same terminal-boundary API.
 - [ ] Local release evidence covers the participating repos for the Linux MVP.
 
 Sprint 2 closes only when the first Linux host matches the documented MVP exit
@@ -119,6 +119,19 @@ added to `howl-android-host` ACTIVE_QUEUE.
 `howl-session` ACTIVE_QUEUE with three mandatory checkpoints (POSIX PTY, Android bridge,
 ConPTY). Android cross-link added to `howl-android-host` ACTIVE_QUEUE requiring the
 checklist as a preface for any transport-adjacent work.
+
+**MVP-S2-A3 closeout (2026-04-27):** Android AH-R2 + AH-R4 runtime shell closure and
+validation completed in `howl-hosts/howl-android-host`. Java activity/surface/input path now
+routes through canonical caller-shape operations only (`start`, `stop`, `feedBytes`, `feedKey`,
+`tick`, `resize`, `control`, `frameData`) via `HowlSurfaceCalls` + JNI + Zig `Host`.
+Deterministic local scripts added for `.so` build, APK assembly, install/launch, and log
+tail/dump.
+
+**PAR-A3-GLES (2026-04-27):** Android/GLES parity checkpoint recorded against SDL/GL text-path
+policy. Current gap is bounded debt (`AH-GLES-1`): Android proof host is caller-shape complete
+but does not yet run GLES text rendering. Closure trigger: first Android GLES text-path activation
+must ship with same-iteration PAR-R1 parity update in both `howl-render-gles` and
+`howl-android-host` ACTIVE_QUEUE docs, plus runtime evidence links.
 
 ## Stop Conditions
 

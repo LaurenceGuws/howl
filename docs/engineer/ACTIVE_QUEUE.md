@@ -290,8 +290,7 @@ Delivered:
 
 ### MVP-S2-A3: Android Proof-Host Closure
 
-Status: pending. AH-R2 (Java Activity/Surface/Input shell) and AH-R4
-(validation) blocked on architect publication of M2 surface lifecycle scope.
+Status: done 2026-04-27. AH-R2 runtime shell and AH-R4 validation complete.
 
 Intent:
 - implement minimal Android Java Activity/Surface/Input shell (AH-R2)
@@ -315,6 +314,17 @@ Required validation:
 - Gradle compile pass
 - architecture guard PASS for `howl-hosts/howl-android-host`
 - APK deploys and terminal surface is reachable from the Java shell
+
+Delivered:
+- Android runtime shell now drives canonical terminal-boundary caller shape only:
+  `start`, `stop`, `feedBytes`, `feedKey`, `tick`, `resize`, `control`, `frameData`.
+- Key routing corrected for host parity: Android keycodes map to terminal key constants;
+  unsupported keys no longer emit unintended VT sequences; key-up no longer duplicates key-down.
+- JNI byte-feed boundary handles empty payloads deterministically.
+- Deterministic local scripts now cover `.so` build, APK assemble, install/launch, and
+  live log tail/dump (`scripts/build-native.sh`, `scripts/assemble-debug.sh`,
+  `scripts/deploy-debug.sh`, `scripts/logcat-debug.sh`).
+- Android/GLES parity checkpoint recorded with bounded debt `AH-GLES-1` and explicit closure trigger.
 
 ### MVP-S2-A4: MVP Quality Lock
 
