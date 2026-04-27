@@ -1,6 +1,6 @@
 # Howl MVP Structural Layout Authority
 
-This document defines the required module structure for Linux MVP closure.
+This document defines the required module structure for scoped MVP closure.
 It is parent-level authority for repo intent, public API boundaries, and allowed coupling.
 
 ## Rules
@@ -23,8 +23,8 @@ It is parent-level authority for repo intent, public API boundaries, and allowed
 | `render/howl-render-metal` | Metal backend executor | `howl_render_metal` exports only | backend lifecycle + execution modules; thin `root.zig` | may depend on `howl-render-core` only |
 | `render/howl-render-vulkan` | Vulkan backend executor | `howl_render_vulkan` exports only | backend lifecycle + execution modules; thin `root.zig` | may depend on `howl-render-core` only |
 | `render/howl-render-software` | Software backend executor/reference | `howl_render_software` exports only | backend lifecycle + execution modules; thin `root.zig` | may depend on `howl-render-core` only |
-| `howl-hosts/howl-sdl-host` | Linux host shell composition and platform loop | host-local app API only | split config/host-loop/platform entry/render handoff modules | may depend on one or more `howl-term-surface` instances + selected renderer backend |
-| `howl-hosts/howl-android-host` | Android lifecycle/input/surface/process integration | host-local app API only | split host/input/platform-surface/process integration modules | may depend on one or more `howl-term-surface` instances + selected renderer backend |
+| `howl-hosts/howl-sdl-host` | SDL host shell composition and platform loop | host-local app API only | split config/host-loop/platform entry/render handoff modules | may depend on one or more `howl-term-surface` instances + selected renderer backend |
+| `howl-hosts/howl-android-host` | Android host lifecycle/input/surface/process integration | host-local app API only | split host/input/platform-surface/process integration modules | may depend on one or more `howl-term-surface` instances + selected renderer backend |
 | `utils/howl-microscope` | External comparison harness | CLI/report APIs only | cli/dsl/runner/report split | no product runtime ownership |
 | `utils/howl-docs` | Documentation tooling | docs tool APIs only | frontend/tooling split | no product runtime ownership |
 | `utils/howl-pm` | Package/release metadata tooling | CLI/provider APIs only | cmd/internal/provider split | no product runtime ownership |
@@ -36,12 +36,20 @@ It is parent-level authority for repo intent, public API boundaries, and allowed
 1. PTY/process implementations are transport implementations, not session policy.
 2. Linux POSIX PTY, Android container integration, and future ConPTY must remain behind the same session transport contract.
 3. The primary terminal boundary chooses or receives the transport-backed session attachment; session core remains host-neutral.
+4. Transport-lane progress must be parity-tracked: Linux PTY changes must include Android/future-ConPTY impact notes or bounded debt in the same iteration.
 
 ### Renderer Backend Cohesion
 
 1. Render policy exists once in `howl-render-core`.
 2. Backends execute plans and report capability; they do not reinterpret terminal frame semantics.
 3. The primary terminal boundary calls the render API per frame; host code must not duplicate render planning policy.
+4. `howl-render-gl` and `howl-render-gles` move in lockstep for text-path policy work; backend-local deviations require explicit architect approval and bounded debt recording in the same iteration.
+
+### Host Parity Cohesion
+
+1. SDL and Android hosts are peer callers of the same `howl-term-surface` API shape.
+2. Host-loop differences are platform-local only; terminal/session/render ownership boundaries must stay identical.
+3. Scoped MVP progression cannot advance on Linux-only host assumptions without an explicit Android parity note or bounded debt record.
 
 ## Primary Embeddable Boundary
 

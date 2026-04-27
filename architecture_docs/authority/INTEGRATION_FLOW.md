@@ -27,6 +27,12 @@ It is intentionally host-framework agnostic.
 - Host/app manager orchestrates multiple terminal instances.
 - Shared renderer resources are allowed via renderer-core/backend policies, not by merging session state machines.
 
+## Host and Backend Parity Rules
+
+- SDL and Android are peer hosts over the same `howl-term` caller API.
+- GL and GLES are peer renderer backends for text-path policy; scoped MVP iterations must keep their policy/evidence lanes aligned.
+- Session transport changes are parity-tracked across Linux POSIX PTY, Android process/container bridge pressure, and future ConPTY expectations.
+
 ## Error Boundary Expectations
 
 - Transport and lifecycle errors are handled at session/surface boundaries.

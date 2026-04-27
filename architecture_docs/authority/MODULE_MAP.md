@@ -30,6 +30,8 @@ It is the cross-repo ownership map.
   embeddable `howl-term` product surface.
 - Hosts own app-level orchestration of multiple terminal instances; the terminal
   boundary owns one terminal instance/widget at a time.
+- GL and GLES backend lanes must move together for text-path policy and
+  capability semantics during scoped MVP work.
 - Child repos should document their own scope and invariants only.
 - Cross-module fit, ownership boundaries, and dependency direction are documented here.
 - This map avoids duplicated cross-repo non-goal text in child repos.

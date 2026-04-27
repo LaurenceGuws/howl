@@ -23,6 +23,9 @@ Canonical direction:
 6. Host apps (for example `howl-sdl-host` and `howl-android-host`) consume one or more `howl-term-surface` instances plus a chosen renderer backend path; they do not reach into lower-level internals.
 7. `howl-sdl-host` and `howl-android-host` must remain equivalent callers of `howl-term-surface` operations (`start`, `stop`, `feedBytes`, `feedKey`, `tick`, `resize`, `control`, `frameData`) even if their platform event loops differ.
 8. Utility repos consume public files, releases, local artifacts, and documented command surfaces; they do not become runtime dependencies of product modules.
+9. `howl-render-gl` and `howl-render-gles` text-path policy changes (glyph load flags, baseline/advance policy, capability semantics) must be advanced in lockstep or recorded as explicit bounded debt in the same iteration.
+10. Session transport policy changes must preserve PTY-lane parity: POSIX PTY (Linux), Android process/container bridge, and future ConPTY expectations are documented together, with bounded debt recorded in the same iteration when implementation parity is not possible.
+11. Sprint advancement requires parity accounting across all three lanes: renderer (GL/GLES), transport (PTY lanes), and hosts (SDL/Android caller-shape).
 
 ## Forbidden Dependency Direction
 

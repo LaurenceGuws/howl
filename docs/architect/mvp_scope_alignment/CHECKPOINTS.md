@@ -54,8 +54,11 @@ These items are bounded and do not block Sprint 2 entry:
 
 - [ ] SDL host renders real text through `howl-term` -> `render-core` ->
       `howl-render-gl`.
+- [ ] GL and GLES text-path policy and capability evidence move in lockstep for Sprint 2 renderer work.
+- [ ] PTY-lane parity is accounted for in every transport-affecting iteration (Linux POSIX PTY, Android bridge pressure, future ConPTY expectation or bounded debt).
 - [ ] SDL host runs an interactive shell with correct input, resize, and
       shutdown.
+- [ ] SDL and Android host caller-shape parity is preserved or bounded debt is recorded in the same iteration.
 - [ ] Render-core and GL evidence reflect runtime truth, not just contract
       structure.
 - [ ] Android remains a working proof host over the same terminal-boundary API.

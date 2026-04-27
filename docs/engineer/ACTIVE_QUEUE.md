@@ -195,8 +195,13 @@ Delivered:
 
 ## Sprint: Scoped MVP Completion
 
-Goal: finish the first Linux MVP through runtime truth, not architectural wishful
-thinking.
+Goal: finish scoped MVP through runtime truth, with a Linux-first release gate
+and explicit host/backend parity rules.
+
+Parity gate for all MVP-S2 execution:
+- renderer parity: GL and GLES move together for text-path policy/capability work
+- transport parity: POSIX PTY changes include Android/future-ConPTY parity notes or bounded debt
+- host parity: SDL and Android remain equivalent callers of `howl-term-surface`
 
 ### MVP-S2-A1: SDL Text Path Closure
 
@@ -206,6 +211,7 @@ render-gl M6 execution scope.
 Intent:
 - complete real text rendering through `howl-term` -> `render-core` ->
   `howl-render-gl`
+- keep `howl-render-gles` in lockstep for text-path policy and capability semantics
 - remove remaining block-only presentation gaps in `howl-hosts/howl-sdl-host`
 
 Non-goals:
@@ -218,6 +224,7 @@ Targets:
 - `render/howl-render-core` — M1 render plan contract (awaiting architect queue)
 - `render/howl-render-gl` — M5 formal damage/presentation evidence closure;
   M6 capability conformance (awaiting architect queue)
+- `render/howl-render-gles` — lockstep parity with GL text-path policy and capability semantics
 - `howl-term-surface` — frame-query/render path from terminal state to GL calls
 - `howl-hosts/howl-sdl-host` — presentation call-through to produce visible text
 
@@ -227,6 +234,9 @@ Stop conditions:
 - presentation layer re-introduces render planning policy
 - engineer attempts to solve per-cell VT color persistence inside A1
 - SDL-MVP-01 through SDL-MVP-07 not verified by observation, only by test pass
+- GL text-path policy changes land without a same-iteration GLES parity update or explicit bounded debt record
+- session/transport changes land without PTY-lane parity accounting (Android/future-ConPTY note or bounded debt)
+- host-facing API/orchestration changes land for SDL without matching Android caller-shape parity note or bounded debt
 
 Color model rule for A1:
 - Use existing terminal-boundary/render theme path for readable text closure.
@@ -235,7 +245,7 @@ Color model rule for A1:
 
 Required validation:
 - `zig build test --summary all` in `render/howl-render-core`, `render/howl-render-gl`,
-  `howl-term-surface`, `howl-hosts/howl-sdl-host`
+  `render/howl-render-gles`, `howl-term-surface`, `howl-hosts/howl-sdl-host`
 - architecture guard PASS across all touched product repos
 - visible text confirmed in SDL window (runtime observation, not inference)
 - glyph atlas population confirmed (log or debug output)

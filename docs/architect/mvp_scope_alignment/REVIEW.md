@@ -63,8 +63,8 @@ Current runtime truth:
 
 - SDL host still needs real, correct text rendering and full interactive-shell
   quality closure
-- Android host is now a working proof shell path, but remains outside the first
-  Linux MVP blocker set
+- Android host must remain a peer boundary-pressure lane, not a disconnected
+  side path
 - module architecture is far ahead of visible MVP completion
 
 Required rule:
@@ -104,11 +104,11 @@ It is not allowed to pretend the visible MVP is complete.
 
 Intent:
 
-- finish the first Linux MVP honestly through runtime closure
+- finish scoped MVP honestly through runtime closure with a Linux-first release gate
 - SDL host must show real text, correct input, resize, shell loop, and stable
   shutdown through the corrected terminal-boundary stack
-- Android remains a proof host that validates abstraction pressure, not a blocker
-  to the first Linux MVP exit
+- Android remains a peer proof host that validates abstraction pressure
+- GL and GLES must move together on text-path policy and capability semantics
 
 This sprint is allowed to change behavior, but only after Sprint 1 scope and
 ownership clarity are closed.
@@ -123,4 +123,6 @@ ownership clarity are closed.
    hidden singletons.
 4. Android and SDL must be described as peer proof hosts over the same terminal
    boundary.
-5. The first Linux MVP is complete only when runtime behavior matches the docs.
+5. GL and GLES must move in lockstep for text-path policy changes unless bounded debt is recorded in the same iteration.
+6. Session transport iterations must carry PTY-lane parity accounting (Linux POSIX PTY, Android bridge pressure, future ConPTY expectations) or bounded debt.
+7. The Linux release gate is complete only when runtime behavior matches the docs.

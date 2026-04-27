@@ -17,9 +17,9 @@ Howl is an embeddable terminal stack:
 - concrete hosts that own windowing, input, app lifecycle, and packaging
 - supporting tools for docs, package/release work, inspection, and hygiene
 
-The first product target is a Linux desktop terminal host using SDL for
-window/input and a decoupled OpenGL renderer path. Android remains a first
-proof host for boundary pressure, but not a blocker for the first Linux MVP.
+The product target is a stable host pair over the same terminal boundary:
+SDL/Linux and Android. Release gating is still Linux-first for the scoped MVP,
+but architecture and module lanes must remain host-paired.
 
 ## Phase Definitions
 
@@ -38,7 +38,7 @@ proof host for boundary pressure, but not a blocker for the first Linux MVP.
 | `F2` | `MVP` | Session-Core Integration | Session owns process lifecycle and drives VT core through public APIs. |
 | `F3` | `MVP` | Terminal Boundary Contract | The primary embeddable terminal boundary composes session, input routing, viewport state, frame production, and render orchestration without host framework types. |
 | `F4` | `MVP` | Render Core Contract | Backend-neutral render plan, glyph/cell layout model, damage model, and resource policy are defined. |
-| `F5` | `MVP` | First Renderer Path | OpenGL renderer consumes render-core plans and draws text/cursor in a host-owned context. |
+| `F5` | `MVP` | First Renderer Path | OpenGL and GLES renderer paths consume render-core plans and draw text/cursor under the same policy contract. |
 | `F6` | `MVP` | First Host Loop | SDL host owns window/input/context/present loop and runs one terminal-boundary instance. |
 | `F7` | `MVP` | Interactive Terminal | Linux SDL host runs an interactive shell with resize, keyboard input, text rendering, scrollback path, and shutdown. |
 | `F8` | `MVP` | MVP Quality Lock | Local evidence covers latency-sensitive loops, resize/input/render stability, leaks, and release packaging. |
@@ -157,8 +157,8 @@ proof host for boundary pressure, but not a blocker for the first Linux MVP.
 | `GLES-POC-01` | `POC` | GLES repo has clean package scaffold and backend API shape matching renderer backend rules. |
 | `GLES-POC-02` | `POC` | GLES capability limits are documented: shader version, texture formats, buffer update strategy, mobile constraints. |
 | `GLES-POC-03` | `POC` | Minimal context-owned resource lifecycle compiles without Android UI coupling. |
-| `GLES-MVP-01` | `MVP` | Parked outside the Linux MVP critical path unless GL cannot provide the required portable baseline. |
-| `GLES-MVP-02` | `MVP` | If activated, consumes render-core plans without adding mobile assumptions to render-core. |
+| `GLES-MVP-01` | `MVP` | Lockstep with GL text-path policy and capability reporting for scoped MVP closure. |
+| `GLES-MVP-02` | `MVP` | Consumes render-core plans without adding mobile assumptions to render-core. |
 | `GLES-LONG-01` | `LONG` | GLES renderer supports Android/mobile host constraints and mobile GPU resource discipline. |
 | `GLES-LONG-02` | `LONG` | GLES output matches render-core conformance fixtures used by GL/software paths. |
 | `GLES-LONG-03` | `LONG` | GLES backend participates in mobile latency, power, and memory evidence. |
@@ -302,7 +302,7 @@ Queue advancement requires `Current Target` sync in the same commit set.
 | `howl-term-surface` | `Primary terminal boundary realignment` | current repo name remains `howl-term-surface`; owned boundary is effectively `howl-term` |
 | `render/howl-render-core` | `M5` | capability negotiation is active, but docs and callers must now describe `howl-term` as the primary owner of render orchestration |
 | `render/howl-render-gl` | `M6` | capability conformance is in progress, but real text-path closure still decides true MVP readiness |
-| `render/howl-render-gles` | `M0` | Scaffold baseline |
+| `render/howl-render-gles` | `MVP lockstep parity with GL` | keep text-path policy, capability semantics, and evidence cadence aligned with GL during scoped MVP |
 | `render/howl-render-metal` | `M0` | Scaffold baseline |
 | `render/howl-render-software` | `M0` | Scaffold baseline |
 | `render/howl-render-vulkan` | `M0` | Scaffold baseline |
@@ -314,7 +314,7 @@ Queue advancement requires `Current Target` sync in the same commit set.
 1. `howl-session`: complete Unix PTY lifecycle and replace current queue-only behavior with real VT core driving.
 2. `howl-term-surface`: define the one-terminal-instance composition API around session, input routing, dimensions, dirty state, and frame model.
 3. `render/howl-render-core`: define backend-neutral render frame/plan/damage/glyph data.
-4. `render/howl-render-gl`: render the first terminal frames from render-core output in a host-owned GL context.
+4. `render/howl-render-gl` + `render/howl-render-gles`: advance text-path policy and capability semantics in lockstep from render-core output.
 5. `howl-hosts/howl-sdl-host`: own SDL window/input/context/present and compose one terminal-boundary instance.
 6. `howl-vt-core`: fix only proven portable semantic gaps discovered by real host pressure.
 7. `utils/howl-docs` and `utils/howl-pm`: publish MVP docs and release metadata.
@@ -335,7 +335,7 @@ through this sequence unless a listed dependency is already complete.
 | `LMVP-06` | `RC-POC-01` through `RC-POC-04` | Render-core frame and draw plan model exists without GPU or host types. |
 | `LMVP-07` | `RC-MVP-01` through `RC-MVP-06` | Render-core can plan visible terminal frames and damage for GL consumption. |
 | `LMVP-08` | `GL-POC-01` through `GL-POC-04` | GL renderer resource boundary is proven without SDL ownership. |
-| `LMVP-09` | `GL-MVP-01` through `GL-MVP-06` | GL renderer draws MVP terminal frames from render-core output. |
+| `LMVP-09` | `GL-MVP-01` through `GL-MVP-06`, `GLES-MVP-01`, `GLES-MVP-02` | GL renderer draws MVP terminal frames from render-core output while GLES tracks the same policy/capability lane. |
 | `LMVP-10` | `SDL-POC-01` through `SDL-POC-04` | SDL host proves window, event, context, swap, and input mapping without terminal logic. |
 | `LMVP-11` | `SDL-MVP-01` through `SDL-MVP-07`, `SF-MVP-05`, `SE-MVP-07` | SDL host composes one interactive terminal-boundary instance end to end. |
 | `LMVP-12` | `VT-MVP-03`, `VT-MVP-04`, `VT-MVP-05`, `VT-MVP-06` | Portable VT gaps found by the host are fixed and the supported core terminal state surface is documented. |
@@ -354,13 +354,14 @@ introduce platform types into session core.
 
 1. Parent docs own cross-module sequencing and dependency direction.
 2. Child repos own local contracts, tests, and active queues.
-3. POC work proves shape; MVP work ships the first Linux terminal; LONG work is recorded but not pulled forward without a dependency reason.
+3. POC work proves shape; MVP work ships the first Linux release gate while keeping SDL/Android and GL/GLES architecture lanes coherent; LONG work is recorded but not pulled forward without a dependency reason.
 4. Renderer backend work must not duplicate render-core logic.
 5. Host work must not absorb session, VT, terminal-boundary, or render-core responsibilities.
 6. Session work must not import host, terminal-boundary, or renderer types.
 7. Terminal-boundary work is the composition boundary, not a dumping ground for platform code or backend-specific rendering.
 8. Utility tooling must support development and release work without becoming product runtime scope.
 9. New module dependencies require updates to `MODULE_MAP.md`, `DEPENDENCY_RULES.md`, and this milestone map in the same commit series.
+10. Advancement gates require parity accounting across renderer (GL/GLES), transport (POSIX PTY/Android bridge/future ConPTY), and host caller-shape (SDL/Android).
 
 ## MVP Exit Bar
 
