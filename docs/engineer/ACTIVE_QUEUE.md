@@ -2,8 +2,9 @@
 
 ## Current State
 
-Active sprint is `MVP-S1` (MVP scope alignment and cleanup).
-Next sprint is `MVP-S2` (scoped MVP completion).
+Active sprint is `MVP-S2` (scoped MVP completion).
+`MVP-S1` closed 2026-04-27. Residual debt recorded in
+`docs/architect/mvp_scope_alignment/CHECKPOINTS.md`.
 
 ## Read Before Execution
 
@@ -71,7 +72,9 @@ Stop conditions:
 
 ### MVP-S1-A3: Naming and Ownership Corrections
 
-Status: pending. Input: correction tickets from MVP-S1-A2 audit (see below).
+Status: done 2026-04-27. All 12 CL-* correction tickets executed. See commits in
+howl-session, howl-term-surface, render/howl-render-core, render/howl-render-gl,
+howl-hosts/howl-sdl-host, and howl-hosts/howl-android-host.
 
 #### Correction Tickets (input to MVP-S1-A3 execution)
 
@@ -183,16 +186,12 @@ Non-goals:
 
 ### MVP-S1-A4: Sprint Closeout
 
-Status: pending.
+Status: done 2026-04-27.
 
-Intent:
-- close Sprint 1 only when parent docs, child docs, queue state, and reported
-  runtime truth agree
-- publish the exact Sprint 2 execution lane for visible MVP closure
-
-Required validation:
-- product hygiene guard passes for reviewed product repos
-- handover reports cite real validation and real residual debt
+Delivered:
+- Sprint 1 checkpoints closed in `docs/architect/mvp_scope_alignment/CHECKPOINTS.md`.
+- Parent progress board transitioned: MVP-S1 closed, MVP-S2 active.
+- MVP-S2 execution queue published below.
 
 ## Sprint: Scoped MVP Completion
 
@@ -201,34 +200,112 @@ thinking.
 
 ### MVP-S2-A1: SDL Text Path Closure
 
-Status: planned.
+Status: pending. Awaits architect queue publication for render-core M1 and
+render-gl M6 execution scope.
 
 Intent:
 - complete real text rendering through `howl-term` -> `render-core` ->
   `howl-render-gl`
-- remove remaining block-only presentation gaps
+- remove remaining block-only presentation gaps in `howl-hosts/howl-sdl-host`
+
+Targets:
+- `render/howl-render-core` — M1 render plan contract (awaiting architect queue)
+- `render/howl-render-gl` — M5 formal damage/presentation evidence closure;
+  M6 capability conformance (awaiting architect queue)
+- `howl-term-surface` — frame-query/render path from terminal state to GL calls
+- `howl-hosts/howl-sdl-host` — presentation call-through to produce visible text
+
+Stop conditions:
+- text rendering is claimed without confirmed glyph rasterization artifacts
+- render-core plan builder scope is invented by engineers without architect publication
+- presentation layer re-introduces render planning policy
+- SDL-MVP-01 through SDL-MVP-07 not verified by observation, only by test pass
+
+Required validation:
+- `zig build test --summary all` in `render/howl-render-core`, `render/howl-render-gl`,
+  `howl-term-surface`, `howl-hosts/howl-sdl-host`
+- architecture guard PASS across all touched product repos
+- visible text confirmed in SDL window (runtime observation, not inference)
+- glyph atlas population confirmed (log or debug output)
 
 ### MVP-S2-A2: SDL Interactive Shell Closure
 
-Status: planned.
+Status: pending. Depends on MVP-S2-A1 (text path must be live first).
 
 Intent:
 - close the shell loop: process output, keyboard/text input, resize, redraw,
   and shutdown
-- prove the Linux host is actually usable
+- prove the Linux host is actually usable end-to-end
+
+Targets:
+- `howl-hosts/howl-sdl-host` — input classification and TerminalSurface routing
+- `howl-term-surface` — input-to-session path, resize propagation
+- `howl-session` — process I/O, signal delivery, resize notification
+
+Stop conditions:
+- input wired past the host boundary without going through TerminalSurface API
+- resize not propagated to session and renderer
+- shutdown is racy or leaves zombie processes
+- shell loop claimed closed without interactive testing
+
+Required validation:
+- `zig build test --summary all` in `howl-session`, `howl-term-surface`,
+  `howl-hosts/howl-sdl-host`
+- architecture guard PASS across all touched product repos
+- SDL-MVP-01 through SDL-MVP-07 each confirmed by runtime observation:
+  SDL-MVP-01 visible text, SDL-MVP-02 correct input, SDL-MVP-03 resize,
+  SDL-MVP-04 scroll, SDL-MVP-05 clipboard, SDL-MVP-06 unicode,
+  SDL-MVP-07 deterministic shutdown
 
 ### MVP-S2-A3: Android Proof-Host Closure
 
-Status: planned.
+Status: pending. AH-R2 (Java Activity/Surface/Input shell) and AH-R4
+(validation) blocked on architect publication of M2 surface lifecycle scope.
 
 Intent:
-- keep Android as a valid peer proof host over the same terminal boundary
-- do not let Android-specific work retake ownership from shared modules
+- implement minimal Android Java Activity/Surface/Input shell (AH-R2)
+- validate Zig tests, Gradle compile, and architecture guard after AH-R2 (AH-R4)
+- confirm Android as a working peer proof host over the same terminal-boundary API
+
+Targets:
+- `howl-hosts/howl-android-host` — AH-R2 Java shell, AH-R4 validation
+- `howl-hosts/howl-android-host/app_architecture/contracts/ANDROID_HOST_SHELL.md`
+  — M2 constraint review (single-instance, thread-safety revisit per known limits)
+
+Stop conditions:
+- Android shell duplicates terminal-surface orchestration instead of wrapping
+  TerminalSurface API
+- Android work delays Linux MVP SDL closure (Android is a proof host, not a blocker)
+- Java/Kotlin imports howl-session directly before an approved transport milestone
+- M2 constraints revisited before architect publishes M2 scope
+
+Required validation:
+- `zig build test --summary all` in `howl-hosts/howl-android-host`
+- Gradle compile pass
+- architecture guard PASS for `howl-hosts/howl-android-host`
+- APK deploys and terminal surface is reachable from the Java shell
 
 ### MVP-S2-A4: MVP Quality Lock
 
-Status: planned.
+Status: pending. Depends on MVP-S2-A1 and MVP-S2-A2 closure (SDL runtime proven).
 
 Intent:
-- publish participating-repo evidence, release steps, and known limits only
-  after runtime truth is closed
+- publish participating-repo release evidence, known limits, and release steps
+  only after SDL runtime truth is closed
+- Android proof-host parity confirmed before quality lock
+- no optimistic milestone claims; evidence must be runtime-observed
+
+Targets:
+- parent `docs/` release evidence
+- participating child repo `docs/engineer/` queues — final status updates
+
+Stop conditions:
+- quality lock claimed before SDL-MVP-01 through SDL-MVP-07 are all confirmed
+- release evidence cites test pass results as proof of runtime correctness
+- Android parked as "planned" without explicit bounded debt record
+
+Required validation:
+- architecture guard PASS across all product repos in scope
+- SDL runtime checklist SDL-MVP-01 through SDL-MVP-07 all confirmed by observation
+- Android proof-host terminal-surface round-trip confirmed
+- all participating child repo MILESTONE_PROGRESS.md boards reflect runtime truth
