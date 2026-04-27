@@ -252,10 +252,11 @@ Required validation:
 - `zig build test --summary all` in `howl-session`, `howl-term-surface`,
   `howl-hosts/howl-sdl-host`
 - architecture guard PASS across all touched product repos
-- SDL-MVP-01 through SDL-MVP-07 each confirmed by runtime observation:
-  SDL-MVP-01 visible text, SDL-MVP-02 correct input, SDL-MVP-03 resize,
-  SDL-MVP-04 scroll, SDL-MVP-05 clipboard, SDL-MVP-06 unicode,
-  SDL-MVP-07 deterministic shutdown
+- SDL-MVP-01 through SDL-MVP-07 each confirmed by runtime observation against
+  the parent authority definitions in `architecture_docs/authority/MILESTONES.md`:
+  window/context ownership, event-loop/presentation ownership, terminal-boundary
+  composition, interactive shell routing, rendered process output, resize
+  propagation, and deterministic shutdown
 
 ### MVP-S2-A3: Android Proof-Host Closure
 
