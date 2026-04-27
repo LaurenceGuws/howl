@@ -64,6 +64,20 @@ These items are bounded and do not block Sprint 2 entry:
 Sprint 2 closes only when the first Linux host matches the documented MVP exit
 bar.
 
+### Sprint 2 Progress Notes
+
+**GL-R1 executed (2026-04-27):** Alpha blending enabled in `render/howl-render-gl/src/backend.zig`.
+GL_ALPHA textures + GL_MODULATE without GL_BLEND produced solid foreground-color
+rectangles. Fix: `glEnable(GL_BLEND)` + `glBlendFunc(GL_SRC_ALPHA,
+GL_ONE_MINUS_SRC_ALPHA)` scoped to glyph draw calls. Runtime evidence: screenshot
+pixel analysis at SDL window position shows anti-aliased glyph shapes (partial-transparency
+values 2-175) at terminal cell positions, confirming shaped character rendering replaces
+prior solid-block output. Commit: `render/howl-render-gl` `f27ebf5`.
+
+**Outstanding for A1 closure:** interactive legibility confirmation (readable bash
+prompt), glyph atlas population log, full SDL-MVP-01 checklist verification by
+observation.
+
 ## Stop Conditions
 
 Stop and review if any cleanup or MVP ticket:
