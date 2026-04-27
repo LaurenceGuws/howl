@@ -120,6 +120,10 @@ added to `howl-android-host` ACTIVE_QUEUE.
 ConPTY). Android cross-link added to `howl-android-host` ACTIVE_QUEUE requiring the
 checklist as a preface for any transport-adjacent work.
 
+**S2 freeze directive (2026-04-27):** No further GL/GLES execution movement until Android
+text-path runtime catch-up closes `AH-GLES-1`. Renderer lanes are restricted to emergency
+fixes/doc-truth edits while freeze is active.
+
 **MVP-S2-A3 closeout (2026-04-27):** Android AH-R2 + AH-R4 runtime shell closure and
 validation completed in `howl-hosts/howl-android-host`. Java activity/surface/input path now
 routes through canonical caller-shape operations only (`start`, `stop`, `feedBytes`, `feedKey`,

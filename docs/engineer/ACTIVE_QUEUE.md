@@ -203,10 +203,16 @@ Parity gate for all MVP-S2 execution:
 - transport parity: POSIX PTY changes include Android/future-ConPTY parity notes or bounded debt
 - host parity: SDL and Android remain equivalent callers of `howl-term-surface`
 
+Hard freeze (architect directive, 2026-04-27):
+- No additional GL/renderer execution movement is permitted until Android catches up on
+  text-path activation evidence (`AH-GLES-1` closure trigger in Android queue).
+- Allowed renderer changes during freeze are limited to emergency regressions or doc truth fixes.
+- Any non-emergency GL/GLES implementation commit during freeze is a stop-condition violation.
+
 ### MVP-S2-A1: SDL Text Path Closure
 
-Status: pending. Awaits architect queue publication for render-core M1 and
-render-gl M6 execution scope.
+Status: constrained. Legibility/runtime closure complete on SDL host; further GL/GLES
+execution is frozen until Android text-path catch-up (`AH-GLES-1`) is closed.
 
 Intent:
 - complete real text rendering through `howl-term` -> `render-core` ->
@@ -237,6 +243,7 @@ Stop conditions:
 - GL text-path policy changes land without a same-iteration GLES parity update or explicit bounded debt record
 - session/transport changes land without PTY-lane parity accounting (Android/future-ConPTY note or bounded debt)
 - host-facing API/orchestration changes land for SDL without matching Android caller-shape parity note or bounded debt
+- GL/GLES implementation advances while Android text-path parity remains deferred
 
 Color model rule for A1:
 - Use existing terminal-boundary/render theme path for readable text closure.
