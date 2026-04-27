@@ -77,9 +77,27 @@ pixel analysis at SDL window position shows anti-aliased glyph shapes (partial-t
 values 2-175) at terminal cell positions, confirming shaped character rendering replaces
 prior solid-block output. Commit: `render/howl-render-gl` `f27ebf5`.
 
-**Outstanding for A1 closure:** interactive legibility confirmation (readable bash
-prompt), glyph atlas population log, full SDL-MVP-01 checklist verification by
-observation.
+**MVP-S2-A1 legibility closure (2026-04-27):** GL-R1 through GL-R7 + GL-R6-R1 executed.
+Key fixes: GL_NEAREST texture filtering; glyph metric capture (bearing_x/bearing_y) and
+baseline-aligned quad placement; HiDPI cell sizing from SDL display scale and actual
+drawable/logical ratio; height-only FT sizing; light+autohint load flags; ghostty-style
+baseline; font-advance-informed cell width; unified load-flag policy between rasterization
+and metric queries. Runtime evidence: screenshot at MVP-S2-A1R3 shows legible bash shell
+output. Tests: 12/12 render-gl, 45/45 sdl-host.
+
+**PAR-R1 (2026-04-27):** GL text-path policy documented as authoritative evidence (load
+flags, baseline/advance policy, capability reporting) in `render/howl-render-gl` ACTIVE_QUEUE.
+GLES parity evidence tied to same checkpoint id in `render/howl-render-gles` ACTIVE_QUEUE.
+No FreeType path active in GLES; no divergence risk at this revision.
+
+**PAR-T1 (2026-04-27):** Transport parity checkpoint added to `howl-session` ACTIVE_QUEUE:
+POSIX PTY current truth, Android bridge pressure (bounded to AH-R2), ConPTY expectation.
+Cross-link added to `howl-android-host` ACTIVE_QUEUE referencing session PAR-T1 section.
+
+**PAR-H1 (2026-04-27):** Host caller-shape parity checkpoint added to both `howl-sdl-host`
+and `howl-android-host` ACTIVE_QUEUEs. Canonical operations: `start`, `stop`, `feedBytes`,
+`feedKey`, `tick`, `resize`, `control`, `frameData`. SDL direct-session-call pattern recorded
+as bounded debt. Android proof-scaffold state recorded; no new divergence permitted.
 
 ## Stop Conditions
 
