@@ -2,3 +2,5 @@ Pre-howl-term
     1) copy IDE metadata + ops scripts from zide for iteration tooling parity
     2) bring up empty window + iteration run/deploy/log checks
     3) bring up GPU lifecycle + full-window blank GL/GLES frame
+    4) android specific platform weakness work
+    4.1) bring over zide side_bar + assist_bar

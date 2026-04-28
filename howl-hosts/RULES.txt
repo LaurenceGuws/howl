@@ -33,3 +33,5 @@
   9. Naming discipline:
      - short, specific symbols
      - no sentence-style names
+
+  10. Android work is not allowed to run anything like ./gradlew assembleDebug --no-daemon, use the iteration script and check the log
