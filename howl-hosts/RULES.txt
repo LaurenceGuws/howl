@@ -1,0 +1,35 @@
+1. `howl_term` is the product identity.
+     - Product-facing naming: `howl-term` / `howl_term` (platform constraints apply).
+     - Forbidden in user-facing output: host labels (`sdl_host`, `android_host`, etc).
+
+  2. No `hello-world` / `scaffold` / `stub` language in symbols, docs, or commits.
+
+  3. Zide reuse is default.
+     - For host-side code/tooling, copy from `~/personal/zide` first.
+     - New-from-scratch host code is last resort.
+
+  4. Copy scope priority (host-only, backend-agnostic):
+     - Android IDE/classpath metadata
+     - Android deploy/install/launch/log flow
+     - Android base UX shell layers
+     - Host-side backend init/lifecycle glue
+
+  5. Migration method:
+     - copy -> rebrand -> restructure -> validate -> commit+push
+     - small chunks
+     - propose chunk before implementation
+
+  6. SDL + Android must iterate side-by-side.
+     - User-visible runtime milestones close only with proof on both hosts.
+
+  7. Host boundary is hard.
+     - Hosts may consume only `howl-term` (+ `howl-hosts/vendor/*`).
+     - No direct host deps on other howl backend modules.
+
+  8. Hosts are reference implementations.
+     - They validate core layers in real environments.
+     - Keep host code thin and avoid backend ownership drift.
+
+  9. Naming discipline:
+     - short, specific symbols
+     - no sentence-style names

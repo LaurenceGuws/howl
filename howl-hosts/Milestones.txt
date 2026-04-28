@@ -1,0 +1,5 @@
+Pre-howl-term
+    1. copy over ide metadata / ops scripts where needed for inital iteration tooling parity
+    2. setup an empty window and test ops
+    3. setup gpu lifecycle and initial full window empty texture.
+

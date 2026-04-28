@@ -1,7 +1,9 @@
-howl-hosts/
 howl-session/
 howl-term/
 howl-vt-core/
 render/
 utils/
 .vscode/
+howl-sdl-host/
+howl-android-host/
+howl-lua/
