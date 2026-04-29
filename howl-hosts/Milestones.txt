@@ -4,3 +4,4 @@ Pre-howl-term
     3) bring up GPU lifecycle + full-window blank GL/GLES frame
     4) android specific platform weakness work
     4.1) bring over zide side_bar + assist_bar
+    4.2) bring over zide userland -> ps howl-pm was set up for howl-android last night before I accidentally nuked the hosts
