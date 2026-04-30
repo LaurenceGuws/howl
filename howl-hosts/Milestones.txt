@@ -5,3 +5,15 @@ Pre-howl-term
     4) android specific platform weakness work
     4.1) bring over zide side_bar + assist_bar
     4.2) bring over zide userland -> ps howl-pm was set up for howl-android last night before I accidentally nuked the hosts
+
+howl-term-mvp
+      1. Host lifecycle hook parity (start/ready/fail) on both hosts.
+      2. Shell spawn + PTY wiring (no renderer changes yet).
+      3. One-way output proof into vt-core on both hosts.
+      4. Font rendering MVP:
+          - atlas upload path live in render impls
+          - glyph quads rendered from real rasterized glyphs
+          - fallback handling for missing glyphs
+      5. Input mapping proof (host-native input -> vt-core -> shell echo).
+      6. Resize correctness (SDL resize, Android IME/assist/rotation).
+      7. Stability/hygiene pass (warnings/errors only, no healthy-path logs, repeated run checks on both hosts).
