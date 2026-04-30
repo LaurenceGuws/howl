@@ -32,10 +32,12 @@ Howl host-renderer integration contract
 5. Host scheduling model (both Linux and Android)
 
 - event-driven wake loop, not unconditional frame loop.
+- no host-owned tight polling loop; window layer owns OS event pump/wait.
 - wake sources: PTY output, input affecting terminal view, resize, cursor blink tick, explicit redraw requests.
 - on wake:
+  - drain available window/input events in one batch,
   - coalesce pending signals,
-  - fetch cached sizes,
+  - fetch cached sizes (computed on resize/scale events, never recomputed every draw),
   - read `dirtySnapshot()`,
   - if dirty (or forced redraw condition), render once and present once,
   - on successful present call `acknowledgePresented()`.

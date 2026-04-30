@@ -1,22 +1,25 @@
 Pre-howl-term
-    1) copy IDE metadata + ops scripts from zide for iteration tooling parity
-    2) bring up empty window + iteration run/deploy/log checks
-    3) bring up GPU lifecycle + full-window blank GL/GLES frame
-    4) android specific platform weakness work
-    4.1) bring over zide side_bar + assist_bar
     4.2) bring over zide userland -> ps howl-pm was set up for howl-android last night before I accidentally nuked the hosts
 
 howl-term-mvp
       1. Host lifecycle hook parity (start/ready/fail) on both hosts.
-      2. Shell spawn + PTY wiring (no renderer changes yet).
-      3. One-way output proof into vt-core on both hosts.
-      4. Font rendering MVP:
+      2. Shell spawn + PTY wiring through `howl-term` handles on both hosts.
+      3. Render API wiring MVP on both hosts:
+          - host render entry uses `renderFrameSized(render_w, render_h, grid_w, grid_h, texture)`
+          - host reads redraw truth from `dirtySnapshot()`
+          - host calls `acknowledgePresented()` only after successful present
+          - window layer event wait/drain wakes render path; no host tight polling loop
+      4. One-way output proof into vt-core on both hosts.
+      5. Font rendering MVP:
           - atlas upload path live in render impls
           - glyph quads rendered from real rasterized glyphs
           - fallback handling for missing glyphs
-      5. Input mapping proof (host-native input -> vt-core -> shell echo).
-      6. Resize correctness (SDL resize, Android IME/assist/rotation).
-      7. Stability/hygiene pass (warnings/errors only, no healthy-path logs, repeated run checks on both hosts).
+      6. Input mapping proof (host-native input -> vt-core -> shell echo).
+      7. Resize correctness with split sizing contract:
+          - grid size drives cell math
+          - render size drives viewport/target texture size
+          - size/scale math updates only on resize/scale events, not per draw pass
+      8. Stability/hygiene pass (warnings/errors only, no healthy-path logs, repeated run checks on both hosts).
 
 howl-renderer-impl
       1. Contract lock:
@@ -33,6 +36,7 @@ howl-renderer-impl
           - target texture + viewport sizing obeys render size, grid math obeys grid size
       4. Host integration completion (SDL/GLFW + Android together):
           - event-driven wake model (no unconditional tight render loop)
+          - window layer drains event batches and publishes normalized signals into core pipeline
           - one render+present pass per coalesced wake batch
           - `acknowledgePresented()` only on successful present
       5. Verification gate:
