@@ -1,0 +1,57 @@
+Howl host-renderer integration contract
+
+1. Ownership split
+
+- `howl-term` owns redraw truth.
+- renderer owns draw execution from core truth.
+- hosts own scheduling/wake/present only.
+- hosts must not compute dirty state heuristics.
+
+2. Core dirty model (`howl-term`)
+
+- dirty state: `none | partial | full`.
+- damage bounds: row/col min-max.
+- row-level dirty tracking: `dirty_rows`, `dirty_cols_start`, `dirty_cols_end`.
+- public read API: `dirtySnapshot()`.
+- public clear API: `acknowledgePresented()`.
+
+3. Dirty lifecycle rules
+
+- terminal-visible mutation must set dirty in core.
+- resize/grid-shape change marks `full`.
+- incremental cell changes mark `partial` and update row spans + damage bounds.
+- dirty is cleared only by `acknowledgePresented()` after a successful present.
+- failed draw/present must not clear dirty.
+
+4. Render call contract
+
+- hosts call `renderFrameSized(render_w, render_h, grid_w, grid_h, texture)`.
+- hosts read dirty state from `dirtySnapshot()`, not from render return codes.
+- render API validates inputs and renders; dirty ownership remains in core.
+
+5. Host scheduling model (both Linux and Android)
+
+- event-driven wake loop, not unconditional frame loop.
+- wake sources: PTY output, input affecting terminal view, resize, cursor blink tick, explicit redraw requests.
+- on wake:
+  - coalesce pending signals,
+  - fetch cached sizes,
+  - read `dirtySnapshot()`,
+  - if dirty (or forced redraw condition), render once and present once,
+  - on successful present call `acknowledgePresented()`.
+
+6. Platform specifics
+
+- Linux: event wait + async wake signal/fd; drain events then one render pass.
+- Android: `GLSurfaceView.RENDERMODE_WHEN_DIRTY`; call `requestRender()` only from wake sources.
+
+7. Coalescing and precedence
+
+- multiple wake events before draw collapse into one pass.
+- `full` overrides `partial`.
+- keep latest size state; drop stale intermediate resize states.
+
+8. Non-negotiable invariant
+
+- redraw truth is host-agnostic because it is core-owned.
+- hosts only decide when work runs, never what changed.

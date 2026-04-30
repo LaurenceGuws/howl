@@ -17,3 +17,24 @@ howl-term-mvp
       5. Input mapping proof (host-native input -> vt-core -> shell echo).
       6. Resize correctness (SDL resize, Android IME/assist/rotation).
       7. Stability/hygiene pass (warnings/errors only, no healthy-path logs, repeated run checks on both hosts).
+
+howl-renderer-impl
+      1. Contract lock:
+          - `howl-term` owns redraw truth (`dirty: none|partial|full`, damage bounds, row spans)
+          - hosts own wake/schedule/present only
+          - dirty clears only after successful present-ack
+      2. `Term` structure completion:
+          - explicit render-facing snapshot state on `Term` (grid, cursor, colors/attrs, dirty metadata)
+          - stable API surface: `renderFrameSized(...)`, `dirtySnapshot()`, `acknowledgePresented()`
+          - resize path sets full dirty and rebuilds render-facing state deterministically
+      3. render-impl structure completion:
+          - renderer consumes term snapshot + dirty metadata, no host-side dirty inference
+          - full path redraws complete frame; partial path redraws only damaged rows/spans
+          - target texture + viewport sizing obeys render size, grid math obeys grid size
+      4. Host integration completion (SDL/GLFW + Android together):
+          - event-driven wake model (no unconditional tight render loop)
+          - one render+present pass per coalesced wake batch
+          - `acknowledgePresented()` only on successful present
+      5. Verification gate:
+          - same terminal-visible behavior across SDL host and Android host for dirty/full/partial scenarios
+          - scale/resize/input/blink flows proven with contract logs/tests

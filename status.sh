@@ -18,6 +18,6 @@ for repo in "${repos[@]}"; do
   fi
 
   if [ "$changes" -gt 0 ] || [ "$ahead" -gt 0 ]; then
-    echo "$rel|changes:$changes|ahead:$ahead"
+    echo "$rel|changes:$changes|ahead:$ahead|commit and/or push needed"
   fi
 done
