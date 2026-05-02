@@ -1,0 +1,14 @@
+howl:
+  - vt-core
+  - term
+  - session:
+      - android_pty
+      - unix_pty
+  - render-core:
+      - gl
+      - gles
+  - hosts:
+      - android: kotlin
+      - linux:
+          - sdl
+          - glfw
