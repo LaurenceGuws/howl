@@ -91,4 +91,10 @@ reject_tree_pattern "howl-render-core/src" '@import\("(vt_core|howl_session|howl
 # Hosts depend on howl-term for terminal runtime, not lower module packages.
 reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("(vt_core|howl_session|howl_render)"\)'
 
+# FFI ABI fields stay stable unless an ABI-changing checkpoint says otherwise.
+require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
+
+# Missing Android runtime proof remains explicit, not hidden by a fake pass.
+require_pattern "tools/check_host_runtime_surface.sh" 'host_runtime_surface_skip=missing_android_runtime'
+
 printf '%s\n' 'module_shape_ok=1'
