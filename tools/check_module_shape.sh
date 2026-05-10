@@ -70,6 +70,7 @@ require_file "howl-vt-core/src/terminal.zig"
 require_file "howl-session/src/session_namespace.zig"
 require_file "howl-vt-core/src/vt_namespace.zig"
 require_file "howl-render-core/src/render_namespace.zig"
+require_file "howl-render-core/src/frame_metrics.zig"
 require_file "howl-render-core/src/frame_pipeline.zig"
 require_file "howl-render-core/src/frame_queue.zig"
 require_file "howl-render-core/src/frame_snapshot.zig"
@@ -108,12 +109,16 @@ require_pattern "howl-render-core/src/render_namespace.zig" 'pub const c_api = i
 require_pattern "howl-term/src/term_namespace.zig" 'pub const c_api = if \(options\.c_abi\) @import\("ffi\.zig"\) else void;'
 require_pattern "howl-session/src/session_namespace.zig" '@import\("pty\.zig"\)'
 require_pattern "howl-render-core/src/render_namespace.zig" '@import\("renderer\.zig"\)'
+require_pattern "howl-render-core/src/render_core.zig" '@import\("frame_metrics\.zig"\)'
 require_pattern "howl-render-core/src/render_core.zig" '@import\("frame_pipeline\.zig"\)'
 require_pattern "howl-render-core/src/render_core.zig" '@import\("frame_queue\.zig"\)'
 require_pattern "howl-render-core/src/render_core.zig" '@import\("frame_snapshot\.zig"\)'
 require_pattern "howl-render-core/src/render_core.zig" 'pub const FramePipeline = frame_pipeline;'
 require_pattern "howl-render-core/src/render_core.zig" 'pub const FrameQueue = frame_queue;'
 require_pattern "howl-render-core/src/render_core.zig" 'pub const FrameSnapshot = frame_snapshot\.Snapshot;'
+require_pattern "howl-render-core/src/render_core.zig" 'pub const PrepareMetrics = frame_metrics\.PrepareMetrics;'
+require_pattern "howl-render-core/src/render_core.zig" 'pub const RenderMetrics = frame_metrics\.RenderMetrics;'
+require_pattern "howl-render-core/src/render_core.zig" 'pub const FramePixels = types\.FramePixels;'
 require_pattern "howl-term/src/term_namespace.zig" '@import\("terminal\.zig"\)'
 reject_pattern "howl-session/src/session_namespace.zig" 'pub const c_api = @import\("ffi\.zig"\)'
 reject_pattern "howl-vt-core/src/vt_namespace.zig" 'pub const c_api = @import\("ffi\.zig"\)'
@@ -202,6 +207,11 @@ require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeo
 require_pattern "howl-term/src/terminal.zig" 'howl_render\.Core\.FrameSnapshot'
 require_pattern "howl-term/src/terminal.zig" 'howl_render\.Core\.FramePipeline'
 require_pattern "howl-term/src/runtime/contract.zig" 'howl_render\.Core\.FrameQueue\.SurfaceExecutor'
+require_pattern "howl-term/src/runtime/contract.zig" 'pub const PrepareMetrics = howl_render\.Core\.PrepareMetrics;'
+require_pattern "howl-term/src/runtime/contract.zig" 'pub const RenderMetrics = howl_render\.Core\.RenderMetrics;'
+require_pattern "howl-term/src/runtime/contract.zig" 'pub const FramePixels = howl_render\.Core\.FramePixels;'
+reject_pattern "howl-term/src/runtime/contract.zig" 'pub const (PrepareMetrics|RenderMetrics|FramePixels) = struct'
+reject_pattern "howl-term/src/render/render.zig" 'pub const (Core|Renderer) = howl_render\.'
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'
 require_pattern "howl-term/src/terminal.zig" 'wake\.stopSnapshotWaiters'
 require_pattern "howl-term/src/terminal.zig" '@import\("runtime/query\.zig"\)'

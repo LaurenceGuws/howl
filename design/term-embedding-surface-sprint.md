@@ -385,6 +385,13 @@ Sprint 5 checkpoint 2 evidence:
 - `howl-render-core/src/render_core.zig` exposes `Core.FramePipeline` and `Core.FrameQueue`.
 - `howl-term` consumes these render-core owners through `howl_render.Core` and no longer has `src/render/pipeline.zig` or `src/render/queue.zig`.
 
+Sprint 5 checkpoint 3 evidence:
+
+- `howl-render-core/src/frame_metrics.zig` owns prepare/render metric contracts.
+- `howl-render-core/src/types.zig` owns `FramePixels` geometry input and clamping helpers.
+- `howl-term/src/runtime/contract.zig` aliases render metrics and frame pixel geometry from `howl_render.Core` instead of defining those render contracts locally.
+- `howl-term/src/render/render.zig` no longer re-exports `Core` or `Renderer`; term files consume render-core directly where orchestration needs it.
+
 ## Verification Cadence
 
 For every implementation checkpoint:
