@@ -265,7 +265,9 @@ if ! grep -Eq '@export' "howl-term/src/howl_term.zig"; then mark_open "term_ffi_
 
 # Missing Android runtime proof remains explicit, not hidden by a fake pass.
 require_pattern "tools/check_host_runtime_surface.sh" 'host_runtime_surface_skip=missing_android_runtime'
-require_pattern "design/term-embedding-surface-sprint.md" 'Sprint 5: Render Boundary Pristine Pass'
+require_pattern "design/term-embedding-surface-sprint.md" 'Sprint 7: Runtime Ownership Board'
+require_pattern "design/term-embedding-surface-sprint.md" 'Checkpoint 1 Audit'
+require_pattern "design/term-embedding-surface-sprint.md" 'work-not-clear'
 require_pattern "design/term-embedding-surface-sprint.md" 'Android is parked until ownership boundaries are pristine'
 
 printf '%s\n' 'module_shape_ok=1'
