@@ -77,11 +77,13 @@ require_catalog_root "howl-hosts/howl-linux-host/src/test_host.zig" 80
 require_pattern "howl-vt-core/src/howl_vt.zig" '@import\("vt/main\.zig"\)'
 require_pattern "howl-vt-core/src/howl_vt.zig" 'pub const VtCore = vt\.VtCore;'
 require_pattern "howl-session/src/howl_session.zig" '@import\("session/main\.zig"\)'
+require_pattern "howl-render-core/src/howl_render.zig" '@import\("render/main\.zig"\)'
 reject_pattern "howl-vt-core/src/howl_vt.zig" 'pub const VtCore = struct'
 reject_pattern "howl-vt-core/src/howl_vt.zig" '@import\("(input|grid|parser|snapshot|selection|terminal|ffi)\.zig"\)'
 reject_pattern "howl-session/src/howl_session.zig" 'pub const Session = struct'
 reject_pattern "howl-session/src/howl_session.zig" '@import\("(session|pty|ffi)\.zig"\)'
 reject_pattern "howl-render-core/src/howl_render.zig" 'pub const RenderCore = struct'
+reject_pattern "howl-render-core/src/howl_render.zig" '@import\("(render_core|renderer|ffi)\.zig"\)'
 
 # Explicit exception: this is an executable owner, not a package index.
 require_runtime_owner "howl-hosts/howl-linux-host/src/main.zig" 'pub fn main'
