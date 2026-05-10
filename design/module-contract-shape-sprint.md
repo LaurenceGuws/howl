@@ -216,12 +216,15 @@ Acceptance:
 - The checks describe the target shape, even if temporarily marked as expected-failing in the doc.
 - No checkpoint claims completion until checks pass without expected-fail markers.
 
-Current open markers from `tools/check_module_shape.sh`:
+Current open markers from `tools/check_module_shape.sh` after Sprint 2:
 
-- `howl_term_root_not_catalog`: `howl-term/src/howl_term.zig` still owns the runtime body.
 - `render_root_ref_all_decls_missing`: `howl-render-core/src/howl_render.zig` needs root public-surface declaration coverage.
 - `session_root_ref_all_decls_missing`: `howl-session/src/root.zig` needs root public-surface declaration coverage.
-- `term_root_ref_all_decls_missing`: `howl-term/src/howl_term.zig` needs root public-surface declaration coverage after it becomes a catalog.
+
+Closed markers:
+
+- `howl_term_root_not_catalog`: closed by moving the runtime owner body to `howl-term/src/terminal.zig`.
+- `term_root_ref_all_decls_missing`: closed by adding root declaration coverage to the catalog root.
 
 ## Sprint 2: `howl-term` Root Reshape
 

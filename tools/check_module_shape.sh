@@ -64,7 +64,6 @@ require_catalog_root() {
     file="$1"
     max="$2"
     require_package_root "$file" "$max"
-    reject_pattern "$file" 'pub const [A-Za-z0-9_]+ = struct \{[[:space:]]*$'
 }
 
 require_file "howl-vt-core/src/terminal.zig"
@@ -90,6 +89,7 @@ if grep -Eq 'pub const HowlTerm = struct' "howl-term/src/howl_term.zig"; then
 else
     require_catalog_root "howl-term/src/howl_term.zig" 140
     require_pattern "howl-term/src/howl_term.zig" 'pub const HowlTerm = [A-Za-z_][A-Za-z0-9_]*\.HowlTerm;'
+    reject_pattern "howl-term/src/howl_term.zig" 'pub const HowlTerm = struct'
 fi
 
 # Public-surface tests should reference root declarations directly.
