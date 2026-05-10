@@ -2,9 +2,15 @@
 
 ## Goal
 
-Make `howl-term` boring and intuitive as the end-user embedding package, with `howl-linux-host` proving the same public dependency/export structure that Android should later consume.
+Make `howl-term` boring and intuitive as the end-user embedding package, with `howl-linux-host` proving the current public dependency/export structure while ownership boundaries are made pristine.
 
-This sprint is not about adding new runtime behavior. It is about making the already working SDL/Linux path depend on a mature `howl-term` public surface instead of a broad grab bag of nested `HowlTerm.*` contracts and host-shaped methods. If this closes cleanly, Android should be unblocked at the dependency/export boundary; Android runtime proof remains open until real Android code proves it.
+This sprint is not about adding new runtime behavior. It is about making the already working SDL/Linux path depend on a mature `howl-term` public surface instead of a broad grab bag of nested `HowlTerm.*` contracts and host-shaped methods. Android is parked until ownership boundaries are pristine; Android runtime proof remains open until real Android code proves it.
+
+Ownership priority while boundaries are unclear:
+
+- Embed intuitiveness follows `utils/dev_references/terminals/ghostty` first.
+- Raw speed, efficiency, and rendering quality follow `utils/dev_references/terminals/alacritty` second.
+- When those point in different directions, keep the embed boundary intuitive and move hot-path internals only when the owner is unambiguous.
 
 ## Ghostty Reference Shape
 
@@ -137,14 +143,14 @@ Linux host `HowlTerm` method consumption:
 | Lifecycle | `initPty`, `start`, `deinit`, `isAlive` | embed-stable | `Surface.zig` owns terminal session lifecycle below app runtime | Keep methods; make lifecycle owner underneath boring. |
 | Host config | `setFontSizePx`, `setPrimaryFontPath`, `setFallbackFontPaths` | embed-stable config | `Surface.zig` owns derived config/font state; `renderer.zig` owns renderer contracts | Keep methods for now; consider root `config` group only after host contract settles. |
 | Frame geometry | `syncFrameGeometry`, `FramePixels.renderWidth`, `FramePixels.renderHeight`, `FramePixels.gridWidth`, `FramePixels.gridHeight` | embed-stable frame contract | `Surface.zig` size callbacks; `renderer.zig` size contracts | Keep; move type use to `runtime.FramePixels`. |
-| Frame loop | `needsFrame`, `needsPrepare`, `prepareNextFrame`, `renderReadyFrame`, `awaitRenderWake`, `wakeSnapshotWaiters` | embed-stable but still broad | Ghostty renderer/termio threads are explicit domain owners | Keep methods while owners mature; `wakeSnapshotWaiters` is deinit-specific and should be reviewed before Android. |
+| Frame loop | `needsFrame`, `needsPrepare`, `prepareNextFrame`, `renderReadyFrame`, `awaitRenderWake`, `wakeSnapshotWaiters` | embed-stable but still broad | Ghostty renderer/termio threads are explicit domain owners | Keep methods while owners mature; `wakeSnapshotWaiters` is deinit-specific and should be reviewed before platform parity work. |
 | Surface readout | `surfaceState`, `renderedSnapshotSeq` | embed-stable surface/pacing | `Surface.zig` draw/state and `apprt/surface.zig` messages | Keep methods; move type use to `surface.State`. |
-| Host pacing diagnostics | `hasQueuedRenderWork`, `setRuntimeBackpressure` | host scheduling contract | Ghostty renderer thread/mailbox owns render pressure | Keep for Linux proof; decide whether public diagnostics or runtime contract before Android. |
+| Host pacing diagnostics | `hasQueuedRenderWork`, `setRuntimeBackpressure` | host scheduling contract | Ghostty renderer thread/mailbox owns render pressure | Keep for Linux proof; decide whether public diagnostics or runtime contract before platform parity work. |
 | Input | `publishInputBytes`, `publishInputKey`, `publishMouseEvent`, `publishPaste`, `setInputFocus` | embed-stable input | Ghostty `Surface.zig` input callbacks and `lib_vt.zig` input group | Keep methods; input vocabulary remains root `Input`. |
 | Viewport/scrollbar | `scrollState`, `followLiveBottom`, `setScrollbackOffset` | embed-stable viewport | Ghostty `Surface.zig` scrollbar and viewport behavior | Keep methods; move type use to `viewport.ScrollState`. |
 | Selection/link | `selectionInProgress`, `beginSelection`, `updateSelection`, `finishSelection`, `setHoveredLinkAtPixel`, `copyHyperlinkUriAtPixel` | host interaction contract | Ghostty `Surface.zig` mouse/selection/link handling | Keep methods; move link type use to `viewport.LinkUnderlineStyle`. |
 | Clipboard/title | `drainPendingClipboardSet`, `copyCurrentTitle` | host UX contract | Ghostty `apprt/surface.zig` clipboard/title messages | Keep methods; consider host effect grouping later. |
-| Text diagnostics | `renderedTextContains` | diagnostics/test convenience | Ghostty debug/test surfaces, not core app contract | Keep for now; classify under future `diagnostics` before Android. |
+| Text diagnostics | `renderedTextContains` | diagnostics/test convenience | Ghostty debug/test surfaces, not core app contract | Keep for now; classify under future `diagnostics` before platform parity work. |
 
 Current ABI domain inventory:
 
@@ -218,7 +224,7 @@ Sprint 1 handoff state:
 
 - Host dependency/export proof is sufficient to start Sprint 2.
 - The full embedding sprint remains open: `terminal.zig` and `ffi.zig` still need facade/catalog maturity work.
-- Android remains blocked on real runtime proof, not on this host dependency/export checkpoint.
+- Platform parity remains blocked on real runtime proof, not on this host dependency/export checkpoint.
 
 ## Sprint 2: `terminal.zig` Facade Maturity
 
@@ -248,8 +254,8 @@ Terminal facade classification:
 | Stable viewport/selection delegates | `scrollState`, `currentScrollbackCount`, `currentScrollbackOffset`, `viewportRows`, `isAlternateScreen`, `setScrollbackOffset`, `followLiveBottom`, `selectionInProgress`, `beginSelection`, `updateSelection`, `finishSelection`, `clearSelection`, `setHoveredLinkAtPixel`, `copyHyperlinkUriAtPixel` | Keep on `HowlTerm`; behavior stays in `render/viewport.zig` and query readouts. |
 | Stable surface/frame-loop delegates | `prepareNextFrame`, `renderReadyFrame`, `awaitRenderWake`, `awaitRenderWakeTimeout`, `needsFrame`, `needsPrepare`, `hasQueuedRenderWork`, `surfaceState`, `renderedSnapshotSeq`, `snapshotEventSeq`, `setRuntimeBackpressure`, `wakeSnapshotWaiters` | Keep on `HowlTerm`; behavior stays in `render/frame.zig`, `runtime/query.zig`, and `wake/wake.zig`. |
 | Config delegates | `setPrimaryFontPath`, `setFontSizePx`, `setFallbackFontPaths`, `clearFallbackFontPaths`, `addFallbackFontPath` | Keep on `HowlTerm`; behavior stays in `config/fonts.zig`; do not add a public `config` group until the contract grows beyond font setup. |
-| Diagnostics delegates | `takePrepareMetrics`, `takeSurfaceMetrics`, `lastRenderMetrics`, `renderMissingGlyphs`, `renderFallbackHits`, `renderFallbackMisses`, `renderShapedClusters`, `renderResolveStage`, `inputBytesApplied`, `renderedTextContains`, `visibleTextContains`, `copyCurrentTitle` | Keep for Linux and ABI proof; classify under future `diagnostics` only after Android/runtime proof shows the same need. |
-| Compatibility/internal render delegates | `renderFrame`, `renderLatestSnapshot`, `prepareLatestSnapshot`, `prepareSnapshotForRequest`, `prepareSnapshotForRequestIfDirty`, `submitPreparedSnapshot`, `renderFrameSized`, `syncSnapshotFromCore`, `syncFrameGeometry`, `snapshotToken`, `lastSubmittedFrame`, `shiftSelectionForHistoryGrowth` | Keep ABI-compatible methods for now, but treat as the main public-surface leak. Next code checkpoint should reduce direct public dependence where consumers are internal, not move this flow to `howl-render-core`. |
+| Diagnostics delegates | `takePrepareMetrics`, `takeSurfaceMetrics`, `lastRenderMetrics`, `renderMissingGlyphs`, `renderFallbackHits`, `renderFallbackMisses`, `renderShapedClusters`, `renderResolveStage`, `inputBytesApplied`, `renderedTextContains`, `visibleTextContains`, `copyCurrentTitle` | Keep for Linux and ABI proof; classify under future `diagnostics` only after runtime proof shows the same need. |
+| Compatibility/internal render delegates | `renderFrame`, `renderLatestSnapshot`, `prepareLatestSnapshot`, `prepareSnapshotForRequest`, `prepareSnapshotForRequestIfDirty`, `submitPreparedSnapshot`, `renderFrameSized`, `syncSnapshotFromCore`, `syncFrameGeometry`, `snapshotToken`, `lastSubmittedFrame`, `shiftSelectionForHistoryGrowth` | Keep ABI-compatible methods for now, but treat as the main public-surface leak. Next code checkpoints should reduce direct public dependence where consumers are internal and move pure renderer-facing storage/model code to `howl-render-core`. |
 
 Render ownership audit:
 
@@ -257,6 +263,7 @@ Render ownership audit:
 | --- | --- | --- | --- |
 | `howl-term/src/render/render.zig` | Coordinates term snapshot sync, geometry derivation, renderer prepare/submit, metrics, lifecycle-facing error mapping, wake completion, and submitted-frame bookkeeping. | Poor as-is because it depends on `HowlTerm`, VT/session-derived snapshot state, wake events, scrollback overlays, and term lifecycle errors. | Keep term-owned; future movement should first extract pure contracts, not move orchestration. |
 | `howl-term/src/render/sync.zig` | Projects VT visible view, selection, cursor, dirty rows, scrollback, alternate-screen state, and link metadata into render snapshots. | Partial only for tiny conversion pieces; most logic depends on VT and term interaction state. | Keep term-owned; do not move to render-core in this sprint. |
+| `howl-term/src/render/snapshot.zig` | Stores renderer-facing cells, cursor, dirty rows, damage, scroll offset, and exposes `SurfaceFrameData`. | Strong fit: no VT/session dependency and all stored types are already render-core surface types. | Move to `howl-render-core` as reusable frame snapshot storage. |
 | `howl-term/src/render/pipeline.zig` | Defines snapshot tokens, retained-frame validation, latest-wins mailbox, and prepare/submit result contracts. | Possible future candidate because it is mostly backend-agnostic, but names and semantics are terminal-surface specific today. | Keep term-owned until a second consumer needs it or render-core exposes an explicitly terminal-frame scheduling contract. |
 | `howl-term/src/render/queue.zig` | Owns host-embeddable terminal frame scheduling, visibility, retained-target policy, prepared slot, and surface metrics. | Possible future candidate only if render-core becomes the owner of reusable surface scheduling. | Keep term-owned because it is currently the `howl-term` host pacing boundary. |
 | `howl-render-core/src/surface.zig` | Defines shared render surface data model: cells, colors, cursor, damage, viewport, frame data. | Correct owner for backend-agnostic frame data contracts. | Keep render-core-owned; term snapshots should continue producing this model. |
@@ -267,7 +274,7 @@ Audit conclusion:
 
 - `terminal.zig` already satisfies most of the facade shape mechanically: public methods are one-line delegates except for the trivial `awaitRenderWake` timeout wrapper.
 - The main maturity gap is public surface breadth: compatibility render methods and internal snapshot methods are visible on `HowlTerm` because FFI, tests, and term-owned modules still use them through the public method table.
-- The suspected render movement mostly does not belong in `howl-render-core` yet. Current render flow is terminal orchestration, not pure renderer conversion.
+- Most render orchestration does not belong in `howl-render-core` yet. Current frame prepare/submit flow is terminal orchestration, but pure renderer-facing snapshot storage belongs in render-core.
 - The first safe implementation checkpoint introduced a term-owned frame domain route for FFI frame/geometry functions, with `ffi.zig` still preserving all `howl_term_*` ABI names and structs.
 - A later checkpoint can reduce internal callers that go through `HowlTerm` public methods, but only after the remaining ABI catalog domains are clear and checked.
 
@@ -319,61 +326,55 @@ Tasks:
 
 - Add or identify a minimal non-SDL Zig embed proof inside `howl-term` tests/benchmarks that creates a term, drives input/geometry, observes wake/frame/surface state, and tears down cleanly.
 - Keep it backend-agnostic and deterministic.
-- Do not fake Android; this proof only validates package-level embed shape.
+- Do not fake platform parity; this proof only validates package-level embed shape.
 
 Acceptance:
 
 - `howl-term` has a repeatable embed-shape proof below SDL.
 - Linux host remains the visible runtime proof.
-- Android remains explicitly open unless real Android runtime code is restored.
+- Platform parity remains explicitly open unless real runtime code is restored.
 
 Sprint 4 checkpoint 1 evidence:
 
 - `howl-term/src/test/root.zig` includes `package root supports minimal non-SDL embedding flow`.
 - The proof constructs `root.HowlTerm` through the public package root, uses `root.runtime.FramePixels`, drives input and focus, syncs geometry, observes wake publication, prepares/renders one frame, observes surface dimensions and rendered sequence, then tears down.
-- This is a package-level embed proof only. SDL/Linux remains the visible runtime proof and Android remains explicitly open.
+- This is a package-level embed proof only. SDL/Linux remains the visible runtime proof and platform parity remains explicitly open.
 
-## Sprint 5: Android Re-Entry Gate
+## Parked Android Gate
 
-Purpose: define what must be true before Android work resumes.
+Purpose: document why Android is not active while ownership boundaries are still being cleaned up.
 
-Tasks:
+Android is parked until ownership boundaries are pristine. The notes below prevent fake parity from creeping in, but they are not the next implementation target.
 
-- Confirm Android can consume the same `howl-term` root groups and runtime handle shape as Linux host.
-- List the Android host-owned pieces separately: app lifecycle, surface presentation, input translation, thread/event-loop wakeups, clipboard, font/resource paths.
-- Keep missing Android runtime proof marked open until implementation exists.
-
-Acceptance:
-
-- No dependency/export boundary work remains before Android restarts.
-- Android TODOs are host-runtime tasks, not `howl-term` public API shape tasks.
-- `host_runtime_surface_skip=missing_android_runtime` remains until real proof closes it.
-
-Sprint 5 re-entry gate:
-
-Current Android state:
+Parked gate:
 
 - `howl-hosts/howl-android-host/src/main/java/howl/term/Terminal.java` is absent.
 - `tools/check_host_runtime_surface.sh` therefore reports `host_runtime_surface_skip=missing_android_runtime` and exits successfully without faking proof.
 - No Android dependency/export boundary is being closed by this sprint. Android parity remains open until real runtime code exists.
 
-Android host-owned work before proof can close:
+## Sprint 5: Render Boundary Pristine Pass
 
-| Host-owned area | Required Android work | Howl boundary |
-| --- | --- | --- |
-| App lifecycle | Restore/create Android activity/service lifecycle that owns terminal lifetime and native library loading. | Host-owned; consume `howl-term` via C ABI/root package shape. |
-| Surface presentation | Own Android surface/texture attachment, resize, present acknowledgment, visibility, and render scheduling. | Host-owned platform UX/runtime; do not push Android surface objects into `howl-term`. |
-| Input translation | Map Android key, text, paste, mouse/touch, focus, and control events to `howl_term_*` input calls or `howl_term.Input` equivalents. | Host-owned translation; VT vocabulary remains owned by lower modules and exposed through `howl-term`. |
-| Thread/event wakeups | Own Android event-loop integration for snapshot wake, prepare, render, and UI-thread presentation. | Host-owned runtime loop; term runtime thread remains `howl-term/src/runtime/thread.zig`. |
-| Clipboard/title effects | Handle clipboard set/drain and current title propagation through Android platform APIs. | Host-owned UX effects; `howl-term` only exposes requests/readouts. |
-| Font/resource paths | Resolve APK/assets/system font paths and pass selected config to term. | Host-owned resource lookup; font config remains term ABI/config input. |
+Purpose: reduce rendering ownership in `howl-term` to terminal orchestration only.
 
-Android can re-enter only after:
+Tasks:
 
-- A real Android host runtime file exists at the checked path or the check is deliberately updated to a real new path.
-- The Android runtime consumes the same public `howl-term` shape proven by Linux and the non-SDL package test: runtime handle, frame geometry, surface state, viewport state, input publication, wake/frame loop, and config calls.
-- `tools/check_host_runtime_surface.sh` compares real Android runtime methods instead of returning the missing-runtime skip.
-- Android proof is run with actual Android code; no stub Java/Kotlin/native placeholders count as parity.
+- Move pure renderer-facing frame storage into `howl-render-core` when it has no VT/session/runtime dependency.
+- Keep VT visible-view projection, selection, scrollback policy, wake events, and frame prepare/submit orchestration in `howl-term`.
+- Enforce that `howl-term/src/render/snapshot.zig` does not return.
+- Use Ghostty as the primary embed-boundary reference and Alacritty as the rendering quality/speed reference.
+
+Acceptance:
+
+- `howl-render-core` owns reusable frame snapshot storage through `Core.FrameSnapshot`.
+- `howl-term` keeps `sync.zig`, `render.zig`, `frame.zig`, `pipeline.zig`, and `queue.zig` as term-owned orchestration unless a later boundary is unambiguous.
+- Parent checks require the render-core snapshot owner and reject `howl-term/src/render/snapshot.zig`.
+
+Sprint 5 checkpoint 1 evidence:
+
+- `howl-render-core/src/frame_snapshot.zig` owns render-frame snapshot storage, dirty metadata, partial-copy scroll reuse, and `SurfaceFrameData` projection.
+- `howl-render-core/src/render_core.zig` exposes `Core.FrameSnapshot` and related dirty/damage contracts.
+- `howl-term` stores `howl_render.Core.FrameSnapshot` directly and no longer has `src/render/snapshot.zig`.
+- `howl-term/src/render/sync.zig` remains term-owned because it projects VT, selection, cursor, scrollback, alternate-screen state, and wake events into the render-core snapshot model.
 
 ## Verification Cadence
 
