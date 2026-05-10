@@ -73,6 +73,16 @@ reject_pattern "howl-render-core/src/howl_render.zig" 'pub const RenderCore = st
 require_runtime_owner "howl-term/src/howl_term.zig" 'pub const HowlTerm = struct'
 require_runtime_owner "howl-hosts/howl-linux-host/src/main.zig" 'pub fn main'
 
+# HowlTerm keeps only host-facing aliases at the public owner surface.
+require_pattern "howl-term/src/howl_term.zig" 'pub const SurfaceHandle = contract\.SurfaceHandle;'
+require_pattern "howl-term/src/howl_term.zig" 'pub const LinkUnderlineStyle = contract\.LinkUnderlineStyle;'
+require_pattern "howl-term/src/howl_term.zig" 'pub const LifecycleState = contract\.LifecycleState;'
+require_pattern "howl-term/src/howl_term.zig" 'pub const FramePixels = contract\.FramePixels;'
+require_pattern "howl-term/src/howl_term.zig" 'pub const SurfaceMetrics = contract\.SurfaceMetrics;'
+require_pattern "howl-term/src/howl_term.zig" 'pub const SurfaceState = contract\.SurfaceState;'
+require_pattern "howl-term/src/howl_term.zig" 'pub const ScrollState = contract\.ScrollState;'
+reject_pattern "howl-term/src/howl_term.zig" 'pub const (RenderPipeline|TerminalSurface|PreparedSlot|SurfaceExecutor|RenderSnapshotResult|ControlSignal|ClipboardRequest|Error|SelectionPoint|Dirty|Damage|DirtySnapshot|SyncMetrics|RenderMetrics|PrepareMetrics|PreparedRenderFrame|PtyLaunchConfig|MouseInput|LinkHoverResult|RenderCellSize|PrepareResult|RenderResult|SnapshotWake) ='
+
 # Layering: lower modules must not import upper modules.
 reject_tree_pattern "howl-vt-core/src" '@import\("howl_(session|render|term)"\)'
 reject_tree_pattern "howl-session/src" '@import\("(vt_core|howl_render|howl_term)"\)'
