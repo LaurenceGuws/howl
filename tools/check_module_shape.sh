@@ -75,6 +75,8 @@ require_file "howl-term/src/c_api/constants.zig"
 require_file "howl-term/src/c_api/input.zig"
 require_file "howl-term/src/c_api/font.zig"
 require_file "howl-term/src/c_api/viewport.zig"
+require_file "howl-term/src/c_api/metrics.zig"
+require_file "howl-term/src/c_api/surface.zig"
 require_file "howl-term/src/runtime/query.zig"
 if test -f "howl-term/src/runtime/state.zig"; then fail "forbidden_file:howl-term/src/runtime/state.zig"; fi
 if test -f "howl-term/src/c_api/state.zig"; then fail "forbidden_file:howl-term/src/c_api/state.zig"; fi
@@ -150,12 +152,16 @@ require_pattern "howl-term/src/ffi.zig" '@import\("c_api/constants\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/input\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/font\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/viewport\.zig"\)'
+require_pattern "howl-term/src/ffi.zig" '@import\("c_api/metrics\.zig"\)'
+require_pattern "howl-term/src/ffi.zig" '@import\("c_api/surface\.zig"\)'
 reject_pattern "howl-term/src/ffi.zig" '^pub fn (modShift|keyEnter|mouseButtonNone|mousePress)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.publish(InputBytes|InputKey|Paste|MouseEvent|ControlSignal)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.setPrimaryFontPath'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(clearFallbackFontPaths|addFallbackFontPath)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(renderedTextContains|visibleTextContains|beginSelection|updateSelection|finishSelection|clearSelection|setHoveredLinkAtPixel|copyHyperlinkUriAtPixel|drainPendingClipboardSet)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(setScrollbackOffset|followLiveBottom)'
+reject_pattern "howl-term/src/ffi.zig" 'term\.(renderMissingGlyphs|renderFallbackHits|renderFallbackMisses|renderShapedClusters|renderResolveStage|lastRenderMetrics)'
+reject_pattern "howl-term/src/ffi.zig" 'term\.(surfaceHandle|hasOutputProof|inputBytesApplied|snapshotEventSeq|renderedSnapshotSeq|copyCurrentTitle)'
 reject_pattern "howl-term/src/terminal.zig" 'canReuseFrameLayoutLocked'
 require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeout'
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'
