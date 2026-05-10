@@ -201,6 +201,11 @@ Checkpoint 1 target:
 - Do not change behavior or method calls in this checkpoint.
 - Add a parent shape check that prevents those nested type aliases from returning.
 
+Checkpoint 2 target:
+
+- Keep Linux host input mapping on the package root as `howl_term.Input`, matching the visible embed package name.
+- Do not duplicate VT input vocabulary or import lower VT modules.
+
 ## Sprint 2: `terminal.zig` Facade Maturity
 
 Purpose: reduce `terminal.zig` to a stable method table over mature owners.
