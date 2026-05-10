@@ -305,6 +305,12 @@ Sprint 3 checkpoint 2 evidence:
 - `howl-term/src/c_api/viewport.zig` now owns `scroll_state` ABI conversion, closing the last known viewport inline conversion in `ffi.zig`.
 - Parent shape checks now require `c_api/lifecycle.zig` and reject direct lifecycle and scroll-state behavior calls from `ffi.zig`.
 
+Sprint 3 checkpoint 3 evidence:
+
+- `howl-term/src/c_api/viewport.zig` owns link-hover ABI result conversion.
+- `howl-term/src/ffi.zig` no longer carries local boolean conversion behavior; it delegates link-hover output shaping to the viewport ABI owner.
+- Parent shape checks reject local `boolInt` conversion helpers in `ffi.zig`.
+
 ## Sprint 4: Minimal Embed Proof Surface
 
 Purpose: prove the public embedding API without assuming SDL-specific host behavior.

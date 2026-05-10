@@ -180,6 +180,7 @@ reject_pattern "howl-term/src/ffi.zig" 'term\.(surfaceHandle|hasOutputProof|inpu
 reject_pattern "howl-term/src/ffi.zig" 'term\.(renderFrame|renderLatestSnapshot|renderFrameSized|awaitSnapshotEvent|syncFrameGeometry|wakeSnapshotWaiters)'
 reject_pattern "howl-term/src/ffi.zig" 'runtime\.(hasQueuedRenderWork|needsFrame|needsPrepare|prepareNextFrame|renderReadyFrame|awaitRenderWakeTimeout|syncFrameGeometry|setRuntimeBackpressure)'
 reject_pattern "howl-term/src/ffi.zig" 'HowlTerm\.initPty|std\.heap\.c_allocator|term\.(start|deinit|setFontSizePx|isAlive)'
+reject_pattern "howl-term/src/ffi.zig" 'fn boolInt|boolInt\('
 reject_pattern "howl-term/src/terminal.zig" 'canReuseFrameLayoutLocked'
 require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeout'
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'
