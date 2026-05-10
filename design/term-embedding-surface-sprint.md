@@ -404,6 +404,24 @@ Sprint 5 checkpoint 5 evidence:
 - `howl-term/src/render/render.zig` no longer translates renderer submit reports/counters into metric or retained-frame structs; it only stores render-core outputs and finishes wake bookkeeping.
 - Parent checks reject direct submit-report/counter conversion in `howl-term/src/render/render.zig`.
 
+## Sprint 6: Term Runtime Implementation Evacuation
+
+Purpose: make `howl-term` trend toward compile-time wiring and orchestration only, not runtime implementation ownership.
+
+Direction:
+
+- Prefer expanding lower module ownership over creating more `howl-term` runtime owners.
+- `howl-session` owns PTY/session I/O mechanics: transport lifecycle, outbound queueing, transport waiting, bounded transport read pumping, resize propagation, and control signals.
+- `howl-render-core` owns render contracts/mechanics, as proven in Sprint 5.
+- `howl-vt-core` owns VT parsing/input encoding/grid semantics.
+- `howl-term` may still sequence the modules together while state is being evacuated, but runtime mechanics should move down when ownership is clear.
+
+Checkpoint 1 evidence:
+
+- `howl-session/src/session.zig` now owns bounded transport pumping through `TransportPumpLimits`, `TransportPumpResult`, and `Session.pumpTransport`.
+- `howl-term/src/runtime/thread.zig` no longer owns the PTY read-drain loop; it calls `term.session.pumpTransport` and keeps only VT application, history/selection adjustment, and wake sequencing.
+- Parent checks require session pump ownership and reject direct `term.session.ingestTransport` use from `howl-term`'s runtime thread.
+
 ## Verification Cadence
 
 For every implementation checkpoint:
