@@ -398,6 +398,12 @@ Sprint 5 checkpoint 4 evidence:
 - `howl-term/src/runtime/contract.zig` aliases `PreparedRenderFrame` from `howl_render.Renderer.FrameRecord` and no longer imports `render/render.zig` to shape a render contract.
 - `howl-term/src/render/render.zig` keeps orchestration functions only and no longer defines a public prepared-frame wrapper struct.
 
+Sprint 5 checkpoint 5 evidence:
+
+- `howl-render-core/src/renderer.zig` owns submit-report conversion through `FrameRecord.renderMetrics` and `FrameRecord.submittedFrame`.
+- `howl-term/src/render/render.zig` no longer translates renderer submit reports/counters into metric or retained-frame structs; it only stores render-core outputs and finishes wake bookkeeping.
+- Parent checks reject direct submit-report/counter conversion in `howl-term/src/render/render.zig`.
+
 ## Verification Cadence
 
 For every implementation checkpoint:
