@@ -70,6 +70,8 @@ require_file "howl-vt-core/src/terminal.zig"
 require_file "howl-session/src/session_namespace.zig"
 require_file "howl-vt-core/src/vt_namespace.zig"
 require_file "howl-render-core/src/render_namespace.zig"
+require_file "howl-render-core/src/frame_pipeline.zig"
+require_file "howl-render-core/src/frame_queue.zig"
 require_file "howl-render-core/src/frame_snapshot.zig"
 require_file "howl-term/src/term_namespace.zig"
 require_file "howl-term/src/c_api/constants.zig"
@@ -86,6 +88,8 @@ require_file "howl-hosts/howl-linux-host/src/terminal/thread.zig"
 if test -f "howl-term/src/wake/loop.zig"; then fail "forbidden_file:howl-term/src/wake/loop.zig"; fi
 if test -f "howl-term/src/runtime/state.zig"; then fail "forbidden_file:howl-term/src/runtime/state.zig"; fi
 if test -f "howl-term/src/c_api/state.zig"; then fail "forbidden_file:howl-term/src/c_api/state.zig"; fi
+if test -f "howl-term/src/render/pipeline.zig"; then fail "forbidden_file:howl-term/src/render/pipeline.zig"; fi
+if test -f "howl-term/src/render/queue.zig"; then fail "forbidden_file:howl-term/src/render/queue.zig"; fi
 if test -f "howl-term/src/render/snapshot.zig"; then fail "forbidden_file:howl-term/src/render/snapshot.zig"; fi
 
 # Package roots stay small and delegate implementation to owned files.
@@ -104,7 +108,11 @@ require_pattern "howl-render-core/src/render_namespace.zig" 'pub const c_api = i
 require_pattern "howl-term/src/term_namespace.zig" 'pub const c_api = if \(options\.c_abi\) @import\("ffi\.zig"\) else void;'
 require_pattern "howl-session/src/session_namespace.zig" '@import\("pty\.zig"\)'
 require_pattern "howl-render-core/src/render_namespace.zig" '@import\("renderer\.zig"\)'
+require_pattern "howl-render-core/src/render_core.zig" '@import\("frame_pipeline\.zig"\)'
+require_pattern "howl-render-core/src/render_core.zig" '@import\("frame_queue\.zig"\)'
 require_pattern "howl-render-core/src/render_core.zig" '@import\("frame_snapshot\.zig"\)'
+require_pattern "howl-render-core/src/render_core.zig" 'pub const FramePipeline = frame_pipeline;'
+require_pattern "howl-render-core/src/render_core.zig" 'pub const FrameQueue = frame_queue;'
 require_pattern "howl-render-core/src/render_core.zig" 'pub const FrameSnapshot = frame_snapshot\.Snapshot;'
 require_pattern "howl-term/src/term_namespace.zig" '@import\("terminal\.zig"\)'
 reject_pattern "howl-session/src/session_namespace.zig" 'pub const c_api = @import\("ffi\.zig"\)'
@@ -151,6 +159,7 @@ reject_tree_pattern "howl-render-core/src" '@import\("(vt_core|howl_session|howl
 # Hosts depend on howl-term for terminal runtime, not lower module packages.
 reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("(vt_core|howl_session|howl_render)"\)'
 reject_tree_pattern "howl-term/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix|android|test)|render_core|renderer)\.zig"\)'
+reject_tree_pattern "howl-term/src" '@import\("[^"]*render/(pipeline|queue)\.zig"\)'
 reject_tree_pattern "howl-term/src" '@import\("[^"]*render/snapshot\.zig"\)'
 reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix|android|test)|render_core|renderer|backend/(gl|gles))'
 reject_pattern "howl-hosts/howl-linux-host/build.zig" 'b\.dependency\("(vt_core|howl_session|howl_render|howl-vt-core|howl-session|howl-render-core)"'
@@ -191,6 +200,8 @@ reject_pattern "howl-term/src/ffi.zig" 'fn boolInt|boolInt\('
 reject_pattern "howl-term/src/terminal.zig" 'canReuseFrameLayoutLocked'
 require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeout'
 require_pattern "howl-term/src/terminal.zig" 'howl_render\.Core\.FrameSnapshot'
+require_pattern "howl-term/src/terminal.zig" 'howl_render\.Core\.FramePipeline'
+require_pattern "howl-term/src/runtime/contract.zig" 'howl_render\.Core\.FrameQueue\.SurfaceExecutor'
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'
 require_pattern "howl-term/src/terminal.zig" 'wake\.stopSnapshotWaiters'
 require_pattern "howl-term/src/terminal.zig" '@import\("runtime/query\.zig"\)'

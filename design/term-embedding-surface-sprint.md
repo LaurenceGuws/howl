@@ -264,8 +264,8 @@ Render ownership audit:
 | `howl-term/src/render/render.zig` | Coordinates term snapshot sync, geometry derivation, renderer prepare/submit, metrics, lifecycle-facing error mapping, wake completion, and submitted-frame bookkeeping. | Poor as-is because it depends on `HowlTerm`, VT/session-derived snapshot state, wake events, scrollback overlays, and term lifecycle errors. | Keep term-owned; future movement should first extract pure contracts, not move orchestration. |
 | `howl-term/src/render/sync.zig` | Projects VT visible view, selection, cursor, dirty rows, scrollback, alternate-screen state, and link metadata into render snapshots. | Partial only for tiny conversion pieces; most logic depends on VT and term interaction state. | Keep term-owned; do not move to render-core in this sprint. |
 | `howl-term/src/render/snapshot.zig` | Stores renderer-facing cells, cursor, dirty rows, damage, scroll offset, and exposes `SurfaceFrameData`. | Strong fit: no VT/session dependency and all stored types are already render-core surface types. | Move to `howl-render-core` as reusable frame snapshot storage. |
-| `howl-term/src/render/pipeline.zig` | Defines snapshot tokens, retained-frame validation, latest-wins mailbox, and prepare/submit result contracts. | Possible future candidate because it is mostly backend-agnostic, but names and semantics are terminal-surface specific today. | Keep term-owned until a second consumer needs it or render-core exposes an explicitly terminal-frame scheduling contract. |
-| `howl-term/src/render/queue.zig` | Owns host-embeddable terminal frame scheduling, visibility, retained-target policy, prepared slot, and surface metrics. | Possible future candidate only if render-core becomes the owner of reusable surface scheduling. | Keep term-owned because it is currently the `howl-term` host pacing boundary. |
+| `howl-term/src/render/pipeline.zig` | Defines snapshot tokens, retained-frame validation, latest-wins mailbox, and prepare/submit result contracts. | Strong fit: no VT/session/runtime dependency; this is reusable retained-frame scheduling. | Move to `howl-render-core` as frame pipeline contracts. |
+| `howl-term/src/render/queue.zig` | Owns host-embeddable terminal frame scheduling, visibility, retained-target policy, prepared slot, and surface metrics. | Strong fit: no VT/session/runtime dependency; this is reusable render queue policy. | Move to `howl-render-core` as frame queue policy. |
 | `howl-render-core/src/surface.zig` | Defines shared render surface data model: cells, colors, cursor, damage, viewport, frame data. | Correct owner for backend-agnostic frame data contracts. | Keep render-core-owned; term snapshots should continue producing this model. |
 | `howl-render-core/src/frame_input.zig` | Converts terminal-like frame data into text scene input and applies renderer themes/damage mapping. | Correct owner for renderer/model conversion. | Keep render-core-owned; do not pull VT/session logic into it. |
 | `howl-render-core/src/render_core.zig` | Public render-core orchestration catalog for geometry, surface types, text conversion, and renderer contracts. | Correct owner for reusable renderer entrypoints. | Keep as render-core boundary; term should call it through selected public APIs only. |
@@ -359,15 +359,17 @@ Purpose: reduce rendering ownership in `howl-term` to terminal orchestration onl
 Tasks:
 
 - Move pure renderer-facing frame storage into `howl-render-core` when it has no VT/session/runtime dependency.
+- Move pure retained-frame pipeline and queue mechanics into `howl-render-core` when they have no VT/session/runtime dependency.
 - Keep VT visible-view projection, selection, scrollback policy, wake events, and frame prepare/submit orchestration in `howl-term`.
-- Enforce that `howl-term/src/render/snapshot.zig` does not return.
+- Enforce that pure render-core owners do not return under `howl-term/src/render`.
 - Use Ghostty as the primary embed-boundary reference and Alacritty as the rendering quality/speed reference.
 
 Acceptance:
 
 - `howl-render-core` owns reusable frame snapshot storage through `Core.FrameSnapshot`.
-- `howl-term` keeps `sync.zig`, `render.zig`, `frame.zig`, `pipeline.zig`, and `queue.zig` as term-owned orchestration unless a later boundary is unambiguous.
-- Parent checks require the render-core snapshot owner and reject `howl-term/src/render/snapshot.zig`.
+- `howl-render-core` owns reusable frame pipeline and queue mechanics through `Core.FramePipeline` and `Core.FrameQueue`.
+- `howl-term` keeps `sync.zig`, `render.zig`, and `frame.zig` as term-owned orchestration unless a later boundary is unambiguous.
+- Parent checks require the render-core snapshot/pipeline/queue owners and reject the old term-owned pure render files.
 
 Sprint 5 checkpoint 1 evidence:
 
@@ -375,6 +377,13 @@ Sprint 5 checkpoint 1 evidence:
 - `howl-render-core/src/render_core.zig` exposes `Core.FrameSnapshot` and related dirty/damage contracts.
 - `howl-term` stores `howl_render.Core.FrameSnapshot` directly and no longer has `src/render/snapshot.zig`.
 - `howl-term/src/render/sync.zig` remains term-owned because it projects VT, selection, cursor, scrollback, alternate-screen state, and wake events into the render-core snapshot model.
+
+Sprint 5 checkpoint 2 evidence:
+
+- `howl-render-core/src/frame_pipeline.zig` owns retained-frame snapshot tokens, damage kind, prepare request metadata, submit validation, and latest-wins mailbox behavior.
+- `howl-render-core/src/frame_queue.zig` owns retained-frame queue policy, visibility drops, target invalidation, prepared-slot ownership, and scheduling metrics.
+- `howl-render-core/src/render_core.zig` exposes `Core.FramePipeline` and `Core.FrameQueue`.
+- `howl-term` consumes these render-core owners through `howl_render.Core` and no longer has `src/render/pipeline.zig` or `src/render/queue.zig`.
 
 ## Verification Cadence
 
