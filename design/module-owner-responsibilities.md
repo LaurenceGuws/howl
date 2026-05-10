@@ -41,3 +41,24 @@ Howl follows the same outcome with flatter wrapper names in `src`: public roots 
 ## Movement Rule
 
 When moving behavior, move it toward the smallest owner that owns the state or variant being touched. Do not move behavior upward into public roots or namespace wrappers for convenience.
+
+## Term Embedding Surface
+
+`howl-term` is the end-user embedding package, so its broad public owner must become a stable method table over mature internal owners instead of accumulating behavior itself.
+
+Current internal target shape:
+
+- `terminal.zig`: owns the `HowlTerm` state container, public method names, and compatibility aliases.
+- `runtime/lifecycle.zig`: construction, PTY startup, worker thread lifecycle, deinit.
+- `runtime/state.zig`: metrics, counters, title/status/surface/scroll state queries.
+- `input/input.zig`: bytes, keys, paste, mouse, focus, control signals, and clipboard effects.
+- `render/frame.zig`: host frame queue, prepare/render-ready flow, render wake publication.
+- `render/render.zig`: direct snapshot prepare/submit/render compatibility paths.
+- `render/geometry.zig`: frame geometry synchronization.
+- `render/viewport.zig`: scrollback, selection, hyperlinks, and visible/rendered text queries.
+- `wake/wake.zig`: snapshot condition waits, signaling, and waiter shutdown.
+- `config/fonts.zig`: font size and font path mutation.
+- `ffi.zig`: C ABI catalog for `howl_term_*` functions.
+- `c_api/*.zig`: domain implementations used by the C ABI catalog.
+
+The ABI rule is strict: moving implementation below `ffi.zig` must not change exported symbol names, numeric return codes, extern struct field order, or `FfiPrepareMetrics.term_us`.
