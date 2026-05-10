@@ -86,10 +86,17 @@ require_pattern "howl-session/src/session_namespace.zig" 'pub const c_api = if \
 require_pattern "howl-vt-core/src/vt_namespace.zig" 'pub const c_api = if \(options\.c_abi\) @import\("ffi\.zig"\) else void;'
 require_pattern "howl-render-core/src/render_namespace.zig" 'pub const c_api = if \(options\.c_abi\) @import\("ffi\.zig"\) else void;'
 require_pattern "howl-term/src/term_namespace.zig" 'pub const c_api = if \(options\.c_abi\) @import\("ffi\.zig"\) else void;'
+require_pattern "howl-session/src/session_namespace.zig" '@import\("pty\.zig"\)'
+require_pattern "howl-render-core/src/render_namespace.zig" '@import\("renderer\.zig"\)'
+require_pattern "howl-term/src/term_namespace.zig" '@import\("terminal\.zig"\)'
 reject_pattern "howl-session/src/session_namespace.zig" 'pub const c_api = @import\("ffi\.zig"\)'
 reject_pattern "howl-vt-core/src/vt_namespace.zig" 'pub const c_api = @import\("ffi\.zig"\)'
 reject_pattern "howl-render-core/src/render_namespace.zig" 'pub const c_api = @import\("ffi\.zig"\)'
 reject_pattern "howl-term/src/term_namespace.zig" 'pub const c_api = @import\("ffi\.zig"\)'
+reject_pattern "howl-session/src/session_namespace.zig" '^pub fn '
+reject_pattern "howl-vt-core/src/vt_namespace.zig" '^pub fn '
+reject_pattern "howl-render-core/src/render_namespace.zig" '^pub fn '
+reject_pattern "howl-term/src/term_namespace.zig" '^pub fn '
 reject_pattern "howl-vt-core/src/howl_vt.zig" 'pub const VtCore = struct'
 reject_pattern "howl-vt-core/src/howl_vt.zig" '@import\("(input|grid|parser|snapshot|selection|terminal|ffi)\.zig"\)'
 reject_pattern "howl-session/src/howl_session.zig" 'pub const Session = struct'
@@ -125,6 +132,10 @@ reject_tree_pattern "howl-render-core/src" '@import\("(vt_core|howl_session|howl
 
 # Hosts depend on howl-term for terminal runtime, not lower module packages.
 reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("(vt_core|howl_session|howl_render)"\)'
+reject_tree_pattern "howl-term/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix|android|test)|render_core|renderer)\.zig"\)'
+reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix|android|test)|render_core|renderer|backend/(gl|gles))'
+reject_pattern "howl-hosts/howl-linux-host/build.zig" 'b\.dependency\("(vt_core|howl_session|howl_render|howl-vt-core|howl-session|howl-render-core)"'
+require_pattern "howl-hosts/howl-linux-host/build.zig" 'check_host_runtime_surface'
 
 # FFI ABI fields stay stable unless an ABI-changing checkpoint says otherwise.
 require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
