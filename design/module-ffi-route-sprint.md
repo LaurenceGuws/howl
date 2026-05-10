@@ -35,9 +35,9 @@ Exact symbol names are module-specific, but every exported C symbol must have an
 
 | Module | Current FFI state | Gap |
 | --- | --- | --- |
-| `howl-term` | Has `src/ffi.zig` and `pub const Ffi` from root. ABI functions are currently `pub export fn` inside `ffi.zig`. | Convert to first-class root-gated `@export` route without changing C symbol names or ABI fields. |
-| `howl-vt-core` | No public FFI route. | Add real VT FFI namespace and root gate for useful backend-agnostic terminal/input primitives only. |
-| `howl-session` | No public FFI route. | Add real session/PTY FFI route only for session-owned contracts that make sense outside Zig. |
+| `howl-term` | Has `src/ffi.zig`, root `pub const Ffi`, and root-gated `howl_term_*` exports. | Closed for route shape; future ABI changes require explicit checkpoint. |
+| `howl-vt-core` | Has `src/ffi.zig`, root `pub const Ffi`, and root-gated `howl_vt_*` input constants exports. | Closed for input/constants route shape; no terminal runtime stubs. |
+| `howl-session` | Has `src/ffi.zig`, `src/howl_session.zig`, root `pub const Ffi`, and root-gated `howl_session_*` status/control-signal exports. | Closed for constants/status route shape; PTY runtime behavior is not stubbed into ABI. |
 | `howl-render-core` | No public FFI route; existing `c_api` names are backend C dependency imports, not public ABI. | Add render FFI route for render-core owned contract helpers where useful; do not expose backend internals. |
 | hosts | Host roots are executable/runtime owners, not module FFI roots. | Hosts should consume module FFI, not define lower-module ABI. |
 
@@ -53,9 +53,9 @@ Exact symbol names are module-specific, but every exported C symbol must have an
 
 ## Active Checkpoint
 
-Sprint 0 is active.
+Sprint 1 is implemented. Session root hygiene and constants/status FFI route are implemented by explicit follow-up request.
 
-Do not implement new ABI functions until the current ABI inventory and first implementation order are committed.
+Sprint 0 inventory, first implementation order, and open-marker checks are complete.
 
 ## Sprint 0: ABI Inventory And Export Plan
 
@@ -74,12 +74,9 @@ Acceptance:
 - Parent checks print open markers for missing first-class FFI routes.
 - No fake `ffi.zig` files are added.
 
-Current open markers from `tools/check_module_shape.sh`:
+Remaining open markers from `tools/check_module_shape.sh`:
 
-- `vt_core_ffi_route_missing`: `howl-vt-core` has no first-class FFI route yet.
-- `session_ffi_route_missing`: `howl-session` has no first-class FFI route yet.
 - `render_ffi_route_missing`: `howl-render-core` has no first-class FFI route yet.
-- `term_ffi_root_export_route_missing`: `howl-term` has an FFI module, but root does not own Ghostty-style `@export` wiring yet.
 
 First implementation order:
 
@@ -134,7 +131,7 @@ Candidate ABI areas:
 
 Acceptance:
 
-- `howl-session/src/root.zig` has `pub const Ffi` and a root `comptime` export block.
+- `howl-session/src/howl_session.zig` has `pub const Ffi` and a root `comptime` export block.
 - Exported symbols use `howl_session_*` prefix.
 - PTY behavior is not stubbed.
 

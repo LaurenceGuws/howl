@@ -70,13 +70,13 @@ require_file "howl-vt-core/src/terminal.zig"
 
 # Package roots stay small and delegate implementation to owned files.
 require_catalog_root "howl-vt-core/src/vt_core.zig" 80
-require_package_root "howl-session/src/root.zig" 120
+require_package_root "howl-session/src/howl_session.zig" 120
 require_catalog_root "howl-render-core/src/howl_render.zig" 120
 require_catalog_root "howl-hosts/howl-linux-host/src/test_host.zig" 80
 
 require_pattern "howl-vt-core/src/vt_core.zig" 'pub const VtCore = terminal\.VtCore;'
 reject_pattern "howl-vt-core/src/vt_core.zig" 'pub const VtCore = struct'
-reject_pattern "howl-session/src/root.zig" 'pub const Session = struct'
+reject_pattern "howl-session/src/howl_session.zig" 'pub const Session = struct'
 reject_pattern "howl-render-core/src/howl_render.zig" 'pub const RenderCore = struct'
 
 # Explicit exception: this is an executable owner, not a package index.
@@ -93,9 +93,9 @@ else
 fi
 
 # Public-surface tests should reference root declarations directly.
-require_pattern "howl-vt-core/src/vt_core.zig" 'refAllDecls\(@This\(\)\)'
+require_pattern "howl-vt-core/src/vt_core.zig" 'refAllDecls\((@This\(\)|lib)\)'
 if ! grep -Eq 'refAllDecls' "howl-render-core/src/howl_render.zig"; then mark_open "render_root_ref_all_decls_missing"; fi
-if ! grep -Eq 'refAllDecls' "howl-session/src/root.zig"; then mark_open "session_root_ref_all_decls_missing"; fi
+if ! grep -Eq 'refAllDecls' "howl-session/src/howl_session.zig"; then mark_open "session_root_ref_all_decls_missing"; fi
 if ! grep -Eq 'refAllDecls' "howl-term/src/howl_term.zig"; then mark_open "term_root_ref_all_decls_missing"; fi
 
 # Layering: lower modules must not import upper modules.
@@ -111,9 +111,9 @@ require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
 
 # First-class module FFI routes are the next active route. Missing real routes stay open.
 if ! grep -Eq 'pub const Ffi =' "howl-vt-core/src/vt_core.zig"; then mark_open "vt_core_ffi_route_missing"; fi
-if ! grep -Eq 'pub const Ffi =' "howl-session/src/root.zig"; then mark_open "session_ffi_route_missing"; fi
+if ! grep -Eq 'pub const Ffi =' "howl-session/src/howl_session.zig"; then mark_open "session_ffi_route_missing"; fi
 if ! grep -Eq 'pub const Ffi =' "howl-render-core/src/howl_render.zig"; then mark_open "render_ffi_route_missing"; fi
-require_pattern "howl-term/src/howl_term.zig" 'pub const Ffi = @import\("ffi\.zig"\);'
+require_pattern "howl-term/src/howl_term.zig" 'pub const Ffi = (ffi|@import\("ffi\.zig"\));'
 if ! grep -Eq '@export' "howl-term/src/howl_term.zig"; then mark_open "term_ffi_root_export_route_missing"; fi
 
 # Missing Android runtime proof remains explicit, not hidden by a fake pass.
