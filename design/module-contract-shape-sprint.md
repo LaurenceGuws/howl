@@ -69,7 +69,7 @@ The exact names can change during implementation, but the shape cannot: root fil
 - Do not use compatibility shims unless they protect real external consumers or persisted ABI.
 - Do not duplicate VT input vocabulary in `howl-term`.
 - Do not expose backend/session/VT internals through hosts.
-- Verify each checkpoint with targeted repo tests and parent `zig build test --summary all`.
+- Verify each checkpoint with targeted repo tests and parent `zig build test`; use verbose summaries only when diagnosing failures.
 - Keep Android runtime proof explicitly open until real Android runtime code exists.
 
 ## Active Checkpoint
@@ -339,5 +339,5 @@ Acceptance:
 - Public exports are intentional and grouped.
 - Root public-surface tests exist for each package.
 - Parent shape checks enforce the catalog shape.
-- Parent `zig build test --summary all` passes.
+- Parent `zig build test` passes.
 - `./status.sh` is empty after commits and pushes.

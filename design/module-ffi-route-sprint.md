@@ -51,7 +51,7 @@ Exact symbol names are module-specific, but every exported C symbol must have an
 - ABI structs must be `extern` and intentionally documented by name.
 - Do not change existing `howl-term` ABI names or fields unless an ABI-changing checkpoint explicitly says so.
 - Preserve `FfiPrepareMetrics.term_us`.
-- Verify each module with targeted tests and parent `zig build test --summary all`.
+- Verify each module with targeted tests and parent `zig build test`; use verbose summaries only when diagnosing failures.
 
 ## Active Checkpoint
 
@@ -166,7 +166,7 @@ Tasks:
 Acceptance:
 
 - `zig build` emits no FFI route open markers.
-- `zig build test --summary all` passes.
+- `zig build test` passes.
 - `./status.sh` is empty after commits and pushes.
 
 ## Done Means Done
