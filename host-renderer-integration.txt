@@ -1,59 +1,64 @@
 Howl host-renderer integration contract
 
-1. Ownership split
+1. Product shape
 
-- `howl-term` owns redraw truth.
-- renderer owns draw execution from core truth.
-- hosts own scheduling/wake/present only.
-- hosts must not compute dirty state heuristics.
+- the product is an embeddable terminal widget, not a window-owning terminal app.
+- hosts own layout, focus, input routing, composition, and present timing.
+- `howl-term` owns terminal runtime, widget invalidation, and the retained render surface.
+- renderer is a projector that maintains one cached terminal image and updates it only when stale.
 
-2. Core dirty model (`howl-term`)
+2. Singular path for current codebase
 
-- dirty state: `none | partial | full`.
-- damage bounds: row/col min-max.
-- row-level dirty tracking: `dirty_rows`, `dirty_cols_start`, `dirty_cols_end`.
-- public read API: `dirtySnapshot()`.
-- public clear API: `acknowledgePresented()`.
+- current implementation chooses one path only: renderer-owned render surface.
+- host-owned target textures are out of scope for the current codebase.
+- future host-owned target support may be added later as an alternate integration mode, not a co-equal path today.
+- naming should stay neutral enough that later surface import is possible without a rewrite.
 
-3. Dirty lifecycle rules
+3. Ownership split
 
-- terminal-visible mutation must set dirty in core.
-- resize/grid-shape change marks `full`.
-- incremental cell changes mark `partial` and update row spans + damage bounds.
-- dirty is cleared only by `acknowledgePresented()` after a successful present.
-- failed draw/present must not clear dirty.
+- `vt-core` owns canonical terminal-visible state.
+- `render-core` should consume terminal-visible state as directly as practical.
+- `howl-term` owns redraw truth, render scheduling, and surface lifecycle.
+- hosts must not compute dirty heuristics and must not own terminal pixel truth.
 
-4. Render call contract
+4. Surface contract
 
-- hosts call `renderFrameSized(render_w, render_h, grid_w, grid_h, texture)`.
-- hosts read dirty state from `dirtySnapshot()`, not from render return codes.
-- render API validates inputs and renders; dirty ownership remains in core.
+- each terminal widget owns one retained render surface.
+- the surface is exported to hosts as a native handle suitable for composition.
+- hosts consume the exported handle; they do not write terminal pixels directly.
+- surface lifetime, resize, and recreation are owned by the widget/runtime.
+- if a surface handle changes, the widget/runtime must expose the new handle explicitly.
 
-5. Host scheduling model (both Linux and Android)
+5. Rendering model
 
-- event-driven wake loop, not unconditional frame loop.
-- no host-owned tight polling loop; window layer owns OS event pump/wait.
-- wake sources: PTY output, input affecting terminal view, resize, cursor blink tick, explicit redraw requests.
-- on wake:
-  - drain available window/input events in one batch,
-  - coalesce pending signals,
-  - fetch cached sizes (computed on resize/scale events, never recomputed every draw),
-  - read `dirtySnapshot()`,
-  - if dirty (or forced redraw condition), render once and present once,
-  - on successful present call `acknowledgePresented()`.
+- rendering is event-driven, not tied to an unconditional frame loop.
+- if terminal-visible state is unchanged, renderer work should be skipped entirely.
+- the last completed surface contents remain valid while idle and may be presented repeatedly by the host.
+- multiple invalidations may coalesce into one redraw of the latest state.
 
-6. Platform specifics
+6. Invalidation model
 
-- Linux: event wait + async wake signal/fd; drain events then one render pass.
-- Android: `GLSurfaceView.RENDERMODE_WHEN_DIRTY`; call `requestRender()` only from wake sources.
+- terminal-visible mutation marks widget state stale.
+- resize marks the visible surface stale.
+- cursor blink or other animated terminal-visible states are timer-driven invalidations, not fixed-FPS rendering.
+- dirty state is acknowledged only after a successful draw/present boundary.
+- failed render/present must not clear dirty state.
 
-7. Coalescing and precedence
+7. Host scheduling model
 
-- multiple wake events before draw collapse into one pass.
-- `full` overrides `partial`.
-- keep latest size state; drop stale intermediate resize states.
+- hosts wait on event-driven wake sources, not on a tight render loop.
+- wake sources include PTY output, input affecting the visible state, resize, and widget-owned animation ticks.
+- on wake, hosts drain their platform event queue, then ask the widget whether redraw work exists.
+- if redraw work exists, hosts request one render update and present the latest exported surface.
+- if only host chrome changed, hosts may present without forcing a terminal redraw.
 
-8. Non-negotiable invariant
+8. Current implementation direction
 
-- redraw truth is host-agnostic because it is core-owned.
-- hosts only decide when work runs, never what changed.
+- remove per-frame host texture injection from the main rendering path.
+- let each terminal instance own and export its render texture.
+- keep the codebase singular around renderer-owned surfaces until a real integration forces host-provided targets.
+
+9. Non-negotiable invariant
+
+- redraw truth is widget-owned and host-agnostic.
+- hosts decide when work runs and how surfaces are composed, never what terminal pixels changed.

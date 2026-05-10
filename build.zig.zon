@@ -1,0 +1,17 @@
+.{
+    .name = .howl_workspace,
+    .version = "0.0.0",
+    .fingerprint = 0x6e224245a690f40c,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "tools",
+        "howl-vt-core",
+        "howl-session",
+        "howl-render-core",
+        "howl-term",
+        "howl-hosts",
+    },
+}

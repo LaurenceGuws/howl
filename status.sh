@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-mapfile -t repos < <(find "$ROOT" -type d -name .git -prune | sed 's|/\.git$||' | sort)
+mapfile -t repos < <(find "$ROOT" -path "$ROOT/utils" -prune -o -type d -name .git -prune -print | sed 's|/\.git$||' | sort)
 
 for repo in "${repos[@]}"; do
   rel="${repo#$ROOT/}"; [ "$repo" = "$ROOT" ] && rel="."
