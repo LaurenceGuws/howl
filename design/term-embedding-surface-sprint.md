@@ -392,6 +392,12 @@ Sprint 5 checkpoint 3 evidence:
 - `howl-term/src/runtime/contract.zig` aliases render metrics and frame pixel geometry from `howl_render.Core` instead of defining those render contracts locally.
 - `howl-term/src/render/render.zig` no longer re-exports `Core` or `Renderer`; term files consume render-core directly where orchestration needs it.
 
+Sprint 5 checkpoint 4 evidence:
+
+- `howl-render-core/src/renderer.zig` owns `Renderer.FrameRecord`, the renderer prepared-frame wrapper plus pipeline metadata.
+- `howl-term/src/runtime/contract.zig` aliases `PreparedRenderFrame` from `howl_render.Renderer.FrameRecord` and no longer imports `render/render.zig` to shape a render contract.
+- `howl-term/src/render/render.zig` keeps orchestration functions only and no longer defines a public prepared-frame wrapper struct.
+
 ## Verification Cadence
 
 For every implementation checkpoint:
