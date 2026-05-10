@@ -58,7 +58,7 @@ The exact names can change during implementation, but the shape cannot: root fil
 
 - `howl-vt-core/src/vt_core.zig` is close to the target catalog shape.
 - `howl-render-core/src/howl_render.zig` is close, but still needs a cleaner grouping story for render contracts vs runtime.
-- `howl-session/src/root.zig` is a small catalog, but should be reorganized into deliberate public groups instead of a flat list.
+- `howl-session/src/root.zig` is a small catalog with explicit `runtime`, `pty`, and `testing` groups.
 - `howl-term/src/howl_term.zig` is not close. It is a runtime owner with fields and methods. This is the main gap.
 - Host roots are executable/test roots, not package API roots, but they still need clear import boundaries and thin test aggregation.
 
@@ -99,25 +99,25 @@ Shape decision: this root is already catalog-shaped. Do not move implementation 
 
 | Export | Current consumers | Class | Decision |
 | --- | --- | --- | --- |
-| `Session` | `howl-term`, `howl-session` tests, `howl-term` fuzz | Public contract | Keep; group under session namespace or leave top-level after grouping decision. |
-| `SessionConfig` | No direct current consumer found | Public contract candidate | Keep for now; validate in Sprint 5. |
-| `SessionStatus` | `howl-session` tests | Public contract | Keep; likely session namespace candidate. |
-| `SessionSnapshot` | No direct current consumer found | Public contract candidate | Keep for now; validate in Sprint 5. |
-| `SessionOps` | No direct current consumer found | Public contract candidate | Keep for now; validate in Sprint 5. |
-| `Pty` | No direct current consumer found | Public contract | Keep; group under PTY namespace if root is reorganized. |
-| `PtyClass` | `howl-session` tests | Public contract | Keep. |
-| `ControlSignal` | `howl-term` control-signal mapping; `howl-session` tests | Public contract | Keep. |
-| `OwnedPty` | `howl-term` runtime owner | Public contract | Keep. |
-| `PtyLaunchConfig` | No direct current consumer found; implied by `initPty` | Public contract | Keep. |
-| `pty_class` | `howl-session` tests | Public contract | Keep or move under PTY namespace during Sprint 5. |
-| `TestPty.Mem` | `howl-session` tests | Test-only contract | Keep under `TestPty`; do not expose as production top-level. |
-| `TestPty.Partial` | `howl-session` tests | Test-only contract | Keep under `TestPty`; update stale external fuzz references. |
-| `TestPty.Fail` | `howl-session` tests | Test-only contract | Keep under `TestPty`. |
-| `initPty` | `howl-term` lifecycle | Public contract | Keep; group decision in Sprint 5. |
+| `runtime.Session` | `howl-session` tests; top-level `Session` remains for `howl-term` | Public contract namespace | Keep grouped under `runtime`; keep top-level alias as deliberate stable catalog export. |
+| `runtime.Config` | Top-level `SessionConfig` alias | Public contract namespace | Keep. |
+| `runtime.Status` | `howl-session` tests; top-level `SessionStatus` alias | Public contract namespace | Keep. |
+| `runtime.Snapshot` | Top-level `SessionSnapshot` alias | Public contract namespace | Keep. |
+| `runtime.Ops` | Top-level `SessionOps` alias | Public contract namespace | Keep. |
+| `pty.Pty` | Top-level `Pty` alias | Public PTY namespace | Keep. |
+| `pty.Class` | `howl-session` tests; top-level `PtyClass` alias | Public PTY namespace | Keep. |
+| `pty.ControlSignal` | `howl-term` control-signal mapping through top-level alias; `howl-session` tests | Public PTY namespace | Keep. |
+| `pty.Owned` | `howl-term` runtime owner through top-level `OwnedPty` alias | Public PTY namespace | Keep. |
+| `pty.LaunchConfig` | Top-level `PtyLaunchConfig` alias and `pty.init` | Public PTY namespace | Keep. |
+| `pty.class` | `howl-session` tests; top-level `pty_class` alias | Public PTY namespace | Keep. |
+| `pty.init` | Top-level `initPty`; `howl-term` lifecycle | Public PTY namespace | Keep. |
+| `testing.Pty.Mem` | `howl-session` tests; top-level `TestPty` remains for fuzz/tests | Test-only namespace | Keep; visually separated from production API. |
+| `testing.Pty.Partial` | `howl-session` tests; top-level `TestPty` remains for fuzz/tests | Test-only namespace | Keep. |
+| `testing.Pty.Fail` | `howl-session` tests; top-level `TestPty` remains for fuzz/tests | Test-only namespace | Keep. |
 
-Consumer cleanup note: `howl-term/src/fuzz/terminal_replies.zig` now uses `howl_session.TestPty.*`; do not reintroduce the old top-level PTY test aliases.
+Consumer cleanup note: `howl-term/src/fuzz/terminal_replies.zig` uses the deliberate top-level `howl_session.TestPty.*` alias. Session-owned tests use the grouped `howl_session.testing.Pty.*` names.
 
-Shape decision: root is small but too flat. Sprint 5 should group session runtime contracts, PTY contracts, and test-only PTYs without turning the root into an implementation owner.
+Shape decision: root is catalog-shaped with grouped runtime, PTY, and test-only namespaces. Top-level aliases remain deliberate stable exports for current downstream consumers.
 
 ### `howl-render-core/src/howl_render.zig`
 
@@ -284,7 +284,7 @@ Acceptance:
 
 Purpose: make session root deliberate, grouped, and test-aware.
 
-Checkpoint decision: `howl-session/src/root.zig` remains a compact catalog for the current public API, with test PTYs visually separated under `TestPty`. Root declaration coverage is now present. Further grouping can happen only with a host/session consumer update, not as churn.
+Checkpoint decision: `howl-session/src/root.zig` now groups contracts under `runtime`, `pty`, and `testing`. Top-level aliases remain deliberate stable exports for current downstream consumers. Root declaration coverage is present.
 
 Tasks:
 
