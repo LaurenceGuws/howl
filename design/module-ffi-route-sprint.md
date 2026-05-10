@@ -38,7 +38,7 @@ Exact symbol names are module-specific, but every exported C symbol must have an
 | `howl-term` | Has `src/ffi.zig`, root `pub const Ffi`, and root-gated `howl_term_*` exports. | Closed for route shape; future ABI changes require explicit checkpoint. |
 | `howl-vt-core` | Has `src/ffi.zig`, root `pub const Ffi`, and root-gated `howl_vt_*` input constants exports. | Closed for input/constants route shape; no terminal runtime stubs. |
 | `howl-session` | Has `src/ffi.zig`, `src/howl_session.zig`, root `pub const Ffi`, and root-gated `howl_session_*` status/control-signal exports. | Closed for constants/status route shape; PTY runtime behavior is not stubbed into ABI. |
-| `howl-render-core` | No public FFI route; existing `c_api` names are backend C dependency imports, not public ABI. | Add render FFI route for render-core owned contract helpers where useful; do not expose backend internals. |
+| `howl-render-core` | Has `src/ffi.zig`, root `pub const Ffi`, and root-gated `howl_render_*` geometry exports. Existing backend `c_api` names remain internal C dependency imports, not public ABI. | Closed for geometry route shape; backend internals remain private. |
 | hosts | Host roots are executable/runtime owners, not module FFI roots. | Hosts should consume module FFI, not define lower-module ABI. |
 
 ## Rules
@@ -76,7 +76,7 @@ Acceptance:
 
 Remaining open markers from `tools/check_module_shape.sh`:
 
-- `render_ffi_route_missing`: `howl-render-core` has no first-class FFI route yet.
+- None.
 
 First implementation order:
 
