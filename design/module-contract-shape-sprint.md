@@ -125,11 +125,10 @@ Shape decision: root is small but too flat. Sprint 5 should group session runtim
 | --- | --- | --- | --- |
 | `Core` | `howl-term` render/snapshot/sync/benchmark; render-core tests | Public contract namespace | Keep; consider more Ghostty-like domain aliasing only after consumer audit. |
 | `Renderer` | `howl-term/src/render/render.zig`; render-core tests | Public runtime type | Keep as selected renderer runtime alias from `renderer.zig`. |
-| `init` | No direct current consumer found | Public helper candidate | Keep for now; validate whether root catalog should expose it or move under `Core`. |
-| `deriveGridSize` | render-core tests | Public helper candidate | Keep for now; validate external need in Sprint 4. |
-| `deriveGridForFrame` | render-core tests | Public helper candidate | Keep for now; validate external need in Sprint 4. |
+| `geometry.deriveGridSize` | render-core tests | Public helper namespace | Keep grouped under `geometry`; no top-level helper alias. |
+| `geometry.deriveGridForFrame` | render-core tests | Public helper namespace | Keep grouped under `geometry`; no top-level helper alias. |
 
-Shape decision: root is catalog-shaped but grouping is weak. Sprint 4 should decide whether helper functions stay top-level or move under a public namespace.
+Shape decision: root is catalog-shaped. Sprint 4 moved geometry helpers under `geometry` and removed unused top-level `init`.
 
 ### `howl-term/src/howl_term.zig`
 
@@ -267,7 +266,7 @@ Acceptance:
 
 Purpose: separate render contracts from selected backend runtime shape.
 
-Checkpoint decision: `howl-render-core/src/howl_render.zig` stays a compact catalog exposing `Core`, `Renderer`, and the existing geometry helpers. Backend internals remain hidden from the root. Root declaration coverage is now present.
+Checkpoint decision: `howl-render-core/src/howl_render.zig` stays a compact catalog exposing `Core`, `Renderer`, and a `geometry` namespace for frame/grid helper functions. Backend internals remain hidden from the root. Root declaration coverage is present.
 
 Tasks:
 
