@@ -250,6 +250,8 @@ Acceptance:
 
 Purpose: make the closest module the reference Howl root.
 
+Checkpoint decision: `howl-vt-core/src/vt_core.zig` is already the current reference catalog root. `Input` stays top-level for now because `howl-term` and tests consume `vt_core.Input` directly, and adding a nested alias now would be churn rather than clarity. The root imports the implementation owner `terminal.zig`, re-exports deliberate public domains/types, and references public declarations in its root test.
+
 Tasks:
 
 - Keep `src/vt_core.zig` as a catalog only.
