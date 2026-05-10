@@ -214,5 +214,7 @@ if ! grep -Eq '@export' "howl-term/src/howl_term.zig"; then mark_open "term_ffi_
 
 # Missing Android runtime proof remains explicit, not hidden by a fake pass.
 require_pattern "tools/check_host_runtime_surface.sh" 'host_runtime_surface_skip=missing_android_runtime'
+require_pattern "design/term-embedding-surface-sprint.md" 'Sprint 5 re-entry gate'
+require_pattern "design/term-embedding-surface-sprint.md" 'No Android dependency/export boundary is being closed by this sprint'
 
 printf '%s\n' 'module_shape_ok=1'

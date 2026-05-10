@@ -349,6 +349,32 @@ Acceptance:
 - Android TODOs are host-runtime tasks, not `howl-term` public API shape tasks.
 - `host_runtime_surface_skip=missing_android_runtime` remains until real proof closes it.
 
+Sprint 5 re-entry gate:
+
+Current Android state:
+
+- `howl-hosts/howl-android-host/src/main/java/howl/term/Terminal.java` is absent.
+- `tools/check_host_runtime_surface.sh` therefore reports `host_runtime_surface_skip=missing_android_runtime` and exits successfully without faking proof.
+- No Android dependency/export boundary is being closed by this sprint. Android parity remains open until real runtime code exists.
+
+Android host-owned work before proof can close:
+
+| Host-owned area | Required Android work | Howl boundary |
+| --- | --- | --- |
+| App lifecycle | Restore/create Android activity/service lifecycle that owns terminal lifetime and native library loading. | Host-owned; consume `howl-term` via C ABI/root package shape. |
+| Surface presentation | Own Android surface/texture attachment, resize, present acknowledgment, visibility, and render scheduling. | Host-owned platform UX/runtime; do not push Android surface objects into `howl-term`. |
+| Input translation | Map Android key, text, paste, mouse/touch, focus, and control events to `howl_term_*` input calls or `howl_term.Input` equivalents. | Host-owned translation; VT vocabulary remains owned by lower modules and exposed through `howl-term`. |
+| Thread/event wakeups | Own Android event-loop integration for snapshot wake, prepare, render, and UI-thread presentation. | Host-owned runtime loop; term runtime thread remains `howl-term/src/runtime/thread.zig`. |
+| Clipboard/title effects | Handle clipboard set/drain and current title propagation through Android platform APIs. | Host-owned UX effects; `howl-term` only exposes requests/readouts. |
+| Font/resource paths | Resolve APK/assets/system font paths and pass selected config to term. | Host-owned resource lookup; font config remains term ABI/config input. |
+
+Android can re-enter only after:
+
+- A real Android host runtime file exists at the checked path or the check is deliberately updated to a real new path.
+- The Android runtime consumes the same public `howl-term` shape proven by Linux and the non-SDL package test: runtime handle, frame geometry, surface state, viewport state, input publication, wake/frame loop, and config calls.
+- `tools/check_host_runtime_surface.sh` compares real Android runtime methods instead of returning the missing-runtime skip.
+- Android proof is run with actual Android code; no stub Java/Kotlin/native placeholders count as parity.
+
 ## Verification Cadence
 
 For every implementation checkpoint:
