@@ -151,7 +151,7 @@ Current ABI domain inventory:
 | ABI domain | `howl_term_*` functions | Current implementation owner | Gap |
 | --- | --- | --- | --- |
 | Handle/lifecycle | `create`, `create_with_start_path`, `destroy` | `ffi.zig` direct | Needs `c_api/lifecycle.zig` before `ffi.zig` is boring. |
-| Frame loop/geometry | `has_queued_render_work`, `needs_frame`, `needs_prepare`, `prepare_next_frame`, `render_ready_frame`, `await_render_wake`, `sync_frame_geometry`, `set_runtime_backpressure`, `wake_snapshot_waiters`, `render_frame`, `render_latest_snapshot`, `render_frame_sized`, `await_snapshot_event` | mixed direct calls in `ffi.zig` | Needs `c_api/frame.zig` or equivalent clear owner. |
+| Frame loop/geometry | `has_queued_render_work`, `needs_frame`, `needs_prepare`, `prepare_next_frame`, `render_ready_frame`, `await_render_wake`, `sync_frame_geometry`, `set_runtime_backpressure`, `wake_snapshot_waiters`, `render_frame`, `render_latest_snapshot`, `render_frame_sized`, `await_snapshot_event` | `c_api/frame.zig` | Owned; `FfiFramePixels` ABI layout remains in `ffi.zig`. |
 | Metrics/diagnostics | `take_prepare_metrics`, `take_surface_metrics`, `render_missing_glyphs`, `render_fallback_hits`, `render_fallback_misses`, `render_shaped_clusters`, `render_resolve_stage`, `last_render_metrics` | `c_api/metrics.zig` | Mostly owned; keep ABI struct layout in `ffi.zig`. |
 | Surface/status/title/sequences | `surface_state`, `has_output_proof`, `surface_texture_id`, `surface_width`, `surface_height`, `surface_epoch`, `is_session_alive`, `input_bytes_applied`, `snapshot_event_seq`, `rendered_snapshot_seq`, `copy_current_title` | `c_api/surface.zig` | Mostly owned; `surface_state` fallback value remains in `ffi.zig`. |
 | Input | `publish_input_bytes`, `publish_input_key`, `set_input_focus`, `publish_paste`, `publish_mouse_event`, `publish_control_signal` | `c_api/input.zig` | Owned. |
@@ -237,6 +237,40 @@ Acceptance:
 - No behavior moves upward into the root or namespace wrapper.
 - SDL/Linux proof remains green.
 
+Sprint 2 audit checkpoint 1:
+
+Terminal facade classification:
+
+| Classification | Current methods | Owner decision |
+| --- | --- | --- |
+| Stable lifecycle delegates | `init`, `initPty`, `deinit`, `start`, `stop`, `isAlive`, `hasOutputProof` | Keep on `HowlTerm`; behavior stays in `runtime/lifecycle.zig` and `runtime/query.zig`. |
+| Stable input delegates | `publishInputBytes`, `input`, `publishInputKey`, `setInputFocus`, `publishPaste`, `publishMouseEvent`, `publishControlSignal` | Keep on `HowlTerm`; behavior stays in `input/input.zig`; input vocabulary remains `howl_term.Input`. |
+| Stable viewport/selection delegates | `scrollState`, `currentScrollbackCount`, `currentScrollbackOffset`, `viewportRows`, `isAlternateScreen`, `setScrollbackOffset`, `followLiveBottom`, `selectionInProgress`, `beginSelection`, `updateSelection`, `finishSelection`, `clearSelection`, `setHoveredLinkAtPixel`, `copyHyperlinkUriAtPixel` | Keep on `HowlTerm`; behavior stays in `render/viewport.zig` and query readouts. |
+| Stable surface/frame-loop delegates | `prepareNextFrame`, `renderReadyFrame`, `awaitRenderWake`, `awaitRenderWakeTimeout`, `needsFrame`, `needsPrepare`, `hasQueuedRenderWork`, `surfaceState`, `renderedSnapshotSeq`, `snapshotEventSeq`, `setRuntimeBackpressure`, `wakeSnapshotWaiters` | Keep on `HowlTerm`; behavior stays in `render/frame.zig`, `runtime/query.zig`, and `wake/wake.zig`. |
+| Config delegates | `setPrimaryFontPath`, `setFontSizePx`, `setFallbackFontPaths`, `clearFallbackFontPaths`, `addFallbackFontPath` | Keep on `HowlTerm`; behavior stays in `config/fonts.zig`; do not add a public `config` group until the contract grows beyond font setup. |
+| Diagnostics delegates | `takePrepareMetrics`, `takeSurfaceMetrics`, `lastRenderMetrics`, `renderMissingGlyphs`, `renderFallbackHits`, `renderFallbackMisses`, `renderShapedClusters`, `renderResolveStage`, `inputBytesApplied`, `renderedTextContains`, `visibleTextContains`, `copyCurrentTitle` | Keep for Linux and ABI proof; classify under future `diagnostics` only after Android/runtime proof shows the same need. |
+| Compatibility/internal render delegates | `renderFrame`, `renderLatestSnapshot`, `prepareLatestSnapshot`, `prepareSnapshotForRequest`, `prepareSnapshotForRequestIfDirty`, `submitPreparedSnapshot`, `renderFrameSized`, `syncSnapshotFromCore`, `syncFrameGeometry`, `snapshotToken`, `lastSubmittedFrame`, `shiftSelectionForHistoryGrowth` | Keep ABI-compatible methods for now, but treat as the main public-surface leak. Next code checkpoint should reduce direct public dependence where consumers are internal, not move this flow to `howl-render-core`. |
+
+Render ownership audit:
+
+| File | Current role | Render-core fit | Sprint 2 decision |
+| --- | --- | --- | --- |
+| `howl-term/src/render/render.zig` | Coordinates term snapshot sync, geometry derivation, renderer prepare/submit, metrics, lifecycle-facing error mapping, wake completion, and submitted-frame bookkeeping. | Poor as-is because it depends on `HowlTerm`, VT/session-derived snapshot state, wake events, scrollback overlays, and term lifecycle errors. | Keep term-owned; future movement should first extract pure contracts, not move orchestration. |
+| `howl-term/src/render/sync.zig` | Projects VT visible view, selection, cursor, dirty rows, scrollback, alternate-screen state, and link metadata into render snapshots. | Partial only for tiny conversion pieces; most logic depends on VT and term interaction state. | Keep term-owned; do not move to render-core in this sprint. |
+| `howl-term/src/render/pipeline.zig` | Defines snapshot tokens, retained-frame validation, latest-wins mailbox, and prepare/submit result contracts. | Possible future candidate because it is mostly backend-agnostic, but names and semantics are terminal-surface specific today. | Keep term-owned until a second consumer needs it or render-core exposes an explicitly terminal-frame scheduling contract. |
+| `howl-term/src/render/queue.zig` | Owns host-embeddable terminal frame scheduling, visibility, retained-target policy, prepared slot, and surface metrics. | Possible future candidate only if render-core becomes the owner of reusable surface scheduling. | Keep term-owned because it is currently the `howl-term` host pacing boundary. |
+| `howl-render-core/src/surface.zig` | Defines shared render surface data model: cells, colors, cursor, damage, viewport, frame data. | Correct owner for backend-agnostic frame data contracts. | Keep render-core-owned; term snapshots should continue producing this model. |
+| `howl-render-core/src/frame_input.zig` | Converts terminal-like frame data into text scene input and applies renderer themes/damage mapping. | Correct owner for renderer/model conversion. | Keep render-core-owned; do not pull VT/session logic into it. |
+| `howl-render-core/src/render_core.zig` | Public render-core orchestration catalog for geometry, surface types, text conversion, and renderer contracts. | Correct owner for reusable renderer entrypoints. | Keep as render-core boundary; term should call it through selected public APIs only. |
+
+Audit conclusion:
+
+- `terminal.zig` already satisfies most of the facade shape mechanically: public methods are one-line delegates except for the trivial `awaitRenderWake` timeout wrapper.
+- The main maturity gap is public surface breadth: compatibility render methods and internal snapshot methods are visible on `HowlTerm` because FFI, tests, and term-owned modules still use them through the public method table.
+- The suspected render movement mostly does not belong in `howl-render-core` yet. Current render flow is terminal orchestration, not pure renderer conversion.
+- The first safe implementation checkpoint introduced a term-owned frame domain route for FFI frame/geometry functions, with `ffi.zig` still preserving all `howl_term_*` ABI names and structs.
+- A later checkpoint can reduce internal callers that go through `HowlTerm` public methods, but only after the remaining ABI catalog domains are clear and checked.
+
 ## Sprint 3: `ffi.zig` ABI Catalog Maturity
 
 Purpose: make `ffi.zig` read like ABI declarations and delegation, not a behavior owner.
@@ -256,6 +290,13 @@ Acceptance:
 - `zig build ffi:build` passes in `howl-term`.
 - Parent checks require the new `c_api/*` owners and reject direct behavior calls from `ffi.zig` where a domain owner exists.
 - ABI names and fields remain unchanged.
+
+Sprint 3 checkpoint 1 evidence:
+
+- `howl-term/src/c_api/frame.zig` owns C ABI frame-loop, wake, geometry, backpressure, and compatibility render return-code behavior.
+- `howl-term/src/ffi.zig` keeps the exported `howl_term_*` function names and extern ABI structs, but delegates frame behavior through `c_api/frame.zig`.
+- Parent shape checks now require `c_api/frame.zig` and reject direct frame/geometry behavior calls from `ffi.zig` once that owner exists.
+- `FfiFramePixels`, `FfiSnapshotWake`, and all existing frame-related exported symbol names are unchanged.
 
 ## Sprint 4: Minimal Embed Proof Surface
 
