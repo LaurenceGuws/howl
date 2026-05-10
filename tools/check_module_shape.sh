@@ -85,6 +85,7 @@ require_file "howl-term/src/c_api/metrics.zig"
 require_file "howl-term/src/c_api/surface.zig"
 require_file "howl-term/src/runtime/thread.zig"
 require_file "howl-term/src/runtime/query.zig"
+require_file "howl-term/src/runtime/terminal_reply.zig"
 require_file "howl-hosts/howl-linux-host/src/terminal/thread.zig"
 if test -f "howl-term/src/wake/loop.zig"; then fail "forbidden_file:howl-term/src/wake/loop.zig"; fi
 if test -f "howl-term/src/runtime/state.zig"; then fail "forbidden_file:howl-term/src/runtime/state.zig"; fi
@@ -245,6 +246,10 @@ require_pattern "howl-term/src/runtime/thread.zig" 'pub fn threadMain'
 require_pattern "howl-term/src/runtime/thread.zig" 'term\.session\.pumpOutboundInput'
 require_pattern "howl-term/src/runtime/thread.zig" 'term\.session\.waitReadableAfterOutbound'
 require_pattern "howl-term/src/runtime/thread.zig" 'term\.session\.pumpTransport'
+require_pattern "howl-term/src/runtime/thread.zig" 'terminal_reply\.drain\(term\)'
+require_pattern "howl-term/src/runtime/terminal_reply.zig" 'term\.vt\.pendingOutput\(\)'
+require_pattern "howl-term/src/runtime/terminal_reply.zig" 'term\.session\.publishHostInput\(pending\) catch return;'
+require_pattern "howl-term/src/runtime/terminal_reply.zig" 'term\.vt\.clearPendingOutput\(\)'
 require_pattern "howl-term/src/input/input.zig" 'term\.session\.publishHostInputAndPump'
 require_pattern "howl-term/src/runtime/lifecycle.zig" 'howl_session\.Session\.initOwnedTransport'
 require_pattern "howl-term/src/runtime/lifecycle.zig" 'howl_session\.Session\.initPty'
@@ -252,6 +257,7 @@ require_pattern "howl-term/src/runtime/thread.zig" 'term\.session\.isActive\(\)'
 require_pattern "howl-term/src/runtime/query.zig" 'term\.session\.isActive\(\)'
 reject_pattern "howl-term/src/runtime/thread.zig" 'term\.session\.ingestTransport'
 reject_pattern "howl-term/src/runtime/thread.zig" 'term\.session\.status|term\.session\.snapshot\(\)\.status'
+reject_pattern "howl-term/src/runtime/thread.zig" 'pendingOutput|clearPendingOutput|publishHostInput\(pending\)'
 reject_pattern "howl-term/src/runtime/query.zig" 'term\.session\.status|term\.session\.snapshot\(\)\.status'
 reject_pattern "howl-term/src/runtime/thread.zig" 'term\.session\.(flushOutboundInput|hasPendingOutboundInput|waitReadable\()'
 reject_pattern "howl-term/src/input/input.zig" 'term\.session\.(flushOutboundInput|hasPendingOutboundInput)'
