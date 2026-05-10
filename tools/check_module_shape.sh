@@ -75,6 +75,9 @@ require_file "howl-term/src/c_api/constants.zig"
 require_file "howl-term/src/c_api/input.zig"
 require_file "howl-term/src/c_api/font.zig"
 require_file "howl-term/src/c_api/viewport.zig"
+require_file "howl-term/src/runtime/query.zig"
+if test -f "howl-term/src/runtime/state.zig"; then fail "forbidden_file:howl-term/src/runtime/state.zig"; fi
+if test -f "howl-term/src/c_api/state.zig"; then fail "forbidden_file:howl-term/src/c_api/state.zig"; fi
 
 # Package roots stay small and delegate implementation to owned files.
 require_catalog_root "howl-vt-core/src/howl_vt.zig" 80
@@ -157,6 +160,7 @@ reject_pattern "howl-term/src/terminal.zig" 'canReuseFrameLayoutLocked'
 require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeout'
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'
 require_pattern "howl-term/src/terminal.zig" 'wake\.stopSnapshotWaiters'
+require_pattern "howl-term/src/terminal.zig" '@import\("runtime/query\.zig"\)'
 
 # FFI implementation files talk to owner modules, not back through their public roots.
 reject_pattern "howl-term/src/ffi.zig" '@import\("howl_term\.zig"\)'
