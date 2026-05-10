@@ -74,6 +74,7 @@ require_file "howl-term/src/term_namespace.zig"
 require_file "howl-term/src/c_api/constants.zig"
 require_file "howl-term/src/c_api/frame.zig"
 require_file "howl-term/src/c_api/input.zig"
+require_file "howl-term/src/c_api/lifecycle.zig"
 require_file "howl-term/src/c_api/font.zig"
 require_file "howl-term/src/c_api/viewport.zig"
 require_file "howl-term/src/c_api/metrics.zig"
@@ -162,6 +163,7 @@ require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/constants\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/frame\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/input\.zig"\)'
+require_pattern "howl-term/src/ffi.zig" '@import\("c_api/lifecycle\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/font\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/viewport\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/metrics\.zig"\)'
@@ -172,10 +174,12 @@ reject_pattern "howl-term/src/ffi.zig" 'term\.setPrimaryFontPath'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(clearFallbackFontPaths|addFallbackFontPath)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(renderedTextContains|visibleTextContains|beginSelection|updateSelection|finishSelection|clearSelection|setHoveredLinkAtPixel|copyHyperlinkUriAtPixel|drainPendingClipboardSet)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(setScrollbackOffset|followLiveBottom)'
+reject_pattern "howl-term/src/ffi.zig" 'term\.(viewportRows|currentScrollbackCount|currentScrollbackOffset|isAlternateScreen)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(renderMissingGlyphs|renderFallbackHits|renderFallbackMisses|renderShapedClusters|renderResolveStage|lastRenderMetrics)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(surfaceHandle|hasOutputProof|inputBytesApplied|snapshotEventSeq|renderedSnapshotSeq|copyCurrentTitle)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(renderFrame|renderLatestSnapshot|renderFrameSized|awaitSnapshotEvent|syncFrameGeometry|wakeSnapshotWaiters)'
 reject_pattern "howl-term/src/ffi.zig" 'runtime\.(hasQueuedRenderWork|needsFrame|needsPrepare|prepareNextFrame|renderReadyFrame|awaitRenderWakeTimeout|syncFrameGeometry|setRuntimeBackpressure)'
+reject_pattern "howl-term/src/ffi.zig" 'HowlTerm\.initPty|std\.heap\.c_allocator|term\.(start|deinit|setFontSizePx|isAlive)'
 reject_pattern "howl-term/src/terminal.zig" 'canReuseFrameLayoutLocked'
 require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeout'
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'

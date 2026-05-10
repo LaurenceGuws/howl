@@ -150,13 +150,13 @@ Current ABI domain inventory:
 
 | ABI domain | `howl_term_*` functions | Current implementation owner | Gap |
 | --- | --- | --- | --- |
-| Handle/lifecycle | `create`, `create_with_start_path`, `destroy` | `ffi.zig` direct | Needs `c_api/lifecycle.zig` before `ffi.zig` is boring. |
+| Handle/lifecycle | `create`, `create_with_start_path`, `destroy` | `c_api/lifecycle.zig` | Owned; handle conversion and `TermHandle` remain in `ffi.zig`. |
 | Frame loop/geometry | `has_queued_render_work`, `needs_frame`, `needs_prepare`, `prepare_next_frame`, `render_ready_frame`, `await_render_wake`, `sync_frame_geometry`, `set_runtime_backpressure`, `wake_snapshot_waiters`, `render_frame`, `render_latest_snapshot`, `render_frame_sized`, `await_snapshot_event` | `c_api/frame.zig` | Owned; `FfiFramePixels` ABI layout remains in `ffi.zig`. |
 | Metrics/diagnostics | `take_prepare_metrics`, `take_surface_metrics`, `render_missing_glyphs`, `render_fallback_hits`, `render_fallback_misses`, `render_shaped_clusters`, `render_resolve_stage`, `last_render_metrics` | `c_api/metrics.zig` | Mostly owned; keep ABI struct layout in `ffi.zig`. |
 | Surface/status/title/sequences | `surface_state`, `has_output_proof`, `surface_texture_id`, `surface_width`, `surface_height`, `surface_epoch`, `is_session_alive`, `input_bytes_applied`, `snapshot_event_seq`, `rendered_snapshot_seq`, `copy_current_title` | `c_api/surface.zig` | Mostly owned; `surface_state` fallback value remains in `ffi.zig`. |
 | Input | `publish_input_bytes`, `publish_input_key`, `set_input_focus`, `publish_paste`, `publish_mouse_event`, `publish_control_signal` | `c_api/input.zig` | Owned. |
 | Font/config | `set_font_size_px`, `set_primary_font_path`, `clear_fallback_font_paths`, `add_fallback_font_path` | `c_api/font.zig` | Owned; may become `config` only if scope grows. |
-| Viewport/selection/link/text | `scroll_state`, `current_scrollback_count`, `current_scrollback_offset`, `set_scrollback_offset`, `follow_live_bottom`, `viewport_rows`, `is_alternate_screen`, `rendered_text_contains`, `visible_text_contains`, `selection_in_progress`, `begin_selection`, `update_selection`, `finish_selection`, `clear_selection`, `set_hovered_link_at_pixel`, `copy_hyperlink_uri_at_pixel`, `drain_pending_clipboard_set` | mostly `c_api/viewport.zig`, with `scroll_state` inline in `ffi.zig` | Move `scroll_state` conversion under viewport owner before claiming FFI maturity. |
+| Viewport/selection/link/text | `scroll_state`, `current_scrollback_count`, `current_scrollback_offset`, `set_scrollback_offset`, `follow_live_bottom`, `viewport_rows`, `is_alternate_screen`, `rendered_text_contains`, `visible_text_contains`, `selection_in_progress`, `begin_selection`, `update_selection`, `finish_selection`, `clear_selection`, `set_hovered_link_at_pixel`, `copy_hyperlink_uri_at_pixel`, `drain_pending_clipboard_set` | `c_api/viewport.zig` | Owned. |
 | Input constants | `mod_*`, `key_*`, `mouse_*` | `c_api/constants.zig` | Owned. |
 
 Ghostty boundary map for this sprint:
@@ -297,6 +297,13 @@ Sprint 3 checkpoint 1 evidence:
 - `howl-term/src/ffi.zig` keeps the exported `howl_term_*` function names and extern ABI structs, but delegates frame behavior through `c_api/frame.zig`.
 - Parent shape checks now require `c_api/frame.zig` and reject direct frame/geometry behavior calls from `ffi.zig` once that owner exists.
 - `FfiFramePixels`, `FfiSnapshotWake`, and all existing frame-related exported symbol names are unchanged.
+
+Sprint 3 checkpoint 2 evidence:
+
+- `howl-term/src/c_api/lifecycle.zig` owns C allocator runtime setup, startup, initial geometry sync, and teardown.
+- `howl-term/src/ffi.zig` keeps `TermHandle`, handle conversion, exported lifecycle symbol names, and ABI pointer slicing, but no longer owns lifecycle behavior.
+- `howl-term/src/c_api/viewport.zig` now owns `scroll_state` ABI conversion, closing the last known viewport inline conversion in `ffi.zig`.
+- Parent shape checks now require `c_api/lifecycle.zig` and reject direct lifecycle and scroll-state behavior calls from `ffi.zig`.
 
 ## Sprint 4: Minimal Embed Proof Surface
 
