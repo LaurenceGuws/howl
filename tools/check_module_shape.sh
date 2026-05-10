@@ -45,6 +45,14 @@ reject_tree_pattern() {
     fi
 }
 
+reject_tree_pattern_java() {
+    dir="$1"
+    pattern="$2"
+    if grep -REn --include='*.java' "$pattern" "$dir" >/dev/null 2>&1; then
+        fail "forbidden_tree_pattern:$dir:$pattern"
+    fi
+}
+
 require_package_root() {
     file="$1"
     max="$2"
@@ -88,12 +96,25 @@ require_file "howl-term/src/runtime/query.zig"
 require_file "howl-term/src/runtime/io_tick.zig"
 require_file "howl-term/src/runtime/terminal_reply.zig"
 require_file "howl-hosts/howl-linux-host/src/terminal/thread.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/effects.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/frame.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/font_size.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/geometry.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/input_flow.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/links.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/query.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/scroll.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/selection.zig"
 if test -f "howl-term/src/wake/loop.zig"; then fail "forbidden_file:howl-term/src/wake/loop.zig"; fi
 if test -f "howl-term/src/runtime/state.zig"; then fail "forbidden_file:howl-term/src/runtime/state.zig"; fi
 if test -f "howl-term/src/c_api/state.zig"; then fail "forbidden_file:howl-term/src/c_api/state.zig"; fi
 if test -f "howl-term/src/render/pipeline.zig"; then fail "forbidden_file:howl-term/src/render/pipeline.zig"; fi
 if test -f "howl-term/src/render/queue.zig"; then fail "forbidden_file:howl-term/src/render/queue.zig"; fi
 if test -f "howl-term/src/render/snapshot.zig"; then fail "forbidden_file:howl-term/src/render/snapshot.zig"; fi
+if test -f "howl-hosts/howl-android-host/src/main/java/howl/term/terminal/NativeBinding.java"; then fail "forbidden_file:howl-hosts/howl-android-host/src/main/java/howl/term/terminal/NativeBinding.java"; fi
+if test -f "howl-hosts/howl-android-host/src/main/java/howl/term/terminal/RenderTelemetry.java"; then fail "forbidden_file:howl-hosts/howl-android-host/src/main/java/howl/term/terminal/RenderTelemetry.java"; fi
+if test -f "howl-hosts/howl-android-host/src/main/java/howl/term/widget/TerminalWidget.java"; then fail "forbidden_file:howl-hosts/howl-android-host/src/main/java/howl/term/widget/TerminalWidget.java"; fi
 
 # Package roots stay small and delegate implementation to owned files.
 require_catalog_root "howl-vt-core/src/howl_vt.zig" 80
@@ -192,12 +213,14 @@ reject_tree_pattern "howl-term/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix
 reject_tree_pattern "howl-term/src" '@import\("[^"]*render/(pipeline|queue)\.zig"\)'
 reject_tree_pattern "howl-term/src" '@import\("[^"]*render/snapshot\.zig"\)'
 reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix|android|test)|render_core|renderer|backend/(gl|gles))'
+reject_tree_pattern_java "howl-hosts/howl-android-host/src/main/java" 'package howl\.term\.terminal;'
+reject_tree_pattern_java "howl-hosts/howl-android-host/src/main/java" '(^|[^A-Za-z0-9_])(presentAck|waitRenderWake|renderFrameSized|surfaceHandle|currentScrollbackCount|currentScrollbackOffset|setScrollbackOffset|followLiveBottom|bindNativeMethods|RenderTelemetry)([^A-Za-z0-9_]|$)'
 reject_pattern "howl-hosts/howl-linux-host/build.zig" 'b\.dependency\("(vt_core|howl_session|howl_render|howl-vt-core|howl-session|howl-render-core)"'
 require_pattern "howl-hosts/howl-linux-host/build.zig" 'check_host_runtime_surface'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'const howl_term = @import\("howl_term"\);'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'howl_term\.runtime\.FramePixels'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'howl_term\.surface\.State'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'howl_term\.viewport\.ScrollState'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/scroll.zig" 'howl_term\.viewport\.ScrollState'
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'HowlTerm\.(LifecycleState|FramePixels|SurfaceHandle|SurfaceMetrics|SurfaceState|ScrollState|LinkUnderlineStyle)'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/input.zig" 'const howl_term = @import\("howl_term"\);'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/input.zig" 'const TermInput = howl_term\.Input;'
@@ -277,17 +300,80 @@ reject_pattern "howl-term/src/runtime/lifecycle.zig" 'howl_session\.initTranspor
 reject_pattern "howl-term/src/terminal.zig" 'worker_'
 reject_pattern "howl-term/src/runtime/lifecycle.zig" 'worker_|workerMain'
 reject_pattern "howl-term/src/runtime/thread.zig" 'worker_|workerMain'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("thread\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" '@import\("thread\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("effects\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("frame\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("font_size\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("geometry\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("input_flow\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("lifecycle\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("links\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("query\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("scroll\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/input_flow.zig" '@import\("selection\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" '@import\("effects\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" '@import\("effects\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/effects.zig" 'copyCurrentTitle'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/effects.zig" 'setInputFocus'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/effects.zig" 'drainPendingClipboardSet'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/effects.zig" 'setClipboardText'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/effects.zig" 'pub fn setWindowFocused'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/effects.zig" 'pub fn setWidgetFocused'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/query.zig" 'surfaceState'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/query.zig" 'renderedTextContains'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/query.zig" 'scroll\.layout'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/query.zig" 'pub fn lifecycleState'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'awaitRenderWake'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'prepareNextFrame'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'renderReadyFrame'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/font_size.zig" 'min_font_px'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/font_size.zig" 'max_font_px'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/font_size.zig" 'setFontSizePx'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/font_size.zig" 'pub fn toggleStress'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/geometry.zig" 'pub const Mutex = struct'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/geometry.zig" 'std\.Io\.Threaded\.mutexLock'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/geometry.zig" 'SDL_GetTicksNS'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/geometry.zig" 'syncFrameGeometry'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/geometry.zig" 'pub fn maybeCommitGridResize'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/input_flow.zig" 'drainInputEvent'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/input_flow.zig" 'publishInputBytes'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/input_flow.zig" 'publishInputKey'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/input_flow.zig" 'publishMouseEvent'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/input_flow.zig" 'publishPaste'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'HowlTerm\.initPty'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'setPrimaryFontPath'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'setFallbackFontPaths'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'std\.Thread\.spawn'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'wakeSnapshotWaiters'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'SDL_DestroySemaphore'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/links.zig" 'setHoveredLinkAtPixel'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/links.zig" 'copyHyperlinkUriAtPixel'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/scroll.zig" 'scrollState'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/scroll.zig" 'setScrollbackOffset'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/scroll.zig" 'followLiveBottom'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/scroll.zig" 'scrollbar\.View'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/selection.zig" 'beginSelection'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/selection.zig" 'finishSelection'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'pub fn wakeThreadMain'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'pub fn prepareThreadMain'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'prepare_thread_signal_pending\.swap\(true, \.acq_rel\)'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'pub fn finishPrepareThreadJob'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'prepare_thread_signal_pending\.store\(false, \.release\)'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'if \(self\.term\.needsPrepare\(\)\) self\.signalPrepareThread\(\);'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'self\.finishPrepareThreadJob\(\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'self\.finishPrepareThreadJob\(\)'
 reject_tree_pattern "howl-hosts/howl-linux-host/src" 'std\.Thread\.sleep|sleep\('
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'worker_|wakeWorker|prepareWorker'
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'worker_|wakeWorker|prepareWorker'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'setHoveredLinkAtPixel|copyHyperlinkUriAtPixel|beginSelection|updateSelection|finishSelection|selectionInProgress'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'scrollState|setScrollbackOffset|followLiveBottom|scrollbarView'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'publishInputBytes|publishInputKey|publishMouseEvent|publishPaste|drainInputEvent'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'HowlTerm\.initPty|setPrimaryFontPath|setFallbackFontPaths|std\.Thread\.spawn|wakeSnapshotWaiters|SDL_DestroySemaphore|copyCurrentTitle|setInputFocus'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'syncFrameGeometry|SDL_GetTicksNS|std\.Io\.Threaded\.mutexLock|geometrySnapshotLocked'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'drainPendingClipboardSet|setClipboardText|drainClipboardSet|\.window_focused = focused|\.widget_focused = focused'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'setFontSizePx|min_font_px|max_font_px|midpoint'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'self\.term\.surfaceState\(|self\.term\.renderedTextContains\(|presentSurfaceHandle|scroll\.layout\(@constCast\(self\), texture_rect\)'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'self\.term\.'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'awaitRenderWake|prepareNextFrame|renderReadyFrame'
 
 # FFI implementation files talk to owner modules, not back through their public roots.
 reject_pattern "howl-term/src/ffi.zig" '@import\("howl_term\.zig"\)'

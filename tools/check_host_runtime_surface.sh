@@ -3,74 +3,167 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 android_runtime="$repo_root/howl-hosts/howl-android-host/src/main/java/howl/term/Terminal.java"
-linux_runtime="$repo_root/howl-term/src/howl_term.zig"
+android_ffi="$repo_root/howl-hosts/howl-android-host/src/main/java/howl/term/Ffi.java"
+zig_ffi="$repo_root/howl-term/src/ffi.zig"
+zig_root="$repo_root/howl-term/src/howl_term.zig"
 
-if [[ ! -f "$linux_runtime" ]]; then
-  echo "missing howl-term owner: $linux_runtime" >&2
+if [[ ! -f "$zig_root" ]]; then
+  echo "missing howl-term owner: $zig_root" >&2
   exit 1
 fi
 
-if [[ ! -f "$android_runtime" ]]; then
+if [[ ! -f "$android_runtime" || ! -f "$android_ffi" ]]; then
   echo "host_runtime_surface_skip=missing_android_runtime"
   exit 0
 fi
 
 mapfile -t android_methods < <(
   perl -ne '
-    if (/public\s+(?:static\s+)?(?:final\s+)?[\w<>\[\], ?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/) {
+    if (/public\s+(?:static\s+)?(?:final\s+)?[\w.<>\[\], ?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/) {
       next if $1 eq "Terminal";
       print "$1\n";
     }
   ' "$android_runtime" | sort -u
 )
 
-mapfile -t linux_methods < <(
+mapfile -t android_ffi_methods < <(
+  perl -ne '
+    if (/public\s+static\s+native\s+[\w.<>\[\], ?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/) {
+      print "$1\n";
+    }
+  ' "$android_ffi" | sort -u
+)
+
+mapfile -t zig_ffi_methods < <(
   perl -ne '
     print "$1\n" if /^\s*pub fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
-  ' "$linux_runtime" | sort -u
+  ' "$zig_ffi" | sort -u
 )
 
-shared_methods=(
-  currentScrollbackCount
-  currentScrollbackOffset
+terminal_methods=(
+  available
   deinit
-  followLiveBottom
-  init
-  isAlternateScreen
-  presentAck
-  publishInputBytes
-  renderFrameSized
-  setFontSizePx
-  setScrollbackOffset
-  state
-  surfaceHandle
-  viewportRows
-  waitRenderWake
-)
-
-android_only_methods=(
-  bindNativeMethods
-  hasOutputProof
   isAlive
+  wakeSnapshotWaiters
+  wakeMetadataWaiters
+  syncFrameGeometry
+  needsFrame
+  needsPrepare
+  hasQueuedRenderWork
+  awaitRenderWake
+  awaitMetadataWake
+  prepareNextFrame
+  renderReadyFrame
+  surfaceState
+  renderedSnapshotSeq
+  setRuntimeBackpressure
   setCellSizePx
-  setFallbackFontPaths
+  setFontSizePx
   setPrimaryFontPath
+  setFallbackFontPaths
+  publishInputBytes
+  publishInputKey
+  publishPaste
+  publishMouseEvent
+  setInputFocus
+  copyCurrentTitle
+  drainPendingClipboardSet
+  scrollState
+  followLiveBottomChanged
+  setScrollbackOffsetChanged
+  setHoveredLinkAtPixel
+  copyHyperlinkUriAtPixel
+  selectionInProgress
+  beginSelection
+  updateSelection
+  finishSelection
+  renderedTextContains
 )
 
-linux_only_methods=(
-  beginSelection
-  clearSelection
-  copyHyperlinkUriAtPixel
-  copyTabTitle
-  drainPendingClipboardSet
-  finishSelection
-  hasRenderWork
+terminal_only_methods=(
+  start
+)
+
+ffi_required_methods=(
+  createWithStartPath
+  destroy
+  isSessionAlive
+  wakeSnapshotWaiters
+  wakeMetadataWaiters
+  syncFrameGeometry
+  needsFrame
+  needsPrepare
+  hasQueuedRenderWork
+  awaitRenderWake
+  awaitMetadataWake
+  prepareNextFrame
+  renderReadyFrame
+  surfaceState
+  renderedSnapshotSeq
+  setRuntimeBackpressure
+  setFontSizePx
+  setPrimaryFontPath
+  clearFallbackFontPaths
+  addFallbackFontPath
+  publishInputBytes
   publishInputKey
-  publishMouseEvent
   publishPaste
+  publishMouseEvent
+  setInputFocusChanged
+  copyCurrentTitle
+  drainPendingClipboardSetAlloc
+  scrollState
+  followLiveBottomChanged
+  setScrollbackOffsetChanged
+  setHoveredLinkAtPixel
+  copyHyperlinkUriAtPixelAlloc
   selectionInProgress
-  setInputFocus
+  beginSelection
   updateSelection
+  finishSelection
+  renderedTextContains
+)
+
+ffi_constant_methods=(
+  modShift modAlt modCtrl
+  keyEnter keyTab keyBackspace keyEscape keyUp keyDown keyLeft keyRight keyInsert keyDelete keyHome keyEnd keyPageup keyPagedown
+  keyF1 keyF2 keyF3 keyF4 keyF5 keyF6 keyF7 keyF8 keyF9 keyF10 keyF11 keyF12
+  mouseButtonNone mouseButtonLeft mouseButtonMiddle mouseButtonRight mouseButtonWheelUp mouseButtonWheelDown
+  mousePress mouseRelease mouseMove mouseWheel
+)
+
+ffi_to_zig_methods=(
+  createWithStartPath
+  destroy
+  isSessionAlive
+  wakeSnapshotWaiters
+  wakeMetadataWaiters
+  syncFrameGeometry
+  needsFrame
+  needsPrepare
+  hasQueuedRenderWork
+  awaitRenderWake
+  awaitMetadataWake
+  prepareNextFrame
+  renderReadyFrame
+  surfaceState
+  renderedSnapshotSeq
+  setRuntimeBackpressure
+  setFontSizePx
+  setPrimaryFontPath
+  clearFallbackFontPaths
+  addFallbackFontPath
+  publishInputBytes
+  publishInputKey
+  publishPaste
+  publishMouseEvent
+  copyCurrentTitle
+  scrollState
+  selectionInProgress
+  beginSelection
+  updateSelection
+  finishSelection
+  renderedTextContains
 )
 
 contains() {
@@ -93,17 +186,28 @@ ensure_in_list() {
   fi
 }
 
-for method in "${shared_methods[@]}"; do
-  contains "$method" "${android_methods[@]}" || { echo "android runtime missing shared method '$method'" >&2; exit 1; }
-  contains "$method" "${linux_methods[@]}" || { echo "linux runtime missing shared method '$method'" >&2; exit 1; }
+for method in "${terminal_methods[@]}"; do
+  contains "$method" "${android_methods[@]}" || { echo "android runtime missing terminal method '$method'" >&2; exit 1; }
+done
+
+for method in "${terminal_only_methods[@]}"; do
+  contains "$method" "${android_methods[@]}" || { echo "android runtime missing terminal-only method '$method'" >&2; exit 1; }
 done
 
 for method in "${android_methods[@]}"; do
-  ensure_in_list "android runtime surface drift" "$method" "${shared_methods[@]}" "${android_only_methods[@]}"
+  ensure_in_list "android runtime surface drift" "$method" "${terminal_methods[@]}" "${terminal_only_methods[@]}"
 done
 
-for method in "${linux_methods[@]}"; do
-  ensure_in_list "linux runtime surface drift" "$method" "${shared_methods[@]}" "${linux_only_methods[@]}"
+for method in "${ffi_required_methods[@]}"; do
+  contains "$method" "${android_ffi_methods[@]}" || { echo "android ffi missing method '$method'" >&2; exit 1; }
+done
+
+for method in "${android_ffi_methods[@]}"; do
+  ensure_in_list "android ffi surface drift" "$method" "${ffi_required_methods[@]}" "${ffi_constant_methods[@]}" available
+done
+
+for method in "${ffi_to_zig_methods[@]}"; do
+  contains "$method" "${zig_ffi_methods[@]}" || { echo "shared ffi missing Zig method '$method'" >&2; exit 1; }
 done
 
 echo "host_runtime_surface_ok=1"

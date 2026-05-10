@@ -111,3 +111,208 @@ For every implementation checkpoint:
 - parent: `sh tools/check_module_shape.sh && zig build && zig build test && ./status.sh`
 
 Use `--summary all` only to diagnose failures.
+
+## Sprint 8: Linux Host Handoff Surface
+
+Purpose: make `howl-linux-host` hand off to `howl-term` through the smallest clear host-owned surface before pursuing lower-module ownership moves.
+
+Priority rule: public export hygiene and embeddable maturity first, ownership assertions second, performance optimization third.
+
+### Board
+
+| Item | Status | Scope | Exit condition |
+| --- | --- | --- | --- |
+| Checkpoint 1: link and selection host UX split | complete | Move link hover/opening and selection drag behavior out of the broad Linux terminal widget file. | Link-specific term calls live in `terminal/links.zig`; selection-specific term calls live in `terminal/selection.zig`; parent checks reject those mechanics returning to `terminal/terminal.zig`. |
+| Checkpoint 2: frame handoff split | complete | Move render wake waiting, frame preparation, and ready-frame rendering handoff out of the Linux terminal widget and thread loops. | Frame-specific term calls live in `terminal/frame.zig`; `terminal/thread.zig` has no direct `self.term.*` calls; parent checks reject frame handoff calls returning to `terminal/terminal.zig`. |
+| Checkpoint 3: scroll handoff split | complete | Move wheel/page scrolling, scrollbar mouse handling, passive hover wake, and overlay layout handoff out of the Linux terminal widget. | Scroll-specific term calls live in `terminal/scroll.zig`; parent checks reject scroll state and offset mechanics returning to `terminal/terminal.zig`. |
+| Checkpoint 4: input handoff split | complete | Move input event draining and term input publication out of the Linux terminal widget. | Input publication and drain ordering live in `terminal/input_flow.zig`; parent checks reject input publication and raw event draining returning to `terminal/terminal.zig`. |
+| Checkpoint 5: lifecycle/config handoff split | complete | Move term creation, font configuration, runtime start, child thread spawn, title/focus sync, and teardown out of the Linux terminal widget. | Lifecycle-specific term calls live in `terminal/lifecycle.zig`; parent checks reject those startup/shutdown mechanics returning to `terminal/terminal.zig`. |
+| Checkpoint 6: geometry handoff split | complete | Move geometry locking, resize coalescing, and frame geometry sync out of the Linux terminal widget. | Geometry-specific term calls and mutex mechanics live in `terminal/geometry.zig`; parent checks reject geometry sync/mutex mechanics returning to `terminal/terminal.zig`. |
+| Checkpoint 7: focus/title/effects split | complete | Move title refresh, focus publication, and clipboard host effects out of the Linux terminal widget. | Effect-specific term calls live in `terminal/effects.zig`; frame and lifecycle use that module directly; parent checks reject focus/title/clipboard mechanics returning to `terminal/terminal.zig`. |
+| Checkpoint 8: font-size policy split | complete | Move zoom, reset, stress-toggle bounds, and term font-size publication out of the Linux terminal widget. | Font-size policy lives in `terminal/font_size.zig`; parent checks reject font-size bounds and direct `setFontSizePx` calls returning to `terminal/terminal.zig`. |
+| Checkpoint 9: query facade split | complete | Move host-facing surface, overlay, lifecycle, and text query reads out of the Linux terminal widget. | Read/query facade lives in `terminal/query.zig`; parent checks reject surface-state/text-query mechanics returning to `terminal/terminal.zig`. |
+
+### Open Candidates
+
+| Topic | Reason | Required proof before code movement |
+| --- | --- | --- |
+| Linux host widget end-state review | The widget is now mostly a facade over focused host modules. | Decide whether any further split remains clear enough to justify the extra file, otherwise stop host decomposition and move back to module hygiene/maturity work. |
+
+## Sprint 9: Android FFI Host Reopen
+
+Purpose: reopen Android only on the same `howl-term` FFI surface used by Linux host backend selection, so Android cannot drift into a second terminal contract again.
+
+Priority rule: one shared term-facing contract first, Android runtime proof second, host chrome/features third.
+
+### Non-Negotiable Rules
+
+- Android host must consume the same `howl-term` FFI contract as Linux host.
+- No Android-only JNI terminal surface.
+- No Java terminal API that invents new term lifecycle, wake, render, scrollback, or query semantics.
+- The only allowed variants across hosts are PTY launch/runtime selection and renderer selection.
+- Host wake behavior stays latest-only and blocking when idle; no sleep loops.
+- Android parity closes only with real `adb` runtime proof.
+- If Android needs a term capability Linux does not use, add it to the shared FFI seam first or stop with `work-not-clear`.
+
+### Why The Previous Android Surface Was Wrong
+
+- `howl-hosts/howl-android-host` commit `60e9aff` correctly deleted the stale Android terminal surface.
+- Deleted files such as `src/main/java/howl/term/Terminal.java`, `src/main/java/howl/term/terminal/NativeBinding.java`, and `src/main/java/howl/term/widget/TerminalWidget.java` formed a separate Java/JNI terminal contract.
+- That deleted contract embedded Android-specific assumptions into the term seam:
+  - bespoke `waitRenderWake` / `presentAck` protocol
+  - bespoke retained surface getters
+  - Java-owned terminal lifecycle state
+  - Java-owned scrollback/query/render telemetry surface
+- Recreating that shape would reintroduce Linux/Android drift by definition.
+
+### Target Shape
+
+- Linux stays the reference host.
+- Android copies Linux host layering, but binds term calls through the shared FFI seam.
+- Desired host shape:
+  - app owner: Linux `main.zig`, Android `Main`
+  - term seam: Linux `src/terminal/api.zig`, Android `howl.term.terminal.Ffi`
+  - widget/runtime composition: Linux `src/terminal/*`, Android `widget/Terminal`
+  - platform leaves: Linux SDL/window/input, Android GL/view/input/IME
+- Shared seam responsibilities:
+  - term init/start/stop/deinit
+  - frame geometry sync
+  - latest-only render wake wait
+  - metadata wake wait
+  - prepare/render handoff
+  - input/key/mouse/paste/focus publication
+  - title/clipboard/query reads already kept in the seam
+
+### Board
+
+| Item | Status | Scope | Exit condition |
+| --- | --- | --- | --- |
+| Checkpoint 1: Linux FFI seam freeze | proposed | Audit Linux `src/terminal/api.zig` and current `howl-term/src/ffi.zig` as the only Android term surface. | Android reopen scope lists the exact shared FFI calls/types it may use; anything else is explicitly banned. |
+| Checkpoint 2: Android delete-line confirmation | proposed | Confirm deleted Java/JNI terminal surface stays deleted and is not partially restored. | No revived `Terminal.java`, `NativeBinding.java`, or old `TerminalWidget.java` logic returns outside the new shared seam shape. |
+| Checkpoint 3: Android FFI shim owner | proposed | Add one boring Java owner that mirrors Linux `api.zig` against `libhowl_term.so`. | Android has one FFI class with shared term calls only; no extra semantics or host policy inside it. |
+| Checkpoint 4: Android terminal facade rebuild | proposed | Recreate Android `Terminal` as a thin host-local facade over the shared FFI shim. | Android `Terminal` only stores host-local state and forwards shared seam calls; no bespoke terminal protocol. |
+| Checkpoint 5: Android widget wake/render split | proposed | Rebuild `widget/Terminal` with separate frame and metadata servicing lanes matching Linux intent. | Android widget blocks on shared render/metadata wakes and does not poll term state in UI loops. |
+| Checkpoint 6: Android input and geometry parity | proposed | Reattach Android IME, hardware keyboard, touch, resize, and focus handling through the shared seam. | Android input/geometry behavior uses only shared term calls plus platform-specific input translation. |
+| Checkpoint 7: Android host proof on device | proposed | Install, run, and verify on a real `adb` device. | Android shows frame output, title updates, clipboard path, and lifecycle proof through the shared FFI host path. |
+| Checkpoint 8: shared-host parity gate | proposed | Add explicit repo checks/docs so Linux and Android must stay on the same seam. | A documented verification step fails if Android reintroduces a private terminal contract or misses the shared seam. |
+
+### Allowed Variants
+
+Only these host differences are allowed:
+
+- PTY/runtime selection
+  - Linux may use its normal PTY/runtime path.
+  - Android may use Android-specific PTY/userland/runtime setup.
+- Renderer selection
+  - Linux and Android may bind different render backends or texture ownership details.
+
+Everything else must be outcome-level shared behavior through the same FFI seam.
+
+### Shared FFI Contract Inventory
+
+Android reopen is allowed to consume only the shared term-facing capabilities already represented by Linux `howl-hosts/howl-linux-host/src/terminal/api.zig` over `howl-term` FFI.
+
+Allowed shared types:
+
+- handle and lifecycle
+  - `TermHandle`
+  - lifecycle state via `surfaceState.state` / `isSessionAlive`
+- geometry and frame
+  - `FfiFramePixels`
+  - `FfiSurfaceState`
+  - `FfiSnapshotWake`
+  - `FfiMetadataWake`
+- viewport and interaction
+  - `FfiScrollState`
+  - `FfiLinkHoverResult`
+- input constants
+  - key constants from `ffi.zig`
+  - modifier constants from `ffi.zig`
+  - mouse kind/button constants from `ffi.zig`
+
+Allowed shared lifecycle calls:
+
+- `createWithStartPath`
+- `destroy`
+- `isSessionAlive`
+- `wakeSnapshotWaiters`
+- `wakeMetadataWaiters`
+
+Allowed shared frame/render calls:
+
+- `syncFrameGeometry`
+- `needsFrame`
+- `needsPrepare`
+- `hasQueuedRenderWork`
+- `awaitRenderWake`
+- `awaitMetadataWake`
+- `prepareNextFrame`
+- `renderReadyFrame`
+- `surfaceState`
+- `renderedSnapshotSeq`
+- `setRuntimeBackpressure`
+
+Allowed shared font/config calls:
+
+- `setFontSizePx`
+- `setPrimaryFontPath`
+- `clearFallbackFontPaths`
+- `addFallbackFontPath`
+
+Allowed shared input calls:
+
+- `publishInputBytes`
+- `publishInputKey`
+- `publishPaste`
+- `publishMouseEvent`
+- `setInputFocusChanged`
+
+Allowed shared metadata/query calls:
+
+- `copyCurrentTitle`
+- `drainPendingClipboardSetAlloc`
+- `scrollState`
+- `followLiveBottomChanged`
+- `setScrollbackOffsetChanged`
+- `setHoveredLinkAtPixel`
+- `copyHyperlinkUriAtPixelAlloc`
+- `selectionInProgress`
+- `beginSelection`
+- `updateSelection`
+- `finishSelection`
+- `renderedTextContains`
+
+Shared seam rules for Android:
+
+- Android must map its Java FFI shim to this inventory directly.
+- Android may wrap memory ownership for alloc-returning calls, but may not change semantics.
+- Android may not add substitute calls for render wake, present ack, surface getters, or scroll state when equivalent shared calls already exist.
+- If Android needs a new call, Linux `api.zig` must be able to consume the same capability through the same `howl-term` FFI surface.
+
+Explicitly banned Android terminal contract shapes:
+
+- Java-owned terminal lifecycle enum that diverges from the runtime lifecycle exposed by the shared seam
+- Android-only `presentAck`
+- Android-only `waitRenderWake`
+- Android-only retained texture getters separate from `surfaceState`
+- Android-only scrollback count/offset protocol separate from `scrollState`, `followLiveBottomChanged`, and `setScrollbackOffsetChanged`
+- Android-only terminal telemetry/query surface unless Linux uses the same shared FFI call
+
+### Explicitly Out Of Scope
+
+- Reintroducing the deleted Java/JNI terminal contract.
+- Android-only terminal query methods when Linux does not use them.
+- Android-only render wake semantics.
+- Android-only scrollback or selection protocol.
+- Closing parity without device proof.
+
+### Verification Cadence
+
+For every Android reopen checkpoint:
+
+- `howl-term`: `zig build test`
+- Linux host: `zig build test && zig build test -Dterm-backend-ffi=true`
+- Android host: build the app and install/run on the attached `adb` device
+- parent: `sh tools/check_module_shape.sh && zig build && zig build test`
+
+Android proof is green only when the shared FFI path is exercised on device, not just when Java compiles.
