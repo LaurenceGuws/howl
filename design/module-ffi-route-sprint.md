@@ -117,7 +117,7 @@ Candidate ABI areas:
 
 Acceptance:
 
-- `howl-vt-core/src/vt_core.zig` has `pub const Ffi` and a root `comptime` export block.
+- `howl-vt-core/src/howl_vt.zig` has `pub const Ffi` and a root `comptime` export block.
 - Exported symbols use `howl_vt_*` prefix.
 - No fake terminal runtime stubs.
 

@@ -69,16 +69,16 @@ require_catalog_root() {
 require_file "howl-vt-core/src/terminal.zig"
 
 # Package roots stay small and delegate implementation to owned files.
-require_catalog_root "howl-vt-core/src/vt_core.zig" 80
+require_catalog_root "howl-vt-core/src/howl_vt.zig" 80
 require_package_root "howl-session/src/howl_session.zig" 120
 require_catalog_root "howl-render-core/src/howl_render.zig" 120
 require_catalog_root "howl-hosts/howl-linux-host/src/test_host.zig" 80
 
-require_pattern "howl-vt-core/src/vt_core.zig" '@import\("vt/main\.zig"\)'
-require_pattern "howl-vt-core/src/vt_core.zig" 'pub const VtCore = vt\.VtCore;'
+require_pattern "howl-vt-core/src/howl_vt.zig" '@import\("vt/main\.zig"\)'
+require_pattern "howl-vt-core/src/howl_vt.zig" 'pub const VtCore = vt\.VtCore;'
 require_pattern "howl-session/src/howl_session.zig" '@import\("session/main\.zig"\)'
-reject_pattern "howl-vt-core/src/vt_core.zig" 'pub const VtCore = struct'
-reject_pattern "howl-vt-core/src/vt_core.zig" '@import\("(input|grid|parser|snapshot|selection|terminal|ffi)\.zig"\)'
+reject_pattern "howl-vt-core/src/howl_vt.zig" 'pub const VtCore = struct'
+reject_pattern "howl-vt-core/src/howl_vt.zig" '@import\("(input|grid|parser|snapshot|selection|terminal|ffi)\.zig"\)'
 reject_pattern "howl-session/src/howl_session.zig" 'pub const Session = struct'
 reject_pattern "howl-session/src/howl_session.zig" '@import\("(session|pty|ffi)\.zig"\)'
 reject_pattern "howl-render-core/src/howl_render.zig" 'pub const RenderCore = struct'
@@ -97,7 +97,7 @@ else
 fi
 
 # Public-surface tests should reference root declarations directly.
-require_pattern "howl-vt-core/src/vt_core.zig" 'refAllDecls\((@This\(\)|lib)\)'
+require_pattern "howl-vt-core/src/howl_vt.zig" 'refAllDecls\((@This\(\)|lib)\)'
 if ! grep -Eq 'refAllDecls' "howl-render-core/src/howl_render.zig"; then mark_open "render_root_ref_all_decls_missing"; fi
 if ! grep -Eq 'refAllDecls' "howl-session/src/howl_session.zig"; then mark_open "session_root_ref_all_decls_missing"; fi
 if ! grep -Eq 'refAllDecls' "howl-term/src/howl_term.zig"; then mark_open "term_root_ref_all_decls_missing"; fi
@@ -120,7 +120,7 @@ reject_pattern "howl-vt-core/src/ffi.zig" '@import\("vt_core\.zig"\)'
 reject_pattern "howl-render-core/src/ffi.zig" '@import\("howl_render\.zig"\)'
 
 # First-class module FFI routes are the next active route. Missing real routes stay open.
-if ! grep -Eq 'pub const Ffi =' "howl-vt-core/src/vt_core.zig"; then mark_open "vt_core_ffi_route_missing"; fi
+if ! grep -Eq 'pub const Ffi =' "howl-vt-core/src/howl_vt.zig"; then mark_open "vt_core_ffi_route_missing"; fi
 if ! grep -Eq 'pub const Ffi =' "howl-session/src/howl_session.zig"; then mark_open "session_ffi_route_missing"; fi
 if ! grep -Eq 'pub const Ffi =' "howl-render-core/src/howl_render.zig"; then mark_open "render_ffi_route_missing"; fi
 require_pattern "howl-term/src/howl_term.zig" 'pub const Ffi = (ffi|@import\("ffi\.zig"\));'

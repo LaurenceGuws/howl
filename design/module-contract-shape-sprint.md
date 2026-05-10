@@ -56,7 +56,7 @@ The exact names can change during implementation, but the shape cannot: root fil
 
 ## Current Mismatch
 
-- `howl-vt-core/src/vt_core.zig` is close to the target catalog shape.
+- `howl-vt-core/src/howl_vt.zig` is close to the target catalog shape.
 - `howl-render-core/src/howl_render.zig` is close, but still needs a cleaner grouping story for render contracts vs runtime.
 - `howl-session/src/howl_session.zig` is a small catalog with explicit `runtime`, `transport`, and `testing` groups.
 - `howl-term/src/howl_term.zig` is not close. It is a runtime owner with fields and methods. This is the main gap.
@@ -82,7 +82,7 @@ Current follow-up focus: keep catalog-shape checks green while closing the separ
 
 This inventory is the source of truth for the first implementation pass. "Keep" means keep as part of the public catalog shape. "Move" means move implementation ownership behind the catalog root. "Remove" means delete or privatize after consumers are updated.
 
-### `howl-vt-core/src/vt_core.zig`
+### `howl-vt-core/src/howl_vt.zig`
 
 | Export | Current consumers | Class | Decision |
 | --- | --- | --- | --- |
@@ -187,7 +187,7 @@ Purpose: know exactly what each root exports and who consumes it before moving c
 
 Tasks:
 
-- Inventory every `pub const`, `pub fn`, and public nested namespace in these roots: `howl-vt-core/src/vt_core.zig`, `howl-session/src/howl_session.zig`, `howl-render-core/src/howl_render.zig`, `howl-term/src/howl_term.zig`, `howl-hosts/howl-linux-host/src/main.zig`, `howl-hosts/howl-linux-host/src/test_host.zig`.
+- Inventory every `pub const`, `pub fn`, and public nested namespace in these roots: `howl-vt-core/src/howl_vt.zig`, `howl-session/src/howl_session.zig`, `howl-render-core/src/howl_render.zig`, `howl-term/src/howl_term.zig`, `howl-hosts/howl-linux-host/src/main.zig`, `howl-hosts/howl-linux-host/src/test_host.zig`.
 - Inventory cross-repo consumers of each public root export.
 - Classify every export as public contract, test-only contract, ABI glue, or internal leak.
 - Write the inventory into this sprint doc before implementation starts.
@@ -248,18 +248,18 @@ Acceptance:
 
 Purpose: make the closest module the reference Howl root.
 
-Checkpoint decision: `howl-vt-core/src/vt_core.zig` is already the current reference catalog root. `Input` stays top-level for now because `howl-term` and tests consume `vt_core.Input` directly, and adding a nested alias now would be churn rather than clarity. The root imports the implementation owner `terminal.zig`, re-exports deliberate public domains/types, and references public declarations in its root test.
+Checkpoint decision: `howl-vt-core/src/howl_vt.zig` is the current reference catalog root. `Input` stays top-level for now because `howl-term` and tests consume `vt_core.Input` directly, and adding a nested alias now would be churn rather than clarity. The root imports the `vt/main.zig` namespace wrapper, re-exports deliberate public domains/types, and references public declarations in its root test.
 
 Tasks:
 
-- Keep `src/vt_core.zig` as a catalog only.
+- Keep `src/howl_vt.zig` as a catalog only.
 - Group VT input APIs in a nested namespace if that reads closer to the Ghostty shape without breaking consumers unnecessarily.
 - Keep `terminal.zig` as the VT runtime/protocol owner.
 - Ensure root tests reference all public exports.
 
 Acceptance:
 
-- `vt_core.zig` is the example for other Howl package roots.
+- `howl_vt.zig` is the example for other Howl package roots.
 - Consumers do not import private VT implementation files.
 
 ## Sprint 4: `howl-render-core` Catalog Polish
