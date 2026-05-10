@@ -107,6 +107,77 @@ Initial inventory seed:
 | C ABI | `Ffi` and root-gated exports | native ABI build | `main_c.zig`, `lib_vt.zig` export block | Keep route; split behavior by ABI domain. |
 | Host terminal widget | `howl-linux-host/src/terminal/terminal.zig` | SDL/Linux only | Ghostty `Surface.zig` plus apprt runtime | Keep host UX out of `howl-term`. |
 
+Concrete root exports:
+
+| Export | Current source | Area | Linux host use | Decision |
+| --- | --- | --- | --- | --- |
+| `HowlTerm` | `term_namespace.zig` alias to `terminal.HowlTerm` | runtime handle | Stored as `Terminal.term` and used as method receiver | Keep as primary embed handle. |
+| `Input` | `term_namespace.zig` alias to VT input vocabulary | input | `terminal/input.zig` maps SDL input to `term.Input` | Keep pass-through; no duplication in host. |
+| `Ffi` | `term_namespace.zig` `c_api` alias | C ABI | Native ABI build/export route | Keep as explicit ABI namespace. |
+| `runtime` | root group alias | runtime contracts | not yet consumed by Linux host | Mature in Sprint 1. |
+| `surface` | root group alias | surface contracts | not yet consumed by Linux host | Mature in Sprint 1. |
+| `viewport` | root group alias | viewport contracts | not yet consumed by Linux host | Mature in Sprint 1. |
+
+Linux host nested `HowlTerm.*` type consumption:
+
+| Current use | File | Area | Preferred public group | Decision |
+| --- | --- | --- | --- | --- |
+| `HowlTerm.LifecycleState` | `terminal/terminal.zig` | runtime state | `howl_term.runtime.LifecycleState` | Move in Sprint 1. |
+| `HowlTerm.FramePixels` | `terminal/terminal.zig` | runtime geometry | `howl_term.runtime.FramePixels` | Move in Sprint 1. |
+| `HowlTerm.SurfaceHandle` | `terminal/terminal.zig` | surface presentation | `howl_term.surface.Handle` | Move in Sprint 1. |
+| `HowlTerm.SurfaceMetrics` | `terminal/terminal.zig` | surface diagnostics | `howl_term.surface.Metrics` | Move in Sprint 1 if still needed. |
+| `HowlTerm.SurfaceState` | `terminal/terminal.zig` | surface presentation | `howl_term.surface.State` | Move in Sprint 1. |
+| `HowlTerm.ScrollState` | `terminal/terminal.zig` | viewport/scrollbar | `howl_term.viewport.ScrollState` | Move in Sprint 1. |
+| `HowlTerm.LinkUnderlineStyle` | `terminal/terminal.zig` | viewport/link hover | `howl_term.viewport.LinkUnderlineStyle` | Move in Sprint 1. |
+
+Linux host `HowlTerm` method consumption:
+
+| Method group | Methods used by Linux host | Classification | Ghostty comparison | Decision |
+| --- | --- | --- | --- | --- |
+| Lifecycle | `initPty`, `start`, `deinit`, `isAlive` | embed-stable | `Surface.zig` owns terminal session lifecycle below app runtime | Keep methods; make lifecycle owner underneath boring. |
+| Host config | `setFontSizePx`, `setPrimaryFontPath`, `setFallbackFontPaths` | embed-stable config | `Surface.zig` owns derived config/font state; `renderer.zig` owns renderer contracts | Keep methods for now; consider root `config` group only after host contract settles. |
+| Frame geometry | `syncFrameGeometry`, `FramePixels.renderWidth`, `FramePixels.renderHeight`, `FramePixels.gridWidth`, `FramePixels.gridHeight` | embed-stable frame contract | `Surface.zig` size callbacks; `renderer.zig` size contracts | Keep; move type use to `runtime.FramePixels`. |
+| Frame loop | `needsFrame`, `needsPrepare`, `prepareNextFrame`, `renderReadyFrame`, `awaitRenderWake`, `wakeSnapshotWaiters` | embed-stable but still broad | Ghostty renderer/termio threads are explicit domain owners | Keep methods while owners mature; `wakeSnapshotWaiters` is deinit-specific and should be reviewed before Android. |
+| Surface readout | `surfaceState`, `renderedSnapshotSeq` | embed-stable surface/pacing | `Surface.zig` draw/state and `apprt/surface.zig` messages | Keep methods; move type use to `surface.State`. |
+| Host pacing diagnostics | `hasQueuedRenderWork`, `setRuntimeBackpressure` | host scheduling contract | Ghostty renderer thread/mailbox owns render pressure | Keep for Linux proof; decide whether public diagnostics or runtime contract before Android. |
+| Input | `publishInputBytes`, `publishInputKey`, `publishMouseEvent`, `publishPaste`, `setInputFocus` | embed-stable input | Ghostty `Surface.zig` input callbacks and `lib_vt.zig` input group | Keep methods; input vocabulary remains root `Input`. |
+| Viewport/scrollbar | `scrollState`, `followLiveBottom`, `setScrollbackOffset` | embed-stable viewport | Ghostty `Surface.zig` scrollbar and viewport behavior | Keep methods; move type use to `viewport.ScrollState`. |
+| Selection/link | `selectionInProgress`, `beginSelection`, `updateSelection`, `finishSelection`, `setHoveredLinkAtPixel`, `copyHyperlinkUriAtPixel` | host interaction contract | Ghostty `Surface.zig` mouse/selection/link handling | Keep methods; move link type use to `viewport.LinkUnderlineStyle`. |
+| Clipboard/title | `drainPendingClipboardSet`, `copyCurrentTitle` | host UX contract | Ghostty `apprt/surface.zig` clipboard/title messages | Keep methods; consider host effect grouping later. |
+| Text diagnostics | `renderedTextContains` | diagnostics/test convenience | Ghostty debug/test surfaces, not core app contract | Keep for now; classify under future `diagnostics` before Android. |
+
+Current ABI domain inventory:
+
+| ABI domain | `howl_term_*` functions | Current implementation owner | Gap |
+| --- | --- | --- | --- |
+| Handle/lifecycle | `create`, `create_with_start_path`, `destroy` | `ffi.zig` direct | Needs `c_api/lifecycle.zig` before `ffi.zig` is boring. |
+| Frame loop/geometry | `has_queued_render_work`, `needs_frame`, `needs_prepare`, `prepare_next_frame`, `render_ready_frame`, `await_render_wake`, `sync_frame_geometry`, `set_runtime_backpressure`, `wake_snapshot_waiters`, `render_frame`, `render_latest_snapshot`, `render_frame_sized`, `await_snapshot_event` | mixed direct calls in `ffi.zig` | Needs `c_api/frame.zig` or equivalent clear owner. |
+| Metrics/diagnostics | `take_prepare_metrics`, `take_surface_metrics`, `render_missing_glyphs`, `render_fallback_hits`, `render_fallback_misses`, `render_shaped_clusters`, `render_resolve_stage`, `last_render_metrics` | `c_api/metrics.zig` | Mostly owned; keep ABI struct layout in `ffi.zig`. |
+| Surface/status/title/sequences | `surface_state`, `has_output_proof`, `surface_texture_id`, `surface_width`, `surface_height`, `surface_epoch`, `is_session_alive`, `input_bytes_applied`, `snapshot_event_seq`, `rendered_snapshot_seq`, `copy_current_title` | `c_api/surface.zig` | Mostly owned; `surface_state` fallback value remains in `ffi.zig`. |
+| Input | `publish_input_bytes`, `publish_input_key`, `set_input_focus`, `publish_paste`, `publish_mouse_event`, `publish_control_signal` | `c_api/input.zig` | Owned. |
+| Font/config | `set_font_size_px`, `set_primary_font_path`, `clear_fallback_font_paths`, `add_fallback_font_path` | `c_api/font.zig` | Owned; may become `config` only if scope grows. |
+| Viewport/selection/link/text | `scroll_state`, `current_scrollback_count`, `current_scrollback_offset`, `set_scrollback_offset`, `follow_live_bottom`, `viewport_rows`, `is_alternate_screen`, `rendered_text_contains`, `visible_text_contains`, `selection_in_progress`, `begin_selection`, `update_selection`, `finish_selection`, `clear_selection`, `set_hovered_link_at_pixel`, `copy_hyperlink_uri_at_pixel`, `drain_pending_clipboard_set` | mostly `c_api/viewport.zig`, with `scroll_state` inline in `ffi.zig` | Move `scroll_state` conversion under viewport owner before claiming FFI maturity. |
+| Input constants | `mod_*`, `key_*`, `mouse_*` | `c_api/constants.zig` | Owned. |
+
+Ghostty boundary map for this sprint:
+
+| Howl file | Role in this sprint | Ghostty reference | Comparison result |
+| --- | --- | --- | --- |
+| `howl-term/src/howl_term.zig` | public catalog and C export route | `lib_vt.zig` | Shape is close; groups need to become useful to hosts. |
+| `howl-term/src/term_namespace.zig` | namespace wrapper | `terminal/main.zig` | Shape is close; keep declarative. |
+| `howl-term/src/terminal.zig` | runtime handle/state/method facade | `Surface.zig` | Same embed importance, but Howl needs more owner maturity below it before it feels like an easy embed API. |
+| `howl-term/src/runtime/thread.zig` | terminal runtime child thread | `termio/Thread.zig`, `renderer/Thread.zig` | Naming is aligned; ownership should stay domain-local. |
+| `howl-term/src/ffi.zig` | C ABI catalog | `main_c.zig`, `lib_vt.zig` export block | Route is aligned; behavior split is incomplete. |
+| `howl-hosts/howl-linux-host/src/terminal/terminal.zig` | SDL host terminal widget | `Surface.zig`, `apprt/gtk/Surface.zig` | Correctly host-owned; should prove public root groups. |
+| `howl-hosts/howl-linux-host/src/terminal/thread.zig` | SDL host child thread loops | `renderer/Thread.zig`, `terminal/search/Thread.zig` | Naming is aligned; remains host-owned. |
+
+Sprint 0 open findings:
+
+- Linux host already has the correct package dependency boundary, but its type vocabulary still leans on `HowlTerm.*` instead of root groups.
+- `terminal.zig` is mostly delegating methods now, but still exposes several compatibility/internal-looking methods to all embedders.
+- `ffi.zig` route is correct, but lifecycle/frame/geometry and `scroll_state` conversion are not yet delegated to domain owners.
+- There is not enough evidence yet to mark `diagnostics` or `config` root groups stable; they should remain future decisions until host and ABI needs are clearer.
+
 ## Sprint 1: Linux Host Uses The Public Groups
 
 Purpose: make the existing SDL host prove the intended embed surface rather than reaching through nested runtime implementation aliases.
