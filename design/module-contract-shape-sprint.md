@@ -19,9 +19,20 @@ Ghostty's `src/lib_vt.zig` is the reference for contract shape and hygiene, not 
 
 ## Active Focus
 
-Sprint 0 is active.
+The module contract shape sprint checkpoints are complete.
 
-Complete and checkpoint the current `howl-term` public alias trim before broader module movement.
+Current follow-up focus: keep these checks green while closing the separately tracked Android runtime proof gap. Do not replace that proof with stubs or fake parity.
+
+## Completed Checkpoints
+
+- Sprint 0: `HowlTerm` internal public aliases trimmed and checkpointed.
+- Sprint 1: parent module-shape checks enforce root categories and dependency direction.
+- Sprint 2: `howl-vt-core` root surface is referenced by tests.
+- Sprint 3: `howl-render-core` root no longer exports selected backend internals by accident.
+- Sprint 4: `howl-session` test PTYs are grouped under `TestPty`.
+- Sprint 5: parent checks guard the narrow host-facing `HowlTerm` aliases.
+- Sprint 6: parent checks enforce host dependency on `howl-term`, not lower modules.
+- Sprint 7: parent checks guard the stable FFI metrics field and explicit Android runtime skip marker.
 
 ## Sprint 0: Baseline Checkpoint
 
