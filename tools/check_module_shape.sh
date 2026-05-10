@@ -148,6 +148,11 @@ reject_tree_pattern "howl-term/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix
 reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix|android|test)|render_core|renderer|backend/(gl|gles))'
 reject_pattern "howl-hosts/howl-linux-host/build.zig" 'b\.dependency\("(vt_core|howl_session|howl_render|howl-vt-core|howl-session|howl-render-core)"'
 require_pattern "howl-hosts/howl-linux-host/build.zig" 'check_host_runtime_surface'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'const howl_term = @import\("howl_term"\);'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'howl_term\.runtime\.FramePixels'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'howl_term\.surface\.State'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'howl_term\.viewport\.ScrollState'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'HowlTerm\.(LifecycleState|FramePixels|SurfaceHandle|SurfaceMetrics|SurfaceState|ScrollState|LinkUnderlineStyle)'
 
 # FFI ABI fields stay stable unless an ABI-changing checkpoint says otherwise.
 require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'

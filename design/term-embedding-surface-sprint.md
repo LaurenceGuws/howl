@@ -195,6 +195,12 @@ Acceptance:
 - Linux host builds/tests pass.
 - Parent checks enforce no lower-module imports and no private owner path imports.
 
+Checkpoint 1 target:
+
+- Move Linux host type aliases from nested `HowlTerm.*` contracts to root groups: `howl_term.runtime`, `howl_term.surface`, and `howl_term.viewport`.
+- Do not change behavior or method calls in this checkpoint.
+- Add a parent shape check that prevents those nested type aliases from returning.
+
 ## Sprint 2: `terminal.zig` Facade Maturity
 
 Purpose: reduce `terminal.zig` to a stable method table over mature owners.
