@@ -77,7 +77,9 @@ require_file "howl-term/src/c_api/font.zig"
 require_file "howl-term/src/c_api/viewport.zig"
 require_file "howl-term/src/c_api/metrics.zig"
 require_file "howl-term/src/c_api/surface.zig"
+require_file "howl-term/src/runtime/thread.zig"
 require_file "howl-term/src/runtime/query.zig"
+if test -f "howl-term/src/wake/loop.zig"; then fail "forbidden_file:howl-term/src/wake/loop.zig"; fi
 if test -f "howl-term/src/runtime/state.zig"; then fail "forbidden_file:howl-term/src/runtime/state.zig"; fi
 if test -f "howl-term/src/c_api/state.zig"; then fail "forbidden_file:howl-term/src/c_api/state.zig"; fi
 
@@ -167,6 +169,7 @@ require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeo
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'
 require_pattern "howl-term/src/terminal.zig" 'wake\.stopSnapshotWaiters'
 require_pattern "howl-term/src/terminal.zig" '@import\("runtime/query\.zig"\)'
+require_pattern "howl-term/src/runtime/lifecycle.zig" '@import\("thread\.zig"\)'
 
 # FFI implementation files talk to owner modules, not back through their public roots.
 reject_pattern "howl-term/src/ffi.zig" '@import\("howl_term\.zig"\)'

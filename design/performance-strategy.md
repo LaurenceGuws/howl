@@ -92,10 +92,10 @@ Existing surfaces:
 - `zig build howl-term-benchmark -- --runs 3`
 
 Useful current owners:
-- `howl-term/src/term/loop.zig`
-- `howl-term/src/term/render_snapshot.zig`
-- `howl-term/src/term/state_sync.zig`
-- `howl-term/src/term/wake.zig`
+- `howl-term/src/runtime/thread.zig`
+- `howl-term/src/render/snapshot.zig`
+- `howl-term/src/render/frame.zig`
+- `howl-term/src/wake/wake.zig`
 
 Current gap:
 - no dummy PTY-backed term benchmark yet
@@ -171,7 +171,7 @@ Why:
 ### B. `howl-term` runtime stress harness
 
 Goal:
-- drive `loop.zig`, `state_sync.zig`, and `render_snapshot.zig` without SDL or a real terminal window
+- drive `runtime/thread.zig`, `render/frame.zig`, and `render/snapshot.zig` without SDL or a real terminal window
 
 Initial shape:
 - synthetic session transport that feeds deterministic PTY-like byte streams

@@ -50,6 +50,7 @@ Current internal target shape:
 
 - `terminal.zig`: owns the `HowlTerm` state container, public method names, and compatibility aliases.
 - `runtime/lifecycle.zig`: construction, PTY startup, worker thread lifecycle, deinit.
+- `runtime/thread.zig`: background runtime thread for session I/O, VT apply, and wake arming.
 - `runtime/query.zig`: locked metrics, counters, title/status, surface, and scroll readouts.
 - `input/input.zig`: bytes, keys, paste, mouse, focus, control signals, and clipboard effects.
 - `render/frame.zig`: host frame queue, prepare/render-ready flow, render wake publication.
