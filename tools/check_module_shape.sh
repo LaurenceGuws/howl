@@ -72,6 +72,8 @@ require_file "howl-vt-core/src/vt_namespace.zig"
 require_file "howl-render-core/src/render_namespace.zig"
 require_file "howl-term/src/term_namespace.zig"
 require_file "howl-term/src/c_api/constants.zig"
+require_file "howl-term/src/c_api/input.zig"
+require_file "howl-term/src/c_api/font.zig"
 
 # Package roots stay small and delegate implementation to owned files.
 require_catalog_root "howl-vt-core/src/howl_vt.zig" 80
@@ -141,7 +143,12 @@ require_pattern "howl-hosts/howl-linux-host/build.zig" 'check_host_runtime_surfa
 # FFI ABI fields stay stable unless an ABI-changing checkpoint says otherwise.
 require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/constants\.zig"\)'
+require_pattern "howl-term/src/ffi.zig" '@import\("c_api/input\.zig"\)'
+require_pattern "howl-term/src/ffi.zig" '@import\("c_api/font\.zig"\)'
 reject_pattern "howl-term/src/ffi.zig" '^pub fn (modShift|keyEnter|mouseButtonNone|mousePress)'
+reject_pattern "howl-term/src/ffi.zig" 'term\.publish(InputBytes|InputKey|Paste|MouseEvent|ControlSignal)'
+reject_pattern "howl-term/src/ffi.zig" 'term\.setPrimaryFontPath'
+reject_pattern "howl-term/src/ffi.zig" 'term\.(clearFallbackFontPaths|addFallbackFontPath)'
 reject_pattern "howl-term/src/terminal.zig" 'canReuseFrameLayoutLocked'
 require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeout'
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'

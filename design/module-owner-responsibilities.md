@@ -59,6 +59,9 @@ Current internal target shape:
 - `wake/wake.zig`: snapshot condition waits, signaling, and waiter shutdown.
 - `config/fonts.zig`: font size and font path mutation.
 - `ffi.zig`: C ABI catalog for `howl_term_*` functions.
-- `c_api/*.zig`: domain implementations used by the C ABI catalog.
+- `c_api/constants.zig`: C ABI input constant discovery.
+- `c_api/input.zig`: C ABI input publication and input value conversion.
+- `c_api/font.zig`: C ABI font configuration and C string conversion.
+- `c_api/*.zig`: future domain implementations used by the C ABI catalog.
 
 The ABI rule is strict: moving implementation below `ffi.zig` must not change exported symbol names, numeric return codes, extern struct field order, or `FfiPrepareMetrics.term_us`.
