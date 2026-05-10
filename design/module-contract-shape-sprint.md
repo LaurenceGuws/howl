@@ -1,180 +1,225 @@
-# Module Contract Shape Sprint
+# Module Public Export Shape Sprint
 
 ## Goal
 
-Make every Howl module boundary boring, curated, and enforceable.
+Make every public Howl module entrypoint look and behave like a curated public API catalog in the spirit of Ghostty's `src/lib_vt.zig`.
 
-Ghostty's `src/lib_vt.zig` is the reference for contract shape and hygiene, not symbol names. The desired pattern is a clear public catalog that points at owned implementation files, groups special contract areas deliberately, and avoids leaking private implementation convenience through package roots.
+This is about shape and hygiene, not copying Ghostty symbol names. A pristine root file should be boring to read: import owned implementation files, re-export deliberate public domains and types, group special API areas under clear namespaces, gate ABI exports explicitly, and run public-surface compile checks.
 
-## Operating Rules
+## Reference Shape
 
-- Work sequentially. Finish the current sprint checkpoint before starting the next one.
-- Keep package roots as curated contract catalogs.
-- Keep runtime owner files obvious and allowed to contain real state.
-- Export only deliberate public API, not aliases used only for internal convenience.
-- Route cross-domain imports through package roots and owner files.
-- Keep hosts on `howl-term`; hosts must not import VT, session, or render internals directly.
-- Avoid fake progress. Missing Android runtime proof stays an explicit open item until real code exists.
-- Verify with parent `zig build test --summary all` after each checkpoint.
+Ghostty `lib_vt.zig` has these important properties:
 
-## Active Focus
+- The root is a public catalog, not the implementation owner.
+- One or more implementation owners are imported privately near the top.
+- Public modules/domains are re-exported intentionally with `pub const`.
+- Public types are aliases from owners, not newly invented wrapper types.
+- Special areas such as input are grouped under a nested public namespace.
+- C ABI export wiring is explicit and gated in one place.
+- Root tests reference the public surface, not private implementation details.
 
-The module contract shape sprint checkpoints are complete.
+## Non-Negotiable Target
 
-Current follow-up focus: keep these checks green while closing the separately tracked Android runtime proof gap. Do not replace that proof with stubs or fake parity.
+Every package root must become a catalog-shaped file.
 
-## Completed Checkpoints
+This includes `howl-term/src/howl_term.zig`. It must stop being the large runtime owner file. The runtime owner body needs to move to a specific implementation file, then `howl_term.zig` should re-export the public runtime type and related public domains from that owner.
 
-- Sprint 0: `HowlTerm` internal public aliases trimmed and checkpointed.
-- Sprint 1: parent module-shape checks enforce root categories and dependency direction.
-- Sprint 2: `howl-vt-core` root surface is referenced by tests.
-- Sprint 3: `howl-render-core` root no longer exports selected backend internals by accident.
-- Sprint 4: `howl-session` test PTYs are grouped under `TestPty`.
-- Sprint 5: parent checks guard the narrow host-facing `HowlTerm` aliases.
-- Sprint 6: parent checks enforce host dependency on `howl-term`, not lower modules.
-- Sprint 7: parent checks guard the stable FFI metrics field and explicit Android runtime skip marker.
+Target sketch for `howl-term/src/howl_term.zig`:
 
-## Sprint 0: Baseline Checkpoint
+```zig
+//! Public API of the howl-term Zig module.
 
-Purpose: finish the already-started `HowlTerm` alias trim as a clean baseline.
+const lib = @This();
+const std = @import("std");
+
+const terminal = @import("terminal.zig");
+const input = @import("input/input.zig");
+const ffi = @import("ffi.zig");
+
+pub const HowlTerm = terminal.HowlTerm;
+pub const Input = terminal.Input;
+pub const Ffi = ffi;
+
+pub const runtime = struct {
+    pub const LifecycleState = terminal.LifecycleState;
+    pub const FramePixels = terminal.FramePixels;
+    pub const SurfaceState = terminal.SurfaceState;
+    pub const ScrollState = terminal.ScrollState;
+};
+
+test {
+    std.testing.refAllDecls(lib);
+}
+```
+
+The exact names can change during implementation, but the shape cannot: root files are catalogs; owner files own state and behavior.
+
+## Current Mismatch
+
+- `howl-vt-core/src/vt_core.zig` is close to the target catalog shape.
+- `howl-render-core/src/howl_render.zig` is close, but still needs a cleaner grouping story for render contracts vs runtime.
+- `howl-session/src/root.zig` is a small catalog, but should be reorganized into deliberate public groups instead of a flat list.
+- `howl-term/src/howl_term.zig` is not close. It is a runtime owner with fields and methods. This is the main gap.
+- Host roots are executable/test roots, not package API roots, but they still need clear import boundaries and thin test aggregation.
+
+## Work Rules
+
+- Work sequentially and commit each checkpoint.
+- No fake completion: a sprint is complete only when the root shape actually matches the catalog target.
+- Do not use compatibility shims unless they protect real external consumers or persisted ABI.
+- Do not duplicate VT input vocabulary in `howl-term`.
+- Do not expose backend/session/VT internals through hosts.
+- Verify each checkpoint with targeted repo tests and parent `zig build test --summary all`.
+- Keep Android runtime proof explicitly open until real Android runtime code exists.
+
+## Active Checkpoint
+
+Sprint 0 is active.
+
+Do not start root reshaping until the export inventory and keep/move/remove decisions are written into this document.
+
+## Sprint 0: Public Surface Inventory
+
+Purpose: know exactly what each root exports and who consumes it before moving code.
 
 Tasks:
 
-- Keep Linux-host-used `HowlTerm` aliases intact: `LifecycleState`, `SurfaceHandle`, `SurfaceMetrics`, `FramePixels`, `SurfaceState`, `LinkUnderlineStyle`, `ScrollState`.
-- Remove internal-only `HowlTerm.*` public aliases.
-- Point internal signatures at their real owners: `runtime/contract.zig`, `render/pipeline.zig`, `render/snapshot.zig`.
-- Run `howl-term` tests.
-- Run parent workspace tests.
-- Commit and push once the checkpoint is clean and approved.
+- Inventory every `pub const`, `pub fn`, and public nested namespace in these roots: `howl-vt-core/src/vt_core.zig`, `howl-session/src/root.zig`, `howl-render-core/src/howl_render.zig`, `howl-term/src/howl_term.zig`, `howl-hosts/howl-linux-host/src/main.zig`, `howl-hosts/howl-linux-host/src/test_host.zig`.
+- Inventory cross-repo consumers of each public root export.
+- Classify every export as public contract, test-only contract, ABI glue, or internal leak.
+- Write the inventory into this sprint doc before implementation starts.
 
 Acceptance:
 
-- `howl-term`: `zig build test --summary all` passes.
-- parent: `zig build test --summary all` passes.
-- `./status.sh` is empty after commit and push.
+- The doc contains an export table for each root.
+- Each export has a keep/move/remove decision.
+- No code movement has happened yet, except inventory-only docs.
 
-## Sprint 1: Shape Enforcement
+## Sprint 1: Define Catalog Shape Checks
 
-Purpose: make the target shape machine-checkable.
+Purpose: update enforcement to match the real target before doing broad movement.
 
 Tasks:
 
-- Define root categories in `tools/check_module_shape.sh`: package root, runtime owner, executable owner, test root.
-- Enforce small package roots where expected.
-- Enforce allowed runtime owner exceptions: `howl-term/src/howl_term.zig`, `howl-hosts/howl-linux-host/src/main.zig`.
-- Fail wrong-direction imports.
-- Fail host imports of lower modules: `vt_core`, `howl_session`, `howl_render`.
+- Change parent shape checks so package roots are forbidden from owning large runtime structs directly.
+- Add a check that `howl-term/src/howl_term.zig` is catalog-shaped and does not contain runtime fields.
+- Add checks for root tests that reference public declarations.
+- Preserve existing dependency direction checks.
+- Keep explicit executable-owner exceptions for host `main.zig` only.
 
 Acceptance:
 
-- `zig build` fails on root bloat or wrong-direction deps.
-- Parent workspace checks still pass.
+- The checks describe the target shape, even if temporarily marked as expected-failing in the doc.
+- No checkpoint claims completion until checks pass without expected-fail markers.
 
-## Sprint 2: `howl-vt-core`
+## Sprint 2: `howl-term` Root Reshape
 
-Purpose: keep VT core as the model package root.
+Purpose: fix the biggest mismatch first.
 
 Tasks:
 
-- Keep `src/vt_core.zig` as a curated public catalog.
-- Keep `src/terminal.zig` as the runtime/protocol owner.
-- Keep VT input vocabulary and terminal-mode-dependent input encoding owned by VT.
-- Remove remaining public aliases that only serve internal convenience.
-- Add or keep root public-surface tests.
+- Move the current `HowlTerm` runtime owner body out of `src/howl_term.zig` into a specific owner file such as `src/terminal.zig`.
+- Keep implementation imports in the owner file, not the root catalog.
+- Make `src/howl_term.zig` a public catalog that imports the owner and re-exports deliberate public API.
+- Group public contract areas under clear namespaces where useful: runtime state, frame/render surface, input, FFI.
+- Keep host-facing Zig API working or update hosts in the same checkpoint if the public shape intentionally changes.
+- Keep FFI ABI fields stable, including `FfiPrepareMetrics.term_us`.
 
 Acceptance:
 
-- Consumers use `vt_core.Input`, `vt_core.Grid`, `vt_core.Parser`, `vt_core.Snapshot`, `vt_core.Selection`, and `vt_core.VtCore` only where intended.
-- `vt_core.zig` stays small and boring.
+- `howl_term.zig` has no runtime fields.
+- `howl_term.zig` reads as a public catalog comparable to `lib_vt.zig`.
+- Linux host builds and tests pass.
+- Parent workspace tests pass.
 
-## Sprint 3: `howl-render-core`
+## Sprint 3: `howl-vt-core` Catalog Polish
 
-Purpose: make the render root expose render contracts, not backend internals by accident.
+Purpose: make the closest module the reference Howl root.
 
 Tasks:
 
-- Audit `howl_render.zig` exports: `Backend`, `BackendError`, `RenderReport`, `PreparedTextScene`, `TextSceneRenderReport`, `Renderer`.
-- Keep public only what `howl-term` and tests need.
-- Move backend-specific public surface under a deliberate namespace only if it must stay public.
-- Keep `render_core.zig` as the render contract owner.
-- Keep `renderer.zig` as selected backend runtime owner.
+- Keep `src/vt_core.zig` as a catalog only.
+- Group VT input APIs in a nested namespace if that reads closer to the Ghostty shape without breaking consumers unnecessarily.
+- Keep `terminal.zig` as the VT runtime/protocol owner.
+- Ensure root tests reference all public exports.
 
 Acceptance:
 
-- Linux host has no direct `howl_render.*` dependency.
-- `howl-term` uses only intended render root contracts.
+- `vt_core.zig` is the example for other Howl package roots.
+- Consumers do not import private VT implementation files.
 
-## Sprint 4: `howl-session`
+## Sprint 4: `howl-render-core` Catalog Polish
 
-Purpose: make session root a clear contract catalog without making test PTYs look like production API.
+Purpose: separate render contracts from selected backend runtime shape.
 
 Tasks:
 
-- Keep public session contracts: `Session`, config/status/snapshot/ops, `Pty`, `OwnedPty`, `ControlSignal`, `PtyLaunchConfig`, `initPty`.
-- Move `MemPty`, `PartialPty`, and `FailPty` behind a deliberate testing namespace or private test imports.
-- Keep PTY variants owned by session.
+- Decide the public grouping for render contracts, renderer runtime, and backend-selected helpers.
+- Keep backend implementation details out of root exports unless grouped under an explicit public namespace.
+- Ensure `howl-term` uses only root-level render contracts.
+- Add or update root public-surface tests.
 
 Acceptance:
 
-- `howl-session/src/root.zig` is a boring contract catalog.
-- Test PTYs are not mistaken for normal production API.
+- `howl_render.zig` is a catalog, not a backend leak.
+- Linux host still has no direct render-core dependency.
 
-## Sprint 5: `howl-term`
+## Sprint 5: `howl-session` Catalog Polish
 
-Purpose: keep `src/howl_term.zig` as the public runtime owner while separating public API from internal owner modules.
+Purpose: make session root deliberate, grouped, and test-aware.
 
 Tasks:
 
-- Keep only host-facing aliases at `HowlTerm.*`.
-- Prefer internal references to concrete owners.
-- Organize methods by lifecycle, frame queue, input, render, viewport, metrics/state.
-- Do not split this into `runtime/term.zig`.
-- Do not rebrand VT input vocabulary into term-specific symbols.
+- Group session runtime contracts separately from PTY contracts.
+- Keep test PTYs under a clearly test-only namespace.
+- Keep PTY ownership in session.
+- Add or update root public-surface tests.
 
 Acceptance:
 
-- `HowlTerm` public surface is small and host-safe.
-- Internal modules name their real owners.
+- `root.zig` reads like a public catalog with grouped domains.
+- Production API and test-only API are visually distinct.
 
-## Sprint 6: Host Boundary
+## Sprint 6: Host Root Boundaries
 
-Purpose: make host dependency direction obvious.
+Purpose: keep host roots clear without pretending they are package catalogs.
 
 Tasks:
 
-- Keep Linux host terminal runtime dependency on `howl-term` only.
-- Keep platform UX/runtime code in host modules.
-- Keep `main.zig` as executable owner exception.
-- Keep `test_host.zig` as a thin test root.
+- Keep host `main.zig` as executable owner.
+- Keep host test roots thin.
+- Enforce that hosts consume terminal runtime through `howl-term` only.
+- Remove any direct host dependency on lower modules if found.
 
 Acceptance:
 
-- Shape checks enforce no host imports of lower modules.
-- Host tests and parent workspace tests pass.
+- Host roots are small where appropriate.
+- Import direction checks pass.
 
-## Sprint 7: FFI And Android Proof Gate
+## Sprint 7: ABI And Platform Proof Gate
 
-Purpose: keep native ABI and platform proof honest.
+Purpose: keep public catalog cleanup from hiding ABI or platform proof gaps.
 
 Tasks:
 
-- Keep FFI ABI fields stable unless intentionally changing ABI.
-- Preserve `FfiPrepareMetrics.term_us`.
-- Keep FFI implementation explicit and boring.
-- Keep Android runtime proof marked open until real runtime code exists.
+- Keep C/FFI exports explicit and easy to audit from the `howl-term` public root.
+- Preserve stable ABI fields unless an ABI-changing checkpoint explicitly says otherwise.
+- Keep Android runtime proof missing as an explicit open item.
+- Do not add stubs or fake Android parity.
 
 Acceptance:
 
 - Native checks pass.
-- Android compile-only proof remains documented.
-- Missing Android runtime proof remains an explicit skip, not a stub.
+- Android compile-only proof remains real if run.
+- Runtime proof gap remains explicit until actual Android runtime code exists.
 
-## Definition Of Done
+## Done Means Done
 
+- All package roots are catalog-shaped like `lib_vt.zig` in structure.
+- `howl-term/src/howl_term.zig` is no longer the runtime owner body.
+- Owner files own state and behavior behind roots.
+- Public exports are intentional and grouped.
+- Root public-surface tests exist for each package.
+- Parent shape checks enforce the catalog shape.
 - Parent `zig build test --summary all` passes.
-- Parent `zig build` emits `module_shape_ok=1`.
-- `tools/check_module_shape.sh` catches root bloat and wrong-direction imports.
-- Package roots read like curated public contracts.
-- Runtime owner files read like owners, not accidental package roots.
-- No public alias exists only because an internal file wanted shorter syntax.
-- `./status.sh` is empty after approved commits and pushes.
+- `./status.sh` is empty after commits and pushes.
