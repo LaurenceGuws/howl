@@ -78,6 +78,110 @@ Sprint 0 is active.
 
 Do not start root reshaping until the export inventory and keep/move/remove decisions are written into this document.
 
+## Sprint 0 Inventory
+
+This inventory is the source of truth for the first implementation pass. "Keep" means keep as part of the public catalog shape. "Move" means move implementation ownership behind the catalog root. "Remove" means delete or privatize after consumers are updated.
+
+### `howl-vt-core/src/vt_core.zig`
+
+| Export | Current consumers | Class | Decision |
+| --- | --- | --- | --- |
+| `Input` | `howl-term` input routing and public `howl_term.Input`; VT tests | Public contract | Keep; consider nested `input` grouping only if consumer churn is justified. |
+| `Grid` | `howl-term/src/render/sync.zig`; VT tests | Public contract | Keep. |
+| `Parser` | VT tests/self surface | Public contract | Keep if parser is intended as public protocol API; otherwise mark for future removal after test audit. |
+| `Snapshot` | VT tests/self surface | Public contract candidate | Keep for now; confirm external need in Sprint 3. |
+| `Selection` | VT tests/self surface | Public contract candidate | Keep for now; confirm external need in Sprint 3. |
+| `VtCore` | `howl-term` runtime and fuzz; VT tests | Public runtime type | Keep as alias from `terminal.zig`. |
+
+Shape decision: this root is already catalog-shaped. Do not move implementation into it. Sprint 3 should only polish grouping and public-surface tests.
+
+### `howl-session/src/root.zig`
+
+| Export | Current consumers | Class | Decision |
+| --- | --- | --- | --- |
+| `Session` | `howl-term`, `howl-session` tests, `howl-term` fuzz | Public contract | Keep; group under session namespace or leave top-level after grouping decision. |
+| `SessionConfig` | No direct current consumer found | Public contract candidate | Keep for now; validate in Sprint 5. |
+| `SessionStatus` | `howl-session` tests | Public contract | Keep; likely session namespace candidate. |
+| `SessionSnapshot` | No direct current consumer found | Public contract candidate | Keep for now; validate in Sprint 5. |
+| `SessionOps` | No direct current consumer found | Public contract candidate | Keep for now; validate in Sprint 5. |
+| `Pty` | No direct current consumer found | Public contract | Keep; group under PTY namespace if root is reorganized. |
+| `PtyClass` | `howl-session` tests | Public contract | Keep. |
+| `ControlSignal` | `howl-term` control-signal mapping; `howl-session` tests | Public contract | Keep. |
+| `OwnedPty` | `howl-term` runtime owner | Public contract | Keep. |
+| `PtyLaunchConfig` | No direct current consumer found; implied by `initPty` | Public contract | Keep. |
+| `pty_class` | `howl-session` tests | Public contract | Keep or move under PTY namespace during Sprint 5. |
+| `TestPty.Mem` | `howl-session` tests | Test-only contract | Keep under `TestPty`; do not expose as production top-level. |
+| `TestPty.Partial` | `howl-session` tests | Test-only contract | Keep under `TestPty`; update stale external fuzz references. |
+| `TestPty.Fail` | `howl-session` tests | Test-only contract | Keep under `TestPty`. |
+| `initPty` | `howl-term` lifecycle | Public contract | Keep; group decision in Sprint 5. |
+
+Consumer cleanup note: `howl-term/src/fuzz/terminal_replies.zig` still references old `howl_session.MemPty` and `howl_session.PartialPty` names. Update those to `howl_session.TestPty.*` before or during Sprint 5; do not reintroduce the old top-level aliases.
+
+Shape decision: root is small but too flat. Sprint 5 should group session runtime contracts, PTY contracts, and test-only PTYs without turning the root into an implementation owner.
+
+### `howl-render-core/src/howl_render.zig`
+
+| Export | Current consumers | Class | Decision |
+| --- | --- | --- | --- |
+| `Core` | `howl-term` render/snapshot/sync/benchmark; render-core tests | Public contract namespace | Keep; consider more Ghostty-like domain aliasing only after consumer audit. |
+| `Renderer` | `howl-term/src/render/render.zig`; render-core tests | Public runtime type | Keep as selected renderer runtime alias from `renderer.zig`. |
+| `init` | No direct current consumer found | Public helper candidate | Keep for now; validate whether root catalog should expose it or move under `Core`. |
+| `deriveGridSize` | render-core tests | Public helper candidate | Keep for now; validate external need in Sprint 4. |
+| `deriveGridForFrame` | render-core tests | Public helper candidate | Keep for now; validate external need in Sprint 4. |
+
+Shape decision: root is catalog-shaped but grouping is weak. Sprint 4 should decide whether helper functions stay top-level or move under a public namespace.
+
+### `howl-term/src/howl_term.zig`
+
+| Export | Current consumers | Class | Decision |
+| --- | --- | --- | --- |
+| `Ffi` | Native ABI build/export surface | ABI glue | Keep in root catalog as explicit ABI area. |
+| `Input` | FFI and Linux host input conversion via `howl_term.Input` | Public pass-through contract | Keep; do not duplicate VT input vocabulary. Consider nested `input` catalog group. |
+| `HowlTerm` | Linux host, FFI, tests/benchmarks | Public runtime type | Keep as root export, but move implementation body to an owner file such as `terminal.zig`. |
+| `HowlTerm.SurfaceHandle` | Linux host | Public host contract | Keep initially; later consider root `surface`/`runtime` grouping with host updates. |
+| `HowlTerm.LinkUnderlineStyle` | Linux host and FFI | Public host/ABI contract | Keep initially. |
+| `HowlTerm.LifecycleState` | Linux host | Public host contract | Keep initially. |
+| `HowlTerm.FramePixels` | Linux host and FFI | Public host/ABI contract | Keep initially. |
+| `HowlTerm.SurfaceMetrics` | Linux host | Public host contract | Keep initially. |
+| `HowlTerm.SurfaceState` | Linux host | Public host contract | Keep initially. |
+| `HowlTerm.ScrollState` | Linux host | Public host contract | Keep initially. |
+
+`HowlTerm` public methods currently exported by the runtime owner body:
+
+| Method group | Methods | Current consumers | Class | Decision |
+| --- | --- | --- | --- | --- |
+| Lifecycle | `init`, `initPty`, `deinit`, `start`, `stop`, `isAlive`, `hasOutputProof` | Linux host, FFI, tests | Public runtime contract | Keep methods on the runtime type, but move the type body out of root. |
+| Frame queue | `prepareNextFrame`, `renderReadyFrame`, `awaitRenderWake`, `awaitRenderWakeTimeout`, `hasQueuedRenderWork`, `needsFrame`, `needsPrepare`, `wakeSnapshotWaiters`, `setRuntimeBackpressure` | Linux host, FFI | Public/host runtime contract | Keep initially; owner file after root split. |
+| Metrics/state | `takePrepareMetrics`, `takeSurfaceMetrics`, `surfaceState`, `scrollState`, `surfaceHandle`, `lastRenderMetrics`, `inputBytesApplied`, `snapshotEventSeq`, `renderedSnapshotSeq`, `currentScrollbackCount`, `currentScrollbackOffset`, `viewportRows`, `copyCurrentTitle` | Linux host, FFI | Public/ABI contract | Keep initially; consider grouping aliases in root catalog later. |
+| Input | `publishInputBytes`, `input`, `publishInputKey`, `setInputFocus`, `publishPaste`, `publishMouseEvent`, `publishControlSignal` | Linux host, FFI | Public input contract | Keep initially; no VT vocabulary duplication. |
+| Clipboard/link/selection | `drainPendingClipboardSet`, `copyHyperlinkUriAtPixel`, `setHoveredLinkAtPixel`, `selectionInProgress`, `beginSelection`, `updateSelection`, `finishSelection`, `clearSelection` | Linux host, FFI | Public host contract | Keep initially. |
+| Font/config | `setPrimaryFontPath`, `setFontSizePx`, `setFallbackFontPaths`, `clearFallbackFontPaths`, `addFallbackFontPath` | Linux host, FFI | Public host/ABI contract | Keep initially. |
+| Render internals exposed today | `syncSnapshotFromCore`, `renderLatestSnapshot`, `prepareLatestSnapshot`, `prepareSnapshotForRequest`, `prepareSnapshotForRequestIfDirty`, `submitPreparedSnapshot`, `renderFrame`, `renderFrameSized`, `syncFrameGeometry`, `awaitSnapshotEvent`, `snapshotToken`, `lastSubmittedFrame`, `shiftSelectionForHistoryGrowth` | FFI, tests, internal modules, some Linux host geometry paths | Mixed public/internal leak | Move with owner file first; later reduce visibility or group as explicit frame/render namespace after consumers are audited. |
+| Render diagnostics | `renderMissingGlyphs`, `renderFallbackHits`, `renderFallbackMisses`, `renderShapedClusters`, `renderResolveStage`, `renderedTextContains`, `visibleTextContains`, `isAlternateScreen`, `setScrollbackOffset`, `followLiveBottom` | Linux host, FFI | Public diagnostics/viewport contract | Keep initially. |
+
+Shape decision: `howl_term.zig` is the primary mismatch. Sprint 2 must move the runtime owner body out of this root and turn the root into a catalog. Do not claim the sprint done while this file still contains runtime fields.
+
+### `howl-hosts/howl-linux-host/src/main.zig`
+
+| Export | Current consumers | Class | Decision |
+| --- | --- | --- | --- |
+| `Options` | No external consumer found; local executable root only | Executable-owner convenience | Keep or privatize after host audit; not a package catalog requirement. |
+| `main` | Zig executable entrypoint | Executable owner | Keep. |
+
+Shape decision: this is an executable owner exception, not a package root. Keep import boundaries enforced.
+
+### `howl-hosts/howl-linux-host/src/test_host.zig`
+
+| Export | Current consumers | Class | Decision |
+| --- | --- | --- | --- |
+| `Config` | Test root aggregation | Test-only catalog | Keep. |
+| `Input` | Test root aggregation | Test-only catalog | Keep. |
+| `Main` | Test root aggregation | Test-only catalog | Keep. |
+| `TerminalWidget` | Test root aggregation | Test-only catalog | Keep. |
+| `Window` | Test root aggregation | Test-only catalog | Keep. |
+
+Shape decision: already a thin test catalog. Keep it small and boring.
+
 ## Sprint 0: Public Surface Inventory
 
 Purpose: know exactly what each root exports and who consumes it before moving code.
