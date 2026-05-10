@@ -216,15 +216,14 @@ Acceptance:
 - The checks describe the target shape, even if temporarily marked as expected-failing in the doc.
 - No checkpoint claims completion until checks pass without expected-fail markers.
 
-Current open markers from `tools/check_module_shape.sh` after Sprint 2:
-
-- `render_root_ref_all_decls_missing`: `howl-render-core/src/howl_render.zig` needs root public-surface declaration coverage.
-- `session_root_ref_all_decls_missing`: `howl-session/src/root.zig` needs root public-surface declaration coverage.
+Current open markers from `tools/check_module_shape.sh` after Sprint 5: none.
 
 Closed markers:
 
 - `howl_term_root_not_catalog`: closed by moving the runtime owner body to `howl-term/src/terminal.zig`.
 - `term_root_ref_all_decls_missing`: closed by adding root declaration coverage to the catalog root.
+- `render_root_ref_all_decls_missing`: closed by adding root declaration coverage in `howl-render-core/src/howl_render.zig`.
+- `session_root_ref_all_decls_missing`: closed by adding root declaration coverage in `howl-session/src/root.zig`.
 
 ## Sprint 2: `howl-term` Root Reshape
 
@@ -268,6 +267,8 @@ Acceptance:
 
 Purpose: separate render contracts from selected backend runtime shape.
 
+Checkpoint decision: `howl-render-core/src/howl_render.zig` stays a compact catalog exposing `Core`, `Renderer`, and the existing geometry helpers. Backend internals remain hidden from the root. Root declaration coverage is now present.
+
 Tasks:
 
 - Decide the public grouping for render contracts, renderer runtime, and backend-selected helpers.
@@ -283,6 +284,8 @@ Acceptance:
 ## Sprint 5: `howl-session` Catalog Polish
 
 Purpose: make session root deliberate, grouped, and test-aware.
+
+Checkpoint decision: `howl-session/src/root.zig` remains a compact catalog for the current public API, with test PTYs visually separated under `TestPty`. Root declaration coverage is now present. Further grouping can happen only with a host/session consumer update, not as churn.
 
 Tasks:
 
