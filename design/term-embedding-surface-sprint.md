@@ -422,6 +422,13 @@ Checkpoint 1 evidence:
 - `howl-term/src/runtime/thread.zig` no longer owns the PTY read-drain loop; it calls `term.session.pumpTransport` and keeps only VT application, history/selection adjustment, and wake sequencing.
 - Parent checks require session pump ownership and reject direct `term.session.ingestTransport` use from `howl-term`'s runtime thread.
 
+Checkpoint 2 evidence:
+
+- `howl-session/src/session.zig` now owns outbound input pump policy through `OutboundInputPump`, `Session.pumpOutboundInput`, `Session.publishHostInputAndPump`, and `Session.waitReadableAfterOutbound`.
+- `howl-term/src/runtime/thread.zig` no longer computes outbound pending-before/pending-after flush state or idle-readable wait policy directly; it sequences the session outbound result with VT/render wake work.
+- `howl-term/src/input/input.zig` no longer queues, flushes, and re-checks outbound backlog as separate term-owned steps; it asks the session to publish and pump host input in one session-owned operation.
+- Parent checks require session outbound pump ownership and reject direct outbound flush/pending/wait mechanics from `howl-term` runtime/input code.
+
 ## Verification Cadence
 
 For every implementation checkpoint:
