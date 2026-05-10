@@ -4,17 +4,17 @@ Purpose: preserve what we tried, what happened, and why the original theory did 
 
 Last updated: 2026-05-05
 
-## Frame-Paced Snapshot Publication In Runtime Worker
+## Frame-Paced Snapshot Publication In Runtime Thread
 
 Theory:
 - Move render publication out of the UI path so the UI consumes published state and PTY ingest can run hotter.
 
 What happened:
-- Moving `syncSnapshotFromCore()` into the worker made the ingest path pay render-projection cost.
+- Moving `syncSnapshotFromCore()` into the runtime thread made the ingest path pay render-projection cost.
 - ASCII and mixed throughput regressed.
 
 Why it crumbled:
-- The publication work was not cheap enough to put on the PTY worker.
+- The publication work was not cheap enough to put on the PTY thread.
 - It moved contention rather than removing it.
 
 Decision:

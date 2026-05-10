@@ -16,7 +16,7 @@ The current best-balanced state keeps the smooth ingest budget at `16 reads / 64
 
 Kitty and ghostty separate child interaction, terminal parsing/state mutation, render preparation, and UI rendering more cleanly.
 
-Howl currently has a runtime worker that reads PTY bytes, feeds/applies VT state, marks dirty work, and indirectly controls render opportunities through wake behavior. Bigger chunks improve producer throughput but also create bigger dirty publications and larger visible jumps.
+Howl currently has a runtime thread that reads PTY bytes, feeds/applies VT state, marks dirty work, and indirectly controls render opportunities through wake behavior. Bigger chunks improve producer throughput but also create bigger dirty publications and larger visible jumps.
 
 Hypothesis: Howl needs a scheduler boundary where PTY reads can remain hot while apply/publication is frame-aware and coalesces stale intermediate states.
 

@@ -79,6 +79,7 @@ require_file "howl-term/src/c_api/metrics.zig"
 require_file "howl-term/src/c_api/surface.zig"
 require_file "howl-term/src/runtime/thread.zig"
 require_file "howl-term/src/runtime/query.zig"
+require_file "howl-hosts/howl-linux-host/src/terminal/thread.zig"
 if test -f "howl-term/src/wake/loop.zig"; then fail "forbidden_file:howl-term/src/wake/loop.zig"; fi
 if test -f "howl-term/src/runtime/state.zig"; then fail "forbidden_file:howl-term/src/runtime/state.zig"; fi
 if test -f "howl-term/src/c_api/state.zig"; then fail "forbidden_file:howl-term/src/c_api/state.zig"; fi
@@ -170,6 +171,15 @@ require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'
 require_pattern "howl-term/src/terminal.zig" 'wake\.stopSnapshotWaiters'
 require_pattern "howl-term/src/terminal.zig" '@import\("runtime/query\.zig"\)'
 require_pattern "howl-term/src/runtime/lifecycle.zig" '@import\("thread\.zig"\)'
+require_pattern "howl-term/src/runtime/thread.zig" 'pub fn threadMain'
+reject_pattern "howl-term/src/terminal.zig" 'worker_'
+reject_pattern "howl-term/src/runtime/lifecycle.zig" 'worker_|workerMain'
+reject_pattern "howl-term/src/runtime/thread.zig" 'worker_|workerMain'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("thread\.zig"\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'pub fn wakeThreadMain'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'pub fn prepareThreadMain'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'worker_|wakeWorker|prepareWorker'
+reject_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'worker_|wakeWorker|prepareWorker'
 
 # FFI implementation files talk to owner modules, not back through their public roots.
 reject_pattern "howl-term/src/ffi.zig" '@import\("howl_term\.zig"\)'

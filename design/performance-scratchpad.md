@@ -189,5 +189,5 @@ Summarize trace frame gaps with a small Python helper over the produced `howl-*.
 - Is renderer submission or dirty publication size the dominant visual bottleneck now?
 - Would a retained GPU cell buffer make larger ingest budgets visually acceptable?
 - Should apply budget be based on elapsed microseconds rather than bytes/read count?
-- Do we need a separate PTY reader thread before a publisher thread, or should the runtime worker become the apply scheduler first?
+- Do we need a separate PTY reader thread before a publisher thread, or should the runtime thread become the apply scheduler first?
 - Can we trace dirty row counts and batch age without cluttering production code?

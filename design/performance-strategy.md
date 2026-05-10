@@ -80,7 +80,7 @@ Use this layer when asking:
 ### 3. `howl-term`
 
 Best for:
-- runtime worker scheduling
+- runtime thread scheduling
 - snapshot publication behavior
 - scrollback-view projection cost
 - wake and present-ack policy
