@@ -32,6 +32,10 @@
   9. Work clarity gate:
      - if ownership/boundary/flow is unclear: stop and mark `work-not-clear`
 
-  10. Cadence:
-     - commit+push each meaningful checkpoint
-     - no long local-only runs
+   10. Cadence:
+      - commit+push each meaningful checkpoint
+      - no long local-only runs
+
+  11. Current focus:
+      - follow `design/module-contract-shape-sprint.md` sequentially
+      - finish the active sprint checkpoint before starting the next one
