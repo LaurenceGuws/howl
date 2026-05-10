@@ -327,6 +327,12 @@ Acceptance:
 - Linux host remains the visible runtime proof.
 - Android remains explicitly open unless real Android runtime code is restored.
 
+Sprint 4 checkpoint 1 evidence:
+
+- `howl-term/src/test/root.zig` includes `package root supports minimal non-SDL embedding flow`.
+- The proof constructs `root.HowlTerm` through the public package root, uses `root.runtime.FramePixels`, drives input and focus, syncs geometry, observes wake publication, prepares/renders one frame, observes surface dimensions and rendered sequence, then tears down.
+- This is a package-level embed proof only. SDL/Linux remains the visible runtime proof and Android remains explicitly open.
+
 ## Sprint 5: Android Re-Entry Gate
 
 Purpose: define what must be true before Android work resumes.

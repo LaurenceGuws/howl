@@ -157,6 +157,8 @@ require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'howl_ter
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'HowlTerm\.(LifecycleState|FramePixels|SurfaceHandle|SurfaceMetrics|SurfaceState|ScrollState|LinkUnderlineStyle)'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/input.zig" 'const howl_term = @import\("howl_term"\);'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/input.zig" 'const TermInput = howl_term\.Input;'
+require_pattern "howl-term/src/test/root.zig" 'package root supports minimal non-SDL embedding flow'
+require_pattern "howl-term/src/test/root.zig" 'root\.runtime\.FramePixels'
 
 # FFI ABI fields stay stable unless an ABI-changing checkpoint says otherwise.
 require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
