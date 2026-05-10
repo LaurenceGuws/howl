@@ -109,6 +109,13 @@ reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("(vt_core|howl_se
 # FFI ABI fields stay stable unless an ABI-changing checkpoint says otherwise.
 require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
 
+# First-class module FFI routes are the next active route. Missing real routes stay open.
+if ! grep -Eq 'pub const Ffi =' "howl-vt-core/src/vt_core.zig"; then mark_open "vt_core_ffi_route_missing"; fi
+if ! grep -Eq 'pub const Ffi =' "howl-session/src/root.zig"; then mark_open "session_ffi_route_missing"; fi
+if ! grep -Eq 'pub const Ffi =' "howl-render-core/src/howl_render.zig"; then mark_open "render_ffi_route_missing"; fi
+require_pattern "howl-term/src/howl_term.zig" 'pub const Ffi = @import\("ffi\.zig"\);'
+if ! grep -Eq '@export' "howl-term/src/howl_term.zig"; then mark_open "term_ffi_root_export_route_missing"; fi
+
 # Missing Android runtime proof remains explicit, not hidden by a fake pass.
 require_pattern "tools/check_host_runtime_surface.sh" 'host_runtime_surface_skip=missing_android_runtime'
 

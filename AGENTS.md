@@ -37,5 +37,5 @@
       - no long local-only runs
 
   11. Current focus:
-      - follow `design/module-contract-shape-sprint.md` sequentially
+      - follow `design/module-ffi-route-sprint.md` sequentially
       - finish the active sprint checkpoint before starting the next one
