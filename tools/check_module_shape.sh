@@ -109,6 +109,12 @@ reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("(vt_core|howl_se
 # FFI ABI fields stay stable unless an ABI-changing checkpoint says otherwise.
 require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
 
+# FFI implementation files talk to owner modules, not back through their public roots.
+reject_pattern "howl-term/src/ffi.zig" '@import\("howl_term\.zig"\)'
+reject_pattern "howl-session/src/ffi.zig" '@import\("howl_session\.zig"\)'
+reject_pattern "howl-vt-core/src/ffi.zig" '@import\("vt_core\.zig"\)'
+reject_pattern "howl-render-core/src/ffi.zig" '@import\("howl_render\.zig"\)'
+
 # First-class module FFI routes are the next active route. Missing real routes stay open.
 if ! grep -Eq 'pub const Ffi =' "howl-vt-core/src/vt_core.zig"; then mark_open "vt_core_ffi_route_missing"; fi
 if ! grep -Eq 'pub const Ffi =' "howl-session/src/howl_session.zig"; then mark_open "session_ffi_route_missing"; fi
