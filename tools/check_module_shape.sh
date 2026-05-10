@@ -74,9 +74,11 @@ require_package_root "howl-session/src/howl_session.zig" 120
 require_catalog_root "howl-render-core/src/howl_render.zig" 120
 require_catalog_root "howl-hosts/howl-linux-host/src/test_host.zig" 80
 
-require_pattern "howl-vt-core/src/vt_core.zig" 'pub const VtCore = terminal\.VtCore;'
+require_pattern "howl-vt-core/src/vt_core.zig" '@import\("vt/main\.zig"\)'
+require_pattern "howl-vt-core/src/vt_core.zig" 'pub const VtCore = vt\.VtCore;'
 require_pattern "howl-session/src/howl_session.zig" '@import\("session/main\.zig"\)'
 reject_pattern "howl-vt-core/src/vt_core.zig" 'pub const VtCore = struct'
+reject_pattern "howl-vt-core/src/vt_core.zig" '@import\("(input|grid|parser|snapshot|selection|terminal|ffi)\.zig"\)'
 reject_pattern "howl-session/src/howl_session.zig" 'pub const Session = struct'
 reject_pattern "howl-session/src/howl_session.zig" '@import\("(session|pty|ffi)\.zig"\)'
 reject_pattern "howl-render-core/src/howl_render.zig" 'pub const RenderCore = struct'
