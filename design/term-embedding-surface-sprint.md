@@ -206,6 +206,20 @@ Checkpoint 2 target:
 - Keep Linux host input mapping on the package root as `howl_term.Input`, matching the visible embed package name.
 - Do not duplicate VT input vocabulary or import lower VT modules.
 
+Sprint 1 evidence:
+
+- `howl-hosts/howl-linux-host/src/terminal/terminal.zig` imports `howl_term` root and keeps `HowlTerm` only as the runtime handle.
+- Linux host terminal contract types come from `howl_term.runtime`, `howl_term.surface`, and `howl_term.viewport`.
+- `howl-hosts/howl-linux-host/src/terminal/input.zig` maps host input through `howl_term.Input`.
+- Parent checks reject lower-module host imports and reject nested `HowlTerm.*` runtime/surface/viewport contract aliases in the terminal widget.
+- Parent checks require the host input mapper to stay on `howl_term.Input`.
+
+Sprint 1 handoff state:
+
+- Host dependency/export proof is sufficient to start Sprint 2.
+- The full embedding sprint remains open: `terminal.zig` and `ffi.zig` still need facade/catalog maturity work.
+- Android remains blocked on real runtime proof, not on this host dependency/export checkpoint.
+
 ## Sprint 2: `terminal.zig` Facade Maturity
 
 Purpose: reduce `terminal.zig` to a stable method table over mature owners.
