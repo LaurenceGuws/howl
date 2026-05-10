@@ -67,6 +67,7 @@ require_catalog_root() {
 }
 
 require_file "howl-vt-core/src/terminal.zig"
+require_file "howl-term/src/term/main.zig"
 
 # Package roots stay small and delegate implementation to owned files.
 require_catalog_root "howl-vt-core/src/howl_vt.zig" 80
@@ -94,8 +95,10 @@ if grep -Eq 'pub const HowlTerm = struct' "howl-term/src/howl_term.zig"; then
     mark_open "howl_term_root_not_catalog"
 else
     require_catalog_root "howl-term/src/howl_term.zig" 140
+    require_pattern "howl-term/src/howl_term.zig" '@import\("term/main\.zig"\)'
     require_pattern "howl-term/src/howl_term.zig" 'pub const HowlTerm = [A-Za-z_][A-Za-z0-9_]*\.HowlTerm;'
     reject_pattern "howl-term/src/howl_term.zig" 'pub const HowlTerm = struct'
+    reject_pattern "howl-term/src/howl_term.zig" '@import\("(terminal|ffi)\.zig"\)'
 fi
 
 # Public-surface tests should reference root declarations directly.
@@ -125,7 +128,7 @@ reject_pattern "howl-render-core/src/ffi.zig" '@import\("howl_render\.zig"\)'
 if ! grep -Eq 'pub const Ffi =' "howl-vt-core/src/howl_vt.zig"; then mark_open "vt_core_ffi_route_missing"; fi
 if ! grep -Eq 'pub const Ffi =' "howl-session/src/howl_session.zig"; then mark_open "session_ffi_route_missing"; fi
 if ! grep -Eq 'pub const Ffi =' "howl-render-core/src/howl_render.zig"; then mark_open "render_ffi_route_missing"; fi
-require_pattern "howl-term/src/howl_term.zig" 'pub const Ffi = (ffi|@import\("ffi\.zig"\));'
+require_pattern "howl-term/src/howl_term.zig" 'pub const Ffi = (c_api|term\.c_api);'
 if ! grep -Eq '@export' "howl-term/src/howl_term.zig"; then mark_open "term_ffi_root_export_route_missing"; fi
 
 # Missing Android runtime proof remains explicit, not hidden by a fake pass.
