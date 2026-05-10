@@ -74,6 +74,7 @@ require_file "howl-term/src/term_namespace.zig"
 require_file "howl-term/src/c_api/constants.zig"
 require_file "howl-term/src/c_api/input.zig"
 require_file "howl-term/src/c_api/font.zig"
+require_file "howl-term/src/c_api/viewport.zig"
 
 # Package roots stay small and delegate implementation to owned files.
 require_catalog_root "howl-vt-core/src/howl_vt.zig" 80
@@ -145,10 +146,13 @@ require_pattern "howl-term/src/ffi.zig" 'term_us: u64 = 0,'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/constants\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/input\.zig"\)'
 require_pattern "howl-term/src/ffi.zig" '@import\("c_api/font\.zig"\)'
+require_pattern "howl-term/src/ffi.zig" '@import\("c_api/viewport\.zig"\)'
 reject_pattern "howl-term/src/ffi.zig" '^pub fn (modShift|keyEnter|mouseButtonNone|mousePress)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.publish(InputBytes|InputKey|Paste|MouseEvent|ControlSignal)'
 reject_pattern "howl-term/src/ffi.zig" 'term\.setPrimaryFontPath'
 reject_pattern "howl-term/src/ffi.zig" 'term\.(clearFallbackFontPaths|addFallbackFontPath)'
+reject_pattern "howl-term/src/ffi.zig" 'term\.(renderedTextContains|visibleTextContains|beginSelection|updateSelection|finishSelection|clearSelection|setHoveredLinkAtPixel|copyHyperlinkUriAtPixel|drainPendingClipboardSet)'
+reject_pattern "howl-term/src/ffi.zig" 'term\.(setScrollbackOffset|followLiveBottom)'
 reject_pattern "howl-term/src/terminal.zig" 'canReuseFrameLayoutLocked'
 require_pattern "howl-term/src/terminal.zig" 'frame_driver\.awaitRenderWakeTimeout'
 require_pattern "howl-term/src/terminal.zig" 'inputs\.drainPendingClipboardSet'
