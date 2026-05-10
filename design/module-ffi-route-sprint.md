@@ -47,6 +47,7 @@ Exact symbol names are module-specific, but every exported C symbol must have an
 - C symbol prefixes must be module-specific: `howl_vt_*`, `howl_session_*`, `howl_render_*`, `howl_term_*`.
 - Root `comptime @export` is the preferred route. Avoid scattered `pub export fn` as the long-term shape.
 - FFI implementation files must talk to owner modules, not import back through their public root.
+- Public roots should import one module namespace wrapper before re-exporting owner contracts.
 - ABI structs must be `extern` and intentionally documented by name.
 - Do not change existing `howl-term` ABI names or fields unless an ABI-changing checkpoint explicitly says so.
 - Preserve `FfiPrepareMetrics.term_us`.
