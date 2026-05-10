@@ -74,9 +74,9 @@ The exact names can change during implementation, but the shape cannot: root fil
 
 ## Active Checkpoint
 
-Sprint 0 is active.
+The public export shape sprint checkpoints are complete.
 
-Do not start root reshaping until the export inventory and keep/move/remove decisions are written into this document.
+Current follow-up focus: keep catalog-shape checks green while closing the separately tracked Android runtime proof gap. Do not replace that proof with stubs or fake parity.
 
 ## Sprint 0 Inventory
 
@@ -115,7 +115,7 @@ Shape decision: this root is already catalog-shaped. Do not move implementation 
 | `TestPty.Fail` | `howl-session` tests | Test-only contract | Keep under `TestPty`. |
 | `initPty` | `howl-term` lifecycle | Public contract | Keep; group decision in Sprint 5. |
 
-Consumer cleanup note: `howl-term/src/fuzz/terminal_replies.zig` still references old `howl_session.MemPty` and `howl_session.PartialPty` names. Update those to `howl_session.TestPty.*` before or during Sprint 5; do not reintroduce the old top-level aliases.
+Consumer cleanup note: `howl-term/src/fuzz/terminal_replies.zig` now uses `howl_session.TestPty.*`; do not reintroduce the old top-level PTY test aliases.
 
 Shape decision: root is small but too flat. Sprint 5 should group session runtime contracts, PTY contracts, and test-only PTYs without turning the root into an implementation owner.
 
