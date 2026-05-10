@@ -67,7 +67,10 @@ require_catalog_root() {
 }
 
 require_file "howl-vt-core/src/terminal.zig"
-require_file "howl-term/src/term/main.zig"
+require_file "howl-session/src/session_namespace.zig"
+require_file "howl-vt-core/src/vt_namespace.zig"
+require_file "howl-render-core/src/render_namespace.zig"
+require_file "howl-term/src/term_namespace.zig"
 
 # Package roots stay small and delegate implementation to owned files.
 require_catalog_root "howl-vt-core/src/howl_vt.zig" 80
@@ -75,10 +78,10 @@ require_package_root "howl-session/src/howl_session.zig" 120
 require_catalog_root "howl-render-core/src/howl_render.zig" 120
 require_catalog_root "howl-hosts/howl-linux-host/src/test_host.zig" 80
 
-require_pattern "howl-vt-core/src/howl_vt.zig" '@import\("vt/main\.zig"\)'
+require_pattern "howl-vt-core/src/howl_vt.zig" '@import\("vt_namespace\.zig"\)'
 require_pattern "howl-vt-core/src/howl_vt.zig" 'pub const VtCore = vt\.VtCore;'
-require_pattern "howl-session/src/howl_session.zig" '@import\("session/main\.zig"\)'
-require_pattern "howl-render-core/src/howl_render.zig" '@import\("render/main\.zig"\)'
+require_pattern "howl-session/src/howl_session.zig" '@import\("session_namespace\.zig"\)'
+require_pattern "howl-render-core/src/howl_render.zig" '@import\("render_namespace\.zig"\)'
 reject_pattern "howl-vt-core/src/howl_vt.zig" 'pub const VtCore = struct'
 reject_pattern "howl-vt-core/src/howl_vt.zig" '@import\("(input|grid|parser|snapshot|selection|terminal|ffi)\.zig"\)'
 reject_pattern "howl-session/src/howl_session.zig" 'pub const Session = struct'
@@ -95,7 +98,7 @@ if grep -Eq 'pub const HowlTerm = struct' "howl-term/src/howl_term.zig"; then
     mark_open "howl_term_root_not_catalog"
 else
     require_catalog_root "howl-term/src/howl_term.zig" 140
-    require_pattern "howl-term/src/howl_term.zig" '@import\("term/main\.zig"\)'
+    require_pattern "howl-term/src/howl_term.zig" '@import\("term_namespace\.zig"\)'
     require_pattern "howl-term/src/howl_term.zig" 'pub const HowlTerm = [A-Za-z_][A-Za-z0-9_]*\.HowlTerm;'
     reject_pattern "howl-term/src/howl_term.zig" 'pub const HowlTerm = struct'
     reject_pattern "howl-term/src/howl_term.zig" '@import\("(terminal|ffi)\.zig"\)'
