@@ -46,6 +46,7 @@ Android is parked until ownership boundaries are pristine. Android runtime proof
 | Session I/O mechanics | `howl-session` | Owned transport storage/construction, lifecycle status query, outbound queueing/flush policy, transport waiting, bounded read pumping, resize propagation, and control signals are lower-owned. |
 | Terminal reply handoff | `howl-term/src/runtime/terminal_reply.zig` | Term-owned sequencing from VT pending output into session outbound input; queue-full preserves VT pending output. |
 | Runtime I/O pass | `howl-term/src/runtime/io_tick.zig` | Term-owned hot path from session transport bytes through VT apply, scrollback repair, and render wake decision. |
+| Frame wake sequencing | Linux host wake/prepare threads plus `howl-term/src/wake/wake.zig` | Host wake/prepare workers block when idle and coalesce wake requests into latest terminal state. |
 | Android proof | none | Parked: `host_runtime_surface_skip=missing_android_runtime`. |
 
 ## Sprint 7: Runtime Ownership Board
@@ -63,7 +64,7 @@ Priority rule: Ghostty decides embeddable intuitiveness first; Alacritty decides
 | Checkpoint 3: lifecycle start/stop split | complete | Decide whether session transport start/stop can become a single session-owned lifecycle operation while thread join/wake remains term orchestration. | Start/stop mechanics are split without session knowing VT/render/thread details. |
 | Checkpoint 4: terminal reply handoff | complete | Review `vt.pendingOutput()` to session input publication. | Formalized as term orchestration; no VT reply semantics moved into session. |
 | Checkpoint 5: runtime thread boundary | complete | Decide whether the loop remains `howl-term` orchestration or a session I/O runner with callbacks. | Thread lifecycle and hot I/O pass are named separately inside `howl-term`; no VT/render concepts moved into session. |
-| Checkpoint 6: wake/render sequencing | ready | Review snapshot wake state and render completion bookkeeping. | Keep out of session; move only to render-core or a neutral owner if proven. |
+| Checkpoint 6: wake/render sequencing | complete | Review snapshot wake state and render completion bookkeeping. | Host wake/prepare workers are latest-only and blocking; no sleep, publisher thread, or readiness listener thread was added. |
 
 ### Out Of Scope
 
@@ -85,6 +86,7 @@ Priority rule: Ghostty decides embeddable intuitiveness first; Alacritty decides
 | `runtime/terminal_reply.zig` drains `vt.pendingOutput()` into session host input | Bridges terminal replies from VT to PTY/session outbound queue. If session queueing fails, VT pending output is preserved for a later pass. | Ghostty stream handler emits termio write requests; Alacritty parser/event loop handles terminal output notifications. | `term-orchestration-only` | Complete. Parent checks require the named term-owned reply drain and keep raw reply draining out of the thread loop. |
 | `input/input.zig` encodes host input with `vt.encodeInput` then publishes through session pump | Maps embed input events to VT bytes and session outbound queue. | Ghostty surface owns input callbacks; termio owns write queue. | split: `vt-owned` encoding, `session-owned` queue, `term-orchestration-only` event sequencing | Keep current split. Do not move pixel-to-cell mapping to session. |
 | `wake/wake.zig` owns snapshot condition variable and render completion wake bookkeeping | Publishes render/snapshot wake events and dirty completion. | Ghostty renderer and surface use domain wakeups; Alacritty event loop sends wake events. | `term-orchestration-only` or future render owner, not session | Keep out of session. Revisit only with render-core proof. |
+| Linux host wake/prepare workers gate frame wake admission | Wake thread blocks on snapshot events. Prepare thread blocks on its semaphore. Requests arriving while a prepare job is running are coalesced by `prepare_thread_signal_pending`; after a job finishes, only the latest current terminal state is checked. | Ghostty renderer thread drains a mailbox on wake and renders current state; Alacritty treats wake as a UI redraw signal rather than a render-work producer. | host-owned blocking workers plus `term-orchestration-only` wake state | Complete. No sleep-based pacing, no render-work publisher, and no render-output listener thread. |
 | `render/render.zig` prepares and submits frames | Coordinates geometry, VT snapshot sync, render-core snapshot copy, renderer prepare/submit, metrics, and wake completion. | Ghostty surface/renderer split and Alacritty rendering quality favor hot-path clarity, but term state crosses VT/render/session. | `term-orchestration-only` | Keep orchestration in term; only move pure render contracts to render-core. |
 | `terminal.zig` stores broad runtime state | Public embed handle and method facade over lower owners. | Ghostty `Surface.zig` is an embeddable terminal surface; public roots remain catalogs. | acceptable embed handle, not pure root | Keep as handle while removing mechanics below it. Do not move host UX down. |
 
@@ -95,6 +97,7 @@ Priority rule: Ghostty decides embeddable intuitiveness first; Alacritty decides
 | Moving runtime I/O pass to `howl-session` | `runtime/io_tick.zig` intentionally touches VT state, title, scrollback, selection, render wake epochs, and session I/O in one hot locked pass. Moving it below term would either import VT/render concepts into session or add callbacks on the critical path. | A callback/event contract that lets session own only I/O without importing VT/render or mutating term state directly, plus proof that the hot path is not slower or less embeddable than the current split. |
 | Moving terminal reply drain below `howl-term` | It crosses VT output semantics and session queueing; Checkpoint 4 intentionally formalized it as term-owned orchestration. | A lower-owner contract with tests for queue-full preservation and partial writes that does not import VT semantics into `howl-session`. |
 | Moving snapshot wake logic | It mixes render completion, VT dirty epochs, condition variables, and embed wait APIs. | Proof that render-core or another lower owner can own it without session or host concepts. |
+| Adding a render-output listener thread | Previous publisher/readiness experiments made prepared-batch availability the pacing driver and risked presentation readiness spinning under load. | Measured proof that readiness is latest-only, blocking when idle, and cannot become a producer-driven hot loop. |
 
 ## Verification Cadence
 
