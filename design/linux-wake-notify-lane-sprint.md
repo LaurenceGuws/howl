@@ -61,9 +61,19 @@ Host callback path is intentionally tiny:
 
 Main loop semantics:
 
-- keep `SDL_WaitEvent` idle blocking,
+- if local frame work is pending, use non-blocking SDL poll turn,
+- if local frame work is not pending, block in `SDL_WaitEvent`,
 - on any event turn, clear `wake_pending` and run one bounded frame work turn,
 - no zero-time `awaitRenderWakeTimeout(..., 0)` polling fallback.
+
+### Final Implemented Producer Contract
+
+- Producer-side pending edge (`false -> true`) now does three explicit actions in order:
+  1. publish latest snapshot request into the render queue,
+  2. advance snapshot event sequence,
+  3. invoke host wake callback through the edge latch.
+- Geometry sync path publishes initial full-dirty snapshot work for first frame bootstrap.
+- Locking rule: when runtime mutex is already held, publish uses a lock-held token path to avoid recursive mutex acquisition.
 
 ### Invariants and Assertions
 
