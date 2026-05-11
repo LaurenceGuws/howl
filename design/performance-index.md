@@ -2,7 +2,7 @@
 
 Purpose: provide one entrypoint for Howl terminal performance history, active hypotheses, and experiment records.
 
-Last updated: 2026-05-05
+Last updated: 2026-05-11
 
 ## Read Order
 
@@ -67,6 +67,7 @@ Last updated: 2026-05-05
   - promote actual wins to `performance-improvements.md`
   - move disproven or net-negative sets to `performance-reverted-experiments.md`
   - keep any still-plausible partial foundations in the scratchpad for recombination later
+  - delete temporary sprint-tracking docs after their invariants are promoted into long-lived docs
 
 ## Current Stable Reference
 

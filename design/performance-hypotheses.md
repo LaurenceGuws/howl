@@ -2,7 +2,7 @@
 
 Purpose: keep a living record of what we believe is limiting Howl throughput, responsiveness, and smoothness compared with kitty and ghostty.
 
-Last updated: 2026-05-05
+Last updated: 2026-05-11
 
 ## Current Read
 
@@ -52,22 +52,30 @@ Use these as approximate recent reference points, not permanent truth.
 
 - Smooth Howl path after snapshot boundary and dirty-span copy: host frame p50 roughly `9-10ms`, p95 roughly `10-13ms` under traced ASCII stress.
 - Larger `64 reads / 256 KiB` budget: producer FPS can rise to roughly `135-138 FPS`, but host frame p50/p95 can regress to roughly `24-68ms`, which looks visibly bursty.
-- ReleaseFast Linux-host peer baseline on this machine under `howl_ascii_rain_stress` now shows a more nuanced picture than the earlier kitty/ghostty-focused comparisons:
-  - ASCII run:
-    - `alacritty` roughly `1025 FPS`
-    - `howl` roughly `843 FPS`
-    - `ghostty` roughly `561 FPS`
-    - `wezterm` roughly `419 FPS` before later removal from the harness due local launch instability
-    - `kitty` roughly `411 FPS`
-  - Mixed run:
-    - `alacritty` roughly `857 FPS`
-    - `howl` roughly `690 FPS`
-    - `ghostty` roughly `440 FPS`
-    - `kitty` roughly `376 FPS`
-    - `wezterm` roughly `372 FPS` before removal from the harness
+- ReleaseFast Linux-host peer baseline on this machine under `howl_ascii_rain_stress` (two sequential runs per mode, one GUI run at a time):
+  - ASCII average:
+    - `alacritty` roughly `1016 FPS`
+    - `howl` roughly `569 FPS`
+    - `ghostty` roughly `559 FPS`
+  - Mixed average:
+    - `alacritty` roughly `847 FPS`
+    - `howl` roughly `476 FPS`
+    - `ghostty` roughly `435 FPS`
 - Working interpretation:
-  - Howl is now competitive enough that broad statements like "kitty and ghostty are simply ahead" are no longer precise for this hostile producer-FPS workload.
-  - The remaining gap is more likely about host-visible smoothness, publication size, and efficiency per rendered update than raw generator throughput alone.
+  - The Alacritty-style event-driven wake move closed liveness/freeze regressions and kept Howl ahead of Ghostty on this workload.
+  - The remaining gap to Alacritty is still large, and is now more likely dominated by render preparation efficiency per update than wake semantics.
+
+## Current Bottleneck Signal
+
+From current `howl-thread-cpu.jsonl` sampling during mixed stress:
+
+- prepare `renderer_us` is the dominant slice of `term_us`.
+- inside renderer preparation, `shape_us` is the largest recurring substage.
+
+Working bottleneck hypothesis:
+
+- wake/scheduling correctness is no longer the dominant limiter.
+- text shaping and render-preparation cost per publication is the next primary bottleneck axis.
 
 ## Working Rule
 

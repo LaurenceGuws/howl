@@ -2,7 +2,7 @@
 
 Purpose: define how Howl performance work should be executed across layers so we can beat strong references deliberately, without bloating the production host path.
 
-Last updated: 2026-05-05
+Last updated: 2026-05-11
 
 ## Position
 
@@ -241,6 +241,18 @@ Deliverables:
 
 Success condition:
 - higher throughput without burst/freeze pacing regressions.
+
+## Locked Wake And Scheduling Invariants
+
+These are now long-lived rules, not sprint notes:
+
+- Producer ownership is hard: only `howl-term` producer-side state transitions may publish render wake intent.
+- Pending-edge contract is hard: on `pending false -> true`, runtime must publish latest snapshot work, bump snapshot sequence, and fire coalesced wake callback.
+- Control-plane mutation contract is hard: font/focus/viewport/scrollback mutations must route through the same publish+wake lane; no seq-only wake paths.
+- Bootstrap contract is hard: first-frame geometry/full-dirty transitions must publish render work without host polling.
+- Host frame-demand contract is hard: content frame demand must include `needsPrepare`, `needsFrame`, and `hasQueuedRenderWork` so queued work never sleeps behind idle waits.
+- Host fairness contract is hard: input binding drains must be bounded per turn so render gets CPU opportunity under key-repeat floods.
+- Observability contract is hard: wake/perf traces stay gated and removable; no always-on production logging.
 
 ## What Stays Out Of The Main Host Path
 

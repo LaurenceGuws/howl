@@ -2,7 +2,7 @@
 
 Purpose: record changes that materially improved throughput, responsiveness, smoothness, or our ability to diagnose performance.
 
-Last updated: 2026-05-05
+Last updated: 2026-05-11
 
 ## Measurement Foundation
 
@@ -56,6 +56,31 @@ Why it matters:
 - Lets us test module-level hypotheses instead of treating full-host stress as the only signal.
 
 ## Runtime And Scheduling Improvements
+
+### Event-Driven Wake Lane With Control-Plane Publication
+
+Locked runtime/host wake contract around one producer-owned lane:
+
+- `howl-term` now owns render wake registration through one minimal C ABI callback surface.
+- Producer pending-edge transitions publish render work, bump snapshot sequence, and wake host.
+- Control-plane mutations (font/focus/viewport/scrollback) route through the same publish+wake lane.
+- Linux host frame demand now includes queued render work, and input binding drain is bounded per turn for fairness.
+
+Material outcome:
+
+- Fixed hard freezes tied to first tab-switch focus updates and repeated font-size changes under active rain churn.
+- Preserved hostile-workload throughput while fixing liveness:
+  - Pre-fix sequential baseline averages (this machine):
+    - ASCII: Howl `~575.6 FPS`, Alacritty `~1007.9 FPS`, Ghostty `~552.4 FPS`
+    - Mixed: Howl `~473.7 FPS`, Alacritty `~840.3 FPS`, Ghostty `~437.0 FPS`
+  - Post-fix sequential baseline averages (this machine):
+    - ASCII: Howl `~568.5 FPS`, Alacritty `~1015.7 FPS`, Ghostty `~559.3 FPS`
+    - Mixed: Howl `~475.8 FPS`, Alacritty `~847.1 FPS`, Ghostty `~434.7 FPS`
+
+Why it matters:
+
+- Confirms the Alacritty-style event-loop ownership move was directionally correct for correctness and stability.
+- Narrows next optimization focus to render preparation/shaping cost instead of wake plumbing.
 
 ### Smooth Ingest Pacing
 
