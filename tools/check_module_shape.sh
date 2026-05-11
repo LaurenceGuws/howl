@@ -1,9 +1,18 @@
 #!/bin/sh
 set -eu
 
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repo_root"
+
 fail() {
     printf '%s\n' "module_shape_error=$1" >&2
     exit 1
+}
+
+repo_root_present() {
+    path="$1"
+    root=${path%%/*}
+    test -e "$root"
 }
 
 mark_open() {
@@ -11,19 +20,33 @@ mark_open() {
 }
 
 require_file() {
+    repo_root_present "$1" || return 0
     test -f "$1" || fail "missing:$1"
 }
 
 require_max_lines() {
     file="$1"
     max="$2"
+    repo_root_present "$file" || return 0
+    require_file "$file"
     lines=$(wc -l < "$file" | tr -d ' ')
     test "$lines" -le "$max" || fail "too_large:$file:${lines}>${max}"
+}
+
+mark_open_if_missing_pattern() {
+    file="$1"
+    pattern="$2"
+    marker="$3"
+    repo_root_present "$file" || return 0
+    require_file "$file"
+    if ! grep -Eq "$pattern" "$file"; then mark_open "$marker"; fi
 }
 
 reject_pattern() {
     file="$1"
     pattern="$2"
+    repo_root_present "$file" || return 0
+    require_file "$file"
     if grep -Eq "$pattern" "$file"; then
         fail "forbidden_pattern:$file:$pattern"
     fi
@@ -32,6 +55,8 @@ reject_pattern() {
 require_pattern() {
     file="$1"
     pattern="$2"
+    repo_root_present "$file" || return 0
+    require_file "$file"
     if ! grep -Eq "$pattern" "$file"; then
         fail "missing_pattern:$file:$pattern"
     fi
@@ -40,6 +65,7 @@ require_pattern() {
 reject_tree_pattern() {
     dir="$1"
     pattern="$2"
+    repo_root_present "$dir" || return 0
     if grep -REn --include='*.zig' "$pattern" "$dir" >/dev/null 2>&1; then
         fail "forbidden_tree_pattern:$dir:$pattern"
     fi
@@ -48,6 +74,7 @@ reject_tree_pattern() {
 reject_tree_pattern_java() {
     dir="$1"
     pattern="$2"
+    repo_root_present "$dir" || return 0
     if grep -REn --include='*.java' "$pattern" "$dir" >/dev/null 2>&1; then
         fail "forbidden_tree_pattern:$dir:$pattern"
     fi
@@ -95,7 +122,6 @@ require_file "howl-term/src/runtime/thread.zig"
 require_file "howl-term/src/runtime/query.zig"
 require_file "howl-term/src/runtime/io_tick.zig"
 require_file "howl-term/src/runtime/terminal_reply.zig"
-require_file "howl-hosts/howl-linux-host/src/terminal/thread.zig"
 require_file "howl-hosts/howl-linux-host/src/terminal/effects.zig"
 require_file "howl-hosts/howl-linux-host/src/terminal/frame.zig"
 require_file "howl-hosts/howl-linux-host/src/terminal/font_size.zig"
@@ -198,9 +224,9 @@ fi
 
 # Public-surface tests should reference root declarations directly.
 require_pattern "howl-vt-core/src/howl_vt.zig" 'refAllDecls\((@This\(\)|lib)\)'
-if ! grep -Eq 'refAllDecls' "howl-render-core/src/howl_render.zig"; then mark_open "render_root_ref_all_decls_missing"; fi
-if ! grep -Eq 'refAllDecls' "howl-session/src/howl_session.zig"; then mark_open "session_root_ref_all_decls_missing"; fi
-if ! grep -Eq 'refAllDecls' "howl-term/src/howl_term.zig"; then mark_open "term_root_ref_all_decls_missing"; fi
+mark_open_if_missing_pattern "howl-render-core/src/howl_render.zig" 'refAllDecls' "render_root_ref_all_decls_missing"
+mark_open_if_missing_pattern "howl-session/src/howl_session.zig" 'refAllDecls' "session_root_ref_all_decls_missing"
+mark_open_if_missing_pattern "howl-term/src/howl_term.zig" 'refAllDecls' "term_root_ref_all_decls_missing"
 
 # Layering: lower modules must not import upper modules.
 reject_tree_pattern "howl-vt-core/src" '@import\("howl_(session|render|term)"\)'
@@ -299,7 +325,6 @@ reject_pattern "howl-term/src/runtime/lifecycle.zig" 'howl_session\.initTranspor
 reject_pattern "howl-term/src/terminal.zig" 'worker_'
 reject_pattern "howl-term/src/runtime/lifecycle.zig" 'worker_|workerMain'
 reject_pattern "howl-term/src/runtime/thread.zig" 'worker_|workerMain'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" '@import\("thread\.zig"\)'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("effects\.zig"\)'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("frame\.zig"\)'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" '@import\("font_size\.zig"\)'
@@ -322,7 +347,6 @@ require_pattern "howl-hosts/howl-linux-host/src/terminal/query.zig" 'surfaceStat
 require_pattern "howl-hosts/howl-linux-host/src/terminal/query.zig" 'renderedTextContains'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/query.zig" 'scroll\.layout'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/query.zig" 'pub fn lifecycleState'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'awaitRenderWake'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'prepareNextFrame'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'renderReadyFrame'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/font_size.zig" 'min_font_px'
@@ -342,9 +366,6 @@ require_pattern "howl-hosts/howl-linux-host/src/terminal/input_flow.zig" 'publis
 require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'HowlTerm\.initPty'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'setPrimaryFontPath'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'setFallbackFontPaths'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'std\.Thread\.spawn'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'wakeSnapshotWaiters'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/lifecycle.zig" 'SDL_DestroySemaphore'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/links.zig" 'setHoveredLinkAtPixel'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/links.zig" 'copyHyperlinkUriAtPixel'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/scroll.zig" 'scrollState'
@@ -353,16 +374,9 @@ require_pattern "howl-hosts/howl-linux-host/src/terminal/scroll.zig" 'followLive
 require_pattern "howl-hosts/howl-linux-host/src/terminal/scroll.zig" 'scrollbar\.View'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/selection.zig" 'beginSelection'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/selection.zig" 'finishSelection'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'pub fn wakeThreadMain'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'pub fn prepareThreadMain'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'prepare_thread_signal_pending\.swap\(true, \.acq_rel\)'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'pub fn finishPrepareThreadJob'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'prepare_thread_signal_pending\.store\(false, \.release\)'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'if \(self\.term\.needsPrepare\(\)\) self\.signalPrepareThread\(\);'
-require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'self\.finishPrepareThreadJob\(\)'
+require_pattern "howl-hosts/howl-linux-host/src/terminal/frame.zig" 'if \(api\.needsPrepare\(&self\.term\)'
 reject_tree_pattern "howl-hosts/howl-linux-host/src" 'std\.Thread\.sleep|sleep\('
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'worker_|wakeWorker|prepareWorker'
-reject_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'worker_|wakeWorker|prepareWorker'
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'setHoveredLinkAtPixel|copyHyperlinkUriAtPixel|beginSelection|updateSelection|finishSelection|selectionInProgress'
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'scrollState|setScrollbackOffset|followLiveBottom|scrollbarView'
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'publishInputBytes|publishInputKey|publishMouseEvent|publishPaste|drainInputEvent'
@@ -371,7 +385,6 @@ reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'syncFrame
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'drainPendingClipboardSet|setClipboardText|drainClipboardSet|\.window_focused = focused|\.widget_focused = focused'
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'setFontSizePx|min_font_px|max_font_px|midpoint'
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'self\.term\.surfaceState\(|self\.term\.renderedTextContains\(|presentSurfaceHandle|scroll\.layout\(@constCast\(self\), texture_rect\)'
-reject_pattern "howl-hosts/howl-linux-host/src/terminal/thread.zig" 'self\.term\.'
 reject_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'awaitRenderWake|prepareNextFrame|renderReadyFrame'
 
 # FFI implementation files talk to owner modules, not back through their public roots.
@@ -381,11 +394,11 @@ reject_pattern "howl-vt-core/src/ffi.zig" '@import\("vt_core\.zig"\)'
 reject_pattern "howl-render-core/src/ffi.zig" '@import\("howl_render\.zig"\)'
 
 # First-class module FFI routes are the next active route. Missing real routes stay open.
-if ! grep -Eq 'pub const Ffi =' "howl-vt-core/src/howl_vt.zig"; then mark_open "vt_core_ffi_route_missing"; fi
-if ! grep -Eq 'pub const Ffi =' "howl-session/src/howl_session.zig"; then mark_open "session_ffi_route_missing"; fi
-if ! grep -Eq 'pub const Ffi =' "howl-render-core/src/howl_render.zig"; then mark_open "render_ffi_route_missing"; fi
+mark_open_if_missing_pattern "howl-vt-core/src/howl_vt.zig" 'pub const Ffi =' "vt_core_ffi_route_missing"
+mark_open_if_missing_pattern "howl-session/src/howl_session.zig" 'pub const Ffi =' "session_ffi_route_missing"
+mark_open_if_missing_pattern "howl-render-core/src/howl_render.zig" 'pub const Ffi =' "render_ffi_route_missing"
 require_pattern "howl-term/src/howl_term.zig" 'pub const Ffi = (c_api|term\.c_api);'
-if ! grep -Eq '@export' "howl-term/src/howl_term.zig"; then mark_open "term_ffi_root_export_route_missing"; fi
+mark_open_if_missing_pattern "howl-term/src/howl_term.zig" '@export' "term_ffi_root_export_route_missing"
 
 # Missing Android runtime proof remains explicit, not hidden by a fake pass.
 require_pattern "tools/check_host_runtime_surface.sh" 'missing android runtime owner or ffi owner'

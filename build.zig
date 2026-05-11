@@ -4,9 +4,11 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const shape_check = b.addSystemCommand(&.{ "sh", "tools/check_module_shape.sh" });
+    const host_runtime_surface = b.addSystemCommand(&.{ "bash", "tools/check_host_runtime_surface.sh" });
 
     const check_step = b.step("check", "Run workspace hygiene checks");
     check_step.dependOn(&shape_check.step);
+    check_step.dependOn(&host_runtime_surface.step);
     b.default_step.dependOn(check_step);
 
     const test_step = b.step("test", "Run all workspace tests");
