@@ -37,5 +37,5 @@
       - no long local-only runs
 
   11. Current focus:
-      - follow `design/module-ffi-route-sprint.md` sequentially
-      - finish the active sprint checkpoint before starting the next one
+      - keep work aligned with current design docs and repo boundaries
+      - finish the active checkpoint before starting the next one

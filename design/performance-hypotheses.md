@@ -52,7 +52,7 @@ Use these as approximate recent reference points, not permanent truth.
 
 - Smooth Howl path after snapshot boundary and dirty-span copy: host frame p50 roughly `9-10ms`, p95 roughly `10-13ms` under traced ASCII stress.
 - Larger `64 reads / 256 KiB` budget: producer FPS can rise to roughly `135-138 FPS`, but host frame p50/p95 can regress to roughly `24-68ms`, which looks visibly bursty.
-- ReleaseFast Linux-host peer baseline on this machine under `howl_ascii_rain_stress` (two sequential runs per mode, one GUI run at a time):
+- ReleaseFast Linux-host peer baseline on this machine under `ascii_rain_stress` (two sequential runs per mode, one GUI run at a time):
   - ASCII average:
     - `alacritty` roughly `1016 FPS`
     - `howl` roughly `569 FPS`
