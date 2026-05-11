@@ -213,8 +213,7 @@ reject_tree_pattern "howl-term/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix
 reject_tree_pattern "howl-term/src" '@import\("[^"]*render/(pipeline|queue)\.zig"\)'
 reject_tree_pattern "howl-term/src" '@import\("[^"]*render/snapshot\.zig"\)'
 reject_tree_pattern "howl-hosts/howl-linux-host/src" '@import\("[^"]*(pty|pty/|pty_(platform|unix|android|test)|render_core|renderer|backend/(gl|gles))'
-reject_tree_pattern_java "howl-hosts/howl-android-host/src/main/java" 'package howl\.term\.terminal;'
-reject_tree_pattern_java "howl-hosts/howl-android-host/src/main/java" '(^|[^A-Za-z0-9_])(presentAck|waitRenderWake|renderFrameSized|surfaceHandle|currentScrollbackCount|currentScrollbackOffset|setScrollbackOffset|followLiveBottom|bindNativeMethods|RenderTelemetry)([^A-Za-z0-9_]|$)'
+reject_tree_pattern_java "howl-hosts/howl-android-host/src/main/java" '(^|[^A-Za-z0-9_])(presentAck|waitRenderWake|renderFrameSized|surfaceHandle|currentScrollbackCount|currentScrollbackOffset|bindNativeMethods|RenderTelemetry)([^A-Za-z0-9_]|$)'
 reject_pattern "howl-hosts/howl-linux-host/build.zig" 'b\.dependency\("(vt_core|howl_session|howl_render|howl-vt-core|howl-session|howl-render-core)"'
 require_pattern "howl-hosts/howl-linux-host/build.zig" 'check_host_runtime_surface'
 require_pattern "howl-hosts/howl-linux-host/src/terminal/terminal.zig" 'const howl_term = @import\("howl_term"\);'
@@ -389,7 +388,7 @@ require_pattern "howl-term/src/howl_term.zig" 'pub const Ffi = (c_api|term\.c_ap
 if ! grep -Eq '@export' "howl-term/src/howl_term.zig"; then mark_open "term_ffi_root_export_route_missing"; fi
 
 # Missing Android runtime proof remains explicit, not hidden by a fake pass.
-require_pattern "tools/check_host_runtime_surface.sh" 'host_runtime_surface_skip=missing_android_runtime'
+require_pattern "tools/check_host_runtime_surface.sh" 'missing android runtime owner or ffi owner'
 require_pattern "design/term-embedding-surface-sprint.md" 'Sprint 7: Runtime Ownership Board'
 require_pattern "design/term-embedding-surface-sprint.md" 'Checkpoint 1 Audit'
 require_pattern "design/term-embedding-surface-sprint.md" 'work-not-clear'

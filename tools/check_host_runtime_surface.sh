@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-android_runtime="$repo_root/howl-hosts/howl-android-host/src/main/java/howl/term/Terminal.java"
-android_ffi="$repo_root/howl-hosts/howl-android-host/src/main/java/howl/term/Ffi.java"
+android_runtime="$repo_root/howl-hosts/howl-android-host/src/main/java/howl/term/terminal/Api.java"
+android_ffi="$repo_root/howl-hosts/howl-android-host/src/main/java/howl/term/terminal/Ffi.java"
 zig_ffi="$repo_root/howl-term/src/ffi.zig"
 zig_root="$repo_root/howl-term/src/howl_term.zig"
 
@@ -13,14 +13,14 @@ if [[ ! -f "$zig_root" ]]; then
 fi
 
 if [[ ! -f "$android_runtime" || ! -f "$android_ffi" ]]; then
-  echo "host_runtime_surface_skip=missing_android_runtime"
-  exit 0
+  echo "missing android runtime owner or ffi owner" >&2
+  exit 1
 fi
 
 mapfile -t android_methods < <(
   perl -ne '
     if (/public\s+(?:static\s+)?(?:final\s+)?[\w.<>\[\], ?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/) {
-      next if $1 eq "Terminal";
+      next if $1 eq "Api";
       print "$1\n";
     }
   ' "$android_runtime" | sort -u
@@ -45,13 +45,11 @@ terminal_methods=(
   deinit
   isAlive
   wakeSnapshotWaiters
-  wakeMetadataWaiters
   syncFrameGeometry
   needsFrame
   needsPrepare
   hasQueuedRenderWork
   awaitRenderWake
-  awaitMetadataWake
   prepareNextFrame
   renderReadyFrame
   surfaceState
@@ -69,8 +67,8 @@ terminal_methods=(
   copyCurrentTitle
   drainPendingClipboardSet
   scrollState
-  followLiveBottomChanged
-  setScrollbackOffsetChanged
+  followLiveBottom
+  setScrollbackOffset
   setHoveredLinkAtPixel
   copyHyperlinkUriAtPixel
   selectionInProgress
@@ -89,13 +87,11 @@ ffi_required_methods=(
   destroy
   isSessionAlive
   wakeSnapshotWaiters
-  wakeMetadataWaiters
   syncFrameGeometry
   needsFrame
   needsPrepare
   hasQueuedRenderWork
   awaitRenderWake
-  awaitMetadataWake
   prepareNextFrame
   renderReadyFrame
   surfaceState
@@ -109,14 +105,14 @@ ffi_required_methods=(
   publishInputKey
   publishPaste
   publishMouseEvent
-  setInputFocusChanged
+  setInputFocus
   copyCurrentTitle
-  drainPendingClipboardSetAlloc
+  drainPendingClipboardSet
   scrollState
-  followLiveBottomChanged
-  setScrollbackOffsetChanged
+  followLiveBottom
+  setScrollbackOffset
   setHoveredLinkAtPixel
-  copyHyperlinkUriAtPixelAlloc
+  copyHyperlinkUriAtPixel
   selectionInProgress
   beginSelection
   updateSelection
@@ -137,13 +133,11 @@ ffi_to_zig_methods=(
   destroy
   isSessionAlive
   wakeSnapshotWaiters
-  wakeMetadataWaiters
   syncFrameGeometry
   needsFrame
   needsPrepare
   hasQueuedRenderWork
   awaitRenderWake
-  awaitMetadataWake
   prepareNextFrame
   renderReadyFrame
   surfaceState
@@ -157,8 +151,13 @@ ffi_to_zig_methods=(
   publishInputKey
   publishPaste
   publishMouseEvent
+  setInputFocus
   copyCurrentTitle
+  drainPendingClipboardSet
   scrollState
+  followLiveBottom
+  setScrollbackOffset
+  copyHyperlinkUriAtPixel
   selectionInProgress
   beginSelection
   updateSelection
