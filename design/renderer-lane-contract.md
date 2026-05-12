@@ -22,7 +22,8 @@ The unit of work is:
 A cell is in the normal lane only when all of the following are true:
 - `text.codepoints.len == 1`
 - `presentation != .emoji`
-- `symbol_map.builtinRoute(text.first_cp) == null`
+- `symbol_map.builtinRoute(text.first_cp) == null` or `.blank`
+- the cell is not using `underline_style == .curly`
 
 Normal-lane implications:
 - lane entry is decided before shaping/grouping machinery.
@@ -39,7 +40,9 @@ The complex lane is explicit and exceptional.
 A cell is in the complex lane only for one of these reasons:
 - `multi_codepoint`: `text.codepoints.len != 1`
 - `emoji_presentation`: `presentation == .emoji`
-- `special_sprite`: `symbol_map.builtinRoute(text.first_cp) != null`
+- `special_sprite`: `symbol_map.builtinRoute(text.first_cp) != null` and not `.blank`
+- `icon_codepoint`: `symbol_map.isIconCodepoint(text.first_cp)`
+- `curly_underline`: `underline and underline_style == .curly`
 
 Lane choice invariants:
 - lane choice is assertion-checked.
@@ -47,18 +50,17 @@ Lane choice invariants:
 - there is no fallback auto-routing based on downstream misses, cache state, or shaping side effects.
 - the live text engine records all legacy-path work against this classifier before benchmark code sees the result.
 
-## Current Wrong Path
+## Current Lane Ownership
 
-The current implementation still leaks normal-lane text into the old universal path.
+The live engine now classifies cells before any shaping/grouping work starts.
 
-That leakage is now a measured defect, not an architecture choice:
-- normal-lane cells still enter resolved-run construction
-- resolved runs still enter shaping
-- shaped runs still enter grouping and sprite-scene preparation
+- normal-lane cells build direct cell/glyph work only
+- complex-lane cells are selected explicitly before resolve/shape/group/scene work runs
+- resolve, shape, grouping, and scene sprite preparation run only on that explicit complex selection
 
-`howl-render-core/src/text/engine.zig` now records this leakage directly in the live owner path through `lane_report`.
+`howl-render-core/src/text/engine.zig` records lane counts and any legacy-stage usage through `lane_report`.
 
-Milestone 2 exists to delete that leakage path for normal text.
+This keeps the normal lane as the controlling default path and the complex lane as the exceptional path.
 
 ## Benchmark Proof Surface
 
@@ -73,11 +75,14 @@ The scorecard must report, per workload:
 - normal-lane cell count
 - complex-lane cell count
 - complex-lane reason counts
+- explicit counts for icon, special-sprite, curly-underline, emoji, and multi-codepoint regressions
 - normal-cluster and complex-cluster counts
 - normal and complex clusters that still entered resolved-run construction
 - normal and complex clusters that still entered shaping
 - normal and complex glyph groups that still entered legacy grouping
 - normal and complex sprite draws that still entered legacy scene preparation
+- cold-path timings and cold miss counts, reported separately from warm steady-state timings and misses
+- resolve/shape/group/scene timing so complex-lane cost remains measurable separately from the normal lane
 - whether the frame was fully normal input
 - whether the frame actually stayed out of the full legacy path
 

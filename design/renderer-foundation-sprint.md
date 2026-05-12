@@ -293,6 +293,70 @@ Fail if:
 - complexity remains smeared across both lanes.
 - review still requires mental reconstruction of hidden control flow to explain the hot path.
 
+## Milestone 4: Lock Regressions And Failure Boundaries
+
+Milestone goal:
+- turn the sprint's discovered regressions into explicit design constraints, tests, assertions, and proof surfaces so they cannot slip back in under future performance work.
+
+Scope done:
+- cold-path behavior is measured separately from warmed steady state.
+- special text semantics that do not belong in the normal lane are explicit and reviewable.
+- known regressions are encoded as fail-fast gates, not only mentioned in review notes.
+
+### Checkpoint 4.1: Explicit Regression Classification
+
+Goal against `alacritty`:
+- keep the common path cheap without misclassifying visually exceptional text as ordinary one-cell glyph work.
+
+TigerBeetle hygiene gate:
+- regressions are named as positive and negative spaces, not implied by downstream breakage.
+- lane and rendering invariants are asserted in at least two places when practical.
+- unsupported normal-lane semantics must fail classification early instead of degrading late.
+
+Done when:
+- icon, special-sprite, and other exceptional glyph semantics are explicitly classified or explicitly rejected from the normal lane.
+- the code can state why each known regression class cannot silently re-enter the normal lane.
+
+### Checkpoint 4.2: Cold-Path Proof Surface
+
+Goal against `alacritty`:
+- measure first-use and cold-start cost honestly instead of hiding it behind steady-state warming.
+
+TigerBeetle hygiene gate:
+- cold-path and warm-path proofs are separate and both deterministic.
+- benchmark naming and output make it impossible to pass a warmed result off as first-use behavior.
+- bounds and capacities for cold misses stay explicit.
+
+Done when:
+- benchmark output reports cold-path cost separately from warm steady state.
+- milestone proof can show whether startup, first atlas misses, or first exceptional glyph work regressed.
+
+### Checkpoint 4.3: Regression Locks
+
+Goal against `alacritty`:
+- preserve common-path wins without regressing exceptional text correctness.
+
+TigerBeetle hygiene gate:
+- known regressions are locked by tests, assertions, or benchmark gates.
+- tests cover both the positive space we want and the negative space we must reject.
+- there is no reliance on reviewer memory or prose-only warnings.
+
+Done when:
+- the current sprint regressions are encoded as permanent checks.
+- a future change cannot bring back half-width icon rendering or hide cold-path collapse without failing proof.
+
+### Milestone 4 Gate
+
+Pass only if:
+- warm steady-state proof and cold-path proof are both explicit and distinct.
+- exceptional text semantics are explicit instead of accidental byproducts of the normal lane.
+- the sprint's discovered regressions are locked in code, tests, or benchmark gates.
+
+Fail if:
+- warmed benchmarks are still the only proof surface for renderer correctness.
+- special text semantics still depend on visual luck or downstream fallback.
+- regressions are recorded only in milestone notes instead of executable proof.
+
 ## Review Rule For The Whole Sprint
 
 The review standard is intentionally severe.

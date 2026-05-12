@@ -80,7 +80,7 @@ Use this layer when asking:
 ### 3. `howl-term`
 
 Best for:
-- runtime thread scheduling
+- host-driven transport/apply/publication scheduling
 - snapshot publication behavior
 - scrollback-view projection cost
 - wake and present-ack policy
@@ -92,7 +92,7 @@ Existing surfaces:
 - `zig build howl-term-benchmark -- --runs 3`
 
 Useful current owners:
-- `howl-term/src/runtime/thread.zig`
+- `howl-term/src/runtime/io_tick.zig`
 - `howl-term/src/render/snapshot.zig`
 - `howl-term/src/render/frame.zig`
 - `howl-term/src/wake/wake.zig`
@@ -171,7 +171,7 @@ Why:
 ### B. `howl-term` runtime stress harness
 
 Goal:
-- drive `runtime/thread.zig`, `render/frame.zig`, and `render/snapshot.zig` without SDL or a real terminal window
+- drive `runtime/io_tick.zig`, `render/frame.zig`, and `render/snapshot.zig` without SDL or a real terminal window
 
 Initial shape:
 - synthetic session transport that feeds deterministic PTY-like byte streams
