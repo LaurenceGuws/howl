@@ -10,6 +10,7 @@ Howl docs lock boundaries, flows, proofs, and contracts. Each line is a cost.
 
 - `AGENTS.md`: principles and workspace boundaries.
 - `WORKFLOW.md`: change loop and proof cadence.
+- `design/reference-index.md`: explicit local reference map.
 - `design/style-law.md`: strict code style law.
 - `design/*.md`: shared reference.
 - `*/design.md`: repo boundary reference.

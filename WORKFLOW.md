@@ -8,6 +8,7 @@ Purpose: the default change loop for Howl.
 - `AGENTS.md`: workspace rules and owner boundaries.
 - `WORKFLOW.md`: change loop, proof expectations, and commit cadence.
 - `design/design-rules.md`: documentation rules.
+- `design/reference-index.md`: explicit local reference map and domain bias.
 - `design/style-law.md`: strict workspace style law.
 
 ## Default Loop
@@ -32,6 +33,17 @@ Before editing, answer these questions:
 - What proof closes the change?
 
 If any answer is unclear, stop and mark `work-not-clear`.
+
+## Reference Rule
+
+Use explicit paths from `design/reference-index.md` before grepping for references ad hoc.
+
+The parent repo ignores child repos and most of `utils/`, so root-level `rg`, `fd`, and some glob
+queries can act incomplete or misleading unless you point them at explicit child-repo or `utils/`
+paths.
+
+If Howl is far from a target state, default to the indexed local reference corpus before looking for
+help elsewhere.
 
 ## Control-Flow Rule
 

@@ -57,10 +57,12 @@ Purpose: global product, ownership, runtime, proof, and documentation rules.
    - Do not add sentence-style symbol names.
 
 10. Dependency rules.
-    - Keep dependencies explicit.
-    - Prefer fewer dependencies.
-    - Keep one clear build authority per repo.
-    - Reuse proven code paths from `~/personal/zide` when the ownership boundary still stays true.
+     - Keep dependencies explicit.
+     - Prefer fewer dependencies.
+     - Keep one clear build authority per repo.
+     - Reuse proven code paths from `~/personal/zide` when the ownership boundary still stays true.
+     - Use the indexed local reference corpus in `design/reference-index.md` before finding help
+       manually when Howl is far from the target state.
 
 11. Workflow rules.
     - Read the owner boundary before editing.
@@ -79,10 +81,11 @@ Purpose: global product, ownership, runtime, proof, and documentation rules.
     - Do not patch around unclear design with wrappers or temporary convenience layers.
 
 14. Documentation rules.
-    - Docs are part of the product.
-    - Keep docs short, exact, and source-friendly.
-    - Prefer principles, guides, proofs, and reference over long narrative drift.
-    - If a doc becomes misleading, fix it immediately.
+     - Docs are part of the product.
+     - Keep docs short, exact, and source-friendly.
+     - Prefer principles, guides, proofs, and reference over long narrative drift.
+     - If a doc becomes misleading, fix it immediately.
+     - Keep reference discovery explicit by path instead of relying on ad hoc grep per iteration.
 
 15. Current direction.
     - Keep Howl owner-true.
