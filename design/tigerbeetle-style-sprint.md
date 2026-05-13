@@ -178,6 +178,7 @@ Each checkpoint must answer before editing:
 - which file owns this control flow
 - which thread owns this work
 - what proof closes this change
+- which invariants this owner can locally prove, or the exact reason no such invariants exist
 
 If any answer is unclear, close the report with `work-not-clear` and stop.
 
@@ -186,6 +187,8 @@ Each checkpoint must produce:
 - one narrow diff
 - before and after style metrics for the touched file
 - proof command output
+- explicit invariant accounting for the owner: proved invariants, paired seam assertions, or a direct
+  explanation for why no local invariant was provable
 - a commit recommendation of `ready` or `not ready`
 
 ## Review Gates
@@ -193,6 +196,7 @@ Each checkpoint must produce:
 A checkpoint fails review if it does any of the following:
 
 - adds assertions that do not prove a real invariant
+- fails to name provable invariants where the owner can locally prove them
 - splits a function by line count theater instead of ownership
 - introduces a wrapper that only forwards
 - leaves avoidable `usize` domain state in a touched file
@@ -211,6 +215,10 @@ Do not commit a checkpoint unless all of the following are true:
 - the commit message describes the boundary or invariant being locked
 
 Fake progress gets dropped. Cosmetic churn is not a checkpoint.
+
+Checkpoint review does not stack indefinitely. Once a checkpoint is accepted, the architect closes it
+with a commit before moving the engineer to the next checkpoint unless an explicit same-owner batch
+was approved up front.
 
 ## Handoff Model
 
@@ -233,6 +241,7 @@ Preferred review cadence:
 Each report must include:
 
 - owner view
+- provable invariants, or the reason none exist
 - before metrics
 - changes made
 - why the change is owner-true
