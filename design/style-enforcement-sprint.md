@@ -152,6 +152,12 @@ Done when:
 
 Done when:
 
+- command model is explicit before behavior grows
+- each invocation has one primary mode
+- deeper combined inspection, if it exists, has its own explicit mode name
+- default mode is a quiet checkpoint gate
+- touched-file review is fast
+- deeper repo and file inspection remains available on demand
 - `style.nu` has an obvious mode for checkpoint review
 - reviewers can see touched-file regressions without scanning the whole workspace blindly
 - long-function and `usize` regressions are visible enough to block closure
@@ -160,6 +166,35 @@ Milestone 2 gate:
 
 - `style.nu` can be used during review as a practical gate
 - output is still short enough to read
+- query surface is broader, not narrower
+- default mode stays quiet while file and repo inspection stay first-class
+
+### Milestone 2 Command Model
+
+- Primary modes are exclusive.
+- Refinement flags do not change the review question, only the slice or ordering.
+- If a combined deep view is useful, it has its own explicit mode name.
+
+Primary modes:
+
+- default checkpoint gate
+- failures view
+- touched-files view
+- touched-repos view
+- by-file deep inspection
+- by-repo deep inspection
+- deep combined inspection
+
+Refinement flags:
+
+- root/path filters
+- `--sort`
+- `--blame`
+
+Invalid combinations:
+
+- more than one primary mode in the same invocation
+- refinement flags that do not apply to the selected primary mode
 
 ## Milestone 3: Wire The Gate Into Workflow
 
@@ -181,6 +216,10 @@ Done when:
 - workflow docs explicitly require style review before checkpoint closure where style is in scope
 - style cleanup work cannot close without `style.nu` proof
 
+Status:
+
+- closed by workflow gate wording and explicit `style.nu` invocation path
+
 ### Checkpoint 3.2: Feature Work Rule
 
 Done when:
@@ -188,9 +227,17 @@ Done when:
 - future feature work has an explicit no-regression style rule
 - touched-file style regressions require justification or rejection
 
+Status:
+
+- closed by workspace law and workflow closure rules
+
 Milestone 3 gate:
 
 - a future engineer handover can require style proof with no extra explanation
+
+Status:
+
+- closed
 
 ## Suggested Rule Targets
 

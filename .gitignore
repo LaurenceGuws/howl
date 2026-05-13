@@ -8,4 +8,6 @@ howl-pty/
 howl-term/
 howl-vt-core/
 howl-vt/
-utils/
+utils/dev_references/
+utils/official_docs/
+utils/howl-pm/

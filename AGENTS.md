@@ -49,6 +49,7 @@ Purpose: global product, ownership, runtime, proof, and documentation rules.
 8. Style rules.
    - `design/style-law.md` is the one strict style law.
    - Changes are reviewed against that law line by line.
+   - Touched-file style regressions block closure unless justified at review.
 
 9. Naming bans.
    - Do not add ambiguous public names such as `adapter`, `bridge`, `bootstrap`, `manager`,
