@@ -2,16 +2,14 @@
 
 Owner: workspace root.
 
-Purpose: explicit local reference index for Howl design and review work.
+Purpose: explicit local reference map.
 
 ## Rules
 
-- Use explicit paths from this index before searching the workspace blindly.
-- Prefer the local cached corpus before asking external tools or looking elsewhere.
-- If Howl is far from a target state, start from the biased reference set for that domain instead of
-  reverse-engineering the answer from unrelated code.
-- Prefer official docs over implementation spelunking when the official doc exists and answers the
-  question.
+- Use explicit paths first.
+- Prefer the local cached corpus.
+- If Howl is far from a target state, start from the biased set for that domain.
+- Prefer official docs when they answer the question.
 
 ## Search Caveat
 
@@ -20,20 +18,9 @@ The parent repo ignores child repos in `.gitignore`.
 That means root-level `rg`, `fd`, and some glob-driven discovery can act incomplete or misleading
 unless you point them at explicit child-repo or `utils/` paths.
 
-Use explicit paths first.
-
 ## Golden Rule
 
-If Howl's current state is far from a target state, default to this indexed reference set before
-finding resources manually or looking for help elsewhere.
-
-Examples:
-
-- For Zig language migration questions, check the cached release notes before reading Zig stdlib
-  source for clues.
-- For terminal rendering correctness, check Kitty protocol and implementation references before
-  guessing from local output.
-- For style or hygiene rules, check TigerBeetle before improvising a local rule.
+If Howl is far from a target state, use this index before looking elsewhere.
 
 ## Bias Map
 
@@ -42,7 +29,7 @@ Examples:
 - Text rendering correctness: Kitty.
 - Embedding standards: Ghostty.
 
-## Primary Bible
+## Primary Set
 
 ### Speed And Efficiency
 
@@ -89,7 +76,7 @@ Use for:
 
 ## Official Docs Bias
 
-Use official cached docs before reading upstream source when they answer the question directly.
+Use official cached docs when they answer the question directly.
 
 Primary official paths:
 
@@ -103,9 +90,7 @@ Primary official paths:
 - Android official docs cache:
   - `/home/home/personal/projects/howl/utils/official_docs/developer.android.com/`
 
-## Secondary Reference Groups
-
-Use these only when the primary bible for the domain is not enough:
+## Secondary Groups
 
 - `/home/home/personal/projects/howl/utils/dev_references/text/`
 - `/home/home/personal/projects/howl/utils/dev_references/fonts/`
@@ -117,10 +102,9 @@ Use these only when the primary bible for the domain is not enough:
 - `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/zig/`
 - `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/zls/`
 
-## Current Non-Bible Groups
+## Non-Primary Groups
 
-These exist in the corpus but are not first-choice references for Howl unless a task names them
-explicitly:
+Use these only when a task names them.
 
 - `/home/home/personal/projects/howl/utils/dev_references/editors/`
 - `/home/home/personal/projects/howl/utils/dev_references/terminals/codex/`
@@ -135,5 +119,3 @@ explicitly:
 - `/home/home/personal/projects/howl/utils/dev_references/terminals/wezterm/`
 - `/home/home/personal/projects/howl/utils/dev_references/terminals/windows_terminal/`
 - `/home/home/personal/projects/howl/utils/dev_references/terminals/xterm_snapshots/`
-
-Do not grep these first out of habit.

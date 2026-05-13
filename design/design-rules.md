@@ -1,7 +1,5 @@
 # Documentation Rules
 
-## Purpose
-
 Owner: workspace root.
 
 Howl docs lock boundaries, flows, proofs, and contracts. Each line is a cost.
@@ -12,7 +10,7 @@ Howl docs lock boundaries, flows, proofs, and contracts. Each line is a cost.
 - `WORKFLOW.md`: change loop and proof cadence.
 - `design/reference-index.md`: explicit local reference map.
 - `design/style-law.md`: strict code style law.
-- `design/*.md`: shared reference.
+- other `design/*.md`: shared reference.
 - `*/design.md`: repo boundary reference.
 - repo-local support docs: narrow proof, protocol, or operational reference only.
 
@@ -24,6 +22,8 @@ Howl docs lock boundaries, flows, proofs, and contracts. Each line is a cost.
 - Reference records exact owner, contract, and lifecycle facts.
 
 If a document does not fit cleanly, fold it into a stronger entrypoint or delete it.
+
+Prefer one source per rule.
 
 ## Design Doc Contract
 
