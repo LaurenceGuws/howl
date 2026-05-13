@@ -16,16 +16,16 @@ Howl docs lock boundaries, flows, proofs, and contracts. Each line is a cost.
 
 ## Doc Shapes
 
-- Principles explain why a rule exists.
-- Guides explain how to do a class of work.
-- Proofs record what closes runtime behavior.
+- Principles explain why.
+- Guides explain how.
+- Proofs record what closes behavior.
 - Reference records exact owner, contract, and lifecycle facts.
 
 If a document does not fit cleanly, fold it into a stronger entrypoint or delete it.
 
 ## Design Doc Contract
 
-Each repo `design.md` should describe the repo as implemented today.
+Each repo `design.md` describes the repo as implemented today.
 
 Required sections:
 
@@ -38,14 +38,14 @@ Required sections:
 - `Non-Goals`
 - `Change Rules`
 
-Add a short doc-set pointer when the repo keeps one or two supporting docs.
+Add a short doc-set pointer when the repo keeps supporting docs.
 
 ## What Design Docs Must Show
 
 - the public owner callers depend on
-- which file or owner owns mutable state
-- which owner owns lifecycle
-- which thread owns the runtime path
+- the owner of mutable state
+- the owner of lifecycle
+- the owner thread for the runtime path
 - important call ordering
 - the invariant that keeps the design safe
 
@@ -94,9 +94,7 @@ Add a short doc-set pointer when the repo keeps one or two supporting docs.
 
 ## Proof Docs
 
-Proof docs are narrow.
-
-They should record:
+Proof docs record:
 
 - what was being proved
 - which runtime owned the proof

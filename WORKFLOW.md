@@ -74,15 +74,9 @@ If proof is missing, leave the work open explicitly.
 
 ## Documentation Rules
 
-Docs are part of the checkpoint, not cleanup afterward.
+Docs are part of the checkpoint.
 
-Update docs when any of these move:
-
-- public API shape
-- owner boundary
-- lifecycle
-- proof requirement
-- runtime flow
+Update docs when public API shape, owner boundary, lifecycle, proof requirement, or runtime flow move.
 
 ## Commit Rules
 
