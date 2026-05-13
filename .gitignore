@@ -2,7 +2,10 @@
 zig-out/
 howl-hosts/
 howl-render-core/
+howl-render/
 howl-session/
+howl-pty/
 howl-term/
 howl-vt-core/
+howl-vt/
 utils/
