@@ -10,6 +10,7 @@ Howl docs lock boundaries, flows, proofs, and contracts. Each line is a cost.
 
 - `AGENTS.md`: principles and workspace boundaries.
 - `WORKFLOW.md`: change loop and proof cadence.
+- `design/style-law.md`: strict code style law.
 - `design/*.md`: shared reference.
 - `*/design.md`: repo boundary reference.
 - repo-local support docs: narrow proof, protocol, or operational reference only.
@@ -88,7 +89,7 @@ Add a short doc-set pointer when the repo keeps supporting docs.
 ## Change Rules
 
 - New public APIs update the owning `design.md` in the same change.
-- Owner moves update owner tables and flow docs in the same change.
+- Owner moves update the owning boundary and flow docs in the same change.
 - Runtime proof changes update proof docs in the same change.
 - If a doc is misleading, fix it immediately instead of waiting for a larger rewrite.
 

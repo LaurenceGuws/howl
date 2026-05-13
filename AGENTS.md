@@ -47,11 +47,8 @@ Purpose: global product, ownership, runtime, proof, and documentation rules.
    - Parity closes on outcome, not on identical internals.
 
 8. Style rules.
-   - Keep functions short when possible.
-   - Prefer explicitly sized integers over `usize` for domain state.
-   - Assertions are intentional invariants, not decoration.
-   - Comments explain why, not what.
-   - Name things with short, specific nouns and verbs.
+   - `design/style-law.md` is the one strict style law.
+   - Changes are reviewed against that law line by line.
 
 9. Naming bans.
    - Do not add ambiguous public names such as `adapter`, `bridge`, `bootstrap`, `manager`,

@@ -8,6 +8,7 @@ Purpose: the default change loop for Howl.
 - `AGENTS.md`: workspace rules and owner boundaries.
 - `WORKFLOW.md`: change loop, proof expectations, and commit cadence.
 - `design/design-rules.md`: documentation rules.
+- `design/style-law.md`: strict workspace style law.
 
 ## Default Loop
 1. Read the boundary.
@@ -16,8 +17,9 @@ Purpose: the default change loop for Howl.
 4. Move leaf behavior toward the true owner.
 5. Add or tighten assertions around the invariant.
 6. Prove the changed path.
-7. Update docs in the same checkpoint.
-8. Commit and push.
+7. Review touched files against `design/style-law.md`.
+8. Update docs in the same checkpoint.
+9. Commit and push.
 
 ## Start Conditions
 
@@ -84,6 +86,7 @@ Update docs when public API shape, owner boundary, lifecycle, proof requirement,
 - use commit messages that describe the boundary or invariant being locked
 - push after each meaningful checkpoint
 - do not batch unrelated repo changes into one commit message theme
+- do not close a checkpoint with touched-file style regressions against `design/style-law.md`
 
 ## Debugging Rules
 
