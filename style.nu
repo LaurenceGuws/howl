@@ -1,20 +1,5 @@
 #!/usr/bin/env -S nu
 
-def default-roots [] {
-  workspace-repos
-}
-
-def gather-files [roots: list<string>] {
-  $roots
-  | each {|root|
-      (do -i {
-        ^rg --files $root -g '*.zig' -g '*.java' -g '*.md' -g '*.nu' -g '*.py' -g '!**/.git/**' -g '!**/.zig-cache/**' -g '!**/zig-out/**' -g '!**/zig-pkg/**' -g '!**/vendor/**'
-      } | lines)
-    }
-  | flatten
-  | uniq
-}
-
 def workspace-repos [] {
   let top = (
     ls
@@ -29,8 +14,8 @@ def workspace-repos [] {
   ['.'] | append $top | append $hosts
 }
 
-def allowed-style-file [path: string] {
-  $path =~ '\.(zig|java|md|nu|py)$'
+def default-roots [] {
+  workspace-repos
 }
 
 def prefix-path [repo: string, path: string] {
@@ -41,7 +26,22 @@ def under-roots [path: string, roots: list<string>] {
   $roots | any {|root| $root == '.' or $path == $root or ($path | str starts-with $"($root)/") }
 }
 
-def touched-files [roots: list<string>] {
+def allowed-style-file [path: string] {
+  $path =~ '\.(zig|java|md|nu|py)$'
+}
+
+def gather-files [roots: list<string>] {
+  $roots
+  | each {|root|
+      (do -i {
+        ^rg --files $root -g '*.zig' -g '*.java' -g '*.md' -g '*.nu' -g '*.py' -g '!**/.git/**' -g '!**/.zig-cache/**' -g '!**/zig-out/**' -g '!**/zig-pkg/**' -g '!**/vendor/**'
+      } | lines)
+    }
+  | flatten
+  | uniq
+}
+
+def touched-paths [roots: list<string>] {
   workspace-repos
   | each {|repo|
       let changed = (do -i { ^git -C $repo diff --name-only --diff-filter=ACMR HEAD } | lines)
@@ -70,7 +70,7 @@ def sort-rows [rows: list<any>, field: string] {
   if $field == 'file' or $field == 'path' {
     $rows | sort-by path
   } else if $field == 'repo' {
-    $rows | sort-by repo
+    $rows | sort-by repo path
   } else {
     $rows | sort-by {|row| $row | get $field } --reverse
   }
@@ -82,7 +82,9 @@ def sum-field [rows: list<any>, field: string] {
 
 def summarize [rows: list<any>] {
   {
+    path: '(sum)'
     repo: 'TOTAL'
+    changed: ''
     files: (sum-field $rows files)
     lines: (sum-field $rows lines)
     blank: (sum-field $rows blank)
@@ -98,29 +100,24 @@ def summarize [rows: list<any>] {
   }
 }
 
+def summarize-repo [repo: string, rows: list<any>] {
+  summarize $rows
+  | update repo $repo
+}
+
 def group-by-repo [rows: list<any>] {
   $rows
   | group-by repo
   | transpose repo rows
-  | each {|group|
-      let items = $group.rows
-      {
-        repo: $group.repo
-        files: (sum-field $items files)
-        lines: (sum-field $items lines)
-        blank: (sum-field $items blank)
-        comments: (sum-field $items comments)
-        code: (sum-field $items code)
-        tests: (sum-field $items tests)
-        prod: (sum-field $items prod)
-        asserts: (sum-field $items asserts)
-        usizes: (sum-field $items usizes)
-        funcs: (sum-field $items funcs)
-        long_funcs: (sum-field $items long_funcs)
-        test_blocks: (sum-field $items test_blocks)
-        changed: ($items | get changed | where $it != '' | sort | last | default '')
-      }
-    }
+  | sort-by repo
+}
+
+def repo-summary-view [rows: list<any>] {
+  let repo_rows = (
+    group-by-repo $rows
+    | each {|group| summarize-repo $group.repo $group.rows }
+  )
+  ([ (summarize $rows) ] | append $repo_rows)
 }
 
 def positive-sum [rows: list<any>, field: string] {
@@ -172,115 +169,33 @@ def failure-view [rows: list<any>] {
 
 def checkpoint-summary [rows: list<any>] {
   let failures = (failure-view $rows)
-  {
+  [{
     status: (if ($failures | is-empty) { 'clean' } else { 'fail' })
     touched_files: ($rows | length)
     blocking_files: ($failures | length)
     assertion_warnings: ($rows | where delta_asserts < 0 | length)
-    failures: $failures
-  }
+  }]
 }
 
-def combined-deep-view [rows: list<any>, sort: string] {
-  let repo_rows = (
-    sort-rows (group-by-repo $rows) $sort
-    | each {|row|
-        {
-          kind: 'repo'
-          repo: $row.repo
-          path: ''
-          changed: $row.changed
-          files: $row.files
-          lines: $row.lines
-          blank: $row.blank
-          comments: $row.comments
-          code: $row.code
-          tests: $row.tests
-          prod: $row.prod
-          asserts: $row.asserts
-          usizes: $row.usizes
-          funcs: $row.funcs
-          long_funcs: $row.long_funcs
-          test_blocks: $row.test_blocks
-        }
-      }
-  )
-
-  let total_row = (
-    summarize $rows
-    | insert kind 'total'
-    | insert path ''
-    | insert changed ''
-  )
-
-  let file_rows = (
-    sort-rows $rows $sort
-    | each {|row|
-        {
-          kind: 'file'
-          repo: $row.repo
-          path: $row.path
-          changed: $row.changed
-          files: $row.files
-          lines: $row.lines
-          blank: $row.blank
-          comments: $row.comments
-          code: $row.code
-          tests: $row.tests
-          prod: $row.prod
-          asserts: $row.asserts
-          usizes: $row.usizes
-          funcs: $row.funcs
-          long_funcs: $row.long_funcs
-          test_blocks: $row.test_blocks
-        }
-      }
-  )
-
-  $repo_rows | append $total_row | append $file_rows
-}
-
-def primary-mode [
-  by_file: bool,
-  by_repo: bool,
-  deep: bool,
-  touched_files: bool,
-  touched_repos: bool,
-  failures: bool
-] {
-  let selected = [
-    { name: 'by-file', on: $by_file }
-    { name: 'by-repo', on: $by_repo }
-    { name: 'deep', on: $deep }
-    { name: 'touched-files', on: $touched_files }
-    { name: 'touched-repos', on: $touched_repos }
-    { name: 'failures', on: $failures }
-  ] | where on
-
-  if ($selected | length) > 1 {
-    error make {
-      msg: 'pick one primary mode'
-      label: {
-        text: ($selected | get name | str join ', ')
-        span: (metadata $selected).span
-      }
-    }
-  }
-
-  if ($selected | is-empty) {
-    'default'
+def print-table [rows: list<any>] {
+  if ($rows | is-empty) {
+    print 'empty'
   } else {
-    $selected.0.name
+    print ($rows | table)
   }
 }
 
-def ensure-valid-refinements [mode: string, blame: bool, sort: string] {
-  if $blame and ($mode == 'default' or $mode == 'failures' or $mode == 'touched-files' or $mode == 'touched-repos') {
-    error make { msg: '--blame only applies to deep inspection modes' }
-  }
-
-  if $sort != 'prod' and ($mode == 'default' or $mode == 'failures' or $mode == 'touched-files' or $mode == 'touched-repos') {
-    error make { msg: '--sort only applies to deep inspection modes' }
+def print-repo-file-tables [rows: list<any>] {
+  if ($rows | is-empty) {
+    print 'empty'
+  } else {
+    group-by-repo $rows
+    | each {|group|
+        print $"## ($group.repo)"
+        print (([ (summarize-repo $group.repo $group.rows) ] | append $group.rows) | table)
+        print ''
+      }
+    | ignore
   }
 }
 
@@ -288,7 +203,6 @@ def main [
   ...roots: string,
   --by-file(-a),
   --by-repo(-r),
-  --deep(-d),
   --touched-files(-t),
   --touched-repos(-p),
   --failures(-f),
@@ -296,31 +210,29 @@ def main [
   --sort(-s): string = 'prod'
 ] {
   let selected_roots = if ($roots | is-empty) { default-roots } else { $roots }
-  let mode = (primary-mode $by_file $by_repo $deep $touched_files $touched_repos $failures)
-  ensure-valid-refinements $mode $blame $sort
-  let touched = (touched-files $selected_roots)
-  let touched_rows = (scan-files $touched false 'HEAD')
 
-  if $mode == 'touched-repos' {
-    touched-repo-view $touched_rows
-  } else if $mode == 'touched-files' {
-    touched-files-view $touched_rows
-  } else if $mode == 'failures' {
-    failure-view $touched_rows
-  } else if $mode == 'deep' or $mode == 'by-repo' or $mode == 'by-file' {
-    let files = gather-files $selected_roots
-    let rows = (scan-files $files $blame '')
-
-    if $mode == 'deep' {
-      combined-deep-view $rows $sort
-    } else if $mode == 'by-repo' {
-      let repo_rows = (sort-rows (group-by-repo $rows) $sort)
-      $repo_rows | append (summarize $rows)
+  if $touched_repos {
+    let touched_rows = (scan-files (touched-paths $selected_roots) false 'HEAD')
+    print-table (touched-repo-view $touched_rows)
+  } else if $touched_files or $failures {
+    let touched_rows = (scan-files (touched-paths $selected_roots) false 'HEAD')
+    let rows = if $failures { failure-view $touched_rows } else { touched-files-view $touched_rows }
+    if $by_repo {
+      print-repo-file-tables $rows
     } else {
-      let file_rows = (sort-rows $rows $sort)
-      $file_rows | append (summarize $rows)
+      print-table $rows
+    }
+  } else if $by_file or $by_repo or $blame or $sort != 'prod' {
+    let rows = (sort-rows (scan-files (gather-files $selected_roots) $blame '') $sort)
+    if $by_repo and $by_file {
+      print-repo-file-tables $rows
+    } else if $by_repo {
+      print-table (repo-summary-view $rows)
+    } else {
+      print-table ([ (summarize $rows) ] | append $rows)
     }
   } else {
-    checkpoint-summary $touched_rows
+    let touched_rows = (scan-files (touched-paths $selected_roots) false 'HEAD')
+    print-table (checkpoint-summary $touched_rows)
   }
 }
