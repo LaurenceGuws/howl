@@ -220,6 +220,8 @@ Normal handoff size:
 
 - one sizable checkpoint in a hotspot owner file, or
 - a small batch of closely related checkpoints inside one milestone
+- soft churn cap: keep each handoff at or under roughly 1000 changed lines unless the architect
+  explicitly approves a larger checkpoint
 
 Preferred review cadence:
 
