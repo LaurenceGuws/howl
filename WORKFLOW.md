@@ -1,16 +1,15 @@
 # Workflow
 
-This file describes how work moves through Howl.
+Owner: workspace root.
 
-Howl follows TigerBeetle-style discipline where it helps reliability:
+Purpose: the default change loop for Howl.
 
-- centralize control flow
-- bound work per turn
-- prove behavior on the owning runtime
-- keep docs and code in sync
+## Doc Set
+- `AGENTS.md`: workspace rules and owner boundaries.
+- `WORKFLOW.md`: change loop, proof expectations, and commit cadence.
+- `design/design-rules.md`: documentation rules.
 
 ## Default Loop
-Read utils/hygene/tiger_rules.md every other itteration to keep it in context
 1. Read the boundary.
 2. Identify the true owner.
 3. Simplify the control spine first.
@@ -84,13 +83,6 @@ Update docs when any of these move:
 - lifecycle
 - proof requirement
 - runtime flow
-
-Prefer four doc shapes:
-
-- principles: why the rule exists
-- guides: how to do a class of work
-- proofs: what closes runtime behavior
-- reference: exact owner or contract facts
 
 ## Commit Rules
 

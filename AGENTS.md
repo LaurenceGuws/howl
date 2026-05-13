@@ -1,3 +1,9 @@
+# Workspace Rules
+
+Owner: workspace root.
+
+Purpose: global product, ownership, runtime, proof, and documentation rules.
+
 1. Product identity is `howl-term` / `howl_term` only.
 
 2. Work from first principles.

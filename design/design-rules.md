@@ -1,32 +1,27 @@
-# Howl Docs Style Guide
+# Documentation Rules
 
 ## Purpose
 
-Howl docs are product artifacts.
+Owner: workspace root.
 
-They exist to lock boundaries, flows, proofs, and contracts for a low-level terminal system. They are
-not marketing copy, and they are not long-form architecture theater.
+Howl docs lock boundaries, flows, proofs, and contracts. Each line is a cost.
 
-TigerBeetle discipline applies here too: every line is a cost. Cover more facts with fewer words.
+## Doc Set
 
-## Macro
+- `AGENTS.md`: principles and workspace boundaries.
+- `WORKFLOW.md`: change loop and proof cadence.
+- `design/*.md`: shared reference.
+- `*/design.md`: repo boundary reference.
+- repo-local support docs: narrow proof, protocol, or operational reference only.
 
-Howl docs are split by job, not by mood.
+## Doc Shapes
 
 - Principles explain why a rule exists.
 - Guides explain how to do a class of work.
 - Proofs record what closes runtime behavior.
 - Reference records exact owner, contract, and lifecycle facts.
 
-Current repo layout maps roughly like this:
-
-- `AGENTS.md` is the global work contract.
-- `WORKFLOW.md` is the engineering guide for day-to-day changes.
-- `design/*.md` is shared design reference.
-- `*/design.md` is repo-local design reference.
-- host proof docs under `howl-hosts/*/docs/` are runtime proof records.
-
-If a document does not fit cleanly, prefer adding a short focused file over bloating an unrelated one.
+If a document does not fit cleanly, fold it into a stronger entrypoint or delete it.
 
 ## Design Doc Contract
 
@@ -43,7 +38,7 @@ Required sections:
 - `Non-Goals`
 - `Change Rules`
 
-If one of these sections is not stable yet, say so directly.
+Add a short doc-set pointer when the repo keeps one or two supporting docs.
 
 ## What Design Docs Must Show
 
@@ -58,7 +53,7 @@ If one of these sections is not stable yet, say so directly.
 
 - mirror every file mechanically
 - document private helpers with no boundary value
-- speculate about future architecture without marking it future
+- speculate about future architecture
 - hide a real ownership conflict under neutral language
 
 ## Diagram Rules
@@ -88,12 +83,7 @@ If one of these sections is not stable yet, say so directly.
 - Name the owner.
 - Name the invariant.
 - Name the proof.
-
-Avoid filler such as:
-
-- broad claims with no owner
-- vague migration language after the migration is complete
-- “helper” explanations that restate code shape without meaning
+- Spend words only on durable facts.
 
 ## Change Rules
 
@@ -114,4 +104,4 @@ They should record:
 - the signal that counted as success
 - any explicit remaining gap
 
-Proof docs should not drift into broad architecture docs.
+Proof docs should not drift into architecture or planning docs.
