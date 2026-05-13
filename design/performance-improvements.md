@@ -44,9 +44,9 @@ Material outcome:
 Why it matters:
 - Gives accurate diagnostics while respecting the “no stale prod logs” rule.
 
-### VT-Core Module Benchmark
+### VT Terminal Module Benchmark
 
-Expanded `howl-vt-core/src/test/vt_core_benchmark.zig` with NDJSON output, `--runs`, unicode/CSI/scroll/snapshot/queue workloads, and production-sized history coverage.
+Expanded `howl-vt/src/test/vt_core_benchmark.zig` with NDJSON output, `--runs`, unicode/CSI/scroll/snapshot/queue workloads, and production-sized history coverage.
 
 Material outcome:
 - Isolated parser/apply/history behavior from host rendering.
@@ -116,7 +116,7 @@ Material outcome:
 Why it matters:
 - Reduces unnecessary memory copy work and keeps snapshot ownership cheap enough to build on.
 
-## VT-Core Improvements
+## VT Terminal Improvements
 
 ### ASCII Bridge Fast Paths
 
@@ -126,7 +126,7 @@ Material outcome:
 - Reduced parser/bridge overhead in common ASCII-heavy traffic.
 
 Why it matters:
-- ASCII throughput is a core terminal benchmark axis and common workload.
+- ASCII throughput is a primary terminal benchmark axis and common workload.
 
 ### CSI Parser Reset Reduction
 
@@ -140,7 +140,7 @@ Why it matters:
 
 ### Dirty Column Ranges
 
-Exposed dirty column ranges from vt-core and used them in howl-term snapshot sync.
+Exposed dirty column ranges from terminal and used them in howl-term snapshot sync.
 
 Material outcome:
 - Incremental sync can avoid scanning full rows when changes are narrow.
@@ -158,7 +158,7 @@ Material outcome:
 Why it matters:
 - Strong isolated win even though full-host stress remained dominated elsewhere.
 
-## Render-Core Improvements
+## Render Improvements
 
 ### Background Fill Span Merging
 

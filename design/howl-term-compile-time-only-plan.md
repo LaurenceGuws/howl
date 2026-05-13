@@ -24,9 +24,9 @@ Last updated: 2026-05-12
 - runtime convenience wrappers that hide lower-module ownership
 
 In plain English:
-- `howl-session` owns PTY and child-process runtime
-- `howl-vt-core` owns terminal protocol and terminal-state vocabulary
-- `howl-render-core` owns snapshot storage, render runtime, renderer execution, and render-facing
+- `howl-pty` owns PTY and child-process runtime
+- `howl-vt` owns terminal protocol and terminal-state vocabulary
+- `howl-render` owns snapshot storage, render runtime, renderer execution, and render-facing
   data model types
 - hosts own wake, pacing, redraw, and presentation
 - `howl-term` only ensures those pieces line up correctly at compile time
@@ -45,7 +45,7 @@ In plain English:
 
 Canonical chain:
 - hosts -> `howl-term`
-- `howl-term` -> `howl-session`, `howl-vt-core`, `howl-render-core`
+- `howl-term` -> `howl-pty`, `howl-vt`, `howl-render`
 
 Meaning of that chain now:
 - hosts may still depend on `howl-term` as the umbrella package/root
@@ -65,8 +65,7 @@ Meaning of that chain now:
 ## What `howl-term` Is Not Allowed To Do
 
 - own mutable runtime state that duplicates lower-module owners
-- define a second C ABI for behavior already owned by `howl-session`, `howl-vt-core`, or
-  `howl-render-core`
+- define a second C ABI for behavior already owned by `howl-pty`, `howl-vt`, or `howl-render`
 - translate lower-module runtime operations into a new broad convenience API
 - compensate for host scheduling or renderer ownership mistakes
 
@@ -101,9 +100,9 @@ Goal:
 - make the smaller modules real C ABI products
 
 Required outcome:
-- `howl-session` exposes PTY/session vocabulary only
-- `howl-vt-core` exposes VT/input vocabulary only
-- `howl-render-core` exposes the render data model, render runtime, and renderer owner surfaces the
+- `howl-pty` exposes PTY vocabulary only
+- `howl-vt` exposes VT/input vocabulary only
+- `howl-render` exposes the render data model, render runtime, and renderer owner surfaces the
   hosts actually need
 
 Done when:
@@ -127,9 +126,9 @@ Goal:
 
 Required outcome:
 - host wake/redraw flow stays host-owned
-- render runtime calls come from `howl-render-core`
-- PTY/session calls come from `howl-session`
-- VT/input vocabulary comes from `howl-vt-core`
+- render runtime calls come from `howl-render`
+- PTY calls come from `howl-pty`
+- VT/input vocabulary comes from `howl-vt`
 - `howl-term` remains compile-time-only
 
 ## TigerBeetle Rules For This Plan

@@ -4,7 +4,7 @@ Purpose: hold compound hypotheses and multi-step experiment chains. This is inte
 
 Last updated: 2026-05-05
 
-## Core Pattern We Keep Seeing
+## Terminal Pattern We Keep Seeing
 
 Raw throughput improvements often regress pacing. Single changes that increase producer FPS can be bad for the terminal if they create larger visible dirty publications.
 
@@ -147,7 +147,7 @@ Theory:
 - We may be able to borrow the architectural lesson from kitty and ghostty without first changing GL profile: keep renderer-owned visible row state and update rows in place.
 
 Coupled cuts:
-- Define renderer-owned row storage in `howl-render-core`.
+- Define renderer-owned row storage in `howl-render`.
 - Replace per-frame full transient rebuild of those rows with row invalidation and refresh.
 - Track row-level text, fill, and decoration counts to verify reduced churn.
 - Compare against current batch builder on hostile ascii and mixed workloads.
@@ -164,8 +164,8 @@ Exit criteria:
 Run module benchmark:
 
 ```sh
-zig build vt-core-benchmark -- --runs 3
-zig build render-core-benchmark -- --runs 3
+zig build terminal-benchmark -- --runs 3
+zig build render-benchmark -- --runs 3
 zig build howl-term-benchmark -- --runs 3
 ```
 

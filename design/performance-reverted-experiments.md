@@ -10,7 +10,7 @@ Theory:
 - Move render publication out of the UI path so the UI consumes published state and PTY ingest can run hotter.
 
 What happened:
-- Moving `syncSnapshotFromCore()` into the runtime thread made the ingest path pay render-projection cost.
+- Moving `syncSnapshotFromTerminal()` into the runtime thread made the ingest path pay render-projection cost.
 - ASCII and mixed throughput regressed.
 
 Why it crumbled:

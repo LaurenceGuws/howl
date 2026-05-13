@@ -21,8 +21,8 @@ This sprint claims success only if the default renderer path becomes the right p
 ## Locked Scope
 
 In scope:
-- `howl-render-core` default text render path.
-- `howl-render-core` benchmark and proof surfaces needed to judge the new default path.
+- `howl-render` default text render path.
+- `howl-render` benchmark and proof surfaces needed to judge the new default path.
 - minimal contract changes in `howl-term` only if needed to feed the renderer the right unit of work.
 - Linux-host benchmark proof only at milestone gates.
 
@@ -34,11 +34,11 @@ Out of scope:
 - compatibility layers that preserve the old universal run-shaping pipeline for normal text.
 
 Layer rules:
-- `howl-render-core` owns renderer-path replacement.
+- `howl-render` owns renderer-path replacement.
 - `howl-term` may only change to support the renderer contract cleanly.
 - `howl-linux-host` is proof surface and harness owner, not renderer-policy owner.
-- do not pull host concerns down into render-core.
-- do not push render-core policy up into hosts.
+- do not pull host concerns down into render.
+- do not push render policy up into hosts.
 
 ## Locked Non-Negotiables
 
@@ -135,7 +135,7 @@ TigerBeetle hygiene gate:
 - scorecard includes cost by lane, not just one FPS number.
 
 Done when:
-- `howl-render-core` benchmark runs can prove whether a frame stayed fully in the normal lane.
+- `howl-render` benchmark runs can prove whether a frame stayed fully in the normal lane.
 - Linux-host gate runs remain sequential and artifact-backed.
 
 ### Checkpoint 1.3: Hot-Path Memory Contract

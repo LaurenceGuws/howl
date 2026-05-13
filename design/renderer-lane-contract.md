@@ -4,7 +4,7 @@ Purpose:
 - lock the renderer-foundation lane split so Milestone 2 replaces the right path instead of preserving the old universal one.
 
 Scope owner:
-- `howl-render-core` owns lane policy, lane predicates, and lane-proof surfaces.
+- `howl-render` owns lane policy, lane predicates, and lane-proof surfaces.
 - `howl-term` may feed the renderer better cell text, but does not own lane policy.
 - `howl-linux-host` remains a proof surface only.
 
@@ -17,7 +17,7 @@ The unit of work is:
 - one resolved glyph identity
 - one atlas-backed glyph draw submission
 
-`howl-render-core/src/text/text_lane.zig` defines the exact positive predicate.
+`howl-render/src/text/text_lane.zig` defines the exact positive predicate.
 
 A cell is in the normal lane only when all of the following are true:
 - `text.codepoints.len == 1`
@@ -35,7 +35,7 @@ Normal-lane implications:
 
 The complex lane is explicit and exceptional.
 
-`howl-render-core/src/text/text_lane.zig` defines the exact positive predicates.
+`howl-render/src/text/text_lane.zig` defines the exact positive predicates.
 
 A cell is in the complex lane only for one of these reasons:
 - `multi_codepoint`: `text.codepoints.len != 1`
@@ -58,7 +58,7 @@ The live engine now classifies cells before any shaping/grouping work starts.
 - complex-lane cells are selected explicitly before resolve/shape/group/scene work runs
 - resolve, shape, grouping, and scene sprite preparation run only on that explicit complex selection
 
-`howl-render-core/src/text/engine.zig` records lane counts and any legacy-stage usage through `lane_report`.
+`howl-render/src/text/engine.zig` records lane counts and any legacy-stage usage through `lane_report`.
 
 This keeps the normal lane as the controlling default path and the complex lane as the exceptional path.
 
@@ -67,7 +67,7 @@ This keeps the normal lane as the controlling default path and the complex lane 
 Primary proof command:
 
 ```sh
-zig build render-core-benchmark -- --text --runs 3
+zig build render-benchmark -- --text --runs 3
 ```
 
 The scorecard must report, per workload:
@@ -108,7 +108,7 @@ Artifact rule:
 This is the locked ownership/bounds target for the final normal lane.
 
 Owner:
-- `howl-render-core`
+- `howl-render`
 
 Steady-state normal-lane buffers after initialization:
 - visible normal-cell buffer: capacity `grid.rows * grid.cols`

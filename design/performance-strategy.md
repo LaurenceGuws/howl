@@ -25,7 +25,7 @@ Instrumentation, synthetic workloads, and intrusive measurement belong in dedica
 
 ## Surface Map
 
-### 1. `howl-vt-core`
+### 1. `howl-vt`
 
 Best for:
 - parser throughput
@@ -37,20 +37,20 @@ Best for:
 Existing surfaces:
 - `zig build test`
 - `zig build test:regression`
-- `zig build vt-core-benchmark -- --runs 3`
+- `zig build terminal-benchmark -- --runs 3`
 - `zig build fuzz`
 
 Key files:
-- `howl-vt-core/src/test/vt_core_benchmark.zig`
-- `howl-vt-core/src/fuzz_tests.zig`
-- `howl-vt-core/src/fuzz/scrollback.zig`
+- `howl-vt/src/test/vt_core_benchmark.zig`
+- `howl-vt/src/fuzz_tests.zig`
+- `howl-vt/src/fuzz/scrollback.zig`
 
 Use this layer when asking:
 - can we parse or apply faster?
 - did dirty tracking become narrower or wider?
-- did history changes help the terminal core even before UI is involved?
+- did history changes help the terminal even before UI is involved?
 
-### 2. `howl-render-core`
+### 2. `howl-render`
 
 Best for:
 - render batch generation cost
@@ -62,15 +62,15 @@ Best for:
 Existing surfaces:
 - `zig build test`
 - direct unit tests already covering `render_batch.zig` and backend behavior
-- `zig build render-core-benchmark -- --runs 3`
+- `zig build render-benchmark -- --runs 3`
 
 Current gap:
 - no dummy backend submission surface yet
 
 Key files:
-- `howl-render-core/src/render_batch.zig`
-- `howl-render-core/src/backend/gl/RenderGl.zig`
-- `howl-render-core/src/test/root.zig`
+- `howl-render/src/render_batch.zig`
+- `howl-render/src/backend/gl/RenderGl.zig`
+- `howl-render/src/test/root.zig`
 
 Use this layer when asking:
 - is transient batch generation itself too expensive?
@@ -137,7 +137,7 @@ Do not start at the host unless the question is inherently visual.
 
 Recommended order:
 
-1. `vt-core` or `render-core` micro-level confirmation
+1. `terminal` or `render` micro-level confirmation
 2. `howl-term` runtime integration confirmation
 3. `howl-linux-host` visible pacing confirmation
 4. kitty/ghostty comparison only after Howl itself improves or changes behavior materially
@@ -146,7 +146,7 @@ This keeps the expensive, noisy benchmark surface for the end of each sprint ins
 
 ## New Harnesses We Should Add
 
-### A. `render-core` benchmark executable
+### A. `render` benchmark executable
 
 Goal:
 - repeatedly build or submit synthetic frame workloads without PTY or host noise
@@ -209,11 +209,11 @@ Why:
 
 Deliverables:
 - gated publication metrics in `howl-term`
-- render-core benchmark entrypoint
+- render benchmark entrypoint
 - howl-term runtime benchmark entrypoint
 - clear scorecard for:
   - vt apply
-  - sync-from-core projection
+  - sync-from-terminal projection
   - snapshot copy
   - batch build
   - backend submission
@@ -225,7 +225,7 @@ Success condition:
 ### Sprint 2: Retained renderer-owned visible state
 
 Deliverables:
-- prototype retained row or cell storage in `howl-render-core`
+- prototype retained row or cell storage in `howl-render`
 - benchmark comparison against transient batch rebuild
 - term-level publication metrics showing whether dirty work shrinks meaningfully
 
@@ -258,7 +258,7 @@ These are now long-lived rules, not sprint notes:
 
 - always-on debug logging
 - broad tracing by default
-- benchmark-only counters that pollute core owners
+- benchmark-only counters that pollute terminal owners
 - scheduling heuristics that exist only to make test numbers prettier
 
 If data is needed in production code, gate it tightly and keep the owner clear.
