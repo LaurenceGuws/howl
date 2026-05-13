@@ -44,7 +44,7 @@ Howl prefers one obvious control spine per runtime.
 ### Boundary Change
 
 - update the owning design doc
-- update boundary tables if the owner moved
+- update the owning boundary reference if the owner moved
 - keep the public surface boring
 
 ### Runtime Change
