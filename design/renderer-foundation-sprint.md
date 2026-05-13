@@ -1,384 +1,407 @@
-# Renderer Foundation Sprint
+# Renderer Rewrite Sprint
 
-Purpose: lock the renderer-foundation sprint in writing so the work does not drift. This sprint is about replacing the wrong default renderer architecture with a best-in-class foundation. It is not the sprint that beats Alacritty outright. It is the sprint that makes that war winnable.
+Purpose: lock the renderer rewrite sprint so we can rewrite `howl-render` deliberately instead of
+smearing style cleanup across the whole repo.
 
-Last updated: 2026-05-11
+Last updated: 2026-05-13
 
 ## Position
 
-This sprint is a foundation sprint.
+This sprint is a rewrite sprint, not a polish sprint.
 
-Annual war target:
-- beat `alacritty` decisively on real hostile terminal workloads.
+The target is not "make the current renderer nicer." The target is:
 
-This sprint target:
-- replace the common-path renderer methodology that is structurally slower and less deterministic than `alacritty`.
-- raise the architecture standard to be stricter than the `tigerbeetle` reference on simplicity, limits, and explicitness in the renderer hot path.
+- rewrite `howl-render` into owner-true, bounded, reviewable code
+- make the public control spine boring
+- make each hot path small enough to prove
+- remove style drift instead of preserving it
 
-This sprint does not claim success by reaching a final FPS number.
-This sprint claims success only if the default renderer path becomes the right path.
+This sprint is done by checkpoints, not by line count.
 
-## Locked Scope
+## Scope
 
 In scope:
-- `howl-render` default text render path.
-- `howl-render` benchmark and proof surfaces needed to judge the new default path.
-- minimal contract changes in `howl-term` only if needed to feed the renderer the right unit of work.
-- Linux-host benchmark proof only at milestone gates.
+
+- `howl-render` only
+- public owner spine
+- render runtime and retained publication state
+- text engine, lane split, and raster path
+- GL and GLES backend owner paths
+- benchmark and proof surfaces needed to close each checkpoint
 
 Out of scope:
-- final year-target victory over `alacritty` on every benchmark.
-- renderer-thread architecture changes.
-- Android parity work.
-- speculative GPU innovation beyond what is needed to replace the wrong common path.
-- compatibility layers that preserve the old universal run-shaping pipeline for normal text.
+
+- VT owner changes except contract adjustments required by render
+- PTY owner changes
+- host event-loop redesign
+- Android parity work
+- speculative new renderer layers
 
 Layer rules:
-- `howl-render` owns renderer-path replacement.
-- `howl-term` may only change to support the renderer contract cleanly.
-- `howl-linux-host` is proof surface and harness owner, not renderer-policy owner.
-- do not pull host concerns down into render.
-- do not push render policy up into hosts.
 
-## Locked Non-Negotiables
+- `howl-render` owns render policy and render runtime state
+- `howl-vt` owns terminal meaning and render input facts
+- hosts own wake, loop cadence, and presentation
+- no new umbrella runtime layer
 
-- No fake progress.
-- No fallback architecture kept alive just to reduce churn.
-- No compatibility layer that preserves the old wrong common path.
-- No "temporary" normal-text exceptions that become permanent.
-- No per-frame heap allocation in the final normal-text lane.
-- No default-path dependence on full-run text hashes.
-- No milestone passes on synthetic-only wins if host proof says the default path is still wrong.
+## Work Split
 
-## Reference Pressure Points
+We use the architect/review/engineer split again.
 
-### Alacritty Pressure Points
+### Architect
 
-Use `alacritty` as the common-path methodology reference, not as a line-for-line cargo cult target.
+Architect owns:
 
-Pressure points:
-- common unit of work is renderable cells and cached glyphs, not row-wide shaped text runs.
-- common path goes from cell iteration to glyph cache lookup to atlas-backed draw batching.
-- ASCII and ordinary monospace text stay out of expensive shaping/group-sprite machinery.
-- glyph identity is local and cacheable; normal-path cost should not track line entropy.
+- the checkpoint boundary
+- the owner map
+- the exact invariant being locked
+- the done proof for the checkpoint
+- the delete list for wrong structure that should not survive
 
-Reference files:
-- `utils/dev_references/terminals/alacritty/alacritty_terminal/src/term/mod.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glyph_cache.rs`
+Architect output per checkpoint:
 
-### TigerBeetle Pressure Points
+- checkpoint note
+- owner file list
+- invariants
+- proof command list
+- explicit non-goals
 
-Use `tigerbeetle` as the simplicity and determinism bar for the renderer hot path.
+### Engineer
 
-Pressure points:
-- explicit, bounded control flow.
-- fixed limits and known capacities.
-- assertions on invariants and lane predicates.
-- no runtime allocation in the final hot path.
-- simple data plane, separate from control-plane complexity.
-- no accidental dependence on hidden state, hash luck, or allocator behavior.
+Engineer owns:
 
-Reference files:
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/concepts/performance.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/concepts/safety.md`
+- code changes inside the active checkpoint boundary
+- carrying the checkpoint to build/test proof
+- updating docs in the same checkpoint
 
-## Sprint Done Definition
+Engineer must not:
 
-This sprint is done only when all of the following are true:
+- open the next checkpoint early
+- preserve bad structure for comfort
+- add convenience wrappers to dodge ownership
 
-- The default normal-text renderer path is cell and glyph based.
-- Normal monospace text no longer pays the run-shaping, regrouping, and sprite-scene pipeline.
-- The complex-text path is explicit, narrow, and reserved for text that truly needs it.
-- The normal-text path is bounded, assertion-heavy, and allocation-free after initialization.
-- Benchmark and host proof clearly show that normal-path cost no longer scales with random line text churn the way it does today.
-- Review can point to one clear owner chain for the hot path without hand-waving.
+### Review
 
-If any one of these is false, the sprint is not done.
+Review owns:
 
-## Milestone 1: Freeze The Right Architecture Contract
+- owner-truth check
+- control-spine check
+- bound check
+- proof check
+- style drift rejection
 
-Milestone goal:
-- lock the unit of work, lane split, and proof surfaces before deep implementation churn.
+Review passes only when the code is simpler, not just different.
 
-Scope done:
-- the renderer has one explicit default path definition for normal text and one explicit exceptional path definition for complex text.
-- benchmark surfaces can prove whether ordinary text still leaks into the wrong path.
+## Global Gates
 
-### Checkpoint 1.1: Canonical Normal-Text Definition
+Every checkpoint must pass all gates.
 
-Goal against `alacritty`:
-- define the common path in `alacritty` terms: renderable cells, glyph identity, atlas-backed drawing.
+### Clarity Gate
 
-TigerBeetle hygiene gate:
-- the normal-text predicate is explicit and positive.
-- the complex-text predicate is explicit and positive.
-- lane choice is assertion-checked.
-- no ambiguous "smart" auto-routing.
+Before edits:
 
-Done when:
-- the code and design can name exactly what qualifies for the normal lane.
-- the code and design can name exactly what forces the complex lane.
+- which file owns the state?
+- which file owns the mutation?
+- which file owns the control flow?
+- what proof closes the change?
 
-### Checkpoint 1.2: Canonical Proof Surface
+If any answer is unclear, stop and mark `work-not-clear`.
 
-Goal against `alacritty`:
-- benchmark the same kind of common-path work that `alacritty` optimizes: ordinary visible cells and repeated glyph reuse.
+### Owner Gate
 
-TigerBeetle hygiene gate:
-- deterministic workloads.
-- fixed workload shapes with named capacities.
-- scorecard includes cost by lane, not just one FPS number.
+- public roots curate exports only
+- namespace wrappers aggregate only
+- owner files own state and mutation
+- FFI translates only
+- hosts do not absorb render policy
 
-Done when:
-- `howl-render` benchmark runs can prove whether a frame stayed fully in the normal lane.
-- Linux-host gate runs remain sequential and artifact-backed.
+### Code-Shape Gate
 
-### Checkpoint 1.3: Hot-Path Memory Contract
+- shorten giant functions when a true owner seam exists
+- prefer direct control flow over hidden pipelines
+- keep capacities and bounds explicit
+- keep assertions on invariants that matter
+- do not keep both old and new paths alive without a hard reason
 
-Goal against `alacritty`:
-- move toward a glyph-cache hot path whose steady-state work does not depend on per-frame allocation.
+### Proof Gate
 
-TigerBeetle hygiene gate:
-- final normal lane allocates all steady-state storage up front.
-- capacities are explicit.
-- overflow behavior is explicit and hard-failing in debug, never silently unbounded.
+Each checkpoint closes only with proof from the owning repo:
 
-Done when:
-- the milestone design states exactly which normal-lane buffers are preallocated, who owns them, and what their bounds are.
+- `zig build test --summary all` in `howl-render`
+- any checkpoint-specific benchmark or runtime proof named below
 
-### Milestone 1 Gate
+### Stop Gate
 
-Pass only if:
-- the sprint has one locked architecture target.
-- the team can prove what the normal lane is, what the complex lane is, and how to measure leakage between them.
-- there is no remaining ambiguity about whether normal text should ever enter run-shaping by default.
+Stop the checkpoint if:
 
-Fail if:
-- benchmark work is still framed around the old universal pipeline.
-- the lane split is still described in vague terms like "fast path" without an exact predicate.
-- the design still allows a compatibility layer to keep normal text inside the old architecture.
+- two files both own the same mutation
+- the shortest change needs a fake bridge layer
+- proof and behavior disagree
+- a rewrite step would silently change public contract without a doc update
 
-## Milestone 2: Replace The Default Hot Path
+## Rewrite Order
+
+We rewrite from the outside in and from the control spine toward the heavy leaves.
+
+Order:
+
+1. public owner spine
+2. render runtime and retained publication path
+3. text lane contract and text engine
+4. raster and atlas path
+5. GL backend
+6. GLES backend
+7. benchmark and proof cleanup
+
+This order is mandatory unless a checkpoint explicitly proves a better dependency order.
+
+## Milestone 1: Lock The Public Spine
 
 Milestone goal:
-- make normal monospace text use a direct cell-to-glyph path modeled after `alacritty`'s common-path methodology.
 
-Scope done:
-- normal text no longer enters run-shaping, regrouping, or sprite-scene preparation.
+- make the exported render surface boring, explicit, and easy to review
 
-### Checkpoint 2.1: Stop Building Long Normal-Text Runs
+Files centered here:
 
-Goal against `alacritty`:
-- ordinary text should be processed as cells and glyphs, not as long same-face row runs.
+- `howl-render/src/howl_render.zig`
+- `howl-render/src/render_namespace.zig`
+- `howl-render/src/render.zig`
+- `howl-render/src/ffi.zig`
+- `howl-render/src/renderer.zig`
 
-TigerBeetle hygiene gate:
-- remove the old default-path branch entirely for normal text.
-- no hidden backdoor where normal text still forms run-hash identity.
-
-Done when:
-- a normal-text frame cannot produce default-path `ShapeRunKey` work.
-
-### Checkpoint 2.2: Direct Glyph Identity And Cache Path
-
-Goal against `alacritty`:
-- normal text resolves to glyph-local identity and atlas lookup, not full-run textual identity.
-
-TigerBeetle hygiene gate:
-- glyph-key construction is explicit.
-- cache ownership is explicit.
-- cache miss behavior is deterministic and bounded.
+### Checkpoint 1.1: Root And Namespace Cleanup
 
 Done when:
-- normal text uses glyph-local cache keys.
-- full-run hash churn is irrelevant to ordinary ASCII and monospace text cost.
 
-### Checkpoint 2.3: Direct Draw Submission For Normal Text
+- root exports are curated only
+- namespace wrapper only aggregates owners
+- no root or namespace file owns policy
+- exported names are short and specific
 
-Goal against `alacritty`:
-- ordinary text goes from cell iteration to glyph batch submission without the sprite-group scene detour.
-
-TigerBeetle hygiene gate:
-- one obvious hot path.
-- no side pipeline to translate normal glyphs into synthetic sprite groups.
-- no duplicate representations that must be kept in sync for the same normal glyph.
+### Checkpoint 1.2: Public Render Owner Contract
 
 Done when:
-- normal text no longer needs regrouping or `sprite_key` generation to draw.
 
-### Checkpoint 2.4: Steady-State No-Allocation Proof
+- `Render` is the only obvious render owner surface
+- the render surface matches the real owner files
+- design docs name the same contract the code exports
 
-Goal against `alacritty`:
-- common repeated text work should stay in a stable cache-and-batch regime.
-
-TigerBeetle hygiene gate:
-- debug proof or instrumentation can show zero steady-state allocations in the normal lane.
-- any remaining allocation is explicitly cold-path only.
-
-Done when:
-- the normal lane is allocation-free after initialization in steady-state benchmark runs.
-
-### Milestone 2 Gate
+### Checkpoint 1 Gate
 
 Pass only if:
-- normal text no longer flows through shaping, grouping, and sprite-scene generation.
-- the code reviewer can trace the common path on one screen of code without crossing multiple translation layers.
-- benchmark proof shows that random ASCII line entropy no longer destroys the common-path cache story.
 
-Fail if:
-- the new path still secretly falls back to the old default path for ordinary text.
-- the old path remains in place as a convenience compatibility layer.
-- the only win is synthetic and the host proof still shows the default path behaving like the old architecture.
+- a reviewer can explain the render public surface from one screen of code
+- root and namespace files contain no hidden policy
 
-## Milestone 3: Isolate Complex Text And Remove The Wrong Default World
+## Milestone 2: Rewrite Runtime Ownership
 
 Milestone goal:
-- keep the sophisticated pipeline only where it is genuinely required and make that boundary explicit and reviewable.
 
-Scope done:
-- complex shaping exists as an exceptional lane.
-- the old universal pipeline is gone as the mental model for renderer work.
+- make retained publication, prepare, submit, and metrics ownership explicit and bounded
 
-### Checkpoint 3.1: Explicit Complex-Text Classifier
+Files centered here:
 
-Goal against `alacritty`:
-- match the spirit of a cheap common path by making expensive behavior conditional on real need.
+- `howl-render/src/render.zig`
+- `howl-render/src/frame_queue.zig`
+- `howl-render/src/frame_pipeline.zig`
+- `howl-render/src/frame_snapshot.zig`
+- `howl-render/src/frame_metrics.zig`
 
-TigerBeetle hygiene gate:
-- the classifier is explicit, bounded, and assertion-checked.
-- no inferred magic from downstream misses.
+### Checkpoint 2.1: Publication State
 
 Done when:
-- the code can state why each complex cell became complex before it enters that lane.
 
-### Checkpoint 3.2: Complex Lane Narrowing
+- retained publication state has one obvious owner
+- source acceptance and damage classification are readable top to bottom
+- no unrelated render policy is mixed into publication storage
 
-Goal against `alacritty`:
-- expensive machinery must be the exception, not the default cost center.
-
-TigerBeetle hygiene gate:
-- complex-lane state is isolated.
-- buffers and temporary storage are bounded.
-- cost is measurable separately from the normal lane.
+### Checkpoint 2.2: Prepare And Submit Flow
 
 Done when:
-- benchmark output shows lane split counts and costs clearly.
 
-### Checkpoint 3.3: Remove Dead Architecture Paths
+- prepare and submit rules are explicit and bounded
+- stale/idle/needs-prepare states are easy to prove
+- no helper hides queue policy
 
-Goal against `alacritty`:
-- do not carry structural baggage that `alacritty` avoids on its common path.
-
-TigerBeetle hygiene gate:
-- remove stale fallback code.
-- remove duplicate default-path concepts.
-- remove comments and docs that still describe the old world as normal.
+### Checkpoint 2.3: Runtime Metrics Ownership
 
 Done when:
-- the renderer no longer describes itself as a universal run-shaping pipeline with a "fast path" bolted on.
 
-### Milestone 3 Gate
+- metrics mutation lives in the smallest true owner
+- metric counters reflect real runtime phases only
+- debug and proof counters are clearly separated from policy
+
+### Checkpoint 2 Gate
 
 Pass only if:
-- the renderer now has a simple normal lane and a narrow explicit complex lane.
-- the old universal model is no longer the controlling architecture.
-- code, docs, and benchmarks all describe the same default path.
 
-Fail if:
-- the old universal path is still treated as the real implementation with a special-case bypass.
-- complexity remains smeared across both lanes.
-- review still requires mental reconstruction of hidden control flow to explain the hot path.
+- the runtime path is readable without chasing unrelated files
+- render runtime state has one clear mutation owner
 
-## Milestone 4: Lock Regressions And Failure Boundaries
+## Milestone 3: Rewrite The Text Control Spine
 
 Milestone goal:
-- turn the sprint's discovered regressions into explicit design constraints, tests, assertions, and proof surfaces so they cannot slip back in under future performance work.
 
-Scope done:
-- cold-path behavior is measured separately from warmed steady state.
-- special text semantics that do not belong in the normal lane are explicit and reviewable.
-- known regressions are encoded as fail-fast gates, not only mentioned in review notes.
+- make lane choice, text preparation, and shaping ownership explicit before deep backend work
 
-### Checkpoint 4.1: Explicit Regression Classification
+Files centered here:
 
-Goal against `alacritty`:
-- keep the common path cheap without misclassifying visually exceptional text as ordinary one-cell glyph work.
+- `howl-render/src/text_contract.zig`
+- `howl-render/src/text_pipeline.zig`
+- `howl-render/src/text/engine.zig`
+- `howl-render/src/text/text_lane.zig`
+- `howl-render/src/text/cluster.zig`
+- `howl-render/src/text/scene.zig`
 
-TigerBeetle hygiene gate:
-- regressions are named as positive and negative spaces, not implied by downstream breakage.
-- lane and rendering invariants are asserted in at least two places when practical.
-- unsupported normal-lane semantics must fail classification early instead of degrading late.
+### Checkpoint 3.1: Lane Predicate And Contract
 
 Done when:
-- icon, special-sprite, and other exceptional glyph semantics are explicitly classified or explicitly rejected from the normal lane.
-- the code can state why each known regression class cannot silently re-enter the normal lane.
 
-### Checkpoint 4.2: Cold-Path Proof Surface
+- lane choice is explicit and positive
+- the contract matches the implementation
+- normal and complex paths have named reasons
 
-Goal against `alacritty`:
-- measure first-use and cold-start cost honestly instead of hiding it behind steady-state warming.
-
-TigerBeetle hygiene gate:
-- cold-path and warm-path proofs are separate and both deterministic.
-- benchmark naming and output make it impossible to pass a warmed result off as first-use behavior.
-- bounds and capacities for cold misses stay explicit.
+### Checkpoint 3.2: Engine Control Flow
 
 Done when:
-- benchmark output reports cold-path cost separately from warm steady state.
-- milestone proof can show whether startup, first atlas misses, or first exceptional glyph work regressed.
 
-### Checkpoint 4.3: Regression Locks
+- engine control flow is top-down and bounded
+- stage ownership is explicit
+- no leaf helper quietly owns routing policy
 
-Goal against `alacritty`:
-- preserve common-path wins without regressing exceptional text correctness.
-
-TigerBeetle hygiene gate:
-- known regressions are locked by tests, assertions, or benchmark gates.
-- tests cover both the positive space we want and the negative space we must reject.
-- there is no reliance on reviewer memory or prose-only warnings.
+### Checkpoint 3.3: Scene And Cluster Ownership
 
 Done when:
-- the current sprint regressions are encoded as permanent checks.
-- a future change cannot bring back half-width icon rendering or hide cold-path collapse without failing proof.
 
-### Milestone 4 Gate
+- grouping/scene logic follows the lane contract cleanly
+- text intermediate shapes are reduced to the smallest set that still earns their keep
+
+### Checkpoint 3 Gate
 
 Pass only if:
-- warm steady-state proof and cold-path proof are both explicit and distinct.
-- exceptional text semantics are explicit instead of accidental byproducts of the normal lane.
-- the sprint's discovered regressions are locked in code, tests, or benchmark gates.
 
-Fail if:
-- warmed benchmarks are still the only proof surface for renderer correctness.
-- special text semantics still depend on visual luck or downstream fallback.
-- regressions are recorded only in milestone notes instead of executable proof.
+- a reviewer can trace one normal lane and one complex lane without guessing
+- the engine no longer feels like a bag of side pipelines
 
-## Review Rule For The Whole Sprint
+## Milestone 4: Rewrite Raster And Atlas Owners
 
-The review standard is intentionally severe.
+Milestone goal:
 
-The reviewer must reject any milestone that:
-- keeps the old wrong architecture alive for comfort.
-- hides complexity under new names instead of deleting it.
-- accepts a compromise because the best move causes churn.
-- passes on benchmark folklore instead of proof.
-- weakens determinism, limits, or explicitness to get a local speed bump.
+- make raster, sprite, atlas, and provider ownership small and local
 
-The reviewer may approve the next milestone only when the current one passes on all three axes:
-- speed direction is correct against `alacritty` methodology.
-- determinism is strengthened against `tigerbeetle` standards.
-- simplicity is visibly improved, not just redistributed.
+Files centered here:
 
-## Exit Artifacts
+- `howl-render/src/text/rasterizer.zig`
+- `howl-render/src/text/provider.zig`
+- `howl-render/src/text/ft_hb_provider.zig`
+- `howl-render/src/text/atlas.zig`
+- `howl-render/src/text/atlas_cache.zig`
+- `howl-render/src/text/sprite_key.zig`
 
-By sprint end, the repository must contain:
-- benchmark artifacts proving lane behavior and steady-state normal-path behavior.
-- updated long-lived design docs for any new public renderer contract.
-- improvements records for kept wins.
-- reverted-experiment records for any discarded branches.
+### Checkpoint 4.1: Raster Control Spine
 
-This sprint doc should be deleted only after its locked rules are promoted into long-lived design and performance docs.
+Done when:
+
+- raster decisions are explicit
+- special glyph and fallback ownership are separate and readable
+- bounds and capacities are stated where they matter
+
+### Checkpoint 4.2: Atlas And Residency State
+
+Done when:
+
+- atlas state has one mutation owner
+- residency/update paths are bounded
+- cache semantics are explicit, not emergent
+
+### Checkpoint 4 Gate
+
+Pass only if:
+
+- atlas and raster paths can be explained without hand-waving about cache magic
+
+## Milestone 5: Rewrite Backend Owners
+
+Milestone goal:
+
+- make GL and GLES backends mirror the same render contract with boring control flow
+
+Files centered here:
+
+- `howl-render/src/backend/gl/**`
+- `howl-render/src/backend/gles/**`
+
+### Checkpoint 5.1: GL Backend
+
+Done when:
+
+- GL backend control flow is explicit
+- provider, atlas, and draw submission responsibilities are local
+- no backend file redefines render policy already owned elsewhere
+
+### Checkpoint 5.2: GLES Backend
+
+Done when:
+
+- GLES follows the same owner story as GL
+- GLES divergence is only where the API truly differs
+
+### Checkpoint 5 Gate
+
+Pass only if:
+
+- both backends read like consumers of one render contract, not forks of render policy
+
+## Milestone 6: Proof And Cleanup Closeout
+
+Milestone goal:
+
+- prove the rewritten renderer and delete sprint scaffolding that no longer earns its keep
+
+Files centered here:
+
+- `howl-render/src/test/**`
+- `howl-render/build.zig`
+- relevant proof docs
+
+### Checkpoint 6.1: Benchmark Surface
+
+Done when:
+
+- benchmark entrypoints match the rewritten owner model
+- proof output tells us which path is hot and why
+
+### Checkpoint 6.2: Doc And Proof Cleanup
+
+Done when:
+
+- stale sprint language is removed
+- owner tables and repo design docs describe the final structure
+
+### Milestone 6 Gate
+
+Pass only if:
+
+- code, docs, and proof all describe the same renderer
+
+## Checkpoint Output Template
+
+Every checkpoint should leave behind this exact record shape in the working notes or commit summary:
+
+- owner files touched
+- invariant locked
+- proof run
+- remaining gap
+
+## Current Active Checkpoint
+
+Current checkpoint after the accepted public-spine, runtime-ownership, and text-lane contract cuts:
+
+- Milestone 3, Checkpoint 3.2
+- Text Engine Control Flow
+
+Reason:
+
+- the public spine and runtime spine are already locked
+- the next risk is hidden routing and stage ownership inside the text engine
+- backend rewrites should wait until the text control spine is boring
