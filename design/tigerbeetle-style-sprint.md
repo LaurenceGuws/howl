@@ -9,10 +9,13 @@ workspace-wide style enforcement push.
 
 The render architecture inversion sprint is closed.
 
-The scoped render hotspot cleanup sprint is now also closed.
+The scoped render hotspot cleanup sprint is closed.
 
-Current focus is no longer "finish the hotspot list". Current focus is a renderer-wide
-TigerBeetle-compliance pass aimed at control flow, intentional state, and owner cohesion.
+Current focus is the remaining biggest render style cancer:
+
+- abstract text orchestration that still does not name a concrete owned product
+- residual control-flow and sized-state debt concentrated in the text parent owner
+- rejecting any rename or cleanup theater that leaves the real owner shape vague
 
 Active cleanup target:
 
@@ -24,10 +27,9 @@ Active cleanup target:
 
 Closed scoped sprint result:
 
-- the render text spine hotspot list was reduced in the planned owner order
-- the backend-local atlas follow-through is closed in both GL and GLES
-- the hotspot sprint proved real simplification, but it did not claim whole-renderer TigerBeetle
-  compliance
+- the largest render hotspot files were reduced in the planned owner order
+- backend roots and provider leaves were tightened without reopening the architecture inversion
+- this did not prove renderer-wide TigerBeetle compliance
 
 This includes a non-negotiable boundary cleanup:
 
@@ -105,149 +107,48 @@ Root test:
 This focus does not replace the existing style gates. It sharpens them toward control-spine
 simplicity and owner-true contracts.
 
-## Active Sprint
+## Active Render Sprint
 
-Status: closed.
-
-Theme: renderer style blocker removal.
+Theme: kill abstract text orchestration.
 
 Purpose:
 
-- finish the shift from owner-true render architecture to TigerBeetle-grade control flow
-- attack the biggest remaining render style blockers in the smallest true owner order
-- close the highest-value text-spine debt before opening another broad workspace sprint
+- remove the remaining owner shape that still reads like mechanism branding instead of a concrete
+  owned product
+- force the text parent owner to justify every surviving phase, state transition, and retained
+  intermediate
+- refuse rename theater until the owner either names a real product or shrinks into one
 
-Closure result:
+Current render reality:
 
-- Milestone A closed: `engine.zig`
-- Milestone B closed: `rasterizer.zig`
-- Milestone C closed: `cluster.zig` and `scene.zig`; `grouping.zig` and `text_lane.zig` reviewed as
-  no-op follow-up
-- Milestone D closed: `gl/internal/atlas.zig`, `gles/internal/atlas.zig`, and this root doc
-  closure
-- the scoped hotspot sprint removed real owner and control-flow debt in the planned order
-- the scoped hotspot sprint did not close whole-renderer TigerBeetle compliance
+- `howl-render` no longer has long-function hotspot debt in production render code
+- backend roots and provider leaves are cleaner than they were at sprint start
+- the biggest remaining render style cancer is now conceptual, not just mechanical:
+  - `src/text/engine.zig` still concentrates the parent text control spine
+  - the owner name is not earned
+  - the retained intermediate state is broader than a concrete owned product justifies
 
-Primary hotspot order now:
+Current measured render leaders by `usize` and production size:
 
-1. `howl-render/src/text/engine.zig`
-2. `howl-render/src/text/rasterizer.zig`
-3. `howl-render/src/text/cluster.zig`
-4. `howl-render/src/text/scene.zig`
-5. `howl-render/src/backend/gl/internal/atlas.zig`
-6. `howl-render/src/backend/gles/internal/atlas.zig`
+1. `howl-render/src/text/engine.zig`: `prod=1116`, `usizes=84`
+2. `howl-render/src/text/rasterizer.zig`: `prod=1180`, `usizes=64`
+3. `howl-render/src/backend/gl/backend.zig`: `prod=1342`, `usizes=50`
+4. `howl-render/src/text/cluster.zig`: `prod=488`, `usizes=42`
+5. `howl-render/src/text/scene.zig`: `prod=524`, `usizes=35`
+6. `howl-render/src/backend/gl/internal/provider.zig`: `prod=726`, `usizes=29`
+7. `howl-render/src/backend/gles/internal/provider.zig`: `prod=723`, `usizes=29`
 
-Milestones:
+The next render checkpoint does not open by metric alone.
 
-### Milestone A
+It opens only if the owner can answer all of these questions exactly:
 
-Theme: text-engine control spine simplification.
+- what concrete product does this file own?
+- what exact inputs does it consume?
+- what exact outputs does it produce?
+- which state transitions does it own and which belong to leaf phases?
+- which retained intermediate forms are indispensable and why?
 
-Goal:
-
-- reduce owner density in `engine.zig`
-- keep one parent function owning routing while leaf helpers compute one true step
-- remove duplicated direct-normal flow where one owner path is enough
-
-TigerBeetle overview gate:
-
-- `engine.zig` reads like one explicit parent control spine instead of accumulated phase glue
-- direct-normal and complex-path consequences stay explicit and bounded
-- touched files show net style improvement by the gate without reopening architecture questions
-
-Checkpoints:
-
-1. `howl-render/src/text/engine.zig`: control-spine split and direct-normal path simplification
-2. `howl-render/src/text/engine.zig`: merge/counter/reporting simplification and invariant tightening
-
-Checkpoint gates:
-
-- no helper hides top-level branch policy
-- no duplicated direct-normal path survives without a true owner difference
-- added assertions prove owner invariants instead of decorating code
-- touched-file style gate shows real improvement, not neutral churn
-
-### Milestone B
-
-Theme: raster contract simplification.
-
-Goal:
-
-- keep `rasterizer.zig` as a leaf owner while reducing shape accumulation and policy spread
-- separate reusable raster math from special-case tables and sprite request policy only where the
-  owner boundary becomes clearer
-
-TigerBeetle overview gate:
-
-- raster code stays leaf-true and bounded
-- special glyph and geometry paths are easier to audit without widening contracts
-- no new abstraction survives unless it removes real control-flow debt
-
-Checkpoints:
-
-1. `howl-render/src/text/rasterizer.zig`: request/policy surface cleanup
-2. `howl-render/src/text/rasterizer.zig`: generated glyph path simplification
-
-Checkpoint gates:
-
-- no helper exists only to rename existing work
-- generated glyph paths keep explicit bounds and local invariants
-- raster contract surface remains smaller or clearer after each checkpoint
-
-### Milestone C
-
-Theme: supporting text phase cleanup.
-
-Goal:
-
-- tighten the surrounding text owners so `engine.zig` no longer has to compensate for phase-local
-  ambiguity
-- reduce style debt in the next most obvious owner files only
-
-TigerBeetle overview gate:
-
-- `cluster.zig`, `scene.zig`, and adjacent text owners read as small phase owners, not overflow
-  storage for `engine.zig`
-- the text spine stays explicit from input to scene without hidden policy spread
-
-Checkpoints:
-
-1. `howl-render/src/text/cluster.zig`
-2. `howl-render/src/text/scene.zig`
-3. `howl-render/src/text/grouping.zig` and `howl-render/src/text/text_lane.zig` only if the first
-   two checkpoints prove they are the next true blockers
-
-Checkpoint gates:
-
-- phase owners do one true step only
-- no checkpoint widens into a general text rewrite
-- follow-up files open only when the current file still cannot close the owner flow cleanly
-
-### Milestone D
-
-Theme: backend-local atlas follow-through and sprint closure.
-
-Goal:
-
-- finish the remaining backend-local render hotspots after the text spine is simpler
-- close the sprint with proof that the largest render style blockers were reduced in the right order
-
-TigerBeetle overview gate:
-
-- backend-local atlas files stay leaf owners and get simpler without regaining render policy
-- final proof and docs state exactly what style blocker was removed and what remains open
-
-Checkpoints:
-
-1. `howl-render/src/backend/gl/internal/atlas.zig`
-2. `howl-render/src/backend/gles/internal/atlas.zig`
-3. sprint proof/doc closure checkpoint
-
-Checkpoint gates:
-
-- no backend-local cleanup reopens renderer/backend ownership questions
-- GL and GLES stay parity-true on owner outcome
-- closure names the remaining top debt honestly if anything still stays open
+If those answers are weak, the owner does not get renamed. It gets reduced.
 
 ## Problem
 
@@ -279,21 +180,21 @@ What is not yet true:
 - `howl-render` is not yet renderer-wide TigerBeetle-compliant
 - broad `usize` debt still exists across production render code
 - some render owners still need stronger invariant proof and more exact control flow
-- the next pass should treat whole-renderer cohesion as the goal rather than another narrow hotspot
-  list
+- the current top render problem is not another backend hotspot; it is the abstract parent text
+  owner that still does not name a concrete product
 
-Current measured render status after the hotspot sprint:
+Current measured render status:
 
-- `howl-render`: `prod=12236`, `usizes=643`, `long_funcs=3`, `asserts=83`
+- `howl-render`: `prod=12425`, `usizes=640`, `long_funcs=2`, `asserts=83`
 
 Largest remaining render production owners by current style report:
 
-- `howl-render/src/backend/gl/backend.zig`: `prod=1357`, `usizes=53`
-- `howl-render/src/text/rasterizer.zig`: `prod=1164`, `usizes=64`
-- `howl-render/src/text/engine.zig`: `prod=940`, `usizes=84`, `long_funcs=1`
-- `howl-render/src/backend/gl/internal/provider.zig`: `prod=723`, `usizes=29`
-- `howl-render/src/backend/gles/internal/provider.zig`: `prod=720`, `usizes=29`
-- `howl-render/src/backend/gles/backend.zig`: `prod=711`, `usizes=23`
+- `howl-render/src/backend/gl/backend.zig`: `prod=1342`, `usizes=50`
+- `howl-render/src/text/rasterizer.zig`: `prod=1180`, `usizes=64`
+- `howl-render/src/text/engine.zig`: `prod=1116`, `usizes=84`
+- `howl-render/src/backend/gl/internal/provider.zig`: `prod=726`, `usizes=29`
+- `howl-render/src/backend/gles/internal/provider.zig`: `prod=723`, `usizes=29`
+- `howl-render/src/backend/gles/backend.zig`: `prod=717`, `usizes=23`
 
 ## End State
 
@@ -310,17 +211,7 @@ This sprint closes when the active hotspot files have all of the following prope
 This sprint does not require the whole workspace to be perfect in one turn. It does require each
 landed checkpoint to remove real debt and never add fake progress.
 
-## Next Active Sprint
-
-Theme: renderer-wide TigerBeetle compliance.
-
-Purpose:
-
-- make `howl-render` read like one intentional system rather than a cleaned hotspot list
-- push control flow toward one obvious owner per phase and one exact state transition path per owner
-- remove avoidable sized-state ambiguity and convenience flow where it still survives in production
-  render code
-- prefer cohesive, boring owner code over cleverness, parity theater, or cleanup churn
+## Render Gate
 
 Clarified bar:
 
@@ -329,33 +220,25 @@ Clarified bar:
 - clean control flow is the goal
 - intentional, cohesive code is the goal
 - do only what is needed, do it well and simply, and do it only in the true owner
+- “You shall not pass!” applies to abstract owner names, convenience flow, and rename theater too
 
-Current render priorities:
+Checkpoint entry gate for render:
 
-1. `howl-render/src/text/engine.zig`
-2. `howl-render/src/text/rasterizer.zig`
-3. `howl-render/src/backend/gl/backend.zig`
-4. `howl-render/src/backend/gles/backend.zig`
-5. `howl-render/src/backend/gl/internal/provider.zig`
-6. `howl-render/src/backend/gles/internal/provider.zig`
-7. renderer-wide residual sized-state and invariant follow-through only after the owner files above
+- identify one true owner file
+- state the concrete product that file owns
+- state the exact inputs and outputs
+- state the exact state transitions it owns
+- state which retained intermediate forms are indispensable
+- if the owner cannot answer those questions concretely, reduce it before renaming it
 
-Renderer-wide closure bar:
+Checkpoint fail conditions for render:
 
-- parent render owners keep branch policy and local state in one obvious place
-- leaf render owners do one true step only
-- avoidable `usize` domain state is removed from touched render owners
-- assertions prove real invariants, preconditions, postconditions, and state transitions
-- helpers that only move lines or hide policy do not survive review
-- no checkpoint claims architectural progress when it is only rename churn or parity-by-copy cleanup
-- final closure states plainly what render debt still remains, if any
-
-Checkpoint discipline for this pass:
-
-- one true owner file at a time unless a second file is required by a real owner boundary
-- no reopening render/backend architecture unless the current owner model is proven wrong again
-- no shared GL/GLES layer added for cleanup convenience
-- no widening into performance work, feature work, or aesthetic rewrites
+- abstract subsystem names such as `engine`, `analyzer`, `pipeline`, or similar survive without a
+  concrete owned product underneath them
+- branch policy is split across helpers instead of staying in one parent owner
+- retained intermediate state survives only for convenience or observability vanity
+- a rename lands before the owner shape becomes more exact
+- a checkpoint claims progress because a file reads cleaner while the real owner boundary stays vague
 
 ## Scope
 
