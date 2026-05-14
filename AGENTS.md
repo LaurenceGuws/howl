@@ -18,6 +18,9 @@ Read `WORKFLOW.md` for the change loop and root doc map.
    - hosts -> `howl-pty`, `howl-render`, `howl-vt`, and `howl-hosts/vendor/*`
    - no reverse deps
    - no new umbrella runtime layer
+   - internal terminal modules are not integration targets in Zig-module shape
+   - the product target is C ABI embeddability, so host-facing consumption must converge on explicit
+     C ABI contracts instead of bypassing them through Zig imports
 
 4. Ownership is hard.
    - `howl-pty` owns PTY variants, child I/O, resize delivery, control signals, and transport state.
@@ -33,6 +36,10 @@ Read `WORKFLOW.md` for the change loop and root doc map.
    - Owner files own state and mutation.
    - FFI translates contracts only.
    - Move behavior toward the smallest true owner.
+   - Do not treat internal repos as if their primary public shape were Zig modules for host
+     integration.
+   - If an integration need appears, sharpen the C ABI contract instead of adding a Zig-shaped
+     bypass.
 
 6. Runtime rules.
    - The program runs at its own pace.
@@ -87,6 +94,8 @@ Read `WORKFLOW.md` for the change loop and root doc map.
     - If a doc becomes misleading, fix it immediately.
 
 15. Current direction.
-    - Keep Howl owner-true.
-    - Keep runtime control flow boring.
-    - Keep TigerBeetle-style discipline while preserving the Howl brand.
+   - Keep Howl owner-true.
+   - Keep runtime control flow boring.
+   - Keep TigerBeetle-style discipline while preserving the Howl brand.
+   - Kill off Zig-module-shaped integration paths for internal terminal modules where they muddy the
+     C ABI embedding boundary.

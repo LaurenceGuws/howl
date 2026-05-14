@@ -29,6 +29,10 @@ Prefer one source per rule.
 
 Each repo `design.md` describes the repo as implemented today.
 
+For internal terminal modules, the design doc must describe the real embedding boundary as a C ABI
+contract. Do not present Zig module shape as the primary integration contract when the product goal
+is C ABI embeddability.
+
 Required sections:
 
 - `Purpose`
@@ -45,6 +49,7 @@ Add a short doc-set pointer when the repo keeps supporting docs.
 ## What Design Docs Must Show
 
 - the public owner callers depend on
+- the real host or embedder contract, including when that contract is C ABI first
 - the owner of mutable state
 - the owner of lifecycle
 - the owner thread for the runtime path
@@ -57,6 +62,7 @@ Add a short doc-set pointer when the repo keeps supporting docs.
 - document private helpers with no boundary value
 - speculate about future architecture
 - hide a real ownership conflict under neutral language
+- present a Zig-module-shaped bypass as if it were the intended public embedding surface
 
 ## Diagram Rules
 

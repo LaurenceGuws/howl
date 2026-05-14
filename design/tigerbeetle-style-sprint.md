@@ -5,6 +5,45 @@ Owner: workspace root.
 Purpose: explicit sprint scope, checkpoint order, review gates, and closure bar for the current
 workspace-wide style enforcement push.
 
+## Current Focus
+
+Today the sprint focus is control-flow simplification and root-contract cleanup.
+
+This includes a non-negotiable boundary cleanup:
+
+- internal terminal modules were never supposed to become host integration surfaces shaped around
+  Zig module imports
+- the end goal is a C ABI embeddable terminal
+- any Zig-module-shaped bypass around that boundary is sprint debt and should be removed or designed
+  out
+- all Zig-shaped host facades in `howl-pty` are deletion targets, not preservation targets
+- all Zig-shaped module roots in `howl-pty` are deletion targets, not preservation targets
+
+What improved already:
+
+- shorter functions forced more local reasoning
+- stronger assertions started proving real invariants instead of decorating code
+
+What to keep pushing now:
+
+- cut control flow until tempo and branch policy stay in one obvious owner file
+- redesign module roots around explicit state-machine contracts
+- redesign public roots around explicit C ABI-facing contracts where the host or embedder depends on
+  them
+- remove root surfaces that hide internal threads, wake policy, or orchestration
+- keep hosts capable of owning runtime policy instead of burying that ownership below the host
+
+Root test:
+
+- the root names the owned state machine, its inputs, and its bounded transitions
+- the host can drive it step by step without guessing about hidden progress
+- one owner is responsible for each state transition
+- the integration surface is not quietly relying on Zig module structure where the real product
+  boundary is C ABI
+
+This focus does not replace the existing style gates. It sharpens them toward control-spine
+simplicity and owner-true contracts.
+
 ## Problem
 
 Howl has a real style gate, but the repo still carries baseline debt that violates the workspace
@@ -53,6 +92,8 @@ Out of scope for this sprint unless a checkpoint names them:
 - broad feature work
 - architecture expansion
 - wrapper layers for cleanup convenience
+- hidden progress engines or internal-thread convenience roots
+- Zig-module-shaped host integration paths that bypass the intended C ABI boundary
 - Android host style parity beyond work needed to keep docs and tooling honest
 
 ## Baseline View
@@ -199,6 +240,10 @@ A checkpoint fails review if it does any of the following:
 - fails to name provable invariants where the owner can locally prove them
 - splits a function by line count theater instead of ownership
 - introduces a wrapper that only forwards
+- keeps a module root that hides policy, timing, or progress that should be explicit in the contract
+- spreads one control decision across multiple layers when one owner file can hold it directly
+- keeps or adds a Zig-module-shaped integration bypass where the owner boundary is supposed to be C
+  ABI
 - leaves avoidable `usize` domain state in a touched file
 - moves behavior away from the smallest true owner
 - claims cleanup without measured debt reduction
