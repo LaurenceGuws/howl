@@ -19,6 +19,26 @@ This includes a non-negotiable boundary cleanup:
 - all Zig-shaped host facades in `howl-pty` are deletion targets, not preservation targets
 - all Zig-shaped module roots in `howl-pty` are deletion targets, not preservation targets
 
+Reference results already achieved:
+
+- `howl-pty` now sets the boundary bar for internal terminal modules
+- shipped surface is `include/howl_pty.h` plus `howl_pty_*` only
+- ABI export root is explicit
+- Zig-shaped host facades and wrapper roots were deleted
+- Linux host consumes the sharpened PTY ABI
+- `howl-vt` now meets the same boundary bar
+- shipped surface is `include/howl_vt.h` plus `howl_vt_*` only
+- ABI export root is explicit
+- wrapper roots and Zig-shaped host import posture were deleted
+- getter-heavy ABI convenience posture is gone
+- Linux host builds and runs on the cleaned VT ABI path
+
+Next active boundary target:
+
+- `howl-render` should follow the same cleanup pattern next: kill wrapper roots, split ABI export
+  from repo-local wiring, remove Zig-shaped host import posture, and sharpen integer-handle and
+  runtime-convenience ABI shape
+
 What improved already:
 
 - shorter functions forced more local reasoning
