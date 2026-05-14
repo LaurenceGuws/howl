@@ -9,8 +9,10 @@ workspace-wide style enforcement push.
 
 The render architecture inversion sprint is closed.
 
-Current focus returns to control-flow simplification and style cleanup on the remaining hotspot owner
-files.
+The scoped render hotspot cleanup sprint is now also closed.
+
+Current focus is no longer "finish the hotspot list". Current focus is a renderer-wide
+TigerBeetle-compliance pass aimed at control flow, intentional state, and owner cohesion.
 
 Active cleanup target:
 
@@ -20,11 +22,12 @@ Active cleanup target:
 - architecture, owner model, and workspace worldview should stay in docs, not be recopied across
   source files
 
-Active scoped sprint:
+Closed scoped sprint result:
 
-- make the render text spine boring, bounded, and owner-obvious
-- prefer one obvious control spine over phase-local convenience flow
-- remove historical accumulation before opening any new render architecture work
+- the render text spine hotspot list was reduced in the planned owner order
+- the backend-local atlas follow-through is closed in both GL and GLES
+- the hotspot sprint proved real simplification, but it did not claim whole-renderer TigerBeetle
+  compliance
 
 This includes a non-negotiable boundary cleanup:
 
@@ -104,6 +107,8 @@ simplicity and owner-true contracts.
 
 ## Active Sprint
 
+Status: closed.
+
 Theme: renderer style blocker removal.
 
 Purpose:
@@ -111,6 +116,17 @@ Purpose:
 - finish the shift from owner-true render architecture to TigerBeetle-grade control flow
 - attack the biggest remaining render style blockers in the smallest true owner order
 - close the highest-value text-spine debt before opening another broad workspace sprint
+
+Closure result:
+
+- Milestone A closed: `engine.zig`
+- Milestone B closed: `rasterizer.zig`
+- Milestone C closed: `cluster.zig` and `scene.zig`; `grouping.zig` and `text_lane.zig` reviewed as
+  no-op follow-up
+- Milestone D closed: `gl/internal/atlas.zig`, `gles/internal/atlas.zig`, and this root doc
+  closure
+- the scoped hotspot sprint removed real owner and control-flow debt in the planned order
+- the scoped hotspot sprint did not close whole-renderer TigerBeetle compliance
 
 Primary hotspot order now:
 
@@ -246,6 +262,39 @@ law in durable ways:
 The problem is not only formatting or naming drift. The real problem is owner ambiguity, hidden
 policy, weak invariant proof, and oversized control paths that make review less exact.
 
+## Render Result
+
+The render hotspot sprint started as a bounded blocker-removal pass, not as a claim that the full
+renderer would become TigerBeetle-compliant in one move.
+
+What is now true:
+
+- the renderer/backend ownership inversion is closed
+- the chosen render text and atlas hotspot owners are cleaner, smaller, and more exact
+- the render proof split now matches the owner split
+- the render style gate is clean for the landed checkpoints
+
+What is not yet true:
+
+- `howl-render` is not yet renderer-wide TigerBeetle-compliant
+- broad `usize` debt still exists across production render code
+- some render owners still need stronger invariant proof and more exact control flow
+- the next pass should treat whole-renderer cohesion as the goal rather than another narrow hotspot
+  list
+
+Current measured render status after the hotspot sprint:
+
+- `howl-render`: `prod=12236`, `usizes=643`, `long_funcs=3`, `asserts=83`
+
+Largest remaining render production owners by current style report:
+
+- `howl-render/src/backend/gl/backend.zig`: `prod=1357`, `usizes=53`
+- `howl-render/src/text/rasterizer.zig`: `prod=1164`, `usizes=64`
+- `howl-render/src/text/engine.zig`: `prod=940`, `usizes=84`, `long_funcs=1`
+- `howl-render/src/backend/gl/internal/provider.zig`: `prod=723`, `usizes=29`
+- `howl-render/src/backend/gles/internal/provider.zig`: `prod=720`, `usizes=29`
+- `howl-render/src/backend/gles/backend.zig`: `prod=711`, `usizes=23`
+
 ## End State
 
 This sprint closes when the active hotspot files have all of the following properties:
@@ -260,6 +309,53 @@ This sprint closes when the active hotspot files have all of the following prope
 
 This sprint does not require the whole workspace to be perfect in one turn. It does require each
 landed checkpoint to remove real debt and never add fake progress.
+
+## Next Active Sprint
+
+Theme: renderer-wide TigerBeetle compliance.
+
+Purpose:
+
+- make `howl-render` read like one intentional system rather than a cleaned hotspot list
+- push control flow toward one obvious owner per phase and one exact state transition path per owner
+- remove avoidable sized-state ambiguity and convenience flow where it still survives in production
+  render code
+- prefer cohesive, boring owner code over cleverness, parity theater, or cleanup churn
+
+Clarified bar:
+
+- performance tuning is not the goal of this pass
+- outcome quality is not the goal of this pass
+- clean control flow is the goal
+- intentional, cohesive code is the goal
+- do only what is needed, do it well and simply, and do it only in the true owner
+
+Current render priorities:
+
+1. `howl-render/src/text/engine.zig`
+2. `howl-render/src/text/rasterizer.zig`
+3. `howl-render/src/backend/gl/backend.zig`
+4. `howl-render/src/backend/gles/backend.zig`
+5. `howl-render/src/backend/gl/internal/provider.zig`
+6. `howl-render/src/backend/gles/internal/provider.zig`
+7. renderer-wide residual sized-state and invariant follow-through only after the owner files above
+
+Renderer-wide closure bar:
+
+- parent render owners keep branch policy and local state in one obvious place
+- leaf render owners do one true step only
+- avoidable `usize` domain state is removed from touched render owners
+- assertions prove real invariants, preconditions, postconditions, and state transitions
+- helpers that only move lines or hide policy do not survive review
+- no checkpoint claims architectural progress when it is only rename churn or parity-by-copy cleanup
+- final closure states plainly what render debt still remains, if any
+
+Checkpoint discipline for this pass:
+
+- one true owner file at a time unless a second file is required by a real owner boundary
+- no reopening render/backend architecture unless the current owner model is proven wrong again
+- no shared GL/GLES layer added for cleanup convenience
+- no widening into performance work, feature work, or aesthetic rewrites
 
 ## Scope
 
