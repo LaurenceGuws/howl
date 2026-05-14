@@ -177,8 +177,10 @@ Milestone closes when:
 
 - backend roots are leaf wrappers only
 - renderer consumes a smaller backend contract instead of the reverse
+- the backend inventory and disposition table are committed explicitly
 - touched render files are clean against the touched-file style gate
 - GL and GLES still close on the owned host proof path
+- GL and GLES close on equivalent renderer-owned sequencing rather than matching backend internals
 
 ### Milestone 2
 
