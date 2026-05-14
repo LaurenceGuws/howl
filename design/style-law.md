@@ -66,6 +66,11 @@ Purpose: strict workspace style law for pass or fail review.
 - Source comments must not restate architecture, ownership slogans, or workspace worldview already
   owned by docs and code structure.
 - Repetitive file-header narration is not allowed.
+- Top-of-file comments are rare and must earn their place as an effective local guardrail.
+- Good top-of-file comments lock a build boundary, ABI-only consumption rule, anti-coupling rule, or
+  another file-local constraint that a future edit could easily violate.
+- Top-of-file comments must not exist only to summarize the file, restate repo architecture, or
+  describe general ownership already made clear by naming and docs.
 
 ## Options And Defaults
 
@@ -89,4 +94,5 @@ Purpose: strict workspace style law for pass or fail review.
 - A change fails style review if comments explain what the code does but not why the owner chose it.
 - A change fails style review if source comments narrate architecture or ownership instead of
   locking a local constraint.
+- A change fails style review if a top-of-file comment does not encode a concrete local guardrail.
 - A change fails style review if a helper or wrapper hides the true control spine.

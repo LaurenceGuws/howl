@@ -44,6 +44,12 @@ Before editing, answer these questions:
 - Is this path honoring the C ABI boundary, or sneaking around it through Zig module structure?
 - What proof closes the change?
 
+Before keeping or adding a top-of-file comment, answer these questions:
+
+- What exact local regression does this comment prevent?
+- Why is this rule better locked here than in repo docs alone?
+- If the comment were deleted, would a future editor be more likely to violate a real boundary?
+
 If any answer is unclear, stop and mark `work-not-clear`.
 
 ## References
