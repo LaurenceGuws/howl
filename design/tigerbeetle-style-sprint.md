@@ -20,6 +20,12 @@ Active cleanup target:
 - architecture, owner model, and workspace worldview should stay in docs, not be recopied across
   source files
 
+Active scoped sprint:
+
+- make the render text spine boring, bounded, and owner-obvious
+- prefer one obvious control spine over phase-local convenience flow
+- remove historical accumulation before opening any new render architecture work
+
 This includes a non-negotiable boundary cleanup:
 
 - internal terminal modules were never supposed to become host integration surfaces shaped around
@@ -95,6 +101,137 @@ Root test:
 
 This focus does not replace the existing style gates. It sharpens them toward control-spine
 simplicity and owner-true contracts.
+
+## Active Sprint
+
+Theme: renderer style blocker removal.
+
+Purpose:
+
+- finish the shift from owner-true render architecture to TigerBeetle-grade control flow
+- attack the biggest remaining render style blockers in the smallest true owner order
+- close the highest-value text-spine debt before opening another broad workspace sprint
+
+Primary hotspot order now:
+
+1. `howl-render/src/text/engine.zig`
+2. `howl-render/src/text/rasterizer.zig`
+3. `howl-render/src/text/cluster.zig`
+4. `howl-render/src/text/scene.zig`
+5. `howl-render/src/backend/gl/internal/atlas.zig`
+6. `howl-render/src/backend/gles/internal/atlas.zig`
+
+Milestones:
+
+### Milestone A
+
+Theme: text-engine control spine simplification.
+
+Goal:
+
+- reduce owner density in `engine.zig`
+- keep one parent function owning routing while leaf helpers compute one true step
+- remove duplicated direct-normal flow where one owner path is enough
+
+TigerBeetle overview gate:
+
+- `engine.zig` reads like one explicit parent control spine instead of accumulated phase glue
+- direct-normal and complex-path consequences stay explicit and bounded
+- touched files show net style improvement by the gate without reopening architecture questions
+
+Checkpoints:
+
+1. `howl-render/src/text/engine.zig`: control-spine split and direct-normal path simplification
+2. `howl-render/src/text/engine.zig`: merge/counter/reporting simplification and invariant tightening
+
+Checkpoint gates:
+
+- no helper hides top-level branch policy
+- no duplicated direct-normal path survives without a true owner difference
+- added assertions prove owner invariants instead of decorating code
+- touched-file style gate shows real improvement, not neutral churn
+
+### Milestone B
+
+Theme: raster contract simplification.
+
+Goal:
+
+- keep `rasterizer.zig` as a leaf owner while reducing shape accumulation and policy spread
+- separate reusable raster math from special-case tables and sprite request policy only where the
+  owner boundary becomes clearer
+
+TigerBeetle overview gate:
+
+- raster code stays leaf-true and bounded
+- special glyph and geometry paths are easier to audit without widening contracts
+- no new abstraction survives unless it removes real control-flow debt
+
+Checkpoints:
+
+1. `howl-render/src/text/rasterizer.zig`: request/policy surface cleanup
+2. `howl-render/src/text/rasterizer.zig`: generated glyph path simplification
+
+Checkpoint gates:
+
+- no helper exists only to rename existing work
+- generated glyph paths keep explicit bounds and local invariants
+- raster contract surface remains smaller or clearer after each checkpoint
+
+### Milestone C
+
+Theme: supporting text phase cleanup.
+
+Goal:
+
+- tighten the surrounding text owners so `engine.zig` no longer has to compensate for phase-local
+  ambiguity
+- reduce style debt in the next most obvious owner files only
+
+TigerBeetle overview gate:
+
+- `cluster.zig`, `scene.zig`, and adjacent text owners read as small phase owners, not overflow
+  storage for `engine.zig`
+- the text spine stays explicit from input to scene without hidden policy spread
+
+Checkpoints:
+
+1. `howl-render/src/text/cluster.zig`
+2. `howl-render/src/text/scene.zig`
+3. `howl-render/src/text/grouping.zig` and `howl-render/src/text/text_lane.zig` only if the first
+   two checkpoints prove they are the next true blockers
+
+Checkpoint gates:
+
+- phase owners do one true step only
+- no checkpoint widens into a general text rewrite
+- follow-up files open only when the current file still cannot close the owner flow cleanly
+
+### Milestone D
+
+Theme: backend-local atlas follow-through and sprint closure.
+
+Goal:
+
+- finish the remaining backend-local render hotspots after the text spine is simpler
+- close the sprint with proof that the largest render style blockers were reduced in the right order
+
+TigerBeetle overview gate:
+
+- backend-local atlas files stay leaf owners and get simpler without regaining render policy
+- final proof and docs state exactly what style blocker was removed and what remains open
+
+Checkpoints:
+
+1. `howl-render/src/backend/gl/internal/atlas.zig`
+2. `howl-render/src/backend/gles/internal/atlas.zig`
+3. sprint proof/doc closure checkpoint
+
+Checkpoint gates:
+
+- no backend-local cleanup reopens renderer/backend ownership questions
+- GL and GLES stay parity-true on owner outcome
+- closure names the remaining top debt honestly if anything still stays open
 
 ## Problem
 
