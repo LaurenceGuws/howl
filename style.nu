@@ -1,17 +1,12 @@
 #!/usr/bin/env -S nu
 
 def workspace-repos [] {
-  let top = (
+  let repos = (
     ls
-    | where type == dir and name =~ '^howl-' and name != 'howl-hosts'
+    | where type == dir and name =~ '^howl-'
     | get name
   )
-  let hosts = (
-    ls howl-hosts
-    | where type == dir and name !~ '/vendor$'
-    | get name
-  )
-  ['.'] | append $top | append $hosts
+  ['.'] | append $repos
 }
 
 def default-roots [] {
@@ -185,6 +180,10 @@ def print-table [rows: list<any>] {
   }
 }
 
+def print-json [rows: any] {
+  print ($rows | to json)
+}
+
 def print-repo-file-tables [rows: list<any>] {
   if ($rows | is-empty) {
     print 'empty'
@@ -207,24 +206,34 @@ def main [
   --touched-repos(-p),
   --failures(-f),
   --blame(-b),
+  --json(-j),
   --sort(-s): string = 'prod'
 ] {
   let selected_roots = if ($roots | is-empty) { default-roots } else { $roots }
 
   if $touched_repos {
     let touched_rows = (scan-files (touched-paths $selected_roots) false 'HEAD')
-    print-table (touched-repo-view $touched_rows)
+    let rows = (touched-repo-view $touched_rows)
+    if $json { print-json $rows } else { print-table $rows }
   } else if $touched_files or $failures {
     let touched_rows = (scan-files (touched-paths $selected_roots) false 'HEAD')
     let rows = if $failures { failure-view $touched_rows } else { touched-files-view $touched_rows }
-    if $by_repo {
+    if $json {
+      print-json $rows
+    } else if $by_repo {
       print-repo-file-tables $rows
     } else {
       print-table $rows
     }
   } else if $by_file or $by_repo or $blame or $sort != 'prod' {
     let rows = (sort-rows (scan-files (gather-files $selected_roots) $blame '') $sort)
-    if $by_repo and $by_file {
+    if $json {
+      if $by_repo and not $by_file {
+        print-json (repo-summary-view $rows)
+      } else {
+        print-json ([ (summarize $rows) ] | append $rows)
+      }
+    } else if $by_repo and $by_file {
       print-repo-file-tables $rows
     } else if $by_repo {
       print-table (repo-summary-view $rows)
@@ -233,6 +242,7 @@ def main [
     }
   } else {
     let touched_rows = (scan-files (touched-paths $selected_roots) false 'HEAD')
-    print-table (checkpoint-summary $touched_rows)
+    let rows = (checkpoint-summary $touched_rows)
+    if $json { print-json $rows } else { print-table $rows }
   }
 }
