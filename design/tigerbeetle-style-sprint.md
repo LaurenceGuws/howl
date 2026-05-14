@@ -33,11 +33,12 @@ Reference results already achieved:
 - getter-heavy ABI convenience posture is gone
 - Linux host builds and runs on the cleaned VT ABI path
 
-Next active boundary target:
+Boundary target status:
 
-- `howl-render` should follow the same cleanup pattern next: kill wrapper roots, split ABI export
-  from repo-local wiring, remove Zig-shaped host import posture, and sharpen integer-handle and
-  runtime-convenience ABI shape
+- `howl-render` has now completed the same cleanup pattern: wrapper roots deleted, ABI export split
+  from repo-local wiring, Zig-shaped host import posture removed, integer-handle posture sharpened,
+  and runtime-convenience ABI shape cleaned
+- no newer boundary target is recorded in this sprint doc yet
 
 What improved already:
 
