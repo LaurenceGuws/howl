@@ -7,7 +7,8 @@ workspace-wide style enforcement push.
 
 ## Current Focus
 
-Today the sprint focus is control-flow simplification and root-contract cleanup.
+Today the sprint focus is render architecture inversion first, then control-flow simplification and
+style cleanup.
 
 This includes a non-negotiable boundary cleanup:
 
@@ -35,10 +36,20 @@ Reference results already achieved:
 
 Boundary target status:
 
-- `howl-render` has now completed the same cleanup pattern: wrapper roots deleted, ABI export split
-  from repo-local wiring, Zig-shaped host import posture removed, integer-handle posture sharpened,
-  and runtime-convenience ABI shape cleaned
-- no newer boundary target is recorded in this sprint doc yet
+- `howl-render` has now completed the same ABI cleanup pattern: wrapper roots deleted, ABI export
+  split from repo-local wiring, Zig-shaped host import posture removed, integer-handle posture
+  sharpened, and runtime-convenience ABI shape cleaned
+- the next top-priority problem is deeper than ABI shape: render/backend ownership is still inverted
+- no newer module boundary target is recorded in this sprint doc yet
+
+Active architecture target:
+
+- `howl-render` backend ownership inversion must be corrected next
+- GL and GLES layers should be leaf wrappers over external C libraries and GPU objects only
+- `Renderer` and `Render.Text` must own render policy, text analysis, retained-frame orchestration,
+  and staged prepare/submit sequencing
+- backend roots must stop consuming shared render logic as if they were partial renderers
+- reviews should reject any checkpoint that preserves the current backwards contract shape for comfort
 
 What improved already:
 
@@ -51,6 +62,8 @@ What to keep pushing now:
 - redesign module roots around explicit state-machine contracts
 - redesign public roots around explicit C ABI-facing contracts where the host or embedder depends on
   them
+- invert render/backend ownership so backend layers are leaf wrappers and renderer consumes a small
+  backend contract
 - remove root surfaces that hide internal threads, wake policy, or orchestration
 - keep hosts capable of owning runtime policy instead of burying that ownership below the host
 
@@ -142,30 +155,57 @@ Highest-value hotspot files at sprint start:
 
 ### Milestone 1
 
-Theme: `howl-render` text spine cleanup.
+Theme: `howl-render` backend ownership inversion.
 
 Goal:
 
-- reduce the largest concentration of `usize` debt
+- make GL and GLES backend layers leaf wrappers over external C libraries and GPU state only
+- move render pipeline orchestration back into `Renderer` and `Render.Text`
+- remove backend-owned shared render policy surfaces
+
+Checkpoints:
+
+1. `howl-render/architecture-sprint.md`
+2. `howl-render/design.md`
+3. `howl-render/src/renderer.zig`
+4. `howl-render/src/backend/gl/backend.zig`
+5. `howl-render/src/backend/gles/backend.zig`
+6. `howl-render/src/backend/gl/internal/provider.zig`
+7. `howl-render/src/backend/gles/internal/provider.zig`
+
+Milestone closes when:
+
+- backend roots are leaf wrappers only
+- renderer consumes a smaller backend contract instead of the reverse
+- touched render files are clean against the touched-file style gate
+- GL and GLES still close on the owned host proof path
+
+### Milestone 2
+
+Theme: `howl-render` text spine cleanup after inversion.
+
+Goal:
+
+- reduce the largest remaining concentration of `usize` debt
 - remove oversized control paths in the render text stack
-- keep the text engine spine owner-true
+- keep the text engine spine owner-true after the backend inversion lands
 
 Checkpoints:
 
 1. `howl-render/src/text/engine.zig`
 2. `howl-render/src/text/rasterizer.zig`
-3. `howl-render/src/backend/gl/internal/provider.zig`
-4. `howl-render/src/backend/gl/backend.zig`
-5. `howl-render/src/backend/gles/internal/provider.zig`
-6. `howl-render/src/backend/gles/backend.zig`
+3. `howl-render/src/text/cluster.zig`
+4. `howl-render/src/text/scene.zig`
+5. `howl-render/src/backend/gl/internal/atlas.zig`
+6. `howl-render/src/backend/gles/internal/atlas.zig`
 
 Milestone closes when:
 
-- the touched render files are clean against the touched-file style gate
-- each touched hotspot shows real metric reduction
-- text-engine control flow still matches `howl-render/design.md`
+- touched files have real invariant assertions where the owner can prove them
+- touched files do not use assertion count as a style proxy
+- touched files reduce measured `usize` and long-function debt
 
-### Milestone 2
+### Milestone 3
 
 Theme: `howl-vt` invariant recovery and sized-state cleanup.
 
@@ -190,7 +230,7 @@ Milestone closes when:
 - touched files do not use assertion count as a style proxy
 - touched files reduce measured `usize` and long-function debt
 
-### Milestone 3
+### Milestone 4
 
 Theme: Linux host owner-file cleanup.
 
@@ -212,7 +252,7 @@ Milestone closes when:
 - leaves compute or apply one true step only
 - touched files show net style improvement by the gate
 
-### Milestone 4
+### Milestone 5
 
 Theme: PTY cleanup and residual owner debt.
 
