@@ -32,7 +32,19 @@ that boundary with a Zig-shaped convenience path.
 8. Review touched files against `design/style-law.md`.
 9. Run `nu "./style.nu"` for style cleanup, architecture cleanup, and code-touching feature work.
 10. Update docs in the same checkpoint.
-11. Commit and push.
+11. Review the actual diff against owner, proof, and style gates.
+12. Commit and push.
+
+## Review Boundary
+
+The engineer implements and reports.
+
+The architect reviews, accepts or rejects, commits, pushes, hands over, and sets the next gate.
+
+Do not treat an engineer report as acceptance.
+
+Do not move to the next checkpoint until the architect has either rejected the report with exact
+findings or accepted it and closed it with a commit.
 
 ## Start Conditions
 
@@ -71,11 +83,23 @@ Do not close a checkpoint with touched-file style regressions unless they are ju
 
 ## Commit Rules
 
+- only the architect closes an accepted checkpoint with a commit and push
 - keep each commit about one meaningful checkpoint
 - use commit messages that describe the boundary or invariant being locked
 - push after each meaningful checkpoint
 - do not batch unrelated repo changes into one commit message theme
 - do not close a checkpoint with touched-file style regressions against `design/style-law.md` or `nu "./style.nu"`
+
+## Report Rules
+
+Engineer reports should include only:
+
+- owner view
+- changes made
+- proof results
+- open edges or blockers
+
+Engineer reports should not include acceptance, commit, push, handover, or next-gate authority.
 
 ## Stop Rules
 

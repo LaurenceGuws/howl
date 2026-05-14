@@ -512,7 +512,7 @@ Preferred review cadence:
 - Milestone 3: one host owner file per turn
 - Milestone 4: batch only when ownership remains obvious
 
-Each report must include:
+Each engineer report must include:
 
 - owner view
 - provable invariants, or the reason none exist
@@ -522,7 +522,9 @@ Each report must include:
 - proof
 - after metrics
 - open edges
-- commit recommendation
+
+The engineer does not accept, reject, commit, push, hand over authoritative state, or set the next
+checkpoint gate. Those decisions belong to the architect after review.
 
 ## Manager Use
 
