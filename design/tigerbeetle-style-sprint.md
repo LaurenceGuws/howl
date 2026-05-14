@@ -7,8 +7,10 @@ workspace-wide style enforcement push.
 
 ## Current Focus
 
-Today the sprint focus is render architecture inversion first, then control-flow simplification and
-style cleanup.
+The render architecture inversion sprint is closed.
+
+Current focus returns to control-flow simplification and style cleanup on the remaining hotspot owner
+files.
 
 This includes a non-negotiable boundary cleanup:
 
@@ -39,17 +41,25 @@ Boundary target status:
 - `howl-render` has now completed the same ABI cleanup pattern: wrapper roots deleted, ABI export
   split from repo-local wiring, Zig-shaped host import posture removed, integer-handle posture
   sharpened, and runtime-convenience ABI shape cleaned
-- the next top-priority problem is deeper than ABI shape: render/backend ownership is still inverted
+- `howl-render` render/backend ownership inversion is now closed in code, tests, and docs
 - no newer module boundary target is recorded in this sprint doc yet
 
-Active architecture target:
+Closed architecture result:
 
-- `howl-render` backend ownership inversion must be corrected next
-- GL and GLES layers should be leaf wrappers over external C libraries and GPU objects only
-- `Renderer` and `Render.Text` must own render policy, text analysis, retained-frame orchestration,
-  and staged prepare/submit sequencing
-- backend roots must stop consuming shared render logic as if they were partial renderers
-- reviews should reject any checkpoint that preserves the current backwards contract shape for comfort
+- GL and GLES layers are leaf wrappers over external C libraries and GPU objects only
+- `Renderer` and `Render.Text` own render policy, text analysis, retained-frame orchestration, and
+  staged prepare/submit sequencing
+- backend roots no longer consume shared render logic as partial renderers
+
+Render inversion retrospective:
+
+- good: the workspace removed a real architectural lie instead of carrying it as debt
+- good: the render proof split now matches the owner split
+- bad: the broader render style debt is still concentrated in the text spine
+- bad: the sprint closed ownership first, not the full simplicity bar
+- lesson: close contract truth first
+- lesson: keep checkpoints narrow and clean-tree-only
+- lesson: treat test ownership as part of architecture ownership, not follow-up cleanup
 
 What improved already:
 
@@ -62,8 +72,8 @@ What to keep pushing now:
 - redesign module roots around explicit state-machine contracts
 - redesign public roots around explicit C ABI-facing contracts where the host or embedder depends on
   them
-- invert render/backend ownership so backend layers are leaf wrappers and renderer consumes a small
-  backend contract
+- keep owner splits honest so leaf layers stay leaf layers and control spines stay with their true
+  owners
 - remove root surfaces that hide internal threads, wake policy, or orchestration
 - keep hosts capable of owning runtime policy instead of burying that ownership below the host
 
@@ -130,7 +140,7 @@ Out of scope for this sprint unless a checkpoint names them:
 - Zig-module-shaped host integration paths that bypass the intended C ABI boundary
 - Android host style parity beyond work needed to keep docs and tooling honest
 
-## Baseline View
+## Historical Baseline
 
 Current measured repo totals:
 
@@ -150,6 +160,13 @@ Highest-value hotspot files at sprint start:
 - `howl-vt/src/grid/resize.zig`
 - `howl-vt/src/parser.zig`
 - `howl-hosts/howl-linux-host/src/terminal/api.zig`
+
+## Historical Milestone Map
+
+This milestone map records the opening style-hotspot plan for the sprint.
+
+Active execution should follow `Current Focus` and the current checkpoint packet, not treat the
+historical milestone list below as a live queue.
 
 ## Milestones
 
