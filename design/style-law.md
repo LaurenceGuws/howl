@@ -61,6 +61,11 @@ Purpose: strict workspace style law for pass or fail review.
 - Comments explain why, not what.
 - Write the rationale where a reviewer would otherwise have to infer policy.
 - Remove comments that restate the code.
+- Source comments should lock a local invariant, boundary constraint, non-obvious rationale, or
+  reviewer trap.
+- Source comments must not restate architecture, ownership slogans, or workspace worldview already
+  owned by docs and code structure.
+- Repetitive file-header narration is not allowed.
 
 ## Options And Defaults
 
@@ -82,4 +87,6 @@ Purpose: strict workspace style law for pass or fail review.
   functions where a cleaner owner split was available.
 - A change fails style review if it adds `usize` domain state without justification.
 - A change fails style review if comments explain what the code does but not why the owner chose it.
+- A change fails style review if source comments narrate architecture or ownership instead of
+  locking a local constraint.
 - A change fails style review if a helper or wrapper hides the true control spine.

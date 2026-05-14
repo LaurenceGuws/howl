@@ -12,6 +12,14 @@ The render architecture inversion sprint is closed.
 Current focus returns to control-flow simplification and style cleanup on the remaining hotspot owner
 files.
 
+Active cleanup target:
+
+- source comments should be reduced to local constraints, local invariants, and non-obvious
+  rationale only
+- repetitive file-header narration should be removed repo by repo
+- architecture, owner model, and workspace worldview should stay in docs, not be recopied across
+  source files
+
 This includes a non-negotiable boundary cleanup:
 
 - internal terminal modules were never supposed to become host integration surfaces shaped around
@@ -169,6 +177,31 @@ Active execution should follow `Current Focus` and the current checkpoint packet
 historical milestone list below as a live queue.
 
 ## Milestones
+
+### Milestone 0
+
+Theme: source-comment truth cleanup.
+
+Goal:
+
+- remove comment narration that explains architecture, ownership slogans, or workspace worldview in
+  source files
+- keep only comments that lock a local boundary, local invariant, local rationale, or reviewer trap
+- preserve small exact source comments where they prevent real boundary regression
+
+Checkpoints:
+
+1. `howl-render`
+2. `howl-hosts/howl-linux-host`
+3. `howl-vt`
+4. `howl-pty`
+
+Milestone closes when:
+
+- source files no longer carry repetitive `Responsibility` / `Ownership` / `Reason` narration
+- surviving source comments earn their keep as local proof or local boundary constraints
+- no repo needs architecture comments in source files to explain code that should already be made
+  clear by owner structure and docs
 
 ### Milestone 1
 
