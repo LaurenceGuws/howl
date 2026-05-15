@@ -96,7 +96,6 @@ Primary official paths:
 - `/home/home/personal/projects/howl/utils/dev_references/fonts/`
 - `/home/home/personal/projects/howl/utils/dev_references/rendering/`
 - `/home/home/personal/projects/howl/utils/dev_references/platform/`
-- `/home/home/personal/projects/howl/utils/dev_references/backends/`
 - `/home/home/personal/projects/howl/utils/dev_references/sdlwiki_md/`
 - `/home/home/personal/projects/howl/utils/dev_references/glfw_docs/`
 - `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/zig/`
