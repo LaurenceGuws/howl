@@ -24,11 +24,12 @@ Read `WORKFLOW.md` for the change loop and root doc map.
 
 4. Ownership is hard.
    - `howl-pty` owns PTY variants, child I/O, resize delivery, control signals, and transport state.
-   - `howl-vt` owns parser state, terminal state, selection, input encoding, and host-facing protocol
-     consequences.
+   - `howl-vt` owns parser state, terminal state, selection, input encoding, host-facing protocol
+     consequences, and VT-surface truth.
    - `howl-render` owns render contracts, geometry policy, retained-frame state, prepare/submit
-     scheduling, renderer variants, and text shaping.
-   - hosts own platform UX, event loops, wake policy, presentation cadence, and runtime orchestration.
+     scheduling, render-surface contracts, and text shaping.
+   - hosts own platform UX, event loops, wake policy, presentation cadence, runtime orchestration,
+     and concrete term-texture or backend resource realization.
 
 5. Owner rules.
    - Public roots curate exports only.

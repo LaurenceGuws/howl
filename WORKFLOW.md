@@ -21,6 +21,12 @@ supposed to drift into host integration surfaces shaped around Zig module import
 If a host or embedding path needs something new, add or sharpen the C ABI contract. Do not bypass
 that boundary with a Zig-shaped convenience path.
 
+Keep the graphics split explicit:
+
+- `howl-vt` exports VT-surface truth.
+- `howl-render` consumes VT-surface input and exports render-surface work.
+- hosts realize render-surface work into concrete term-texture or backend resources.
+
 ## Default Loop
 1. Read the boundary.
 2. Identify the true owner.

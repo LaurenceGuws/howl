@@ -178,5 +178,5 @@ Stop and mark the checkpoint open if:
 - whether fallback font paths remain temporarily public or move directly to render-owned discovery
 - whether `SurfaceQuery.cell_px` remains output truth or is replaced by a tighter layout packet
 - whether `howl-vt` should export dirty-row and dirty-column spans through its C ABI so the
-  host-to-render surface source can preserve partial damage instead of the current full-or-scroll
+  host-to-render VT-surface input can preserve partial damage instead of the current full-or-scroll
   coarse damage contract
