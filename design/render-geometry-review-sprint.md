@@ -82,6 +82,8 @@ Engineer must:
 - have the host ask render for layout
 - have the host resize VT, PTY, and presentation from render-owned layout output
 - remove host-side precomputation of text geometry policy
+- narrow the host request shape to render and grid pixel constraints only; host-authored `cell_px`
+  is not allowed even if the current render ABI still accepts a later commit packet
 
 Architect accepts only if:
 
