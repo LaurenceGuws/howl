@@ -27,6 +27,24 @@ Keep the graphics split explicit:
 - `howl-render` consumes VT-surface input and exports render-surface work.
 - hosts realize render-surface work into concrete term-texture or backend resources.
 
+## Design Source Order
+
+When deciding whether a shape is acceptable, use this order:
+
+1. Ghostty does it.
+2. Alacritty does it.
+3. TigerBeetle mandates it.
+4. If Howl's embeddable render boundary still has no direct match, invent the smallest possible
+   shape and bias it toward a simple Alacritty-like host implementation.
+
+Anything outside these rules is presumed stale debt until proved otherwise.
+
+- VT-core shape follows Ghostty first.
+- Host runtime shape follows Alacritty first.
+- Bounds, assertions, simplicity, and proof follow TigerBeetle as a hard gate.
+- Render-specific novelty is allowed only where the embeddable renderer truly has no direct source
+  model.
+
 ## Default Loop
 1. Read the boundary.
 2. Identify the true owner.
