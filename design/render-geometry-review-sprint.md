@@ -178,6 +178,3 @@ Stop and mark the checkpoint open if:
 
 - whether `font_size_px` remains host-provided policy or moves fully into render-owned policy
 - whether fallback font paths remain temporarily public or move directly to render-owned discovery
-- whether `howl-vt` should export dirty-row and dirty-column spans through its C ABI so the
-  host-to-render VT-surface input can preserve partial damage instead of the current full-or-scroll
-  coarse damage contract
