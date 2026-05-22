@@ -33,7 +33,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-vt` `074abf1` `vt: inline stream turn handler`
 - Accepted checkpoint: collapse title feed-turn signal to bool
 - Closed by: `howl-vt` `600a450` `vt: collapse title feed turn signal`
-- Status: three narrowing checkpoints closed
+- Accepted checkpoint: let terminal own feed finalization
+- Closed by: `howl-vt` `33c4609` `vt: let terminal own feed finalization`
+- Status: four narrowing checkpoints closed
 
 ### 2. Render queue state machine
 
