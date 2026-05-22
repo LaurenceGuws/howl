@@ -27,7 +27,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Thread owner: main/UI thread with a wake-only background thread
 - C ABI gate: host still stays on `howl_pty_*`, `howl_vt_*`, and `howl_render_*`
 - Source-order read: this is now the strongest stale debt against Alacritty-first host shape and TigerBeetle ownership sharpness
-- Status: next likely attack
+- Accepted checkpoint: move per-tab runtime lifetime into `main.zig`
+- Closed by: `howl-linux-host` `5dbc565` `host: move tab runtime into main`
+- Status: narrowed; still active
 
 ### 2. Render queue phase protocol
 
@@ -49,6 +51,7 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Last Closed Checkpoints
 
+- `howl-linux-host` `5dbc565` `host: move tab runtime into main`
 - `howl-linux-host` `617bbdc` `host: make present cadence explicit`
 - `howl-render` `7d0a837` `render: let queue own slot intake`
 - `howl-vt` `33c4609` `vt: let terminal own feed finalization`
