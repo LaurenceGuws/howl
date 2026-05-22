@@ -48,7 +48,10 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Thread owner: host main thread
 - C ABI gate: render still stays on `howl_render_*`
 - Source-order read: remaining queue/phase shape is partly stale debt and partly `work-not-clear`
-- Status: review before next bite
+- Accepted checkpoint: retire presented snapshot identity through render ABI
+- Closed by: `howl-render` `3774c8c` `render: retire presented snapshot in abi`
+- Closed by: `howl-linux-host` `b27453f` `host: retire render present through abi`
+- Status: narrowed; one host/render retire-ack ambiguity closed
 
 ### 3. VT stream parsed-event queue
 
@@ -61,6 +64,8 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Last Closed Checkpoints
 
+- `howl-render` `3774c8c` `render: retire presented snapshot in abi`
+- `howl-linux-host` `b27453f` `host: retire render present through abi`
 - `howl-linux-host` `badf8a4` `host: delete runtime umbrella`
 - `howl-linux-host` `8283ebc` `host: make panel borrow tab term`
 - `howl-linux-host` `27d9c30` `host: inline term construction spine`
