@@ -46,7 +46,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-render` `b7af7a8` `render: let queue own prepare consume`
 - Accepted checkpoint: stage publish-slot ABI cells at the FFI seam
 - Closed by: `howl-render` `b07eb24` `render: stage publish slot abi cells`
-- Status: two narrowing checkpoints closed
+- Accepted checkpoint: remove stale prepare wrapper
+- Closed by: `howl-render` `694cad6` `render: remove stale prepare wrapper`
+- Status: three narrowing checkpoints closed
 
 ### 3. Host render/present spine
 
