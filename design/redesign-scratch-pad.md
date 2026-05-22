@@ -37,7 +37,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-linux-host` `27d9c30` `host: inline term construction spine`
 - Accepted checkpoint: make panel borrow tab term
 - Closed by: `howl-linux-host` `8283ebc` `host: make panel borrow tab term`
-- Status: narrowed; still active
+- Accepted checkpoint: delete runtime umbrella
+- Closed by: `howl-linux-host` `badf8a4` `host: delete runtime umbrella`
+- Status: core smell largely reduced; reassess remaining host debt
 
 ### 2. Render queue phase protocol
 
@@ -59,6 +61,7 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Last Closed Checkpoints
 
+- `howl-linux-host` `badf8a4` `host: delete runtime umbrella`
 - `howl-linux-host` `8283ebc` `host: make panel borrow tab term`
 - `howl-linux-host` `27d9c30` `host: inline term construction spine`
 - `howl-linux-host` `fb28784` `host: inline tab shutdown spine`
