@@ -31,6 +31,8 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-linux-host` `5dbc565` `host: move tab runtime into main`
 - Accepted checkpoint: inline tab startup spine
 - Closed by: `howl-linux-host` `e54b127` `host: inline tab startup spine`
+- Accepted checkpoint: inline tab shutdown spine
+- Closed by: `howl-linux-host` `fb28784` `host: inline tab shutdown spine`
 - Status: narrowed; still active
 
 ### 2. Render queue phase protocol
@@ -53,6 +55,7 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Last Closed Checkpoints
 
+- `howl-linux-host` `fb28784` `host: inline tab shutdown spine`
 - `howl-linux-host` `e54b127` `host: inline tab startup spine`
 - `howl-linux-host` `5dbc565` `host: move tab runtime into main`
 - `howl-linux-host` `617bbdc` `host: make present cadence explicit`
