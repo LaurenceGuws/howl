@@ -29,6 +29,8 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Source-order read: this is now the strongest stale debt against Alacritty-first host shape and TigerBeetle ownership sharpness
 - Accepted checkpoint: move per-tab runtime lifetime into `main.zig`
 - Closed by: `howl-linux-host` `5dbc565` `host: move tab runtime into main`
+- Accepted checkpoint: inline tab startup spine
+- Closed by: `howl-linux-host` `e54b127` `host: inline tab startup spine`
 - Status: narrowed; still active
 
 ### 2. Render queue phase protocol
@@ -51,6 +53,7 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Last Closed Checkpoints
 
+- `howl-linux-host` `e54b127` `host: inline tab startup spine`
 - `howl-linux-host` `5dbc565` `host: move tab runtime into main`
 - `howl-linux-host` `617bbdc` `host: make present cadence explicit`
 - `howl-render` `7d0a837` `render: let queue own slot intake`
