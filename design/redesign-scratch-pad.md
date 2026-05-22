@@ -18,66 +18,40 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
   3. review -> accept and commit/push, or reject and return to 1
   4. repeat from 1
 
-## Active Seams
+## Present Focus
 
-### 1. VT aggregate facade
-
-- Repo owner: `howl-vt`
-- Control owner: `src/stream_terminal.zig` and `src/action/route.zig`
-- Thread owner: host main thread
-- C ABI gate: host must stay on `howl_vt_*`
-- Source-order read: Ghostty-shaped first; Alacritty bounded feed shape agrees
-- Accepted checkpoint: remove repo-local `vtHandler` terminal forwarder
-- Closed by: `howl-vt` `851306b` `vt: remove handler forwarder`
-- Accepted checkpoint: inline stream-turn `Handler` wrapper
-- Closed by: `howl-vt` `074abf1` `vt: inline stream turn handler`
-- Accepted checkpoint: collapse title feed-turn signal to bool
-- Closed by: `howl-vt` `600a450` `vt: collapse title feed turn signal`
-- Accepted checkpoint: let terminal own feed finalization
-- Closed by: `howl-vt` `33c4609` `vt: let terminal own feed finalization`
-- Status: four narrowing checkpoints closed
-
-### 2. Render queue state machine
-
-- Repo owner: `howl-render`
-- Control owner: `src/frame/queue.zig`
-- Thread owner: host main thread
-- C ABI gate: host must stay on `howl_render_*`
-- Source-order read: renderer-owned retained flow is acceptable; novelty must stay minimal
-- Accepted checkpoint: queue owns prepare-consume handshake
-- Closed by: `howl-render` `b7af7a8` `render: let queue own prepare consume`
-- Accepted checkpoint: stage publish-slot ABI cells at the FFI seam
-- Closed by: `howl-render` `b07eb24` `render: stage publish slot abi cells`
-- Accepted checkpoint: remove stale prepare wrapper
-- Closed by: `howl-render` `694cad6` `render: remove stale prepare wrapper`
-- Accepted checkpoint: let owner drive prepare handle
-- Closed by: `howl-render` `106de9c` `render: let owner drive prepare handle`
-- Accepted checkpoint: let queue own slot intake
-- Closed by: `howl-render` `7d0a837` `render: let queue own slot intake`
-- Status: five narrowing checkpoints closed
-
-### 3. Host render/present spine
+### 1. Host runtime aggregate
 
 - Repo owner: `howl-linux-host`
-- Control owner: `src/main.zig` and `src/terminal/render/frame.zig`
-- Thread owner: main/UI thread
-- C ABI gate: no direct Zig imports from `howl-vt` or `howl-render`
-- Source-order read: Alacritty host/runtime shape first
-- Accepted checkpoint: `frame.zig` owns one bounded pre-present render turn
-- Closed by: `howl-linux-host` `38f0147` `host: let frame own render turn`
-- Accepted checkpoint: `frame.zig` owns active-tab turn interest query
-- Closed by: `howl-linux-host` `ee32728` `host: let frame own turn interest`
-- Accepted checkpoint: `frame.zig` owns post-present seam entry
-- Closed by: `howl-linux-host` `dbff1fe` `host: let frame finish present`
-- Accepted checkpoint: make host present cadence explicit
-- Closed by: `howl-linux-host` `617bbdc` `host: make present cadence explicit`
-- Status: four narrowing checkpoints closed
+- Control owner today: `src/terminal/runtime/runtime.zig`
+- Thread owner: main/UI thread with a wake-only background thread
+- C ABI gate: host still stays on `howl_pty_*`, `howl_vt_*`, and `howl_render_*`
+- Source-order read: this is now the strongest stale debt against Alacritty-first host shape and TigerBeetle ownership sharpness
+- Status: next likely attack
 
-## Next Review Order
+### 2. Render queue phase protocol
 
-1. Return to render queue state machine
-2. Return to host render/present spine
-3. Return to VT aggregate facade
+- Repo owner: `howl-render`
+- Control owner today: `src/frame/queue.zig`
+- Thread owner: host main thread
+- C ABI gate: render still stays on `howl_render_*`
+- Source-order read: remaining queue/phase shape is partly stale debt and partly `work-not-clear`
+- Status: review before next bite
+
+### 3. VT stream parsed-event queue
+
+- Repo owner: `howl-vt`
+- Control owner today: `src/stream_terminal.zig`
+- Thread owner: host main thread
+- C ABI gate: host still stays on `howl_vt_*`
+- Source-order read: still stale debt against Ghostty-first VT-core shape, but work-clear
+- Status: ready when host/render are not the tighter seam
+
+## Last Closed Checkpoints
+
+- `howl-linux-host` `617bbdc` `host: make present cadence explicit`
+- `howl-render` `7d0a837` `render: let queue own slot intake`
+- `howl-vt` `33c4609` `vt: let terminal own feed finalization`
 
 ## Acceptance Gate Per Checkpoint
 
