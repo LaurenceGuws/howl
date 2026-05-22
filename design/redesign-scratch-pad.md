@@ -50,7 +50,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-render` `b07eb24` `render: stage publish slot abi cells`
 - Accepted checkpoint: remove stale prepare wrapper
 - Closed by: `howl-render` `694cad6` `render: remove stale prepare wrapper`
-- Status: three narrowing checkpoints closed
+- Accepted checkpoint: let owner drive prepare handle
+- Closed by: `howl-render` `106de9c` `render: let owner drive prepare handle`
+- Status: four narrowing checkpoints closed
 
 ### 3. Host render/present spine
 
