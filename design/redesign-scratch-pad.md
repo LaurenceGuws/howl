@@ -52,7 +52,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-render` `694cad6` `render: remove stale prepare wrapper`
 - Accepted checkpoint: let owner drive prepare handle
 - Closed by: `howl-render` `106de9c` `render: let owner drive prepare handle`
-- Status: four narrowing checkpoints closed
+- Accepted checkpoint: let queue own slot intake
+- Closed by: `howl-render` `7d0a837` `render: let queue own slot intake`
+- Status: five narrowing checkpoints closed
 
 ### 3. Host render/present spine
 
