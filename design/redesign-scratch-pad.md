@@ -42,7 +42,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Source-order read: renderer-owned retained flow is acceptable; novelty must stay minimal
 - Accepted checkpoint: queue owns prepare-consume handshake
 - Closed by: `howl-render` `b7af7a8` `render: let queue own prepare consume`
-- Status: first narrowing checkpoint closed
+- Accepted checkpoint: stage publish-slot ABI cells at the FFI seam
+- Closed by: `howl-render` `b07eb24` `render: stage publish slot abi cells`
+- Status: two narrowing checkpoints closed
 
 ### 3. Host render/present spine
 
@@ -75,5 +77,3 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Workspace root still has unrelated untracked `design/zig16-release-notes.txt`.
 - `howl-vt` `zig build fuzz:build` is failing on clean `main` due a pre-existing fuzz error-set mismatch in
   `src/fuzz/protocol.zig`.
-- `howl-linux-host` runtime `zig build run` is failing on clean `main` due a pre-existing VT/render
-  cursor type mismatch in `src/terminal/vt/surface.zig`.
