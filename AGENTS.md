@@ -1,101 +1,98 @@
-# Workspace Rules
+# Howl Rules
 
 Owner: workspace root.
 
-Purpose: workspace principles and boundaries.
+Purpose: workspace boundary, source order, and change loop.
 
-Read `WORKFLOW.md` for the change loop and root doc map.
+## Product
 
-1. Product identity is `howl-term` / `howl_term` only.
+- The ABIs are the product.
+- Howl is aiming at a C ABI embeddable terminal.
 
-2. Work from first principles.
-   - Prefer simple control flow over clever control flow.
-   - Put a bound on everything.
-   - Make steady-state behavior explicit.
-   - Fail hard on missing ownership, missing proof, or missing invariants.
+## Boundary
 
-3. Layering is hard.
-   - hosts -> `howl-pty`, `howl-render`, `howl-vt`, and `howl-hosts/vendor/*`
-   - no reverse deps
-   - no new umbrella runtime layer
-   - internal terminal modules are not integration targets in Zig-module shape
-   - the product target is C ABI embeddability, so host-facing consumption must converge on explicit
-     C ABI contracts instead of bypassing them through Zig imports
+- Hosts depend on `howl-pty`, `howl-vt`, `howl-render`, and `howl-hosts/vendor/*` only.
+- No reverse deps.
+- No new umbrella runtime layer.
+- Internal terminal modules are not host integration targets in Zig-module shape.
+- If a host or embedding path needs something new, add or sharpen the C ABI contract.
+- Do not bypass that boundary with Zig-shaped convenience imports.
 
-4. Ownership is hard.
-   - `howl-pty` owns PTY variants, child I/O, resize delivery, control signals, and transport state.
-   - `howl-vt` owns parser state, terminal state, selection, input encoding, host-facing protocol
-     consequences, and VT-surface truth.
-   - `howl-render` owns render contracts, geometry policy, retained-frame state, prepare/submit
-     scheduling, render-surface contracts, and text shaping.
-   - hosts own platform UX, event loops, wake policy, presentation cadence, runtime orchestration,
-     and concrete term-texture or backend resource realization.
+## Ownership
 
-5. Owner rules.
-   - Public roots curate exports only.
-   - Namespace wrappers aggregate owners only.
-   - Owner files own state and mutation.
-   - FFI translates contracts only.
-   - Move behavior toward the smallest true owner.
-   - Do not treat internal repos as if their primary public shape were Zig modules for host
-     integration.
-   - If an integration need appears, sharpen the C ABI contract instead of adding a Zig-shaped
-     bypass.
+- `howl-pty` owns PTY variants, child I/O, resize delivery, control signals, and transport state.
+- `howl-vt` owns parser state, terminal state, selection, input encoding, host-facing protocol consequences, and VT-surface truth.
+- `howl-render` owns render contracts, geometry policy, retained-frame state, prepare/submit scheduling, render-surface contracts, and text shaping.
+- Hosts own platform UX, event loops, wake policy, presentation cadence, runtime orchestration, and backend resource realization.
 
-6. Runtime rules.
-   - The program runs at its own pace.
-   - Event loops do bounded work per turn.
-   - Main-thread control flow stays centralized.
-   - Leaf helpers do not own policy.
-   - Background threads wake the owner thread; they do not silently take over its work.
+## Owner Rules
 
-7. Proof rules.
-   - No fake progress.
-   - No placeholder semantics.
-   - If a required path is missing, fail hard and mark it open.
-   - User-visible runtime changes close only with proof on the owning host.
-   - Parity closes on outcome, not on identical internals.
+- Public roots curate exports only.
+- Namespace wrappers aggregate owners only.
+- Owner files own state and mutation.
+- FFI translates contracts only.
+- Move behavior toward the smallest true owner.
 
-8. Style rules.
-   - `design/style-law.md` is the one strict style law.
-   - Changes are reviewed against that law line by line.
-   - Touched-file style regressions block closure unless justified at review.
+## Runtime Rules
 
-9. Naming bans.
-   - Do not add ambiguous public names such as `adapter`, `bridge`, `bootstrap`, `manager`,
-     `helper`, `util`, or `pattern`.
-   - Do not add sentence-style symbol names.
+- The program runs at its own pace.
+- Event loops do bounded work per turn.
+- Main-thread control flow stays centralized.
+- Leaf helpers do not own policy.
+- Background threads wake the owner thread. They do not take over its work.
 
-10. Dependency rules.
-    - Keep dependencies explicit.
-    - Prefer fewer dependencies.
-    - Keep one clear build authority per repo.
-    - Reuse proven code paths from `~/personal/zide` when the ownership boundary still stays true.
+## Design Source Order
 
-11. Workflow rules.
-    - Read the owner boundary before editing.
-    - Centralize the control spine first.
-    - Prove the hot path second.
-    - Update docs in the same change when boundaries, proofs, or public contracts move.
-    - Finish the active checkpoint before opening the next one.
+When deciding whether a shape is acceptable, use this order:
 
-12. Git cadence.
-    - Commit and push each meaningful checkpoint.
-    - Do not let important work sit locally for long.
-    - Keep commits narrow and truthful.
+1. Ghostty does it.
+2. Alacritty does it.
+3. TigerBeetle mandates it.
+4. If Howl's embeddable render boundary still has no direct match, invent the smallest possible shape and bias it toward a simple Alacritty-like host implementation.
 
-13. Work clarity gate.
-    - If ownership, boundary, or flow is unclear, stop and mark `work-not-clear`.
-    - Do not patch around unclear design with wrappers or temporary convenience layers.
+Anything outside these rules is presumed stale debt until proved otherwise.
 
-14. Documentation rules.
-    - Docs are part of the product.
-    - Keep docs short, exact, and source-friendly.
-    - Prefer principles, guides, proofs, and reference over long narrative drift.
-    - If a doc becomes misleading, fix it immediately.
+- VT-core shape follows Ghostty first.
+- Host runtime shape follows Alacritty first.
+- Bounds, assertions, simplicity, and proof follow TigerBeetle as a hard gate.
+- Render-specific novelty is allowed only where the embeddable renderer truly has no direct source model.
 
-15. Current direction.
-   - Keep internal terminal ownership exact.
-   - Keep host runtime control flow simple and bounded.
-   - Use TigerBeetle-style bounds, assertions, simplicity, and proof as a hard gate.
-   - Remove Zig-module-shaped integration paths that muddy the C ABI embedding boundary.
+## Default Loop
+
+1. Read the boundary.
+2. Identify the true owner.
+3. Simplify the control spine first.
+4. Move leaf behavior toward the true owner.
+5. Add or tighten assertions around the invariant.
+6. Remove any Zig-module-shaped bypass that fights the C ABI boundary.
+7. Prove the changed path.
+8. Update docs in the same checkpoint when boundaries, proofs, or public contracts move.
+9. Review the actual diff against owner, proof, and style gates.
+
+## Start Conditions
+
+Before editing, answer these questions:
+
+- Which repo owns this state?
+- Which file owns this control flow?
+- Which thread owns this work?
+- Is this path honoring the C ABI boundary, or sneaking around it through Zig module structure?
+- What proof closes the change?
+
+If any answer is unclear, stop and mark `work-not-clear`.
+
+## Stop Rules
+
+Stop and escalate when:
+
+- ownership is unclear
+- two owners both mutate the same state
+- the shortest correct change requires a new layer
+- the path only works by bypassing the intended C ABI boundary through Zig imports
+- proof and behavior disagree
+
+In these cases, write down the open edge instead of guessing.
+
+## References
+
+Use `reference-index.md`.
