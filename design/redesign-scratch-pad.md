@@ -59,7 +59,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Source-order read: Alacritty host/runtime shape first
 - Accepted checkpoint: `frame.zig` owns one bounded pre-present render turn
 - Closed by: `howl-linux-host` `38f0147` `host: let frame own render turn`
-- Status: first narrowing checkpoint closed
+- Accepted checkpoint: `frame.zig` owns active-tab turn interest query
+- Closed by: `howl-linux-host` `ee32728` `host: let frame own turn interest`
+- Status: two narrowing checkpoints closed
 
 ## Next Review Order
 
