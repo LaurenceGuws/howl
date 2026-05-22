@@ -9,56 +9,9 @@ Rule:
 - TigerBeetle third.
 - Anything outside that order is stale debt or style breach unless proved otherwise.
 
-## Cross-repo
-
-### 1. PTY stop/wait seam is incomplete across the shipped ABI
-- Offenders
-  - `howl-pty/include/howl_pty.h:88-100`
-  - `howl-pty/src/ffi.zig:172-220`
-  - `howl-pty/src/session.zig:223-226`
-  - `howl-pty/src/session.zig:303-316`
-  - `howl-pty/src/session.zig:441-446`
-  - `howl-linux-host/src/terminal/runtime/thread.zig:7-17`
-  - `howl-linux-host/src/terminal/runtime/thread.zig:49-57`
-  - `howl-linux-host/src/terminal/runtime/thread.zig:66-76`
-  - `howl-linux-host/src/terminal/terminal_panel.zig:132-145`
-- Breach
-  - Host still compensates for missing authoritative PTY wake/stop seam; join can depend on PTY activity/backend exit.
-- Reference against it
-  - `howl-pty/design.md:125-131`
-  - `AGENTS.md:38-42`
-  - `utils/dev_references/terminals/ghostty/src/termio/Thread.zig:98-131`
-  - `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:251-316`
-  - `utils/dev_references/terminals/alacritty/alacritty_terminal/src/tty/unix.rs:278-369`
-- Fix according to reference
-  - Export an authoritative PTY wake seam through the ABI or make stop break `wait_readable` directly.
-
-### 2. VT benchmark reaches into host-owned replay artifacts
-- Offenders
-  - `howl-vt/src/test/terminal_benchmark.zig:650-679`
-- Breach
-  - VT proof code hardcodes host-owned replay artifact paths.
-- Reference against it
-  - `AGENTS.md:14-19,21-26`
-  - `howl-vt/design.md:6-12,192-205`
-- Fix according to reference
-  - Move replay fixtures under `howl-vt` ownership or inject explicit paths.
-
-### 3. Render proof code reaches into host-owned font assets
-- Offenders
-  - `howl-render/src/text/font/ft_hb/support.zig:640-667`
-- Breach
-  - Render proof depends on host-owned font asset layout.
-- Reference against it
-  - `AGENTS.md:21-26`
-  - `howl-render/design.md:54-57,163-176`
-  - `howl-linux-host/design.md:63-65`
-- Fix according to reference
-  - Put proof fonts under render ownership or inject test font paths.
-
 ## howl-pty
 
-### 4. Public PTY facade still exists as a parallel Zig surface
+### 1. Public PTY facade still exists as a parallel Zig surface
 - Offenders
   - `howl-pty/src/pty.zig:19-74`
 - Breach
@@ -70,7 +23,7 @@ Rule:
 - Fix according to reference
   - Demote `src/pty.zig` to internal plumbing and keep build-selected PTY construction behind `Session`.
 
-### 5. `Session` still publishes repo-local helpers as API shape
+### 2. `Session` still publishes repo-local helpers as API shape
 - Offenders
   - `howl-pty/src/session.zig:5-8`
   - `howl-pty/src/session.zig:207-215`
@@ -84,7 +37,7 @@ Rule:
 - Fix according to reference
   - Keep those helpers internal to tests/repo wiring only.
 
-### 6. Outbound queue is bounded by policy but still heap-grows during steady state
+### 3. Outbound queue is bounded by policy but still heap-grows during steady state
 - Offenders
   - `howl-pty/src/session.zig:127-128`
   - `howl-pty/src/session.zig:135-150`
@@ -99,7 +52,7 @@ Rule:
 - Fix according to reference
   - Preallocate full queue capacity at init and use a fixed-capacity owner queue.
 
-### 7. Child exec hygiene is below Ghostty/Alacritty PTY lifecycle shape
+### 4. Child exec hygiene is below Ghostty/Alacritty PTY lifecycle shape
 - Offenders
   - `howl-pty/src/pty/pty_unix.zig:54-75`
   - `howl-pty/src/pty/pty_android.zig:57-93`
@@ -112,7 +65,7 @@ Rule:
 - Fix according to reference
   - Add explicit child-pre-exec setup with signal reset, fd close discipline, and CLOEXEC backstop.
 
-### 8. Unix and Android PTY owners duplicate the same control spine
+### 5. Unix and Android PTY owners duplicate the same control spine
 - Offenders
   - `howl-pty/src/pty/pty_unix.zig:24-230`
   - `howl-pty/src/pty/pty_android.zig:27-247`
@@ -126,7 +79,7 @@ Rule:
 - Fix according to reference
   - Factor shared PTY transport state machine into one internal owner and keep only backend-specific leaves.
 
-### 9. PTY interface erases operating contracts with `anyerror`
+### 6. PTY interface erases operating contracts with `anyerror`
 - Offenders
   - `howl-pty/src/pty/pty_platform.zig:24-62`
   - `howl-pty/src/pty/pty_unix.zig:49,128,136,151,167,197`
@@ -143,7 +96,9 @@ Rule:
 
 ## howl-vt
 
-### 10. Title OSC bypass in the router
+## howl-vt
+
+### 7. Title OSC bypass in the router
 - Offenders
   - `howl-vt/src/action/route.zig:64-67`
 - Breach
@@ -154,7 +109,7 @@ Rule:
 - Fix according to reference
   - Map title/raw_title in `src/xterm/osc.zig` and let host consequence owner apply it.
 
-### 11. Router-owned reset composition mutates multiple owners directly
+### 8. Router-owned reset composition mutates multiple owners directly
 - Offenders
   - `howl-vt/src/action/route.zig:79-108`
 - Breach
@@ -166,7 +121,7 @@ Rule:
 - Fix according to reference
   - Move reset composition into terminal owner and let it delegate to subowners.
 
-### 12. Mode owner reaches into selection during alt-screen switching
+### 9. Mode owner reaches into selection during alt-screen switching
 - Offenders
   - `howl-vt/src/control/mode.zig:187-195`
 - Breach
@@ -177,7 +132,7 @@ Rule:
 - Fix according to reference
   - Move selection clearing into `screen_set` or selection owner.
 
-### 13. Kitty retained-state helpers silently drop allocation failures
+### 10. Kitty retained-state helpers silently drop allocation failures
 - Offenders
   - `howl-vt/src/kitty/apply.zig:55-77`
 - Breach
@@ -188,7 +143,7 @@ Rule:
 - Fix according to reference
   - Make helpers fallible and propagate OOM/limit failures through feed.
 
-### 14. Kitty graphics state is unbounded and non-fallible
+### 11. Kitty graphics state is unbounded and non-fallible
 - Offenders
   - `howl-vt/src/kitty/graphics.zig:54-59`
   - `howl-vt/src/kitty/graphics.zig:122-137`
@@ -203,7 +158,7 @@ Rule:
 - Fix according to reference
   - Add explicit byte/count caps and make graphics handling fallible.
 
-### 15. Scratch-buffer formatting failures silently drop protocol output
+### 12. Scratch-buffer formatting failures silently drop protocol output
 - Offenders
   - `howl-vt/src/control/report.zig:193-246`
   - `howl-vt/src/control/report.zig:266-312`
@@ -223,7 +178,9 @@ Rule:
 
 ## howl-render
 
-### 16. Reserve-publish FFI adds a second allocation/copy layer
+## howl-render
+
+### 13. Reserve-publish FFI adds a second allocation/copy layer
 - Offenders
   - `howl-render/src/frame/surface_text_ffi.zig:15-35`
   - `howl-render/src/frame/surface_text_ffi.zig:138-180`
@@ -235,7 +192,7 @@ Rule:
 - Fix according to reference
   - Expose render-owned reserved slot directly through ABI spans and commit only metadata.
 
-### 17. Publish-slot storage is heap-allocated per reservation instead of retained by owner
+### 14. Publish-slot storage is heap-allocated per reservation instead of retained by owner
 - Offenders
   - `howl-render/src/frame/queue.zig:321-373`
 - Breach
@@ -246,7 +203,7 @@ Rule:
 - Fix according to reference
   - Pre-size one owner-held publication slot from geometry/session limits and reuse it.
 
-### 18. Prepare path heap-copies the full VT grid before text preparation
+### 15. Prepare path heap-copies the full VT grid before text preparation
 - Offenders
   - `howl-render/src/frame/surface_text.zig:114-127`
   - `howl-render/src/frame/input.zig:176-259`
@@ -258,7 +215,7 @@ Rule:
 - Fix according to reference
   - Use retained owner scratch or borrowed owner state directly instead of full temporary grid copies.
 
-### 19. Scene build recreates all draw lists as fresh heap-owned slices each frame
+### 16. Scene build recreates all draw lists as fresh heap-owned slices each frame
 - Offenders
   - `howl-render/src/text/scene.zig:76-98`
   - `howl-render/src/text/scene.zig:107-139`
@@ -271,7 +228,7 @@ Rule:
 - Fix according to reference
   - Move these lists into retained owner scratch with explicit capacities.
 
-### 20. Resolver uses unbounded per-call ArrayLists and AutoHashMap scratch
+### 17. Resolver uses unbounded per-call ArrayLists and AutoHashMap scratch
 - Offenders
   - `howl-render/src/text/font/resolver.zig:73-165`
 - Breach
@@ -282,7 +239,7 @@ Rule:
 - Fix according to reference
   - Replace per-call growable containers with fixed-capacity resolve scratch sized from session limits.
 
-### 21. FT/HB caches and shape-input assembly are still unbounded heap structures
+### 18. FT/HB caches and shape-input assembly are still unbounded heap structures
 - Offenders
   - `howl-render/src/text/font/ft_hb/cache.zig:39-124`
   - `howl-render/src/text/font/ft_hb/support.zig:120-129`
@@ -298,7 +255,7 @@ Rule:
 - Fix according to reference
   - Give caches explicit capacities and use retained bounded buffers.
 
-### 22. Cluster extraction/build path stacks multiple growable assembly layers
+### 19. Cluster extraction/build path stacks multiple growable assembly layers
 - Offenders
   - `howl-render/src/text/shape/cluster.zig:98-166`
   - `howl-render/src/text/shape/cluster.zig:235-345`
@@ -312,7 +269,7 @@ Rule:
 - Fix according to reference
   - Collapse into fewer owner-held bounded buffers with explicit precomputed counts.
 
-### 23. Benchmark control spine violates the 70-line function limit
+### 20. Benchmark control spine violates the 70-line function limit
 - Offenders
   - `howl-render/src/test/benchmark.zig:586-756`
 - Breach
@@ -324,7 +281,9 @@ Rule:
 
 ## howl-linux-host
 
-### 24. Unbounded SDL burst drain per host turn
+## howl-linux-host
+
+### 21. Unbounded SDL burst drain per host turn
 - Offenders
   - `howl-linux-host/src/input/input.zig:166-210`
   - especially `howl-linux-host/src/input/input.zig:203-210`
@@ -336,7 +295,7 @@ Rule:
 - Fix according to reference
   - Add an explicit per-turn SDL event cap and continue on the next turn.
 
-### 25. Wake thread blocks forever instead of waiting in bounded slices
+### 22. Wake thread blocks forever instead of waiting in bounded slices
 - Offenders
   - `howl-linux-host/src/terminal/runtime/thread.zig:7-7`
   - `howl-linux-host/src/terminal/runtime/thread.zig:49-76`
@@ -349,7 +308,11 @@ Rule:
 - Fix according to reference
   - Replace infinite wait with finite timeout slices and re-check stop/handoff state each slice.
 
-### 26. Bounded queues implemented with O(n) front-shifts instead of a ring
+### 23. Bounded queues implemented with O(n) front-shifts instead of a ring
+
+### 24. Fixed 9-tab host still relies on runtime heap growth/churn
+
+### 25. Invariant failures use `@panic` instead of assertion-style contracts
 - Offenders
   - `howl-linux-host/src/input/input.zig:106-117`
   - `howl-linux-host/src/input/input.zig:125-136`
@@ -361,7 +324,7 @@ Rule:
 - Fix according to reference
   - Replace both queues with fixed-capacity ring buffers.
 
-### 27. Fixed 9-tab host still relies on runtime heap growth/churn
+### 26. Invariant failures use `@panic` instead of assertion-style contracts
 - Offenders
   - `howl-linux-host/src/main.zig:22-22`
   - `howl-linux-host/src/main.zig:90-93`
@@ -377,7 +340,7 @@ Rule:
 - Fix according to reference
   - Preallocate tab slots up to `max_tabs` and store them in a bounded owner container/free-list.
 
-### 28. Invariant failures use `@panic` instead of assertion-style contracts
+### 27. Invariant failures use `@panic` instead of assertion-style contracts
 - Offenders
   - `howl-linux-host/src/tab_bar/tab_bar.zig:16-19`
   - `howl-linux-host/src/tab_bar/tab_bar.zig:30-32`
