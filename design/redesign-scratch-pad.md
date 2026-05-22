@@ -69,7 +69,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-linux-host` `ee32728` `host: let frame own turn interest`
 - Accepted checkpoint: `frame.zig` owns post-present seam entry
 - Closed by: `howl-linux-host` `dbff1fe` `host: let frame finish present`
-- Status: three narrowing checkpoints closed
+- Accepted checkpoint: make host present cadence explicit
+- Closed by: `howl-linux-host` `617bbdc` `host: make present cadence explicit`
+- Status: four narrowing checkpoints closed
 
 ## Next Review Order
 
