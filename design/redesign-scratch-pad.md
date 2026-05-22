@@ -29,7 +29,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Source-order read: Ghostty-shaped first; Alacritty bounded feed shape agrees
 - Accepted checkpoint: remove repo-local `vtHandler` terminal forwarder
 - Closed by: `howl-vt` `851306b` `vt: remove handler forwarder`
-- Status: first narrowing checkpoint closed
+- Accepted checkpoint: inline stream-turn `Handler` wrapper
+- Closed by: `howl-vt` `074abf1` `vt: inline stream turn handler`
+- Status: two narrowing checkpoints closed
 
 ### 2. Render queue state machine
 
@@ -55,9 +57,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Next Review Order
 
-1. Return to VT aggregate facade
-2. Return to render queue state machine
-3. Return to host render/present spine
+1. Return to render queue state machine
+2. Return to host render/present spine
+3. Return to VT aggregate facade
 
 ## Acceptance Gate Per Checkpoint
 
