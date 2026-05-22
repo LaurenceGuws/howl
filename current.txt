@@ -1,0 +1,37 @@
+Current Task
+
+Source: `host-simplification-plan.md`
+
+Task 10: Standalone `howl_lua` host dependency bypasses the vendor-only boundary.
+
+Required outcome:
+
+- Remove the standalone `howl_lua` dependency seam from the host.
+- Keep the host inside the allowed dependency boundary.
+- If Lua support remains, move it behind a host-owned vendor/local adapter shape backed by the references.
+
+Primary offenders:
+
+- `howl-linux-host/build.zig:14-27`
+- `howl-linux-host/build.zig:87-124`
+- `howl-linux-host/build.zig:138-146`
+- `howl-linux-host/src/config/config.zig:1-25`
+- `howl-linux-host/src/config/terminal.zig:2-7`
+- `howl-linux-host/src/config/window.zig:2-7`
+- `howl-linux-host/src/config/tab_bar.zig:2-6`
+
+No guessing allowed:
+
+- Read `AGENTS.md`
+- Read `reference-index.md`
+- Read `host-simplification-plan.md`
+- Read `howl-linux-host/design.md`
+- Read the live host build/config dependency seam files.
+- Use the references and `AGENTS.md` boundary rules with zero guessing.
+- If the correct owner seam cannot be named exactly, stop and report `work-not-clear`.
+
+Acceptance target:
+
+- Standalone `howl_lua` dependency seam is removed or moved behind an allowed host-owned path.
+- Host dependency boundary gets narrower and more exact.
+- The host gets simpler and dumber.
