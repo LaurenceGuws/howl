@@ -95,8 +95,7 @@ Read `WORKFLOW.md` for the change loop and root doc map.
     - If a doc becomes misleading, fix it immediately.
 
 15. Current direction.
-   - Keep Howl owner-true.
-   - Keep runtime control flow boring.
-   - Keep TigerBeetle-style discipline while preserving the Howl brand.
-   - Kill off Zig-module-shaped integration paths for internal terminal modules where they muddy the
-     C ABI embedding boundary.
+   - Keep internal terminal ownership exact.
+   - Keep host runtime control flow simple and bounded.
+   - Use TigerBeetle-style bounds, assertions, simplicity, and proof as a hard gate.
+   - Remove Zig-module-shaped integration paths that muddy the C ABI embedding boundary.

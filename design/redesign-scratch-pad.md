@@ -2,96 +2,87 @@
 
 Owner: workspace root.
 
-Purpose: temporary checkpoint tracker for redesign-scale cleanup.
+Purpose: temporary checkpoint tracker for the current cross-repo bad-style cleanup.
 
 ## Rules
 
-- Use the 4 start questions before each checkpoint.
-- Judge acceptable shape by source order only:
-  1. Ghostty does it.
-  2. Alacritty does it.
-  3. TigerBeetle mandates it.
-  4. If Howl still has no direct match, invent the smallest possible shape.
-- The architect loop stays strict:
-  1. review/plan
-  2. delegate
-  3. review -> accept and commit/push, or reject and return to 1
-  4. repeat from 1
+- Judge acceptable shape by `WORKFLOW.md` source order.
+- Review every touched file against `design/style-law.md`.
+- Close each checkpoint only when the owning repo boundary, docs, and proof stay true.
+- Delete this scratch pad when the tracked cleanup is closed.
 
-## Present Focus
+## Active Checkpoints
 
-### 1. Host runtime aggregate
+### 1. Workspace root docs
 
-- Repo owner: `howl-linux-host`
-- Control owner today: `src/terminal/runtime/runtime.zig`
-- Thread owner: main/UI thread with a wake-only background thread
-- C ABI gate: host still stays on `howl_pty_*`, `howl_vt_*`, and `howl_render_*`
-- Source-order read: this is now the strongest stale debt against Alacritty-first host shape and TigerBeetle ownership sharpness
-- Accepted checkpoint: move per-tab runtime lifetime into `main.zig`
-- Closed by: `howl-linux-host` `5dbc565` `host: move tab runtime into main`
-- Accepted checkpoint: inline tab startup spine
-- Closed by: `howl-linux-host` `e54b127` `host: inline tab startup spine`
-- Accepted checkpoint: inline tab shutdown spine
-- Closed by: `howl-linux-host` `fb28784` `host: inline tab shutdown spine`
-- Accepted checkpoint: inline term construction spine
-- Closed by: `howl-linux-host` `27d9c30` `host: inline term construction spine`
-- Accepted checkpoint: make panel borrow tab term
-- Closed by: `howl-linux-host` `8283ebc` `host: make panel borrow tab term`
-- Accepted checkpoint: delete runtime umbrella
-- Closed by: `howl-linux-host` `badf8a4` `host: delete runtime umbrella`
-- Status: core smell largely reduced; reassess remaining host debt
+- Owner: workspace root.
+- Goal: remove stale planning and checkpoint-doc drift from active root docs.
+- Closed work:
+  - deleted stale root planning doc `design/render-geometry-review-sprint.md`
+  - kept source-order ownership in `WORKFLOW.md` instead of repeating the full rule in
+    `design/reference-index.md`
+- Open work:
+  - review remaining root docs for the same planning-drift posture
 
-### 2. Render queue phase protocol
+### 2. `howl-linux-host`
 
-- Repo owner: `howl-render`
-- Control owner today: `src/frame/queue.zig`
-- Thread owner: host main thread
-- C ABI gate: render still stays on `howl_render_*`
-- Source-order read: remaining queue/phase shape is partly stale debt and partly `work-not-clear`
-- Accepted checkpoint: retire presented snapshot identity through render ABI
-- Closed by: `howl-render` `3774c8c` `render: retire presented snapshot in abi`
-- Closed by: `howl-linux-host` `b27453f` `host: retire render present through abi`
-- Status: narrowed; one host/render retire-ack ambiguity closed
+- Owner: `howl-linux-host`.
+- Goal: move host runtime shape toward a smaller Alacritty-like control spine.
+- Closed work:
+  - deleted stale host sprint doc drift
+  - removed the reviewed non-guardrail source comments in touched host files
+- Open work:
+  - split `src/main.zig` by true owner without hiding the control spine
 
-### 3. VT stream parsed-event queue
+### 3. `howl-pty`
 
-- Repo owner: `howl-vt`
-- Control owner today: `src/stream_terminal.zig`
-- Thread owner: host main thread
-- C ABI gate: host still stays on `howl_vt_*`
-- Source-order read: still stale debt against Ghostty-first VT-core shape, but work-clear
-- Status: ready when host/render are not the tighter seam
+- Owner: `howl-pty`.
+- Goal: make PTY ABI seams typed, exact, and owner-true.
+- Open work:
+  - use typed public enum contracts at the C ABI seam instead of raw byte posture
+  - stop collapsing distinct FFI failures into generic `failed` or `null`
+  - remove Zig-shaped transport-injection preservation that muddies the C ABI boundary
+  - reduce duplicated Unix and Android transport lifecycle control flow
+  - remove non-guardrail source comments and fix design-doc drift
 
-## Last Closed Checkpoints
+### 4. `howl-render`
 
-- `howl-render` `3774c8c` `render: retire presented snapshot in abi`
-- `howl-linux-host` `b27453f` `host: retire render present through abi`
-- `howl-linux-host` `badf8a4` `host: delete runtime umbrella`
-- `howl-linux-host` `8283ebc` `host: make panel borrow tab term`
-- `howl-linux-host` `27d9c30` `host: inline term construction spine`
-- `howl-linux-host` `fb28784` `host: inline tab shutdown spine`
-- `howl-linux-host` `e54b127` `host: inline tab startup spine`
-- `howl-linux-host` `5dbc565` `host: move tab runtime into main`
-- `howl-linux-host` `617bbdc` `host: make present cadence explicit`
-- `howl-render` `7d0a837` `render: let queue own slot intake`
-- `howl-vt` `33c4609` `vt: let terminal own feed finalization`
+- Owner: `howl-render`.
+- Goal: keep render novelty minimal and keep owner files owner-true.
+- Open work:
+  - fix local doc drift against workspace source order
+  - split oversized benchmark control flow by true owner
+  - move proof-harness behavior out of `src/ffi.zig`, or rename the owner truthfully
+  - remove non-owning mutex wrappers
+  - remove umbrella wrapper posture in `src/text/text.zig`
 
-## Acceptance Gate Per Checkpoint
+### 5. `howl-vt`
 
-- owner and boundary still true
-- control spine simpler, not wider
-- no Zig-module-shaped host bypass
-- assertions or bounds tightened where the invariant lives
-- docs updated in the same change
-- proof run and recorded in report
+- Owner: `howl-vt`.
+- Goal: keep VT-core Ghostty-first and remove fake root layering.
+- Open work:
+  - remove wrapper roots and other namespace-bag posture that does not own a real boundary
+  - stop curated-root bypasses in repo-local roots
+  - split oversized benchmark control flow and remove pure forwarding roots
+  - remove stale planning and migration-doc drift from active docs
+  - re-check parser bound rationale against Ghostty-first VT ownership
+  - remove what-comments that do not lock a local invariant
 
-## Open Edge
+### 6. Cross-repo root posture
 
-- Workspace root still has unrelated untracked `design/zig16-release-notes.txt`.
-- `howl-linux-host` short-lived child smoke `zig build run -- --duration-ms 1000 --command 'printf ok'` fails on clean
-  `main` with `HostTabFailed` after child exit; this is pre-existing host dead-child policy, not a regression from
-  `27d9c30`.
-- `howl-vt` `zig build fuzz:build` is failing on clean `main` due a pre-existing fuzz error-set mismatch in
-  `src/fuzz/protocol.zig`.
-- direct `zig test src/ffi.zig` remains blocked in this environment by Zig/libc linker issues unrelated
-  to the accepted VT checkpoint.
+- Owner: workspace root, with child-repo owners per file.
+- Goal: keep public roots curated and keep internal owners out of fake Zig integration posture.
+- Open work:
+  - align `src/howl_*.zig` and other root surfaces with true curated-root rules
+  - remove wrapper roots that only aggregate or re-export without a boundary difference
+  - reconcile repo `design.md` files with the code that still exists today
+
+## Closure Gate
+
+- owner still true
+- source-order match is explicit
+- no Zig-module-shaped host bypass was added or preserved
+- bounds and assertions tightened where the invariant lives
+- touched-file style gate is clean or the remaining gap is exact and owned
+- docs changed with the code
+- proof was run and recorded in the report

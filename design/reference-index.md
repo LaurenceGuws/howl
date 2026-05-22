@@ -24,15 +24,7 @@ If Howl is far from a target state, use this index before looking elsewhere.
 
 ## Source Order
 
-When choosing a design, follow this order exactly:
-
-1. Ghostty does it.
-2. Alacritty does it.
-3. TigerBeetle mandates it.
-4. Only then invent something for Howl's embeddable renderer, and try as hard as possible to keep
-   it in the shape of a simple Alacritty-like host implementation.
-
-If a Howl-local concept does not fit this order, treat it as stale debt.
+Use `WORKFLOW.md`.
 
 ## Bias Map
 
