@@ -33,6 +33,8 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-linux-host` `e54b127` `host: inline tab startup spine`
 - Accepted checkpoint: inline tab shutdown spine
 - Closed by: `howl-linux-host` `fb28784` `host: inline tab shutdown spine`
+- Accepted checkpoint: inline term construction spine
+- Closed by: `howl-linux-host` `27d9c30` `host: inline term construction spine`
 - Status: narrowed; still active
 
 ### 2. Render queue phase protocol
@@ -55,6 +57,7 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Last Closed Checkpoints
 
+- `howl-linux-host` `27d9c30` `host: inline term construction spine`
 - `howl-linux-host` `fb28784` `host: inline tab shutdown spine`
 - `howl-linux-host` `e54b127` `host: inline tab startup spine`
 - `howl-linux-host` `5dbc565` `host: move tab runtime into main`
@@ -74,6 +77,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 ## Open Edge
 
 - Workspace root still has unrelated untracked `design/zig16-release-notes.txt`.
+- `howl-linux-host` short-lived child smoke `zig build run -- --duration-ms 1000 --command 'printf ok'` fails on clean
+  `main` with `HostTabFailed` after child exit; this is pre-existing host dead-child policy, not a regression from
+  `27d9c30`.
 - `howl-vt` `zig build fuzz:build` is failing on clean `main` due a pre-existing fuzz error-set mismatch in
   `src/fuzz/protocol.zig`.
 - direct `zig test src/ffi.zig` remains blocked in this environment by Zig/libc linker issues unrelated
