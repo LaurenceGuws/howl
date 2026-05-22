@@ -49,13 +49,15 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Thread owner: main/UI thread
 - C ABI gate: no direct Zig imports from `howl-vt` or `howl-render`
 - Source-order read: Alacritty host/runtime shape first
-- Status: work-clear
+- Accepted checkpoint: `frame.zig` owns one bounded pre-present render turn
+- Closed by: `howl-linux-host` `38f0147` `host: let frame own render turn`
+- Status: first narrowing checkpoint closed
 
 ## Next Review Order
 
-1. Host render/present spine
-2. Return to VT aggregate facade
-3. Return to render queue state machine for the next narrowing cut
+1. Return to VT aggregate facade
+2. Return to render queue state machine
+3. Return to host render/present spine
 
 ## Acceptance Gate Per Checkpoint
 
@@ -71,3 +73,5 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Workspace root still has unrelated untracked `design/zig16-release-notes.txt`.
 - `howl-vt` `zig build fuzz:build` is failing on clean `main` due a pre-existing fuzz error-set mismatch in
   `src/fuzz/protocol.zig`.
+- `howl-linux-host` runtime `zig build run` is failing on clean `main` due a pre-existing VT/render
+  cursor type mismatch in `src/terminal/vt/surface.zig`.
