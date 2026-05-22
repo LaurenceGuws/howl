@@ -27,7 +27,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Thread owner: host main thread
 - C ABI gate: host must stay on `howl_vt_*`
 - Source-order read: Ghostty-shaped first; Alacritty bounded feed shape agrees
-- Status: work-clear
+- Accepted checkpoint: remove repo-local `vtHandler` terminal forwarder
+- Closed by: `howl-vt` `851306b` `vt: remove handler forwarder`
+- Status: first narrowing checkpoint closed
 
 ### 2. Render queue state machine
 
@@ -49,9 +51,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Next Review Order
 
-1. VT aggregate facade
-2. Render queue state machine
-3. Host render/present spine
+1. Render queue state machine
+2. Host render/present spine
+3. Return to VT aggregate facade only after the next render/host cuts sharpen the boundary further
 
 ## Acceptance Gate Per Checkpoint
 
@@ -65,3 +67,5 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 ## Open Edge
 
 - Workspace root still has unrelated untracked `design/zig16-release-notes.txt`.
+- `howl-vt` `zig build fuzz:build` is failing on clean `main` due a pre-existing fuzz error-set mismatch in
+  `src/fuzz/protocol.zig`.
