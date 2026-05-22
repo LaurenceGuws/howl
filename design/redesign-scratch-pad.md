@@ -31,7 +31,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-vt` `851306b` `vt: remove handler forwarder`
 - Accepted checkpoint: inline stream-turn `Handler` wrapper
 - Closed by: `howl-vt` `074abf1` `vt: inline stream turn handler`
-- Status: two narrowing checkpoints closed
+- Accepted checkpoint: collapse title feed-turn signal to bool
+- Closed by: `howl-vt` `600a450` `vt: collapse title feed turn signal`
+- Status: three narrowing checkpoints closed
 
 ### 2. Render queue state machine
 
@@ -77,3 +79,5 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Workspace root still has unrelated untracked `design/zig16-release-notes.txt`.
 - `howl-vt` `zig build fuzz:build` is failing on clean `main` due a pre-existing fuzz error-set mismatch in
   `src/fuzz/protocol.zig`.
+- direct `zig test src/ffi.zig` remains blocked in this environment by Zig/libc linker issues unrelated
+  to the accepted VT checkpoint.
