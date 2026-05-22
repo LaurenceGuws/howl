@@ -65,7 +65,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Closed by: `howl-linux-host` `38f0147` `host: let frame own render turn`
 - Accepted checkpoint: `frame.zig` owns active-tab turn interest query
 - Closed by: `howl-linux-host` `ee32728` `host: let frame own turn interest`
-- Status: two narrowing checkpoints closed
+- Accepted checkpoint: `frame.zig` owns post-present seam entry
+- Closed by: `howl-linux-host` `dbff1fe` `host: let frame finish present`
+- Status: three narrowing checkpoints closed
 
 ## Next Review Order
 
