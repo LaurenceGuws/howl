@@ -38,7 +38,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 - Thread owner: host main thread
 - C ABI gate: host must stay on `howl_render_*`
 - Source-order read: renderer-owned retained flow is acceptable; novelty must stay minimal
-- Status: work-clear
+- Accepted checkpoint: queue owns prepare-consume handshake
+- Closed by: `howl-render` `b7af7a8` `render: let queue own prepare consume`
+- Status: first narrowing checkpoint closed
 
 ### 3. Host render/present spine
 
@@ -51,9 +53,9 @@ Purpose: temporary checkpoint tracker for redesign-scale cleanup.
 
 ## Next Review Order
 
-1. Render queue state machine
-2. Host render/present spine
-3. Return to VT aggregate facade only after the next render/host cuts sharpen the boundary further
+1. Host render/present spine
+2. Return to VT aggregate facade
+3. Return to render queue state machine for the next narrowing cut
 
 ## Acceptance Gate Per Checkpoint
 
