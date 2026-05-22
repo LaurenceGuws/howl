@@ -64,7 +64,6 @@ Anything outside these rules is presumed stale debt until proved otherwise.
 3. Simplify the control spine first.
 4. Move leaf behavior toward the true owner.
 5. Add or tighten assertions around the invariant.
-6. Remove any Zig-module-shaped bypass that fights the C ABI boundary.
 7. Prove the changed path.
 8. Update docs in the same checkpoint when boundaries, proofs, or public contracts move.
 9. Review the actual diff against owner, proof, and style gates.
