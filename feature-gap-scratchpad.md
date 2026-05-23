@@ -210,7 +210,7 @@ Rule:
 - Description
   - VT tracks cursor `shape` and `blink`, but the shipped surface contract exports only shape and visibility. Render consumes only static shape, so DECSCUSR blink variants are impossible to present above VT.
 - Complete picture needed
-  - A render/ABI design checkpoint that splits source token identity from presentation token identity, so host-owned blink cadence can drive same-source presentation changes without re-publishing VT source truth.
+  - Carry VT cursor `blink` truth through the shipped ABI, keep host-owned blink cadence as presentation policy, and add a host-configured default cursor style/blink policy that seeds VT default/reset behavior without overriding runtime DECSCUSR truth.
 - Howl truth
   - `howl-vt/src/screen/cursor.zig:7-12`
   - `howl-vt/src/screen/apply.zig:149-157`
@@ -222,7 +222,10 @@ Rule:
   - `howl-render/src/frame/queue.zig`
 - Reference locations
   - `utils/dev_references/terminals/ghostty/src/terminal/c/render.zig:95-113`
+  - `utils/dev_references/terminals/ghostty/src/config/Config.zig:859-893`
+  - `utils/dev_references/terminals/ghostty/src/termio/stream_handler.zig:880-918`
   - `utils/dev_references/terminals/ghostty/src/Surface.zig`
+  - `utils/official_docs/xterm/ctlseqs.html.md:1539-1547`
   - `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:51-62`
   - `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:1620-1645`
   - `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs:229-231`

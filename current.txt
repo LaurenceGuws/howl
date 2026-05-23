@@ -2,45 +2,48 @@ Current Task
 
 Source: `feature-gap-scratchpad.md`
 
-Issue 1: Hyperlink targets stop at `link_id`.
+Issue 13: Cursor blink state is lost at the VT surface and render seam.
 
 Required outcome:
 
-- Carry hyperlink target lookup truth through the ABI with snapshot-scoped lifetime.
-- Let the host resolve a visible cell hyperlink target above VT.
-- Preserve existing per-cell `link_id` behavior where it already exists.
+- Carry VT cursor `blink` truth through the shipped ABI.
+- Keep host-owned blink cadence as presentation policy, not VT source publication policy.
+- Add a host-configured default cursor style/blink policy that seeds VT default/reset behavior.
+- Preserve runtime DECSCUSR cursor truth as the live override.
 
 Primary evidence:
 
-- `howl-vt/src/host/apply.zig:33-34`
-- `howl-vt/src/host/state.zig:52-53`
-- `howl-vt/src/host/state.zig:116-150`
-- `howl-vt/src/ffi.zig:187-203`
-- `howl-vt/include/howl_vt.h:111-123`
-- `howl-render/include/howl_render.h:153-165`
-- `howl-render/src/frame/surface_text_ffi.zig:522-534`
-- `howl-linux-host/src/input/input.zig:75-80`
-- `howl-linux-host/src/terminal/terminal_panel.zig:193-196`
+- `howl-vt/src/screen/cursor.zig:7-12`
+- `howl-vt/src/screen/apply.zig:149-157`
+- `howl-vt/include/howl_vt.h:140-145`
+- `howl-vt/src/ffi.zig:258-269`
+- `howl-render/include/howl_render.h:177-182`
+- `howl-render/src/frame/input.zig:319-325`
+- `howl-render/src/frame/queue.zig`
+- `howl-linux-host/src/config/terminal.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
 
 Reference against it:
 
 - `AGENTS.md`
-- `utils/dev_references/terminals/ghostty/src/terminal/c/grid_ref.zig:94-123`
-- `utils/dev_references/terminals/ghostty/src/terminal/c/grid_ref.zig:221-249`
-- `utils/dev_references/terminals/ghostty/src/Surface.zig:1607-1673`
-- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:1233-1263`
+- `utils/dev_references/terminals/ghostty/src/config/Config.zig:859-893`
+- `utils/dev_references/terminals/ghostty/src/termio/stream_handler.zig:880-918`
+- `utils/dev_references/terminals/ghostty/src/terminal/c/render.zig:95-113`
+- `utils/official_docs/xterm/ctlseqs.html.md:1539-1547`
+- `utils/dev_references/terminals/alacritty/alacritty_terminal/src/term/mod.rs:938-950`
 
 No guessing allowed:
 
 - Read `AGENTS.md`
 - Read `reference-index.md`
 - Read `feature-gap-scratchpad.md`
-- Read the live owner files for VT hyperlink truth, ABI export, render-preserved `link_id`, and host hover/open seams.
+- Read the live owner files for VT cursor truth, ABI export, render ingestion/queue, and host config/cadence paths.
 - Use `AGENTS.md` boundary rules with zero guessing.
 - If the correct owner seam cannot be named exactly, stop and report `work-not-clear`.
 
 Acceptance target:
 
-- Hyperlink target truth is no longer dropped above VT.
-- Host can resolve visible hyperlink targets through the shipped boundary.
+- VT blink truth is no longer dropped above VT.
+- Host config can seed default cursor shape/blink without stealing runtime DECSCUSR ownership.
+- Blink cadence remains host-owned and presentation-only.
 - Control flow remains centralized.
