@@ -1,32 +1,46 @@
 Current Task
 
-Source: `host-simplification-plan.md`
+Source: `feature-gap-scratchpad.md`
 
-Task 14: Public PTY facade still exists as a parallel Zig surface.
+Issue 1: Hyperlink targets stop at `link_id`.
 
 Required outcome:
 
-- Demote `howl-pty/src/pty.zig` to internal plumbing.
-- Keep build-selected PTY construction behind `Session`.
-- Remove the parallel Zig PTY surface as a preserved package story.
+- Carry hyperlink target lookup truth through the ABI with snapshot-scoped lifetime.
+- Let the host resolve a visible cell hyperlink target above VT.
+- Preserve existing per-cell `link_id` behavior where it already exists.
 
-Primary offenders:
+Primary evidence:
 
-- `howl-pty/src/pty.zig:19-74`
+- `howl-vt/src/host/apply.zig:33-34`
+- `howl-vt/src/host/state.zig:52-53`
+- `howl-vt/src/host/state.zig:116-150`
+- `howl-vt/src/ffi.zig:187-203`
+- `howl-vt/include/howl_vt.h:111-123`
+- `howl-render/include/howl_render.h:153-165`
+- `howl-render/src/frame/surface_text_ffi.zig:522-534`
+- `howl-linux-host/src/input/input.zig:75-80`
+- `howl-linux-host/src/terminal/terminal_panel.zig:193-196`
+
+Reference against it:
+
+- `AGENTS.md`
+- `utils/dev_references/terminals/ghostty/src/terminal/c/grid_ref.zig:94-123`
+- `utils/dev_references/terminals/ghostty/src/terminal/c/grid_ref.zig:221-249`
+- `utils/dev_references/terminals/ghostty/src/Surface.zig:1607-1673`
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:1233-1263`
 
 No guessing allowed:
 
 - Read `AGENTS.md`
 - Read `reference-index.md`
-- Read `host-simplification-plan.md`
-- Read `howl-pty/design.md`
-- Read the live PTY owner/root files.
-- Read Ghostty and Alacritty PTY reference files explicitly.
+- Read `feature-gap-scratchpad.md`
+- Read the live owner files for VT hyperlink truth, ABI export, render-preserved `link_id`, and host hover/open seams.
 - Use `AGENTS.md` boundary rules with zero guessing.
 - If the correct owner seam cannot be named exactly, stop and report `work-not-clear`.
 
 Acceptance target:
 
-- The public PTY facade is gone or fully demoted from package surface.
-- The C ABI and true owners remain the only real PTY story.
-- The host gets simpler and dumber.
+- Hyperlink target truth is no longer dropped above VT.
+- Host can resolve visible hyperlink targets through the shipped boundary.
+- Control flow remains centralized.
