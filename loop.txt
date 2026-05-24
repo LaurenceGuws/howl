@@ -1,0 +1,27 @@
+Aligned, we have multiple repos, so you can do more than one task at a time where it does not cost safety or correctness, are you ready to drive sub agents with 0 space for guessing?
+Yes.
+And the rule I’ll use is:
+- Parallelize only when the tasks are independent in owner, proof, and failure handling.
+- If two tasks can create ambiguity in the same semantic area, keep them serial.
+- For Issue 6, most active work is still serial inside howl-vt because owner truth is being reshaped.
+- Cross-repo parallelism is fine for:
+- research
+- doc updates
+- future consumer planning
+- independent cleanup/proof tasks
+- But I will not run parallel implementation passes that depend on unsettled VT truth.
+For subagents, yes, I’m ready to run them with near-zero room for guessing by always pinning:
+- exact checkpoint name
+- exact source files
+- exact reference files
+- exact in-scope and out-of-scope semantics
+- exact proof target
+- exact stop condition
+- explicit “no code changes” when research-only
+- explicit “do not add ABI / do not add new layer / do not bypass owner” constraints when coding
+So the practical pattern is:
+1. one subagent derives or drafts a narrow checkpoint
+2. one subagent critiques it
+3. I accept, reject, or reset from the top
+4. I alone commit
+That is ready to use now.
