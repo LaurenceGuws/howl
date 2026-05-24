@@ -604,10 +604,26 @@ Accepted answer from the latest derive/critique round:
   - VT item queries are publication-local and index order is unstable
   - Kitty requires explicit draw-order semantics
   - the remaining unresolved questions are already draw-order, viewport inclusion, and clipping questions
+- Critique correction:
+  - draw order is not the primary blocker anymore
+  - the primary blocker is destination extent truth for placements that omit `c` and/or `r`
+  - current copied ABI fields are not truthful enough for viewport inclusion or clipping in those cases
 - Single must-close blocker:
-  - state exactly how Howl derives Kitty-correct paint order from copied data without relying on query index order, and decide whether the current ABI fields are sufficient for that contract
+  - state the exact current destination extent contract for copied placements, especially for `c`-only, `r`-only, or fully default placements, so render can decide visibility and clipping without guessing
 - Rule from here:
   - do not build a scene, cache, or drawing pass until draw-order, viewport inclusion, and clipping contracts are named explicitly from copied ABI truth
+
+Accepted answer after critique completion:
+
+- Current copied ABI fields are sufficient for stating most supported-subset draw-order rules:
+  - sort by `z_index`
+  - then by lower `image_id`
+  - never use query index order as paint order
+- But current copied ABI fields are not sufficient for truthful viewport inclusion or clipping when placement size is implicit.
+- Kitty requires omitted `c`/`r` dimensions to derive from aspect ratio and cell geometry.
+- Howl currently collapses those cases too early into insufficient retained extent truth above VT.
+- Therefore the next truthful checkpoint is no longer a render drawing checkpoint.
+- The next truthful checkpoint is a VT-truth/design checkpoint for destination extent publication.
 
 6. Unsupported-action rejection.
    - Reject unsupported scope explicitly instead of partially accepting it.

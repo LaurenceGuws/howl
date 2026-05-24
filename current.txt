@@ -108,14 +108,15 @@ Current next step:
 1. keep the current supported physical subset fixed
 2. keep the current above-VT slice copied-metadata-only
 3. keep the exact coherence rule between VT surface publication and graphics item publication explicit
-4. stop and answer the draw-semantics gate before starting any drawing work
+4. stop and answer the destination-extent truth gate before starting any drawing work
 
 Current blocker before that pass:
 
 - `current.txt` and `issue-6-scratchpad.md` must reflect the now-landed copied item retention/replacement proof
 - the next slice still must not treat query index as stable identity or paint order
 - the next slice still must not invent viewport mapping, geometry resolution, or draw order from copied metadata alone
-- Kitty draw-order semantics are not yet stated as an honest Howl render contract above the copied ABI seam
+- current copied ABI fields are still not sufficient for truthful viewport inclusion and clipping when placements omit `c` and/or `r`
+- draw order is no longer the primary blocker; destination extent truth is
 - any next slice must still omit render-derived geometry, decoded-image claims, and payload ingestion
 
 Current coherence rule:
@@ -134,19 +135,18 @@ Current coherence rule:
 Execution plan for the next real pass:
 
 1. Re-state the supported Kitty graphics subset explicitly before editing.
-2. Accept the design-round result: there is no honest pre-drawing checkpoint left.
-3. Answer the draw-semantics gate explicitly:
-   - What exact draw-order meaning does Kitty require for the supported physical subset?
-   - What exact viewport/anchor interpretation can Howl carry above VT without inventing render-owned geometry?
-   - What exact clipping rule can be stated from copied VT truth alone?
-   - Are the current copied ABI fields sufficient for that draw contract, or is more VT-owned truth required?
+2. Accept the design-round result: there is no honest drawing checkpoint yet.
+3. Answer the destination-extent truth gate explicitly:
+   - What exact current grid/pixel extent does Kitty require when placements omit `c` and/or `r`?
+   - What additional VT-owned truth, if any, must Howl carry above the ABI so render can decide viewport inclusion and clipping without guessing?
+   - Which parts of draw order are already answerable from copied truth, and which parts still depend on the extent blocker?
 4. Use the reference bars in this order:
    - Kitty is the quality bar.
    - Ghostty is the integration bar.
    - Alacritty is the speed and simplicity bar.
    - TigerBeetle is the final say and mandates style.
-5. Do a draw-semantics design round before any more coding.
-6. Write the accepted draw-semantics answer back into `issue-6-scratchpad.md` before any more coding.
+5. Do a VT-truth design round before any more coding.
+6. Write the accepted destination-extent answer back into `issue-6-scratchpad.md` before any more coding.
 
 Internal driver:
 
@@ -156,6 +156,6 @@ Internal driver:
 Acceptance target:
 
 - The docs name the real current state, not a stale pre-ABI state.
-- The next implementation pass starts only after the draw-semantics gate is answered explicitly.
+- The next implementation pass starts only after the destination-extent gate is answered explicitly.
 - No false seam is added for graphics-local publication, payload decoding, or render-derived geometry.
 - The next coding pass starts only after the design questions above have written answers.
