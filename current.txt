@@ -110,11 +110,24 @@ Current blocker before that pass:
 - the next slice still needs an explicit ownership/coherence rule for pairing copied VT surface state with copied graphics item metadata
 - the next slice must still omit render-derived geometry, decoded-image claims, and payload ingestion
 
+Current coherence rule:
+
+- `howl_vt_terminal_copy_surface()` and graphics item queries are separate publications.
+- Surface publication is keyed by `snapshot_seq` from the visible surface copy path.
+- Graphics item queries are keyed by `publication_seq` returned by `howl_vt_terminal_query_graphics_meta()`.
+- Graphics publication is conservative today: any terminal dirty-generation change can advance it, not only graphics-local mutation.
+- A caller that wants one coherent pair must:
+  1. copy the VT surface snapshot
+  2. query graphics meta
+  3. use that returned graphics `publication_seq` for image/placement/payload item queries
+  4. if any graphics item query fails with invalid publication, restart acquisition rather than mixing generations
+- Above-VT consumers still consume only copied C-ABI truth. They do not reach into `howl-vt` directly through Zig-module structure.
+
 Execution plan for the next real pass:
 
 1. Re-state the supported Kitty graphics subset explicitly before editing.
 2. Keep the render-side checkpoint metadata-only at first item ingestion: image and placement metadata only, no drawing.
-3. Define whether the host or another C caller pairs `howl_vt_terminal_copy_surface()` with `howl_vt_terminal_query_graphics_*()` for one publication moment.
+3. Have the caller that already owns VT surface acquisition pair `howl_vt_terminal_copy_surface()` with `howl_vt_terminal_query_graphics_*()` for one coherent acquisition attempt.
 4. Add focused render proofs for publication-scoped item ingestion, count validation, and retained replacement on graphics publication changes.
 5. Only after that should render-side retained graphics translation progress toward raster/scene work.
 

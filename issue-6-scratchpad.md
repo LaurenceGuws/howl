@@ -512,6 +512,23 @@ Immediate blockers before the next render ingestion pass can begin:
 2. decide the owner of that pairing above VT without bypassing the C ABI boundary
 3. keep the next slice metadata-only: copied image and placement metadata, no payload bytes, no decoded pixels, no render-derived geometry
 
+Exact current pairing rule:
+
+- `howl_vt_terminal_copy_surface()` publishes visible text/dirty/cursor/color/selection truth under `snapshot_seq`.
+- `howl_vt_terminal_query_graphics_meta()` publishes graphics truth under a separate `publication_seq`.
+- Graphics publication is conservative today:
+  - it can advance on any terminal `dirty_generation` change
+  - it is not yet a graphics-local cache key
+- Therefore the first honest above-VT consumer rule is:
+  1. one caller acquires surface truth and graphics truth together
+  2. surface and graphics are treated as two publication tokens from one acquisition attempt, not one shared token
+  3. graphics item queries must use the exact `publication_seq` returned by `query_graphics_meta()`
+  4. if any item query rejects that publication, the caller restarts acquisition instead of mixing generations
+- This keeps ownership honest:
+  - VT owns both publication tokens
+  - the caller above VT owns acquisition/retry policy
+  - render still consumes copied results only, not direct VT internals
+
 Current answer from the latest render-facing scrutiny round:
 
 - Smallest next slice:
