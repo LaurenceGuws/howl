@@ -1,40 +1,160 @@
 Current Task
 
-Source: `feature-gap-scratchpad.md`
+Source:
+
+- `feature-gap-scratchpad.md`
+- `issue-6-scratchpad.md`
 
 Issue 6: Kitty graphics state is implemented in VT but not exportable above VT.
 
+First rule:
+
+- Treat this as a staged VT-truth repair first, not “add an ABI now”.
+
 Required outcome:
 
-- Carry VT-owned kitty graphics state through the product boundary so it can exist above VT.
-- Define the smallest ABI-visible graphics contract and lifecycle relative to visible surface publication.
-- Keep ownership aligned: VT owns graphics truth, render consumes it, host presents it.
+- Do not ship a fake kitty graphics ABI over false VT truth.
+- First repair VT owner truth for the supported Kitty graphics subset.
+- Only after VT truth is honest, define the smallest ABI-visible graphics contract.
+- Keep ownership aligned: `howl-vt` owns graphics truth, later consumers above VT use only the C ABI seam.
 
 Primary evidence:
 
 - `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/kitty/state.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
+- `howl-vt/src/kitty/apply.zig`
+- `howl-vt/src/kitty/protocol.zig`
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/control/mode.zig`
 - `howl-vt/include/howl_vt.h`
-- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `howl-vt/src/ffi.zig`
 
 Reference against it:
 
 - `AGENTS.md`
 - `utils/dev_references/terminals/ghostty/src/lib_vt.zig:244-259`
 - `utils/dev_references/terminals/ghostty/src/terminal/c/terminal.zig:577-606`
+- `utils/dev_references/terminals/ghostty/src/terminal/c/kitty_graphics.zig`
+- `utils/dev_references/terminals/ghostty/include/ghostty/vt/kitty_graphics.h`
+- `utils/dev_references/terminals/kitty/kitty/vt-parser.c`
+- `utils/dev_references/terminals/kitty/kitty/screen.c`
+- `utils/dev_references/terminals/kitty/kitty/screen.h`
+- `utils/dev_references/terminals/kitty/tools/tui/loop/terminal-state.go`
+- `utils/official_docs/kitty/graphics-protocol.md`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 
 No guessing allowed:
 
 - Read `AGENTS.md`
 - Read `reference-index.md`
 - Read `feature-gap-scratchpad.md`
-- Read the live owner files for VT kitty graphics truth, ABI export candidates, and host/render ingress.
+- Read the live owner files for VT kitty graphics truth, reset behavior, alt-screen behavior, and publication behavior.
+- Read the Ghostty kitty graphics C seam before proposing any ABI shape.
+- Read Kitty source/docs before proposing lifecycle semantics.
+- Run a TigerBeetle-style skepticism pass against any proposed shape.
 - Use `AGENTS.md` boundary rules with zero guessing.
 - If the correct owner seam cannot be named exactly, stop and report `work-not-clear`.
 
+Current status:
+
+- `work-not-clear`
+- Reason:
+  current VT graphics truth is not honest enough to export above the ABI yet.
+  current placement truth is also not rich enough to implement Kitty-honest text/scroll mutation coupling.
+- Known owner-truth gaps:
+  - graphics state is terminal-global, not per buffer/screen
+  - RIS/reset does not clear graphics truth
+  - alt-screen switching does not switch graphics truth
+  - text scroll / erase / mutation paths do not update graphics placements
+  - `a=T` is not implemented honestly
+  - placement replacement semantics are incomplete
+  - retained payloads are base64 protocol payloads, not render-ready decoded bytes
+
+Hard constraints for the next implementation pass:
+
+- Do not add a public graphics ABI until the supported VT truth is honest.
+- Do not export `kitty.global.graphics` directly.
+- Do not copy Ghostty's borrowed-handle seam literally unless Howl's owner truth matches it.
+- Do not claim active-screen semantics while graphics state is global.
+- Do not claim reset/alt-screen/scroll correctness before VT actually implements those semantics.
+- Do not claim render-ready image bytes while VT only owns retained base64 payloads.
+- Do not silently accept unsupported Kitty graphics actions; reject them explicitly once scope is defined.
+
+Required research/decomposition before code:
+
+1. Define the supported Kitty graphics subset for Howl right now.
+2. State which lifecycle semantics from Kitty are in scope for that subset.
+3. Identify the smallest owner-truth repairs required inside `howl-vt` before any ABI export.
+4. Decide whether the eventual ABI exports retained payload bytes as stored, or whether VT must first own a normalized representation.
+5. Decide whether graphics publication will be tied to visible surface publication `snapshot_seq`, or a separate graphics publication sequence.
+
+If implementation is attempted, the first code changes must be VT-truth repair only:
+
+1. per-buffer/main-vs-alt graphics ownership
+2. reset semantics
+3. alt-screen semantics
+4. supported scroll/text-mutation coupling
+5. placement replacement semantics
+6. explicit rejection for unsupported graphics actions
+
+Current next step:
+
+1. Do not narrow the subset as a shortcut.
+2. Extend VT placement truth first.
+3. Only then resume text/scroll mutation coupling.
+
+Checkpoint 4.5 scope decision:
+
+- Extend placement truth for physical cursor-anchored placements only.
+- Do not implement virtual/relative placement truth in this checkpoint.
+- Do not claim generic text-mutation coupling yet.
+- Next honest mutation targets after truth extension are:
+  - scroll/index/reverse-index
+  - margin scroll clipping
+  - full-screen clear deletion semantics
+
+Current blocker before that next pass:
+
+- `work-not-clear`
+- `anchor_row: u16` is not enough to represent main-screen scroll into scrollback honestly.
+- We need a richer VT-owned anchor truth for off-screen-above retained placements before scroll/index/reverse-index can be implemented without shortcuts.
+
+Updated status after more VT checkpoints:
+
+- retained row-anchor truth is landed
+- upward full-page scroll retention is landed
+- full-screen clear deletion semantics are landed
+- new `work-not-clear` edge:
+  downward full-page movement still needs honest bottom clipping, and VT does not yet own enough geometry truth to update `source_height` correctly without guessing
+
+Next design question:
+
+- define the full, exact VT-owned geometry truth needed for honest downward bottom clipping
+
+Current design pressure:
+
+- exact downward bottom clipping likely needs VT-owned retained destination geometry in cell-grid pixel space, not just row anchors and crop fields
+- do not implement the next pass until that owner truth is named exactly without leaking render policy into VT
+
+Only after that is proven should an ABI pass begin.
+
+Execution plan for the next real pass:
+
+1. Re-state the supported Kitty graphics subset explicitly before editing.
+2. Repair VT owner truth only. Do not add a public graphics ABI in this checkpoint.
+3. Add focused VT proofs for reset, alt-screen, supported mutation paths, and unsupported-action rejection.
+4. Review whether VT truth is now honest enough to export.
+5. Only in a later checkpoint, if step 4 is truly satisfied, start the ABI seam.
+
+Internal driver:
+
+- Use `issue-6-scratchpad.md` as the detailed checkpoint queue.
+- `current.txt` stays as the narrow active-loop summary only.
+
 Acceptance target:
 
-- Kitty graphics state is no longer trapped below VT with no product boundary above it.
-- The graphics ABI contract is explicit about retained state and visible lifecycle.
-- Control flow remains centralized and ownership stays explicit.
+- A future implementation pass must first turn `work-not-clear` into explicit supported VT truth.
+- No fake graphics ABI is added over false lifecycle semantics.
+- When the ABI is eventually added, it must describe only state VT truly owns and prove.
