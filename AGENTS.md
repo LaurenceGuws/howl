@@ -2,7 +2,7 @@
 
 Owner: workspace root.
 
-Purpose: workspace boundary, source order, and change loop.
+Purpose: workspace boundary and source order.
 
 ## Product
 
@@ -57,40 +57,9 @@ Anything outside these rules is presumed stale debt until proved otherwise.
 - Bounds, assertions, simplicity, and proof follow TigerBeetle as a hard gate.
 - Render-specific novelty is allowed only where the embeddable renderer truly has no direct source model.
 
-## Default Loop
+## Workflow
 
-1. Read the boundary.
-2. Identify the true owner.
-3. Simplify the control spine first.
-4. Move leaf behavior toward the true owner.
-5. Add or tighten assertions around the invariant.
-7. Prove the changed path.
-8. Update docs in the same checkpoint when boundaries, proofs, or public contracts move.
-9. Review the actual diff against owner, proof, and style gates.
-
-## Start Conditions
-
-Before editing, answer these questions:
-
-- Which repo owns this state?
-- Which file owns this control flow?
-- Which thread owns this work?
-- Is this path honoring the C ABI boundary, or sneaking around it through Zig module structure?
-- What proof closes the change?
-
-If any answer is unclear, stop and mark `work-not-clear`.
-
-## Stop Rules
-
-Stop and escalate when:
-
-- ownership is unclear
-- two owners both mutate the same state
-- the shortest correct change requires a new layer
-- the path only works by bypassing the intended C ABI boundary through Zig imports
-- proof and behavior disagree
-
-In these cases, write down the open edge instead of guessing.
+Read `loop.txt`.
 
 ## References
 
