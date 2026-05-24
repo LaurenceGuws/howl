@@ -549,15 +549,15 @@ Current answer from the latest render-facing scrutiny round:
 - We are not ready for item-level ingestion yet.
 - The host acquisition boundary was honest enough to start the next checkpoint.
 - That copied item metadata checkpoint is now landed.
+- The copied item retention/replacement proof is now landed.
 - Remaining constraints after that pass:
   - current graphics publication is still conservative and invalidates on terminal dirty-generation changes, not only graphics-local changes
   - copied item metadata must not treat query index as stable identity or paint order
   - copied item metadata alone still does not define draw order, viewport mapping, or render-owned geometry meaning
 - Therefore the next truthful checkpoint is:
-  1. define the smallest retained render-side meaning for copied images and placements
-  2. prove retained replacement/invalidation on graphics publication changes
-  3. keep no payload bytes, no drawing, and no render-derived geometry
-  4. only then answer whether any pre-drawing scene/raster checkpoint is honest
+  1. answer whether any honest pre-drawing scene/raster checkpoint exists at all
+  2. if yes, prove it before integration
+  3. if no, stop and do a fresh design round before drawing work
 - Rule:
   - slow progress is preferred over fake progress
   - stop above-VT expansion whenever the acquisition boundary is weaker than the claimed truth

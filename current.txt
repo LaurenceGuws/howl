@@ -71,9 +71,10 @@ Current status:
 - The real host caller now:
   - pairs copied VT surface truth with queried graphics meta
   - retries whole acquisition on stale graphics item publication
+- `howl-render` now proves retained replacement/invalidation for copied graphics item metadata from publication truth.
 - The next blocker is not "start ABI work" anymore.
 - The next blocker is not copied metadata ingestion anymore.
-- The next blocker is what retained/render-owned meaning to assign to those copied items without inventing drawing, geometry, or paint order above VT.
+- The next blocker is whether any honest pre-drawing render checkpoint remains before actual drawing questions.
 
 Hard constraints for the next implementation pass:
 
@@ -107,11 +108,11 @@ Current next step:
 1. keep the current supported physical subset fixed
 2. keep the current above-VT slice copied-metadata-only
 3. keep the exact coherence rule between VT surface publication and graphics item publication explicit
-4. define the next retained render-side meaning for copied graphics items before any drawing work
+4. decide whether any pre-drawing render checkpoint is still honest before starting drawing work
 
 Current blocker before that pass:
 
-- `current.txt` and `issue-6-scratchpad.md` must reflect the now-landed copied item metadata ingestion slice
+- `current.txt` and `issue-6-scratchpad.md` must reflect the now-landed copied item retention/replacement proof
 - the next slice still must not treat query index as stable identity or paint order
 - the next slice still must not invent viewport mapping, geometry resolution, or draw order from copied metadata alone
 - any next slice must still omit render-derived geometry, decoded-image claims, and payload ingestion
@@ -133,9 +134,9 @@ Execution plan for the next real pass:
 
 1. Re-state the supported Kitty graphics subset explicitly before editing.
 2. Keep the next slice above VT metadata-only: no payload bytes and no drawing.
-3. Decide the smallest truthful retained render-side meaning for copied images and placements.
-4. Prove that any retained replacement/invalidation logic follows publication truth, not index stability or guessed paint order.
-5. Only after that should drawing/raster questions begin.
+3. Decide whether there is any honest pre-drawing render checkpoint left that does not invent geometry, viewport mapping, or paint order.
+4. If yes, prove it before integration.
+5. If no, stop and do a new design round before drawing/raster questions begin.
 
 Internal driver:
 
@@ -145,5 +146,5 @@ Internal driver:
 Acceptance target:
 
 - The docs name the real current state, not a stale pre-ABI state.
-- The next implementation pass stays above VT but still does not start drawing.
+- The next implementation pass either stays above VT without drawing or stops for a design round honestly.
 - No false seam is added for graphics-local publication, payload decoding, or render-derived geometry.
