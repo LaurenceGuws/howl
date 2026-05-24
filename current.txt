@@ -108,15 +108,16 @@ Current next step:
 1. keep the current supported physical subset fixed
 2. keep the current above-VT slice copied-metadata-only
 3. keep the exact coherence rule between VT surface publication and graphics item publication explicit
-4. stop and answer the destination-extent truth gate before starting any drawing work
+4. repair VT destination-extent truth for implicit-size placements before any more above-VT graphics work
 
 Current blocker before that pass:
 
 - `current.txt` and `issue-6-scratchpad.md` must reflect the now-landed copied item retention/replacement proof
 - the next slice still must not treat query index as stable identity or paint order
 - the next slice still must not invent viewport mapping, geometry resolution, or draw order from copied metadata alone
-- current copied ABI fields are still not sufficient for truthful viewport inclusion and clipping when placements omit `c` and/or `r`
-- draw order is no longer the primary blocker; destination extent truth is
+- current VT truth itself is still false for implicit-size placements
+- `effective_columns` / `effective_rows` are not Kitty-honest for `c`-only, `r`-only, or fully default placements
+- this false extent already contaminates VT-owned mutation behavior, not just ABI publication
 - any next slice must still omit render-derived geometry, decoded-image claims, and payload ingestion
 
 Current coherence rule:
@@ -135,18 +136,24 @@ Current coherence rule:
 Execution plan for the next real pass:
 
 1. Re-state the supported Kitty graphics subset explicitly before editing.
-2. Accept the design-round result: there is no honest drawing checkpoint yet.
-3. Answer the destination-extent truth gate explicitly:
-   - What exact current grid/pixel extent does Kitty require when placements omit `c` and/or `r`?
-   - What additional VT-owned truth, if any, must Howl carry above the ABI so render can decide viewport inclusion and clipping without guessing?
-   - Which parts of draw order are already answerable from copied truth, and which parts still depend on the extent blocker?
+2. Accept the design-round result: current VT extent truth is not sufficient already.
+3. Repair VT-owned resolved destination extent for:
+   - `c=0,r=0`
+   - `c>0,r=0`
+   - `c=0,r>0`
+   - `c>0,r>0`
+   - with non-zero cell offsets
+4. Decide the exact VT-owned contract for resolved destination truth:
+   - current grid extent
+   - current destination pixel edges in anchor-cell space
+   - and whether `effective_columns` / `effective_rows` are redefined or replaced
 4. Use the reference bars in this order:
    - Kitty is the quality bar.
    - Ghostty is the integration bar.
    - Alacritty is the speed and simplicity bar.
    - TigerBeetle is the final say and mandates style.
-5. Do a VT-truth design round before any more coding.
-6. Write the accepted destination-extent answer back into `issue-6-scratchpad.md` before any more coding.
+5. Prove the VT truth repair first.
+6. Only after that return to ABI/render publication questions.
 
 Internal driver:
 
@@ -156,6 +163,6 @@ Internal driver:
 Acceptance target:
 
 - The docs name the real current state, not a stale pre-ABI state.
-- The next implementation pass starts only after the destination-extent gate is answered explicitly.
+- The next implementation pass is a VT owner-truth repair, not another render checkpoint.
 - No false seam is added for graphics-local publication, payload decoding, or render-derived geometry.
 - The next coding pass starts only after the design questions above have written answers.

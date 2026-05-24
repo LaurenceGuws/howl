@@ -622,8 +622,39 @@ Accepted answer after critique completion:
 - But current copied ABI fields are not sufficient for truthful viewport inclusion or clipping when placement size is implicit.
 - Kitty requires omitted `c`/`r` dimensions to derive from aspect ratio and cell geometry.
 - Howl currently collapses those cases too early into insufficient retained extent truth above VT.
-- Therefore the next truthful checkpoint is no longer a render drawing checkpoint.
-- The next truthful checkpoint is a VT-truth/design checkpoint for destination extent publication.
+- Critique completion sharpened that further:
+  - this is not just an ABI/publication gap
+  - current VT truth itself is already false for implicit-size placements
+  - `effective_columns` / `effective_rows` are not Kitty-honest in those cases
+  - that false truth already affects VT-owned mutation behavior
+- Therefore the next truthful checkpoint is a VT owner-truth repair for resolved destination extent.
+
+Accepted result from the full explicit scoped VT design round:
+
+- Recommended next checkpoint name:
+  `VT Destination-Extent Truth`
+- Current VT truth is sufficient already:
+  no
+- Exact missing truth:
+  - truthful current grid extent for implicit-size placements
+  - truthful current destination pixel edges in anchor-cell pixel space
+  - truthful omitted-`c`/`r` resolution from source rect, cell size, offsets, and aspect ratio
+- Exact contract direction:
+  - keep requested `columns` / `rows`
+  - add or redefine current resolved destination truth explicitly
+  - likely fields:
+    - `dest_left_cell_px`
+    - `dest_top_cell_px`
+    - `dest_right_cell_px`
+    - `dest_bottom_cell_px`
+    - `dest_grid_columns`
+    - `dest_grid_rows`
+- Exact proof target:
+  - prove Kitty-honest resolution for `c=0,r=0`, `c>0,r=0`, `c=0,r>0`, `c>0,r>0`
+  - prove non-zero offsets
+  - prove cursor movement uses resolved grid extent
+  - prove viewport inclusion/clipping can be derived from resolved truth without guesses
+  - prove no render-owned geometry leaks back into VT
 
 6. Unsupported-action rejection.
    - Reject unsupported scope explicitly instead of partially accepting it.
