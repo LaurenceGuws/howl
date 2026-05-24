@@ -68,7 +68,11 @@ Current status:
 - VT truth for the current supported physical subset is substantially repaired.
 - The public C graphics ABI now exists for graphics meta, indexed image query, indexed placement query, payload copy, and cell pixel size.
 - `howl-render` now consumes graphics publication metadata only and forces full damage when graphics publication changes.
-- The next blocker is not "start ABI work" anymore. It is defining the next above-VT ingestion slice without inventing drawing or geometry policy.
+- The next blocker is not "start ABI work" anymore.
+- The next blocker is the real acquisition boundary above VT:
+  - the host caller that copies VT surface truth still must acquire graphics meta in the same attempt
+  - that paired truth still must be carried cleanly through the shipped host/render contract
+- Until that boundary is proven, above-VT item ingestion is premature.
 
 Hard constraints for the next implementation pass:
 
@@ -101,14 +105,15 @@ Current next step:
 
 1. keep the current supported physical subset fixed
 2. keep the first `howl-render` slice metadata/publication-only
-3. define the exact coherence rule between VT surface publication and graphics item publication
-4. start the next render ingestion slice only after that rule is explicit
+3. keep the exact coherence rule between VT surface publication and graphics item publication explicit
+4. close the real host acquisition boundary before any item-level ingestion above VT
 
 Current blocker before that pass:
 
 - `current.txt` and `issue-6-scratchpad.md` must reflect the now-landed public ABI and metadata-only render slice
-- the next slice still needs an explicit ownership/coherence rule for pairing copied VT surface state with copied graphics item metadata
-- the next slice must still omit render-derived geometry, decoded-image claims, and payload ingestion
+- the real host caller still does not pair copied VT surface state with queried graphics meta in one acquisition attempt
+- the shipped host/render publish seam still must carry that paired truth cleanly
+- any next slice must still omit render-derived geometry, decoded-image claims, and payload ingestion
 
 Current coherence rule:
 
@@ -126,10 +131,10 @@ Current coherence rule:
 Execution plan for the next real pass:
 
 1. Re-state the supported Kitty graphics subset explicitly before editing.
-2. Keep the render-side checkpoint metadata-only at first item ingestion: image and placement metadata only, no drawing.
-3. Have the caller that already owns VT surface acquisition pair `howl_vt_terminal_copy_surface()` with `howl_vt_terminal_query_graphics_*()` for one coherent acquisition attempt.
-4. Add focused render proofs for publication-scoped item ingestion, count validation, and retained replacement on graphics publication changes.
-5. Only after that should render-side retained graphics translation progress toward raster/scene work.
+2. Keep above-VT work stopped until the real host acquisition boundary is truthful.
+3. Have the caller that already owns VT surface acquisition pair `howl_vt_terminal_copy_surface()` with `howl_vt_terminal_query_graphics_meta()` for one coherent acquisition attempt.
+4. Carry that paired truth through the shipped host/render publish contract and prove retry on invalid graphics publication.
+5. Only after that should copied image/placement metadata ingestion begin above VT.
 
 Internal driver:
 
@@ -139,5 +144,5 @@ Internal driver:
 Acceptance target:
 
 - The docs name the real current state, not a stale pre-ABI state.
-- The next implementation pass adds only copied item metadata ingestion above VT, not drawing.
+- The next implementation pass closes the acquisition boundary first, not item ingestion.
 - No false seam is added for graphics-local publication, payload decoding, or render-derived geometry.

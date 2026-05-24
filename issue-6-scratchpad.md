@@ -112,7 +112,7 @@ Reference files:
 - A strong retained row owner model through terminal page/page-list truth.
 - Graphics references borrow retained row location truth from terminal ownership rather than inventing a parallel graphics row model.
 - A public C seam for kitty graphics inspection.
-- More mature lifetime and borrowed-handle publication patterns than Howl currently has.
+- A more mature publication/acquisition story than Howl currently has.
 - A useful shape reference for publication and owner split.
 - Not a literal copy target for Howl internals.
 
@@ -134,13 +134,22 @@ Reference files:
 - Full-page upward movement is retained honestly.
 - Below-page retained anchor truth now exists.
 - Margin-region clipping for fully enclosed physical placements now exists.
-- Internal graphics publication contract now exists below the ABI.
+- A public graphics ABI now exists for:
+  - graphics meta
+  - indexed image query
+  - indexed placement query
+  - payload copy
+  - cell-pixel-size input
+- `howl-render` now consumes graphics publication metadata only and forces full damage when that metadata changes.
+- The graphics publication contract is explicit, but still conservative.
 - `a=T` now works for the supported physical direct-upload subset.
 
 ### Howl Still Does Not Have
 
-- A public graphics ABI.
-- A public graphics publication/lifetime contract in C.
+- A graphics-local publication key proved to advance only on graphics-local mutation.
+- A completed caller-owned acquisition path that pairs visible surface publication with graphics publication in the real host seam.
+- Item-level image/placement ingestion above VT.
+- Any truthful drawing path above VT.
 - Virtual/placeholder placement truth.
 - Relative placement truth.
 - Non-`t=d` media.
@@ -154,7 +163,11 @@ Correction after the first above-VT render slice:
   - it carries graphics publication metadata through render VT publication input
   - it forces full damage when graphics publication changes
   - it does not yet ingest images, placements, or payload bytes
-- Remaining missing work above VT is now item-level render ingestion and later rendering, not the initial public ABI itself.
+- But that slice does not yet close the real host acquisition boundary:
+  - the real host caller still needs to acquire graphics meta alongside the copied VT surface
+  - the host/render publish seam still needs to carry that truth cleanly through the shipped contract
+- Therefore the next truthful checkpoint is not item ingestion yet.
+- The next truthful checkpoint is to close the acquisition boundary first.
 
 ## Exact Goal
 
@@ -171,6 +184,7 @@ That means:
 - Render does not invent behavior above VT.
 - Hosts do not reach around the ABI.
 - The first graphics ABI must describe only retained truth that VT already owns and proves.
+- Above-VT progress stops whenever the acquisition/publication boundary is weaker than the truth it claims to carry.
 
 ## Exact Howl Graphics Target
 
@@ -497,7 +511,7 @@ ABI readiness review result:
 - VT truth is now substantially repaired for the current supported physical subset.
 - The public graphics ABI checkpoint has landed.
 - The first render-side metadata/publication-only consumer checkpoint has landed.
-- The next blocker is the coherence and ownership rule for item-level ingestion above VT, not whether a first public ABI should exist.
+- The next blocker is the real acquisition boundary above VT, not whether a first public ABI should exist.
 
 When public ABI work begins, the smallest honest first ABI must:
 
@@ -531,17 +545,19 @@ Exact current pairing rule:
 
 Current answer from the latest render-facing scrutiny round:
 
-- Smallest next slice:
-  `howl-render` publication-scoped image/placement metadata ingestion only.
-- Why:
-  - VT already exports truthful item metadata.
-  - Render already consumes graphics publication metadata.
-  - Drawing would force unresolved z/clipping/viewport/raster policy too early.
-  - Payload-byte ingestion still has no honest render consumer.
-- Required caution:
-  - current graphics publication is conservative and invalidates on terminal dirty-generation changes, not only graphics-local changes
-  - that is acceptable for metadata-only ingestion, but must be stated explicitly so a later pass does not mistake it for a graphics-local cache key
-  - placement index order must not be treated as paint order
+- We are not ready for item-level ingestion yet.
+- Why not:
+  - current graphics publication is still conservative and invalidates on terminal dirty-generation changes, not only graphics-local changes
+  - the real host caller has not yet paired `copy_surface()` with `query_graphics_meta()` as one coherent acquisition attempt
+  - the host/render publish seam must carry that paired truth through the shipped contract before render can honestly retain copied graphics items
+- Therefore the next truthful checkpoint is:
+  1. fix the host/render publish contract drift if any exists
+  2. make the real host acquisition seam query graphics meta during surface acquisition
+  3. prove caller-owned retry on invalid graphics publication
+  4. only then begin copied image/placement metadata ingestion above VT
+- Rule:
+  - slow progress is preferred over fake progress
+  - stop above-VT expansion whenever the acquisition boundary is weaker than the claimed truth
 
 6. Unsupported-action rejection.
    - Reject unsupported scope explicitly instead of partially accepting it.
