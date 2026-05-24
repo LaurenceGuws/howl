@@ -91,6 +91,127 @@ Reference files:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 
+## Clear Comparison
+
+### Kitty Has
+
+- VT is the source of truth for kitty graphics lifecycle.
+- Main and alternate screens have separate graphics owners.
+- Physical placements are retained terminal truth, not a render cache.
+- Full-page upward scroll moves placements into retained above-screen state.
+- Full-page downward scroll moves placements downward and can retain them below the page.
+- Margin-region scroll mutates retained placement truth with clipping.
+- Full-screen clear deletes visible placements.
+- `a=T` is real transmit-and-display, not a fake alias for upload.
+- Placement replies include placement id when `p != 0`.
+- Chunked transmit-and-display depends on first-command placement metadata surviving until completion.
+- Virtual placements, placeholder-driven behavior, relative placements, and animation are real parts of Kitty, but are not required for Howl v1.
+
+### Ghostty Has
+
+- A strong retained row owner model through terminal page/page-list truth.
+- Graphics references borrow retained row location truth from terminal ownership rather than inventing a parallel graphics row model.
+- A public C seam for kitty graphics inspection.
+- More mature lifetime and borrowed-handle publication patterns than Howl currently has.
+- A useful shape reference for publication and owner split.
+- Not a literal copy target for Howl internals.
+
+### Howl Has Now
+
+- `howl-vt` owns graphics truth.
+- Main and alternate screens now own separate graphics state.
+- Reset clears graphics truth.
+- Placement replacement semantics are now honest.
+- Unsupported subset is now rejected explicitly.
+- Physical placement truth now includes:
+  - image identity
+  - placement identity
+  - row-anchor truth
+  - crop truth
+  - offsets
+  - requested extents
+  - effective extents
+- Full-page upward movement is retained honestly.
+- Below-page retained anchor truth now exists.
+- Margin-region clipping for fully enclosed physical placements now exists.
+- Internal graphics publication contract now exists below the ABI.
+- `a=T` now works for the supported physical direct-upload subset.
+
+### Howl Still Does Not Have
+
+- A public graphics ABI.
+- A public graphics publication/lifetime contract in C.
+- Virtual/placeholder placement truth.
+- Relative placement truth.
+- Non-`t=d` media.
+- Compression.
+- Animation/frame publication in the eventual ABI target.
+
+Correction after the first above-VT render slice:
+
+- The public graphics ABI now exists for graphics meta, indexed image query, indexed placement query, payload copy, and cell-pixel-size input.
+- The first `howl-render` consumer slice is landed and metadata-only:
+  - it carries graphics publication metadata through render VT publication input
+  - it forces full damage when graphics publication changes
+  - it does not yet ingest images, placements, or payload bytes
+- Remaining missing work above VT is now item-level render ingestion and later rendering, not the initial public ABI itself.
+
+## Exact Goal
+
+Howl should become better than both references in one specific way:
+
+- Kitty-level lifecycle honesty.
+- Ghostty-level publication discipline.
+- TigerBeetle-level skepticism about shipping false seams.
+
+That means:
+
+- VT remains the source of truth.
+- Render translates VT truth to rendered output.
+- Render does not invent behavior above VT.
+- Hosts do not reach around the ABI.
+- The first graphics ABI must describe only retained truth that VT already owns and proves.
+
+## Exact Howl Graphics Target
+
+Public graphics ABI work starts only after VT truth is complete for the currently supported subset.
+
+When ABI work begins, the first public graphics product should expose only this exact subset:
+
+- direct payload medium `t=d`
+- physical cursor-anchored placements only
+- actions `t`, `T`, `p`, `d`
+- image ids and image numbers
+- active-screen retained image metadata
+- active-screen retained physical placement metadata
+- retained payload bytes exactly as stored by VT
+- row-anchor truth, including off-screen retained states
+- crop truth
+- offsets
+- requested extents
+- effective extents
+- publication through an explicit graphics publication contract
+
+The first public graphics product should explicitly omit:
+
+- placeholders / `U=1`
+- relative placements `P/Q/H/V`
+- decoded/render-ready image publication
+- non-`d` media
+- compression
+- animation control/composition
+- render-derived geometry
+
+## Drive Rule
+
+When a checkpoint is ambiguous, decide by asking three direct questions:
+
+1. Is this VT-owned truth or render-owned translation?
+2. Does Kitty already require this behavior for the subset we claim to support?
+3. Would exporting this now create a false ABI seam?
+
+If any answer is bad, do not ship the checkpoint.
+
 No-guessing rules:
 
 - Read the live owner files before each checkpoint.
@@ -354,6 +475,56 @@ Boundary warning:
 - do not solve this by asking render/host to provide post-scroll crop truth
 - do not leak render viewport/output geometry into VT owner state
 - if exact downward clipping needs a new resolved-geometry owner inside `howl-vt`, make that owner explicit and keep it fully below the ABI
+
+Current blocker after reassessing `a=T`:
+
+- `work-not-clear` for honest `a=T` support even after the current VT-truth repairs.
+- Why it is still blocked:
+  - current upload truth does not retain enough placement metadata across chunked `a=T`
+  - current placement reply semantics are not yet Kitty-honest for non-zero `p`
+  - current VT path does not implement the required default cursor movement after transmit-and-display placement
+- Rule from this point:
+  do not land `a=T` until those three prerequisites are repaired explicitly.
+
+Next smaller prerequisite checkpoints before `a=T` can land:
+
+1. placement reply semantics for non-zero `p`
+2. retained upload metadata shape for chunked `a=T`
+3. default cursor movement semantics for accepted physical placement
+
+ABI readiness review result:
+
+- VT truth is now substantially repaired for the current supported physical subset.
+- The public graphics ABI checkpoint has landed.
+- The first render-side metadata/publication-only consumer checkpoint has landed.
+- The next blocker is the coherence and ownership rule for item-level ingestion above VT, not whether a first public ABI should exist.
+
+When public ABI work begins, the smallest honest first ABI must:
+
+- expose only the currently supported physical subset
+- expose retained payload bytes exactly as stored, not decoded pixels
+- omit placeholders, relative/virtual placements, non-`d` media, compression, animation, and render-derived geometry
+- tie publication explicitly to a graphics publication rule, preferably the existing `surface_snapshot_seq` only if graphics publication is proven to cohere with that contract
+
+Immediate blockers before the next render ingestion pass can begin:
+
+1. state the exact rule for pairing VT surface publication with graphics item publication
+2. decide the owner of that pairing above VT without bypassing the C ABI boundary
+3. keep the next slice metadata-only: copied image and placement metadata, no payload bytes, no decoded pixels, no render-derived geometry
+
+Current answer from the latest render-facing scrutiny round:
+
+- Smallest next slice:
+  `howl-render` publication-scoped image/placement metadata ingestion only.
+- Why:
+  - VT already exports truthful item metadata.
+  - Render already consumes graphics publication metadata.
+  - Drawing would force unresolved z/clipping/viewport/raster policy too early.
+  - Payload-byte ingestion still has no honest render consumer.
+- Required caution:
+  - current graphics publication is conservative and invalidates on terminal dirty-generation changes, not only graphics-local changes
+  - that is acceptable for metadata-only ingestion, but must be stated explicitly so a later pass does not mistake it for a graphics-local cache key
+  - placement index order must not be treated as paint order
 
 6. Unsupported-action rejection.
    - Reject unsupported scope explicitly instead of partially accepting it.
