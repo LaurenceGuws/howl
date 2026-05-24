@@ -5,164 +5,70 @@ Source:
 - `feature-gap-scratchpad.md`
 - `issue-6-scratchpad.md`
 
-Current comparison and target are pinned in `issue-6-scratchpad.md` under:
+Issue 6:
 
-- `Clear Comparison`
-- `Exact Goal`
-- `Exact Howl V1 Graphics Target`
+- Kitty graphics truth is exported above VT, but the next blocker is still inside VT owner truth.
 
-Issue 6: Kitty graphics state is now exportable from VT, but higher consumers only partially ingest it.
+Current state:
 
-First rule:
+- VT owns the supported physical subset and exports graphics meta, indexed image query, indexed placement query, payload copy, and cell pixel size.
+- Host pairs `copy_surface()` with `query_graphics_meta()` and retries on stale item publication.
+- Render ingests copied image/placement metadata and proves replacement follows graphics publication truth.
+- No drawing is implemented.
 
-- Treat this as a staged VT-truth repair first, not “add an ABI now”.
+Active blocker:
 
-Required outcome:
+- Current VT truth is still false for implicit-size placements.
+- `effective_columns` / `effective_rows` are not Kitty-honest for:
+  - `c=0,r=0`
+  - `c>0,r=0`
+  - `c=0,r>0`
+- That false extent already affects VT-owned mutation behavior, not just ABI publication.
 
-- Do not ship a fake kitty graphics ABI over false VT truth.
-- First repair VT owner truth for the supported Kitty graphics subset.
-- Only after VT truth is honest, define the smallest ABI-visible graphics contract.
-- Keep ownership aligned: `howl-vt` owns graphics truth, later consumers above VT use only the C ABI seam.
+Current rule:
 
-Primary evidence:
+- `copy_surface()` and graphics item queries are separate publications.
+- Surface uses `snapshot_seq`.
+- Graphics items use `publication_seq` from `query_graphics_meta()`.
+- If any item query rejects the publication, restart the whole acquisition attempt.
 
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/kitty/state.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
-- `howl-vt/src/kitty/apply.zig`
-- `howl-vt/src/kitty/protocol.zig`
-- `howl-vt/src/terminal.zig`
-- `howl-vt/src/control/mode.zig`
-- `howl-vt/include/howl_vt.h`
-- `howl-vt/src/ffi.zig`
+Next checkpoint:
 
-Reference against it:
+`VT Destination-Extent Truth`
 
-- `AGENTS.md`
-- `utils/dev_references/terminals/ghostty/src/lib_vt.zig:244-259`
-- `utils/dev_references/terminals/ghostty/src/terminal/c/terminal.zig:577-606`
-- `utils/dev_references/terminals/ghostty/src/terminal/c/kitty_graphics.zig`
-- `utils/dev_references/terminals/ghostty/include/ghostty/vt/kitty_graphics.h`
-- `utils/dev_references/terminals/kitty/kitty/vt-parser.c`
-- `utils/dev_references/terminals/kitty/kitty/screen.c`
-- `utils/dev_references/terminals/kitty/kitty/screen.h`
-- `utils/dev_references/terminals/kitty/tools/tui/loop/terminal-state.go`
-- `utils/official_docs/kitty/graphics-protocol.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+What must be true:
 
-No guessing allowed:
+- VT must own truthful current destination extent for implicit-size placements.
+- Above-VT code must be able to derive viewport inclusion and clipping without guessing.
+- No render-owned geometry may leak back into VT truth.
 
-- Read `AGENTS.md`
-- Read `reference-index.md`
-- Read `feature-gap-scratchpad.md`
-- Read the live owner files for VT kitty graphics truth, reset behavior, alt-screen behavior, and publication behavior.
-- Read the Ghostty kitty graphics C seam before proposing any ABI shape.
-- Read Kitty source/docs before proposing lifecycle semantics.
-- Run a TigerBeetle-style skepticism pass against any proposed shape.
-- Use `AGENTS.md` boundary rules with zero guessing.
-- If the correct owner seam cannot be named exactly, stop and report `work-not-clear`.
+Contract direction:
 
-Current status:
+- Keep requested `columns` / `rows`.
+- Add or redefine current resolved destination truth explicitly, likely:
+  - `dest_left_cell_px`
+  - `dest_top_cell_px`
+  - `dest_right_cell_px`
+  - `dest_bottom_cell_px`
+  - `dest_grid_columns`
+  - `dest_grid_rows`
 
-- VT truth for the current supported physical subset is substantially repaired.
-- The public C graphics ABI now exists for graphics meta, indexed image query, indexed placement query, payload copy, and cell pixel size.
-- `howl-render` now consumes graphics publication metadata and copied image/placement metadata above VT.
-- The real host caller now:
-  - pairs copied VT surface truth with queried graphics meta
-  - retries whole acquisition on stale graphics item publication
-- `howl-render` now proves retained replacement/invalidation for copied graphics item metadata from publication truth.
-- The next blocker is not "start ABI work" anymore.
-- The next blocker is not copied metadata ingestion anymore.
-- The next blocker is whether any honest pre-drawing render checkpoint remains before actual drawing questions.
+Proof target:
 
-Hard constraints for the next implementation pass:
-
-- Do not export `kitty.global.graphics` directly.
-- Do not copy Ghostty's borrowed-handle seam literally unless Howl's owner truth matches it.
-- Do not claim render-ready image bytes while VT only owns retained base64 payloads.
-- Do not silently accept unsupported Kitty graphics actions; reject them explicitly once scope is defined.
-- Do not make `howl-render` reach into `howl-vt` through a Zig-module shortcut; above-VT consumers still use only copied C ABI truth.
-- Do not assume graphics publication is graphics-local until the contract says so explicitly.
-- Do not assume graphics item array order is paint order.
-
-Required research/decomposition before code:
-
-1. Define the supported Kitty graphics subset for Howl right now.
-2. State which lifecycle semantics from Kitty are in scope for that subset.
-3. Identify the smallest owner-truth repairs required inside `howl-vt` before any ABI export.
-4. Decide whether the eventual ABI exports retained payload bytes as stored, or whether VT must first own a normalized representation.
-5. Decide whether graphics publication will be tied to visible surface publication `snapshot_seq`, or a separate graphics publication sequence.
-
-If implementation is attempted, the first code changes must be VT-truth repair only:
-
-1. per-buffer/main-vs-alt graphics ownership
-2. reset semantics
-3. alt-screen semantics
-4. supported scroll/text-mutation coupling
-5. placement replacement semantics
-6. explicit rejection for unsupported graphics actions
-
-Current next step:
-
-1. keep the current supported physical subset fixed
-2. keep the current above-VT slice copied-metadata-only
-3. keep the exact coherence rule between VT surface publication and graphics item publication explicit
-4. repair VT destination-extent truth for implicit-size placements before any more above-VT graphics work
-
-Current blocker before that pass:
-
-- `current.txt` and `issue-6-scratchpad.md` must reflect the now-landed copied item retention/replacement proof
-- the next slice still must not treat query index as stable identity or paint order
-- the next slice still must not invent viewport mapping, geometry resolution, or draw order from copied metadata alone
-- current VT truth itself is still false for implicit-size placements
-- `effective_columns` / `effective_rows` are not Kitty-honest for `c`-only, `r`-only, or fully default placements
-- this false extent already contaminates VT-owned mutation behavior, not just ABI publication
-- any next slice must still omit render-derived geometry, decoded-image claims, and payload ingestion
-
-Current coherence rule:
-
-- `howl_vt_terminal_copy_surface()` and graphics item queries are separate publications.
-- Surface publication is keyed by `snapshot_seq` from the visible surface copy path.
-- Graphics item queries are keyed by `publication_seq` returned by `howl_vt_terminal_query_graphics_meta()`.
-- Graphics publication is conservative today: any terminal dirty-generation change can advance it, not only graphics-local mutation.
-- A caller that wants one coherent pair must:
-  1. copy the VT surface snapshot
-  2. query graphics meta
-  3. use that returned graphics `publication_seq` for image/placement/payload item queries
-  4. if any graphics item query fails with invalid publication, restart acquisition rather than mixing generations
-- Above-VT consumers still consume only copied C-ABI truth. They do not reach into `howl-vt` directly through Zig-module structure.
-
-Execution plan for the next real pass:
-
-1. Re-state the supported Kitty graphics subset explicitly before editing.
-2. Accept the design-round result: current VT extent truth is not sufficient already.
-3. Repair VT-owned resolved destination extent for:
+1. Kitty-honest resolution for:
    - `c=0,r=0`
    - `c>0,r=0`
    - `c=0,r>0`
    - `c>0,r>0`
-   - with non-zero cell offsets
-4. Decide the exact VT-owned contract for resolved destination truth:
-   - current grid extent
-   - current destination pixel edges in anchor-cell space
-   - and whether `effective_columns` / `effective_rows` are redefined or replaced
-4. Use the reference bars in this order:
-   - Kitty is the quality bar.
-   - Ghostty is the integration bar.
-   - Alacritty is the speed and simplicity bar.
-   - TigerBeetle is the final say and mandates style.
-5. Prove the VT truth repair first.
-6. Only after that return to ABI/render publication questions.
+2. Non-zero offsets.
+3. Cursor movement uses resolved grid extent.
+4. Viewport inclusion/clipping derives from resolved truth without guesses.
+5. No render-owned geometry leaks into VT.
 
-Internal driver:
+Hard constraints:
 
-- Use `issue-6-scratchpad.md` as the detailed checkpoint queue.
-- `current.txt` stays as the narrow active-loop summary only.
-
-Acceptance target:
-
-- The docs name the real current state, not a stale pre-ABI state.
-- The next implementation pass is a VT owner-truth repair, not another render checkpoint.
-- No false seam is added for graphics-local publication, payload decoding, or render-derived geometry.
-- The next coding pass starts only after the design questions above have written answers.
+- Kitty is the quality bar.
+- Ghostty is the integration bar.
+- Alacritty is the speed and simplicity bar.
+- TigerBeetle is the final say and mandates style.
+- No false seam for graphics-local publication, paint order, viewport mapping, or render-derived geometry.
