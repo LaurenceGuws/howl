@@ -1,0 +1,16 @@
+[submodule "howl-pty"]
+	path = howl-pty
+	url = git@github.com:LaurenceGuws/howl-pty.git
+	branch = main
+[submodule "howl-vt"]
+	path = howl-vt
+	url = git@github.com:LaurenceGuws/howl-vt.git
+	branch = main
+[submodule "howl-render"]
+	path = howl-render
+	url = git@github.com:LaurenceGuws/howl-render.git
+	branch = main
+[submodule "howl-linux-host"]
+	path = howl-linux-host
+	url = git@github.com:LaurenceGuws/howl-linux-host.git
+	branch = main
