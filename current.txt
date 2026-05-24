@@ -2,41 +2,39 @@ Current Task
 
 Source: `feature-gap-scratchpad.md`
 
-Issue 5: Dynamic terminal color state never becomes render truth.
+Issue 6: Kitty graphics state is implemented in VT but not exportable above VT.
 
 Required outcome:
 
-- Carry VT-owned dynamic color state through the product boundary so render/host use VT truth.
-- Replace render-local fixed default fg/bg/cursor color assumptions where VT owns the live state.
-- Keep ownership aligned: VT owns dynamic color truth, render consumes it, host presents it.
+- Carry VT-owned kitty graphics state through the product boundary so it can exist above VT.
+- Define the smallest ABI-visible graphics contract and lifecycle relative to visible surface publication.
+- Keep ownership aligned: VT owns graphics truth, render consumes it, host presents it.
 
 Primary evidence:
 
-- `howl-vt/src/control/osc_color.zig`
-- `howl-vt/src/host/state.zig`
+- `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/kitty/state.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
 - `howl-vt/include/howl_vt.h`
-- `howl-render/src/frame/input.zig`
-- `howl-render/src/frame/queue.zig`
-- `howl-render/include/howl_render.h`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
 
 Reference against it:
 
 - `AGENTS.md`
-- `utils/dev_references/terminals/ghostty/src/terminal/c/render.zig:312-360`
-- `utils/dev_references/terminals/ghostty/src/renderer/generic.zig:2046-2085`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:113-150`
+- `utils/dev_references/terminals/ghostty/src/lib_vt.zig:244-259`
+- `utils/dev_references/terminals/ghostty/src/terminal/c/terminal.zig:577-606`
 
 No guessing allowed:
 
 - Read `AGENTS.md`
 - Read `reference-index.md`
 - Read `feature-gap-scratchpad.md`
-- Read the live owner files for VT dynamic color truth, ABI export, and render ingestion.
+- Read the live owner files for VT kitty graphics truth, ABI export candidates, and host/render ingress.
 - Use `AGENTS.md` boundary rules with zero guessing.
 - If the correct owner seam cannot be named exactly, stop and report `work-not-clear`.
 
 Acceptance target:
 
-- Dynamic VT-owned fg/bg/cursor-related colors are no longer visual no-ops above VT.
-- Render consumes VT color truth instead of fixed local defaults where VT owns state.
+- Kitty graphics state is no longer trapped below VT with no product boundary above it.
+- The graphics ABI contract is explicit about retained state and visible lifecycle.
 - Control flow remains centralized and ownership stays explicit.
