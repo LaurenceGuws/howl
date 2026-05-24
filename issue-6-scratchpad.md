@@ -555,12 +555,59 @@ Current answer from the latest render-facing scrutiny round:
   - copied item metadata must not treat query index as stable identity or paint order
   - copied item metadata alone still does not define draw order, viewport mapping, or render-owned geometry meaning
 - Therefore the next truthful checkpoint is:
-  1. answer whether any honest pre-drawing scene/raster checkpoint exists at all
-  2. if yes, prove it before integration
-  3. if no, stop and do a fresh design round before drawing work
+  1. accept that no honest pre-drawing checkpoint remains
+  2. answer the draw-semantics gate before any drawing work
+  3. only then start code again
+
+Next design-round questions before any more coding:
+
+1. Kitty quality bar:
+   - For the supported physical subset, what exact visible ordering and clipping semantics must the next render-facing checkpoint preserve?
+   - What would count as a second-best shortcut against Kitty truth here?
+2. Ghostty integration bar:
+   - What is the smallest integration shape for carrying retained graphics truth above VT without reopening a borrowed-handle or direct-owner seam that Howl does not actually own?
+   - Which Ghostty integration ideas are shape references only and must not be copied literally?
+3. Alacritty speed/simplicity bar:
+   - What is the simplest host/render control spine that can carry the next graphics truth without adding a new layer or speculative cache?
+   - What should remain out of scope to keep the next pass small and bounded?
+4. TigerBeetle final-say/style bar:
+   - What assertions and proof obligations must exist before we claim any pre-drawing or drawing-adjacent checkpoint?
+   - If the next step cannot be stated as a small, explicit, bounded owner checkpoint, should we stop and mark `work-not-clear`?
+
+Smallest subagent plan for this round:
+
+1. Derive subagent:
+   - exact task: propose the smallest honest next checkpoint from the questions above
+   - inputs: `AGENTS.md`, `reference-index.md`, `loop.txt`, `current.txt`, this scratchpad, live Howl VT/render/host files, Kitty/Ghostty/Alacritty/TigerBeetle reference paths
+   - output: checkpoint name, owner, exact shape, exact proof list, exact stop condition
+   - constraints: research-only, no code changes, no new ABI, no new layer, no Zig bypass
+2. Critique subagent:
+   - exact task: attack that checkpoint for false seams, guessed geometry, guessed ordering, weak proof, or style violations
+   - same pinned inputs
+   - output: severity-ordered findings, single must-close blocker, yes/no on starting code
+   - constraints: research-only, no code changes
+3. Main agent:
+   - accept/reject/reset from those two outputs
+   - write the chosen checkpoint into this scratchpad
+   - only then start proof-first coding
 - Rule:
   - slow progress is preferred over fake progress
   - stop above-VT expansion whenever the acquisition boundary is weaker than the claimed truth
+
+Accepted answer from the latest derive/critique round:
+
+- Recommended next checkpoint name:
+  `Graphics Draw-Semantics Gate`
+- Honest pre-drawing checkpoint still exists:
+  no
+- Why:
+  - VT item queries are publication-local and index order is unstable
+  - Kitty requires explicit draw-order semantics
+  - the remaining unresolved questions are already draw-order, viewport inclusion, and clipping questions
+- Single must-close blocker:
+  - state exactly how Howl derives Kitty-correct paint order from copied data without relying on query index order, and decide whether the current ABI fields are sufficient for that contract
+- Rule from here:
+  - do not build a scene, cache, or drawing pass until draw-order, viewport inclusion, and clipping contracts are named explicitly from copied ABI truth
 
 6. Unsupported-action rejection.
    - Reject unsupported scope explicitly instead of partially accepting it.
