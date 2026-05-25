@@ -2,36 +2,21 @@ Current Task
 
 Source:
 
-- `build-test-architecture-migration-scratchpad.md`
+- host graphics crash repro from deterministic Kitty image send path
 
 Promoted Item:
 
-- Add VT ABI verification.
-
-Targets:
-
-- `/home/home/personal/projects/howl/howl-vt/build.zig`
-- exact VT ABI test root chosen during implementation
+- Add a host regression surface for the Kitty graphics crash repro and use it to fix the crash.
 
 Required Output:
 
-- `test:abi` exists in `howl-vt`.
-- Its proof statement explicitly names the shipped VT C ABI contract being verified.
-
-Depends on:
-
-- `build-test-architecture-spec.md`
-- `build-test-verification-ledger.md`
-
-Out of scope:
-
-- benchmark reclassification
-- broader package taxonomy renames outside the VT ABI surface
+- A host-owned regression harness exists for the deterministic Kitty graphics image repro.
+- The regression fails on the current crash path until fixed.
+- The crash is fixed and the regression passes.
 
 Hard Constraints:
 
-- Keep VT as an ABI product package.
-- Treat the shipped C ABI as the product under test.
-- Bias VT owner split and surface shape to Ghostty first where applicable, while keeping host/runtime posture compatible with Alacritty-style orchestration and TigerBeetle pressure for bounds/assertions/directness.
-- Direct cutover only. No compatibility aliases.
+- Use a real Zig-owned repro/harness, not the Python helper as proof.
+- Keep the harness owner-true to the host integration boundary.
+- Use direct assertions and deterministic inputs.
 - No ABI-boundary bypass.

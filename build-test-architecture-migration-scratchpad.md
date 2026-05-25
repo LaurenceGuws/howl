@@ -427,7 +427,7 @@ Proof of done:
 Targets:
 
 - `/home/home/personal/projects/howl/howl-render/build.zig`
-- `/home/home/personal/projects/howl/howl-render/src/non_prod.zig`
+- `/home/home/personal/projects/howl/howl-render/src/test_unit.zig`
 
 Depends on:
 
@@ -449,7 +449,7 @@ Proof of done:
 Targets:
 
 - `/home/home/personal/projects/howl/howl-render/build.zig`
-- `/home/home/personal/projects/howl/howl-render/src/non_prod.zig`
+- `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig`
 
 Depends on:
 
@@ -469,7 +469,8 @@ Proof of done:
 Targets:
 
 - `/home/home/personal/projects/howl/howl-render/build.zig`
-- `/home/home/personal/projects/howl/howl-render/src/non_prod.zig`
+- `/home/home/personal/projects/howl/howl-render/src/test_unit.zig`
+- `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig`
 
 Depends on:
 

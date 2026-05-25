@@ -63,6 +63,24 @@ Purpose:
 - The workspace root must not install product artifacts of its own.
 - The workspace root must not define a default `run` surface.
 
+## Workspace-Root Aggregate Audit Surface
+
+- Root aggregate steps are an audit map over package-owned public steps only.
+- Each root aggregate below is stable by package mapping: if a package-local surface changes, the root mapping and this document must change in the same slice.
+- Root aggregate steps do not upgrade missing package-local coverage into implied proof. If a category is exposed by only one package today, the root aggregate remains intentionally partial.
+
+| Root step | Stable package mapping | Explicit proof statement |
+| --- | --- | --- |
+| `check` | `howl-pty:check`, `howl-vt:check`, `howl-render:check`, `howl-linux-host:check` | Proves only that each package's canonical non-running audit/build surface compiles from the workspace root; it is not runtime proof and does not create a root install or run path. |
+| `test` | `howl-pty:test`, `howl-vt:test`, `howl-render:test`, `howl-linux-host:test` | Proves only the union of package-local accepted test-family aggregates currently exposed by each package. It does not imply that every canonical family exists in every package. |
+| `test:unit` | `howl-pty:test:unit`, `howl-vt:test:unit`, `howl-render:test:unit`, `howl-linux-host:test:unit` | Proves owner-local logic surfaces only, by delegating directly to each package's unit step. |
+| `test:abi` | `howl-pty:test:abi`, `howl-vt:test:abi`, `howl-render:test:abi` | Proves the shipped product-package C ABI contracts only. The host package is intentionally absent because it does not own a shipped product ABI. |
+| `test:integration` | `howl-linux-host:test:integration` | Proves currently exposed cross-package behavior through shipped ABI seams only where the host harness owns that integration proof. |
+| `test:regression` | `howl-vt:test:regression` | Proves only the currently exposed regression suite at the workspace root. Absence of other package mappings is an explicit proof gap, not an implied alias or fallback. |
+| `fuzz` | `howl-vt:fuzz` | Runs only the currently exposed fuzz search surface. This is complementary evidence, not correctness proof for packages that do not expose fuzz here. |
+| `stress` | `howl-linux-host:stress:rain`, `howl-linux-host:stress:rain:ascii`, `howl-linux-host:stress:rain:mixed`, `howl-linux-host:stress:rain:visual` | Runs only the currently exposed named stress harnesses. The root aggregate is a convenience auditor over named stress surfaces, not a new verification category. |
+| `benchmark` | `howl-vt:benchmark:m7_baseline`, `howl-render:benchmark:render` | Runs only the currently exposed named benchmarks. The root aggregate is measurement orchestration only and never proof of correctness. |
+
 ## Canonical Build-Step Taxonomy
 
 Only the following public step families are accepted.
