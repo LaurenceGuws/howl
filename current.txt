@@ -2,125 +2,36 @@ Current Task
 
 Source:
 
-- `feature-gap-scratchpad.md`
-- `issue-6-scratchpad.md`
-- `issue-6-vt-readiness-scratchpad.md`
+- `build-test-architecture-migration-scratchpad.md`
 
-Issue 6:
+Promoted Item:
 
-- Kitty graphics truth is now exported, retained, prepared, decoded, cached, and drawn for the supported subset. The remaining unsupported graphics gaps will now be handled sequentially.
+- Add VT ABI verification.
 
-Current state:
+Targets:
 
-- VT owns the supported physical subset and exports graphics meta, indexed image query, indexed placement query, payload copy, and cell pixel size.
-- Host pairs `copy_surface()` with `query_graphics_meta()` and retries on stale item publication.
-- Render ingests copied image/placement metadata and proves replacement follows graphics publication truth.
-- Render prepare now consumes retained graphics images/placements into prepared graphics records with visibility, clipping, source-rect adjustment, z-band classification, and stable ordering.
-- Render compose now consumes prepared graphics bands at the correct insertion points.
-- Raw `f=24` / `f=32` and `f=100` payload handoff, decode/cache, and draw consumption are landed.
+- `/home/home/personal/projects/howl/howl-vt/build.zig`
+- exact VT ABI test root chosen during implementation
 
-Active blocker:
+Required Output:
 
-- VT owner truth is repaired and exported.
-- Host acquisition preserves that truth.
-- Render retention and prepare preserve and consume that truth.
-- Render compose now consumes `PreparedSurface.graphics` ordering truth.
-- Raw and PNG decode/cache seams now make the supported subset draws real.
-- The supported subset path is landed.
-- Remaining unsupported gaps will now be handled in fixed order.
+- `test:abi` exists in `howl-vt`.
+- Its proof statement explicitly names the shipped VT C ABI contract being verified.
 
-Current rule:
+Depends on:
 
-- `copy_surface()` and graphics item queries are separate publications.
-- Surface uses `snapshot_seq`.
-- Graphics items use `publication_seq` from `query_graphics_meta()`.
-- If any item query rejects the publication, restart the whole acquisition attempt.
+- `build-test-architecture-spec.md`
+- `build-test-verification-ledger.md`
 
-Next checkpoint:
+Out of scope:
 
-`Virtual/Placeholder Placements`
+- benchmark reclassification
+- broader package taxonomy renames outside the VT ABI surface
 
-Accepted landed state:
+Hard Constraints:
 
-- `howl-render/src/frame/surface_text.zig`, `SurfaceText.prepareSurface()`, owns prepared graphics consumption and raw decode/cache.
-- `howl-render/src/frame/graphics_viewport.zig` remains a leaf helper only.
-- `surface.PrepareLayout.grid_px` is landed.
-- `surface.PreparedSurface.graphics` is landed.
-- `howl-render/src/frame/surface_buffer.zig:compose()` now consumes prepared graphics bands in the accepted order.
-- Host/render publish-slot commit now carries flat `graphics_payload_bytes` in `graphics_images` order.
-- `queue.PublicationSource` retains committed payload bytes.
-- `SurfaceText` owns raw and PNG decode/cache keyed by content identity.
-- `surface_buffer` consumes cached rasters for prepared graphics draws.
-
-Known current state:
-
-- VT exports:
-  - `dest_left_cell_px`
-  - `dest_top_cell_px`
-  - `dest_right_cell_px`
-  - `dest_bottom_cell_px`
-  - `dest_grid_columns`
-  - `dest_grid_rows`
-- Host preserves that truth through paired acquisition and retry.
-- Render preserves that truth through ABI mirrors and retained publication metadata.
-
-Accepted landed follow-up:
-
-- `f=100` now decodes inside the existing `SurfaceText` decode/cache owner.
-- PNG decode validates metadata width/height and RGBA output size/stride.
-
-Research result:
-
-- Smallest true owner remains `howl-render/src/frame/surface_text.zig`, `SurfaceText`.
-- Exact code seam:
-  - add `100 => decodePngGraphicsRaster(...)` inside `decodeGraphicsRaster()`
-- Smallest honest dependency choice:
-  - wire `stb_image` under `howl-render`
-  - do not decode through `howl-linux-host`
-  - do not introduce a new decoder callback seam
-- PNG decode must validate:
-  - base64 decode success
-  - PNG decode success
-  - decoded width/height match VT metadata
-  - output bytes == `width * height * 4`
-  - stride == `width * 4`
-- Failure behavior:
-  - malformed base64 / PNG / dimension mismatch => `error.InvalidGraphicsPayload`
-
-Remaining queue:
-
-1. `Virtual/Placeholder Placements`
-2. `Non-\`t=d\` Media`
-3. `Compression`
-4. `Animation/Frame Publication`
-
-Why this order:
-
-- placeholders are the next largest behavior gap closest to current placement/render truth
-- non-`t=d` media and compression extend payload transport/decode
-- animation/frame publication comes last because it needs the strongest lifecycle/publication contract
-
-Next code-driving work:
-
-- promote `Virtual/Placeholder Placements`
-- research/code that checkpoint under the same owner/boundary rules
-
-Sub-scratchpad:
-
-- `issue-6-viewport-consumer-sub-scratchpad.md`
-
-VT pressure scratchpad:
-
-- `issue-6-vt-readiness-scratchpad.md`
-
-VT promoted next blocker:
-
-- `Surface Cell Combining Truth`
-
-Hard constraints:
-
-- Kitty is the quality bar.
-- Ghostty is the integration bar.
-- Alacritty is the speed and simplicity bar.
-- TigerBeetle is the final say and mandates style.
-- No false seam for graphics-local publication, paint order, viewport mapping, drawing, scene policy, or render-derived geometry.
+- Keep VT as an ABI product package.
+- Treat the shipped C ABI as the product under test.
+- Bias VT owner split and surface shape to Ghostty first where applicable, while keeping host/runtime posture compatible with Alacritty-style orchestration and TigerBeetle pressure for bounds/assertions/directness.
+- Direct cutover only. No compatibility aliases.
+- No ABI-boundary bypass.
