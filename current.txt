@@ -2,21 +2,27 @@ Current Task
 
 Source:
 
-- host graphics crash repro from deterministic Kitty image send path
+- `graphics-owner-split-strict-scratchpad.md`
+- `loop.txt`
+- `reference-index.md`
+- Kitty protocol docs
+- Ghostty image/render/runtime references
+- TigerBeetle style and architecture references
 
 Promoted Item:
 
-- Add a host regression surface for the Kitty graphics crash repro and use it to fix the crash.
+- Proof/fix live size slice: determine why the live app-icon still presents as a tiny visible spec and fix the first owner-true size/placement seam that is still wrong.
 
 Required Output:
 
-- A host-owned regression harness exists for the deterministic Kitty graphics image repro.
-- The regression fails on the current crash path until fixed.
-- The crash is fixed and the regression passes.
+- We identify the first live seam where the presented app-icon size collapses from the intended placement size to the tiny visible spec.
+- If the seam is wrong, we fix only that seam.
+- Existing replay proofs stay green.
+- The fix remains narrow and owner-true.
 
 Hard Constraints:
 
-- Use a real Zig-owned repro/harness, not the Python helper as proof.
-- Keep the harness owner-true to the host integration boundary.
-- Use direct assertions and deterministic inputs.
-- No ABI-boundary bypass.
+- Prefer touching only the smallest live size/placement seam and directly related proof seams.
+- Do not redesign Kitty semantics, animation/runtime state, or broader graphics architecture.
+- Do not guess from the screenshot; prove the wrong size numerically in the live path first.
+- Rerun the relevant host replay proofs after the fix.
