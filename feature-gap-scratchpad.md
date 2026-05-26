@@ -93,6 +93,9 @@ Rule:
 ## howl-vt
 
 ### 6. Kitty graphics state is implemented in VT but not exportable above VT
+- Status
+  - Closed.
+  - VT graphics truth is now exportable above VT through the shipped ABI and consumed by host/render.
 - Description
   - VT retains kitty graphics images, placements, frames, and uploads, but the shipped ABI exposes only text surface, pending output, clipboard drain, and input encoding. There is no ABI surface for a renderer or host to consume retained graphics state.
 - Complete picture needed
@@ -125,6 +128,9 @@ Rule:
 ## howl-pty
 
 ### 8. Child exit and transport-stop truth are collapsed out of the PTY ABI
+- Status
+  - Closed.
+  - The PTY ABI now carries typed lifecycle/result truth, including active-tab exit/failure distinctions used by the host.
 - Description
   - The PTY owner detects child death and transport outcomes internally, but the shipped ABI reduces wait/read truth to generic booleans and byte counts. Above the seam, host/runtime code cannot distinguish timeout, kick-wake, EOF, child exit, or transport failure, and cannot obtain exit status.
 - Complete picture needed
