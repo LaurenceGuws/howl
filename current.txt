@@ -1,140 +1,68 @@
-# Current Slice: Dirty Metadata Canonicalization
+# Current Slice: Present/Retire Final Contract Research
 
 Owner: workspace root.
 
 Source scratchpad:
 
 - `render-surface-hardening-scratchpad.md`
-- Promoted item: `Slice D: Dirty Metadata Canonicalization`
+- Promoted item: `Slice E: Present/Retire Final Contract`
 
 ## Goal
 
-Canonicalize semantically irrelevant dirty metadata before publication equality and dedupe.
+Decide the final render/host contract for presented-frame identity before any more code is written in this area.
 
-Clean rows do not use `dirty_cols_start` or `dirty_cols_end`. Today those columns can carry arbitrary values and still change `samePublicationSource()` because it compares the arrays byte-for-byte. That makes render source equality depend on meaningless metadata.
+This is a research/design slice, not a coding slice yet. The scratchpad still has a real open question: keep the explicit one-in-flight render-owned presented frame, or move present/retire identity fully to host ownership with a cleaner acknowledgement model.
 
-## Current Bad Shape
+## Current State
 
-Relevant code:
+- Render currently has explicit one-in-flight `presented_frame: ?pipeline.SubmittedFrame` in `queue.zig`.
+- Host currently gates submit until presented-frame retire/ack clears.
+- `retirePresented()` returns the presented snapshot sequence and clears render’s presented state.
+- This was an improvement over implicit/lossy state, but it may still be architecturally muddy.
 
-- `surface_text_ffi.dirtyRowsIn()` validates dirty-row bytes are `0` or `1`.
-- `surface_text_ffi.dirtyColsIn()` duplicates dirty column arrays.
-- `queue.validateDirtySource()` validates dirty rows and preserves the valid dirty-row sentinel `start_col == cols && end_col == 0`.
-- `queue.samePublicationSource()` compares `dirty_rows`, `dirty_cols_start`, and `dirty_cols_end` byte-for-byte.
-- `queue.classifyDirty()` ignores dirty columns on clean rows.
-- Text input also ignores dirty columns on clean rows.
+## What We Need To Know
 
-Problem:
+Research must answer plainly:
 
-- Two publications with identical cells and identical clean dirty rows can compare different solely because clean-row column metadata differs.
+- What does Ghostty’s render/runtime seam imply about who owns present/ack identity?
+- What does Alacritty’s display/window presentation path imply about host-owned presentation state?
+- What does TigerBeetle require for state-machine proof if render keeps one-in-flight identity?
+- Is Howl’s current explicit render-owned `presented_frame` stronger than the references, or just a local patch over a host ownership gap?
+- What exact next code slice should follow, if any?
 
-## Reference-Derived Rule
+## Scope For Research Agents
 
-- Alacritty damage state models damaged vs undamaged lines explicitly; irrelevant bounds on undamaged lines do not become semantic content.
-- TigerBeetle requires canonical state before equality/dedupe; compare only owner-meaningful truth.
-- VT owns dirty-row truth; render owns how its retained publication source canonicalizes irrelevant metadata for equality.
-
-## Hard Scope
-
-Repository to modify:
-
-- `howl-render` only.
-
-Allowed files:
+Read Howl:
 
 - `howl-render/src/frame/queue.zig`
-- `howl-render/src/frame/surface_text_ffi.zig` only if tests or translation require it
-- `howl-render/src/test_abi.zig` only if ABI proof is the smallest proof surface
+- `howl-render/src/frame/surface_text_ffi.zig`
+- `howl-render/src/frame/pipeline.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-render/include/howl_render.h`
 
-Do not edit unless absolutely necessary:
+Read references:
 
-- headers
-- `ffi_types.zig`
-- host repos
-- VT repos
+- `utils/dev_references/terminals/ghostty/src/renderer.zig`
+- `utils/dev_references/terminals/ghostty/src/Surface.zig`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/window.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 
-Forbidden in this slice:
+## Required Output
 
-- No dirty ABI shape change.
-- No VT contract change.
-- No host change.
-- No reinterpretation of dirty-row sentinels.
-- No broad source equality rewrite beyond dirty metadata canonicalization.
+The research round must produce a plain-English rewrite brief with:
 
-## Required Contract
+- current bad shape, if any
+- reference-derived ownership answer
+- whether to keep render-owned one-in-flight presented state
+- whether to replace `retirePresented()` with a host-owned acknowledgement shape
+- smallest acceptable code slice
+- proof matrix for the chosen design
+- explicit rejection criteria for coding workers
 
-Canonicalization rule:
+## Stop Condition
 
-- For every row where `dirty_rows[row] == 0`, set:
-  - `dirty_cols_start[row] = 0`
-  - `dirty_cols_end[row] = 0`
-- For every row where `dirty_rows[row] == 1`, preserve the caller-provided dirty columns exactly after validation.
-- Preserve the valid dirty-row sentinel:
-  - `dirty_rows[row] == 1`
-  - `dirty_cols_start[row] == cols`
-  - `dirty_cols_end[row] == 0`
-
-Owner boundary:
-
-- Canonicalization must happen before `samePublicationSource()` can compare the publication.
-- Canonicalization should happen after `validateDirtySource()` accepts the publication, so invalid dirty metadata is still rejected rather than silently rewritten.
-- Both ordinary `publishVtSource()` and retained-slot `commitPublishSlot()` paths must receive canonicalized source state.
-
-## Implementation Guidance
-
-Preferred shape:
-
-- Add a small `canonicalizeDirtyMetadata()` helper in `queue.zig` near `validateDirtySource()` / `samePublicationSource()`.
-- Call it inside `PublicationState.acceptSource()` or immediately before all paths enter classification/equality.
-- Use direct row iteration.
-- Assert lengths match rows before mutation.
-- Do not allocate.
-
-Avoid:
-
-- Canonicalizing in `samePublicationSource()` only. Equality should consume canonical state, not hide non-canonical state locally.
-- Canonicalizing dirty rows with `dirty_rows[row] == 1`; those spans are meaningful.
-- Clamping invalid dirty columns. Invalid dirty metadata must still be rejected.
-
-## Required Proofs
-
-Add tests in `queue.zig` unless ABI tests are clearly smaller.
-
-Required tests:
-
-- clean rows with different dirty column metadata become semantically equal and dedupe as `.none`.
-- canonicalization mutates clean-row column values to `0,0` in stored/queued source state.
-- dirty rows preserve normal spans exactly.
-- dirty rows preserve the sentinel `start_col == cols && end_col == 0` exactly.
-- invalid dirty metadata is still rejected by boundary validation.
-
-## Commands
-
-Run from `/home/home/personal/projects/howl/howl-render`:
-
-- `zig build test:render`
-- `zig build test:unit`
-- `zig build test:abi`
-
-If any command fails, report the exact failure. Do not hide failures.
-
-## Rejection Gates
-
-Reject the worker diff if any of these happen:
-
-- equality still depends on clean-row dirty column values
-- dirty-row sentinel is canonicalized away or rejected
-- invalid dirty metadata is silently clamped or accepted
-- canonicalization allocates or rewrites caller-owned immutable input
-- ABI/header/host/VT changes are mixed into this slice
-- tests only check the helper and do not prove dedupe/equality behavior
-
-## Completion Definition
-
-This slice is done only when:
-
-- publication source state is canonical before equality/dedupe
-- clean-row column metadata no longer affects equality
-- dirty-row spans and sentinels remain meaningful and preserved
-- invalid dirty metadata remains rejected
-- requested tests pass or blockers are documented
+Do not seed a coding worker for this slice until the research brief makes the ownership answer unambiguous.

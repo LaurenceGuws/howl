@@ -50,7 +50,6 @@ Purpose:
 ### Remaining Major Themes
 
 - Prepared/export surface semantics are still muddier than they should be.
-- Dirty metadata canonicalization still deserves explicit owner handling.
 - Placeholder semantics may still have residual divergence from ideal Kitty behavior.
 - Text/render input truth may still have remaining blind spots beyond the style/presentation slice already landed.
 
@@ -65,39 +64,6 @@ Every slice should answer one or more of these directly:
 5. What proof matrix makes this subsystem TigerBeetle-grade?
 
 ## Promotable Slices
-
-### Slice D: Dirty Metadata Canonicalization
-
-Status: open.
-
-Goal:
-
-- Canonicalize semantically irrelevant dirty metadata so publication equality and dedupe are exact.
-
-Primary files:
-
-- `howl-render/src/frame/queue.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- related tests
-
-Current problem:
-
-- clean rows can still carry arbitrary dirty column values that do not matter semantically, yet source equality compares them byte-for-byte.
-
-Target shape:
-
-- canonical form for clean rows
-- explicit preserved sentinel form for VT dirty-row empty-span rows
-
-Proof matrix:
-
-- semantically equivalent clean-row publications compare equal
-- VT sentinel rows are preserved and accepted
-- dedupe behavior is stable under canonicalization
-
-Stop condition:
-
-- Equality and classification depend only on semantically meaningful dirty-state truth.
 
 ### Slice E: Present/Retire Final Contract
 
@@ -159,9 +125,8 @@ Stop condition:
 
 Recommended next promotions:
 
-1. Slice D: Dirty Metadata Canonicalization
-2. Slice E: Present/Retire Final Contract
-3. Slice F: Placeholder Semantic Residuals
+1. Slice E: Present/Retire Final Contract
+2. Slice F: Placeholder Semantic Residuals
 
 ## Review Standard
 
@@ -174,11 +139,12 @@ Recommended next promotions:
 
 ## Ready-To-Promote Item
 
-- `Slice D: Dirty Metadata Canonicalization`
+- `Slice E: Present/Retire Final Contract`
 
 Why first:
 
 - Slice A made token ingress reject impossible prepared/export states.
 - Slice B made prepared-handle lifetime explicit and safely rejectable.
 - Slice C made submit execution upload/dimension truth checked before render mutation.
-- The next weakest seam is dirty metadata equality depending on irrelevant clean-row columns.
+- Slice D made dirty metadata canonical before equality/dedupe.
+- The next item has an open ownership question and needs a focused research round before coding.
