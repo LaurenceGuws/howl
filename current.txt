@@ -1,92 +1,97 @@
-# Current Slice: Point 5 Host Frame Pacing
+# Current Slice: Point 8 Text Input Fast Path
 
 Owner: `howl-linux-host`.
 
 Source scratchpad:
 
 - `host-alacritty-gap-scratchpad.md`
-- promoted item: `Point 5: Host Frame Pacing Is Under-Shaped`
+- promoted item: `Point 8: The Simple Text Path Is Not Obviously Collapsed`
 
 ## Accepted Answer
 
-- The host now has explicit wake/redraw/render/present/completion concepts, but frame pacing itself is still under-shaped.
-- Terminal render desire is still treated like loop admission/pacing state.
-- The host needs a first-class frame pacing state that owns blocking, render permission, and present submission permission.
-- Frame pacing must remain host policy in `main.zig`; do not move it into terminal, render, or input owners.
+- The simple readline/text path is not readable as a primary path.
+- Text input currently joins the generic input queue and is drained beside pointer, scroll, hover, selection, and host UI behavior.
+- Host control/pacing is now explicit enough to split terminal text publication from pointer/UI handling.
+- This slice is host-only. Do not implement VT protocol support for `OSC 133` or `DECSCUSR` here; record that as future VT-owner work if needed.
 
 ## Mandatory Reference Preload
 
 Read these references before touching code:
 
+- `utils/dev_references/terminals/ghostty/src/termio/Termio.zig`
+- `utils/dev_references/terminals/ghostty/src/termio/stream_handler.zig`
+- `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
 - `utils/dev_references/terminals/alacritty/alacritty/src/event.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
-- `utils/dev_references/terminals/ghostty/src/App.zig`
-- `utils/dev_references/terminals/ghostty/src/Surface.zig`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/damage.rs`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 
 Reference-derived truth:
 
-- Alacritty owns frame pacing through host scheduler/frame availability, not terminal render desire alone.
-- Ghostty keeps render and present runtime actions separate.
-- TigerBeetle requires bounded explicit host-side state transitions.
+- Ghostty queues render after output processing.
+- Alacritty wakes after terminal mutation and keeps low-latency frame events visible.
+- Alacritty content/damage model makes the simple text path primary, not buried in pointer/UI policy.
 
 ## Current Offending Code
 
+- `howl-linux-host/src/input/input.zig`
+  - text input becomes ordinary queued input events.
+- `howl-linux-host/src/terminal/terminal_panel.zig`
+  - `drainInput(...)` handles bytes/key in the same mixed path as mouse, hover, selection, scroll, and host visual policy.
 - `howl-linux-host/src/main.zig`
-  - no host-owned frame permit/token/pacing concept exists.
-  - `collectLoopPending()` still uses `activeTabNeedsRenderTurn(...)` as `frame_work` wait admission.
-  - wait calculation derives from SDL/input, blink, and runtime obligations but has no frame-pacer deadline input.
-  - render and present submission are asserted locally, but no central pacing state owns permission.
+  - `forwardTerminalInput(...)` has one generic terminal drain call, so the text path is not obvious beside runtime progress.
 
 ## Exact Files Allowed To Change
 
+- `howl-linux-host/src/terminal/terminal_panel.zig`
 - `howl-linux-host/src/main.zig`
 - relevant existing `howl-linux-host/src/test/*.zig` files only if genuinely needed for first-class test exposure
 - `howl-linux-host/src/test_root.zig` only if genuinely needed for first-class test exposure
 
 ## Exact Change Shape
 
+- In `howl-linux-host/src/terminal/terminal_panel.zig`
+  - split `drainInput(...)` into exactly:
+    - `drainTextInputFastPath(self: *TerminalPanel, input_events: *HostInput) DrainInputOutcome`
+    - `drainPointerAndUiInput(self: *TerminalPanel, input_events: *HostInput, origin_x: i32, origin_y: i32, logical_width: c_int, logical_height: c_int) DrainInputOutcome`
+  - `drainTextInputFastPath` must handle only:
+    - `.bytes`
+    - `.key`
+  - `drainTextInputFastPath` may call only:
+    - `publishTerminalBytes`
+    - `publishTerminalKey`
+    - `resetCursorBlinkActivity`
+  - `drainTextInputFastPath` must not touch host redraw, selection, hover, scroll, mouse, or window policy.
+  - Pointer/UI handling remains in `drainPointerAndUiInput`.
+  - Keep `DrainInputOutcome` semantics: PTY publication and host visual mutation stay distinct.
 - In `howl-linux-host/src/main.zig`
-  - add `FramePacingState` with exactly:
-    - `redraw_requested: bool`
-    - `render_work_pending: bool`
-    - `frame_permit_ready: bool`
-    - `present_in_flight: bool`
-    - `present_complete_pending: bool`
-  - `FramePacingState` must be the only owner of:
-    - blocking decision
-    - render permission
-    - present submission permission
-  - `collectLoopPending()` must stop treating terminal render desire as pacing state.
-  - `loopWaitMs(...)` must grow a frame-pacer deadline input.
-  - Preserve Point 2 and Point 6 semantics:
-    - `.host_damage` present does not consume terminal retained present state
-    - terminal retained present state completes only from a drained matching token
-    - `.terminal_retire` must not create unmatched present tokens
+  - `forwardTerminalInput()` must call text fast path first, then pointer/UI path.
+  - No host policy step may be inserted between text publication and runtime progress.
 
 ## Required Proof
 
-- `main.zig` tests proving:
-  - runtime wake is not frame permit
-  - redraw request is not frame permit
-  - terminal render work is not frame permit
-  - frame deadlines participate in wait calculation
-  - render/present submission respect frame permit and in-flight state
-- Existing Point 2, Point 3, and Point 6 tests must keep passing.
+- `terminal_panel.zig` host unit test proving text fast path:
+  - publishes bytes and key
+  - resets blink on successful publication
+  - does not directly report host visual mutation except cursor blink state returned by `resetCursorBlinkActivity`
+  - does not call pointer/UI/hover/selection/scroll operations
+- `main.zig` host unit or helper test proving:
+  - text fast path is invoked before pointer/UI drain in `forwardTerminalInput` flow
+  - text publication admission remains separate from redraw/present intent
+- Existing Point 4, Point 5, Point 6 tests must keep passing.
 
 ## Rejection Gates
 
 - reject any patch touching `howl-vt`
 - reject any patch touching `howl-render`
 - reject any patch touching `howl-linux-host/src/input/input.zig`
-- reject any patch moving frame pacing into terminal/render/window/input owners
-- reject any patch that treats terminal render desire itself as frame permit
-- reject any patch that regresses host present token completion semantics from Point 6
-- reject any fake frame-pacing type used only by tests and not by production `runLoopTurn()`
+- reject any patch that reintroduces synthetic redraw admission for text publication
+- reject any patch that mixes pointer/UI policy back into the text fast path
+- reject any fake fast path used only in tests and not by production `forwardTerminalInput()`
+- reject any patch that regresses host present token completion or frame pacing semantics
 
 Stop condition:
 
-- host frame pacing is explicit in production `main.zig`
-- wait admission, render permission, and present submission permission flow through `FramePacingState`
-- terminal render work is an input to pacing, not the pacing owner
+- production text publication path is visibly separate from pointer/UI policy
+- `forwardTerminalInput()` reads as text first, pointer/UI second, then runtime progress continues through existing host loop
+- tests prove text publication remains admission-only and not host redraw/present policy
