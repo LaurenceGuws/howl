@@ -1,96 +1,20 @@
-# Current Slice: Placeholder Ordering Proof
+# Current Slice: None
 
 Owner: workspace root.
 
-Source scratchpad:
+The render surface hardening scratchpad has no ready-to-promote slice remaining.
 
-- `render-surface-hardening-scratchpad.md`
-- Promoted item: `Slice G: Placeholder/Ordinary Ordering Contract`
+Completed in this campaign:
 
-## Decision
+- render ABI token validation
+- prepared handle lifecycle
+- submit execution truth validation
+- dirty metadata canonicalization
+- host-owned present acknowledgement
+- placeholder virtual placement boundary hardening
+- placeholder/ordinary ordering proof
 
-Keep placeholder/ordinary graphics ordering as render compositor policy for now. Do not add VT or render ABI fields in this slice.
+Stop condition:
 
-Research result:
-
-- Kitty defines image `z`, negative-z bands, and lower-image-id ordering for same `z`.
-- Kitty says Unicode-placeholder images are not ordinary protocol placements.
-- Kitty does not define a stable global order between placeholder-derived images and ordinary placements with the same image id.
-- Ghostty maps Unicode-placeholder render instances to renderer-side `z = -1` and sorts in the renderer.
-- Howl render already receives VT-resolved placeholder runs and virtual placement truth; it does not need more VT protocol inference to compose them as render draw items.
-
-Therefore:
-
-- VT owns placeholder decoding, run order, virtual placement binding, and geometry truth.
-- render owns compositor bands and deterministic pixel draw order.
-- placeholder-backed graphics are render-local below-text draw items equivalent to `z = -1`.
-- same-image/same-z details are deterministic Howl render policy, not Kitty protocol truth.
-
-## Current Weak Shape
-
-Current render behavior is mostly right but under-proved and under-named:
-
-- `surface_buffer.zig` merges placeholder-backed graphics with ordinary `z = -1` placements.
-- Existing tests cover several same-image/placement/run cases.
-- Missing proof should make the intended compositor matrix explicit, especially ordinary `z < -1`, different image ids at `z = -1`, and same image/placement tie behavior.
-
-## Hard Scope
-
-Repository to modify:
-
-- `howl-render`
-
-Allowed files:
-
-- `howl-render/src/frame/surface_buffer.zig`
-
-Allowed changes:
-
-- test additions
-- test renames if they clarify render-local policy
-- a short code comment only if needed to state why placeholders are compositor-local `z = -1`
-
-Forbidden in this slice:
-
-- No VT changes.
-- No host changes.
-- No C ABI changes.
-- No behavior changes unless a test exposes an actual existing bug.
-- No new ordering fields.
-- No render-side placeholder decoding, cell scanning, or virtual placement inference.
-- No broad helper abstraction.
-
-## Required Proofs
-
-Add or sharpen `surface_buffer.zig` tests proving:
-
-- ordinary below-text placement with `z < -1` draws before placeholder-backed `z = -1` graphics.
-- ordinary `z = -1` placement with lower image id draws before a placeholder-backed higher image id.
-- placeholder-backed lower image id draws before ordinary `z = -1` higher image id.
-- same image id and same placement id uses deterministic render-local tie behavior between placeholder `run_order` and ordinary `placement_ordinal`.
-- existing placeholder-run ordering by placement id and exported run order remains intact.
-
-Tests should assert final pixels, not only sort keys.
-
-## Commands
-
-Run from `/home/home/personal/projects/howl/howl-render`:
-
-- `zig build test:render`
-- `zig build test:unit`
-- `zig build test:abi`
-
-## Rejection Gates
-
-Reject the worker diff if any of these happen:
-
-- ABI or VT changes are introduced.
-- behavior is changed without an explicit failing proof.
-- render starts treating placeholder order as VT protocol truth.
-- render adds placeholder decoding/inference.
-- tests assert implementation internals instead of pixel outcomes.
-- same-image undefined Kitty behavior is described as Kitty-mandated rather than Howl render policy.
-
-## Completion Definition
-
-This slice is done only when render-local placeholder/ordinary ordering is covered as explicit compositor policy and render tests pass.
+- Start a new research round or scratchpad before seeding more coding workers.
+- Remaining broad themes need fresh shaping before promotion.

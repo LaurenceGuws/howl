@@ -45,13 +45,13 @@ Purpose:
 - Render owns submitted-frame retained-base truth only.
 - Host owns present-in-flight identity and VT acknowledgement.
 - Render requires VT-owned virtual placement source/grid truth and no longer infers placeholder virtual placement dimensions.
+- Placeholder/ordinary graphics ordering is explicit render-local `z = -1` compositor policy with pixel proof.
 - Host publish path now carries placeholder-run metadata across the ABI.
 - Integration proof surfaces were recovered after the placeholder-run ABI expansion.
 
 ### Remaining Major Themes
 
 - Prepared/export surface semantics are still muddier than they should be.
-- Placeholder/ordinary graphics ordering still needs an explicit VT/render ABI ownership decision.
 - Text/render input truth may still have remaining blind spots beyond the style/presentation slice already landed.
 
 ## Canonical Questions
@@ -66,35 +66,13 @@ Every slice should answer one or more of these directly:
 
 ## Promotable Slices
 
-### Slice G: Placeholder/Ordinary Ordering Contract
-
-Status: open research.
-
-Goal:
-
-- Decide whether placeholder-backed graphics ordering relative to ordinary negative-z placements is VT-owned ABI truth or acceptable render draw policy.
-
-Primary files:
-
-- `howl-vt` graphics placement, virtual placement, placeholder-run export, and FFI headers
-- `howl-render` graphics viewport ordering and placeholder draw merge
-- Kitty protocol and Ghostty renderer/terminal graphics references
-
-Questions:
-
-- Does Kitty define a concrete order between Unicode-placeholder images and ordinary placements at the same negative z?
-- Does Ghostty's renderer hard-coded placeholder z translate to Howl as render policy, or should VT export a compositing key?
-- What is the smallest ABI shape that would make render sorting mechanical instead of semantic?
-
-Stop condition:
-
-- Placeholder/ordinary graphics ordering ownership is explicit and not hidden in render merge logic.
+No ready-to-promote slices remain in this scratchpad.
 
 ## Promotion Order
 
 Recommended next promotions:
 
-1. Slice G: Placeholder/Ordinary Ordering Contract
+- None. Start a new research round or scratchpad before further coding.
 
 ## Review Standard
 
@@ -107,7 +85,7 @@ Recommended next promotions:
 
 ## Ready-To-Promote Item
 
-- `Slice G: Placeholder/Ordinary Ordering Contract`
+- None.
 
 Why first:
 
@@ -117,4 +95,5 @@ Why first:
 - Slice D made dirty metadata canonical before equality/dedupe.
 - Slice E moved presentation acknowledgement to the host and removed render-owned retire-present state.
 - Slice F removed placeholder virtual placement fallback semantics from render.
-- The remaining item needs focused research before coding because cross-kind graphics ordering may require a VT/render ABI contract.
+- Slice G established placeholder/ordinary ordering as render compositor policy and proved the matrix.
+- Remaining major themes are not yet shaped into promotable slices.
