@@ -2,20 +2,25 @@
 
 Owner: workspace root.
 
-The host Alacritty-gap scratchpad has no promoted slice remaining in this campaign.
+The VT style attrs slice is complete.
 
-Completed in this campaign:
+Completed in this slice:
 
-- Point 4: input-to-redraw ownership
-- Point 7: redraw as policy, not SDL event
-- Point 1: wake/redraw/present separation
-- Point 3: explicit loop phases
-- Point 2: first-class present cadence
-- Point 6: tokenized present completion
-- Point 5: host frame pacing state
-- Point 8: text input fast path
+- VT now retains and exports dim, italic, invisible, and strikethrough attrs.
+- VT SGR handling covers `2`, `3`, `8`, `9`, `22`, `23`, `28`, and `29` for those attrs.
+- VT SGR rectangle reporting includes common dim, italic, invisible, and strikethrough attrs.
+- Render maps italic and strikethrough through existing fields, dims foreground/decorations, and suppresses invisible foreground/decorations while preserving background.
+- `howl-vt:test` is routine unit + ABI only; VT regression proofs are explicit under `test:regression`.
+
+Verification run:
+
+- `zig build test` in `howl-vt`
+- `zig build test:regression:build` in `howl-vt`
+- `zig build test` in `howl-render`
+- `zig build test:unit` in `howl-linux-host`
+- `zig build test:integration:kitty-graphics-replay` in `howl-linux-host`
+- `zig build -Doptimize=ReleaseFast` in `howl-linux-host`
 
 Stop condition:
 
 - Start a new research round or scratchpad before seeding more coding workers.
-- Remaining VT protocol items mentioned by Point 8, such as `OSC 133` and `DECSCUSR`, are VT-owner work and were intentionally not implemented in this host-only campaign.

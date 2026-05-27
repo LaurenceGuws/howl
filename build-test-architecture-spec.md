@@ -72,7 +72,7 @@ Purpose:
 | Root step | Stable package mapping | Explicit proof statement |
 | --- | --- | --- |
 | `check` | `howl-pty:check`, `howl-vt:check`, `howl-render:check`, `howl-linux-host:check` | Proves only that each package's canonical non-running audit/build surface compiles from the workspace root; it is not runtime proof and does not create a root install or run path. |
-| `test` | `howl-pty:test`, `howl-vt:test`, `howl-render:test`, `howl-linux-host:test` | Proves only the union of package-local accepted test-family aggregates currently exposed by each package. It does not imply that every canonical family exists in every package. |
+| `test` | `howl-pty:test`, `howl-vt:test`, `howl-render:test`, `howl-linux-host:test` | Proves only the routine package-local test aggregate currently exposed by each package. It must not run regression, fuzz, stress, or benchmark surfaces; those remain explicit root steps. |
 | `test:unit` | `howl-pty:test:unit`, `howl-vt:test:unit`, `howl-render:test:unit`, `howl-linux-host:test:unit` | Proves owner-local logic surfaces only, by delegating directly to each package's unit step. |
 | `test:abi` | `howl-pty:test:abi`, `howl-vt:test:abi`, `howl-render:test:abi` | Proves the shipped product-package C ABI contracts only. The host package is intentionally absent because it does not own a shipped product ABI. |
 | `test:integration` | `howl-linux-host:test:integration` | Proves currently exposed cross-package behavior through shipped ABI seams only where the host harness owns that integration proof. |
@@ -90,7 +90,7 @@ Only the following public step families are accepted.
 - `install`: install shipped product artifacts for product packages, or explicit dev-only harness artifacts for a harness package.
 - `check`: compile or audit the default supported owner surfaces without running long-lived or measurement workloads.
 - `run`: manually execute a runnable harness or tool.
-- `test`: aggregate accepted test families only.
+- `test`: aggregate routine test families only; it must not include regression, fuzz, stress, or benchmark workloads.
 
 ### Test Families
 
