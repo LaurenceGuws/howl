@@ -1,121 +1,92 @@
-# Current Slice: Point 6 Strong Present Completion
+# Current Slice: Point 5 Host Frame Pacing
 
 Owner: `howl-linux-host`.
 
 Source scratchpad:
 
 - `host-alacritty-gap-scratchpad.md`
-- promoted item: `Point 6: “Present Complete” Is Not A Strong Host Concept Yet`
+- promoted item: `Point 5: Host Frame Pacing Is Under-Shaped`
 
 ## Accepted Answer
 
-- Present completion is now named in `main.zig`, but it is still not a strong host concept.
-- The window backend submit path should return a host-owned present token.
-- Completion should be drained explicitly from the window owner path, then matched against terminal retained present state.
-- Terminal retained state should remember both the submitted terminal snapshot and the host present token.
-- Host code must separate present submission from present completion; completion must not happen in the same statement block as submit.
+- The host now has explicit wake/redraw/render/present/completion concepts, but frame pacing itself is still under-shaped.
+- Terminal render desire is still treated like loop admission/pacing state.
+- The host needs a first-class frame pacing state that owns blocking, render permission, and present submission permission.
+- Frame pacing must remain host policy in `main.zig`; do not move it into terminal, render, or input owners.
 
 ## Mandatory Reference Preload
 
 Read these references before touching code:
 
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
 - `utils/dev_references/terminals/ghostty/src/App.zig`
 - `utils/dev_references/terminals/ghostty/src/Surface.zig`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 
 Reference-derived truth:
 
-- Ghostty separates render and present at the host/runtime seam.
-- Alacritty separates swap from next-frame admission.
-- TigerBeetle requires explicit state transitions and rejecting impossible lifecycle transitions.
+- Alacritty owns frame pacing through host scheduler/frame availability, not terminal render desire alone.
+- Ghostty keeps render and present runtime actions separate.
+- TigerBeetle requires bounded explicit host-side state transitions.
 
 ## Current Offending Code
 
-- `howl-linux-host/src/window/present.zig`
-  - backend `present(...)` records proof/debug only and returns no submission identity.
-- `howl-linux-host/src/window/window.zig`
-  - `State.present(frame)` has no token-returning submit API or drain-completion API.
-- `howl-linux-host/src/terminal/render/retained.zig`
-  - retained present in-flight state is just a render-side `snapshot_seq`.
 - `howl-linux-host/src/main.zig`
-  - present submit and terminal completion are explicit, but completion still follows submit directly and has no host token.
+  - no host-owned frame permit/token/pacing concept exists.
+  - `collectLoopPending()` still uses `activeTabNeedsRenderTurn(...)` as `frame_work` wait admission.
+  - wait calculation derives from SDL/input, blink, and runtime obligations but has no frame-pacer deadline input.
+  - render and present submission are asserted locally, but no central pacing state owns permission.
 
 ## Exact Files Allowed To Change
 
-- `howl-linux-host/src/window/present.zig`
-- `howl-linux-host/src/window/window.zig`
-- `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/terminal/terminal_panel.zig` only for API forwarding to retained state
 - `howl-linux-host/src/main.zig`
 - relevant existing `howl-linux-host/src/test/*.zig` files only if genuinely needed for first-class test exposure
 - `howl-linux-host/src/test_root.zig` only if genuinely needed for first-class test exposure
 
 ## Exact Change Shape
 
-- In `howl-linux-host/src/window/present.zig`
-  - add `pub const PresentToken = u64`
-  - extend `Present.State(c)` with:
-    - `next_present_token`
-    - `submitted_present`
-    - `completed_present`
-  - replace `present(...) void` with:
-    - `submitPresent(...) PresentToken`
-    - `drainPresentComplete(...) ?PresentToken`
-  - assert single in-flight token and drain-before-overwrite semantics
-- In `howl-linux-host/src/window/window.zig`
-  - replace `State.present(frame)` with:
-    - `State.submitPresent(frame) PresentToken`
-    - `State.drainPresentComplete() ?PresentToken`
-- In `howl-linux-host/src/terminal/render/retained.zig`
-  - replace `present_in_flight: ?u64` with a struct carrying:
-    - `snapshot_seq`
-    - `token`
-  - replace:
-    - `beginPresent(snapshot_seq)`
-    - `finishPresent() ?u64`
-  - with:
-    - `notePresentSubmitted(snapshot_seq, token)`
-    - `completePresent(token) ?u64`
 - In `howl-linux-host/src/main.zig`
-  - submit path records the token on terminal present reasons
-  - completion path drains window completion and passes the token to terminal completion
-  - host must never call terminal completion in the same statement block as submit
-  - preserve Point 2 `PresentReason` semantics:
-    - `.host_damage` submits a host present and does not consume terminal retained present state
-    - `.terminal_frame` and `.terminal_retire` submit host present and later complete terminal retained present state by matching token
+  - add `FramePacingState` with exactly:
+    - `redraw_requested: bool`
+    - `render_work_pending: bool`
+    - `frame_permit_ready: bool`
+    - `present_in_flight: bool`
+    - `present_complete_pending: bool`
+  - `FramePacingState` must be the only owner of:
+    - blocking decision
+    - render permission
+    - present submission permission
+  - `collectLoopPending()` must stop treating terminal render desire as pacing state.
+  - `loopWaitMs(...)` must grow a frame-pacer deadline input.
+  - Preserve Point 2 and Point 6 semantics:
+    - `.host_damage` present does not consume terminal retained present state
+    - terminal retained present state completes only from a drained matching token
+    - `.terminal_retire` must not create unmatched present tokens
 
 ## Required Proof
 
-- `window/present.zig` tests for:
-  - submit returns monotonic nonzero tokens
-  - single in-flight submission is enforced
-  - completion drains exactly once before overwrite
-- `terminal/render/retained.zig` tests for:
-  - submit token storage
-  - matching completion returns the snapshot sequence
-  - mismatched completion is rejected or ignored without clearing state
-  - pending-state lifetime survives until matching completion
-- `main.zig` fake-window/fake-tab tests proving:
-  - submit and completion are distinct host actions
-  - `.host_damage` completion does not call terminal completion
-  - terminal present reasons complete only after a drained matching token
-- Existing Point 2 and Point 3 tests must keep passing.
+- `main.zig` tests proving:
+  - runtime wake is not frame permit
+  - redraw request is not frame permit
+  - terminal render work is not frame permit
+  - frame deadlines participate in wait calculation
+  - render/present submission respect frame permit and in-flight state
+- Existing Point 2, Point 3, and Point 6 tests must keep passing.
 
 ## Rejection Gates
 
 - reject any patch touching `howl-vt`
 - reject any patch touching `howl-render`
 - reject any patch touching `howl-linux-host/src/input/input.zig`
-- reject any patch that completes terminal present state in the same statement block as submit
-- reject any token that is only a test seam and not returned by the production window present API
-- reject any patch that silently clears retained pending state on mismatched token
-- reject any patch that regresses Point 2 host-only damage behavior
+- reject any patch moving frame pacing into terminal/render/window/input owners
+- reject any patch that treats terminal render desire itself as frame permit
+- reject any patch that regresses host present token completion semantics from Point 6
+- reject any fake frame-pacing type used only by tests and not by production `runLoopTurn()`
 
 Stop condition:
 
-- host present submit has a production token
-- host present completion is drained explicitly
-- terminal retained present state completes only on matching host token
-- submit and completion are visibly separate host actions and tested
+- host frame pacing is explicit in production `main.zig`
+- wait admission, render permission, and present submission permission flow through `FramePacingState`
+- terminal render work is an input to pacing, not the pacing owner
