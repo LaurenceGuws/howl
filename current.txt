@@ -9,7 +9,7 @@ Completed in this slice:
 - VT now retains and exports dim, italic, invisible, and strikethrough attrs.
 - VT SGR handling covers `2`, `3`, `8`, `9`, `22`, `23`, `28`, and `29` for those attrs.
 - VT SGR rectangle reporting includes common dim, italic, invisible, and strikethrough attrs.
-- Render maps italic and strikethrough through existing fields, dims foreground/decorations, and suppresses invisible foreground/decorations while preserving background.
+- Render maps inverse/reverse video, italic, and strikethrough through existing fields, dims foreground/decorations, and suppresses invisible foreground/decorations while preserving background.
 - `howl-vt:test` is routine unit + ABI only; VT regression proofs are explicit under `test:regression`.
 
 Verification run:
