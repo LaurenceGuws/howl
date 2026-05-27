@@ -1,65 +1,54 @@
-# Current Slice: VT Generated Placeholder Cell Placements
+# Current Slice: Graphics Placement ABI Mirror Safety
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md`.
+Promoted from `graphics-generated-placement-transition-scratchpad.md` atomic commit sequence item 1.
 
 ## Goal
 
-Implement VT-owned generated cell placements for Unicode placeholders, matching Kitty's screen-owned cell-image materialization model.
+Make the smallest coordinated placement ABI mirror change needed to support future generated placeholder placement publication, with no behavior change.
 
-Kitty source truth:
+## Target Repos And Files
 
-- `utils/dev_references/terminals/kitty/kitty/screen.c`: `screen_render_line_graphics`
-- `utils/dev_references/terminals/kitty/kitty/screen.c`: `screen_dirty_line_graphics`
-- `utils/dev_references/terminals/kitty/kitty/graphics.c`: `grman_put_cell_image`
-- `utils/dev_references/terminals/kitty/kitty/graphics.c`: `grman_remove_cell_images`
-- `utils/dev_references/terminals/kitty/kitty/graphics.h`: `ImageRef.virtual_ref_id`, `ImageRef.is_virtual_ref`
+VT:
 
-Howl target files:
-
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/terminal.zig`
+- `howl-vt/include/howl_vt.h`
 - `howl-vt/src/ffi.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
 
-## Required Acceptance Tests
+Render:
 
-- Placeholder cells create generated z `-1` placements in VT, not render-only protocol geometry.
-- Rewriting or clearing a placeholder row removes stale generated placements.
-- Updating a virtual placement redraws or republishes existing placeholder rows.
-- Generated placements preserve image id, placement id, source fragment row/column, run width, screen row/column, and a stable link to the virtual placement equivalent to Kitty's virtual ref linkage.
-- Existing placeholder run assembly tests remain valid.
+- `howl-render/src/ffi_types.zig`
+
+Host:
+
+- Inspect `howl-linux-host/src/terminal/vt/surface.zig` and generated C import consumers. Edit only if compile drift requires it.
+
+## Required Shape
+
+- If render needs to distinguish future generated placeholder placements to enforce mixed-stream rejection, add only a tail `flags` field to `HowlVtGraphicsPlacement` and mirror it in render.
+- Define a public generated-placeholder flag constant only if the field is added.
+- All existing placements must publish `flags == 0`.
+- Do not add provenance/debug fields such as virtual placement index, placeholder run order, image row, or image col in this slice.
+- Do not emit generated placements in this slice.
+- Do not alter `placeholder_run_count` behavior in this slice.
 
 ## Hard Constraints
 
-- Keep Kitty protocol consequences in `howl-vt`.
-- Do not add new render-side placeholder interpretation.
-- Do not reinterpret protocol diacritics as 1-based.
-- Do not special-case yazi or pane positions.
-- Do not edit `howl-render` in this slice unless a reviewed blocker proves the VT ABI shape is impossible.
-- Prefer the smallest ABI addition that lets hosts/render consume generated placements as normal placement truth.
+- No behavior change.
+- No render placeholder path changes.
+- No generated placement publication.
+- Keep C header and Zig extern structs synchronized exactly.
+- ABI is the product. Do not change one repo without the mirror.
 
 ## Verification Required
 
 - `zig build test` in `howl-vt`
-- `zig build test:regression:build` in `howl-vt`
-- If ABI changes require it, run `zig build test` in `howl-render` and `zig build test:unit` in `howl-linux-host`.
+- `zig build test` in `howl-render`
+- `zig build test:unit` in `howl-linux-host`
 - `git diff --check` at workspace root
 
 Stop condition:
 
-- If a correct ABI shape cannot be proven within VT boundary rules, stop and report the exact blocker. Do not invent a render shortcut.
-
-## Blocker Found
-
-The first worker attempt proved this slice is not safely VT-only.
-
-- Publishing generated placeholder placements through the existing normal placement stream while `placeholder_run_count` remains exported would make current render consume both paths and potentially double-draw placeholder images.
-- Adding generated-placeholder metadata to `HowlVtGraphicsPlacement` is a public ABI change and requires coordinated `howl-render`/host ABI updates, not a VT-only patch.
-
-Next required step:
-
-- Start a coordinated scratchpad/current slice for VT generated cell refs plus render placeholder-path replacement, or do a smaller research round to define the exact ABI transition that avoids double drawing.
+- If a `flags` tail field is not actually needed for the next render guard, stop and report why no ABI change should be made. Do not add speculative fields.
