@@ -1,4 +1,4 @@
-# Current Slice: Placeholder Semantic Residuals Research
+# Current Slice: Placeholder Virtual Placement Boundary
 
 Owner: workspace root.
 
@@ -7,54 +7,130 @@ Source scratchpad:
 - `render-surface-hardening-scratchpad.md`
 - Promoted item: `Slice F: Placeholder Semantic Residuals`
 
-## Goal
+## Decision
 
-Decide whether any residual Kitty placeholder semantics are still incorrectly owned or inferred by render after VT placeholder-run export landed.
+Tighten the render-side placeholder boundary so render consumes VT-owned virtual placement truth instead of inferring missing Kitty semantics.
 
-This is a research/design slice first. Do not seed a coding worker until the ownership answer and proof matrix are unambiguous.
+Research result:
 
-## Current Baseline
+- Kitty placeholder identity, row/column inheritance, virtual-placement binding, cell coverage, and one-axis placement extent are VT/terminal-state truth.
+- Ghostty can call terminal internals from renderer, but Howl's render boundary must consume C ABI truth instead of importing or reconstructing VT semantics.
+- Howl already exports resolved placeholder runs from VT and render no longer reconstructs runs from cells.
+- Residual render debt remains in virtual-placement fallback math and a stale render-side Kitty diacritic table.
 
-- VT exports resolved placeholder runs.
-- Render consumes VT placeholder runs directly.
-- Render no longer reconstructs placeholder runs from raw cells in the primary path.
-- Host carries placeholder-run ABI metadata.
-- Integration replay proofs cover app-icon and unicode-placeholder paths.
+## Current Bad Shape
 
-## Questions To Answer
+Concrete residuals:
 
-- Are one-axis placement semantics correct against Kitty protocol behavior?
-- Is cross-kind ordering fully authoritative from VT truth, or does render still infer ordering locally?
-- Does render retain any fallback path that semantically co-owns placeholder truth and should move to VT?
-- Are placeholder run bounds, clipping, placement identity, and virtual placement behavior proven at the right owner boundary?
-- What smallest code slice, if any, would make render a pure consumer of VT placeholder truth?
+- `howl-render/src/frame/surface_buffer.zig` treats `source_width == 0` / `source_height == 0` as “use remaining raster”.
+- `howl-render/src/frame/surface_buffer.zig` treats virtual placement `columns == 0` / `rows == 0` as “derive grid from raster and cell size”.
+- `howl-render/src/frame/queue.zig` validates placeholder run columns and binding, but does not reject invalid zero virtual-placement source/grid fields.
+- `howl-render/src/frame/graphics_prepare.zig` still exports Kitty placeholder codepoint/diacritic constants even though render should not parse placeholder diacritics.
 
-## Scope For Research Agents
+VT currently normalizes virtual placements:
 
-Read Howl:
+- `howl-vt/src/kitty/graphics.zig` sets virtual placement source width/height from image dimensions when protocol source dimensions are zero.
+- `howl-vt/src/kitty/graphics.zig` normalizes virtual placement columns/rows to at least 1.
 
-- `howl-vt` placeholder export, graphics placement, and surface publication files found by search.
-- `howl-render` placeholder run ingestion, composition ordering, shaping/draw math, and tests found by search.
-- `howl-render/include/howl_render.h` placeholder-run ABI structs.
-- `howl-linux-host` placeholder replay/proof surfaces only as integration evidence.
+Therefore render fallback is stale semantic duplication, not required behavior.
 
-Read references:
+## Hard Scope
 
-- Kitty graphics protocol docs in repo references, especially unicode placeholders, placement, z/order, virtual placements, and cell coverage rules.
-- Ghostty placeholder/graphics handling if present in `utils/dev_references/terminals/ghostty`.
-- TigerBeetle style docs for assertion/proof discipline.
+Repository to modify:
 
-## Required Output
+- `howl-render`
 
-The research round must produce a plain-English rewrite brief with:
+Allowed files:
 
-- current bad shape, if any
-- reference-derived semantic owner answer
-- exact files that need code changes, if any
-- smallest acceptable code slice
-- proof matrix by owner boundary
-- explicit rejection criteria for coding workers
+- `howl-render/src/frame/queue.zig`
+- `howl-render/src/frame/surface_buffer.zig`
+- `howl-render/src/frame/graphics_prepare.zig`
+- `howl-render/src/frame/surface_text.zig` only for tests that referenced removed render-side placeholder constants
+- `howl-render/src/frame/surface_text_ffi.zig` only for tests/fixtures that must use valid virtual placement source/grid fields
 
-## Stop Condition
+Forbidden in this slice:
 
-Stop after research if there is no concrete code slice or if ownership remains ambiguous. Do not invent render-side semantics to paper over unclear Kitty/VT behavior.
+- No VT ABI changes.
+- No host changes.
+- No cross-kind ordering rewrite.
+- No render cell-scan or placeholder reconstruction.
+- No new compatibility fallback for invalid virtual placements.
+- No changes to physical placement source clipping/fallback unless directly required by virtual placeholder tests.
+
+## Required Render Contract
+
+In `howl-render`:
+
+- Reject invalid virtual placements at the render boundary before prepared/render mutation:
+  - `source_width == 0`
+  - `source_height == 0`
+  - `columns == 0`
+  - `rows == 0`
+- Keep existing placeholder-run checks:
+  - count/span coherence
+  - `run.columns != 0`
+  - `virtual_placement_index` in range
+  - dense `run_order == index`
+  - run image/placement matches referenced virtual placement
+  - run bounds fit surface columns/rows
+- Remove virtual placement fallback inference in `surface_buffer.zig`:
+  - `placeholderSourceRect()` must not invent source width/height from raster when VT exported zero.
+  - `placeholderGrid()` must not derive columns/rows from raster/cell size.
+  - any now-unused fallback helper, such as `ceilDivU32`, should be removed.
+- Remove `kitty_placeholder_diacritics` from `graphics_prepare.zig`.
+- Remove `kitty_placeholder_codepoint` from `graphics_prepare.zig` if it is only used by tests.
+- Keep the private `U+10EEEE` masking rule in `input.zig`; that is render presentation hygiene, not placeholder semantic ownership.
+
+## Required Test/Fixture Updates
+
+- Update render tests/fixtures that currently build virtual placements with zero source/grid fields so they use explicit VT-like normalized values.
+- If tests need the placeholder codepoint, use a test-local constant in the test file rather than exporting Kitty protocol constants from `graphics_prepare.zig`.
+- Add negative boundary tests proving render rejects virtual placements with:
+  - zero `source_width`
+  - zero `source_height`
+  - zero `columns`
+  - zero `rows`
+- Preserve tests proving render consumes exported placeholder runs without cell reconstruction.
+- Preserve tests proving placeholder glyph masking still happens in `input.zig`.
+
+## Out Of Scope But Documented
+
+Cross-kind ordering remains a separate design issue:
+
+- render currently merges placeholder-backed graphics with ordinary z=-1 placements locally
+- Ghostty hard-codes placeholder render z in renderer, but Howl likely needs a sharper VT/render ABI contract before moving that ownership
+- do not solve this in the current slice
+
+## Commands
+
+Run from `/home/home/personal/projects/howl/howl-render`:
+
+- `zig build test:render`
+- `zig build test:unit`
+- `zig build test:abi`
+
+If any host integration is affected unexpectedly, also run the relevant host replay test and report why it was necessary.
+
+## Rejection Gates
+
+Reject the worker diff if any of these happen:
+
+- render still infers virtual placement source width/height from raster when VT exported zero
+- render still infers virtual placement columns/rows from raster/cell size
+- render accepts zero source/grid virtual placement fields at boundary
+- render keeps the Kitty diacritic table in production code
+- render starts scanning cells or decoding diacritics to reconstruct placeholder runs
+- render reorders or regroups placeholder runs in this slice
+- VT, host, or ABI changes are introduced without a new brief
+- tests only cover happy path
+- existing placeholder-run consumption and glyph-masking proofs are weakened
+
+## Completion Definition
+
+This slice is done only when:
+
+- VT-owned virtual placement source/grid truth is mandatory at render ingress
+- render has no fallback that invents missing virtual-placement source/grid semantics
+- stale render-side Kitty diacritic constants are gone
+- negative boundary tests prove invalid zero fields are rejected
+- render tests pass or exact blockers are documented
