@@ -1,4 +1,4 @@
-# Current Slice: Present/Retire Final Contract Research
+# Current Slice: Host-Owned Present Acknowledgement
 
 Owner: workspace root.
 
@@ -7,62 +7,175 @@ Source scratchpad:
 - `render-surface-hardening-scratchpad.md`
 - Promoted item: `Slice E: Present/Retire Final Contract`
 
-## Goal
+## Decision
 
-Decide the final render/host contract for presented-frame identity before any more code is written in this area.
+Move presentation acknowledgement identity out of `howl-render` and into the host.
 
-This is a research/design slice, not a coding slice yet. The scratchpad still has a real open question: keep the explicit one-in-flight render-owned presented frame, or move present/retire identity fully to host ownership with a cleaner acknowledgement model.
+Research result:
 
-## Current State
+- Ghostty does not put terminal snapshot presentation acknowledgement in terminal/render queue state.
+- Alacritty owns presentation, pacing, redraw, and swap completion in the host/window/event loop.
+- TigerBeetle-grade proof wants retained render base and host presentation acknowledgement as separate state machines.
 
-- Render currently has explicit one-in-flight `presented_frame: ?pipeline.SubmittedFrame` in `queue.zig`.
-- Host currently gates submit until presented-frame retire/ack clears.
-- `retirePresented()` returns the presented snapshot sequence and clears render’s presented state.
-- This was an improvement over implicit/lossy state, but it may still be architecturally muddy.
+Therefore:
 
-## What We Need To Know
+- render owns submitted-frame retained-base truth
+- host owns presentation-in-flight and VT source acknowledgement truth
 
-Research must answer plainly:
+## Current Bad Shape
 
-- What does Ghostty’s render/runtime seam imply about who owns present/ack identity?
-- What does Alacritty’s display/window presentation path imply about host-owned presentation state?
-- What does TigerBeetle require for state-machine proof if render keeps one-in-flight identity?
-- Is Howl’s current explicit render-owned `presented_frame` stronger than the references, or just a local patch over a host ownership gap?
-- What exact next code slice should follow, if any?
+Current render state conflates two concepts:
 
-## Scope For Research Agents
+- `submitted_frame`: legitimate render-retained base identity
+- `presented_frame`: host/window presentation lifecycle identity living in render
 
-Read Howl:
+Current bad paths:
+
+- `howl-render/src/frame/queue.zig` sets both `submitted_frame` and `presented_frame` in `acceptSubmitted()`.
+- `howl-render/src/frame/queue.zig` exposes `retirePresented()` and `present_pending` as render-owned public truth.
+- `howl-render/src/frame/surface_text_ffi.zig` exposes `retirePresented()` through the C ABI.
+- `howl-linux-host/src/terminal/render/retained.zig` asks render which snapshot to retire after the host presents.
+- `howl-linux-host/src/terminal/terminal_panel.zig` blocks submit on render-owned `present_pending` even though the host owns the actual present cadence.
+
+## Hard Scope
+
+Repositories to modify:
+
+- `howl-render`
+- `howl-linux-host`
+- root only for submodule refs after accepted commits
+
+Allowed render files:
 
 - `howl-render/src/frame/queue.zig`
 - `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/frame/pipeline.zig`
-- `howl-linux-host/src/terminal/terminal_panel.zig`
-- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-render/src/ffi_types.zig`
+- `howl-render/src/ffi.zig`
+- `howl-render/src/libhowl_render.zig`
+- `howl-render/src/test_abi.zig`
 - `howl-render/include/howl_render.h`
 
-Read references:
+Allowed host files:
 
-- `utils/dev_references/terminals/ghostty/src/renderer.zig`
-- `utils/dev_references/terminals/ghostty/src/Surface.zig`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/window.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `howl-linux-host/src/main.zig` only for `shouldPresent()` / present loop tests if needed
+- `howl-linux-host/src/test/kitty_graphics_replay.zig` only if integration proof needs repair
 
-## Required Output
+Forbidden in this slice:
 
-The research round must produce a plain-English rewrite brief with:
+- No VT ABI changes.
+- No render retained-base redesign.
+- No prepared-handle/upload/dirty-metadata rewrites.
+- No multi-buffer present contract.
+- No compatibility shim that keeps render as presentation ack owner.
+- No broad host event-loop rewrite.
 
-- current bad shape, if any
-- reference-derived ownership answer
-- whether to keep render-owned one-in-flight presented state
-- whether to replace `retirePresented()` with a host-owned acknowledgement shape
-- smallest acceptable code slice
-- proof matrix for the chosen design
-- explicit rejection criteria for coding workers
+## Required Render Contract
 
-## Stop Condition
+In `howl-render`:
 
-Do not seed a coding worker for this slice until the research brief makes the ownership answer unambiguous.
+- Remove `TerminalSurface.presented_frame`.
+- `acceptSubmitted()` updates only `submitted_frame`.
+- Remove `TerminalSurface.retirePresented()` and `Flow.retirePresented()`.
+- Remove render-owned `present_pending` from `PendingState` and FFI pending output.
+- Remove `FfiPresentedRetire` if unused after ABI cleanup.
+- Remove `surface_text_ffi.retirePresented()`.
+- Remove `howl_render_surface_text_retire_presented` export.
+- Remove `HowlRenderPresentedRetire` and `howl_render_surface_text_retire_presented()` from `include/howl_render.h`.
+- Keep render submitted-frame validation and retained-base behavior unchanged.
+
+ABI note:
+
+- This is an intentional ABI contract sharpening. Do not leave dead `present_pending` or retire-present symbols as compatibility ghosts.
+
+## Required Host Contract
+
+In `howl-linux-host`:
+
+- Add host-owned `present_in_flight: ?u64` to `render_retained.State` or the nearest true host presentation owner.
+- `WorkState.present_pending` may remain as host-owned state, but it must no longer come from render C ABI.
+- `State.pending()` should combine render source/prepare/submit pending with host `present_in_flight != null`.
+- On successful submit/rendered result, host records exactly the submitted snapshot sequence as `present_in_flight`.
+- Use the prepared/upload info snapshot sequence already available during submit; do not ask render later.
+- Host must not start another submit while `present_in_flight != null`.
+- After `app.window.present()`, `TerminalPanel.finishPresent()` uses the host-owned pending snapshot sequence and calls `vt_surface.ackPublishedSourceLocked()` with exactly that sequence.
+- `finishPresent()` must clear `present_in_flight` exactly once.
+- Chrome-only present with no terminal present in flight must not ack VT snapshot `0`.
+
+## Implementation Guidance
+
+Preferred host shape:
+
+- Add methods on `render_retained.State`:
+  - `beginPresent(snapshot_seq: u64) void`
+  - `finishPresent() ?u64`
+  - `presentPending() bool` if useful
+- `beginPresent()` asserts `snapshot_seq != 0` and no existing present in flight.
+- `finishPresent()` returns the pending snapshot and clears it, or returns null when no terminal present is pending.
+- `TerminalPanel.submitPrepared()` calls `beginPresent(upload.info.snapshot_seq)` only after `submit()` returns `.rendered`.
+- `TerminalPanel.finishPresent()` acks VT only when `finishPresent()` returns a snapshot.
+
+Render pending state:
+
+- keep `source_pending`, `prepare_pending`, `submit_pending`, and `bootstrap_surface`
+- remove render-owned `present_pending` from the C ABI
+- preserve host `WorkState.present_pending` if it is now host-owned
+
+## Required Proofs
+
+Render proofs:
+
+- submitted-frame retained-base tests still pass after removing `presented_frame`.
+- `pendingState()` no longer exposes render-owned present pending.
+- ABI size/header tests updated for removed pending field and removed retire type/function.
+- no `retirePresented` symbol remains in render source/header/export.
+
+Host proofs:
+
+- successful render submit records `present_in_flight` with the submitted snapshot sequence.
+- failed/stale/idle/needs-prepare submit does not create `present_in_flight`.
+- render action blocks submit while host `present_in_flight != null`.
+- `finishPresent()` with a pending snapshot acks exactly once and clears it.
+- second `finishPresent()` without a new terminal present does not ack snapshot `0`.
+- chrome-only present without terminal present pending does not ack VT.
+- after finish-present clears pending state, next submit is allowed.
+
+## Commands
+
+Run from `/home/home/personal/projects/howl/howl-render`:
+
+- `zig build test:abi`
+- `zig build test:render`
+- `zig build test:unit`
+
+Run from `/home/home/personal/projects/howl/howl-linux-host`:
+
+- relevant host tests/build commands discovered from `build.zig`; at minimum run the targeted tests that cover `terminal_panel`, render retained state, and kitty graphics replay if available.
+
+If commands fail, report exact failures. Do not hide failures.
+
+## Rejection Gates
+
+Reject the worker diff if any of these happen:
+
+- render still stores `presented_frame`
+- render still exposes `retirePresented()` or `howl_render_surface_text_retire_presented`
+- render C ABI still exposes `present_pending` as render-owned truth
+- `acceptSubmitted()` still means “presented”
+- host acknowledges VT by asking render which snapshot to retire
+- host can ack snapshot `0`
+- failed/stale/idle/needs-prepare submit creates host present-in-flight state
+- submit can proceed while host present-in-flight is set
+- tests cover only happy path
+- ABI/header changes are not reflected in Zig FFI types/tests/exports
+
+## Completion Definition
+
+This slice is done only when:
+
+- render owns only retained submitted-frame identity
+- host owns present-in-flight identity and VT ack
+- render retire-present ABI is removed
+- host present ack proves exact once-only snapshot acknowledgement
+- render and host tests pass or exact blockers are documented
