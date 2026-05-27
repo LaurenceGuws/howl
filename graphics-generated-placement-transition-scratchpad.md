@@ -176,6 +176,8 @@ Implementation blocker found after VT generated placements landed:
 - Before this render deletion can be accepted, add a VT-owned host-facing surface consequence for placeholder cells, for example exporting generated-placeholder cells as non-rendering text while retaining internal screen truth for placeholder assembly.
 - Do not solve this by keeping or moving Kitty placeholder codepoint handling in render.
 
+Blocker status: resolved by `howl-vt` `e32c93f vt: blank placeholder cells in surface export`.
+
 ### 4a. VT Placeholder Surface Suppression Contract
 
 Owner: `howl-vt`.

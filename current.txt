@@ -1,51 +1,50 @@
-# Current Slice: VT Placeholder Surface Suppression Contract
+# Current Slice: Render Placeholder Path Deletion
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-generated-placement-transition-scratchpad.md` item 4a.
+Promoted from `graphics-generated-placement-transition-scratchpad.md` item 4, after item 4a landed.
 
 ## Goal
 
-Move Kitty Unicode placeholder glyph suppression from render to VT's host-facing surface export, while keeping VT internal placeholder truth for graphics assembly.
+Remove render-owned Kitty Unicode-placeholder interpretation now that VT publishes generated placeholder cells as normal graphics placements and blanks placeholder cells in the render-facing surface export.
 
 ## Target Files
 
-VT:
+Render:
 
-- `howl-vt/src/ffi.zig`
-- `howl-vt/src/test/terminal_surface.zig`
-- `howl-vt/src/test/terminal_graphics.zig` only if needed for proof reuse
-
-Render, for verification only unless a compile blocker proves otherwise:
-
+- `howl-render/src/frame/surface_buffer.zig`
+- `howl-render/src/frame/graphics_prepare.zig`
+- `howl-render/src/frame/surface_text.zig`
+- `howl-render/src/frame/surface.zig`
+- `howl-render/src/frame/queue.zig`
 - `howl-render/src/frame/input.zig`
+- tests under `howl-render/src/frame/`
 
 ## Required Behavior
 
-- Internal `Screen.Cell` truth remains unchanged for placeholder cells: `0x10EEEE`, combining diacritics, foreground image id, and underline placement id remain available to VT graphics assembly.
-- `howl_vt_terminal_copy_surface` exports placeholder lead cells as non-rendering text cells: codepoint space, `combining_len == 0`, zeroed combining array, underline disabled, underline color default/unset, strikethrough disabled.
-- Surface export preserves background behavior and still allows `applyVisibleSelection` to mark selected placeholder cells after export, so selection displays as selection over blank cells.
-- Graphics publication remains unchanged: generated placeholder placements stay normal placements and `placeholder_run_count == 0`.
-- No new ABI fields.
+- Generated placeholder placements render through the normal placement prepare/draw path.
+- `z_index == -1` still classifies generated placeholder placements below text.
+- Render no longer parses Kitty placeholder cells, placeholder diacritics, foreground image ids, underline placement ids, virtual placement semantics, or `U+10EEEE`.
+- Render keeps rejecting mixed generated-placeholder placements plus non-empty placeholder-run spans until placeholder-run ABI plumbing is removed in a later host cleanup slice.
+- Normal image decode, bind, prepare, sort, and draw behavior remains intact.
 
 ## Hard Constraints
 
-- Do not mutate screen state or placeholder cells before VT graphics assembly.
-- Do not edit render in this slice unless a compile blocker proves otherwise.
-- Do not add render-side placeholder protocol handling.
-- Do not add debug/raw placeholder provenance to the ABI.
+- Do not edit VT in this slice unless a compile blocker proves otherwise.
+- Do not add a new render-side placeholder drawer or placeholder-specific geometry path.
+- Do not remove normal raster decode/bind machinery.
+- Do not reintroduce generated placement plus placeholder-run double draw.
 - Do not special-case yazi/panes.
 
 ## Verification Required
 
-- `zig build test` in `howl-vt`
-- `zig build test:regression:build` in `howl-vt`
 - `zig build test` in `howl-render`
 - `zig build test:unit` in `howl-linux-host`
+- `zig build test` in `howl-vt`
 - `git diff --check` at workspace root
 
 Stop condition:
 
-- If render-facing surface consumers require both raw placeholder codepoints and non-rendering text in the same C surface contract, stop and report the exact API split needed. Do not add a half-visible placeholder workaround in render.
+- If render cannot draw generated placeholder placements as normal placements without needing Kitty placeholder protocol data, stop and report the exact ABI gap. Do not keep a fallback placeholder interpreter.
