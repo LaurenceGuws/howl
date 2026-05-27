@@ -42,8 +42,8 @@ Purpose:
 - Render ingress is stricter about dirty-row byte domain, metadata counts, image references, and screen identity.
 - Placeholder composition ordering is tighter and uses stronger published truth.
 - Prepared/export truth is improved for prepare-time metrics.
-- Presented frame identity is now explicit in render.
-- Host submit is gated behind presented-frame retirement.
+- Render owns submitted-frame retained-base truth only.
+- Host owns present-in-flight identity and VT acknowledgement.
 - Host publish path now carries placeholder-run metadata across the ABI.
 - Integration proof surfaces were recovered after the placeholder-run ABI expansion.
 
@@ -64,39 +64,6 @@ Every slice should answer one or more of these directly:
 5. What proof matrix makes this subsystem TigerBeetle-grade?
 
 ## Promotable Slices
-
-### Slice E: Present/Retire Final Contract
-
-Status: partially tightened, larger redesign still open.
-
-Goal:
-
-- Decide the final render/host contract for presented identity.
-
-Primary files:
-
-- `howl-render/src/frame/queue.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- host follow-up files only after render contract is settled
-
-Current state:
-
-- render now has an explicit one-in-flight presented identity
-- host now gates submit on present retirement
-
-Open design question:
-
-- Is one-in-flight the final intended contract?
-- Or should present/retire identity move fully to host with render no longer modeling it as a public queue state?
-
-Possible outcomes:
-
-- keep one-in-flight contract and fully prove it
-- or remove/replace `retirePresented` with a cleaner host-owned acknowledgement model
-
-Stop condition:
-
-- The presented/retired identity contract is explicit, exact, and not semantically misleading.
 
 ### Slice F: Placeholder Semantic Residuals
 
@@ -125,8 +92,7 @@ Stop condition:
 
 Recommended next promotions:
 
-1. Slice E: Present/Retire Final Contract
-2. Slice F: Placeholder Semantic Residuals
+1. Slice F: Placeholder Semantic Residuals
 
 ## Review Standard
 
@@ -139,7 +105,7 @@ Recommended next promotions:
 
 ## Ready-To-Promote Item
 
-- `Slice E: Present/Retire Final Contract`
+- `Slice F: Placeholder Semantic Residuals`
 
 Why first:
 
@@ -147,4 +113,5 @@ Why first:
 - Slice B made prepared-handle lifetime explicit and safely rejectable.
 - Slice C made submit execution upload/dimension truth checked before render mutation.
 - Slice D made dirty metadata canonical before equality/dedupe.
-- The next item has an open ownership question and needs a focused research round before coding.
+- Slice E moved presentation acknowledgement to the host and removed render-owned retire-present state.
+- The remaining item needs focused research before coding because placeholder semantics cross VT, render, and Kitty protocol truth.
