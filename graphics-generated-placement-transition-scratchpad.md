@@ -176,6 +176,38 @@ Implementation blocker found after VT generated placements landed:
 - Before this render deletion can be accepted, add a VT-owned host-facing surface consequence for placeholder cells, for example exporting generated-placeholder cells as non-rendering text while retaining internal screen truth for placeholder assembly.
 - Do not solve this by keeping or moving Kitty placeholder codepoint handling in render.
 
+### 4a. VT Placeholder Surface Suppression Contract
+
+Owner: `howl-vt`.
+
+Purpose: unblock render deletion by moving placeholder glyph suppression to VT's host-facing surface contract.
+
+Source truth:
+
+- Kitty keeps `IMAGE_PLACEHOLDER_CHAR` in screen line truth, uses it to scan/materialize cell images, and returns `BLANK_FONT` for it in text font selection.
+- Ghostty keeps the placeholder codepoint in terminal/page truth, marks rows with `kitty_virtual_placeholder`, scans those rows for image placement, and substitutes a space in the shaper for the placeholder.
+- Howl currently keeps placeholder screen truth in VT but suppresses the glyph in `howl-render/src/frame/input.zig`, which blocks deleting render-side Kitty protocol knowledge.
+
+Required shape:
+
+- Keep internal `Screen.Cell` truth unchanged: `0x10EEEE`, combining diacritics, foreground image id, and underline placement id must remain available to VT graphics assembly and tests.
+- Make `howl_vt_terminal_copy_surface` export placeholder lead cells as non-rendering text cells: codepoint space, zero combining length, zero combining array, no underline, no underline color, no strikethrough.
+- Preserve background and existing non-text surface behavior enough for selection overlay to keep working; `applyVisibleSelection` still runs after cell export.
+- Do not add a new ABI field unless a concrete public consumer needs raw placeholder text through the render-facing surface.
+- Do not change graphics publication shape: generated placements remain normal placements and `placeholder_run_count` remains zero.
+
+Acceptance:
+
+- VT tests prove internal screen/surface distinction: internal screen still contains placeholder truth; copied surface exports blank render-facing cells.
+- Render's existing placeholder suppression test can be deleted or made obsolete in the later render deletion slice because render will no longer receive `0x10EEEE` through the normal host surface.
+- Selection highlighting over placeholder cells remains visible as selection over blank cells.
+
+Reviewer red flags:
+
+- Mutating screen truth to spaces before graphics assembly.
+- Adding render-side placeholder code or a new placeholder draw path.
+- Adding ABI fields for debug/raw placeholder provenance.
+
 Delete or simplify:
 
 - `surface_buffer.zig`: `drawPlaceholderRunByIndex`, `resolvePlaceholderDrawPlacement`, `placeholderSourceRect`, `placeholderGrid`, placeholder sort helpers, placeholder draw/reject logs
