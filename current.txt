@@ -1,26 +1,46 @@
-# Current Slice: None
+# Current Slice: Graphics Placeholder Run Assembly Proof
 
 Owner: workspace root.
 
-The VT style attrs slice is complete.
+Sprint scope: graphics.
 
-Completed in this slice:
+Promoted from `graphics-machinery-scratchpad.md`.
 
-- VT now retains and exports dim, italic, invisible, and strikethrough attrs.
-- VT SGR handling covers `2`, `3`, `8`, `9`, `22`, `23`, `28`, and `29` for those attrs.
-- VT SGR rectangle reporting includes common dim, italic, invisible, and strikethrough attrs.
-- Render maps inverse/reverse video, italic, and strikethrough through existing fields, dims foreground/decorations, and suppresses invisible foreground/decorations while preserving background.
-- `howl-vt:test` is routine unit + ABI only; VT regression proofs are explicit under `test:regression`.
+## Goal
 
-Verification run:
+Prove and, if needed, correct Howl's Unicode placeholder run assembly against Kitty source.
+
+Kitty source truth:
+
+- `utils/dev_references/terminals/kitty/kitty/screen.c`: `screen_render_line_graphics`
+- `utils/dev_references/terminals/kitty/docs/graphics-protocol.rst`: `U+0305` maps to number `0`
+
+Howl target files:
+
+- `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
+
+## Required Acceptance Tests
+
+- `U+0305` maps to image row/col `0`.
+- Same-row missing column inference matches Kitty.
+- Same-row missing high-byte inference matches Kitty.
+- Mismatched row, column, image id, placement id, or high byte breaks runs as Kitty does.
+
+## Hard Constraints
+
+- Do not alter render geometry.
+- Do not reinterpret protocol diacritics as 1-based.
+- Do not reintroduce cross-row inference.
+- Do not special-case yazi or pane positions.
+- Keep changes in `howl-vt` only unless a reviewed blocker proves otherwise.
+
+## Verification Required
 
 - `zig build test` in `howl-vt`
 - `zig build test:regression:build` in `howl-vt`
-- `zig build test` in `howl-render`
-- `zig build test:unit` in `howl-linux-host`
-- `zig build test:integration:kitty-graphics-replay` in `howl-linux-host`
-- `zig build -Doptimize=ReleaseFast` in `howl-linux-host`
+- `git diff --check` at workspace root
 
 Stop condition:
 
-- Start a new research round or scratchpad before seeding more coding workers.
+- If Kitty source behavior cannot be proven from `screen_render_line_graphics`, stop and report the exact uncertainty. Do not guess.
