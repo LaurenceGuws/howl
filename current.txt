@@ -1,45 +1,56 @@
-# Current Slice: Render Generated Placeholder Mixed-Stream Guard
+# Current Slice: VT Generated Placeholder Placement Publication
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-generated-placement-transition-scratchpad.md` atomic commit sequence item 2.
+Promoted from `graphics-generated-placement-transition-scratchpad.md` atomic commit sequence item 3.
 
 ## Goal
 
-Add render-side validation that prevents future generated-placeholder placements from being consumed together with legacy placeholder runs.
+Materialize Unicode placeholder cell images in VT and publish them as normal graphics placements, with render-facing placeholder runs suppressed to avoid double draw.
 
 ## Target Files
 
-Render only unless a compile blocker proves otherwise:
+VT:
 
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/frame/queue.zig`
-- render tests in existing test files
+- `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/ffi.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
+
+Host bridge if needed:
+
+- `howl-linux-host/src/terminal/vt/surface.zig`
 
 ## Required Behavior
 
-- Existing old-shape publications with no generated-placeholder placement flags and non-empty placeholder runs still work.
-- If any `FfiVtGraphicsPlacement.flags & HOWL_VT_GRAPHICS_PLACEMENT_GENERATED_PLACEHOLDER != 0`, then render must reject or not accept a publish state with non-empty placeholder runs.
-- Do not require VT to emit generated placements yet.
-- Do not delete old placeholder render path in this slice.
+- Placeholder cells produce generated z `-1` placements with `flags & HOWL_VT_GRAPHICS_PLACEMENT_GENERATED_PLACEHOLDER != 0`.
+- Generated placement source rect fields are image pixel coordinates.
+- Generated placement destination geometry uses existing placement destination fields; render should not need placeholder protocol knowledge.
+- Render-facing `graphicsMeta().placeholder_run_count` is `0` once generated placement publication is active.
+- Host render publication passes empty placeholder-run spans for this path.
+- Clearing/replacing placeholder cells removes generated placements on the next publication.
+- Updating a virtual placement republishes changed generated placements.
+- Existing placeholder run assembly proof remains available via tests that do not require render-facing nonzero placeholder runs.
 
 ## Hard Constraints
 
-- No VT edits.
-- No host edits unless a compile blocker proves otherwise.
-- No generated placement publication.
-- No render-side Kitty placeholder parsing.
-- No yazi/pane special cases.
-- Keep this as a guard-only behavior change.
+- Do not add new placement ABI fields beyond existing `flags`.
+- Do not edit render in this slice unless a compile blocker proves otherwise.
+- Do not add render-side Kitty placeholder interpretation.
+- Do not publish generated placements and nonzero render-facing placeholder runs together.
+- Do not special-case yazi/panes.
+- Keep diacritics 0-based.
 
 ## Verification Required
 
+- `zig build test` in `howl-vt`
+- `zig build test:regression:build` in `howl-vt`
 - `zig build test` in `howl-render`
-- `zig build test:unit` in `howl-linux-host` if public ABI use is touched
+- `zig build test:unit` in `howl-linux-host`
 - `git diff --check` at workspace root
 
 Stop condition:
 
-- If current render publication validation cannot express the guard cleanly, stop and report the exact blocker. Do not add a second placement stream or new protocol interpretation.
+- If existing VT public queries cannot both expose generated placement truth and preserve placeholder-run proof without double-draw, stop and report the exact API split needed. Do not re-enable mixed streams.
