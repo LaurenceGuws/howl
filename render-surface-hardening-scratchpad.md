@@ -44,13 +44,14 @@ Purpose:
 - Prepared/export truth is improved for prepare-time metrics.
 - Render owns submitted-frame retained-base truth only.
 - Host owns present-in-flight identity and VT acknowledgement.
+- Render requires VT-owned virtual placement source/grid truth and no longer infers placeholder virtual placement dimensions.
 - Host publish path now carries placeholder-run metadata across the ABI.
 - Integration proof surfaces were recovered after the placeholder-run ABI expansion.
 
 ### Remaining Major Themes
 
 - Prepared/export surface semantics are still muddier than they should be.
-- Placeholder semantics may still have residual divergence from ideal Kitty behavior.
+- Placeholder/ordinary graphics ordering still needs an explicit VT/render ABI ownership decision.
 - Text/render input truth may still have remaining blind spots beyond the style/presentation slice already landed.
 
 ## Canonical Questions
@@ -65,34 +66,35 @@ Every slice should answer one or more of these directly:
 
 ## Promotable Slices
 
-### Slice F: Placeholder Semantic Residuals
+### Slice G: Placeholder/Ordinary Ordering Contract
 
-Status: open, but no longer the first blocker.
+Status: open research.
 
 Goal:
 
-- Revisit any residual divergence from ideal Kitty placeholder semantics now that VT owns placeholder-run truth.
+- Decide whether placeholder-backed graphics ordering relative to ordinary negative-z placements is VT-owned ABI truth or acceptable render draw policy.
 
 Primary files:
 
-- `howl-vt` placeholder-run export and semantics
-- `howl-render` composition ordering / draw math only as consumers
+- `howl-vt` graphics placement, virtual placement, placeholder-run export, and FFI headers
+- `howl-render` graphics viewport ordering and placeholder draw merge
+- Kitty protocol and Ghostty renderer/terminal graphics references
 
 Questions:
 
-- Are one-axis placement semantics perfect?
-- Is cross-kind ordering fully authoritative or still locally inferred?
-- Does any render-side fallback remain that should move to VT?
+- Does Kitty define a concrete order between Unicode-placeholder images and ordinary placements at the same negative z?
+- Does Ghostty's renderer hard-coded placeholder z translate to Howl as render policy, or should VT export a compositing key?
+- What is the smallest ABI shape that would make render sorting mechanical instead of semantic?
 
 Stop condition:
 
-- Render is a pure consumer of VT placeholder truth, not a semantic co-owner.
+- Placeholder/ordinary graphics ordering ownership is explicit and not hidden in render merge logic.
 
 ## Promotion Order
 
 Recommended next promotions:
 
-1. Slice F: Placeholder Semantic Residuals
+1. Slice G: Placeholder/Ordinary Ordering Contract
 
 ## Review Standard
 
@@ -105,7 +107,7 @@ Recommended next promotions:
 
 ## Ready-To-Promote Item
 
-- `Slice F: Placeholder Semantic Residuals`
+- `Slice G: Placeholder/Ordinary Ordering Contract`
 
 Why first:
 
@@ -114,4 +116,5 @@ Why first:
 - Slice C made submit execution upload/dimension truth checked before render mutation.
 - Slice D made dirty metadata canonical before equality/dedupe.
 - Slice E moved presentation acknowledgement to the host and removed render-owned retire-present state.
-- The remaining item needs focused research before coding because placeholder semantics cross VT, render, and Kitty protocol truth.
+- Slice F removed placeholder virtual placement fallback semantics from render.
+- The remaining item needs focused research before coding because cross-kind graphics ordering may require a VT/render ABI contract.
