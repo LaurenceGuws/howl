@@ -1,4 +1,4 @@
-# Current Slice: Graphics Placeholder Run Assembly Proof
+# Current Slice: VT Generated Placeholder Cell Placements
 
 Owner: workspace root.
 
@@ -8,39 +8,47 @@ Promoted from `graphics-machinery-scratchpad.md`.
 
 ## Goal
 
-Prove and, if needed, correct Howl's Unicode placeholder run assembly against Kitty source.
+Implement VT-owned generated cell placements for Unicode placeholders, matching Kitty's screen-owned cell-image materialization model.
 
 Kitty source truth:
 
 - `utils/dev_references/terminals/kitty/kitty/screen.c`: `screen_render_line_graphics`
-- `utils/dev_references/terminals/kitty/docs/graphics-protocol.rst`: `U+0305` maps to number `0`
+- `utils/dev_references/terminals/kitty/kitty/screen.c`: `screen_dirty_line_graphics`
+- `utils/dev_references/terminals/kitty/kitty/graphics.c`: `grman_put_cell_image`
+- `utils/dev_references/terminals/kitty/kitty/graphics.c`: `grman_remove_cell_images`
+- `utils/dev_references/terminals/kitty/kitty/graphics.h`: `ImageRef.virtual_ref_id`, `ImageRef.is_virtual_ref`
 
 Howl target files:
 
 - `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/ffi.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Acceptance Tests
 
-- `U+0305` maps to image row/col `0`.
-- Same-row missing column inference matches Kitty.
-- Same-row missing high-byte inference matches Kitty.
-- Mismatched row, column, image id, placement id, or high byte breaks runs as Kitty does.
+- Placeholder cells create generated z `-1` placements in VT, not render-only protocol geometry.
+- Rewriting or clearing a placeholder row removes stale generated placements.
+- Updating a virtual placement redraws or republishes existing placeholder rows.
+- Generated placements preserve image id, placement id, source fragment row/column, run width, screen row/column, and a stable link to the virtual placement equivalent to Kitty's virtual ref linkage.
+- Existing placeholder run assembly tests remain valid.
 
 ## Hard Constraints
 
-- Do not alter render geometry.
+- Keep Kitty protocol consequences in `howl-vt`.
+- Do not add new render-side placeholder interpretation.
 - Do not reinterpret protocol diacritics as 1-based.
-- Do not reintroduce cross-row inference.
 - Do not special-case yazi or pane positions.
-- Keep changes in `howl-vt` only unless a reviewed blocker proves otherwise.
+- Do not edit `howl-render` in this slice unless a reviewed blocker proves the VT ABI shape is impossible.
+- Prefer the smallest ABI addition that lets hosts/render consume generated placements as normal placement truth.
 
 ## Verification Required
 
 - `zig build test` in `howl-vt`
 - `zig build test:regression:build` in `howl-vt`
+- If ABI changes require it, run `zig build test` in `howl-render` and `zig build test:unit` in `howl-linux-host`.
 - `git diff --check` at workspace root
 
 Stop condition:
 
-- If Kitty source behavior cannot be proven from `screen_render_line_graphics`, stop and report the exact uncertainty. Do not guess.
+- If a correct ABI shape cannot be proven within VT boundary rules, stop and report the exact blocker. Do not invent a render shortcut.
