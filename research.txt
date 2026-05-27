@@ -1,0 +1,48 @@
+Biggest host gaps relative to Alacritty-like shape:
+1. Wake, redraw, and present policy are still too entangled.
+- Current host loop mixes:
+- wake admission
+- redraw requests
+- runtime progress
+- render gating
+- present gating
+- In a cleaner Alacritty-like host, wake marks work available, dirty/redraw policy stays explicit, and draw/present cadence is owned in one obvious place.
+2. Present cadence is not first-class enough.
+- shouldPresent(...) and chrome_present make present policy feel bolted onto the loop instead of being a clear host presentation contract.
+- Alacritty’s host shape makes frame/draw/present scheduling more explicit through its event processor, window context, and scheduler.
+3. The host loop is carrying too much implicit policy in runLoopTurn(...).
+- main.zig currently centralizes the right things, but the policy boundaries are blurry.
+- It is not obvious which of these are:
+- admission signals
+- redraw signals
+- render work signals
+- present-complete signals
+4. Input-to-redraw ownership is weakly expressed.
+- The host clearly owns SDL input.
+- But the path from input publication to “host should now redraw/present” is not explicit enough.
+- That is exactly why the readline responsiveness bug became hard to reason about.
+5. Host frame pacing is under-shaped.
+- Alacritty has a clearer scheduler/frame model.
+- Howl currently has waits from:
+- SDL events
+- cursor blink
+- runtime obligations
+- but not a pristine host frame/present pacing story.
+6. “Present complete” is not a strong host concept yet.
+- Host does window.present(...) and then finishPresent().
+- But the code does not read like:
+- present submitted
+- present completed
+- host wakes/continues from present completion
+- That seam needs to be more explicit if present completion is a meaningful host boundary.
+7. Redraw is still too event-shaped instead of policy-shaped.
+- Dedicated redraw events exist, but the references point toward clearer host-owned redraw policy, not just another event bit.
+- The code still feels like it is shuffling event signals instead of expressing a clean draw contract.
+8. The simple text path is not obviously collapsed.
+- Even if the architecture stays owner-loop based, the shell/readline path should read like a near-direct fast path.
+- Right now it still looks like it may take multiple host decisions to get from input to present.
+What looks directionally right already:
+- host owns SDL/window/GL/present
+- PTY/VT/render are separated
+- owner loop is centralized
+- background thread wakes owner instead of taking over

@@ -1,20 +1,91 @@
-# Current Slice: None
+# Current Slice: Point 3 Explicit Loop Phases
 
-Owner: workspace root.
+Owner: `howl-linux-host`.
 
-The render surface hardening scratchpad has no ready-to-promote slice remaining.
+Source scratchpad:
 
-Completed in this campaign:
+- `host-alacritty-gap-scratchpad.md`
+- promoted item: `Point 3: runLoopTurn Carries Too Much Implicit Policy`
 
-- render ABI token validation
-- prepared handle lifecycle
-- submit execution truth validation
-- dirty metadata canonicalization
-- host-owned present acknowledgement
-- placeholder virtual placement boundary hardening
-- placeholder/ordinary ordering proof
+## Accepted Answer
+
+- `runLoopTurn()` still carries too much implicit host policy in one body.
+- Admission, window-event pumping, host-owned mutations, runtime progress, redraw/render intent, render, present intent, and present completion must read as explicit phases.
+- Runtime `keep_running` must suppress blocking only.
+- Host redraw request draining must feed only host redraw intent.
+- Present completion must be named explicitly in host code, not buried in generic render flow.
+
+## Mandatory Reference Preload
+
+Read these references before touching code:
+
+- `utils/dev_references/terminals/ghostty/src/App.zig`
+- `utils/dev_references/terminals/ghostty/src/termio/stream_handler.zig`
+- `utils/dev_references/terminals/alacritty/alacritty/src/event_loop.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+
+Reference-derived truth:
+
+- Ghostty app ticks drain explicit mailbox kinds and map them to explicit runtime actions.
+- Alacritty keeps PTY wakeup, dirtying, redraw request, and draw separate.
+- TigerBeetle requires explicit centralized control flow with named state transitions.
+
+## Current Offending Code
+
+- `howl-linux-host/src/main.zig:257-286`
+  - `runLoopTurn()` mixes admission, event pumping, host mutation, runtime progress, redraw/render derivation, render, present, and present completion.
+- `howl-linux-host/src/main.zig:447-455`
+  - `render(...)` calls `presentRenderFrame(...)`, hiding present intent and present completion inside generic render flow.
+- `howl-linux-host/src/main.zig:483-493`
+  - `presentRenderFrame(...)` performs both present submission and terminal present completion without a named completion seam.
+
+## Exact Files Allowed To Change
+
+- `howl-linux-host/src/main.zig`
+- relevant existing `howl-linux-host/src/test/*.zig` files only if genuinely needed for first-class test exposure
+- `howl-linux-host/src/test_root.zig` only if genuinely needed for first-class test exposure
+
+## Exact Change Shape
+
+- In `howl-linux-host/src/main.zig`
+  - split `runLoopTurn()` into explicit internal phases:
+    - compute admission
+    - pump window events
+    - apply host-owned mutations
+    - drive runtime progress
+    - derive redraw/render intent
+    - render
+    - derive present intent
+    - complete present
+  - keep `driveTerminalProgress()` returning:
+    - `should_redraw: bool`
+    - `keep_running: bool`
+  - `keep_running` must suppress blocking only through wake/admission behavior.
+  - `app.input.drainRedrawRequested()` must feed only host redraw intent.
+  - present completion must be named explicitly in host code.
+
+## Required Proof
+
+- `main.zig` tests proving:
+  - `keep_running=true, should_redraw=false` keeps host non-blocking without redraw/present
+  - `host_redraw_requested=true` can produce host-only present
+  - `render_work_pending=true` produces render without host redraw bit
+  - present completion only happens after present submission
+
+## Rejection Gates
+
+- reject any patch touching `howl-vt`
+- reject any patch touching `howl-render`
+- reject any patch touching `howl-linux-host/src/input/input.zig` unless the coder proves Point 3 cannot be done without it
+- reject any fake proof seam or harness-only policy object
+- reject any patch that reintroduces redraw into wait admission
+- reject any patch that turns runtime `keep_running` into redraw or present intent
+- reject any patch that leaves `finishPresent()` buried as an unnamed side effect of generic render flow
 
 Stop condition:
 
-- Start a new research round or scratchpad before seeding more coding workers.
-- Remaining broad themes need fresh shaping before promotion.
+- the loop reads as named host phases
+- redraw/render/present intent are distinct values
+- present completion is explicit and tested
