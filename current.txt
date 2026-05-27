@@ -1,91 +1,121 @@
-# Current Slice: Point 2 First-Class Present Cadence
+# Current Slice: Point 6 Strong Present Completion
 
 Owner: `howl-linux-host`.
 
 Source scratchpad:
 
 - `host-alacritty-gap-scratchpad.md`
-- promoted item: `Point 2: Present Cadence Is Not First-Class Enough`
+- promoted item: `Point 6: “Present Complete” Is Not A Strong Host Concept Yet`
 
 ## Accepted Answer
 
-- Present cadence is still under-expressed after Point 3 made present submission and completion explicit.
-- The host must own a named presentation contract rather than deriving a bare submit boolean through `shouldPresent(...)`.
-- Host-only damage, terminal frame publication, and terminal present retirement are distinct present reasons.
-- Terminal present completion must happen only for terminal-owned present reasons, not for host-only damage.
+- Present completion is now named in `main.zig`, but it is still not a strong host concept.
+- The window backend submit path should return a host-owned present token.
+- Completion should be drained explicitly from the window owner path, then matched against terminal retained present state.
+- Terminal retained state should remember both the submitted terminal snapshot and the host present token.
+- Host code must separate present submission from present completion; completion must not happen in the same statement block as submit.
 
 ## Mandatory Reference Preload
 
 Read these references before touching code:
 
-- `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/window.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
-- `utils/dev_references/terminals/ghostty/src/renderer/Thread.zig`
 - `utils/dev_references/terminals/ghostty/src/App.zig`
+- `utils/dev_references/terminals/ghostty/src/Surface.zig`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 
 Reference-derived truth:
 
-- Alacritty has explicit host frame cadence primitives and keeps draw/present scheduling in host policy.
-- Ghostty separates render actions from present/wakeup actions.
-- TigerBeetle favors explicit state machines over booleans with hidden lifecycle meaning.
+- Ghostty separates render and present at the host/runtime seam.
+- Alacritty separates swap from next-frame admission.
+- TigerBeetle requires explicit state transitions and rejecting impossible lifecycle transitions.
 
 ## Current Offending Code
 
+- `howl-linux-host/src/window/present.zig`
+  - backend `present(...)` records proof/debug only and returns no submission identity.
+- `howl-linux-host/src/window/window.zig`
+  - `State.present(frame)` has no token-returning submit API or drain-completion API.
+- `howl-linux-host/src/terminal/render/retained.zig`
+  - retained present in-flight state is just a render-side `snapshot_seq`.
 - `howl-linux-host/src/main.zig`
-  - `PresentIntent` currently carries only `submit: bool`, hiding why present is needed.
-  - `derivePresentIntent(...)` delegates to `shouldPresent(...)`, hiding host cadence policy.
-  - `completePresent(...)` completes terminal present state for every submitted present, including host-only damage.
-  - `shouldPresent(...)` is still a boolean helper instead of a host-owned present reason.
+  - present submit and terminal completion are explicit, but completion still follows submit directly and has no host token.
 
 ## Exact Files Allowed To Change
 
+- `howl-linux-host/src/window/present.zig`
+- `howl-linux-host/src/window/window.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig` only for API forwarding to retained state
 - `howl-linux-host/src/main.zig`
 - relevant existing `howl-linux-host/src/test/*.zig` files only if genuinely needed for first-class test exposure
 - `howl-linux-host/src/test_root.zig` only if genuinely needed for first-class test exposure
 
 ## Exact Change Shape
 
+- In `howl-linux-host/src/window/present.zig`
+  - add `pub const PresentToken = u64`
+  - extend `Present.State(c)` with:
+    - `next_present_token`
+    - `submitted_present`
+    - `completed_present`
+  - replace `present(...) void` with:
+    - `submitPresent(...) PresentToken`
+    - `drainPresentComplete(...) ?PresentToken`
+  - assert single in-flight token and drain-before-overwrite semantics
+- In `howl-linux-host/src/window/window.zig`
+  - replace `State.present(frame)` with:
+    - `State.submitPresent(frame) PresentToken`
+    - `State.drainPresentComplete() ?PresentToken`
+- In `howl-linux-host/src/terminal/render/retained.zig`
+  - replace `present_in_flight: ?u64` with a struct carrying:
+    - `snapshot_seq`
+    - `token`
+  - replace:
+    - `beginPresent(snapshot_seq)`
+    - `finishPresent() ?u64`
+  - with:
+    - `notePresentSubmitted(snapshot_seq, token)`
+    - `completePresent(token) ?u64`
 - In `howl-linux-host/src/main.zig`
-  - delete `shouldPresent(...)`
-  - add exactly:
-    - `const PresentReason = enum { none, host_damage, terminal_frame, terminal_retire };`
-    - `const PresentPlan = struct { reason: PresentReason, needs_render_turn: bool };`
-  - replace bare `PresentIntent.submit: bool` with present reason/plan policy
-  - add `fn derivePresentReason(host_redraw: bool, step: TerminalPanel.TurnStep) PresentReason`
-  - present submission must switch on `PresentReason`
-    - `.none`: no present, no terminal completion
-    - `.host_damage`: present, no `tab.finishPresent()`
-    - `.terminal_frame`: present, then `tab.finishPresent()`
-    - `.terminal_retire`: present, then `tab.finishPresent()`
-  - `TerminalPanel.TurnStep` remains terminal/render-owned fact
-  - host must own present cadence policy in `main.zig`, not in `TerminalPanel` or `window/present.zig`
+  - submit path records the token on terminal present reasons
+  - completion path drains window completion and passes the token to terminal completion
+  - host must never call terminal completion in the same statement block as submit
+  - preserve Point 2 `PresentReason` semantics:
+    - `.host_damage` submits a host present and does not consume terminal retained present state
+    - `.terminal_frame` and `.terminal_retire` submit host present and later complete terminal retained present state by matching token
 
 ## Required Proof
 
-- `main.zig` tests for `derivePresentReason()` matrix.
-- fake-window/fake-tab or equivalent production-helper test proving:
-  - `.host_damage` does not call `finishPresent()`
-  - `.terminal_frame` does call `finishPresent()`
-  - `.terminal_retire` does call `finishPresent()`
-  - `.none` does neither
-- retained/present state or helper-level test ensuring host-only redraw does not consume terminal present state.
-- Existing Point 3 tests must keep passing.
+- `window/present.zig` tests for:
+  - submit returns monotonic nonzero tokens
+  - single in-flight submission is enforced
+  - completion drains exactly once before overwrite
+- `terminal/render/retained.zig` tests for:
+  - submit token storage
+  - matching completion returns the snapshot sequence
+  - mismatched completion is rejected or ignored without clearing state
+  - pending-state lifetime survives until matching completion
+- `main.zig` fake-window/fake-tab tests proving:
+  - submit and completion are distinct host actions
+  - `.host_damage` completion does not call terminal completion
+  - terminal present reasons complete only after a drained matching token
+- Existing Point 2 and Point 3 tests must keep passing.
 
 ## Rejection Gates
 
 - reject any patch touching `howl-vt`
 - reject any patch touching `howl-render`
 - reject any patch touching `howl-linux-host/src/input/input.zig`
-- reject any patch that deletes or muddies the explicit loop phases from Point 3
-- reject any patch that keeps boolean `shouldPresent(...)` as the policy owner
-- reject any patch that calls `finishPresent()` for `.host_damage`
-- reject any fake proof seam that is not exercised by production present submission/completion code
+- reject any patch that completes terminal present state in the same statement block as submit
+- reject any token that is only a test seam and not returned by the production window present API
+- reject any patch that silently clears retained pending state on mismatched token
+- reject any patch that regresses Point 2 host-only damage behavior
 
 Stop condition:
 
-- present cadence is represented by explicit host-owned reasons
-- host-only damage can present without consuming terminal present state
-- terminal frame and terminal retire presents complete terminal present state explicitly
+- host present submit has a production token
+- host present completion is drained explicitly
+- terminal retained present state completes only on matching host token
+- submit and completion are visibly separate host actions and tested
