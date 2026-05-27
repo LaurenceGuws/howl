@@ -50,7 +50,6 @@ Purpose:
 ### Remaining Major Themes
 
 - Prepared/export surface semantics are still muddier than they should be.
-- Prepared-handle lifecycle is not yet TigerBeetle-grade explicit.
 - Upload requirement vs upload realization semantics are still under-specified across phases.
 - Dirty metadata canonicalization still deserves explicit owner handling.
 - Placeholder semantics may still have residual divergence from ideal Kitty behavior.
@@ -67,48 +66,6 @@ Every slice should answer one or more of these directly:
 5. What proof matrix makes this subsystem TigerBeetle-grade?
 
 ## Promotable Slices
-
-### Slice B: Prepared Handle Lifecycle Truth
-
-Status: research complete, code not started.
-
-Goal:
-
-- Replace implicit raw-pointer handle lifecycle assumptions with explicit owner-managed live-state discipline.
-
-Primary files:
-
-- `howl-render/src/frame/surface_text.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/frame/prepared_surface_owner.zig`
-- `howl-render/src/test_abi.zig`
-
-Current problem:
-
-- prepared handles can be cached, published, released, and later dereferenced with no explicit liveness contract beyond pointer identity and convention.
-
-Target shape:
-
-- one owner-managed prepared-handle state model
-- explicit phase states such as:
-  - prepared
-  - published
-  - submit-ready
-  - consumed/released
-- no dereference of a handle whose state has been invalidated
-
-Proof matrix:
-
-- live prepared handle can describe/buffer/diagnose
-- released handle is rejected
-- submitted handle is consumed once
-- double-submit rejected
-- cross-session handle rejected
-- publish-after-release rejected
-
-Stop condition:
-
-- Prepared-handle lifetime becomes explicit and provable instead of conventional.
 
 ### Slice C: Upload Requirement vs Realization Truth
 
@@ -238,11 +195,10 @@ Stop condition:
 
 Recommended next promotions:
 
-1. Slice B: Prepared Handle Lifecycle Truth
-2. Slice C: Upload Requirement vs Realization Truth
-3. Slice D: Dirty Metadata Canonicalization
-4. Slice E: Present/Retire Final Contract
-5. Slice F: Placeholder Semantic Residuals
+1. Slice C: Upload Requirement vs Realization Truth
+2. Slice D: Dirty Metadata Canonicalization
+3. Slice E: Present/Retire Final Contract
+4. Slice F: Placeholder Semantic Residuals
 
 ## Review Standard
 
@@ -255,11 +211,11 @@ Recommended next promotions:
 
 ## Ready-To-Promote Item
 
-- `Slice B: Prepared Handle Lifecycle Truth`
+- `Slice C: Upload Requirement vs Realization Truth`
 
 Why first:
 
 - Slice A made token ingress reject impossible prepared/export states.
-- The next weakest ABI seam is prepared-handle lifetime.
-- Freed opaque pointers cannot be validated after release.
-- The smallest truthful next shape is explicit handle state owned by the render surface owner.
+- Slice B made prepared-handle lifetime explicit and safely rejectable.
+- The next weakest seam is the ambiguous upload count contract.
+- The smallest truthful shape is enforcing required-vs-realized upload agreement before submit.

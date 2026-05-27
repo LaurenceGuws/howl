@@ -1,42 +1,40 @@
-# Current Slice: Prepared Handle Lifecycle Truth
+# Current Slice: Upload Requirement vs Realization Truth
 
 Owner: workspace root.
 
 Source scratchpad:
 
 - `render-surface-hardening-scratchpad.md`
-- Promoted item: `Slice B: Prepared Handle Lifecycle Truth`
+- Promoted item: `Slice C: Upload Requirement vs Realization Truth`
 
 ## Goal
 
-Replace implicit raw-pointer prepared-handle lifetime with explicit owner-managed live-state discipline.
+Make the prepared-buffer export and submit execution seam agree on upload truth.
 
-This slice exists because `HowlRenderPreparedSurfaceHandle` currently behaves like a raw pointer to an owned prepared surface. `release()` frees the object immediately, while other ABI functions later cast the same opaque pointer back into an owner. That makes release-after-use, submit-after-release, and stale cached handles unprovable at the ABI seam.
+This slice does not rename the shipped ABI field. It makes the current shipped names provable by enforcing pair contracts at the owner boundary.
 
 ## Current Bad Shape
 
-Current code:
+Current code has two meanings around `uploads_committed`:
 
-- `prepared_surface_owner.Owner.fromHandle()` blindly casts a non-null opaque handle.
-- `prepared_surface_ffi.release()` calls `owner.destroy()` immediately.
-- `prepared_surface_ffi.describe/buffer/diagnostics()` dereference any non-null handle.
-- `surface_text_ffi.publishPreparedHandle()` stores a raw prepared handle in `prepared_publish_handle`.
-- `surface_text_ffi.takeSubmitHandle()` moves that raw handle into `prepared_submit_handle`.
-- `surface_text_ffi.submitHandle()` consumes `prepared_submit_handle`, calls `submitOwned()`, and `submitOwned()` destroys the owner.
-- `surface_text_ffi.submit()` can also submit a prepared handle directly and `Owner.submit()` eventually destroys it through `submitOwned()`.
-- `SurfaceTextOwner.destroy()` does not centrally retire or free outstanding prepared-handle records.
+- `prepared_surface_owner.Owner.buffer()` returns `uploads_required` through the shipped `FfiPreparedSurfaceBuffer.uploads_committed` field.
+- `surface_text.SurfaceText.submitSurface()` records `execution.uploads_committed` as host-realized work in `RenderSurfaceFeedback` and metrics.
+- There is no owner check that the host-reported realized uploads match the prepared owner’s required uploads.
+- There is no owner check that the host surface dimensions match the prepared render dimensions.
 
-Observed consequence:
+Current relevant paths:
 
-- The ABI cannot safely reject a released handle because the object was freed.
-- A handle can remain cached in `prepared_publish_handle` or `prepared_submit_handle` after external release unless the code explicitly clears it.
-- A submitted/consumed handle has no explicit state; it is only gone by convention.
+- `prepared_surface_owner.Owner.buffer()` exports the required upload count.
+- `surface_text_ffi.executionInputIn()` translates host execution input.
+- `prepared_surface_owner.Owner.submit()` and `submitOwned()` call `session.submitSurface()`.
+- `surface_text.SurfaceText.submitSurface()` marks raster outputs rendered and reports `execution.uploads_committed`.
+- `submit_feedback.renderMetrics()` stores `uploads_committed` in `metrics.uploads`.
 
 ## Reference-Derived Rule
 
-- Ghostty uses opaque C handles, but owner methods reject invalid values before owner mutation and keep C-facing object ownership clear.
-- Alacritty keeps runtime/presentation ownership centralized instead of letting leaf helpers own lifecycle policy.
-- TigerBeetle requires explicit state, pair assertions, and positive/negative tests for invalid data becoming invalid. A freed pointer cannot be inspected, so “released” must be represented as state before memory is reclaimed.
+- Ghostty-style owner seams do not let C-facing values silently change meaning after crossing the boundary.
+- Alacritty-style rendering keeps host realization distinct from prepared render content.
+- TigerBeetle requires pair assertions: the producer publishes required work, and the consumer reports realized work; the seam must prove they agree or reject the transition.
 
 ## Hard Scope
 
@@ -46,12 +44,12 @@ Repository to modify:
 
 Allowed files:
 
-- `howl-render/src/frame/surface_text.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
 - `howl-render/src/frame/prepared_surface_owner.zig`
-- `howl-render/src/frame/prepared_surface_ffi.zig`
+- `howl-render/src/frame/surface_text_ffi.zig`
+- `howl-render/src/frame/surface_text.zig` only if the smallest correct check belongs there
+- `howl-render/src/frame/submit_feedback.zig` only if tests require metric proof cleanup
 - `howl-render/src/test_abi.zig`
-- `howl-render/src/ffi.zig` only for existing internal FFI tests if needed
+- `howl-render/src/ffi.zig` only if existing internal FFI tests are the smallest proof surface
 
 Do not edit unless absolutely necessary:
 
@@ -62,104 +60,61 @@ Do not edit unless absolutely necessary:
 
 Forbidden in this slice:
 
-- No public ABI/header shape changes.
-- No upload-count semantic rewrite.
+- No ABI/header field rename.
+- No public ABI shape change.
 - No present/retire redesign.
-- No host or VT changes.
-- No broad renaming campaign.
-- No fake validation that still dereferences freed memory.
+- No prepared-handle lifecycle redesign beyond using the state model already landed.
+- No host changes.
+- No broad metric rename campaign.
 
-## Required Model
+## Required Contract
 
-Use an explicit prepared-handle state owned by `prepared_surface_owner.Owner`.
+Prepared phase:
 
-Minimum state names:
+- `Owner.buffer().uploads_committed` continues to export the prepared owner’s `uploads_required` because the ABI field name is shipped.
+- The code comment must remain explicit that this value is required uploads at prepare-buffer export time.
 
-- `prepared`
-- `published`
-- `submit_ready`
-- `released`
-- `consumed`
+Submit phase:
 
-Allowed transitions:
+- `execution.uploads_committed` is host-realized uploads.
+- A submit may proceed only when `execution.uploads_committed == owner.uploads_required`.
+- A submit may proceed only when `execution.surface.width == owner.render_px.width`.
+- A submit may proceed only when `execution.surface.height == owner.render_px.height`.
+- Rejection should happen in `prepared_surface_owner.Owner` before `session.submitSurface()` mutates atlas/render state.
 
-- `prepared -> published` when `publishPreparedHandle()` accepts it
-- `published -> submit_ready` when `takeSubmitHandle()` returns it
-- `prepared -> consumed` when direct `submit()` succeeds
-- `submit_ready -> consumed` when `submitHandle()` succeeds
-- `prepared/published/submit_ready -> released` when `prepared_surface_ffi.release()` is called
+Feedback phase:
 
-Rejected transitions:
-
-- release after `released` or `consumed` must be a no-op
-- publish after `released` or `consumed` must fail
-- take-submit for a stale released/consumed published handle must fail and clear cached handle state
-- submit after `released` must fail
-- submit after `consumed` must fail
-- double-submit must fail
-- cross-session handle use must fail
-
-Memory/lifetime rule:
-
-- `release()` must not immediately free the handle record if callers may still pass the opaque handle back.
-- It may deinit the heavy prepared payload and RGBA buffer exactly once, but the handle record must remain inspectable until the owning `SurfaceTextOwner` is destroyed.
-- `SurfaceTextOwner` must own and free all prepared-handle records during `destroy()`.
-- A prepared handle belongs to exactly one `SurfaceTextOwner`.
-
-This means the object shell remains alive after `release()`/`consumed`; that is intentional for ABI safety. Do not leak shells on surface teardown.
+- `RenderSurfaceFeedback.uploads_committed` and `metrics.uploads` remain host-realized upload counts.
+- Because submit rejects mismatches, these values are now proven equal to the prepared owner’s required upload count for accepted submits.
 
 ## Implementation Guidance
 
-Prefer this shape unless code proves a smaller equally safe shape:
+Prefer a small owner-local check in `prepared_surface_owner.Owner`, before `performSubmit()` calls `session_owner.session.submitSurface()`.
 
-- Add lifecycle state to `prepared_surface_owner.Owner`.
-- Add a small owner-managed registry/list of prepared handles to `SurfaceTextOwner`.
-- `Owner.create()` registers the new prepared owner with `SurfaceTextOwner`.
-- `SurfaceTextOwner.destroy()` retires/frees all registered prepared owners.
-- `Owner.release()` marks `released` and deinitializes owned prepared payload/buffer once.
-- `Owner.consumeAfterSubmit()` or equivalent marks `consumed` and deinitializes owned prepared payload/buffer once.
-- `Owner.destroy()` is only used by the owning `SurfaceTextOwner` teardown path once the shell is no longer ABI-visible.
-- `fromHandle()` can still cast a non-null pointer, but all public entrypoints must check state before using payload.
+Acceptable shape:
 
-Payload deinit requirement:
+- Add a tiny helper such as `executionMatchesPrepared()` or `validateExecution()` on `Owner`.
+- Use direct checks, not dense compound conditions.
+- Return `.failed` from `submit()` / `submitOwned()` when dimensions or uploads do not match.
+- Keep the C ABI unchanged.
 
-- Do not call `prepared.deinit()` twice.
-- Do not free `rgba_pixels` twice.
-- Do not call `session.submitSurface(&self.prepared, ...)` after payload was released or consumed.
-
-Cached handle cleanup requirement:
-
-- Releasing a handle must clear `session_owner.prepared_publish_handle` if it points at that handle.
-- Releasing a handle must clear `session_owner.prepared_submit_handle` if it points at that handle.
-- Consuming a handle must clear matching cached handle slots.
-
-Status behavior:
-
-- Null prepared-surface handle remains `missing_handle` for describe/buffer/diagnostics.
-- Non-null but `released`/`consumed` prepared-surface handle must return `invalid_argument` for describe/buffer/diagnostics.
-- `publishPreparedHandle()` with released/consumed handle returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
-- `takeSubmitHandle()` must not return released/consumed handles.
-- `submit()`/`submitHandle()` with released/consumed handle returns `.failed`.
-- `release()` remains void and idempotent.
+Do not put this policy in `surface_text_ffi.executionInputIn()` unless it is only translating values. FFI translates contracts; the prepared owner owns the prepared dimensions and required upload count.
 
 ## Required Proofs
 
-Add or update ABI tests. Prefer `src/test_abi.zig` for shipped C ABI behavior. Use `src/ffi.zig` only if an existing internal export test is the smaller fit.
+Add or update tests.
 
-Required tests:
+Required ABI proofs:
 
-- live prepared handle can `describe`, `buffer`, and `diagnostics`
-- released prepared handle rejects `describe`, `buffer`, and `diagnostics` with `invalid_argument`
-- release is idempotent and does not crash
-- publish-after-release returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`
-- take-submit after releasing a published handle fails and does not return the released handle
-- direct submit after release returns `.failed`
-- successful direct submit consumes the handle, and a second direct submit fails
-- successful handle submit consumes the handle, and a second `submitHandle()` fails
-- cross-session publish/submit remains rejected
-- surface teardown with outstanding prepared handles does not leak or double-free under the test allocator
+- prepared buffer export reports required upload count.
+- submit with matching surface dimensions and upload count succeeds.
+- submit with wrong `uploads_committed` fails.
+- submit with wrong surface width fails.
+- submit with wrong surface height fails.
+- failed submit from upload/dimension mismatch does not consume the prepared handle; a later matching submit can still succeed.
+- accepted submit feedback metrics report uploads equal to the realized count.
 
-If a proof is too large for this slice, stop and report the blocker. Do not silently skip it.
+If generating non-zero uploads through the full ABI is too heavy, use the smallest owner-local test in `prepared_surface_owner.zig` to prove non-zero `uploads_required` mismatch/match behavior, and keep ABI tests for dimension mismatch and zero-upload success. Do not skip non-zero upload proof entirely.
 
 ## Commands
 
@@ -175,21 +130,20 @@ If any command fails, report the exact failure. Do not hide failures.
 
 Reject the worker diff if any of these happen:
 
-- `release()` still frees the handle record immediately.
-- Any public prepared-handle entrypoint can dereference released/consumed payload.
-- A released handle can still be published, submitted, described, buffered, or diagnosed as live.
-- A consumed handle can still be submitted again.
-- Cached `prepared_publish_handle` or `prepared_submit_handle` can point at released/consumed handles after release/consume.
-- Public ABI/header shape changes without explicit approval.
-- Host/VT/present/upload changes are mixed into this slice.
-- Tests rely on null handles instead of real prepared handles for lifecycle behavior.
+- submit can still succeed with `execution.uploads_committed != owner.uploads_required`
+- submit can still succeed with host surface dimensions different from prepared render dimensions
+- mismatch rejection happens after `session.submitSurface()` mutates atlas/render state
+- public ABI/header shape changes without explicit approval
+- host changes are mixed into this slice
+- tests only cover zero-upload cases and never prove non-zero upload mismatch behavior
+- failed mismatch consumes or releases the prepared handle
 
 ## Completion Definition
 
 This slice is done only when:
 
-- prepared-handle lifecycle is explicit in owner state
-- released/consumed handles are safely rejectable without use-after-free
-- surface teardown owns final shell reclamation
-- required ABI proofs pass
+- producer required-upload truth and host realized-upload truth are checked at submit
+- accepted feedback upload metrics are proven
+- mismatched dimensions/uploads are rejected before render mutation
+- tests prove both zero-upload ABI flow and non-zero upload mismatch truth
 - requested tests have run or exact blockers are documented
