@@ -1,50 +1,53 @@
-# Current Slice: Render Placeholder Path Deletion
+# Current Slice: Host Placeholder-Run Publication Cleanup
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-generated-placement-transition-scratchpad.md` item 4, after item 4a landed.
+Promoted from `graphics-generated-placement-transition-scratchpad.md` item 5, after render placeholder path deletion landed in `howl-render` `7bd5b89` and root `891a5c8`.
 
 ## Goal
 
-Remove render-owned Kitty Unicode-placeholder interpretation now that VT publishes generated placeholder cells as normal graphics placements and blanks placeholder cells in the render-facing surface export.
+Remove host-side placeholder-run render-publication plumbing now that VT publishes generated placeholder cells as normal graphics placements and render no longer interprets Kitty placeholder protocol.
 
 ## Target Files
 
-Render:
+Host:
 
-- `howl-render/src/frame/surface_buffer.zig`
-- `howl-render/src/frame/graphics_prepare.zig`
-- `howl-render/src/frame/surface_text.zig`
-- `howl-render/src/frame/surface.zig`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
+- tests under `howl-linux-host/src/terminal/vt/`
+
+Render only if compilation requires matching public-input cleanup:
+
 - `howl-render/src/frame/queue.zig`
-- `howl-render/src/frame/input.zig`
-- tests under `howl-render/src/frame/`
+- `howl-render/src/frame/surface_text_ffi.zig`
+- `howl-render/src/ffi_types.zig`
 
 ## Required Behavior
 
-- Generated placeholder placements render through the normal placement prepare/draw path.
-- `z_index == -1` still classifies generated placeholder placements below text.
-- Render no longer parses Kitty placeholder cells, placeholder diacritics, foreground image ids, underline placement ids, virtual placement semantics, or `U+10EEEE`.
-- Render keeps rejecting mixed generated-placeholder placements plus non-empty placeholder-run spans until placeholder-run ABI plumbing is removed in a later host cleanup slice.
-- Normal image decode, bind, prepare, sort, and draw behavior remains intact.
+- Host no longer allocates, queries, stores, or passes placeholder-run spans for render publication.
+- Host publication to render uses generated graphics placements and an empty placeholder-run span/count.
+- Host graphics diagnostics/logs describe placement truth, not placeholder-run render truth.
+- No Zig-shaped shortcut bypasses the C ABI.
+- Render mixed-stream guard may remain until public render ABI cleanup is deliberately promoted, but host must not rely on placeholder runs.
 
 ## Hard Constraints
 
 - Do not edit VT in this slice unless a compile blocker proves otherwise.
-- Do not add a new render-side placeholder drawer or placeholder-specific geometry path.
-- Do not remove normal raster decode/bind machinery.
-- Do not reintroduce generated placement plus placeholder-run double draw.
+- Do not reintroduce render-side Kitty placeholder parsing.
+- Do not remove VT's public placeholder-run ABI in this slice; VT still owns internal/debug placeholder-run queries unless a later ABI cleanup is promoted.
 - Do not special-case yazi/panes.
+- Do not publish generated placeholder placements and placeholder-run spans together.
 
 ## Verification Required
 
-- `zig build test` in `howl-render`
 - `zig build test:unit` in `howl-linux-host`
-- `zig build test` in `howl-vt`
+- `zig build test` in `howl-render` if render files are touched
+- `zig build test` in `howl-vt` if VT files are touched
 - `git diff --check` at workspace root
 
 Stop condition:
 
-- If render cannot draw generated placeholder placements as normal placements without needing Kitty placeholder protocol data, stop and report the exact ABI gap. Do not keep a fallback placeholder interpreter.
+- If host cannot avoid querying/passing placeholder runs because render still requires them for a non-placeholder graphics behavior, stop and report the exact render ABI dependency. Do not recreate placeholder-run drawing in host or render.
