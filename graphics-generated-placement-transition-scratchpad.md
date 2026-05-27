@@ -169,6 +169,13 @@ Owner: `howl-render`.
 
 Purpose: remove render-owned Kitty placeholder interpretation.
 
+Implementation blocker found after VT generated placements landed:
+
+- Render still contains `U+10EEEE` glyph suppression because VT currently exports placeholder cells as visible surface text.
+- Removing that suppression before changing the VT surface contract risks drawing placeholder glyph/tofu over generated placeholder placements.
+- Before this render deletion can be accepted, add a VT-owned host-facing surface consequence for placeholder cells, for example exporting generated-placeholder cells as non-rendering text while retaining internal screen truth for placeholder assembly.
+- Do not solve this by keeping or moving Kitty placeholder codepoint handling in render.
+
 Delete or simplify:
 
 - `surface_buffer.zig`: `drawPlaceholderRunByIndex`, `resolvePlaceholderDrawPlacement`, `placeholderSourceRect`, `placeholderGrid`, placeholder sort helpers, placeholder draw/reject logs
