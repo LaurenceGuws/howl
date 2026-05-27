@@ -71,7 +71,7 @@ Every slice should answer one or more of these directly:
 
 ### Slice A: Render ABI Token Validation
 
-Status: ready to promote.
+Status: completed.
 
 Goal:
 
@@ -111,6 +111,12 @@ Proof matrix:
 Stop condition:
 
 - No impossible prepared/submitted frame token crosses the FFI boundary.
+
+Completed proof:
+
+- `howl-render/src/frame/surface_text_ffi.zig` now rejects invalid `FfiPrepareRequest` and `FfiPreparedFrame` token shapes before owner mutation.
+- ABI tests cover valid prepared-frame publication, invalid prepared-frame rejection across publish/accept/submit seams, and invalid prepare-request failure with null handle output.
+- Verified with `zig build test:abi` and `zig build test:render`.
 
 ### Slice B: Prepared Handle Lifecycle Truth
 
