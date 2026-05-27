@@ -6,7 +6,7 @@ def workspace-repos [] {
     | where type == dir and name =~ '^howl-'
     | get name
   )
-  ['.'] | append $repos
+  # ['.'] | append $repos
 }
 
 def default-roots [] {
