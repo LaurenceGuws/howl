@@ -51,7 +51,6 @@ Purpose:
 
 - Prepared/export surface semantics are still muddier than they should be.
 - Prepared-handle lifecycle is not yet TigerBeetle-grade explicit.
-- Token validation at the render ABI boundary is still too weak.
 - Upload requirement vs upload realization semantics are still under-specified across phases.
 - Dirty metadata canonicalization still deserves explicit owner handling.
 - Placeholder semantics may still have residual divergence from ideal Kitty behavior.
@@ -68,55 +67,6 @@ Every slice should answer one or more of these directly:
 5. What proof matrix makes this subsystem TigerBeetle-grade?
 
 ## Promotable Slices
-
-### Slice A: Render ABI Token Validation
-
-Status: completed.
-
-Goal:
-
-- Make inbound `prepare` and `prepared frame` tokens explicit, validated contracts.
-- Reject impossible token states at the FFI boundary before queue/session mutation.
-
-Primary files:
-
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/frame/queue.zig`
-- `howl-render/src/test_abi.zig`
-- `howl-render/src/ffi_types.zig` only if strictly required
-
-Invariants to harden:
-
-- `snapshot_seq != 0`
-- `damage_kind != .none` for prepared/submitted frame seams
-- full frame:
-  - `damage_base_seq == 0`
-  - `required_base_seq == 0`
-- partial frame:
-  - `damage_base_seq != 0`
-  - `required_base_seq != 0`
-  - `required_base_seq == damage_base_seq`
-- geometry/token fields are coherent before queue mutation
-
-Proof matrix:
-
-- valid full token accepted
-- valid partial token accepted
-- zero snapshot rejected
-- `.none` rejected
-- full with non-zero base rejected
-- partial with zero base rejected
-- partial with mismatched base rejected
-
-Stop condition:
-
-- No impossible prepared/submitted frame token crosses the FFI boundary.
-
-Completed proof:
-
-- `howl-render/src/frame/surface_text_ffi.zig` now rejects invalid `FfiPrepareRequest` and `FfiPreparedFrame` token shapes before owner mutation.
-- ABI tests cover valid prepared-frame publication, invalid prepared-frame rejection across publish/accept/submit seams, and invalid prepare-request failure with null handle output.
-- Verified with `zig build test:abi` and `zig build test:render`.
 
 ### Slice B: Prepared Handle Lifecycle Truth
 
@@ -288,12 +238,11 @@ Stop condition:
 
 Recommended next promotions:
 
-1. Slice A: Render ABI Token Validation
-2. Slice B: Prepared Handle Lifecycle Truth
-3. Slice C: Upload Requirement vs Realization Truth
-4. Slice D: Dirty Metadata Canonicalization
-5. Slice E: Present/Retire Final Contract
-6. Slice F: Placeholder Semantic Residuals
+1. Slice B: Prepared Handle Lifecycle Truth
+2. Slice C: Upload Requirement vs Realization Truth
+3. Slice D: Dirty Metadata Canonicalization
+4. Slice E: Present/Retire Final Contract
+5. Slice F: Placeholder Semantic Residuals
 
 ## Review Standard
 
@@ -306,11 +255,11 @@ Recommended next promotions:
 
 ## Ready-To-Promote Item
 
-- `Slice A: Render ABI Token Validation`
+- `Slice B: Prepared Handle Lifecycle Truth`
 
 Why first:
 
-- It is high leverage.
-- It is narrow.
-- It improves correctness without requiring a host redesign.
-- It sharpens the public render contract before larger lifecycle changes.
+- Slice A made token ingress reject impossible prepared/export states.
+- The next weakest ABI seam is prepared-handle lifetime.
+- Freed opaque pointers cannot be validated after release.
+- The smallest truthful next shape is explicit handle state owned by the render surface owner.

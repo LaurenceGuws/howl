@@ -1,36 +1,42 @@
-# Current Slice: Render ABI Token Validation
+# Current Slice: Prepared Handle Lifecycle Truth
 
 Owner: workspace root.
 
 Source scratchpad:
 
 - `render-surface-hardening-scratchpad.md`
-- Promoted item: `Slice A: Render ABI Token Validation`
+- Promoted item: `Slice B: Prepared Handle Lifecycle Truth`
 
 ## Goal
 
-Make inbound render prepare/prepared tokens explicit, validated ABI contracts.
+Replace implicit raw-pointer prepared-handle lifetime with explicit owner-managed live-state discipline.
 
-The worker must reject impossible token states at the FFI boundary before queue/session mutation. This is not a broad lifecycle rewrite. This is the smallest TigerBeetle-grade boundary hardening slice for prepared/export semantics.
+This slice exists because `HowlRenderPreparedSurfaceHandle` currently behaves like a raw pointer to an owned prepared surface. `release()` frees the object immediately, while other ABI functions later cast the same opaque pointer back into an owner. That makes release-after-use, submit-after-release, and stale cached handles unprovable at the ABI seam.
 
-## Why This Slice Exists
+## Current Bad Shape
 
-Current render code decodes inbound token structs too weakly:
+Current code:
 
-- `howl-render/src/frame/surface_text_ffi.zig:477` `prepareTokenIn()` currently converts `damage_kind` and otherwise trusts the token.
-- `howl-render/src/frame/surface_text_ffi.zig:488` `preparedFrameIn()` currently converts `damage_kind` and otherwise trusts the token.
-- These feed owner mutation paths:
-  - `prepareHandle()` -> `owner.prepareHandle(token)` -> `flow.consumePrepare(token)`
-  - `publishPrepared()` -> `owner.flow.publishPrepared(prepared)`
-  - `acceptSubmitted()` -> `owner.flow.acceptSubmitted(...)`
-  - `submit()` -> `prepared_owner.submit(...)`
-- `queue.zig` has some internal assertions, such as `acceptSubmitted()` asserting `snapshot_seq != 0`, but the ABI boundary should reject invalid external data before owner mutation.
+- `prepared_surface_owner.Owner.fromHandle()` blindly casts a non-null opaque handle.
+- `prepared_surface_ffi.release()` calls `owner.destroy()` immediately.
+- `prepared_surface_ffi.describe/buffer/diagnostics()` dereference any non-null handle.
+- `surface_text_ffi.publishPreparedHandle()` stores a raw prepared handle in `prepared_publish_handle`.
+- `surface_text_ffi.takeSubmitHandle()` moves that raw handle into `prepared_submit_handle`.
+- `surface_text_ffi.submitHandle()` consumes `prepared_submit_handle`, calls `submitOwned()`, and `submitOwned()` destroys the owner.
+- `surface_text_ffi.submit()` can also submit a prepared handle directly and `Owner.submit()` eventually destroys it through `submitOwned()`.
+- `SurfaceTextOwner.destroy()` does not centrally retire or free outstanding prepared-handle records.
 
-Reference-derived rule:
+Observed consequence:
 
-- Ghostty C ABI returns explicit invalid-value results at the C boundary before constructing/mutating owner state.
-- Alacritty keeps damage state explicit as full-vs-line damage instead of accepting ambiguous damage records.
-- TigerBeetle requires positive and negative boundary proof: check valid and invalid spaces, split invariants, assert relationships, and test invalid data becoming valid/invalid.
+- The ABI cannot safely reject a released handle because the object was freed.
+- A handle can remain cached in `prepared_publish_handle` or `prepared_submit_handle` after external release unless the code explicitly clears it.
+- A submitted/consumed handle has no explicit state; it is only gone by convention.
+
+## Reference-Derived Rule
+
+- Ghostty uses opaque C handles, but owner methods reject invalid values before owner mutation and keep C-facing object ownership clear.
+- Alacritty keeps runtime/presentation ownership centralized instead of letting leaf helpers own lifecycle policy.
+- TigerBeetle requires explicit state, pair assertions, and positive/negative tests for invalid data becoming invalid. A freed pointer cannot be inspected, so “released” must be represented as state before memory is reclaimed.
 
 ## Hard Scope
 
@@ -40,9 +46,12 @@ Repository to modify:
 
 Allowed files:
 
+- `howl-render/src/frame/surface_text.zig`
 - `howl-render/src/frame/surface_text_ffi.zig`
+- `howl-render/src/frame/prepared_surface_owner.zig`
+- `howl-render/src/frame/prepared_surface_ffi.zig`
 - `howl-render/src/test_abi.zig`
-- `howl-render/src/frame/pipeline.zig` only if needed for a tiny pure validator shared by FFI and tests
+- `howl-render/src/ffi.zig` only for existing internal FFI tests if needed
 
 Do not edit unless absolutely necessary:
 
@@ -53,111 +62,104 @@ Do not edit unless absolutely necessary:
 
 Forbidden in this slice:
 
-- No ABI shape changes.
-- No public header changes.
-- No prepared-handle lifecycle rewrite.
+- No public ABI/header shape changes.
 - No upload-count semantic rewrite.
 - No present/retire redesign.
-- No compatibility shim or helper layer that preserves ambiguous semantics.
-- No broad renaming.
+- No host or VT changes.
+- No broad renaming campaign.
+- No fake validation that still dereferences freed memory.
 
-## Exact Token Contract
+## Required Model
 
-Inbound `FfiPrepareRequest` and inbound `FfiPreparedFrame` must satisfy the same snapshot-token shape rules.
+Use an explicit prepared-handle state owned by `prepared_surface_owner.Owner`.
 
-Common rules:
+Minimum state names:
 
-- `snapshot_seq != 0`
-- `dirty_epoch != 0`
-- `geometry_epoch != 0`
-- `damage_kind` must decode to a known `pipeline.DamageKind`
-- decoded `damage_kind` must not be `.none`
+- `prepared`
+- `published`
+- `submit_ready`
+- `released`
+- `consumed`
 
-Full-frame rules:
+Allowed transitions:
 
-- `damage_kind == .full`
-- `damage_base_seq == 0`
-- for `FfiPreparedFrame`: `required_base_seq == 0`
+- `prepared -> published` when `publishPreparedHandle()` accepts it
+- `published -> submit_ready` when `takeSubmitHandle()` returns it
+- `prepared -> consumed` when direct `submit()` succeeds
+- `submit_ready -> consumed` when `submitHandle()` succeeds
+- `prepared/published/submit_ready -> released` when `prepared_surface_ffi.release()` is called
 
-Partial-frame rules:
+Rejected transitions:
 
-- `damage_kind == .partial`
-- `damage_base_seq != 0`
-- for `FfiPreparedFrame`: `required_base_seq != 0`
-- for `FfiPreparedFrame`: `required_base_seq == damage_base_seq`
+- release after `released` or `consumed` must be a no-op
+- publish after `released` or `consumed` must fail
+- take-submit for a stale released/consumed published handle must fail and clear cached handle state
+- submit after `released` must fail
+- submit after `consumed` must fail
+- double-submit must fail
+- cross-session handle use must fail
 
-No other `DamageKind` is acceptable on these inbound prepared/export seams.
+Memory/lifetime rule:
 
-## Intended Implementation Shape
+- `release()` must not immediately free the handle record if callers may still pass the opaque handle back.
+- It may deinit the heavy prepared payload and RGBA buffer exactly once, but the handle record must remain inspectable until the owning `SurfaceTextOwner` is destroyed.
+- `SurfaceTextOwner` must own and free all prepared-handle records during `destroy()`.
+- A prepared handle belongs to exactly one `SurfaceTextOwner`.
 
-Prefer small direct helpers in `surface_text_ffi.zig` near the existing conversion helpers:
+This means the object shell remains alive after `release()`/`consumed`; that is intentional for ABI safety. Do not leak shells on surface teardown.
 
-- `prepareTokenIn(value: abi.FfiPrepareRequest) ?pipeline.SnapshotToken`
-- `preparedFrameIn(value: abi.FfiPreparedFrame) ?pipeline.PreparedFrame`
+## Implementation Guidance
 
-These helpers should validate before constructing returned owner-facing values.
+Prefer this shape unless code proves a smaller equally safe shape:
 
-Acceptable helper extraction:
+- Add lifecycle state to `prepared_surface_owner.Owner`.
+- Add a small owner-managed registry/list of prepared handles to `SurfaceTextOwner`.
+- `Owner.create()` registers the new prepared owner with `SurfaceTextOwner`.
+- `SurfaceTextOwner.destroy()` retires/frees all registered prepared owners.
+- `Owner.release()` marks `released` and deinitializes owned prepared payload/buffer once.
+- `Owner.consumeAfterSubmit()` or equivalent marks `consumed` and deinitializes owned prepared payload/buffer once.
+- `Owner.destroy()` is only used by the owning `SurfaceTextOwner` teardown path once the shell is no longer ABI-visible.
+- `fromHandle()` can still cast a non-null pointer, but all public entrypoints must check state before using payload.
 
-- a tiny helper for shared snapshot-token validation if it makes the code clearer
-- a tiny helper for prepared-frame base validation if direct validation would duplicate too much
+Payload deinit requirement:
 
-Review preference:
+- Do not call `prepared.deinit()` twice.
+- Do not free `rgba_pixels` twice.
+- Do not call `session.submitSurface(&self.prepared, ...)` after payload was released or consumed.
 
-- Keep control flow obvious.
-- Split checks; do not hide the contract in a dense boolean expression.
-- Return `null` from conversion helpers for invalid ABI input.
-- Keep internal queue assertions as pair assertions where they already exist.
+Cached handle cleanup requirement:
 
-## ABI Behavior Required
+- Releasing a handle must clear `session_owner.prepared_publish_handle` if it points at that handle.
+- Releasing a handle must clear `session_owner.prepared_submit_handle` if it points at that handle.
+- Consuming a handle must clear matching cached handle slots.
 
-For invalid inbound `HowlRenderPreparedFrame`:
+Status behavior:
 
-- `howl_render_surface_text_publish_prepared` returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
-- `howl_render_surface_text_accept_submitted` returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
-- `howl_render_surface_text_submit` returns `HOWL_RENDER_SUBMIT_FAILED`.
-
-For invalid inbound `HowlRenderPrepareRequest`:
-
-- `howl_render_surface_text_prepare_handle` returns `HOWL_RENDER_PREPARE_FAILED`.
-- The output prepared handle must remain `null`.
+- Null prepared-surface handle remains `missing_handle` for describe/buffer/diagnostics.
+- Non-null but `released`/`consumed` prepared-surface handle must return `invalid_argument` for describe/buffer/diagnostics.
+- `publishPreparedHandle()` with released/consumed handle returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
+- `takeSubmitHandle()` must not return released/consumed handles.
+- `submit()`/`submitHandle()` with released/consumed handle returns `.failed`.
+- `release()` remains void and idempotent.
 
 ## Required Proofs
 
-Add ABI tests in `howl-render/src/test_abi.zig`.
+Add or update ABI tests. Prefer `src/test_abi.zig` for shipped C ABI behavior. Use `src/ffi.zig` only if an existing internal export test is the smaller fit.
 
-Required valid cases:
+Required tests:
 
-- valid full `FfiPreparedFrame` is accepted by `publishPrepared()`.
-- valid partial `FfiPreparedFrame` is accepted by `publishPrepared()`.
+- live prepared handle can `describe`, `buffer`, and `diagnostics`
+- released prepared handle rejects `describe`, `buffer`, and `diagnostics` with `invalid_argument`
+- release is idempotent and does not crash
+- publish-after-release returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`
+- take-submit after releasing a published handle fails and does not return the released handle
+- direct submit after release returns `.failed`
+- successful direct submit consumes the handle, and a second direct submit fails
+- successful handle submit consumes the handle, and a second `submitHandle()` fails
+- cross-session publish/submit remains rejected
+- surface teardown with outstanding prepared handles does not leak or double-free under the test allocator
 
-Required invalid `FfiPreparedFrame` cases:
-
-- `snapshot_seq == 0` rejected
-- `dirty_epoch == 0` rejected
-- `geometry_epoch == 0` rejected
-- `damage_kind == .none` rejected
-- unknown `damage_kind` rejected
-- full with non-zero `damage_base_seq` rejected
-- full with non-zero `required_base_seq` rejected
-- partial with zero `damage_base_seq` rejected
-- partial with zero `required_base_seq` rejected
-- partial with `required_base_seq != damage_base_seq` rejected
-
-Required invalid `FfiPrepareRequest` cases:
-
-- `snapshot_seq == 0` fails `prepareHandle()` and leaves output handle null
-- `dirty_epoch == 0` fails `prepareHandle()` and leaves output handle null
-- `geometry_epoch == 0` fails `prepareHandle()` and leaves output handle null
-- `damage_kind == .none` fails `prepareHandle()` and leaves output handle null
-- unknown `damage_kind` fails `prepareHandle()` and leaves output handle null
-- full with non-zero `damage_base_seq` fails and leaves output handle null
-- partial with zero `damage_base_seq` fails and leaves output handle null
-
-Testing note:
-
-- `prepareHandle()` may fail for other reasons if no matching active prepare exists; for these invalid-input tests, only prove it returns failed and leaves the handle null.
-- For `publishPrepared()` valid cases, only prove the boundary accepts the token. Do not try to prove later submit behavior in this slice.
+If a proof is too large for this slice, stop and report the blocker. Do not silently skip it.
 
 ## Commands
 
@@ -165,26 +167,29 @@ Run from `/home/home/personal/projects/howl/howl-render`:
 
 - `zig build test:abi`
 - `zig build test:render`
+- `zig build test:unit`
 
-If either fails because the test surface depends on missing environment fonts, report the exact failure and run the narrowest passing build/test command available. Do not hide failures.
+If any command fails, report the exact failure. Do not hide failures.
 
 ## Rejection Gates
 
 Reject the worker diff if any of these happen:
 
-- invalid `.none` tokens can still cross the FFI boundary
-- zero snapshot/dirty/geometry epoch can still cross through `prepareTokenIn()` or `preparedFrameIn()`
-- partial prepared frame can carry a `required_base_seq` different from `damage_base_seq`
-- public ABI/header shape changes without explicit approval
-- lifecycle, present/retire, upload-count, or host changes are mixed into this slice
-- tests only cover valid cases or only one invalid case
-- checks are implemented as a confusing compound condition instead of readable contract checks
+- `release()` still frees the handle record immediately.
+- Any public prepared-handle entrypoint can dereference released/consumed payload.
+- A released handle can still be published, submitted, described, buffered, or diagnosed as live.
+- A consumed handle can still be submitted again.
+- Cached `prepared_publish_handle` or `prepared_submit_handle` can point at released/consumed handles after release/consume.
+- Public ABI/header shape changes without explicit approval.
+- Host/VT/present/upload changes are mixed into this slice.
+- Tests rely on null handles instead of real prepared handles for lifecycle behavior.
 
 ## Completion Definition
 
 This slice is done only when:
 
-- all inbound prepared/export token conversion helpers reject impossible token states
-- ABI tests prove both valid and invalid spaces
-- render tests requested above have been run or exact blockers are documented
-- `howl-render` has a clean, reviewable diff limited to the allowed scope
+- prepared-handle lifecycle is explicit in owner state
+- released/consumed handles are safely rejectable without use-after-free
+- surface teardown owns final shell reclamation
+- required ABI proofs pass
+- requested tests have run or exact blockers are documented
