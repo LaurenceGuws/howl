@@ -1,45 +1,44 @@
-# Current Slice: Point 3 Explicit Loop Phases
+# Current Slice: Point 2 First-Class Present Cadence
 
 Owner: `howl-linux-host`.
 
 Source scratchpad:
 
 - `host-alacritty-gap-scratchpad.md`
-- promoted item: `Point 3: runLoopTurn Carries Too Much Implicit Policy`
+- promoted item: `Point 2: Present Cadence Is Not First-Class Enough`
 
 ## Accepted Answer
 
-- `runLoopTurn()` still carries too much implicit host policy in one body.
-- Admission, window-event pumping, host-owned mutations, runtime progress, redraw/render intent, render, present intent, and present completion must read as explicit phases.
-- Runtime `keep_running` must suppress blocking only.
-- Host redraw request draining must feed only host redraw intent.
-- Present completion must be named explicitly in host code, not buried in generic render flow.
+- Present cadence is still under-expressed after Point 3 made present submission and completion explicit.
+- The host must own a named presentation contract rather than deriving a bare submit boolean through `shouldPresent(...)`.
+- Host-only damage, terminal frame publication, and terminal present retirement are distinct present reasons.
+- Terminal present completion must happen only for terminal-owned present reasons, not for host-only damage.
 
 ## Mandatory Reference Preload
 
 Read these references before touching code:
 
-- `utils/dev_references/terminals/ghostty/src/App.zig`
-- `utils/dev_references/terminals/ghostty/src/termio/stream_handler.zig`
-- `utils/dev_references/terminals/alacritty/alacritty/src/event_loop.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs`
 - `utils/dev_references/terminals/alacritty/alacritty/src/event.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/window.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
+- `utils/dev_references/terminals/ghostty/src/renderer/Thread.zig`
+- `utils/dev_references/terminals/ghostty/src/App.zig`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 
 Reference-derived truth:
 
-- Ghostty app ticks drain explicit mailbox kinds and map them to explicit runtime actions.
-- Alacritty keeps PTY wakeup, dirtying, redraw request, and draw separate.
-- TigerBeetle requires explicit centralized control flow with named state transitions.
+- Alacritty has explicit host frame cadence primitives and keeps draw/present scheduling in host policy.
+- Ghostty separates render actions from present/wakeup actions.
+- TigerBeetle favors explicit state machines over booleans with hidden lifecycle meaning.
 
 ## Current Offending Code
 
-- `howl-linux-host/src/main.zig:257-286`
-  - `runLoopTurn()` mixes admission, event pumping, host mutation, runtime progress, redraw/render derivation, render, present, and present completion.
-- `howl-linux-host/src/main.zig:447-455`
-  - `render(...)` calls `presentRenderFrame(...)`, hiding present intent and present completion inside generic render flow.
-- `howl-linux-host/src/main.zig:483-493`
-  - `presentRenderFrame(...)` performs both present submission and terminal present completion without a named completion seam.
+- `howl-linux-host/src/main.zig`
+  - `PresentIntent` currently carries only `submit: bool`, hiding why present is needed.
+  - `derivePresentIntent(...)` delegates to `shouldPresent(...)`, hiding host cadence policy.
+  - `completePresent(...)` completes terminal present state for every submitted present, including host-only damage.
+  - `shouldPresent(...)` is still a boolean helper instead of a host-owned present reason.
 
 ## Exact Files Allowed To Change
 
@@ -50,42 +49,43 @@ Reference-derived truth:
 ## Exact Change Shape
 
 - In `howl-linux-host/src/main.zig`
-  - split `runLoopTurn()` into explicit internal phases:
-    - compute admission
-    - pump window events
-    - apply host-owned mutations
-    - drive runtime progress
-    - derive redraw/render intent
-    - render
-    - derive present intent
-    - complete present
-  - keep `driveTerminalProgress()` returning:
-    - `should_redraw: bool`
-    - `keep_running: bool`
-  - `keep_running` must suppress blocking only through wake/admission behavior.
-  - `app.input.drainRedrawRequested()` must feed only host redraw intent.
-  - present completion must be named explicitly in host code.
+  - delete `shouldPresent(...)`
+  - add exactly:
+    - `const PresentReason = enum { none, host_damage, terminal_frame, terminal_retire };`
+    - `const PresentPlan = struct { reason: PresentReason, needs_render_turn: bool };`
+  - replace bare `PresentIntent.submit: bool` with present reason/plan policy
+  - add `fn derivePresentReason(host_redraw: bool, step: TerminalPanel.TurnStep) PresentReason`
+  - present submission must switch on `PresentReason`
+    - `.none`: no present, no terminal completion
+    - `.host_damage`: present, no `tab.finishPresent()`
+    - `.terminal_frame`: present, then `tab.finishPresent()`
+    - `.terminal_retire`: present, then `tab.finishPresent()`
+  - `TerminalPanel.TurnStep` remains terminal/render-owned fact
+  - host must own present cadence policy in `main.zig`, not in `TerminalPanel` or `window/present.zig`
 
 ## Required Proof
 
-- `main.zig` tests proving:
-  - `keep_running=true, should_redraw=false` keeps host non-blocking without redraw/present
-  - `host_redraw_requested=true` can produce host-only present
-  - `render_work_pending=true` produces render without host redraw bit
-  - present completion only happens after present submission
+- `main.zig` tests for `derivePresentReason()` matrix.
+- fake-window/fake-tab or equivalent production-helper test proving:
+  - `.host_damage` does not call `finishPresent()`
+  - `.terminal_frame` does call `finishPresent()`
+  - `.terminal_retire` does call `finishPresent()`
+  - `.none` does neither
+- retained/present state or helper-level test ensuring host-only redraw does not consume terminal present state.
+- Existing Point 3 tests must keep passing.
 
 ## Rejection Gates
 
 - reject any patch touching `howl-vt`
 - reject any patch touching `howl-render`
-- reject any patch touching `howl-linux-host/src/input/input.zig` unless the coder proves Point 3 cannot be done without it
-- reject any fake proof seam or harness-only policy object
-- reject any patch that reintroduces redraw into wait admission
-- reject any patch that turns runtime `keep_running` into redraw or present intent
-- reject any patch that leaves `finishPresent()` buried as an unnamed side effect of generic render flow
+- reject any patch touching `howl-linux-host/src/input/input.zig`
+- reject any patch that deletes or muddies the explicit loop phases from Point 3
+- reject any patch that keeps boolean `shouldPresent(...)` as the policy owner
+- reject any patch that calls `finishPresent()` for `.host_damage`
+- reject any fake proof seam that is not exercised by production present submission/completion code
 
 Stop condition:
 
-- the loop reads as named host phases
-- redraw/render/present intent are distinct values
-- present completion is explicit and tested
+- present cadence is represented by explicit host-owned reasons
+- host-only damage can present without consuming terminal present state
+- terminal frame and terminal retire presents complete terminal present state explicitly
