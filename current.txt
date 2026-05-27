@@ -1,0 +1,190 @@
+# Current Slice: Render ABI Token Validation
+
+Owner: workspace root.
+
+Source scratchpad:
+
+- `render-surface-hardening-scratchpad.md`
+- Promoted item: `Slice A: Render ABI Token Validation`
+
+## Goal
+
+Make inbound render prepare/prepared tokens explicit, validated ABI contracts.
+
+The worker must reject impossible token states at the FFI boundary before queue/session mutation. This is not a broad lifecycle rewrite. This is the smallest TigerBeetle-grade boundary hardening slice for prepared/export semantics.
+
+## Why This Slice Exists
+
+Current render code decodes inbound token structs too weakly:
+
+- `howl-render/src/frame/surface_text_ffi.zig:477` `prepareTokenIn()` currently converts `damage_kind` and otherwise trusts the token.
+- `howl-render/src/frame/surface_text_ffi.zig:488` `preparedFrameIn()` currently converts `damage_kind` and otherwise trusts the token.
+- These feed owner mutation paths:
+  - `prepareHandle()` -> `owner.prepareHandle(token)` -> `flow.consumePrepare(token)`
+  - `publishPrepared()` -> `owner.flow.publishPrepared(prepared)`
+  - `acceptSubmitted()` -> `owner.flow.acceptSubmitted(...)`
+  - `submit()` -> `prepared_owner.submit(...)`
+- `queue.zig` has some internal assertions, such as `acceptSubmitted()` asserting `snapshot_seq != 0`, but the ABI boundary should reject invalid external data before owner mutation.
+
+Reference-derived rule:
+
+- Ghostty C ABI returns explicit invalid-value results at the C boundary before constructing/mutating owner state.
+- Alacritty keeps damage state explicit as full-vs-line damage instead of accepting ambiguous damage records.
+- TigerBeetle requires positive and negative boundary proof: check valid and invalid spaces, split invariants, assert relationships, and test invalid data becoming valid/invalid.
+
+## Hard Scope
+
+Repository to modify:
+
+- `howl-render` only.
+
+Allowed files:
+
+- `howl-render/src/frame/surface_text_ffi.zig`
+- `howl-render/src/test_abi.zig`
+- `howl-render/src/frame/pipeline.zig` only if needed for a tiny pure validator shared by FFI and tests
+
+Do not edit unless absolutely necessary:
+
+- `howl-render/src/ffi_types.zig`
+- `howl-render/include/howl_render.h`
+- host repos
+- VT repos
+
+Forbidden in this slice:
+
+- No ABI shape changes.
+- No public header changes.
+- No prepared-handle lifecycle rewrite.
+- No upload-count semantic rewrite.
+- No present/retire redesign.
+- No compatibility shim or helper layer that preserves ambiguous semantics.
+- No broad renaming.
+
+## Exact Token Contract
+
+Inbound `FfiPrepareRequest` and inbound `FfiPreparedFrame` must satisfy the same snapshot-token shape rules.
+
+Common rules:
+
+- `snapshot_seq != 0`
+- `dirty_epoch != 0`
+- `geometry_epoch != 0`
+- `damage_kind` must decode to a known `pipeline.DamageKind`
+- decoded `damage_kind` must not be `.none`
+
+Full-frame rules:
+
+- `damage_kind == .full`
+- `damage_base_seq == 0`
+- for `FfiPreparedFrame`: `required_base_seq == 0`
+
+Partial-frame rules:
+
+- `damage_kind == .partial`
+- `damage_base_seq != 0`
+- for `FfiPreparedFrame`: `required_base_seq != 0`
+- for `FfiPreparedFrame`: `required_base_seq == damage_base_seq`
+
+No other `DamageKind` is acceptable on these inbound prepared/export seams.
+
+## Intended Implementation Shape
+
+Prefer small direct helpers in `surface_text_ffi.zig` near the existing conversion helpers:
+
+- `prepareTokenIn(value: abi.FfiPrepareRequest) ?pipeline.SnapshotToken`
+- `preparedFrameIn(value: abi.FfiPreparedFrame) ?pipeline.PreparedFrame`
+
+These helpers should validate before constructing returned owner-facing values.
+
+Acceptable helper extraction:
+
+- a tiny helper for shared snapshot-token validation if it makes the code clearer
+- a tiny helper for prepared-frame base validation if direct validation would duplicate too much
+
+Review preference:
+
+- Keep control flow obvious.
+- Split checks; do not hide the contract in a dense boolean expression.
+- Return `null` from conversion helpers for invalid ABI input.
+- Keep internal queue assertions as pair assertions where they already exist.
+
+## ABI Behavior Required
+
+For invalid inbound `HowlRenderPreparedFrame`:
+
+- `howl_render_surface_text_publish_prepared` returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
+- `howl_render_surface_text_accept_submitted` returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
+- `howl_render_surface_text_submit` returns `HOWL_RENDER_SUBMIT_FAILED`.
+
+For invalid inbound `HowlRenderPrepareRequest`:
+
+- `howl_render_surface_text_prepare_handle` returns `HOWL_RENDER_PREPARE_FAILED`.
+- The output prepared handle must remain `null`.
+
+## Required Proofs
+
+Add ABI tests in `howl-render/src/test_abi.zig`.
+
+Required valid cases:
+
+- valid full `FfiPreparedFrame` is accepted by `publishPrepared()`.
+- valid partial `FfiPreparedFrame` is accepted by `publishPrepared()`.
+
+Required invalid `FfiPreparedFrame` cases:
+
+- `snapshot_seq == 0` rejected
+- `dirty_epoch == 0` rejected
+- `geometry_epoch == 0` rejected
+- `damage_kind == .none` rejected
+- unknown `damage_kind` rejected
+- full with non-zero `damage_base_seq` rejected
+- full with non-zero `required_base_seq` rejected
+- partial with zero `damage_base_seq` rejected
+- partial with zero `required_base_seq` rejected
+- partial with `required_base_seq != damage_base_seq` rejected
+
+Required invalid `FfiPrepareRequest` cases:
+
+- `snapshot_seq == 0` fails `prepareHandle()` and leaves output handle null
+- `dirty_epoch == 0` fails `prepareHandle()` and leaves output handle null
+- `geometry_epoch == 0` fails `prepareHandle()` and leaves output handle null
+- `damage_kind == .none` fails `prepareHandle()` and leaves output handle null
+- unknown `damage_kind` fails `prepareHandle()` and leaves output handle null
+- full with non-zero `damage_base_seq` fails and leaves output handle null
+- partial with zero `damage_base_seq` fails and leaves output handle null
+
+Testing note:
+
+- `prepareHandle()` may fail for other reasons if no matching active prepare exists; for these invalid-input tests, only prove it returns failed and leaves the handle null.
+- For `publishPrepared()` valid cases, only prove the boundary accepts the token. Do not try to prove later submit behavior in this slice.
+
+## Commands
+
+Run from `/home/home/personal/projects/howl/howl-render`:
+
+- `zig build test:abi`
+- `zig build test:render`
+
+If either fails because the test surface depends on missing environment fonts, report the exact failure and run the narrowest passing build/test command available. Do not hide failures.
+
+## Rejection Gates
+
+Reject the worker diff if any of these happen:
+
+- invalid `.none` tokens can still cross the FFI boundary
+- zero snapshot/dirty/geometry epoch can still cross through `prepareTokenIn()` or `preparedFrameIn()`
+- partial prepared frame can carry a `required_base_seq` different from `damage_base_seq`
+- public ABI/header shape changes without explicit approval
+- lifecycle, present/retire, upload-count, or host changes are mixed into this slice
+- tests only cover valid cases or only one invalid case
+- checks are implemented as a confusing compound condition instead of readable contract checks
+
+## Completion Definition
+
+This slice is done only when:
+
+- all inbound prepared/export token conversion helpers reject impossible token states
+- ABI tests prove both valid and invalid spaces
+- render tests requested above have been run or exact blockers are documented
+- `howl-render` has a clean, reviewable diff limited to the allowed scope
