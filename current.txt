@@ -52,3 +52,14 @@ Howl target files:
 Stop condition:
 
 - If a correct ABI shape cannot be proven within VT boundary rules, stop and report the exact blocker. Do not invent a render shortcut.
+
+## Blocker Found
+
+The first worker attempt proved this slice is not safely VT-only.
+
+- Publishing generated placeholder placements through the existing normal placement stream while `placeholder_run_count` remains exported would make current render consume both paths and potentially double-draw placeholder images.
+- Adding generated-placeholder metadata to `HowlVtGraphicsPlacement` is a public ABI change and requires coordinated `howl-render`/host ABI updates, not a VT-only patch.
+
+Next required step:
+
+- Start a coordinated scratchpad/current slice for VT generated cell refs plus render placeholder-path replacement, or do a smaller research round to define the exact ABI transition that avoids double drawing.
