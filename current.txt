@@ -1,40 +1,38 @@
-# Current Slice: Upload Requirement vs Realization Truth
+# Current Slice: Dirty Metadata Canonicalization
 
 Owner: workspace root.
 
 Source scratchpad:
 
 - `render-surface-hardening-scratchpad.md`
-- Promoted item: `Slice C: Upload Requirement vs Realization Truth`
+- Promoted item: `Slice D: Dirty Metadata Canonicalization`
 
 ## Goal
 
-Make the prepared-buffer export and submit execution seam agree on upload truth.
+Canonicalize semantically irrelevant dirty metadata before publication equality and dedupe.
 
-This slice does not rename the shipped ABI field. It makes the current shipped names provable by enforcing pair contracts at the owner boundary.
+Clean rows do not use `dirty_cols_start` or `dirty_cols_end`. Today those columns can carry arbitrary values and still change `samePublicationSource()` because it compares the arrays byte-for-byte. That makes render source equality depend on meaningless metadata.
 
 ## Current Bad Shape
 
-Current code has two meanings around `uploads_committed`:
+Relevant code:
 
-- `prepared_surface_owner.Owner.buffer()` returns `uploads_required` through the shipped `FfiPreparedSurfaceBuffer.uploads_committed` field.
-- `surface_text.SurfaceText.submitSurface()` records `execution.uploads_committed` as host-realized work in `RenderSurfaceFeedback` and metrics.
-- There is no owner check that the host-reported realized uploads match the prepared owner’s required uploads.
-- There is no owner check that the host surface dimensions match the prepared render dimensions.
+- `surface_text_ffi.dirtyRowsIn()` validates dirty-row bytes are `0` or `1`.
+- `surface_text_ffi.dirtyColsIn()` duplicates dirty column arrays.
+- `queue.validateDirtySource()` validates dirty rows and preserves the valid dirty-row sentinel `start_col == cols && end_col == 0`.
+- `queue.samePublicationSource()` compares `dirty_rows`, `dirty_cols_start`, and `dirty_cols_end` byte-for-byte.
+- `queue.classifyDirty()` ignores dirty columns on clean rows.
+- Text input also ignores dirty columns on clean rows.
 
-Current relevant paths:
+Problem:
 
-- `prepared_surface_owner.Owner.buffer()` exports the required upload count.
-- `surface_text_ffi.executionInputIn()` translates host execution input.
-- `prepared_surface_owner.Owner.submit()` and `submitOwned()` call `session.submitSurface()`.
-- `surface_text.SurfaceText.submitSurface()` marks raster outputs rendered and reports `execution.uploads_committed`.
-- `submit_feedback.renderMetrics()` stores `uploads_committed` in `metrics.uploads`.
+- Two publications with identical cells and identical clean dirty rows can compare different solely because clean-row column metadata differs.
 
 ## Reference-Derived Rule
 
-- Ghostty-style owner seams do not let C-facing values silently change meaning after crossing the boundary.
-- Alacritty-style rendering keeps host realization distinct from prepared render content.
-- TigerBeetle requires pair assertions: the producer publishes required work, and the consumer reports realized work; the seam must prove they agree or reject the transition.
+- Alacritty damage state models damaged vs undamaged lines explicitly; irrelevant bounds on undamaged lines do not become semantic content.
+- TigerBeetle requires canonical state before equality/dedupe; compare only owner-meaningful truth.
+- VT owns dirty-row truth; render owns how its retained publication source canonicalizes irrelevant metadata for equality.
 
 ## Hard Scope
 
@@ -44,85 +42,79 @@ Repository to modify:
 
 Allowed files:
 
-- `howl-render/src/frame/prepared_surface_owner.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/frame/surface_text.zig` only if the smallest correct check belongs there
-- `howl-render/src/frame/submit_feedback.zig` only if tests require metric proof cleanup
-- `howl-render/src/test_abi.zig`
-- `howl-render/src/ffi.zig` only if existing internal FFI tests are the smallest proof surface
+- `howl-render/src/frame/queue.zig`
+- `howl-render/src/frame/surface_text_ffi.zig` only if tests or translation require it
+- `howl-render/src/test_abi.zig` only if ABI proof is the smallest proof surface
 
 Do not edit unless absolutely necessary:
 
-- `howl-render/src/ffi_types.zig`
-- `howl-render/include/howl_render.h`
+- headers
+- `ffi_types.zig`
 - host repos
 - VT repos
 
 Forbidden in this slice:
 
-- No ABI/header field rename.
-- No public ABI shape change.
-- No present/retire redesign.
-- No prepared-handle lifecycle redesign beyond using the state model already landed.
-- No host changes.
-- No broad metric rename campaign.
+- No dirty ABI shape change.
+- No VT contract change.
+- No host change.
+- No reinterpretation of dirty-row sentinels.
+- No broad source equality rewrite beyond dirty metadata canonicalization.
 
 ## Required Contract
 
-Prepared phase:
+Canonicalization rule:
 
-- `Owner.buffer().uploads_committed` continues to export the prepared owner’s `uploads_required` because the ABI field name is shipped.
-- The code comment must remain explicit that this value is required uploads at prepare-buffer export time.
+- For every row where `dirty_rows[row] == 0`, set:
+  - `dirty_cols_start[row] = 0`
+  - `dirty_cols_end[row] = 0`
+- For every row where `dirty_rows[row] == 1`, preserve the caller-provided dirty columns exactly after validation.
+- Preserve the valid dirty-row sentinel:
+  - `dirty_rows[row] == 1`
+  - `dirty_cols_start[row] == cols`
+  - `dirty_cols_end[row] == 0`
 
-Submit phase:
+Owner boundary:
 
-- `execution.uploads_committed` is host-realized uploads.
-- A submit may proceed only when `execution.uploads_committed == owner.uploads_required`.
-- A submit may proceed only when `execution.surface.width == owner.render_px.width`.
-- A submit may proceed only when `execution.surface.height == owner.render_px.height`.
-- Rejection should happen in `prepared_surface_owner.Owner` before `session.submitSurface()` mutates atlas/render state.
-
-Feedback phase:
-
-- `RenderSurfaceFeedback.uploads_committed` and `metrics.uploads` remain host-realized upload counts.
-- Because submit rejects mismatches, these values are now proven equal to the prepared owner’s required upload count for accepted submits.
+- Canonicalization must happen before `samePublicationSource()` can compare the publication.
+- Canonicalization should happen after `validateDirtySource()` accepts the publication, so invalid dirty metadata is still rejected rather than silently rewritten.
+- Both ordinary `publishVtSource()` and retained-slot `commitPublishSlot()` paths must receive canonicalized source state.
 
 ## Implementation Guidance
 
-Prefer a small owner-local check in `prepared_surface_owner.Owner`, before `performSubmit()` calls `session_owner.session.submitSurface()`.
+Preferred shape:
 
-Acceptable shape:
+- Add a small `canonicalizeDirtyMetadata()` helper in `queue.zig` near `validateDirtySource()` / `samePublicationSource()`.
+- Call it inside `PublicationState.acceptSource()` or immediately before all paths enter classification/equality.
+- Use direct row iteration.
+- Assert lengths match rows before mutation.
+- Do not allocate.
 
-- Add a tiny helper such as `executionMatchesPrepared()` or `validateExecution()` on `Owner`.
-- Use direct checks, not dense compound conditions.
-- Return `.failed` from `submit()` / `submitOwned()` when dimensions or uploads do not match.
-- Keep the C ABI unchanged.
+Avoid:
 
-Do not put this policy in `surface_text_ffi.executionInputIn()` unless it is only translating values. FFI translates contracts; the prepared owner owns the prepared dimensions and required upload count.
+- Canonicalizing in `samePublicationSource()` only. Equality should consume canonical state, not hide non-canonical state locally.
+- Canonicalizing dirty rows with `dirty_rows[row] == 1`; those spans are meaningful.
+- Clamping invalid dirty columns. Invalid dirty metadata must still be rejected.
 
 ## Required Proofs
 
-Add or update tests.
+Add tests in `queue.zig` unless ABI tests are clearly smaller.
 
-Required ABI proofs:
+Required tests:
 
-- prepared buffer export reports required upload count.
-- submit with matching surface dimensions and upload count succeeds.
-- submit with wrong `uploads_committed` fails.
-- submit with wrong surface width fails.
-- submit with wrong surface height fails.
-- failed submit from upload/dimension mismatch does not consume the prepared handle; a later matching submit can still succeed.
-- accepted submit feedback metrics report uploads equal to the realized count.
-
-If generating non-zero uploads through the full ABI is too heavy, use the smallest owner-local test in `prepared_surface_owner.zig` to prove non-zero `uploads_required` mismatch/match behavior, and keep ABI tests for dimension mismatch and zero-upload success. Do not skip non-zero upload proof entirely.
+- clean rows with different dirty column metadata become semantically equal and dedupe as `.none`.
+- canonicalization mutates clean-row column values to `0,0` in stored/queued source state.
+- dirty rows preserve normal spans exactly.
+- dirty rows preserve the sentinel `start_col == cols && end_col == 0` exactly.
+- invalid dirty metadata is still rejected by boundary validation.
 
 ## Commands
 
 Run from `/home/home/personal/projects/howl/howl-render`:
 
-- `zig build test:abi`
 - `zig build test:render`
 - `zig build test:unit`
+- `zig build test:abi`
 
 If any command fails, report the exact failure. Do not hide failures.
 
@@ -130,20 +122,19 @@ If any command fails, report the exact failure. Do not hide failures.
 
 Reject the worker diff if any of these happen:
 
-- submit can still succeed with `execution.uploads_committed != owner.uploads_required`
-- submit can still succeed with host surface dimensions different from prepared render dimensions
-- mismatch rejection happens after `session.submitSurface()` mutates atlas/render state
-- public ABI/header shape changes without explicit approval
-- host changes are mixed into this slice
-- tests only cover zero-upload cases and never prove non-zero upload mismatch behavior
-- failed mismatch consumes or releases the prepared handle
+- equality still depends on clean-row dirty column values
+- dirty-row sentinel is canonicalized away or rejected
+- invalid dirty metadata is silently clamped or accepted
+- canonicalization allocates or rewrites caller-owned immutable input
+- ABI/header/host/VT changes are mixed into this slice
+- tests only check the helper and do not prove dedupe/equality behavior
 
 ## Completion Definition
 
 This slice is done only when:
 
-- producer required-upload truth and host realized-upload truth are checked at submit
-- accepted feedback upload metrics are proven
-- mismatched dimensions/uploads are rejected before render mutation
-- tests prove both zero-upload ABI flow and non-zero upload mismatch truth
-- requested tests have run or exact blockers are documented
+- publication source state is canonical before equality/dedupe
+- clean-row column metadata no longer affects equality
+- dirty-row spans and sentinels remain meaningful and preserved
+- invalid dirty metadata remains rejected
+- requested tests pass or blockers are documented

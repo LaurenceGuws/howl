@@ -50,7 +50,6 @@ Purpose:
 ### Remaining Major Themes
 
 - Prepared/export surface semantics are still muddier than they should be.
-- Upload requirement vs upload realization semantics are still under-specified across phases.
 - Dirty metadata canonicalization still deserves explicit owner handling.
 - Placeholder semantics may still have residual divergence from ideal Kitty behavior.
 - Text/render input truth may still have remaining blind spots beyond the style/presentation slice already landed.
@@ -66,41 +65,6 @@ Every slice should answer one or more of these directly:
 5. What proof matrix makes this subsystem TigerBeetle-grade?
 
 ## Promotable Slices
-
-### Slice C: Upload Requirement vs Realization Truth
-
-Status: partially improved, still open.
-
-Goal:
-
-- Make the producer/consumer contract around uploads exact.
-
-Primary files:
-
-- `howl-render/src/frame/prepared_surface_owner.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/frame/surface_text.zig`
-- `howl-render/src/frame/submit_feedback.zig`
-- `howl-render/src/test_abi.zig`
-
-Current problem:
-
-- `uploads_committed` is a shipped field name, but the prepared-buffer export uses it for uploads required prior to submit.
-- submit feedback uses the same noun for host-reported realized uploads.
-
-Target shape:
-
-- either explicit field split, or at minimum pair assertions and airtight documented semantics at each phase
-
-Proof matrix:
-
-- prepared export reports required upload count truthfully
-- submit input/feedback reports realized upload count truthfully
-- producer/consumer seam checks dimension and upload coherence
-
-Stop condition:
-
-- No field silently changes meaning across phases without proof and documentation.
 
 ### Slice D: Dirty Metadata Canonicalization
 
@@ -195,10 +159,9 @@ Stop condition:
 
 Recommended next promotions:
 
-1. Slice C: Upload Requirement vs Realization Truth
-2. Slice D: Dirty Metadata Canonicalization
-3. Slice E: Present/Retire Final Contract
-4. Slice F: Placeholder Semantic Residuals
+1. Slice D: Dirty Metadata Canonicalization
+2. Slice E: Present/Retire Final Contract
+3. Slice F: Placeholder Semantic Residuals
 
 ## Review Standard
 
@@ -211,11 +174,11 @@ Recommended next promotions:
 
 ## Ready-To-Promote Item
 
-- `Slice C: Upload Requirement vs Realization Truth`
+- `Slice D: Dirty Metadata Canonicalization`
 
 Why first:
 
 - Slice A made token ingress reject impossible prepared/export states.
 - Slice B made prepared-handle lifetime explicit and safely rejectable.
-- The next weakest seam is the ambiguous upload count contract.
-- The smallest truthful shape is enforcing required-vs-realized upload agreement before submit.
+- Slice C made submit execution upload/dimension truth checked before render mutation.
+- The next weakest seam is dirty metadata equality depending on irrelevant clean-row columns.
