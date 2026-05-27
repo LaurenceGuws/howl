@@ -1,4 +1,4 @@
-# Current Slice: Placeholder/Ordinary Ordering Research
+# Current Slice: Placeholder Ordering Proof
 
 Owner: workspace root.
 
@@ -7,63 +7,90 @@ Source scratchpad:
 - `render-surface-hardening-scratchpad.md`
 - Promoted item: `Slice G: Placeholder/Ordinary Ordering Contract`
 
-## Goal
+## Decision
 
-Decide the correct ownership and ABI shape for ordering placeholder-backed graphics relative to ordinary graphics placements.
+Keep placeholder/ordinary graphics ordering as render compositor policy for now. Do not add VT or render ABI fields in this slice.
 
-This is a research/design slice. Do not seed a coding worker until the ownership answer and smallest acceptable ABI/code slice are unambiguous.
+Research result:
 
-## Current Baseline
+- Kitty defines image `z`, negative-z bands, and lower-image-id ordering for same `z`.
+- Kitty says Unicode-placeholder images are not ordinary protocol placements.
+- Kitty does not define a stable global order between placeholder-derived images and ordinary placements with the same image id.
+- Ghostty maps Unicode-placeholder render instances to renderer-side `z = -1` and sorts in the renderer.
+- Howl render already receives VT-resolved placeholder runs and virtual placement truth; it does not need more VT protocol inference to compose them as render draw items.
 
-- VT owns placeholder decoding, inheritance, virtual placement binding, and placeholder run publication.
-- Render consumes VT-exported placeholder runs.
-- Render now rejects missing virtual placement source/grid truth instead of inferring it.
-- Render still locally merges placeholder-backed draw items with ordinary z=-1 placements in `surface_buffer.zig`.
+Therefore:
 
-## Question
+- VT owns placeholder decoding, run order, virtual placement binding, and geometry truth.
+- render owns compositor bands and deterministic pixel draw order.
+- placeholder-backed graphics are render-local below-text draw items equivalent to `z = -1`.
+- same-image/same-z details are deterministic Howl render policy, not Kitty protocol truth.
 
-Is render's current placeholder/ordinary merge order legitimate render draw policy, or stale semantic ownership that should move to VT/ABI as explicit compositing order truth?
+## Current Weak Shape
 
-## What To Research
+Current render behavior is mostly right but under-proved and under-named:
 
-- Kitty protocol ordering rules for Unicode-placeholder images, ordinary placements, negative z, same z, and same image id.
-- Whether Kitty defines ordering between placeholder-derived images and ordinary placements when both are below text.
-- Ghostty's exact ownership shape for placeholder render z/order and whether that maps to Howl's C ABI boundary.
-- How Alacritty-style host/render separation affects whether ordering belongs in VT export or render sorting.
-- TigerBeetle-grade proof requirements if Howl keeps render-local ordering versus moves it to ABI truth.
+- `surface_buffer.zig` merges placeholder-backed graphics with ordinary `z = -1` placements.
+- Existing tests cover several same-image/placement/run cases.
+- Missing proof should make the intended compositor matrix explicit, especially ordinary `z < -1`, different image ids at `z = -1`, and same image/placement tie behavior.
 
-## Scope For Research Agents
+## Hard Scope
 
-Read Howl:
+Repository to modify:
+
+- `howl-render`
+
+Allowed files:
 
 - `howl-render/src/frame/surface_buffer.zig`
-- `howl-render/src/frame/graphics_viewport.zig`
-- `howl-render/src/frame/surface.zig`
-- `howl-render/src/frame/queue.zig`
-- `howl-render/include/howl_render.h`
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/ffi.zig`
-- `howl-vt/include/howl_vt.h`
-- existing render/VT/host tests for graphics ordering and placeholder replay
 
-Read references:
+Allowed changes:
 
-- Kitty graphics protocol docs for z/order and Unicode placeholders.
-- Ghostty terminal Kitty graphics unicode/storage/renderer image code.
-- TigerBeetle style and architecture docs.
+- test additions
+- test renames if they clarify render-local policy
+- a short code comment only if needed to state why placeholders are compositor-local `z = -1`
 
-## Required Output
+Forbidden in this slice:
 
-The research round must produce a plain-English rewrite brief with:
+- No VT changes.
+- No host changes.
+- No C ABI changes.
+- No behavior changes unless a test exposes an actual existing bug.
+- No new ordering fields.
+- No render-side placeholder decoding, cell scanning, or virtual placement inference.
+- No broad helper abstraction.
 
-- current bad shape, if any
-- reference-derived ownership answer
-- whether render-local placeholder z/order is acceptable
-- whether a VT/render ABI change is required
-- smallest acceptable code slice, if any
-- proof matrix by owner boundary
-- explicit rejection criteria for coding workers
+## Required Proofs
 
-## Stop Condition
+Add or sharpen `surface_buffer.zig` tests proving:
 
-Stop after research if Kitty/Ghostty evidence does not justify an ABI/code change. Do not invent ABI fields just to make ownership look cleaner.
+- ordinary below-text placement with `z < -1` draws before placeholder-backed `z = -1` graphics.
+- ordinary `z = -1` placement with lower image id draws before a placeholder-backed higher image id.
+- placeholder-backed lower image id draws before ordinary `z = -1` higher image id.
+- same image id and same placement id uses deterministic render-local tie behavior between placeholder `run_order` and ordinary `placement_ordinal`.
+- existing placeholder-run ordering by placement id and exported run order remains intact.
+
+Tests should assert final pixels, not only sort keys.
+
+## Commands
+
+Run from `/home/home/personal/projects/howl/howl-render`:
+
+- `zig build test:render`
+- `zig build test:unit`
+- `zig build test:abi`
+
+## Rejection Gates
+
+Reject the worker diff if any of these happen:
+
+- ABI or VT changes are introduced.
+- behavior is changed without an explicit failing proof.
+- render starts treating placeholder order as VT protocol truth.
+- render adds placeholder decoding/inference.
+- tests assert implementation internals instead of pixel outcomes.
+- same-image undefined Kitty behavior is described as Kitty-mandated rather than Howl render policy.
+
+## Completion Definition
+
+This slice is done only when render-local placeholder/ordinary ordering is covered as explicit compositor policy and render tests pass.
