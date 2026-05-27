@@ -1,97 +1,21 @@
-# Current Slice: Point 8 Text Input Fast Path
+# Current Slice: None
 
-Owner: `howl-linux-host`.
+Owner: workspace root.
 
-Source scratchpad:
+The host Alacritty-gap scratchpad has no promoted slice remaining in this campaign.
 
-- `host-alacritty-gap-scratchpad.md`
-- promoted item: `Point 8: The Simple Text Path Is Not Obviously Collapsed`
+Completed in this campaign:
 
-## Accepted Answer
-
-- The simple readline/text path is not readable as a primary path.
-- Text input currently joins the generic input queue and is drained beside pointer, scroll, hover, selection, and host UI behavior.
-- Host control/pacing is now explicit enough to split terminal text publication from pointer/UI handling.
-- This slice is host-only. Do not implement VT protocol support for `OSC 133` or `DECSCUSR` here; record that as future VT-owner work if needed.
-
-## Mandatory Reference Preload
-
-Read these references before touching code:
-
-- `utils/dev_references/terminals/ghostty/src/termio/Termio.zig`
-- `utils/dev_references/terminals/ghostty/src/termio/stream_handler.zig`
-- `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/damage.rs`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-
-Reference-derived truth:
-
-- Ghostty queues render after output processing.
-- Alacritty wakes after terminal mutation and keeps low-latency frame events visible.
-- Alacritty content/damage model makes the simple text path primary, not buried in pointer/UI policy.
-
-## Current Offending Code
-
-- `howl-linux-host/src/input/input.zig`
-  - text input becomes ordinary queued input events.
-- `howl-linux-host/src/terminal/terminal_panel.zig`
-  - `drainInput(...)` handles bytes/key in the same mixed path as mouse, hover, selection, scroll, and host visual policy.
-- `howl-linux-host/src/main.zig`
-  - `forwardTerminalInput(...)` has one generic terminal drain call, so the text path is not obvious beside runtime progress.
-
-## Exact Files Allowed To Change
-
-- `howl-linux-host/src/terminal/terminal_panel.zig`
-- `howl-linux-host/src/main.zig`
-- relevant existing `howl-linux-host/src/test/*.zig` files only if genuinely needed for first-class test exposure
-- `howl-linux-host/src/test_root.zig` only if genuinely needed for first-class test exposure
-
-## Exact Change Shape
-
-- In `howl-linux-host/src/terminal/terminal_panel.zig`
-  - split `drainInput(...)` into exactly:
-    - `drainTextInputFastPath(self: *TerminalPanel, input_events: *HostInput) DrainInputOutcome`
-    - `drainPointerAndUiInput(self: *TerminalPanel, input_events: *HostInput, origin_x: i32, origin_y: i32, logical_width: c_int, logical_height: c_int) DrainInputOutcome`
-  - `drainTextInputFastPath` must handle only:
-    - `.bytes`
-    - `.key`
-  - `drainTextInputFastPath` may call only:
-    - `publishTerminalBytes`
-    - `publishTerminalKey`
-    - `resetCursorBlinkActivity`
-  - `drainTextInputFastPath` must not touch host redraw, selection, hover, scroll, mouse, or window policy.
-  - Pointer/UI handling remains in `drainPointerAndUiInput`.
-  - Keep `DrainInputOutcome` semantics: PTY publication and host visual mutation stay distinct.
-- In `howl-linux-host/src/main.zig`
-  - `forwardTerminalInput()` must call text fast path first, then pointer/UI path.
-  - No host policy step may be inserted between text publication and runtime progress.
-
-## Required Proof
-
-- `terminal_panel.zig` host unit test proving text fast path:
-  - publishes bytes and key
-  - resets blink on successful publication
-  - does not directly report host visual mutation except cursor blink state returned by `resetCursorBlinkActivity`
-  - does not call pointer/UI/hover/selection/scroll operations
-- `main.zig` host unit or helper test proving:
-  - text fast path is invoked before pointer/UI drain in `forwardTerminalInput` flow
-  - text publication admission remains separate from redraw/present intent
-- Existing Point 4, Point 5, Point 6 tests must keep passing.
-
-## Rejection Gates
-
-- reject any patch touching `howl-vt`
-- reject any patch touching `howl-render`
-- reject any patch touching `howl-linux-host/src/input/input.zig`
-- reject any patch that reintroduces synthetic redraw admission for text publication
-- reject any patch that mixes pointer/UI policy back into the text fast path
-- reject any fake fast path used only in tests and not by production `forwardTerminalInput()`
-- reject any patch that regresses host present token completion or frame pacing semantics
+- Point 4: input-to-redraw ownership
+- Point 7: redraw as policy, not SDL event
+- Point 1: wake/redraw/present separation
+- Point 3: explicit loop phases
+- Point 2: first-class present cadence
+- Point 6: tokenized present completion
+- Point 5: host frame pacing state
+- Point 8: text input fast path
 
 Stop condition:
 
-- production text publication path is visibly separate from pointer/UI policy
-- `forwardTerminalInput()` reads as text first, pointer/UI second, then runtime progress continues through existing host loop
-- tests prove text publication remains admission-only and not host redraw/present policy
+- Start a new research round or scratchpad before seeding more coding workers.
+- Remaining VT protocol items mentioned by Point 8, such as `OSC 133` and `DECSCUSR`, are VT-owner work and were intentionally not implemented in this host-only campaign.
