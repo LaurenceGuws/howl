@@ -1036,7 +1036,7 @@ Promoted raw direct validation slice:
 - Validate base64 syntax for uncompressed direct raw `f=24` and `f=32` uploads.
 - Decode only for validation and keep retaining original base64 transport bytes for current ABI behavior.
 - Require decoded byte length to equal `width * height * bytes_per_pixel`.
-- Correct graphics-test success fixtures that currently declare dimensions larger than the decoded payload.
+- Correct graphics and FFI-test success fixtures that currently declare dimensions larger than the decoded payload.
 - Leave PNG, zlib, chunk lifecycle, parser, ABI, render, host, storage-model, animation, delete/reset, and generated-placeholder behavior out of scope.
 
 Raw direct validation acceptance tests:

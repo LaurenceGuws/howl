@@ -14,6 +14,7 @@ Match Kitty/Ghostty behavior by validating uncompressed direct raw graphics payl
 
 - `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
+- `howl-vt/src/ffi.zig` test fixtures only
 
 ## Required Behavior
 
@@ -25,7 +26,8 @@ Match Kitty/Ghostty behavior by validating uncompressed direct raw graphics payl
 
 ## Hard Constraints
 
-- Do not change ABI, render, host, parser, terminal, or build files.
+- Do not change ABI behavior, render, host, parser, terminal, or build files.
+- In `howl-vt/src/ffi.zig`, only correct invalid test fixture data/dimensions required by this validation change; do not edit FFI implementation or C ABI contracts.
 - Do not change direct chunk lifecycle, local media behavior, parser validation, or quiet response handling.
 - Do not change EBADPNG behavior, PNG mode behavior, zlib decompression behavior, storage quota, animation, delete/reset, composition, or generated placeholder behavior.
 - Do not replace retained base64 model truth in this slice.
