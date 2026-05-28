@@ -72,6 +72,8 @@ What not to do:
 
 Severity: high.
 
+Status: proved complete in current VT implementation.
+
 Kitty machinery:
 
 - `kitty/screen.c`: `screen_render_line_graphics`
@@ -109,6 +111,14 @@ What not to do:
 
 - Do not reinterpret protocol diacritics as 1-based.
 - Do not add renderer-side corrections.
+
+Proof recorded:
+
+- Kitty `screen_render_line_graphics` uses internal 1-based values where zero is unknown/incorrect, then publishes `prev_img_col - run_length` and `prev_img_row - 1` to `grman_put_cell_image`.
+- Kitty `rowcolumn-diacritics.c` maps `U+0305` to internal `1`; Howl's public/internal proof API reports protocol-facing `0` for that same diacritic.
+- Howl `placeholderDiacriticIndex` returns 0-based protocol values and `backfillPlaceholderRow` uses nullable missing sentinels before defaulting/inheriting, avoiding real-zero ambiguity.
+- Howl `PlaceholderRun.canAppend` requires same row, image id, placement id, contiguous screen cells, and contiguous image columns after row-local backfill.
+- VT tests now cover `U+0305 -> 0`, missing column/high-byte inference on the same row, row/col/image/placement/high-byte mismatch breaks, no cross-row inheritance, anonymous placement resolution, stable run order, and yazi-like alt-screen runs.
 
 ### 3. Graphics command parser validation is incomplete
 
