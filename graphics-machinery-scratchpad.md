@@ -479,6 +479,38 @@ Stable parent-ref acceptance tests:
 - Updating/converting a nonzero parent preserves its internal ref id and children remain attached.
 - Deleting an anonymous parent removes descendants by internal ref instead of deleting all `placement_id=0` descendants for that image.
 
+Stable parent-ref slice completed:
+
+- `howl-vt` commit `fc7c456 vt: bind graphics parents by ref`.
+- Root commit `396cac4 design: update graphics parent refs`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
+Frame deletion research:
+
+- Kitty source truth: `handle_delete_frame_command` in `kitty/graphics.c`.
+- Kitty normalizes delete target as `min(extra_frame_count + 1, r)` and defaults missing/zero `r` to frame `1`.
+- If extra frames exist and frame `1` is deleted, Kitty promotes the first extra frame to root, removes that extra slot, shifts later frames down, and repairs current frame index/publication.
+- If an extra frame is deleted, Kitty removes it positionally, shifts later frames down, and decrements or refreshes current frame selection as needed.
+- If no extra frames exist, lowercase `d=f` leaves the image alive; uppercase `d=F` returns the image for deletion.
+- Howl currently only removes matching `Frame` rows, uses `swapRemove`, does not promote frame `2` into root, and treats `d=f`/`d=F` identically.
+
+Promoted frame delete promotion slice:
+
+- VT-only, ABI-preserving.
+- Implement Kitty root promotion and positional extra-frame deletion in `deleteFrames`/repair helpers.
+- Preserve frame order and renumber remaining extra frames after deletion.
+- Repair current frame publication when deleting current or prior frames.
+- Implement `d=F` image-free behavior only when no extra frames remain.
+- Leave decoded-cache storage, full frame graph/cache identity, and runtime timing policy for later slices.
+
+Frame delete promotion acceptance tests:
+
+- Deleting root frame promotes frame `2` to root and shifts old frame `3` to frame `2`.
+- Deleting a middle extra frame preserves order and repairs selected current frame.
+- Repeated lowercase frame delete promotes until no extra frames remain and keeps final root alive.
+- Uppercase `d=F` with no extra frames deletes the image.
+- Missing or too-large `r=` deletes Kitty's normalized target frame.
+
 ### 6. Render-layer sorting and grouping differs from Kitty
 
 Severity: medium.

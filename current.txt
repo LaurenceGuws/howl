@@ -1,14 +1,14 @@
-# Current Slice: VT Graphics Stable Parent Refs
+# Current Slice: VT Graphics Frame Delete Promotion
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` item 4 after placement-ref identity research.
+Promoted from `graphics-machinery-scratchpad.md` item 5 after animation frame deletion research.
 
 ## Goal
 
-Bind relative placements to VT-owned parent ref identity without changing ABI, so parent references selected by `P=<image>,Q=0` do not drift when placement arrays are reordered or later refs are added/removed.
+Match Kitty's frame deletion semantics without changing ABI: deleting root frame promotes the first extra frame to root, deleting extra frames repairs frame numbering/current publication, and capital `d=F` frees the image when no extra frames remain.
 
 ## Target Files
 
@@ -21,13 +21,13 @@ VT only:
 
 - Keep `howl_vt.h`, render, and hosts unchanged.
 - Preserve image publication ABI and payload-copy behavior.
-- Assign each physical and virtual placement a VT-internal ref id.
-- Preserve the internal ref id when an existing nonzero client placement id is updated or converted between physical and virtual kind.
-- Store relative parent links by internal parent ref id, while keeping public/client parent fields for ABI publication.
-- `P=<image>,Q=0` selects the first live parent ref at creation time and remains bound to that ref even if other refs are later removed or arrays reorder.
-- Parent chain resolution, cycle checks, descendant deletion, and virtual-parent resolution use internal parent ref identity where possible.
-- Anonymous `p=0` placement behavior remains unchanged except that each anonymous placement receives a distinct internal ref id.
-- Existing generated-placeholder, virtual-placement, quota, delete-selector, image-number, frame loading, frame compose, and placement-kind replacement behavior remains green.
+- `a=d,d=f,r=1` promotes frame `2` payload/metadata/gap into the root image and removes one extra frame.
+- Deleting an extra frame removes it positionally, preserves frame order, and renumbers later frames.
+- Missing or too-large `r=` normalizes to Kitty's target frame instead of no-oping unexpectedly.
+- Deleting the current frame or a prior frame repairs `current_frame_number` and refreshes the published current payload.
+- `a=d,d=f` with no extra frames keeps the image alive.
+- `a=d,d=F` with no extra frames frees the image.
+- Existing generated-placeholder, virtual-placement, quota, delete-selector, image-number, frame loading, frame compose, placement-kind replacement, and stable-parent-ref behavior remains green.
 
 ## Hard Constraints
 
@@ -36,19 +36,19 @@ VT only:
 - Do not introduce the full internal id/ref/cache rewrite or persistent generated cell refs.
 - Do not change placement identity or render-facing publication structs.
 - Do not solve anonymous `image_id == 0` multi-image identity in this slice.
-- Do not expose internal ref ids through the C ABI.
-- Do not make generated placeholder placements persistent refs in this slice.
+- Do not replace retained base64 payload truth with decoded/cache storage in this slice.
+- Do not change animation runtime timing or visibility policy.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- `P=<image>,Q=0` child remains anchored to the originally selected physical parent after another parent placement is removed/reordered.
-- `P=<image>,Q=0` child remains anchored to the originally selected virtual parent after another parent ref is added or removed.
-- Updating a nonzero parent placement preserves its internal ref id and keeps existing children attached.
-- Converting a nonzero parent physical-to-virtual and virtual-to-physical preserves its internal ref id and keeps existing children attached through the updated kind.
-- Deleting a parent placement removes descendants by internal parent ref, including anonymous parents where client `placement_id` is `0`.
-- Existing placement-kind replacement tests remain green.
+- Deleting root frame promotes frame `2` into root, removes one extra frame, shifts old frame `3` to frame `2`, and repairs current frame to root when needed.
+- Deleting a middle extra frame preserves remaining frame order, renumbers later frames, and repairs a selected later current frame.
+- `a=d,d=f` with no `r=` repeatedly promotes until no extra frames remain, then leaves the final root image alive.
+- `a=d,d=F` with no extra frames deletes the image and associated frame state.
+- Missing or too-large `r=` deletes Kitty's normalized target frame.
+- Existing frame compose/current-frame publication tests remain green.
 
 ## Verification Required
 
@@ -58,4 +58,4 @@ VT only:
 
 Stop condition:
 
-- If correct stable parent behavior requires persistent generated cell-ref storage or render ABI changes, stop and report the exact dependency instead of widening the slice.
+- If correct frame deletion requires decoded/cache storage or render ABI changes, stop and report the exact dependency instead of widening the slice.
