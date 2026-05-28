@@ -124,6 +124,15 @@ Proof recorded:
 
 Severity: high, protocol correctness.
 
+Promoted first implementation slice:
+
+- Match Kitty `parse_graphics_code` for graphics control-block syntax before state mutation.
+- Reject unknown keys, missing `=`, invalid action/delete/transmission/compression flags, empty integer fields, invalid integer bytes, overlarge unsigned integers, invalid signed integers, bad separators, and trailing incomplete fields.
+- Preserve Howl's later base64/payload ownership for now; this slice is parser control-block validation, not payload normalization relocation.
+- Invalid parser input must not reach `State.handle`, mutate graphics state, or emit graphics protocol replies.
+- Remove `unsupported_key` state/handler plumbing if strict parse rejection makes it dead.
+- Keep existing supported command behavior and quiet handling unchanged for valid commands.
+
 Kitty machinery:
 
 - `kitty/parse-graphics-command.h`: `parse_graphics_code`

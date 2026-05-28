@@ -1,52 +1,50 @@
-# Current Slice: Render Placeholder-Run ABI Cleanup
+# Current Slice: VT Graphics Parser Validation
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-generated-placement-transition-scratchpad.md` item 6, after host placeholder-run publication cleanup landed in `howl-linux-host` `c607a2b` and root `54d039f`.
+Promoted from `graphics-machinery-scratchpad.md` item 3 after placeholder assembly proof was recorded in root `f83947d`.
 
 ## Goal
 
-Remove render's public placeholder-run input contract and internal copy/validation plumbing now that VT publishes generated placeholder cells as normal graphics placements and host no longer publishes placeholder-run spans.
+Make Kitty graphics control-block parsing reject malformed syntax and invalid flag/integer domains before graphics state mutation, matching Kitty `parse_graphics_code` behavior for parser validation.
 
 ## Target Files
 
-Render:
+VT:
 
-- `howl-render/include/howl_render.h`
-- `howl-render/src/ffi_types.zig`
-- `howl-render/src/frame/queue.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/ffi.zig`
-- `howl-render/src/test_abi.zig`
-
-Host C ABI consumer updates:
-
-- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-vt/src/kitty/protocol.zig`
+- `howl-vt/src/action/vocabulary.zig`
+- `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/test/action_mapping.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
-- Render publish/source ABI no longer includes placeholder-run count or placeholder-run spans.
-- Render queue no longer stores, clones, frees, compares, validates, or logs placeholder runs.
-- Render still accepts generated placeholder placements as normal placements.
-- Host compiles against the updated render C ABI and no longer sets or asserts removed render placeholder-run fields.
-- VT's public/internal placeholder-run proof API remains unchanged in this slice.
+- Valid existing graphics commands continue parsing and handling unchanged.
+- Unknown graphics control keys fail parsing and do not reach `State.handle`.
+- Missing `=`, empty fields, trailing comma/incomplete field, malformed separators, invalid flag bytes, empty integer values, non-digit unsigned values, invalid signed values, and overlarge integer values fail parsing.
+- Invalid parser input must not mutate graphics image/placement/upload state.
+- Invalid parser input must not emit graphics protocol replies; Kitty parser logs and does not call `screen_handle_graphics_command`.
+- `a`, `d`, `t`, and `o` flag domains match Kitty's generated parser.
+- `q`, `m`, `C`, and `U` remain integer fields where nonzero maps to true for Howl's bool fields.
 
 ## Hard Constraints
 
-- Do not edit VT in this slice unless a compile blocker proves otherwise.
-- Do not reintroduce render-side Kitty placeholder parsing, placeholder drawing, diacritic handling, fg/underline image-id handling, or virtual placement placeholder semantics.
-- Do not remove generated placement flags or normal placement validation.
-- Do not special-case yazi/panes.
-- Do not add backwards-compatible ignored placeholder-run fields to render; the point is to delete this render input contract.
+- Do not edit render or host in this slice.
+- Do not reinterpret placeholder protocol diacritics.
+- Do not move base64 payload decoding into the parser in this slice; preserve existing payload ownership unless required for a syntax gate.
+- Do not add renderer-side corrections.
+- Do not make invalid parser input become an `EINVAL` graphics reply; it should fail before state handling.
+- Keep the smallest correct diff.
 
 ## Verification Required
 
-- `zig build test` in `howl-render`
-- `zig build test:unit` in `howl-linux-host`
+- `zig build test` in `howl-vt`
+- `zig build test:regression:build` in `howl-vt`
 - `git diff --check` at workspace root
 
 Stop condition:
 
-- If render still needs placeholder-run data for a non-dead behavior, stop and report the exact dependency. Do not keep a half-removed ABI field or restore placeholder rendering.
+- If exact Kitty parser behavior conflicts with an existing shipped Howl command shape, stop and report the command and source reference instead of preserving permissive parsing silently.
