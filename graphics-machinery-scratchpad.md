@@ -1259,6 +1259,39 @@ Oversized-animation-frame slice completed:
 - `howl-vt` commit `ed8e3b3 vt: reject oversized graphics frames`.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 23. Commands with both image id and image number are not uniformly rejected
+
+Severity: medium, protocol correctness.
+
+Kitty/Ghostty machinery:
+
+- Kitty docs state that specifying both `i` and `I` in any graphics command is an error and must reply with `EINVAL` unless silenced.
+- Kitty `handle_graphics_command` checks `g->id && g->image_number` before action dispatch and replies `EINVAL:Must not specify both image id and image number`.
+- Ghostty rejects transmit commands with both image id and image number as mutually exclusive.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `resolveImageId` returns null for both ids, making some commands report `ENOENT`.
+- Upload paths use `imageIdForUpload`, which can prefer lowercase `i=` and store a command that should be rejected.
+
+Problem:
+
+- Commands with both id forms can mutate state or report the wrong failure class instead of failing uniformly before command-specific behavior.
+
+Promoted both-id rejection slice:
+
+- Reject any graphics command with both `image_id` and `image_number` before command-specific mutation.
+- Reply with `EINVAL:Must not specify both image id and image number` unless quiet failure suppression applies.
+- Preserve existing valid `i=` only, `I=` only, and anonymous behavior.
+- Leave parser changes, identity/ref rewrites, ABI, render, host, media normalization, query/delete/frame/animation semantics, storage, and generated placeholders out of scope.
+
+Both-id rejection acceptance tests:
+
+- Direct transmit with both id forms rejects and stores no image.
+- Place with both id forms rejects as `EINVAL` instead of `ENOENT` and stores no placement.
+- Animation/frame path with both id forms rejects before mutation.
+- `q=2` suppresses the failure and still does not mutate state.
+
 Research notes for later slices:
 
 - Root-frame edit parity remains broader and should not be pulled into this oversized-frame slice.

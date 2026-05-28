@@ -1,14 +1,14 @@
-# Current Slice: Reject Oversized Animation Frames
+# Current Slice: Reject Both Image Id Forms
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after animation frame dimension research.
+Promoted from `graphics-machinery-scratchpad.md` after image-id/image-number validation research.
 
 ## Goal
 
-Match Kitty behavior by rejecting animation frame uploads whose loaded frame dimensions exceed the existing base image dimensions.
+Match Kitty behavior by rejecting graphics commands that specify both lowercase `i=` image id and uppercase `I=` image number.
 
 ## Target Files
 
@@ -17,30 +17,27 @@ Match Kitty behavior by rejecting animation frame uploads whose loaded frame dim
 
 ## Required Behavior
 
-- For `a=f` frame uploads, compute the loaded/intrinsic frame dimensions before mutating frame state.
-- If loaded frame width is greater than the base image width, reject with `EINVAL:Frame width {frame_width} larger than image width: {image_width}`.
-- If loaded frame height is greater than the base image height, reject with `EINVAL:Frame height {frame_height} larger than image height: {image_height}`.
-- Rejection stores no frame, preserves existing frame/image state, and follows existing quiet failure suppression.
-- Valid frame uploads keep existing behavior.
+- Any graphics command with both `cmd.image_id != 0` and `cmd.image_number != 0` rejects before command-specific mutation.
+- Failure reply uses `EINVAL:Must not specify both image id and image number` unless quiet failure suppression applies.
+- Rejection stores no image/frame/placement and does not mutate existing graphics state.
+- Existing commands with only `i=`, only `I=`, or neither keep current behavior.
 
 ## Hard Constraints
 
 - Do not change ABI, render, host, parser, terminal, FFI, or build files.
-- Do not implement broader root-frame edit parity, frame graph/ref semantics, cache/storage identity, or animation runtime changes.
-- Do not change successful frame upload behavior, frame-number allocation, current-frame selection, frame gaps, or composition behavior.
-- Do not change PNG decoder behavior, zlib/compressed raw, direct/indirect media normalization, query, delete/reset, parser validation, quiet semantics, or EBADPNG behavior.
-- Do not replace retained base64 model truth in this slice.
+- Do not change parser validation; this is VT command validation before mutation.
+- Do not change successful upload, query, place, delete, animation, frame, media normalization, quiet semantics, EBADPNG behavior, PNG decoder behavior, zlib/compressed raw, direct/indirect media behavior, storage quota, composition, or generated placeholder behavior.
+- Do not replace retained base64 model truth or identity/ref storage model in this slice.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Width-oversized raw frame upload against a `1x1` base image replies with the Kitty `EINVAL` width message and stores no frame.
-- Height-oversized raw frame upload against a `1x1` base image replies with the Kitty `EINVAL` height message and stores no frame.
-- Existing-frame edit with oversized dimensions rejects and preserves the previous frame payload/metadata.
-- `q=1` still emits the oversized-frame failure.
-- `q=2` suppresses the oversized-frame failure and stores no frame.
-- Existing valid frame upload tests continue to pass.
+- Direct transmit with both `i=` and `I=` rejects with `EINVAL` and stores no image.
+- Place with both `i=` and `I=` rejects with `EINVAL` instead of `ENOENT` and stores no placement.
+- Animation/control or frame path with both ids rejects before mutation.
+- `q=2` suppresses the mutual-exclusion failure and still does not mutate state.
+- Existing valid image-number-only behavior continues to pass.
 
 ## Verification Required
 
@@ -50,4 +47,4 @@ Match Kitty behavior by rejecting animation frame uploads whose loaded frame dim
 
 Stop condition:
 
-- If correct behavior requires broader root-frame edit parity, frame graph/ref rewrites, parser changes, host/runtime changes, render changes, ABI changes, or decoded/cache storage rewrites, stop and report the exact dependency instead of widening the slice.
+- If correct behavior requires parser changes, identity/ref storage rewrites, host/runtime changes, render changes, ABI changes, or broader command validation refactors, stop and report the exact dependency instead of widening the slice.
