@@ -1828,6 +1828,24 @@ Decoded storage ABI research after direct chunk bridge:
 - Next safe work: research how render/host should consume decoded VT publication without
   breaking the existing render base64 ABI or moving Kitty protocol decode into host/render.
 
+Decoded render bridge research:
+
+- Verdict: first slice is worker-ready and owned by `howl-render`.
+- Existing render ABI truth: `HowlRenderPublishSlotCommit`, `HowlRenderVtSurface`, and
+  internal `PublicationSource.graphics_payload_bytes` carry old VT `HowlVtGraphicsImage`
+  metadata plus base64/protocol payload bytes. `graphics_prepare.zig` decodes those bytes
+  from base64 for RGB/RGBA.
+- Dependency order: render must gain decoded ABI before Linux host switches to VT decoded
+  copy APIs. If the host switched first, old render ABI would treat decoded pixels as
+  base64. Host re-encoding is rejected as wrong ownership and wasted work.
+- Promoted next slice: add a parallel render decoded commit-slot ABI, preserve old render
+  ABI unchanged, add explicit internal payload kind (`legacy base64/protocol` vs `decoded
+  pixels`), validate decoded RGB/RGBA byte lengths, and include payload kind in raster
+  cache keys.
+- Out of scope for first slice: Linux host switchover, old ABI deprecation, direct decoded
+  `publish_vt_source` unless required by implementation coherence, quota/eviction
+  redesign, and renderer-side Kitty protocol interpretation.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
