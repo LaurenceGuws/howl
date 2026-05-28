@@ -641,6 +641,8 @@ Kitty machinery:
 
 - `kitty_tests/graphics.py`: `test_suppressing_gr_command_responses` covers `q=1` success suppression and `q=2` failure suppression.
 - `utils/official_docs/kitty/graphics-protocol.md`: `q=1` suppresses `OK`; `q=2` suppresses failure responses.
+- `kitty/graphics.c`: `finish_command_response` suppresses any `OK` when `g->quiet != 0` and suppresses all responses when `g->quiet > 1`.
+- `kitty/parse-graphics-command.h`: `quiet` parses as an unsigned integer, not a two-value enum.
 
 Howl current shape:
 
@@ -652,27 +654,33 @@ Howl current shape:
 Problem:
 
 - Howl suppresses all replies for both `q=1` and `q=2`.
-- Kitty emits failures for `q=1` and emits successes for `q=2`.
+- Kitty emits failures for `q=1`, and suppresses both failures and successes for `q > 1`.
 - Chunked uploads need to preserve the initiating quiet mode until the final response.
 
 Promoted quiet response mode slice:
 
-- Replace the boolean command quiet state with a small numeric/enum quiet mode.
+- Replace the boolean command quiet state with numeric quiet mode.
 - Centralize success/failure suppression enough to avoid ad hoc `q=1`/`q=2` mistakes across reply sites.
 - Preserve existing reply text, image id, placement id, image number, and mutation behavior except for suppression rules.
 - Leave PNG error taxonomy, decode/storage, delete/reset behavior, animation runtime, frame gaps, and ABI/render/host code unchanged.
 
 Quiet response acceptance tests:
 
-- Parser/action mapping keeps `q=0`, `q=1`, and `q=2` distinct.
+- Parser/action mapping keeps `q=0`, `q=1`, `q=2`, and `q=3` distinct.
 - Invalid direct upload with `q=1` still emits an error.
 - Invalid direct upload with `q=2` emits no error.
 - Successful upload/query/placement with `q=1` emits no `OK`.
-- Successful upload/query/placement with `q=2` still emits `OK`.
+- Successful upload/query/placement with `q=2` emits no `OK`.
 - Failed final chunk with initiating `q=1` emits an error.
 - Failed final chunk with initiating `q=2` emits no error.
 - Missing image/frame/parent errors with `q=2` emit no error.
 - Successful animation/frame control with `q=1` emits no `OK`.
+
+Quiet response mode slice completed:
+
+- `howl-vt` commit `381fb35 vt: honor kitty quiet modes`.
+- Review corrected the initial docs-shaped brief to Kitty source truth: nonzero `q` suppresses success, `q > 1` suppresses failure, and `q` remains a parsed unsigned integer.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
 ## Howl-Only Hacks
 

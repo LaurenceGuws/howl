@@ -8,7 +8,7 @@ Promoted from `graphics-machinery-scratchpad.md` after protocol-matrix research.
 
 ## Goal
 
-Preserve Kitty's distinct graphics response suppression modes: `q=1` suppresses successful `OK` responses, while `q=2` suppresses failure responses.
+Preserve Kitty's graphics response suppression modes from source: any nonzero `q` suppresses successful `OK` responses, while `q > 1` also suppresses failure responses.
 
 ## Target Files
 
@@ -23,7 +23,7 @@ Preserve Kitty's distinct graphics response suppression modes: `q=1` suppresses 
 - Parser/action vocabulary preserves the numeric quiet mode instead of collapsing nonzero values to `true`.
 - `q=0` and omitted `q` keep current unsuppressed reply behavior.
 - `q=1` suppresses successful `OK` replies but still emits failures.
-- `q=2` suppresses failures but still emits successful `OK` replies.
+- `q>1` suppresses failures and successful `OK` replies.
 - Chunked uploads carry the initiating quiet mode through final success/error handling.
 - Placement, query/transmit, animation/frame, compose, parent, and validation reply sites use success-vs-error suppression rather than a boolean.
 
@@ -40,11 +40,11 @@ Preserve Kitty's distinct graphics response suppression modes: `q=1` suppresses 
 
 ## Required Tests
 
-- Parser/action test proves `q=0`, `q=1`, and `q=2` remain distinct.
+- Parser/action test proves `q=0`, `q=1`, `q=2`, and `q=3` remain distinct.
 - Invalid direct upload with `q=1` still emits an error.
 - Invalid direct upload with `q=2` emits no error.
 - Successful direct upload/query/placement with `q=1` emits no `OK`.
-- Successful direct upload/query/placement with `q=2` still emits `OK`.
+- Successful direct upload/query/placement with `q=2` emits no `OK`.
 - Failed chunked upload with initiating `q=1` emits final error.
 - Failed chunked upload with initiating `q=2` emits no final error.
 - Missing image/frame/parent errors with `q=2` emit no error.
@@ -58,4 +58,4 @@ Preserve Kitty's distinct graphics response suppression modes: `q=1` suppresses 
 
 Stop condition:
 
-- If correct suppression requires broad reply taxonomy changes beyond success/error helpers, stop and report the exact dependency instead of widening the slice.
+- If correct suppression requires broad reply taxonomy changes beyond source-backed success/failure helpers, stop and report the exact dependency instead of widening the slice.
