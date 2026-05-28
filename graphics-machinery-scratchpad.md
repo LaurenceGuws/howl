@@ -6,7 +6,7 @@ Purpose: sprint scope `graphics` research output and worker-driving backlog.
 
 Reviewer status: accepted after researcher correction. The first research pass was rejected because it incorrectly claimed Kitty protocol placeholder diacritics are 1-based. Kitty docs and source show the protocol value is 0-based; Kitty uses `0` as an internal missing sentinel while scanning and subtracts before cell-image creation.
 
-Current gate: do not seed coding workers yet. The repo is dirty across `howl-vt`, `howl-render`, and `howl-linux-host`. Per `loop.txt`, a worker requires a promoted `current.txt` item and a clean git tree.
+Current gate: seed coding workers only after `current.txt` is promoted and the git tree is clean.
 
 ## Research Truth
 
@@ -299,6 +299,38 @@ Promoted delete selector first slice:
 - Uppercase geometry selectors may delete image data only for images whose placements matched that selector and are now unplaced; they must not run global unplaced-image cleanup.
 - Add tests for newest-only `d=N,I=<number>`, lowercase named-image retention, uppercase matched-image freeing, and unrelated unplaced image preservation.
 - Leave full visibility filtering for `d=a` and generated cell-ref materialization to later source-proofed slices unless needed by tests.
+
+Delete selector first slice completed:
+
+- `howl-vt` commit `6916aac vt: honor graphics delete lifetimes`.
+- Root commit `3af602e design: update graphics delete selectors`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
+Image-number identity research:
+
+- Kitty `Image.internal_id` and `Image.client_id` are distinct, but the next ABI-preserving Howl slice does not need to expose or store a full internal id yet.
+- Kitty `I=<number>` upload without `i=` allocates a free positive client id via `get_free_client_id`; it must not collide with existing explicit `i=` images.
+- Kitty `I=<number>` creates a new image for that number, and later `I=<number>` references resolve to the newest matching image.
+- Howl currently allocates `I=` uploads from `next_image_id`; this can collide with an existing explicit `i=` image and replacement-delete it.
+- Howl direct and chunked `a=f,I=<number>` currently validate the target using `resolveImageId`, then use `imageIdForUpload`, which allocates instead of targeting the newest existing image.
+
+Promoted image-number identity slice:
+
+- VT-only, ABI-preserving.
+- Replace `next_image_id` allocation for `I=` uploads with lowest-free positive client id allocation.
+- Keep explicit `i=<id>` replacement semantics unchanged.
+- Repeated `I=<number>` uploads create distinct client ids; placement/query/control/delete by `I=<number>` continue to resolve newest-first.
+- Direct and chunked `a=f,I=<number>` frame uploads target the resolved newest existing image; missing targets must not allocate images.
+- Leave anonymous `image_id == 0`, full internal image/ref ids, access-time quota, render publication identity, and frame graph completeness for later slices.
+
+Image-number identity acceptance tests:
+
+- `I=` upload after existing `i=1` assigns a non-colliding id and preserves the explicit image.
+- Repeated `I=<number>` uploads assign distinct ids and placement by `I=<number>` targets newest.
+- `I=` allocation reuses the lowest freed positive client id.
+- Direct `a=f,I=<number>` stores a frame on the newest image.
+- Chunked `a=f,I=<number>` stores a frame on the newest image captured by the first chunk.
+- Missing `a=f,I=<number>` target replies not found and does not allocate an image.
 
 ### 5. Frame, animation, and compose machinery is partial
 

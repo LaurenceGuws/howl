@@ -1,14 +1,14 @@
-# Current Slice: VT Graphics Delete Selector Lifetime
+# Current Slice: VT Graphics Image-Number Identity
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` item 4 after delete-selector research.
+Promoted from `graphics-machinery-scratchpad.md` item 4 after image-number identity research.
 
 ## Goal
 
-Match Kitty's first-order graphics delete selector lifetime semantics without changing ABI: lowercase selectors remove refs/placements while preserving named image data, and uppercase selectors free only targeted images whose matched refs are now gone.
+Match Kitty's observable image-number identity semantics without changing ABI: `I=` uploads allocate a free client image id without colliding with explicit `i=` images, while frame uploads by `I=` target the newest existing image instead of allocating a new one.
 
 ## Target Files
 
@@ -21,30 +21,33 @@ VT only:
 
 - Keep `howl_vt.h`, render, and hosts unchanged.
 - Preserve image publication ABI and payload-copy behavior.
-- `d=i,i=<id>` removes matching physical/virtual placements but keeps named image data.
-- `d=I,i=<id>` removes matching placements and deletes that image only if it is now unplaced.
-- `d=n,I=<number>` and `d=N,I=<number>` target only the newest image with that image number.
-- `d=n` keeps named image data after removing refs; `d=N` deletes the targeted image only if now unplaced.
-- `d=r` removes refs for images whose client id is in `x..y` and keeps named image data; `d=R` deletes only targeted images that become unplaced.
-- Uppercase geometry selectors (`C/P/Q/X/Y/Z`) must not sweep unrelated unplaced images.
-- Existing generated-placeholder, virtual-placement, quota, image-number, frame, and replacement behavior remains green.
+- `a=t/T,I=<number>` with no `i=` allocates the lowest free positive client image id.
+- `I=` allocation must not replace or delete an existing explicit `i=` image.
+- Repeated `I=<number>` uploads create distinct client ids; future `I=<number>` references resolve to the newest matching image.
+- Reusing a freed client id is allowed when it is the lowest free positive id.
+- `a=f,I=<number>` stores the frame on the newest existing image with that number.
+- Chunked `a=f,I=<number>` stores the frame on the same resolved existing image captured by the first chunk.
+- Missing-image frame uploads by `I=` must not allocate a new image.
+- Existing generated-placeholder, virtual-placement, quota, delete-selector, frame, and replacement behavior remains green.
 
 ## Hard Constraints
 
 - Do not edit render or host.
 - Do not edit `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi.zig`, or `howl-vt/src/terminal.zig`.
 - Do not introduce the full internal id/ref/cache rewrite.
+- Do not change placement identity or render-facing publication structs.
+- Do not solve anonymous `image_id == 0` multi-image identity in this slice.
 - Do not special-case yazi/panes.
-- Do not move delete selector policy to render.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Lowercase `d=i` removes placements but keeps named image data.
-- Uppercase `d=I` removes image data only for the targeted image after refs are gone.
-- `d=N,I=<number>` deletes only newest matching image-number target; older same-number image remains and becomes lookup target.
-- Uppercase geometry selector does not delete an unrelated unplaced image.
-- Lowercase `d=r` preserves image data while removing placements for ids in range; uppercase `d=R` deletes targeted unplaced images only.
+- `I=` upload after existing `i=1` assigns a non-colliding free id and preserves `i=1`.
+- Repeated `I=<number>` uploads assign distinct ids and placement by `I=<number>` targets the newest image.
+- `I=` allocation reuses the lowest freed positive client id.
+- Direct `a=f,I=<number>` stores a frame on the newest matching image.
+- Chunked `a=f,I=<number>` stores a frame on the newest matching image captured by the first chunk.
+- Missing `a=f,I=<number>` target replies not found and does not allocate an image.
 
 ## Verification Required
 
@@ -54,4 +57,4 @@ VT only:
 
 Stop condition:
 
-- If correct delete semantics require full internal ref identity or generated cell-ref storage, stop and report the exact dependency instead of widening the slice.
+- If correct image-number behavior requires full internal image/ref identity or render ABI changes, stop and report the exact dependency instead of widening the slice.
