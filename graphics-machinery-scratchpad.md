@@ -1692,21 +1692,37 @@ Next safe work:
 
 Ownership: VT/runtime plus render/host visibility truth; likely cross-submodule.
 
-Risk: medium-high.
+Risk: completed for drawn-feedback gate; remaining cache/presentation edge cases are
+medium.
 
 Source truth:
 
 - Kitty updates image visibility/drawn state from visible refs and advances animations
   only for drawn images.
-- Howl `imageNeedsRuntime` still keys off animation state and frame count, not actual
-  drawn visibility.
+- Howl now gates `imageNeedsRuntime` on VT image drawn state, which is fed by render
+  prepared graphics image refs through the host and C ABI.
 
-Next safe work:
+Completed slice:
 
-- Do a source-backed research round before code.
-- Prefer a VT-only proof first if an unplaced or off-screen animation can be shown to
-  advance incorrectly through existing runtime APIs.
-- Stop if exact parity needs render/host visible-ref feedback into VT runtime.
+- Kitty `grman_update_layers()` resets `Image.is_drawn`, skips virtual refs, skips
+  off-screen refs, and sets drawn only after visible non-virtual render data exists;
+  `image_is_animatable()` requires that drawn bit.
+- Ghostty has no direct runtime model because Kitty graphics animation is not
+  implemented there.
+- VT images now carry stable nonzero `image_ref_id` values.
+- Render preserves `image_ref_id` through visible/clipped/raster-bound prepared
+  graphics refs and exposes those refs from prepared surfaces.
+- Host reports rendered prepared image refs to VT with
+  `howl_vt_terminal_note_drawn_graphics`.
+- VT tests cover unplaced animation, deleted-placement plus empty drawn feedback,
+  and virtual-only/no-placeholder animation having no runtime obligation.
+- Render tests cover visible placement preserving the image ref id and fully
+  off-screen placement producing no prepared image refs.
+
+Remaining caution:
+
+- The drawn set is render-feedback cached, matching Kitty's layer-update model more
+  closely than eager VT mutation. Do not replace it with VT placement-count policy.
 
 ### 3. Persistent generated cell refs are not implemented
 

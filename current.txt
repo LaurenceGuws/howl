@@ -1,43 +1,54 @@
-# Current Slice: Re-index Graphics Scratchpad
+# Current Slice: Graphics Animation Drawn-Visibility Runtime Gate
 
-Owner: workspace root.
+Owner: howl-vt, howl-render, and howl-linux-host.
 
 Sprint scope: graphics.
 
 ## Goal
 
-Replace stale graphics backlog entries with a current live-gap index so future workers do
-not start from removed functions, completed placeholder machinery, or completed logging
-cleanup.
+Gate VT graphics animation runtime on render-confirmed drawn image refs instead of
+animation state plus frame count alone.
 
 ## Source Truth
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `reference-index.md`
-- `graphics-machinery-scratchpad.md`
-
-## Target Files
-
-- `graphics-machinery-scratchpad.md`
+- `utils/dev_references/terminals/kitty/kitty/graphics.c`
+- `utils/dev_references/terminals/kitty/kitty/graphics.h`
+- `utils/dev_references/terminals/kitty/kitty/screen.c`
+- `howl-vt/src/kitty/graphics.zig`
+- `howl-render/src/frame/graphics_viewport.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
 
 ## Required Behavior
 
-- Docs-only slice.
-- Mark completed/stale items as completed or stale instead of leaving them in the active
-  worker backlog.
-- Replace stale worker backlog and deletion gate with live unresolved graphics gaps.
-- Record current risks for base64 retained payload truth, animation visibility gating,
-  persistent generated cell refs, and decoded/cache quota parity.
-- Do not edit `howl-vt`, `howl-render`, `howl-linux-host`, ABI, render behavior, host
-  behavior, or tests.
+- VT images have a stable nonzero image ref id for their lifetime.
+- Render carries visible prepared image ref ids after viewport clipping and raster
+  binding.
+- Host reports prepared/rendered drawn image refs back to VT through the C ABI.
+- VT `imageNeedsRuntime()` requires the image to be drawn by the last accepted render
+  feedback.
+- Unplaced, deleted-placement with empty drawn feedback, and virtual-only animations
+  have no runtime obligation and do not advance.
+- Do not approximate off-screen visibility in VT from placement counts.
+
+## Reference Notes
+
+- Kitty `grman_update_layers()` clears `Image.is_drawn`, skips virtual refs, skips
+  off-screen refs, and sets drawn only after visible non-virtual render data exists.
+- Kitty delete/scroll/ref mutations dirty layers; drawn truth converges through the
+  render/layer update path.
+- Ghostty has no direct animation-runtime match; Kitty graphics animation is
+  unimplemented there.
 
 ## Required Checks
 
-- `git diff --check` at root.
-- Root/submodule status remains clean except for the intended scratchpad/current docs.
-
-Stop condition:
-
-- If choosing the next code slice requires new Kitty/Ghostty/Alacritty reference research,
-  stop after the re-index and do not promote behavior code.
+- `zig build test --summary all` in `howl-vt`.
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-render`.
+- `zig build test:integration:kitty-graphics-replay:build --summary all` in
+  `howl-linux-host`.
+- `zig build test:integration:kitty-graphics-replay:app:build --summary all` in
+  `howl-linux-host`.
+- Root `zig build --summary all`.
+- `git diff --check` at root and touched submodules.
