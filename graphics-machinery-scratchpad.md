@@ -1161,6 +1161,11 @@ Require-query-`i` acceptance tests:
 - Missing-`i=` invalid PNG query produces no `EBADPNG` output and stores no image.
 - Existing lowercase-`i=` query success still returns `OK` and stores no image.
 
+Require-query-`i` slice completed:
+
+- `howl-vt` commit `bb49020 vt: require image id for graphics query`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 Research notes for later slices:
 
 - Direct raw small oversize truncation may be a future narrow slice, but needs careful Kitty `+10` buffer slack bounds.
