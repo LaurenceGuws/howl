@@ -1762,6 +1762,38 @@ Risk:
 
 - Low functional risk, but deleting now reduces observability.
 
+Temporary graphics logging cleanup research:
+
+- Current duplicated `HOWL_GRAPHICS_LOG` plumbing exists in `howl-vt`, `howl-render`,
+  and `howl-linux-host`, each with its own `graphics_log.zig` helper and
+  `graphics_log.event()` calls.
+- Stale scratchpad references: `tracePlaceholderReject`, `tracePlaceholderDraw`,
+  `drawPlaceholderRunByIndex`, `resolvePlaceholderDrawPlacement`,
+  `ensureVirtualPlacementImageRefs`, and `preparePlaceholderGraphics` no longer exist.
+- Preserve product/test proof infrastructure such as host graphics proof snapshots and
+  present proof capture; these are not the temporary env-log path.
+- Ghostty uses scoped owner-local graphics logs, and TigerBeetle-style diagnostics do not
+  justify duplicated cross-owner env-probe modules.
+- Current VT/render/host tests now cover generated placeholder publication, render order,
+  and graphics replay/proof paths, so the temporary logging can be deleted.
+
+Promoted temporary graphics logging deletion slice:
+
+- Delete only `HOWL_GRAPHICS_LOG` plumbing.
+- Remove `howl-vt/src/graphics_log.zig`, `howl-render/src/graphics_log.zig`, and
+  `howl-linux-host/src/graphics_log.zig`.
+- Remove only their imports and `graphics_log.event()` call blocks.
+- Preserve `graphicsProofSnapshot`, present proof capture, Kitty replay tests, ABI/test
+  proof APIs, generated placement behavior, render ordering, and host presentation policy.
+
+Temporary graphics logging deletion acceptance checks:
+
+- No source matches remain for `graphics_log`, `HOWL_GRAPHICS_LOG`, or `vt-mutate`.
+- `howl-vt` tests and regression builds pass.
+- `howl-render` tests pass.
+- `howl-linux-host` Kitty graphics replay build targets pass.
+- Root build and diff checks pass.
+
 ## Worker Backlog
 
 ### Item 1: Prove placeholder run assembly against Kitty
