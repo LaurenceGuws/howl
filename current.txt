@@ -1,46 +1,43 @@
-# Current Slice: Validate Raw Direct Payloads
+# Current Slice: Validate Indirect Raw Undersize
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after raw direct payload validation research.
+Promoted from `graphics-machinery-scratchpad.md` after indirect raw explicit-size research.
 
 ## Goal
 
-Match Kitty/Ghostty behavior by validating uncompressed direct raw graphics payloads (`t=d`, `c` omitted, `f=24` or `f=32`) before retaining or publishing them.
+Match Kitty/Ghostty behavior by rejecting uncompressed indirect raw graphics media whose loaded byte count is smaller than the declared raw image dimensions require.
 
 ## Target Files
 
 - `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
-- `howl-vt/src/ffi.zig` test fixtures only
 
 ## Required Behavior
 
-- For uncompressed direct raw uploads (`t=d`, `c` omitted, `f=24` or `f=32`), validate base64 syntax.
-- Decode raw payloads only for validation; retain the original base64 transport bytes for the current ABI/product behavior.
-- Require decoded byte length to equal `width * height * bytes_per_pixel` where `f=24` is 3 bytes per pixel and `f=32` is 4 bytes per pixel.
-- Reject zero width or height through the existing raw payload validation path.
-- Preserve direct PNG (`f=100`) validation and zlib-compressed raw behavior.
+- For uncompressed indirect raw uploads (`t=f`, `t=t`, or `t=s`, `c` omitted, `f=24` or `f=32`), require the loaded byte count to be at least `width * height * bytes_per_pixel` before retaining or publishing.
+- Explicit `S=` smaller than the required raw byte count fails with the existing insufficient-data graphics failure path.
+- Omitted `S=` valid indirect raw behavior remains unchanged.
+- Safe temp deletion and shared-memory unlink behavior remain unchanged even when validation fails after reading.
 
 ## Hard Constraints
 
-- Do not change ABI behavior, render, host, parser, terminal, or build files.
-- In `howl-vt/src/ffi.zig`, only correct invalid test fixture data/dimensions required by this validation change; do not edit FFI implementation or C ABI contracts.
-- Do not change direct chunk lifecycle, local media behavior, parser validation, or quiet response handling.
+- Do not change ABI, render, host, parser, terminal, FFI, or build files.
+- Do not change direct media behavior, direct chunk lifecycle, parser validation, or quiet response handling.
+- Do not resolve or change `S=` larger-than-expected behavior in this slice.
 - Do not change EBADPNG behavior, PNG mode behavior, zlib decompression behavior, storage quota, animation, delete/reset, composition, or generated placeholder behavior.
 - Do not replace retained base64 model truth in this slice.
-- Existing tests that use invalid raw fixtures must be corrected to valid fixture dimensions/payloads if they assert successful upload behavior.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Valid `s=1,v=1,t=d,f=24;AAAA` stores successfully.
-- Valid `s=1,v=1,t=d,f=32;AAAAAA==` stores successfully.
-- Invalid base64 direct raw payload fails with graphics `EINVAL` and does not store an image.
-- Decoded-length mismatch such as `s=2,v=1,t=d,f=24;QUJD` fails with graphics `EINVAL` and does not store an image.
+- File medium `t=f,S=2,s=1,v=1,f=24` against a 3-byte file fails with graphics `ENODATA` and stores no image.
+- Temp-file medium `t=t,S=2,s=1,v=1,f=24` fails with graphics `ENODATA`, stores no image, and still deletes a safe temp file.
+- Shared-memory medium `t=s,S=2,s=1,v=1,f=24` fails with graphics `ENODATA`, stores no image, and still unlinks the shared-memory object.
+- Existing valid indirect raw tests with omitted `S=` continue to pass.
 
 ## Verification Required
 
@@ -50,4 +47,4 @@ Match Kitty/Ghostty behavior by validating uncompressed direct raw graphics payl
 
 Stop condition:
 
-- If correct behavior requires replacing retained base64 model truth, parser changes, host/runtime changes, render changes, ABI changes, or broad fixture rewrites outside graphics tests, stop and report the exact dependency instead of widening the slice.
+- If correct behavior requires replacing retained base64 model truth, changing larger-than-expected `S=` behavior, parser changes, host/runtime changes, render changes, ABI changes, or broad fixture rewrites, stop and report the exact dependency instead of widening the slice.

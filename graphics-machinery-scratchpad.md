@@ -1051,6 +1051,39 @@ Raw direct validation slice completed:
 - `howl-vt` commit `f71306a vt: validate direct raw graphics`.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 18. Indirect raw explicit-size undersize is accepted
+
+Severity: medium, protocol correctness.
+
+Kitty/Ghostty machinery:
+
+- Kitty `mmap_img_file` maps `S=` bytes for file/shared-memory media.
+- Kitty `initialize_load_data` computes raw RGB/RGBA byte count as `width * height * bytes_per_pixel` and rejects zero dimensions.
+- Kitty `process_image_data` fails uncompressed indirect raw media with `ENODATA` when mapped bytes are smaller than the expected raw size.
+- Ghostty `LoadingImage.readFile` reads local media with size bounds, and `LoadingImage.complete` rejects completed raw data whose length does not match dimensions/depth.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `loadIndirectPayloadNormalized` encodes uncompressed non-PNG indirect bytes without raw undersize validation.
+- `howl-vt/src/kitty/graphics.zig`: `graphicsReadLength` uses explicit `S=` directly and only applies raw expected-length checks when `S=` is omitted.
+
+Problem:
+
+- `t=f`, `t=t`, or `t=s` with `f=24`/`f=32` and `S=` smaller than `width * height * bytes_per_pixel` can store undersized retained base64 payloads.
+
+Promoted indirect raw undersize slice:
+
+- Reject uncompressed indirect raw media whose loaded byte count is smaller than required by dimensions/depth.
+- Preserve valid omitted-`S=` indirect raw behavior.
+- Preserve safe temp deletion and shared-memory unlink policy.
+- Leave larger-than-expected `S=`, PNG, zlib, direct media, parser, ABI, render, host, storage-model, animation, delete/reset, and generated-placeholder behavior out of scope.
+
+Indirect raw undersize acceptance tests:
+
+- File medium `t=f,S=2,s=1,v=1,f=24` against a 3-byte file fails with `ENODATA` and stores no image.
+- Temp-file medium `t=t,S=2,s=1,v=1,f=24` fails with `ENODATA`, stores no image, and deletes a safe temp file.
+- Shared-memory medium `t=s,S=2,s=1,v=1,f=24` fails with `ENODATA`, stores no image, and unlinks the object.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
