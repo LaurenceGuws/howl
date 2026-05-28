@@ -1127,6 +1127,45 @@ Indirect raw oversize slice completed:
 - `howl-vt` commit `7ffbc54 vt: truncate oversized indirect graphics`.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 20. Graphics query without lowercase image id replies incorrectly
+
+Severity: low-medium, protocol correctness.
+
+Kitty machinery:
+
+- Kitty `handle_graphics_command` handles `a=q` by saving lowercase `i=` as `q_iid`, setting upload target `iid=0`, and breaking with only an internal error report when `q_iid == 0`.
+- Kitty query response is built with `finish_command_response(&(GraphicsCommand){.id=q_iid, ...}, ...)`, so query replies are keyed only by lowercase `i=`.
+- `finish_command_response` emits no protocol reply when neither `id` nor `image_number` is present.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `State.handle` dispatches all `a=q` commands to `queryImageSupport` before checking for lowercase `i=`.
+- `queryImageSupport` can validate payloads and append replies using `cmd.image_id`, including `i=0` or validation failures for missing-`i=` queries.
+
+Problem:
+
+- Howl can emit query replies or validation failures for `a=q` without lowercase `i=`, while Kitty emits no graphics protocol reply and stores no image.
+
+Promoted require-query-`i` slice:
+
+- `a=q` with lowercase `i=` keeps existing query behavior.
+- `a=q` without lowercase `i=` emits no protocol reply and stores no image.
+- `a=q,I=...` without lowercase `i=` also emits no protocol reply and stores no image.
+- Missing-`i=` queries do not validate payloads or emit payload validation failures.
+- Leave upload/place/delete/frame/animation/media/parser/ABI/render/host behavior out of scope.
+
+Require-query-`i` acceptance tests:
+
+- Missing-`i=` query produces no output and stores no image.
+- Image-number-only query produces no output and stores no image.
+- Missing-`i=` invalid PNG query produces no `EBADPNG` output and stores no image.
+- Existing lowercase-`i=` query success still returns `OK` and stores no image.
+
+Research notes for later slices:
+
+- Direct raw small oversize truncation may be a future narrow slice, but needs careful Kitty `+10` buffer slack bounds.
+- Animation frame dimensions larger than the base image may be a future VT-only slice, but failure reply behavior should be researched before promotion.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter

@@ -1,14 +1,14 @@
-# Current Slice: Truncate Indirect Raw Oversize
+# Current Slice: Require Query Image Id
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after indirect raw explicit-size oversize research.
+Promoted from `graphics-machinery-scratchpad.md` after graphics query research.
 
 ## Goal
 
-Match Kitty/Ghostty behavior by ignoring extra bytes from uncompressed indirect raw graphics media when explicit `S=` is larger than the declared raw image dimensions require.
+Match Kitty behavior by treating `a=q` graphics queries without lowercase `i=` as no-reply, no-mutation commands.
 
 ## Target Files
 
@@ -17,17 +17,16 @@ Match Kitty/Ghostty behavior by ignoring extra bytes from uncompressed indirect 
 
 ## Required Behavior
 
-- For uncompressed indirect raw uploads (`t=f`, `t=t`, or `t=s`, `c` omitted, `f=24` or `f=32`), retain and publish only `width * height * bytes_per_pixel` bytes.
-- Explicit `S=` larger than the required raw byte count succeeds but ignores trailing bytes.
-- Existing undersize validation remains unchanged.
-- Omitted `S=` valid indirect raw behavior remains unchanged.
-- Safe temp deletion and shared-memory unlink behavior remain unchanged.
+- `a=q` with lowercase `i=` keeps existing query validation and replies keyed by that `i=`.
+- `a=q` without lowercase `i=` emits no graphics protocol reply and stores no image.
+- `a=q,I=...` without lowercase `i=` emits no graphics protocol reply and stores no image.
+- Missing-`i=` queries do not validate payloads or emit payload-validation failures such as `EBADPNG`.
 
 ## Hard Constraints
 
 - Do not change ABI, render, host, parser, terminal, FFI, or build files.
-- Do not change direct media behavior, direct chunk lifecycle, parser validation, or quiet response handling.
-- Do not change undersize failure behavior.
+- Do not change valid lowercase-`i=` query behavior.
+- Do not change upload, place, delete, animation, frame, direct media, indirect media, chunk lifecycle, parser validation, or quiet response handling.
 - Do not change EBADPNG behavior, PNG mode behavior, zlib decompression behavior, storage quota, animation, delete/reset, composition, or generated placeholder behavior.
 - Do not replace retained base64 model truth in this slice.
 - Do not special-case yazi/panes.
@@ -35,10 +34,10 @@ Match Kitty/Ghostty behavior by ignoring extra bytes from uncompressed indirect 
 
 ## Required Tests
 
-- File medium `t=f,S=5,s=1,v=1,f=24` over bytes `ABCXY` stores retained payload `QUJD` for `ABC` only.
-- Temp-file medium `t=t,S=5,s=1,v=1,f=24` stores `QUJD` and still deletes a safe temp file.
-- Shared-memory medium `t=s,S=5,s=1,v=1,f=24` stores `QUJD` and still unlinks the shared-memory object.
-- Existing undersize and omitted-`S=` indirect raw tests continue to pass.
+- `a=q` with no `i=` produces no pending output and stores no image.
+- `a=q,I=31` with no lowercase `i=` produces no pending output and stores no image.
+- `a=q` with invalid PNG payload and no `i=` produces no `EBADPNG` reply and stores no image.
+- Existing valid `i=31,a=q` query test still returns `OK` and stores no image.
 
 ## Verification Required
 
@@ -48,4 +47,4 @@ Match Kitty/Ghostty behavior by ignoring extra bytes from uncompressed indirect 
 
 Stop condition:
 
-- If correct behavior requires replacing retained base64 model truth, parser changes, host/runtime changes, render changes, ABI changes, or broad fixture rewrites, stop and report the exact dependency instead of widening the slice.
+- If correct behavior requires parser changes, host/runtime changes, render changes, ABI changes, or broader query/delete/frame rewrites, stop and report the exact dependency instead of widening the slice.
