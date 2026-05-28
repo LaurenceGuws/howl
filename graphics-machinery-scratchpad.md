@@ -1687,6 +1687,34 @@ Next safe work:
   VT-owned image/frame bytes before changing code.
 - Do not remove retained payload fields or ABI payload publication without an explicit C
   ABI/storage contract slice.
+- Correction from the chunk-decode proof attempt: Kitty's `base64_decode8()` decodes each
+  APC payload before graphics dispatch but ignores libbase64's return value. A partial
+  chunk such as `Q` is therefore not a parser rejection; it contributes zero decoded
+  bytes. The observable mismatch is still real because Howl concatenates base64 text
+  before final validation, while Kitty/Ghostty concatenate decoded bytes.
+- The tempting narrow test `m=1;Q` then `m=0;UJD` should not be implemented as a parser
+  rejection proof. Making it source-true requires an explicit decoded-transport bridge:
+  pending direct chunks must accumulate decoded bytes, then the current ABI-preserving
+  retained payload, if kept temporarily, must be derived from those bytes rather than
+  from concatenated base64 text.
+- Research verdict: promote a VT-only decoded-transport bridge now. The bridge is
+  ABI-preserving because `Upload.data` can become decoded pending bytes, then final
+  storage can re-encode once and continue publishing base64 through `Image.base64_payload`,
+  `Frame.base64_payload`, FFI, render, and host. Stop if implementation requires changing
+  `howl_vt_terminal_copy_graphics_payload`, render payload decode, or host publication.
+- Direct chunk decoded-transport bridge completed in `howl-vt` commit `8beeb93
+  vt: decode direct graphics chunks`.
+- Accepted behavior: chunked direct uploads decode each APC payload independently into
+  pending decoded bytes, then re-encode once for the existing retained base64 ABI seam.
+- Proofs include a non-concatenation case where `m=1;Q` followed by `m=0;UJD` no longer
+  stores `ABC`, valid-boundary chunk success, raw slack/EFBIG preservation, zlib chunk
+  preservation, frame upload preservation, and FFI fixture updates.
+- Verification passed after main-agent review fixes: `zig build test --summary all` in
+  `howl-vt`, `zig build test:regression:build --summary all` in `howl-vt`, root
+  `zig build --summary all`, root `git diff --check`, and `howl-vt git diff --check`.
+- Main-agent review fixed two accountability issues before commit: decode
+  `ConsequenceLimit` now aborts the pending upload, and retained-payload accounting counts
+  pending decoded upload bytes by their final base64 encoded size.
 
 ### 2. Animation runtime is not drawn-visibility gated
 

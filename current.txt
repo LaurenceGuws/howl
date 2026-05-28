@@ -1,54 +1,80 @@
-# Current Slice: Graphics Animation Drawn-Visibility Runtime Gate
+# Current Slice: Graphics Decoded Storage ABI Research
 
-Owner: howl-vt, howl-render, and howl-linux-host.
+Owner: workspace research; likely future owners are howl-vt, howl-render, and host ABI
+call sites.
 
 Sprint scope: graphics.
 
 ## Goal
 
-Gate VT graphics animation runtime on render-confirmed drawn image refs instead of
-animation state plus frame count alone.
+Design the next source-backed step after direct chunk decoded transport: replacing
+retained base64 payload truth with VT-owned decoded image/frame bytes without breaking
+Howl's C ABI product boundary.
 
 ## Source Truth
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+- `AGENTS.md`
+- `loop.txt`
+- `reference-index.md`
+- `utils/dev_references/terminals/kitty/kitty/parse-graphics-command.h`
+- `utils/dev_references/terminals/kitty/kitty/base64.h`
 - `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty/graphics.h`
-- `utils/dev_references/terminals/kitty/kitty/screen.c`
+- `utils/dev_references/terminals/kitty/kitty_tests/graphics.py`
+- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_command.zig`
+- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
+- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_storage.zig`
+- `howl-vt/src/kitty/protocol.zig`
 - `howl-vt/src/kitty/graphics.zig`
-- `howl-render/src/frame/graphics_viewport.zig`
-- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `howl-vt/src/ffi.zig`
+- `howl-vt/include/howl_vt.h`
+- `howl-vt/src/test/terminal_graphics.zig`
+- `howl-render/src/frame/graphics_prepare.zig`
+- `howl-render/include/howl_render.h`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
 
-## Required Behavior
+## Research Questions
 
-- VT images have a stable nonzero image ref id for their lifetime.
-- Render carries visible prepared image ref ids after viewport clipping and raster
-  binding.
-- Host reports prepared/rendered drawn image refs back to VT through the C ABI.
-- VT `imageNeedsRuntime()` requires the image to be drawn by the last accepted render
-  feedback.
-- Unplaced, deleted-placement with empty drawn feedback, and virtual-only animations
-  have no runtime obligation and do not advance.
-- Do not approximate off-screen visibility in VT from placement counts.
+- What exact decoded byte ownership does Kitty use for direct, compressed, PNG, file,
+  temp-file, shared-memory, root image, frame, and animation storage?
+- What exact decoded byte ownership does Ghostty use for command parse, loading image,
+  completed image, storage quota, and eviction?
+- Which Howl C ABI contracts currently promise protocol/base64 payload bytes, and which
+  host/render call sites depend on that promise?
+- What is the smallest ABI-safe transition shape: parallel decoded-byte query APIs,
+  versioned payload metadata, or a VT-internal decoded store with temporary base64
+  publication?
+- What tests prove the boundary without broad render/cache/quota redesign?
+- Which future slice should be implemented first, and which files/symbols must it own?
 
-## Reference Notes
+## Required Output
 
-- Kitty `grman_update_layers()` clears `Image.is_drawn`, skips virtual refs, skips
-  off-screen refs, and sets drawn only after visible non-virtual render data exists.
-- Kitty delete/scroll/ref mutations dirty layers; drawn truth converges through the
-  render/layer update path.
-- Ghostty has no direct animation-runtime match; Kitty graphics animation is
-  unimplemented there.
+- Research only. Do not edit product code.
+- Return source-backed findings with exact file/line references.
+- Identify an explicit owner model for decoded bytes, retained publication bytes, render
+  raster cache bytes, and host copies.
+- Identify ABI compatibility risks and whether compatibility is a real requirement or
+  removable stale shape.
+- Draft the next worker-ready `current.txt` implementation slice if one is ready.
+- If no implementation slice is ready, draft the narrower child scratchpad/research slice.
 
-## Required Checks
+## Out Of Scope
 
-- `zig build test --summary all` in `howl-vt`.
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- `zig build test --summary all` in `howl-render`.
-- `zig build test:integration:kitty-graphics-replay:build --summary all` in
-  `howl-linux-host`.
-- `zig build test:integration:kitty-graphics-replay:app:build --summary all` in
-  `howl-linux-host`.
-- Root `zig build --summary all`.
-- `git diff --check` at root and touched submodules.
+- No code implementation in this slice.
+- No C ABI change without explicit contract text.
+- No render cache rewrite unless source proves it is required for the first decoded
+  storage step.
+- No quota/eviction implementation independent of decoded storage ownership.
+- No host-owned protocol decode.
+
+## Verification
+
+- Scratchpad update must pass root `git diff --check`.
+
+Stop conditions:
+
+- Stop if the ABI transition requires a product decision about breaking existing hosts.
+- Stop if source truth does not determine a safe first implementation slice.
