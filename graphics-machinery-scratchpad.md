@@ -1240,6 +1240,45 @@ Research notes for later slices:
 
 - Exact Kitty `EFBIG` response taxonomy for larger-than-slack direct raw remains deferred.
 
+Exact direct-raw `EFBIG` taxonomy research:
+
+- `kitty/parse-graphics-command.h:326-337`: Kitty base64-decodes APC payloads before
+  graphics dispatch, so direct chunk sizes are decoded byte lengths.
+- `kitty/graphics.c:667-681`: raw RGB/RGBA direct uploads allocate
+  `expected_raw_len + 10` bytes for uncompressed data.
+- `kitty/graphics.c:554-568`: each direct chunk append checks remaining buffer and
+  rejects non-PNG over-capacity data with `EFBIG:Too much data`.
+- Cumulative decoded direct raw bytes up to `expected_raw_len + 10` are accepted, but
+  trailing slack is ignored as image truth.
+- The first direct raw append that would exceed `expected_raw_len + 10` replies
+  `EFBIG:Too much data`; chunked direct raw uses the same check.
+- Existing quiet behavior applies: `q=1` emits failures and `q=2` suppresses them.
+- Howl currently rejects beyond-slack direct raw as `EINVAL:invalid kitty graphics data`.
+
+Promoted direct raw `EFBIG` taxonomy slice:
+
+- VT-only, ABI-preserving.
+- Distinguish decoded direct raw oversize beyond Kitty's `+10` slack from other invalid
+  raw data.
+- Reply with `EFBIG:Too much data` for single direct raw uploads and completed chunked
+  direct raw uploads that exceed the slack.
+- Preserve `EINVAL:invalid kitty graphics data` for undersize raw, invalid base64, and
+  non-oversize invalid raw data.
+- Preserve accepted `expected_raw_len + 10` truncation behavior.
+- Leave PNG, zlib, indirect media, parser payload ownership, render, host, ABI, storage,
+  placement, animation, delete/reset, and generated-placeholder behavior out of scope.
+
+Direct raw `EFBIG` acceptance tests:
+
+- Single direct RGB raw upload with decoded length `expected + 11` replies
+  `EFBIG:Too much data` and stores no image.
+- Chunked direct RGB raw upload with final decoded length `expected + 11` replies
+  `EFBIG:Too much data`, clears pending upload, and stores no image.
+- Single direct raw `expected + 11,q=1` emits the same failure reply.
+- Single direct raw `expected + 11,q=2` emits no reply and stores no image.
+- Existing `expected + 10` slack tests, undersize tests, and invalid-base64 tests remain
+  green with their existing behavior.
+
 ### 22. Animation frame dimensions may exceed base image dimensions
 
 Severity: medium, protocol correctness.

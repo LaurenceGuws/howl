@@ -1,4 +1,4 @@
-# Current Slice: Kitty Root-Frame Edit Parity
+# Current Slice: Direct Raw EFBIG Taxonomy
 
 Owner: workspace root.
 
@@ -6,17 +6,18 @@ Sprint scope: graphics.
 
 ## Goal
 
-Match Kitty `a=f,r=1` root-frame edit behavior without changing render, host, ABI,
-decoded-cache storage, media transport, generated placeholders, or runtime timing.
+Match Kitty's `EFBIG:Too much data` failure taxonomy for direct uncompressed raw
+graphics payloads whose decoded length exceeds Kitty's accepted `expected_raw_len + 10`
+slack.
 
 ## Source Truth
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `utils/dev_references/terminals/kitty/kitty/graphics.h`
+- `utils/dev_references/terminals/kitty/kitty/parse-graphics-command.h`
 - `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty_tests/graphics.py`
-- `graphics-machinery-scratchpad.md` section `### 25. Root-frame edits with `a=f,r=1` diverge from Kitty`
+- `graphics-machinery-scratchpad.md` section `Exact direct-raw EFBIG taxonomy research`
 
 ## Target Files
 
@@ -25,26 +26,27 @@ decoded-cache storage, media transport, generated placeholders, or runtime timin
 
 ## Required Behavior
 
-- Keep omitted `r` and `r=0` on `a=f` as append-new-extra-frame behavior.
-- Normalize too-large explicit `r` to append at the next frame number.
-- Implement `a=f,r=1` as an existing root-frame edit.
-- Partial `a=f,r=1,x/y,s/v` edits must compose the transmitted rectangle onto the
-  existing root at `x/y`.
-- Full root image dimensions must be preserved after a root-frame edit.
-- Omitted or zero `z` must preserve the existing root gap.
-- Nonzero `z` must update the root gap and clamp negative values to `0`.
-- Preserve current successful behavior for explicit extra-frame edits.
+- Keep direct uncompressed raw decoded payloads up to `expected_raw_len + 10` accepted
+  and truncated to expected image truth.
+- Reject decoded direct raw payloads larger than `expected_raw_len + 10` with graphics
+  reply `EFBIG:Too much data`.
+- Apply the same `EFBIG` taxonomy to completed direct chunked raw uploads.
+- Preserve `q=1` failure emission and `q=2` failure suppression.
+- Preserve existing `EINVAL:invalid kitty graphics data` behavior for undersize raw,
+  invalid base64, zero dimensions, and other non-oversize invalid raw data.
+- Do not change PNG, zlib, indirect media, parser payload ownership, render, host, ABI,
+  storage, placement, animation, delete/reset, or generated-placeholder behavior.
 
 ## Required Tests
 
-- `a=f,r=1,x/y,s/v` composes a smaller payload into the existing root and preserves
-  root dimensions.
-- `a=f,r=1` full-size edit preserves root dimensions and replaces the expected pixels.
-- `a=f,r=1` without `z` preserves root gap.
-- `a=f,r=1,z=0` preserves root gap.
-- `a=f,r=1,z=-1` changes root gap to `0`.
-- Too-large explicit `r` appends at the next frame number.
-- Existing omitted-`r` and `r=0` append tests continue to pass.
+- Single direct RGB raw upload with decoded length `expected + 11` replies
+  `EFBIG:Too much data` and stores no image.
+- Chunked direct RGB raw upload with final decoded length `expected + 11` replies
+  `EFBIG:Too much data`, clears pending upload, and stores no image.
+- Single direct raw `expected + 11,q=1` emits the same `EFBIG` failure reply.
+- Single direct raw `expected + 11,q=2` emits no reply and stores no image.
+- Existing `expected + 10` slack tests remain green.
+- Existing undersize and invalid-base64 tests remain `EINVAL:invalid kitty graphics data`.
 
 ## Verification Required
 
@@ -56,6 +58,6 @@ decoded-cache storage, media transport, generated placeholders, or runtime timin
 
 Stop condition:
 
-- If root-frame editing requires decoded/cache storage, file media/shared memory,
-  render behavior, host behavior, ABI changes, or a frame graph redesign, stop and
-  report the smaller source-backed slice needed.
+- If exact `EFBIG` parity requires parser payload ownership changes, decoded storage
+  redesign, PNG/zlib changes, indirect-media changes, render, host, or ABI changes, stop
+  and report the smaller source-backed slice needed.
