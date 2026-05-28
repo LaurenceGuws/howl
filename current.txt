@@ -1,58 +1,51 @@
-# Current Slice: VT Graphics Frame Compose Action
+# Current Slice: VT Graphics Placement Kind Replacement
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` item 5 after frame/animation compose research.
+Promoted from `graphics-machinery-scratchpad.md` item 4 after placement-ref research.
 
 ## Goal
 
-Implement Kitty's `a=c` graphics frame composition without changing ABI: compose a rectangular region from a source frame onto a destination frame in VT-owned retained frame state, and refresh the published current frame when the destination is visible.
+Match Kitty's single-ref namespace for nonzero placement ids without changing ABI: a physical and virtual placement with the same image id and client placement id are the same ref being updated, not two independent refs.
 
 ## Target Files
 
 VT only:
 
 - `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/kitty/protocol.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
 - Keep `howl_vt.h`, render, and hosts unchanged.
 - Preserve image publication ABI and payload-copy behavior.
-- `a=c` resolves the target image by `i=` or newest `I=` using existing image lookup rules.
-- Source frame is `r=<number>`; destination frame is `c=<number>`; frame `1` is the root image.
-- Rectangle size is `w=<pixels>,h=<pixels>`, defaulting to the full image dimensions when omitted.
-- Destination offset is `x=<pixels>,y=<pixels>`; source offset is `X=<pixels>,Y=<pixels>`.
-- `C=1` uses simple replacement; default `C=0` alpha-blends the source over destination where format supports alpha.
-- Missing image/source/destination replies with `ENOENT` and does not mutate state.
-- Out-of-bounds rectangles reply with `EINVAL` and do not mutate state.
-- Same-frame overlapping source/destination rectangles reply with `EINVAL` and do not mutate state.
-- Composing into the selected/current frame refreshes the render-facing published image payload.
-- Existing generated-placeholder, virtual-placement, quota, delete-selector, image-number, frame loading, and replacement behavior remains green.
+- For nonzero `p=`, `a=p,U=1` replaces an existing physical placement with the same `(image_id, placement_id)` instead of adding a duplicate virtual placement.
+- For nonzero `p=`, physical `a=p` replaces an existing virtual placement with the same `(image_id, placement_id)` instead of adding a duplicate physical placement.
+- Parent links that point at a converted placement id remain pointed at the same client ref and update their physical/virtual parent kind when possible.
+- Anonymous `p=0` placement behavior remains unchanged; multiple anonymous placements are still allowed.
+- Delete selectors and quota placement protection continue to treat the converted ref as one live placement.
+- Existing generated-placeholder, virtual-placement, quota, delete-selector, image-number, frame loading, frame compose, and replacement behavior remains green.
 
 ## Hard Constraints
 
 - Do not edit render or host.
 - Do not edit `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi.zig`, or `howl-vt/src/terminal.zig`.
-- Do not introduce the full internal id/ref/cache rewrite.
+- Do not introduce the full internal id/ref/cache rewrite or persistent generated cell refs.
 - Do not change placement identity or render-facing publication structs.
 - Do not solve anonymous `image_id == 0` multi-image identity in this slice.
-- Do not add runtime scheduling policy or visibility-driven animation changes.
+- Do not solve omitted-parent `Q=0` drift with internal ref ids in this slice.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Compose root frame `r=1` into destination frame `c=2` and store the fully composed destination payload.
-- Compose a source-frame sub-rectangle into a destination-frame sub-rectangle using `X/Y` as source offset and `x/y` as destination offset.
-- `C=1` replacement differs from default alpha blending for RGBA source data.
-- Missing image, missing source frame, and missing destination frame fail without mutation.
-- Out-of-bounds source or destination rectangles fail without mutation.
-- Same-frame overlapping rectangles fail without mutation.
-- Composing into the currently selected destination frame refreshes `graphicsImageAt` publication.
+- Physical placement converted to virtual by same nonzero `p=` leaves physical count `0` and virtual count `1`.
+- Virtual placement converted to physical by same nonzero `p=` leaves virtual count `0` and physical count `1`.
+- Repeated physical/virtual conversions do not grow total placement count or duplicate replies.
+- Anonymous `p=0` physical and virtual placements do not replace each other.
+- Child placements referencing a converted nonzero parent keep resolving through the updated parent kind where possible.
 
 ## Verification Required
 
@@ -62,4 +55,4 @@ VT only:
 
 Stop condition:
 
-- If correct compose behavior requires decoded/cache storage, full internal frame graph surgery, or render ABI changes, stop and report the exact dependency instead of widening the slice.
+- If correct replacement semantics require full internal ref ids or persistent generated cell-ref storage, stop and report the exact dependency instead of widening the slice.

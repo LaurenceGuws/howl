@@ -419,6 +419,36 @@ Frame compose acceptance tests:
 - Same-frame overlapping rectangles fail without mutation.
 - Composing into the selected current frame refreshes publication.
 
+Frame compose slice completed:
+
+- `howl-vt` commit `6b39f78 vt: compose kitty graphics frames`.
+- Root commit `b150e82 design: update graphics frame compose`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
+Placement-ref namespace research:
+
+- Kitty uses a single `Image.refs_by_internal_id` namespace per image; physical, virtual, and generated cell refs are one ref type with kind fields such as `is_virtual_ref` and `virtual_ref_id`.
+- Kitty `handle_put_command` updates an existing nonzero client placement id ref instead of allowing a physical ref and a virtual ref with the same client id to coexist.
+- Howl currently stores physical placements and virtual placements in separate arrays. `upsertPlacement` only searches physical placements, and `upsertVirtualPlacement` only searches virtual placements.
+- This means `a=p,i=7,p=9` followed by `a=p,i=7,p=9,U=1` leaves both a physical placement and a virtual prototype, contradicting Kitty's single ref namespace.
+- Full Kitty ref parity still needs VT-owned internal ref ids, stable parent links, and eventually generated cell refs. The next small slice only fixes cross-kind replacement for nonzero client placement ids.
+
+Promoted placement kind replacement slice:
+
+- VT-only, ABI-preserving.
+- For nonzero `(image_id, placement_id)`, physical and virtual puts replace each other across arrays instead of coexisting.
+- Preserve anonymous `p=0` behavior.
+- When a parent ref is converted across physical/virtual kind, update direct child parent kind metadata where possible so existing relative placements keep targeting the same client ref.
+- Leave omitted-parent `Q=0` drift, internal ref ids, and persistent generated cell refs for later source-proofed slices.
+
+Placement kind replacement acceptance tests:
+
+- Physical placement converted to virtual by same nonzero `p=` leaves only the virtual placement.
+- Virtual placement converted to physical by same nonzero `p=` leaves only the physical placement.
+- Repeated physical/virtual conversions do not grow total placement count.
+- Anonymous `p=0` physical and virtual placements do not replace each other.
+- Direct child placement referencing a converted nonzero parent continues resolving through the updated parent kind where possible.
+
 ### 6. Render-layer sorting and grouping differs from Kitty
 
 Severity: medium.
