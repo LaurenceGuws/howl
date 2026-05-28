@@ -1845,6 +1845,16 @@ Decoded render bridge research:
 - Out of scope for first slice: Linux host switchover, old ABI deprecation, direct decoded
   `publish_vt_source` unless required by implementation coherence, quota/eviction
   redesign, and renderer-side Kitty protocol interpretation.
+- Render decoded graphics commit ABI completed in `howl-render` commit `0313678 render:
+  accept decoded graphics payloads`.
+- Accepted behavior: render now has a parallel decoded commit-slot ABI, keeps existing
+  base64/protocol ABI unchanged, validates decoded RGB/RGBA lengths, rejects unsupported
+  decoded formats, and keys raster cache entries by payload kind.
+- Verification passed after main-agent review fix for zero decoded dimensions:
+  `zig build test --summary all` in `howl-render`, root `zig build --summary all`, root
+  `git diff --check`, and `howl-render git diff --check`.
+- Next safe work: switch Linux host graphics acquisition to VT decoded query/copy and
+  render decoded commit ABI. Do not decode or re-encode protocol payloads in host.
 
 ## Completed Or Stale Graphics Backlog
 

@@ -1,18 +1,18 @@
-# Current Slice: Render Decoded Graphics Commit ABI
+# Current Slice: Linux Host Decoded Graphics Bridge
 
-Owner: howl-render.
+Owner: howl-linux-host.
 
 Sprint scope: graphics.
 
 ## Goal
 
-Add a parallel render C ABI commit-slot path for VT-decoded graphics bytes without
-breaking the existing base64/protocol render ABI.
+Switch the Linux host graphics path to copy decoded graphics bytes from VT and publish
+them through render's decoded graphics commit ABI.
 
-VT already exposes decoded graphics query/copy ABI. Render and the Linux host still use
-the old base64/protocol payload path. This slice makes render capable of accepting
-decoded RGB/RGBA image bytes through a new commit-slot ABI. The Linux host switchover is
-a later slice.
+Dependency state:
+
+- `howl-vt` exposes decoded graphics query/copy ABI and preserves old base64 ABI.
+- `howl-render` exposes decoded graphics commit-slot ABI and preserves old base64 ABI.
 
 ## Source Truth
 
@@ -22,75 +22,49 @@ a later slice.
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `howl-vt/include/howl_vt.h`
 - `howl-render/include/howl_render.h`
-- `howl-render/src/ffi_types.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/frame/queue.zig`
-- `howl-render/src/frame/graphics_prepare.zig`
-- `howl-render/src/frame/surface_text.zig`
-- `howl-render/src/frame/surface_buffer.zig`
-- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
-- `utils/dev_references/terminals/kitty/kitty/graphics.c`
-- `utils/dev_references/terminals/kitty/kitty/graphics.h`
-
-## Source Findings
-
-- Existing render C ABI commit and VT-surface structs carry `HowlVtGraphicsImage` plus a
-  single `graphics_payload_bytes` blob; those bytes are old VT protocol/base64 payloads.
-- Existing render graphics preparation decodes RGB/RGBA from base64 payload bytes.
-- VT decoded publication now exposes decoded graphics bytes in parallel and preserves the
-  old VT base64 ABI.
-- Linux host cannot switch to VT decoded bytes before render gains decoded input; old
-  render ABI would interpret decoded RGB/RGBA as base64.
+- `howl-linux-host/src/terminal/vt/abi.zig`
+- `howl-linux-host/src/terminal/render/abi.zig`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
 
 ## Required Work
 
-- Do not mutate existing render C ABI structs or functions.
-- Add a parallel decoded graphics commit-slot ABI:
-  - decoded image span using `HowlVtGraphicsDecodedImage`.
-  - decoded commit struct mirroring `HowlRenderPublishSlotCommit`.
-  - `howl_render_surface_text_commit_publish_decoded_graphics_slot`.
-- Add matching Zig FFI extern structs and compile-time layout assertions.
-- Extend render internal publication state with explicit graphics payload kind:
-  - legacy base64/protocol.
-  - decoded pixels.
-- Preserve old base64/protocol validation and decoding behavior.
-- Decoded path accepts only:
-  - `format == 24`: RGB bytes, `width * height * 3`.
-  - `format == 32`: RGBA bytes, `width * height * 4`.
-- PNG is not decoded in render on the decoded path; VT decoded publication already reports
-  PNG as RGBA format `32`.
-- Include payload kind in the graphics raster cache key so old base64 payload bytes and
-  decoded pixel bytes cannot share a key accidentally.
+- Use `howl_vt_terminal_query_graphics_decoded_image` for host graphics image metadata.
+- Use `howl_vt_terminal_copy_graphics_decoded_payload` for host graphics payload bytes.
+- Publish retained render slots through
+  `howl_render_surface_text_commit_publish_decoded_graphics_slot`.
+- Keep host ownership as transient ABI copies only; do not decode Kitty protocol in host.
+- Preserve old host behavior around publication sequence, visible metadata, placements,
+  virtual placements, payload aggregation, prepared refs, and drawn feedback.
+- Do not remove old VT/render ABI wrappers; they remain compatibility paths.
 
 ## Tests Required
 
-- Existing old render publish/commit ABI still accepts base64 payloads.
-- New decoded commit ABI prepares a 1x1 RGB image from raw decoded bytes.
-- New decoded commit ABI prepares a 1x1 RGBA image from raw decoded bytes.
-- Decoded commit rejects truncated/trailing decoded payload bytes.
-- Decoded commit rejects unsupported decoded formats.
-- Cache key distinguishes base64/protocol payload kind from decoded payload kind.
-- Prepared graphics image refs remain exposed after decoded prepare.
+- Existing Linux host kitty graphics replay build/integration tests still pass.
+- Existing render drawn-ref feedback path still reports prepared decoded image refs.
+- If host has unit coverage for retained graphics acquisition, update it to prove decoded
+  image metadata and decoded payload copies are used.
 
 ## Out Of Scope
 
-- No Linux host switchover.
 - No VT changes.
-- No removal or deprecation of old render base64/protocol ABI.
-- No quota/eviction redesign.
-- No renderer-side Kitty protocol interpretation.
-- No direct decoded `publish_vt_source` unless required to keep the commit-slot ABI
-  implementation coherent.
+- No render changes.
+- No old ABI removal or deprecation.
+- No host-side protocol decode or base64 re-encode.
+- No render cache/quota redesign.
 
 ## Verification
 
-- `zig build test --summary all` in `howl-render`.
+- `zig build test:integration:kitty-graphics-replay:build --summary all` in
+  `howl-linux-host`.
+- `zig build test:integration:kitty-graphics-replay:app:build --summary all` in
+  `howl-linux-host`.
 - Root `zig build --summary all`.
-- Root and `howl-render` `git diff --check`.
+- Root and `howl-linux-host` `git diff --check`.
 
 ## Stop Conditions
 
-- Stop if an existing C ABI struct/function must be changed instead of adding parallel ABI.
-- Stop if decoded support requires broad cache/quota redesign.
-- Stop if render would need to parse Kitty protocol.
-- Stop if host re-encoding is needed to prove the slice.
+- Stop if host must decode or re-encode graphics payload bytes.
+- Stop if render decoded ABI is insufficient and would require mutating old render ABI.
+- Stop if VT decoded ABI is insufficient and would require mutating old VT ABI.
