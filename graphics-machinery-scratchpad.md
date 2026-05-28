@@ -580,6 +580,54 @@ Render-order ABI acceptance tests:
 - Render sorts same-z same-image placements by render-order key rather than client placement id.
 - Render uses publication ordinal only as final tie-break for equal render-order keys.
 
+Render-order ABI slice completed:
+
+- `howl-vt` commit `fa2b8af vt: publish graphics render order`.
+- `howl-render` commit `bf29292 render: sort graphics by render order`.
+- Root commit `873f6bf design: update graphics render order`.
+- Verification passed: `zig build test` and `zig build test:regression:build` in `howl-vt`, `zig build test` in `howl-render`, and root `git diff --check`.
+
+### 7. Animation frame load gap semantics differ from Kitty
+
+Severity: medium, protocol correctness.
+
+Kitty machinery:
+
+- `kitty/graphics.c`: `DEFAULT_GAP` is `40`.
+- `kitty/graphics.c`: `handle_animation_frame_load_command` gives new transmitted frames `g->gap > 0 ? g->gap : (g->gap < 0) ? 0 : DEFAULT_GAP`.
+- `kitty/graphics.c`: editing an existing frame changes gap only when `g->gap != 0`.
+- `kitty/graphics.c`: `change_gap` clamps negative gaps to `0`.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `storePayload` passes `cmd.z` directly to `storeFrameOwned`.
+- `howl-vt/src/kitty/graphics.zig`: `storeFrameOwned` stores or updates frame gap directly.
+- `howl-vt/src/kitty/graphics.zig`: `setFrameGap` already ignores `gap == 0` for animation-control edits.
+
+Problem:
+
+- Howl currently treats `cmd.z == 0` as frame gap `0` for `a=f`.
+- Kitty treats missing/zero `z` as default gap `40` for new extra frames.
+- Kitty treats missing/zero `z` as preserve previous gap when editing existing frames.
+- Kitty clamps negative nonzero gaps to `0`.
+
+Promoted frame-gap semantics slice:
+
+- For `a=f` new extra frames, omitted or zero `z` stores gap `40`.
+- For `a=f` new extra frames, negative `z` stores gap `0`.
+- For `a=f` existing extra-frame edits, omitted or zero `z` preserves previous gap.
+- For `a=f` existing extra-frame edits, nonzero `z` updates gap and clamps negative values to `0`.
+- Leave animation runtime, visibility, loop handling, decoded/cache storage, render ABI, and host policy unchanged.
+
+Frame-gap acceptance tests:
+
+- New extra frame without `z=` gets gap `40`.
+- New extra frame with `z=0` gets gap `40`.
+- New extra frame with `z=-1` gets gap `0`.
+- Editing an existing frame without `z=` preserves its old gap.
+- Editing an existing frame with `z=0` preserves its old gap.
+- Editing an existing frame with `z=-1` changes gap to `0`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter

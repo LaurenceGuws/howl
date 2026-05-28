@@ -1,64 +1,54 @@
-# Current Slice: Graphics Placement Render Order ABI
+# Current Slice: Kitty Animation Frame Gap Semantics
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` item 6 after render ordering research.
+Promoted from `graphics-machinery-scratchpad.md` after the remaining Kitty graphics parity audit.
 
 ## Goal
 
-Publish VT graphics ref order through the C ABI and make render sort placements by Kitty-compatible order: z-index, image identity, ref/order identity, then publication ordinal as a defensive tie-break.
+Match Kitty frame-gap semantics for `a=f` animation frame loads, including the default `40` ms gap for new extra frames and preserve-on-zero behavior when editing existing frames.
 
 ## Target Files
 
 - `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/include/howl_vt.h`
-- `howl-vt/src/ffi.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
-- `howl-render/src/ffi_types.zig`
-- `howl-render/src/frame/surface.zig`
-- `howl-render/src/frame/graphics_viewport.zig`
 
 ## Required Behavior
 
-- Add an explicit render-order/ref key to `HowlVtGraphicsPlacement`.
-- Physical placements publish their VT-internal `ref_id` as the render-order key.
-- Generated placeholder placements publish a stable order key derived from the source virtual placement ref and generated run order; it must be nonzero and stable for the same publication content.
-- Render mirrors the field in `FfiVtGraphicsPlacement` and `PreparedGraphicsPlacement`.
-- Render sorting changes from `z_index, image_id, placement_id, ordinal` to `z_index, image_id, render_order, ordinal`.
-- Publication ordinal remains only a final defensive tie-break.
-- Layer classification/counting remains unchanged.
-- Host source remains unchanged unless compilation proves a real ABI copy/update need.
-- Existing generated-placeholder, virtual-placement, quota, delete-selector, image-number, frame, compose, placement-kind, stable-parent-ref, and frame-delete behavior remains green.
+- For `a=f` new extra frames, `z=0` or omitted `z` stores gap `40`.
+- For `a=f` new extra frames, negative `z` stores gap `0`.
+- For `a=f` edits to existing extra frames, `z=0` or omitted `z` preserves the previous gap.
+- For `a=f` edits to existing extra frames, nonzero `z` updates the gap and clamps negative values to `0`.
+- Existing root-frame, compose, delete, render-order, placeholder, and animation-control behavior remains green.
 
 ## Hard Constraints
 
-- Do not edit host unless C ABI compilation requires a direct source update.
+- Do not touch ABI, render, or host files.
 - Do not edit `howl-vt/src/terminal.zig`.
-- Do not introduce the full internal id/ref/cache rewrite or persistent generated cell refs.
-- Do not use client `placement_id` as a proxy for Kitty ref identity.
-- Do not solve anonymous `image_id == 0` multi-image identity in this slice.
-- Do not change layer band policy, draw code, raster decode, or texture cache behavior.
+- Do not change placement `z_index` semantics.
+- Do not implement visibility-driven animation runtime, decoded/cache storage, or persistent generated cell refs.
+- Do not change compose, frame deletion, or animation-control `a=a` behavior except to keep it green.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- VT publishes distinct nonzero render-order keys for multiple anonymous `p=0` placements of the same image.
-- Updating a nonzero placement preserves its render-order key.
-- Physical-to-virtual-to-physical conversion preserves the same render-order key.
-- Generated placeholder placements publish stable render-order keys tied to their virtual placement and run order.
-- Render sorts same-z same-image placements by render-order key, not client placement id.
-- Render keeps publication ordinal as the final tie-break when render-order keys are equal.
+- New extra frame without `z=` gets gap `40`.
+- New extra frame with `z=0` gets gap `40`.
+- New extra frame with negative `z=-1` gets gap `0`.
+- Editing an existing frame without `z=` preserves its old gap.
+- Editing an existing frame with `z=0` preserves its old gap.
+- Editing an existing frame with negative `z=-1` changes gap to `0`.
+- Existing animation-control gap tests remain green.
 
 ## Verification Required
 
 - `zig build test` in `howl-vt`
 - `zig build test:regression:build` in `howl-vt`
-- `zig build test` in `howl-render`
 - `git diff --check` at workspace root
 
 Stop condition:
 
-- If correct render ordering requires persistent generated cell refs, decoded/cache storage, or host runtime policy changes, stop and report the exact dependency instead of widening the slice.
+- If preserving old gap on omitted `z` requires parser presence bits or broader command-shape changes, stop and report the exact dependency instead of widening the slice.
