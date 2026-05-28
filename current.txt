@@ -1,49 +1,47 @@
-# Current Slice: Generated Placeholder Dirty Publication Proof
+# Current Slice: Delete-All Visible Placement Scope
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after generated cell-ref parity research.
+Promoted from `graphics-machinery-scratchpad.md` after delete/reset edge-case research.
 
 ## Goal
 
-Prove Howl's current on-demand generated placeholder publication has Kitty-compatible observable behavior for row/cell mutations before considering persistent generated cell refs.
+Match Kitty delete-all selectors for visible physical placements: default `a=d`, `d=a`, and `d=A` must not delete retained/off-screen physical placements.
 
 ## Target Files
 
 - `howl-vt/src/test/terminal_graphics.zig`
-- `howl-vt/src/kitty/graphics.zig` only if a test exposes a real generated-publication bug
-- `howl-vt/src/terminal.zig` only if a test exposes a real publication invalidation bug
+- `howl-vt/src/kitty/graphics.zig`
 
 ## Required Behavior
 
-- Generated placements are derived from current VT/screen truth after text-grid mutations.
-- Insert/delete lines over placeholder rows moves or removes generated placements coherently.
-- Insert/delete characters across placeholder cells updates generated placement runs coherently.
-- Clearing placeholder cells removes generated placements from publication.
-- Mutating placeholder rows invalidates stale `publication_seq` queries.
-- Generated placement render-order keys remain deterministic for unchanged publication content.
+- Default `a=d` behaves like Kitty `d=a`.
+- `d=a` removes visible physical placements only.
+- `d=a` preserves fully scrolled-above/off-screen retained physical placements.
+- `d=A` removes visible physical placements and frees image data only for images that became unplaced because of matched visible placements.
+- `d=A` preserves image data for images that only have retained/off-screen placements.
+- Virtual and generated/cell placeholder refs remain outside this delete-all physical-placement slice unless existing behavior already deletes them by lifetime through a matched physical parent.
 
 ## Hard Constraints
 
-- Prefer tests only. Implementation changes are allowed only for a bug proved by a new focused test.
-- Do not add persistent generated ref storage.
-- Do not add a new public ABI stream or change render/host code.
-- Do not reintroduce render-side Kitty placeholder parsing.
-- Do not solve scrollback viewport graphics publication.
-- Do not change placeholder protocol decoding rules, render sorting, layer policy, or frame/quiet behavior.
+- Do not change frame deletion.
+- Do not change quiet response handling.
+- Do not add persistent generated cell refs.
+- Do not change ABI, render, host, parser, or terminal files.
+- Do not implement full visibility/layer ref machinery beyond delete-all visible physical placement scope.
+- Do not change RIS/reset behavior, generated placeholder publication, render sorting, or layer policy.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Insert lines over placeholder rows removes/moves generated placements to match the resulting screen cells.
-- Delete lines over placeholder rows removes/moves generated placements to match the resulting screen cells.
-- Insert/delete chars across placeholder cells updates generated placement runs.
-- Clearing a row/range containing placeholders removes generated placements.
-- Reusing an old `publication_seq` after placeholder row mutation is rejected.
-- Generated placement render-order keys remain stable for unchanged publication content after a non-graphics meta query.
+- `d=a` preserves a fully scrolled-above retained physical placement.
+- Default `a=d` preserves a fully scrolled-above retained physical placement.
+- `d=A` preserves image data for an image that only has off-screen/retained placements.
+- `d=A` removes visible physical placements and frees only images that became unplaced because of matched visible placements.
+- `d=a` removes a visible parent placement and its relative descendants by lifetime.
 
 ## Verification Required
 
@@ -53,4 +51,4 @@ Prove Howl's current on-demand generated placeholder publication has Kitty-compa
 
 Stop condition:
 
-- If this proof requires persistent generated refs, scrollback-aware graphics publication, ABI changes, render changes, or host policy changes, stop and report the exact dependency instead of widening the slice.
+- If correct behavior requires persistent generated refs, full render-layer visibility state, ABI changes, render changes, or host policy changes, stop and report the exact dependency instead of widening the slice.

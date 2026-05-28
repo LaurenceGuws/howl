@@ -728,6 +728,43 @@ Generated placement dirty/publication proof slice completed:
 - Tests-only slice; no persistent refs, ABI, render, host, or terminal implementation changes.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 10. Delete-all selectors are broader than Kitty visibility scope
+
+Severity: medium, protocol correctness.
+
+Kitty machinery:
+
+- `kitty/graphics.c`: delete-all skips virtual refs and cell/generated refs.
+- `kitty/graphics.c`: default `a=d`/`d=a` deletes visible non-cell refs only.
+- `kitty/graphics.c`: `d=A` frees image data only for images whose matched visible refs were removed and are now unused.
+- `utils/official_docs/kitty/graphics-protocol.md`: `d=a` deletes all visible placements; `d=A` also deletes image data that becomes unused.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `delete` handles `0, 'a', 'A'` by clearing all physical placements regardless of visibility.
+- `howl-vt/src/kitty/graphics.zig`: `d=A` then deletes all images that become unplaced, including images whose only placements were retained/off-screen.
+- Existing tests cover retained/off-screen placement states but not delete-all visibility scope.
+
+Problem:
+
+- Howl can delete retained/off-screen physical placements that Kitty would keep.
+- Howl can free image data for retained/off-screen-only images on `d=A` even though Kitty only frees after matched visible refs are removed.
+
+Promoted delete-all visibility slice:
+
+- Make default `a=d`, `d=a`, and `d=A` operate on visible physical placements only.
+- Preserve fully scrolled-above/off-screen retained physical placements.
+- For `d=A`, free image data only for images that became unplaced because visible placements were removed.
+- Keep virtual/generated/cell placeholder refs, frame deletion, quiet modes, ABI, render, host, and reset behavior out of scope unless directly required by the visible physical placement rule.
+
+Delete-all visibility acceptance tests:
+
+- `d=a` preserves a fully scrolled-above retained physical placement.
+- Default `a=d` behaves like `d=a` and preserves a fully scrolled-above retained physical placement.
+- `d=A` preserves image data for an image that only has off-screen/retained placements.
+- `d=A` removes visible physical placements and frees only images that became unplaced because of matched visible placements.
+- `d=a` removes visible parent placement and its relative descendants by lifetime.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
