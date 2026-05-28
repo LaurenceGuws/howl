@@ -887,6 +887,12 @@ Simple PNG acceptance tests:
 - Kitty 1x1 PNG fixture selected as a current frame publishes exact RGBA base64 `AP//fw==`.
 - Optional query proof with the same PNG returns `OK` and stores no image.
 
+Simple PNG exact RGBA slice completed:
+
+- `howl-vt` commit `622cfd5 vt: prove simple png parity`.
+- Tests-only slice using Kitty's 1x1 PNG fixture.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
