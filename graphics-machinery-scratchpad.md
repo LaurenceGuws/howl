@@ -1816,6 +1816,17 @@ Decoded storage ABI research after direct chunk bridge:
   raw, zlib, PNG RGBA, chunked direct, and invalid publication/index behavior in VT tests.
 - Stop conditions: no old ABI behavior changes, no render/host switchover, no unbounded
   decoded memory duplication, no frame-graph redesign hidden in the ABI slice.
+- VT decoded publication ABI completed in `howl-vt` commit `386ae6a vt: expose decoded
+  graphics payloads`.
+- Accepted behavior: new parallel decoded query/copy ABI exposes VT-owned decoded bytes
+  while the existing base64/protocol payload ABI remains unchanged. Decoded publication
+  covers direct RGB/RGBA, zlib, chunked direct, and PNG-as-RGBA. Invalid publication and
+  image-index checks are covered for decoded APIs.
+- Verification passed after main-agent review: `zig build test --summary all` in
+  `howl-vt`, `zig build test:regression:build --summary all` in `howl-vt`, root
+  `zig build --summary all`, root `git diff --check`, and `howl-vt git diff --check`.
+- Next safe work: research how render/host should consume decoded VT publication without
+  breaking the existing render base64 ABI or moving Kitty protocol decode into host/render.
 
 ## Completed Or Stale Graphics Backlog
 

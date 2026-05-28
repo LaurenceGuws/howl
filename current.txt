@@ -1,13 +1,15 @@
-# Current Slice: VT Graphics Decoded Publication ABI
+# Current Slice: Graphics Decoded Render Bridge Research
 
-Owner: howl-vt.
+Owner: workspace research; likely future owners are howl-render and howl-linux-host,
+with howl-vt ABI as source input.
 
 Sprint scope: graphics.
 
 ## Goal
 
-Add an ABI-compatible decoded graphics publication path owned by VT, while preserving
-the existing base64/protocol payload ABI exactly.
+Design the next source-backed slice after VT decoded graphics publication: make in-tree
+host/render paths consume VT-decoded graphics bytes without breaking existing render or
+VT C ABI contracts.
 
 ## Source Truth
 
@@ -17,69 +19,55 @@ the existing base64/protocol payload ABI exactly.
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty/graphics.h`
-- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_command.zig`
 - `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
 - `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_storage.zig`
 - `howl-vt/include/howl_vt.h`
 - `howl-vt/src/ffi.zig`
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
+- `howl-render/include/howl_render.h`
+- `howl-render/src/frame/graphics_prepare.zig`
+- `howl-render/src/frame/queue.zig`
+- `howl-render/src/frame/surface_text.zig`
+- `howl-render/src/frame/surface_buffer.zig`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
 
-## Source Findings
+## Research Questions
 
-- Kitty parser decodes graphics APC payload base64 before graphics manager dispatch.
-- Kitty `LoadData` owns decoded bytes for direct, file/temp/shared-memory mapped input,
-  zlib-inflated input, and PNG-decoded input before image/frame storage.
-- Ghostty parser returns command-owned decoded `data`; loading images and completed
-  images own decoded bytes and quota accounts `Image.data.len`.
-- Howl's existing `HowlVtGraphicsImage.payload_len` and
-  `howl_vt_terminal_copy_graphics_payload` are real product ABI and explicitly expose
-  retained protocol/base64 bytes.
-- Howl VT `Image.base64_payload`, `Frame.base64_payload`, and render-side base64 decode
-  are stale internal/integration shape, but cannot be removed in this slice.
+- Which render C ABI structs/functions currently imply base64/protocol payload bytes?
+- Can render add a parallel decoded graphics publication path without breaking existing
+  base64 render ABI?
+- Should the Linux host switch to VT decoded copy APIs first while render still accepts
+  base64, or must render gain decoded ABI first?
+- What is the smallest cross-submodule sequence: render ABI addition, host switchover,
+  then old base64 path deprecation later?
+- How should render raster cache keys change when bytes are already decoded RGBA/RGB?
+- What tests prove old render ABI compatibility, decoded render ingestion, and host
+  end-to-end behavior without broad cache/quota redesign?
 
-## Required Behavior
+## Required Output
 
-- Add parallel decoded graphics image query/copy C ABI in `howl-vt`.
-- Preserve `HowlVtGraphicsImage` layout and `howl_vt_terminal_copy_graphics_payload`
-  semantics exactly.
-- VT owns decoded bytes; host only copies; render is not switched in this slice.
-- Decoded publication exposes format, width, height, and byte length for decoded image
-  bytes.
-- PNG decoded publication exposes RGBA bytes with format `32`.
-- Direct zlib and chunked zlib decoded publication exposes decompressed decoded bytes.
-- Chunked direct decoded publication reflects concatenated decoded chunk bytes.
-- Add explicit bounds/assertions for decoded retained bytes; do not silently double
-  memory without a bound.
-
-## Acceptance Tests
-
-- Old base64 ABI unchanged for direct raw upload.
-- Decoded ABI returns raw direct RGB/RGBA bytes.
-- Decoded ABI returns decompressed zlib bytes.
-- Decoded ABI returns RGBA bytes for PNG.
-- Chunked direct decoded bytes equal concatenated decoded chunks.
-- Invalid publication sequence and invalid image index reject through decoded APIs.
+- Research only. Do not edit product code.
+- Return source-backed findings with exact file/line references.
+- Identify the ABI-safe owner split among VT decoded publication, host copied bytes, and
+  render raster/cache realization.
+- Draft one worker-ready implementation slice if safe; otherwise draft a narrower child
+  research slice.
 
 ## Out Of Scope
 
-- No render switchover.
+- No code implementation in this slice.
+- No removal of old VT or render base64 payload ABI.
 - No host protocol decode.
-- No quota/eviction redesign beyond explicit decoded-byte bound.
-- No breaking C ABI changes.
-- No removal of compatibility base64 publication.
-- No frame graph redesign; stop if current-frame decoded publication requires it.
+- No quota/eviction redesign.
+- No renderer-side Kitty protocol interpretation.
 
 ## Verification
 
-- `zig build test --summary all` in `howl-vt`.
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- Root `zig build --summary all`.
-- Root and `howl-vt` `git diff --check`.
+- Scratchpad update must pass root `git diff --check`.
 
 Stop conditions:
 
-- Stop if implementing decoded publication changes old payload ABI behavior.
-- Stop if decoded storage requires broad render/host changes.
-- Stop if PNG decoded format/geometry cannot be made precise from existing VT helpers.
-- Stop if decoded-byte accounting cannot be bounded in this slice.
+- Stop if render ABI compatibility needs a product-breaking decision.
+- Stop if the source-backed first implementation slice cannot be made smaller than a
+  broad render/cache rewrite.
