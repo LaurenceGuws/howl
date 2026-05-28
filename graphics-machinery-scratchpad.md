@@ -847,6 +847,12 @@ PNG EBADPNG acceptance tests:
 - Invalid PNG query returns `EBADPNG` and leaves image count unchanged.
 - Valid PNG normalization/replay tests remain green.
 
+PNG EBADPNG slice completed:
+
+- `howl-vt` commit `4d43182 vt: report invalid png graphics`.
+- Review required full stb decode validation before storage, not only `stbi_info` header validation.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
