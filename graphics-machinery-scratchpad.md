@@ -1122,6 +1122,11 @@ Indirect raw oversize acceptance tests:
 - Temp-file medium `t=t,S=5,s=1,v=1,f=24` stores `QUJD` and deletes a safe temp file.
 - Shared-memory medium `t=s,S=5,s=1,v=1,f=24` stores `QUJD` and unlinks the object.
 
+Indirect raw oversize slice completed:
+
+- `howl-vt` commit `7ffbc54 vt: truncate oversized indirect graphics`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
