@@ -1292,6 +1292,11 @@ Both-id rejection acceptance tests:
 - Animation/frame path with both id forms rejects before mutation.
 - `q=2` suppresses the failure and still does not mutate state.
 
+Both-id rejection slice completed:
+
+- `howl-vt` commit `6b65f19 vt: reject graphics id conflicts`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 Research notes for later slices:
 
 - Root-frame edit parity remains broader and should not be pulled into this oversized-frame slice.
