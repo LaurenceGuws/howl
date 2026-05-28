@@ -1403,6 +1403,99 @@ Combined-animation-control slice completed:
   `zig build test:regression:build --summary all`, root `zig build`, root
   `git diff --check`, and `howl-vt` `git diff --check`.
 
+### 25. Root-frame edits with `a=f,r=1` diverge from Kitty
+
+Severity: medium, frame edit parity.
+
+Kitty source truth:
+
+- `kitty/graphics.h`: root frame is stored separately from extra frames.
+- `kitty/graphics.c:1334-1344`: frame number `1` maps to root, `2+` maps to extra
+  frames, and `0` is missing.
+- `kitty/graphics.c:1557-1561`: omitted/zero or too-large `r` on `a=f` appends at the
+  next extra-frame number.
+- `kitty/graphics.c:1648-1667`: `a=f,r=1` uses the existing-frame edit path. It
+  coalesces current root data, composes the transmitted rectangle at `x/y`, preserves
+  full root dimensions, and stores the result back as root.
+- `kitty/graphics.c:1347-1353` and `kitty/graphics.c:1651`: existing-frame edit changes
+  gap only when `z != 0`, clamping negative gaps to `0`.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: root image bytes live on `Image`; extra frames live
+  in `State.frames`.
+- `howl-vt/src/kitty/graphics.zig`: `a=f,r=1` has an ad hoc root replacement path that
+  only accepts full root replacement under narrow conditions.
+- Partial `a=f,r=1,x/y/s/v` root edits are not Kitty-compatible.
+- Root replacement can change root dimensions to transmitted dimensions, while Kitty's
+  root edit preserves full image dimensions after composition.
+
+Root-frame-edit future slice:
+
+- Keep omitted `r` and `r=0` as append-new-extra-frame behavior.
+- Normalize too-large explicit `r` to append at the next frame number.
+- Implement `a=f,r=1` as existing root-frame edit, including partial rectangle compose
+  at `x/y` and full root dimension preservation.
+- Preserve root gap for omitted/zero `z`; update root gap for nonzero `z` and clamp
+  negative gaps to `0`.
+- Leave ABI, render, host, decoded-cache storage, frame graph identity, runtime timing,
+  PNG/media, and generated placeholders out of scope.
+
+### 26. Go animation frame uploads omit `r=` and need replay proof
+
+Severity: medium, real client animation proof.
+
+Kitty and Go source truth:
+
+- `kitty_tests/graphics.py:1132-1186`: Kitty proves missing-image `a=f`, root upload,
+  chunked frame upload, omitted-`r` append, frame edits, partial edits, and base-frame
+  loading in `test_animation_frame_loading`.
+- `kitty/graphics.c:1557-1561`: omitted/zero/out-of-range frame numbers append the next
+  extra frame.
+- `kittens/icat/transmit.go:46-81`: `icat` uploads frame `0` as root and extra frames
+  as `a=f` with `z`, `C`, `c`, `x`, and `y`, but without serializing `r=`.
+- `kittens/choose_files/graphics.go:199-247`: `choose_files` also sends extra frames
+  without `r=` and then retained animation controls.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `storeFrameOwned` appears to append when
+  `frame_number == 0`, but real Go omitted-`r` traffic is under-proved.
+- Current animation replay tests prove retained controls but use explicit `r=2`/`r=3`
+  frame uploads before those controls.
+
+Promoted omitted-`r` frame upload proof slice:
+
+- Tests-only unless a real mismatch is exposed.
+- Prove direct `a=f` without `r=` appends frame `2` after root upload.
+- Prove repeated direct omitted-`r` frame uploads append frames in order.
+- Prove chunked omitted-`r` frame upload captures the append target from the first chunk
+  and stores one frame at completion.
+- Prove Go-style omitted-`r` frame upload plus retained combined `a=a` controls advances
+  runtime.
+- Leave root-frame edit parity, parser, render, host, ABI, decoded-cache storage, frame
+  graph rewrite, compose/delete, media transports, and runtime timing changes out of
+  scope unless these tests expose a direct bug.
+
+Omitted-`r` proof acceptance tests:
+
+- Direct omitted-`r` `a=f` after root upload stores frame `2`.
+- A second direct omitted-`r` `a=f` stores frame `3`.
+- Chunked omitted-`r` `a=f,m=1` followed by final chunk stores exactly one appended
+  frame with the expected payload.
+- `icat`-style replay uses omitted-`r` frame upload plus retained `a=a,r/z`, `s=2`,
+  and `s=3`, and then advances runtime.
+- `choose_files`-style replay uses omitted-`r` frame upload plus retained `v=1` and
+  preserves the expected loop state.
+
+Omitted-`r` frame upload proof completed:
+
+- Tests-only; no implementation mismatch found.
+- `howl-vt` commit `3c03285 vt: prove omitted frame append`.
+- Verification passed: `zig build test --summary all`,
+  `zig build test:regression:build --summary all`, root `zig build`, root
+  `git diff --check`, and `howl-vt` `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter

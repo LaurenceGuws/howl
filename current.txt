@@ -1,4 +1,4 @@
-# Current Slice: Combined Kitty Animation Controls
+# Current Slice: Omitted-r Animation Frame Upload Proof
 
 Owner: workspace root.
 
@@ -6,8 +6,8 @@ Sprint scope: graphics.
 
 ## Goal
 
-Accept Kitty-compatible combined `a=a` animation-control commands emitted by real Kitty
-Go clients.
+Prove real Kitty Go animation traffic where `a=f` extra-frame uploads omit `r=` and rely
+on Kitty append semantics.
 
 ## Source Truth
 
@@ -15,6 +15,7 @@ Go clients.
 - `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty_tests/graphics.py`
 - `utils/dev_references/terminals/kitty/kittens/icat/transmit.go`
+- `utils/dev_references/terminals/kitty/kittens/icat/process_images.go`
 - `utils/dev_references/terminals/kitty/kittens/choose_files/graphics.go`
 
 ## Target Files
@@ -24,25 +25,28 @@ Go clients.
 
 ## Required Behavior
 
-- `a=a` may apply multiple Kitty animation controls from the same command.
-- `r/z` edits a frame gap when `r` is present and `z != 0`.
-- `c` selects the current frame when present.
-- `s` sets animation state when present.
-- `v` sets loop count when present.
-- Preserve existing success/failure reply behavior and quiet behavior.
+- Tests-only unless the replay exposes a real mismatch.
+- `a=f` with omitted `r=` appends the next extra frame.
+- Repeated omitted-`r` `a=f` uploads append frames in order.
+- Chunked omitted-`r` `a=f,m=1` captures the append target from the first chunk and
+  stores exactly one appended frame at completion.
+- Go-style omitted-`r` frame uploads followed by retained combined `a=a` controls run
+  without `EINVAL` and advance runtime.
 - Do not special-case `icat`, `choose_files`, or any other client.
-- Do not change parser, render, host, ABI, frame upload, compose, delete, runtime timing,
-  storage identity, or generated-placeholder behavior.
+- Do not change parser, render, host, ABI, decoded-cache storage, frame graph identity,
+  compose/delete, media transports, or runtime timing unless a test exposes a direct bug.
 
 ## Required Tests
 
-- `icat`-style direct replay with retained `r/z` and later `s=2` then `s=3` produces no
-  `EINVAL`, preserves root gap, reaches running state, and runtime advances.
-- `choose_files`-style replay with retained `r/z/v=1` preserves finite-loop state and
-  runtime behavior.
-- Loading replay with retained `r/z/v` still advances immediately when a future frame is
-  uploaded after waiting at the last available frame.
-- Existing split-control animation tests continue to pass.
+- Direct omitted-`r` `a=f` after root upload stores frame `2`.
+- A second direct omitted-`r` `a=f` stores frame `3`.
+- Chunked omitted-`r` `a=f,m=1` followed by final chunk stores exactly one appended
+  frame with the expected payload.
+- `icat`-style replay uses omitted-`r` frame upload plus retained `a=a,r/z`, `s=2`,
+  and `s=3`, and then advances runtime.
+- `choose_files`-style replay uses omitted-`r` frame upload plus retained `v=1` and
+  preserves the expected loop state.
+- Existing explicit-`r` animation tests continue to pass.
 
 ## Verification Required
 
@@ -53,7 +57,7 @@ Go clients.
 
 Stop condition:
 
-- If accepting combined controls conflicts with a deeper Howl invariant, stop and report
-  the smaller source-backed redesign needed for `controlAnimation`.
-- If a replay requires chunking, compression, file media, render, or host behavior, stop
-  and keep this slice to animation-control semantics only.
+- If omitted-`r` append semantics conflict with current frame-number allocation
+  invariants, stop and report the smaller source-backed redesign needed.
+- If a replay requires file media, shared memory, compression, render, or host behavior,
+  stop and split that into a separate source-backed slice.
