@@ -1873,6 +1873,24 @@ Decoded render bridge research:
   paths as public ABI compatibility, internal debt, or still-needed bridge before removing
   anything.
 
+Base64 compatibility retirement research:
+
+- Verdict: first cleanup slice is worker-ready and owned by `howl-vt`.
+- Public ABI compatibility that must remain: VT `HowlVtGraphicsImage.payload_len`,
+  `howl_vt_terminal_query_graphics_image`, `howl_vt_terminal_copy_graphics_payload`,
+  render `HowlRenderPublishSlotCommit`, `HowlRenderVtSurface.graphics_payload_bytes`,
+  and `howl_render_surface_text_commit_publish_slot`.
+- Internal debt: VT `Image.base64_payload`, `Frame.base64_payload`,
+  `current_override_payload`, direct/indirect normalization returning base64 as model
+  truth, and frame coalescing decoding from legacy base64 fields.
+- Still-needed bridges: VT decoded query/copy ABI, render payload-kind split, and host
+  decoded VT-to-render bridge.
+- Promoted next slice: VT-only decoded-truth internal cleanup. Decoded image/frame bytes
+  become the source for frame coalescing while old base64/protocol bytes remain bounded
+  compatibility publication for old ABI copy/query APIs.
+- Stop conditions: no old ABI byte changes, no render/host changes, no quota/eviction
+  redesign, no broad frame graph rewrite.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers

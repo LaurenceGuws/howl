@@ -1,23 +1,13 @@
-# Current Slice: Graphics Base64 Compatibility Retirement Research
+# Current Slice: VT Graphics Decoded-Truth Internal Cleanup
 
-Owner: workspace research; likely future owners are howl-vt, howl-render, and public ABI
-compatibility policy.
+Owner: howl-vt.
 
 Sprint scope: graphics.
 
 ## Goal
 
-Decide the next source-backed step after the end-to-end decoded graphics publication path:
-which base64/protocol payload paths are compatibility ABI that must remain, and which
-base64-retained internals can be retired or narrowed.
-
-## Completed Dependency State
-
-- VT direct chunks accumulate decoded transport bytes.
-- VT exposes parallel decoded graphics query/copy ABI.
-- Render exposes parallel decoded graphics commit-slot ABI.
-- Linux host copies VT decoded graphics bytes and publishes through render decoded ABI.
-- Existing VT/render base64/protocol payload ABIs remain compatibility paths.
+Make VT decoded graphics bytes the internal image/frame/coalescing truth while preserving
+the existing public base64/protocol payload ABI exactly.
 
 ## Source Truth
 
@@ -25,51 +15,71 @@ base64-retained internals can be retired or narrowed.
 - `loop.txt`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+- `graphics-machinery-scratchpad.md`
 - `howl-vt/include/howl_vt.h`
-- `howl-render/include/howl_render.h`
-- `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/ffi.zig`
-- `howl-render/src/frame/graphics_prepare.zig`
-- `howl-render/src/frame/queue.zig`
-- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
 - `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty/graphics.h`
 - `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
 - `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_storage.zig`
 
-## Research Questions
+## Source Findings
 
-- Which old base64/protocol payload APIs are public ABI compatibility and must remain for
-  external embedders?
-- Which old base64-retained fields are now internal-only compatibility publication and no
-  longer product truth?
-- Can VT stop storing base64 as primary image/frame truth while still generating old ABI
-  compatibility bytes on demand or at publication time?
-- Can render keep legacy base64 ingestion as an ABI compatibility path while decoded path
-  becomes the in-tree default?
-- What is the smallest next implementation slice: VT internal decoded-truth cleanup,
-  render legacy-path isolation, ABI documentation, or quota/eviction redesign?
+- Old VT base64/protocol payload query/copy APIs are public ABI compatibility and must
+  remain byte-for-byte stable.
+- In-tree host/render now use decoded graphics bytes end-to-end.
+- VT `Image.base64_payload`, `Frame.base64_payload`, and `current_override_payload` are
+  now internal compatibility-publication bytes, not product/model truth.
+- Frame coalescing still decodes from legacy base64 payload fields, which keeps base64 as
+  internal frame graph truth and contradicts Kitty/Ghostty decoded-byte ownership.
+- Render already isolates legacy vs decoded paths with payload kind; no render cleanup
+  should precede VT decoded-truth cleanup unless tests expose a render bug.
 
-## Required Output
+## Required Work
 
-- Research only. Do not edit product code.
-- Return source-backed findings with exact file/line references.
-- Classify each base64 path as public ABI compatibility, internal debt, or still-needed
-  implementation bridge.
-- Draft the next worker-ready slice if one is safe.
+- VT-only, ABI-preserving.
+- Separate decoded/model payload ownership from legacy compatibility payload ownership in
+  naming and use.
+- Stop using legacy base64/protocol payload bytes as the source for frame coalescing.
+- Coalesce frames from decoded image/frame bytes.
+- Preserve old ABI payload bytes for direct raw, normalized raw, zlib, indirect raw, PNG,
+  and current-frame publication.
+- Preserve decoded ABI metadata and payload bytes.
+- Add assertions around decoded length, legacy length, and format/dimension coherence.
+- Keep compatibility bytes bounded under existing retained payload limits.
+
+## Tests Required
+
+- Old payload copy remains byte-for-byte unchanged for direct raw.
+- Decoded copy remains raw bytes for direct raw.
+- PNG old payload remains original protocol/base64 bytes while decoded payload is RGBA.
+- Zlib/normalized raw old payload and decoded payload remain coherent.
+- Current-frame publication coalesces from decoded truth and preserves old ABI bytes.
+- Stale publication and invalid image index behavior remains unchanged for old and decoded
+  APIs.
 
 ## Out Of Scope
 
-- No code implementation in this slice.
-- No breaking ABI changes without an explicit product decision.
-- No quota/eviction redesign unless source proves it is the first required cleanup.
-- No removal of external compatibility paths by assumption.
+- No public ABI changes.
+- No render or host changes.
+- No quota/eviction redesign.
+- No PNG decoder replacement.
+- No persistent generated refs.
+- No broad frame graph rewrite beyond decoded-truth coalescing.
+- No old compatibility API removal or deprecation.
 
 ## Verification
 
-- Scratchpad update must pass root `git diff --check`.
+- `zig build test --summary all` in `howl-vt`.
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- Root `zig build --summary all`.
+- Root and `howl-vt` `git diff --check`.
 
-Stop conditions:
+## Stop Conditions
 
-- Stop if removing or changing any public ABI requires a product compatibility decision.
-- Stop if internal base64 cleanup cannot be sliced without broad quota/frame/render work.
+- Stop if old ABI bytes would change.
+- Stop if compatibility bytes cannot remain bounded.
+- Stop if render/host changes become necessary.
+- Stop if broad frame graph redesign is required.
