@@ -1,24 +1,19 @@
-# Current Slice: Graphics Decoded Quota Research
+# Current Slice: Graphics Decoded Quota Eviction
 
-Owner: workspace research; likely future owner is howl-vt first, with render cache policy
-as a later separate owner.
+Owner: howl-vt.
 
 Sprint scope: graphics.
 
 ## Goal
 
-Design the next source-backed step after VT decoded-truth cleanup: decoded graphics
-storage quota and eviction semantics that match Kitty/Ghostty ownership without widening
-into render cache policy too early.
+Make VT decoded graphics bytes the primary protocol storage quota while keeping
+legacy/base64 bytes as a conservative compatibility bound.
 
-## Completed Dependency State
+## Strategic Goal
 
-- VT direct chunks accumulate decoded transport bytes.
-- VT exposes decoded graphics query/copy ABI.
-- Render accepts decoded graphics commit-slot ABI.
-- Linux host publishes decoded graphics end-to-end.
-- VT coalesces frames from decoded bytes instead of legacy base64 compatibility bytes.
-- Old base64/protocol payload ABIs remain compatibility paths.
+Continue the graphics cleanup loop autonomously until Howl's graphics machinery is
+cleaner and more accountable than Kitty's, without fake progress. Every step must remain
+source-backed, bounded, tested, reviewed, verified, and committed.
 
 ## Source Truth
 
@@ -26,46 +21,76 @@ into render cache policy too early.
 - `loop.txt`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+- `graphics-machinery-scratchpad.md`
 - `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
 - `howl-vt/include/howl_vt.h`
-- `howl-render/src/frame/graphics_prepare.zig`
 - `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty/graphics.h`
 - `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_storage.zig`
 - `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
 
-## Research Questions
+## Source Findings
 
-- What exact storage/quota bytes does Kitty account for images, frames, loading data,
-  cache entries, and rendered data?
-- What exact eviction priority does Kitty use for incomplete, unreferenced, placed,
-  animated, and recently used images?
-- What exact storage/quota model does Ghostty implement for decoded images and placements?
-- Which Howl VT decoded/legacy/upload fields should count toward VT-owned protocol
-  storage quota now that decoded bytes are model truth?
-- What can remain a conservative bound for compatibility bytes until old ABI retirement?
-- What is the smallest VT-only quota/eviction slice with tests?
+- Kitty and Ghostty account decoded image data as storage truth, not base64 transport
+  text.
+- Kitty root image storage increments image and manager storage by decoded byte size;
+  extra frames are bounded by disk-cache/load data size.
+- Ghostty stores decoded `Image.data` and quota accounts `img.data.len`.
+- Howl VT now has decoded image/frame payloads as model truth, but decoded quota still
+  fails instead of evicting safe images.
+- Howl legacy/base64 bytes remain public ABI compatibility and must stay bounded as a
+  separate compatibility limit.
 
-## Required Output
+## Required Work
 
-- Research only. Do not edit product code.
-- Return source-backed findings with exact file/line references.
-- Separate VT protocol/storage quota from render raster cache quota.
-- Draft one worker-ready VT implementation slice if safe.
+- Edit only `howl-vt/src/kitty/graphics.zig` and
+  `howl-vt/src/test/terminal_graphics.zig` unless a stop condition is hit.
+- No public ABI changes.
+- No render or host changes.
+- No image identity redesign.
+- Count decoded protocol storage from:
+  - image decoded payloads.
+  - frame decoded payloads.
+  - current decoded override payloads.
+  - in-flight decoded upload bytes.
+- `ensureDecodedPayloadStore` must evict safe unplaced images before returning
+  `ConsequenceLimit`.
+- Preserve images with physical placements.
+- Preserve images with virtual placements.
+- Replacement of the same image id must count decoded bytes freed by the old image, old
+  frames, and current decoded override.
+- Eviction must remove image data, frames, and current override payloads.
+- Keep retained/base64 quota as compatibility-only bound.
+- Add assertions around decoded/retained accounting after store/evict paths where useful.
+
+## Tests Required
+
+- Decoded quota evicts an unplaced image.
+- Decoded quota preserves physical placement.
+- Decoded quota preserves virtual placement.
+- Decoded quota replacement counts freed bytes.
+- Decoded quota eviction removes frames and current override.
+- Existing retained quota and decoded ABI tests remain green.
 
 ## Out Of Scope
 
-- No code implementation in this slice.
-- No render cache redesign unless research proves it must precede VT quota.
-- No public ABI changes.
-- No host changes.
+- Render raster cache policy.
+- Host changes.
+- Public ABI changes.
+- Full Kitty internal id/ref/LRU redesign.
+- Access-time/LRU implementation; keep first slice conservative and source-backed.
 
 ## Verification
 
-- Scratchpad update must pass root `git diff --check`.
+- `zig build test --summary all` in `howl-vt`.
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- Root `zig build --summary all`.
+- Root and `howl-vt` `git diff --check`.
 
-Stop conditions:
+## Stop Conditions
 
-- Stop if quota/eviction cannot be sliced without broad image identity/ref redesign.
-- Stop if source truth requires a render cache policy decision first.
+- Stop if decoded quota requires changing public `howl_vt.h`.
+- Stop if eviction cannot be made safe without full internal image/ref identity redesign.
+- Stop if render cache policy becomes necessary.
+- Stop if old base64 compatibility bytes would change.

@@ -1902,6 +1902,27 @@ Base64 compatibility retirement research:
 - Next safe work: research decoded storage quota/eviction now that VT decoded bytes are
   model truth. Keep render raster cache quota separate unless source proves dependency.
 
+Decoded quota research:
+
+- Strategic handoff goal: keep driving the graphics cleanup loop autonomously until Howl's
+  graphics machinery is cleaner and more accountable than Kitty's, without fake progress.
+- Verdict: first quota slice is worker-ready and owned by `howl-vt`.
+- Kitty source truth: root image storage accounts decoded bytes in `Image.used_storage`
+  and `GraphicsManager.used_storage`; quota eviction trims incomplete/no-ref images first,
+  then oldest remaining images. Extra animation frames are disk-cache/load-data bounded.
+- Ghostty source truth: completed images own decoded `Image.data`; storage quota accounts
+  `img.data.len`; placements are eviction-protection state, not byte quota.
+- Howl ownership decision: VT protocol storage quota counts decoded image payloads, frame
+  decoded payloads, current decoded override payloads, and in-flight decoded upload bytes.
+  Render raster cache quota remains render-owned and separate.
+- Compatibility decision: legacy/base64 bytes stay under the existing retained-payload
+  compatibility bound until old public ABI retirement is explicitly decided.
+- Promoted next slice: make `ensureDecodedPayloadStore` evict safe unplaced images before
+  failing, preserve physical and virtual placements, count replacement-freed decoded bytes,
+  and prove eviction removes frames/current overrides.
+- Out of scope: render cache policy, host changes, public ABI changes, full internal
+  id/ref/LRU redesign, and access-time implementation.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
