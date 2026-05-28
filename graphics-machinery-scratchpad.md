@@ -449,6 +449,36 @@ Placement kind replacement acceptance tests:
 - Anonymous `p=0` physical and virtual placements do not replace each other.
 - Direct child placement referencing a converted nonzero parent continues resolving through the updated parent kind where possible.
 
+Placement kind replacement slice completed:
+
+- `howl-vt` commit `096e961 vt: replace graphics placement kinds`.
+- Root commit `e54b7d5 design: update graphics placement refs`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
+Stable parent-ref identity research:
+
+- Kitty parent links store internal image/ref identity (`ImageRef.parent.img` and `ImageRef.parent.ref`) rather than re-resolving client placement ids on every anchor lookup.
+- Kitty `Q=0` selects the first live ref at creation time and stores that ref identity; subsequent map/array changes do not retarget the child.
+- Howl currently stores `parent_image_id`, `parent_placement_id`, and `parent_is_virtual`, then resolves by searching arrays. `Q=0` stores client placement id `0`, so anonymous or first-parent children can drift when placements are removed or arrays reorder.
+- Howl can add VT-internal `ref_id` fields to physical and virtual placement structs without changing C ABI because FFI copies only published fields.
+- Generated placeholder placements should not become persistent refs in this slice; that remains a separate source-proofed step.
+
+Promoted stable parent-ref slice:
+
+- VT-only, ABI-preserving.
+- Add internal ref ids to physical and virtual placements and a `next_ref_id` allocator on graphics state.
+- Preserve ref ids across same-kind replacement and physical/virtual kind conversion for nonzero client placement ids.
+- Store parent links by internal parent ref id while keeping existing public parent image/placement fields for publication and diagnostics.
+- Resolve anchors, validate cycles, and delete descendants using parent ref ids where possible.
+- Fix `P=<image>,Q=0` drift for physical and virtual refs without implementing persistent generated cell refs.
+
+Stable parent-ref acceptance tests:
+
+- `Q=0` child remains anchored to originally selected physical parent after another parent placement is removed/reordered.
+- `Q=0` child remains anchored to originally selected virtual parent after other refs are added or removed.
+- Updating/converting a nonzero parent preserves its internal ref id and children remain attached.
+- Deleting an anonymous parent removes descendants by internal ref instead of deleting all `placement_id=0` descendants for that image.
+
 ### 6. Render-layer sorting and grouping differs from Kitty
 
 Severity: medium.

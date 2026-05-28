@@ -1,14 +1,14 @@
-# Current Slice: VT Graphics Placement Kind Replacement
+# Current Slice: VT Graphics Stable Parent Refs
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` item 4 after placement-ref research.
+Promoted from `graphics-machinery-scratchpad.md` item 4 after placement-ref identity research.
 
 ## Goal
 
-Match Kitty's single-ref namespace for nonzero placement ids without changing ABI: a physical and virtual placement with the same image id and client placement id are the same ref being updated, not two independent refs.
+Bind relative placements to VT-owned parent ref identity without changing ABI, so parent references selected by `P=<image>,Q=0` do not drift when placement arrays are reordered or later refs are added/removed.
 
 ## Target Files
 
@@ -21,12 +21,13 @@ VT only:
 
 - Keep `howl_vt.h`, render, and hosts unchanged.
 - Preserve image publication ABI and payload-copy behavior.
-- For nonzero `p=`, `a=p,U=1` replaces an existing physical placement with the same `(image_id, placement_id)` instead of adding a duplicate virtual placement.
-- For nonzero `p=`, physical `a=p` replaces an existing virtual placement with the same `(image_id, placement_id)` instead of adding a duplicate physical placement.
-- Parent links that point at a converted placement id remain pointed at the same client ref and update their physical/virtual parent kind when possible.
-- Anonymous `p=0` placement behavior remains unchanged; multiple anonymous placements are still allowed.
-- Delete selectors and quota placement protection continue to treat the converted ref as one live placement.
-- Existing generated-placeholder, virtual-placement, quota, delete-selector, image-number, frame loading, frame compose, and replacement behavior remains green.
+- Assign each physical and virtual placement a VT-internal ref id.
+- Preserve the internal ref id when an existing nonzero client placement id is updated or converted between physical and virtual kind.
+- Store relative parent links by internal parent ref id, while keeping public/client parent fields for ABI publication.
+- `P=<image>,Q=0` selects the first live parent ref at creation time and remains bound to that ref even if other refs are later removed or arrays reorder.
+- Parent chain resolution, cycle checks, descendant deletion, and virtual-parent resolution use internal parent ref identity where possible.
+- Anonymous `p=0` placement behavior remains unchanged except that each anonymous placement receives a distinct internal ref id.
+- Existing generated-placeholder, virtual-placement, quota, delete-selector, image-number, frame loading, frame compose, and placement-kind replacement behavior remains green.
 
 ## Hard Constraints
 
@@ -35,17 +36,19 @@ VT only:
 - Do not introduce the full internal id/ref/cache rewrite or persistent generated cell refs.
 - Do not change placement identity or render-facing publication structs.
 - Do not solve anonymous `image_id == 0` multi-image identity in this slice.
-- Do not solve omitted-parent `Q=0` drift with internal ref ids in this slice.
+- Do not expose internal ref ids through the C ABI.
+- Do not make generated placeholder placements persistent refs in this slice.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Physical placement converted to virtual by same nonzero `p=` leaves physical count `0` and virtual count `1`.
-- Virtual placement converted to physical by same nonzero `p=` leaves virtual count `0` and physical count `1`.
-- Repeated physical/virtual conversions do not grow total placement count or duplicate replies.
-- Anonymous `p=0` physical and virtual placements do not replace each other.
-- Child placements referencing a converted nonzero parent keep resolving through the updated parent kind where possible.
+- `P=<image>,Q=0` child remains anchored to the originally selected physical parent after another parent placement is removed/reordered.
+- `P=<image>,Q=0` child remains anchored to the originally selected virtual parent after another parent ref is added or removed.
+- Updating a nonzero parent placement preserves its internal ref id and keeps existing children attached.
+- Converting a nonzero parent physical-to-virtual and virtual-to-physical preserves its internal ref id and keeps existing children attached through the updated kind.
+- Deleting a parent placement removes descendants by internal parent ref, including anonymous parents where client `placement_id` is `0`.
+- Existing placement-kind replacement tests remain green.
 
 ## Verification Required
 
@@ -55,4 +58,4 @@ VT only:
 
 Stop condition:
 
-- If correct replacement semantics require full internal ref ids or persistent generated cell-ref storage, stop and report the exact dependency instead of widening the slice.
+- If correct stable parent behavior requires persistent generated cell-ref storage or render ABI changes, stop and report the exact dependency instead of widening the slice.
