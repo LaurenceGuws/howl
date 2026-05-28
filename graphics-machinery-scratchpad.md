@@ -765,6 +765,11 @@ Delete-all visibility acceptance tests:
 - `d=A` removes visible physical placements and frees only images that became unplaced because of matched visible placements.
 - `d=a` removes visible parent placement and its relative descendants by lifetime.
 
+Delete-all visibility slice completed:
+
+- `howl-vt` commit `e912e32 vt: limit delete-all to visible placements`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
