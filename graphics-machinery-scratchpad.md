@@ -1441,6 +1441,15 @@ Root-frame-edit future slice:
 - Leave ABI, render, host, decoded-cache storage, frame graph identity, runtime timing,
   PNG/media, and generated placeholders out of scope.
 
+Root-frame-edit slice completed:
+
+- `howl-vt` commit `3b39abe vt: edit kitty root frames`.
+- Review caught and corrected `a=f,r=1,c=<missing>`: Kitty ignores `c` on existing
+  frame edits, so root edits must not pre-resolve the compose base frame.
+- Verification passed: `zig build test --summary all`,
+  `zig build test:regression:build --summary all`, root `zig build`, root
+  `git diff --check`, and `howl-vt` `git diff --check`.
+
 ### 26. Go animation frame uploads omit `r=` and need replay proof
 
 Severity: medium, real client animation proof.
