@@ -1046,6 +1046,11 @@ Raw direct validation acceptance tests:
 - Invalid base64 direct raw upload fails with graphics `EINVAL` and stores no image.
 - Decoded-length mismatch direct raw upload fails with graphics `EINVAL` and stores no image.
 
+Raw direct validation slice completed:
+
+- `howl-vt` commit `f71306a vt: validate direct raw graphics`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
