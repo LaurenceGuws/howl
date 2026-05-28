@@ -1254,6 +1254,11 @@ Oversized-animation-frame acceptance tests:
 - Existing-frame edit with oversized dimensions rejects and preserves previous frame payload/metadata.
 - `q=1` emits the failure; `q=2` suppresses the failure and stores no frame.
 
+Oversized-animation-frame slice completed:
+
+- `howl-vt` commit `ed8e3b3 vt: reject oversized graphics frames`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 Research notes for later slices:
 
 - Root-frame edit parity remains broader and should not be pulled into this oversized-frame slice.
