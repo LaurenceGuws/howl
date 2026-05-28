@@ -1,4 +1,4 @@
-# Current Slice: Delete Temporary Graphics Logging
+# Current Slice: Re-index Graphics Scratchpad
 
 Owner: workspace root.
 
@@ -6,55 +6,38 @@ Sprint scope: graphics.
 
 ## Goal
 
-Remove the temporary duplicated `HOWL_GRAPHICS_LOG` cross-layer probe plumbing now that
-generated placeholder publication, render ordering, and graphics replay/proof paths have
-durable tests.
+Replace stale graphics backlog entries with a current live-gap index so future workers do
+not start from removed functions, completed placeholder machinery, or completed logging
+cleanup.
 
 ## Source Truth
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `reference-index.md`
-- `graphics-machinery-scratchpad.md` section `Temporary graphics logging cleanup research`
+- `graphics-machinery-scratchpad.md`
 
 ## Target Files
 
-- `howl-vt/src/graphics_log.zig`
-- `howl-vt/src/kitty/apply.zig`
-- `howl-vt/src/terminal.zig`
-- `howl-render/src/graphics_log.zig`
-- `howl-render/src/frame/surface_text.zig`
-- `howl-render/src/frame/queue.zig`
-- `howl-linux-host/src/graphics_log.zig`
-- `howl-linux-host/src/main.zig`
-- `howl-linux-host/src/terminal/vt/surface.zig`
-- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `graphics-machinery-scratchpad.md`
 
 ## Required Behavior
 
-- Deletion-only slice.
-- Delete duplicated `graphics_log.zig` helpers and all `graphics_log.event()` calls.
-- Remove all `HOWL_GRAPHICS_LOG` source plumbing.
-- Preserve host `graphicsProofSnapshot`, present proof capture, Kitty replay tests, ABI/test
-  proof APIs, generated placement behavior, render ordering, and host presentation policy.
-- Do not change placeholder/generated placement behavior, render data contracts, host wake
-  or presentation policy, replay fixtures, ABI, or product diagnostics beyond this temporary
-  env-log probe.
+- Docs-only slice.
+- Mark completed/stale items as completed or stale instead of leaving them in the active
+  worker backlog.
+- Replace stale worker backlog and deletion gate with live unresolved graphics gaps.
+- Record current risks for base64 retained payload truth, animation visibility gating,
+  persistent generated cell refs, and decoded/cache quota parity.
+- Do not edit `howl-vt`, `howl-render`, `howl-linux-host`, ABI, render behavior, host
+  behavior, or tests.
 
 ## Required Checks
 
-- No source matches remain for `graphics_log`, `HOWL_GRAPHICS_LOG`, or `vt-mutate`.
-- `zig build test --summary all` in `howl-vt`.
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- `zig build test --summary all` in `howl-render`.
-- `zig build test:integration:kitty-graphics-replay:build --summary all` in `howl-linux-host`.
-- `zig build test:integration:kitty-graphics-replay:app:build --summary all` in `howl-linux-host`.
-- root `zig build --summary all`.
-- root `git diff --check`.
-- `howl-vt`, `howl-render`, and `howl-linux-host` `git diff --check`.
+- `git diff --check` at root.
+- Root/submodule status remains clean except for the intended scratchpad/current docs.
 
 Stop condition:
 
-- If deleting a hook forces changes to proof snapshot APIs, present proof capture, ABI,
-  generated placement behavior, render ordering, host presentation policy, or replay tests,
-  stop and report the smaller cleanup needed.
+- If choosing the next code slice requires new Kitty/Ghostty/Alacritty reference research,
+  stop after the re-index and do not promote behavior code.

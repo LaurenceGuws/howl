@@ -1658,281 +1658,111 @@ Omitted-`r` frame upload proof completed:
   `zig build test:regression:build --summary all`, root `zig build`, root
   `git diff --check`, and `howl-vt` `git diff --check`.
 
-## Howl-Only Hacks
+## Current Live Graphics Gaps
 
-### 1. Render-side Kitty placeholder interpreter
+### 1. Base64 retained payload remains graphics truth
 
-Removal confidence: high after VT materialization exists, unsafe before then.
+Ownership: VT/render/ABI cross-submodule.
 
-Howl files/functions:
+Risk: high; do not start with deletion-only work.
 
-- `howl-render/src/frame/surface_buffer.zig`: `drawPlaceholderRunByIndex`
-- `howl-render/src/frame/surface_buffer.zig`: `resolvePlaceholderDrawPlacement`
-- `howl-render/src/frame/surface_buffer.zig`: `placeholderSourceRect`
-- `howl-render/src/frame/surface_buffer.zig`: `placeholderGrid`
-- `howl-render/src/frame/surface_buffer.zig`: `sortPlaceholderRuns`
-- `howl-render/src/frame/surface_buffer.zig`: `placeholderRunSortLessPlacement`
+Source contradiction:
 
-Reference contradiction:
+- Kitty stores loaded image/frame data with cache/texture refs, not base64 transport text
+  as model truth.
+- Ghostty stores loaded image state and render placements, not base64 transport text as
+  graphics truth.
 
-- Kitty materializes placeholders in terminal/screen code.
-- Ghostty keeps placeholder parsing in terminal kitty graphics unicode code.
-- Neither reference makes renderer parse Kitty placeholder protocol.
+Current Howl shape:
 
-Delete or replace:
+- `howl-vt/src/kitty/graphics.zig`: `Image.base64_payload`, `Frame.base64_payload`,
+  `storeImageOwned`, `storeFrameOwned`, and `refreshCurrentFramePublication` keep
+  base64 retained payload as VT graphics state.
+- `howl-render/src/frame/graphics_prepare.zig`: render decodes graphics rasters from
+  ABI payload bytes.
 
-- Replace with VT-generated cell placements.
-- Delete render placeholder geometry and ordering only after VT publication is complete.
+Next safe work:
 
-Risk:
+- Research/design the ABI-preserving bridge from transport base64 to decoded/validated
+  VT-owned image/frame bytes before changing code.
+- Do not remove retained payload fields or ABI payload publication without an explicit C
+  ABI/storage contract slice.
 
-- High if deleted now.
+### 2. Animation runtime is not drawn-visibility gated
 
-### 2. Base64 retained payload as graphics truth
+Ownership: VT/runtime plus render/host visibility truth; likely cross-submodule.
 
-Removal confidence: not deletion-only.
+Risk: medium-high.
 
-Howl files/functions:
+Source truth:
 
-- `howl-vt/src/kitty/graphics.zig`: `Image.base64_payload`
-- `howl-vt/src/kitty/graphics.zig`: `Frame.base64_payload`
-- `howl-vt/src/kitty/graphics.zig`: `storeImageOwned`
-- `howl-vt/src/kitty/graphics.zig`: `storeFrameOwned`
-- `howl-vt/src/kitty/graphics.zig`: `refreshCurrentFramePublication`
-- `howl-render/src/frame/graphics_prepare.zig`: `ensureDecodedGraphicsRaster`
-- `howl-render/src/frame/graphics_prepare.zig`: `decodeGraphicsRaster`
+- Kitty updates image visibility/drawn state from visible refs and advances animations
+  only for drawn images.
+- Howl `imageNeedsRuntime` still keys off animation state and frame count, not actual
+  drawn visibility.
 
-Reference contradiction:
+Next safe work:
 
-- Kitty stores loaded image/frame data with cache/texture refs, not base64 as model truth.
-- Ghostty stores loaded image state and render placements, not base64 transport as truth.
+- Do a source-backed research round before code.
+- Prefer a VT-only proof first if an unplaced or off-screen animation can be shown to
+  advance incorrectly through existing runtime APIs.
+- Stop if exact parity needs render/host visible-ref feedback into VT runtime.
 
-Delete or replace:
+### 3. Persistent generated cell refs are not implemented
 
-- Replace with decoded/validated image payload state behind the ABI.
-- Keep base64 only as transport input.
+Ownership: VT first; possible ABI/render follow-up.
 
-Risk:
+Risk: medium-high.
 
-- High migration cost.
+Source truth:
 
-### 3. Placeholder image refs injected in render preparation
+- Kitty materializes placeholder cells into real cell-image refs and removes stale refs
+  when rows/cells are dirtied.
+- Howl currently derives generated placements on demand from live VT cell truth.
 
-Removal confidence: medium after VT materialization exists.
+Current proof status:
 
-Howl files/functions:
+- Placeholder assembly, dirty/publication behavior, render order, palette/yazi-like
+  publication, high-byte image ids, multiple virtual placements, and scroll-region
+  placeholder publication have durable tests.
 
-- `howl-render/src/frame/graphics_prepare.zig`: `ensureVirtualPlacementImageRefs`
-- `howl-render/src/frame/graphics_prepare.zig`: `preparePlaceholderGraphics`
+Next safe work:
 
-Reference contradiction:
+- Do not add persistent generated refs unless a new Kitty behavior proof exposes an
+  observable mismatch in on-demand publication.
 
-- Kitty creates cell refs before render data construction.
-- Ghostty render placement flow does not require render prep to invent missing refs for virtual placements.
+### 4. Full decoded/cache quota parity is incomplete
 
-Delete or replace:
+Ownership: VT/render/ABI cross-submodule.
 
-- Remove after VT publishes generated cell placements and their images as normal graphics publication entries.
+Risk: medium-high.
 
-Risk:
+Source truth:
 
-- Medium; currently required by the placeholder POC path.
+- Kitty accounts decoded/cache storage and evicts incomplete, unreferenced, and old
+  images through cache/storage policy.
+- Howl currently enforces conservative retained-payload quotas and has tests for that
+  first slice.
 
-### 4. Temporary cross-layer graphics logging
+Next safe work:
 
-Removal confidence: high when diagnosis is done.
+- Research decoded/cache storage ownership together with the base64-truth replacement.
+- Do not widen quota code independently of the storage model.
 
-Howl files/functions:
+## Completed Or Stale Graphics Backlog
 
-- `howl-vt/src/kitty/apply.zig`: `graphics_log.event("vt-mutate", ...)`
-- `howl-render/src/frame/surface_buffer.zig`: `tracePlaceholderReject`
-- `howl-render/src/frame/surface_buffer.zig`: `tracePlaceholderDraw`
-- `howl-linux-host/src/terminal/terminal_panel.zig`: graphics proof/upload logging helpers
-
-Reference contradiction:
-
-- These are temporary proof hooks, not product machinery.
-
-Delete or replace:
-
-- Delete after tests cover placeholder placement.
-- Keep gated while current live failure lacks a durable test.
-
-Risk:
-
-- Low functional risk, but deleting now reduces observability.
-
-Temporary graphics logging cleanup research:
-
-- Current duplicated `HOWL_GRAPHICS_LOG` plumbing exists in `howl-vt`, `howl-render`,
-  and `howl-linux-host`, each with its own `graphics_log.zig` helper and
-  `graphics_log.event()` calls.
-- Stale scratchpad references: `tracePlaceholderReject`, `tracePlaceholderDraw`,
-  `drawPlaceholderRunByIndex`, `resolvePlaceholderDrawPlacement`,
-  `ensureVirtualPlacementImageRefs`, and `preparePlaceholderGraphics` no longer exist.
-- Preserve product/test proof infrastructure such as host graphics proof snapshots and
-  present proof capture; these are not the temporary env-log path.
-- Ghostty uses scoped owner-local graphics logs, and TigerBeetle-style diagnostics do not
-  justify duplicated cross-owner env-probe modules.
-- Current VT/render/host tests now cover generated placeholder publication, render order,
-  and graphics replay/proof paths, so the temporary logging can be deleted.
-
-Promoted temporary graphics logging deletion slice:
-
-- Delete only `HOWL_GRAPHICS_LOG` plumbing.
-- Remove `howl-vt/src/graphics_log.zig`, `howl-render/src/graphics_log.zig`, and
-  `howl-linux-host/src/graphics_log.zig`.
-- Remove only their imports and `graphics_log.event()` call blocks.
-- Preserve `graphicsProofSnapshot`, present proof capture, Kitty replay tests, ABI/test
-  proof APIs, generated placement behavior, render ordering, and host presentation policy.
-
-Temporary graphics logging deletion acceptance checks:
-
-- No source matches remain for `graphics_log`, `HOWL_GRAPHICS_LOG`, or `vt-mutate`.
-- `howl-vt` tests and regression builds pass.
-- `howl-render` tests pass.
-- `howl-linux-host` Kitty graphics replay build targets pass.
-- Root build and diff checks pass.
-
-Temporary graphics logging deletion slice completed:
-
-- `howl-vt` commit `b997271 vt: remove temporary graphics logging`.
-- `howl-render` commit `0e571e1 render: remove temporary graphics logging`.
-- `howl-linux-host` commit `e01c169 host: remove temporary graphics logging`.
-- Deleted only duplicated `HOWL_GRAPHICS_LOG` helpers/imports/event calls and
-  logging-only helper residue.
-- Preserved graphics proof snapshots, present proof capture, replay tests, ABI/test proof
-  APIs, generated placement behavior, render ordering, and host presentation policy.
-- Verification passed: no `*.zig` source matches for `graphics_log`, `HOWL_GRAPHICS_LOG`,
-  or `vt-mutate`; `howl-vt` tests/regression build; `howl-render` tests;
-  `howl-linux-host` Kitty graphics replay build targets; root `zig build --summary all`;
-  root and touched submodule `git diff --check`.
-
-## Worker Backlog
-
-### Item 1: Prove placeholder run assembly against Kitty
-
-Owner: `howl-vt`.
-
-Type: machinery proof/fix.
-
-Target files:
-
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
-
-Acceptance tests:
-
-- `U+0305` maps to image row/col `0`.
-- Same-row missing col/high-byte inference matches Kitty.
-- Mismatched row, col, image id, placement id, or high byte breaks runs.
-
-What not to do:
-
-- Do not alter render geometry.
-- Do not reintroduce cross-row inference.
-
-### Item 2: Implement VT-owned generated cell placements
-
-Owner: `howl-vt`.
-
-Type: machinery implementation.
-
-Target files:
-
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/terminal.zig`
-- `howl-vt/src/ffi.zig`
-
-Acceptance tests:
-
-- Placeholder cells create generated z `-1` placements.
-- Rewriting a placeholder row removes stale generated placements.
-- Updating a virtual placement redraws existing placeholder rows.
-- Yazi-like pane preview starts at the target pane's left edge.
-
-What not to do:
-
-- Do not special-case yazi.
-- Do not add render-owned protocol interpretation.
-
-### Item 3: Replace render placeholder path with normal placement rendering
-
-Owner: `howl-render`.
-
-Type: machinery implementation followed by deletion.
-
-Target files:
-
-- `howl-render/src/frame/surface_buffer.zig`
-- `howl-render/src/frame/graphics_prepare.zig`
-- `howl-render/src/frame/graphics_viewport.zig`
-- `howl-render/src/frame/surface.zig`
-
-Acceptance tests:
-
-- Placeholder-generated placements participate in `prepareGraphics` like normal placements.
-- Mixed placeholder/normal image z ordering matches Kitty.
-- No render-side Kitty placeholder geometry remains after replacement.
-
-What not to do:
-
-- Do not delete this path before VT generated placements exist.
-
-### Item 4: Harden graphics parser to Kitty source shape
-
-Owner: `howl-vt`.
-
-Type: machinery implementation.
-
-Target files:
-
-- `howl-vt/src/kitty/protocol.zig`
-- `howl-vt/src/kitty/apply.zig`
-
-Acceptance tests:
-
-- Invalid action/delete/transmission/compression flags fail without mutation.
-- Invalid integer fields fail instead of becoming `0`.
-- Quiet response behavior matches Kitty tests.
-
-What not to do:
-
-- Do not keep invalid values permissive for compatibility without a reference reason.
-
-### Item 5: Port Kitty graphics tests by behavior group
-
-Owner: test worker.
-
-Type: machinery proof.
-
-Target files:
-
-- `howl-vt/src/test/terminal_graphics.zig`
-- Render tests as needed under `howl-render/src/frame/`
-
-Acceptance tests:
-
-- Load images.
-- PNG load.
-- Image numbers.
-- Image put.
-- Parents.
-- Unicode placeholders.
-- Scroll.
-- Delete.
-- Animation frame loading.
-
-What not to do:
-
-- Do not bless current Howl placeholder POC behavior as golden.
-
-## Deletion Worker Gate
-
-Do not seed a deletion-only worker yet.
-
-Reasons:
-
-- The tree is dirty, violating `loop.txt` code workflow.
-- The high-confidence hacks are dependency-ordered. Render placeholder hacks cannot be deleted until VT generated cell placements exist.
-- Temporary graphics logging is deletion-only but currently supports diagnosis and should be removed only after durable tests replace it.
+- Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
+  (`drawPlaceholderRunByIndex`, `resolvePlaceholderDrawPlacement`, `placeholderSourceRect`,
+  `placeholderGrid`, and placeholder-run sorting helpers) no longer exist.
+- Render placeholder image-ref injection: completed/stale. `ensureVirtualPlacementImageRefs`
+  and `preparePlaceholderGraphics` no longer exist.
+- Temporary cross-layer graphics logging: completed by `howl-vt` commit `b997271`,
+  `howl-render` commit `0e571e1`, and `howl-linux-host` commit `e01c169`. No source
+  matches remain for `graphics_log`, `HOWL_GRAPHICS_LOG`, or `vt-mutate`.
+- Worker backlog items for placeholder assembly, VT generated placements, render normal
+  placement replacement, parser hardening, and broad Kitty behavior-group porting are
+  stale as active queue items. They are now covered by the completed slices above and the
+  live gaps listed in this section.
+- Deletion worker gate is closed. The tree is clean, dependency-ordered deletion work has
+  run, and future deletion work must be promoted from current source truth rather than
+  old placeholder POC notes.
