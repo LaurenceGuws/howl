@@ -1,43 +1,42 @@
-# Current Slice: PNG Non-Palette Mode Matrix VT Proof
+# Current Slice: Ignore Chunk Flag For Indirect Media
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after PNG mode matrix research.
+Promoted from `graphics-machinery-scratchpad.md` after chunk/transmission medium research.
 
 ## Goal
 
-Prove VT PNG normalization handles fixed RGBA, RGB, and grayscale PNG fixtures as RGBA output. Palette PNG is blocked by the current stb decoder behavior and is deferred.
+Match Kitty/Ghostty behavior by ignoring `m=1` for non-direct graphics media (`t=f`, `t=t`, `t=s`) instead of rejecting the command.
 
 ## Target Files
 
 - `howl-vt/src/test/terminal_graphics.zig`
-- `howl-vt/src/kitty/graphics.zig` only if the test exposes a real PNG decode bug
+- `howl-vt/src/kitty/graphics.zig`
 
 ## Required Behavior
 
-- Fixed PNG fixtures for `RGBA`, `RGB`, and `L` decode to expected RGBA bytes.
-- VT current-frame publication normalizes each PNG fixture to raw RGBA `format=32`, `width=5`, `height=3`, and expected base64 payload.
-- Existing invalid PNG, simple PNG, and valid PNG query behavior remains green.
+- For file medium `t=f`, `m=1` is ignored and the file is loaded immediately.
+- For temp-file medium `t=t`, `m=1` is ignored, the file is loaded immediately, and safe temp deletion still happens.
+- For shared-memory medium `t=s`, `m=1` is ignored, the object is loaded immediately, and unlink still happens.
+- Direct medium `t=d` chunk semantics remain unchanged.
 
 ## Hard Constraints
 
 - Do not change ABI, render, host, parser, or terminal files.
-- Prefer tests only.
-- Do not replace stb_image or add libpng.
-- Do not broaden into gamma/ICC/color-management, 16-bit, interlace, APNG, or file/temp/shm lifecycle parity.
-- Do not attempt palette `P` PNG parity in this slice; current fixed palette fixture exposes a decoder dependency.
-- Do not add PNG zlib support.
-- Do not change decoded PNG root storage/model truth.
-- Do not change indirect media lifecycle, animation, quiet, delete/reset, quota, composition, generated placeholder behavior, or EBADPNG handling.
+- Do not change direct chunk lifecycle or parser validation.
+- Do not change quiet response handling, EBADPNG behavior, storage quota, animation, delete/reset, composition, generated placeholder behavior, or PNG mode behavior.
+- Do not change file permission policy, safe temp deletion rules, or shared-memory unlink policy beyond allowing `m=1` to be ignored.
+- Do not add local-media chunk assembly semantics.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Add fixed inline fixtures for `RGBA`, `RGB`, and `L` PNG modes.
-- For each fixture, upload a raw/RGBA root image, upload the PNG as frame 2, select frame 2, and assert `format=32`, `width=5`, `height=3`, and expected RGBA base64.
+- File medium upload with `m=1` stores the expected payload and leaves no active upload.
+- Temp-file medium upload with `m=1` stores the expected payload, deletes the safe temp file, and leaves no active upload.
+- Shared-memory medium upload with `m=1` stores the expected payload, unlinks the object, and leaves no active upload.
 
 ## Verification Required
 
@@ -47,4 +46,4 @@ Prove VT PNG normalization handles fixed RGBA, RGB, and grayscale PNG fixtures a
 
 Stop condition:
 
-- If `stb_image` differs from Kitty/libpng for these non-palette 8-bit fixtures, stop and report a decoder dependency instead of widening the slice.
+- If correct behavior requires local-media chunk assembly, parser changes, host/runtime changes, or ABI changes, stop and report the exact dependency instead of widening the slice.

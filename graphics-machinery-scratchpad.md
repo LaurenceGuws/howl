@@ -974,6 +974,37 @@ PNG non-palette mode matrix proof slice completed:
 - Tests-only slice covering RGBA, RGB, and grayscale `L`; palette `P` remains blocked on decoder behavior.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 16. Non-direct media incorrectly rejects `m=1`
+
+Severity: medium, protocol compatibility.
+
+Kitty/Ghostty machinery:
+
+- Kitty `load_image_data` treats chunking as meaningful only for direct payloads and loads `t=f`, `t=t`, and `t=s` immediately.
+- Ghostty explicitly ignores `m` for local-only media and notes Kitty/mpv compatibility.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `storeIndirectPayload` rejects `cmd.more_chunks` with `EINVAL:chunked kitty graphics upload requires direct medium`.
+- Existing file/temp/shared-memory tests cover non-chunked media only.
+
+Problem:
+
+- Howl rejects valid Kitty/mpv-style local media commands that set `m=1` even though no continuation is needed for non-direct media.
+
+Promoted ignore-indirect-`m` slice:
+
+- Ignore `m=1` for `t=f`, `t=t`, and `t=s` in VT graphics indirect payload handling.
+- Keep direct `t=d` chunk semantics unchanged.
+- Keep safe temp deletion and shared-memory unlink policy unchanged.
+- Leave parser, quiet, EBADPNG, quota, animation, delete/reset, render, host, and ABI code out of scope.
+
+Ignore-indirect-`m` acceptance tests:
+
+- File medium `t=f,m=1` loads and stores payload immediately with no active upload.
+- Temp-file medium `t=t,m=1` loads, stores payload, deletes the safe temp file, and leaves no active upload.
+- Shared-memory medium `t=s,m=1` loads, stores payload, unlinks the object, and leaves no active upload.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
