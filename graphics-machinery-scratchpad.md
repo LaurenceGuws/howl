@@ -853,6 +853,40 @@ PNG EBADPNG slice completed:
 - Review required full stb decode validation before storage, not only `stbi_info` header validation.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 13. Kitty simple PNG exact RGBA fixture is not directly ported
+
+Severity: low-medium, test parity confidence.
+
+Kitty machinery:
+
+- `kitty_tests/graphics.py`: `test_load_png_simple` uses a 1x1 transparent PNG fixture.
+- Expected decoded RGBA bytes are `00 ff ff 7f`, base64 `AP//fw==`.
+- `kitty/png-reader.c`: PNG data is normalized to RGBA.
+
+Howl current shape:
+
+- Existing tests cover valid PNG normalization/replay with a Howl fixture and app-icon replay.
+- Existing tests now cover invalid PNG `EBADPNG` behavior.
+- No test directly ports Kitty's simple PNG fixture and exact expected bytes.
+
+Problem:
+
+- A source-backed simple valid PNG parity proof is missing.
+- Full PNG mode matrix remains broader, but this fixture is narrow and likely tests-only.
+
+Promoted simple PNG exact RGBA slice:
+
+- Add a VT test using Kitty's 1x1 PNG fixture.
+- Exercise through current-frame publication so the decoded RGBA bytes are observable at the VT model boundary.
+- Assert published image is `format=32`, `width=1`, `height=1`, and `base64_payload="AP//fw=="`.
+- Optionally prove `a=q,f=100` accepts the same PNG and stores no image.
+- Leave PNG mode matrix, color management, decoder replacement, root decoded storage truth, ABI, render, host, and unrelated graphics behavior out of scope.
+
+Simple PNG acceptance tests:
+
+- Kitty 1x1 PNG fixture selected as a current frame publishes exact RGBA base64 `AP//fw==`.
+- Optional query proof with the same PNG returns `OK` and stores no image.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter

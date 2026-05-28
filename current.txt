@@ -1,42 +1,45 @@
-# Current Slice: PNG EBADPNG Protocol Errors
+# Current Slice: Simple PNG Exact RGBA Parity
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after PNG/error parity research.
+Promoted from `graphics-machinery-scratchpad.md` after post-EBADPNG PNG parity research.
 
 ## Goal
 
-Return Kitty-style `EBADPNG` protocol failures for invalid `f=100` PNG payloads instead of asserting or collapsing into generic data errors.
+Port Kitty's 1x1 valid PNG fixture and prove Howl publishes the exact normalized RGBA bytes through VT current-frame publication.
 
 ## Target Files
 
-- `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
+- `howl-vt/src/kitty/graphics.zig` only if the test exposes a real PNG decode bug
 
 ## Required Behavior
 
-- Invalid direct `f=100` PNG upload replies with `EBADPNG:*` and does not store image data.
-- Invalid `f=100` query replies with `EBADPNG:*` and does not store image data.
-- PNG size/decode helpers return explicit errors instead of asserting or using `unreachable` for stb failures.
-- Valid PNG behavior already covered by existing tests remains green.
+- Kitty's 1x1 transparent PNG fixture decodes to exact RGBA bytes `00 ff ff 7f`.
+- VT current-frame publication normalizes a PNG frame to raw RGBA `format=32`, `width=1`, `height=1`, and base64 payload `AP//fw==`.
+- Optional query proof may show `a=q,f=100` accepts the same PNG without storing image data.
+- Existing invalid PNG `EBADPNG` behavior remains green.
 
 ## Hard Constraints
 
 - Do not change ABI, render, host, parser, or terminal files.
+- Prefer tests only.
 - Do not replace stb_image or add libpng.
 - Do not broaden into full PNG mode/color-management/gamma/ICC parity.
 - Do not add PNG zlib support.
-- Do not change indirect media lifecycle, animation, quiet, delete/reset, quota, composition, or generated placeholder behavior.
+- Do not change decoded PNG root storage/model truth.
+- Do not change indirect media lifecycle, animation, quiet, delete/reset, quota, composition, generated placeholder behavior, or EBADPNG handling.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Invalid direct PNG upload returns `EBADPNG` and leaves image count unchanged.
-- Invalid PNG query returns `EBADPNG` and leaves image count unchanged.
-- Valid simple PNG decode/current-frame publication remains covered by existing PNG tests or an added focused test if needed.
+- Upload a raw/RGBA root image.
+- Upload Kitty's 1x1 PNG fixture as frame 2 with `f=100`.
+- Select frame 2 and assert the published image is `format=32`, `width=1`, `height=1`, `base64_payload="AP//fw=="`.
+- If added, `a=q,f=100` with the same PNG replies `OK` and stores no image.
 
 ## Verification Required
 
@@ -46,4 +49,4 @@ Return Kitty-style `EBADPNG` protocol failures for invalid `f=100` PNG payloads 
 
 Stop condition:
 
-- If correct behavior requires replacing the PNG decoder, broad image cache redesign, render changes, ABI changes, or a full PNG color-management matrix, stop and report the exact dependency instead of widening the slice.
+- If `stb_image` decodes the Kitty fixture differently than Kitty/libpng, stop and report a PNG decoder/color-management dependency instead of widening the slice.
