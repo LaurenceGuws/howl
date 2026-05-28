@@ -1794,6 +1794,20 @@ Temporary graphics logging deletion acceptance checks:
 - `howl-linux-host` Kitty graphics replay build targets pass.
 - Root build and diff checks pass.
 
+Temporary graphics logging deletion slice completed:
+
+- `howl-vt` commit `b997271 vt: remove temporary graphics logging`.
+- `howl-render` commit `0e571e1 render: remove temporary graphics logging`.
+- `howl-linux-host` commit `e01c169 host: remove temporary graphics logging`.
+- Deleted only duplicated `HOWL_GRAPHICS_LOG` helpers/imports/event calls and
+  logging-only helper residue.
+- Preserved graphics proof snapshots, present proof capture, replay tests, ABI/test proof
+  APIs, generated placement behavior, render ordering, and host presentation policy.
+- Verification passed: no `*.zig` source matches for `graphics_log`, `HOWL_GRAPHICS_LOG`,
+  or `vt-mutate`; `howl-vt` tests/regression build; `howl-render` tests;
+  `howl-linux-host` Kitty graphics replay build targets; root `zig build --summary all`;
+  root and touched submodule `git diff --check`.
+
 ## Worker Backlog
 
 ### Item 1: Prove placeholder run assembly against Kitty
