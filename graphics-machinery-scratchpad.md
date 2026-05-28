@@ -1922,6 +1922,22 @@ Decoded quota research:
   and prove eviction removes frames/current overrides.
 - Out of scope: render cache policy, host changes, public ABI changes, full internal
   id/ref/LRU redesign, and access-time implementation.
+- VT decoded quota eviction completed in `howl-vt` commit `e302b3d vt: evict decoded
+  graphics payloads`.
+- Accepted behavior: decoded quota now evicts safe unplaced images before failing,
+  preserves physical and virtual placements, counts decoded bytes freed by replacement,
+  removes frame/current override bytes with evicted images, and leaves the legacy/base64
+  compatibility quota separate.
+- Main-agent review found and fixed a root-frame compose pointer-shift bug introduced by
+  decoded quota eviction. Compose now reacquires the protected image after eviction before
+  mutating it, with a regression proving an earlier unplaced image can be evicted safely.
+- Verification passed after review fix: `zig build test --summary all` in `howl-vt` with
+  `636/636` tests, `zig build test:regression:build --summary all` in `howl-vt`, root
+  `zig build --summary all`, root `git diff --check`, and `howl-vt git diff --check`.
+- Next safe work: research Kitty/Ghostty image identity, ref, access-time, and LRU
+  semantics now that decoded payload bytes are VT storage truth. Do not promote an
+  implementation slice until the boundary between observable protocol behavior and
+  internal cleanup is source-backed.
 
 ## Completed Or Stale Graphics Backlog
 

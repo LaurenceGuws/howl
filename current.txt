@@ -1,96 +1,21 @@
-# Current Slice: Graphics Decoded Quota Eviction
+# Current Slice: None
 
-Owner: howl-vt.
+Owner: workspace root.
 
 Sprint scope: graphics.
 
-## Goal
+Status: `Graphics Decoded Quota Eviction` completed and accepted.
 
-Make VT decoded graphics bytes the primary protocol storage quota while keeping
-legacy/base64 bytes as a conservative compatibility bound.
+Accepted commits:
 
-## Strategic Goal
+- `howl-vt` `e302b3d vt: evict decoded graphics payloads`
 
-Continue the graphics cleanup loop autonomously until Howl's graphics machinery is
-cleaner and more accountable than Kitty's, without fake progress. Every step must remain
-source-backed, bounded, tested, reviewed, verified, and committed.
+Verification passed:
 
-## Source Truth
-
-- `AGENTS.md`
-- `loop.txt`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `graphics-machinery-scratchpad.md`
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
-- `howl-vt/include/howl_vt.h`
-- `utils/dev_references/terminals/kitty/kitty/graphics.c`
-- `utils/dev_references/terminals/kitty/kitty/graphics.h`
-- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_storage.zig`
-- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
-
-## Source Findings
-
-- Kitty and Ghostty account decoded image data as storage truth, not base64 transport
-  text.
-- Kitty root image storage increments image and manager storage by decoded byte size;
-  extra frames are bounded by disk-cache/load data size.
-- Ghostty stores decoded `Image.data` and quota accounts `img.data.len`.
-- Howl VT now has decoded image/frame payloads as model truth, but decoded quota still
-  fails instead of evicting safe images.
-- Howl legacy/base64 bytes remain public ABI compatibility and must stay bounded as a
-  separate compatibility limit.
-
-## Required Work
-
-- Edit only `howl-vt/src/kitty/graphics.zig` and
-  `howl-vt/src/test/terminal_graphics.zig` unless a stop condition is hit.
-- No public ABI changes.
-- No render or host changes.
-- No image identity redesign.
-- Count decoded protocol storage from:
-  - image decoded payloads.
-  - frame decoded payloads.
-  - current decoded override payloads.
-  - in-flight decoded upload bytes.
-- `ensureDecodedPayloadStore` must evict safe unplaced images before returning
-  `ConsequenceLimit`.
-- Preserve images with physical placements.
-- Preserve images with virtual placements.
-- Replacement of the same image id must count decoded bytes freed by the old image, old
-  frames, and current decoded override.
-- Eviction must remove image data, frames, and current override payloads.
-- Keep retained/base64 quota as compatibility-only bound.
-- Add assertions around decoded/retained accounting after store/evict paths where useful.
-
-## Tests Required
-
-- Decoded quota evicts an unplaced image.
-- Decoded quota preserves physical placement.
-- Decoded quota preserves virtual placement.
-- Decoded quota replacement counts freed bytes.
-- Decoded quota eviction removes frames and current override.
-- Existing retained quota and decoded ABI tests remain green.
-
-## Out Of Scope
-
-- Render raster cache policy.
-- Host changes.
-- Public ABI changes.
-- Full Kitty internal id/ref/LRU redesign.
-- Access-time/LRU implementation; keep first slice conservative and source-backed.
-
-## Verification
-
-- `zig build test --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-vt` (`636/636` tests).
 - `zig build test:regression:build --summary all` in `howl-vt`.
 - Root `zig build --summary all`.
-- Root and `howl-vt` `git diff --check`.
+- Root `git diff --check`.
+- `howl-vt git diff --check`.
 
-## Stop Conditions
-
-- Stop if decoded quota requires changing public `howl_vt.h`.
-- Stop if eviction cannot be made safe without full internal image/ref identity redesign.
-- Stop if render cache policy becomes necessary.
-- Stop if old base64 compatibility bytes would change.
+Next work must start with research and a freshly promoted single slice.
