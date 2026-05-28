@@ -950,19 +950,23 @@ Problem:
 - The simple PNG proof covers one RGBA fixture only.
 - A narrow fixed-fixture mode matrix can prove common PNG mode normalization without broad color-management or decoder replacement work.
 
-Promoted PNG mode matrix VT proof slice:
+Palette PNG blocker found:
 
-- Add fixed inline base64 fixtures for `RGBA`, `RGB`, `L`, and `P` mode PNGs.
+- The fixed `P` fixture is rejected by current `stb_image` validation as `EBADPNG` while Kitty/libpng expands it.
+- This is a decoder behavior dependency and is deferred instead of widening this proof slice.
+
+Promoted PNG non-palette mode matrix VT proof slice:
+
+- Add fixed inline base64 fixtures for `RGBA`, `RGB`, and `L` mode PNGs.
 - For each fixture, exercise current-frame publication and assert normalized raw RGBA output.
 - Keep the slice VT tests-only unless a simple fixture exposes a real decode mismatch.
-- Leave render decode matrix, gamma/ICC/color management, 16-bit/interlace/APNG, PNG zlib, ABI, host, and storage-model changes out of scope.
+- Leave palette PNG, render decode matrix, gamma/ICC/color management, 16-bit/interlace/APNG, PNG zlib, ABI, host, and storage-model changes out of scope.
 
 PNG mode matrix acceptance tests:
 
 - RGBA PNG fixture publishes expected RGBA base64.
 - RGB PNG fixture publishes expected RGBA base64 with alpha `ff`.
 - L PNG fixture publishes expected grayscale-expanded RGBA base64.
-- P PNG fixture publishes expected palette-expanded RGBA base64.
 
 ## Howl-Only Hacks
 

@@ -1,4 +1,4 @@
-# Current Slice: PNG Mode Matrix VT Proof
+# Current Slice: PNG Non-Palette Mode Matrix VT Proof
 
 Owner: workspace root.
 
@@ -8,7 +8,7 @@ Promoted from `graphics-machinery-scratchpad.md` after PNG mode matrix research.
 
 ## Goal
 
-Prove VT PNG normalization handles fixed RGBA, RGB, grayscale, and palette PNG fixtures as RGBA output, matching Kitty's mode-matrix intent.
+Prove VT PNG normalization handles fixed RGBA, RGB, and grayscale PNG fixtures as RGBA output. Palette PNG is blocked by the current stb decoder behavior and is deferred.
 
 ## Target Files
 
@@ -17,7 +17,7 @@ Prove VT PNG normalization handles fixed RGBA, RGB, grayscale, and palette PNG f
 
 ## Required Behavior
 
-- Fixed PNG fixtures for `RGBA`, `RGB`, `L`, and `P` decode to expected RGBA bytes.
+- Fixed PNG fixtures for `RGBA`, `RGB`, and `L` decode to expected RGBA bytes.
 - VT current-frame publication normalizes each PNG fixture to raw RGBA `format=32`, `width=5`, `height=3`, and expected base64 payload.
 - Existing invalid PNG, simple PNG, and valid PNG query behavior remains green.
 
@@ -27,6 +27,7 @@ Prove VT PNG normalization handles fixed RGBA, RGB, grayscale, and palette PNG f
 - Prefer tests only.
 - Do not replace stb_image or add libpng.
 - Do not broaden into gamma/ICC/color-management, 16-bit, interlace, APNG, or file/temp/shm lifecycle parity.
+- Do not attempt palette `P` PNG parity in this slice; current fixed palette fixture exposes a decoder dependency.
 - Do not add PNG zlib support.
 - Do not change decoded PNG root storage/model truth.
 - Do not change indirect media lifecycle, animation, quiet, delete/reset, quota, composition, generated placeholder behavior, or EBADPNG handling.
@@ -35,7 +36,7 @@ Prove VT PNG normalization handles fixed RGBA, RGB, grayscale, and palette PNG f
 
 ## Required Tests
 
-- Add fixed inline fixtures for `RGBA`, `RGB`, `L`, and `P` PNG modes.
+- Add fixed inline fixtures for `RGBA`, `RGB`, and `L` PNG modes.
 - For each fixture, upload a raw/RGBA root image, upload the PNG as frame 2, select frame 2, and assert `format=32`, `width=5`, `height=3`, and expected RGBA base64.
 
 ## Verification Required
@@ -46,4 +47,4 @@ Prove VT PNG normalization handles fixed RGBA, RGB, grayscale, and palette PNG f
 
 Stop condition:
 
-- If `stb_image` differs from Kitty/libpng for these simple 8-bit fixtures, stop and report a decoder dependency instead of widening the slice.
+- If `stb_image` differs from Kitty/libpng for these non-palette 8-bit fixtures, stop and report a decoder dependency instead of widening the slice.
