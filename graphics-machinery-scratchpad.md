@@ -511,6 +511,12 @@ Frame delete promotion acceptance tests:
 - Uppercase `d=F` with no extra frames deletes the image.
 - Missing or too-large `r=` deletes Kitty's normalized target frame.
 
+Frame delete promotion slice completed:
+
+- `howl-vt` commit `fd0b49e vt: promote deleted graphics frames`.
+- Root commit `3d7d211 design: update graphics frame deletion`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ### 6. Render-layer sorting and grouping differs from Kitty
 
 Severity: medium.
@@ -549,6 +555,30 @@ Acceptance tests:
 What not to do:
 
 - Do not delete placeholder render code before normal generated placements exist.
+
+Render-order ABI research:
+
+- Kitty `grman_update_layers` sorts visible refs by `z_index`, image internal id, then ref internal id before computing layer groups.
+- Howl render currently sorts by `z_index`, public `image_id`, public `placement_id`, and publication ordinal.
+- Howl VT now has internal placement `ref_id`, including stable parent refs and preservation across placement updates/kind conversions, but the C ABI does not publish it.
+- Client `placement_id` is not ref identity: anonymous `p=0` refs all share it, and client ids can be out of creation/ref order.
+- Generated placeholder placements are still publication-derived, not persistent refs. For this slice, they can publish a stable render-order key derived from the virtual placement ref plus run order without becoming stored refs.
+
+Promoted render-order ABI slice:
+
+- Add a render-order/ref key field to `HowlVtGraphicsPlacement` and mirror it in render's `FfiVtGraphicsPlacement`/prepared placement state.
+- Physical placements publish `Placement.ref_id`.
+- Generated placeholder placements publish a nonzero stable key derived from source virtual placement ref and run order.
+- Render sorts same-layer placements by `z_index`, `image_id`, render-order key, then ordinal.
+- Keep layer bands, raster decode, host event flow, and generated placeholder persistence unchanged.
+
+Render-order ABI acceptance tests:
+
+- VT publishes distinct nonzero render-order keys for multiple anonymous same-image placements.
+- Updating or converting a nonzero placement preserves the render-order key.
+- Generated placeholder placements publish stable render-order keys.
+- Render sorts same-z same-image placements by render-order key rather than client placement id.
+- Render uses publication ordinal only as final tie-break for equal render-order keys.
 
 ## Howl-Only Hacks
 
