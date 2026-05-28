@@ -1939,6 +1939,38 @@ Decoded quota research:
   implementation slice until the boundary between observable protocol behavior and
   internal cleanup is source-backed.
 
+Access-order quota research:
+
+- Verdict: first follow-up slice is worker-ready and owned by `howl-vt`, but it must stay
+  narrower than full image identity/ref/LRU redesign.
+- Kitty source truth: `Image.atime` and `Image.used_storage` live on each image;
+  `apply_storage_quota` first removes trim candidates, then sorts remaining candidates by
+  oldest `atime`; `atime` is updated on load, put, and cell-image realization, not every
+  render walk.
+- Ghostty source truth: storage eviction builds candidates with placement-used status and
+  transmit time, prioritizes unused images first, then oldest transmit time, and removes
+  image plus placements if selected. Its candidate-list allocation and exact-byte edge are
+  not shapes to copy into Howl.
+- Howl current truth: after decoded quota eviction, Howl evicts only safe unplaced images
+  and scans array order. Array order is not access order once an older image is placed or
+  otherwise used and then later becomes unplaced again.
+- Boundary decision for the next slice: add VT-owned monotonically increasing image access
+  order and use it only to order currently safe unplaced quota victims. Do not evict placed
+  images, do not change public ABI, do not replace current image-number semantics, and do
+  not implement full internal ids/refs.
+- Required work: add image access order state, mark access on root image load/reload and
+  successful physical/virtual placement upsert, and choose oldest-accessed unplaced image
+  for retained and decoded quota eviction. Existing generated placeholder publication does
+  not mutate VT state, so Kitty cell-realization atime parity remains a follow-up unless a
+  materialization slice is promoted.
+- Required tests: prove decoded quota evicts the least-recently-accessed unplaced image,
+  prove retained quota uses the same access order, prove a successful placement access can
+  make an older image survive after its placement is deleted, and keep placed-image
+  preservation tests green.
+- Stop conditions: stop if this requires public ABI changes, placed-image eviction,
+  full internal image/ref identity redesign, generated placeholder materialization, or
+  renderer/host changes.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
