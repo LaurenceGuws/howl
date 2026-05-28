@@ -893,6 +893,37 @@ Simple PNG exact RGBA slice completed:
 - Tests-only slice using Kitty's 1x1 PNG fixture.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 14. Valid PNG query path is not directly proved
+
+Severity: low-medium, protocol proof coverage.
+
+Kitty machinery:
+
+- `kitty/graphics.c`: query commands load/process data for validation but skip image/cache storage.
+- `kitty_tests/graphics.py`: load query returns `OK` and image count stays zero.
+- `kitty_tests/graphics.py`: simple PNG fixture is a source-backed valid PNG input.
+
+Howl current shape:
+
+- Existing tests prove raw `a=q` returns `OK` without storing.
+- Existing tests prove invalid PNG query returns `EBADPNG` without storing.
+- Existing tests prove Kitty's simple PNG fixture publishes exact RGBA through current-frame publication.
+- No test directly proves valid PNG `a=q` validates and replies `OK` without storing.
+
+Problem:
+
+- Valid PNG query is a narrow protocol path not covered by the invalid-query or publication tests.
+
+Promoted valid PNG query proof slice:
+
+- Add a tests-only VT proof using Kitty's 1x1 PNG fixture with `a=q,f=100`.
+- Assert reply is `OK` and image/placement/frame/upload state remains empty.
+- Leave PNG mode matrix, color management, decoder replacement, ABI, render, host, and unrelated graphics behavior out of scope.
+
+Valid PNG query acceptance tests:
+
+- `a=q,f=100` with Kitty's 1x1 PNG fixture replies `OK` and stores no graphics state.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
