@@ -924,6 +924,12 @@ Valid PNG query acceptance tests:
 
 - `a=q,f=100` with Kitty's 1x1 PNG fixture replies `OK` and stores no graphics state.
 
+Valid PNG query proof slice completed:
+
+- `howl-vt` commit `0649502 vt: prove png query parity`.
+- Tests-only slice.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
