@@ -1168,8 +1168,52 @@ Require-query-`i` slice completed:
 
 Research notes for later slices:
 
-- Direct raw small oversize truncation may be a future narrow slice, but needs careful Kitty `+10` buffer slack bounds.
 - Animation frame dimensions larger than the base image may be a future VT-only slice, but failure reply behavior should be researched before promotion.
+
+### 21. Direct raw oversize slack is rejected instead of truncated
+
+Severity: medium, protocol correctness.
+
+Kitty machinery:
+
+- Kitty `parse_graphics_code` base64-decodes APC payloads before graphics dispatch, so `load_image_data` receives decoded image bytes.
+- Kitty `initialize_load_data` computes raw RGB/RGBA byte count as `width * height * bytes_per_pixel`.
+- For direct uncompressed raw uploads, Kitty allocates `data_sz + 10` bytes of direct-upload buffer slack.
+- Kitty `load_image_data` rejects raw direct data that needs to grow beyond that initial slack with `EFBIG`, but accepts cumulative decoded length up to `expected_raw_len + 10`.
+- Kitty storage uses `currently_loading.data_sz`, so accepted slack bytes are ignored.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/protocol.zig`: direct payloads remain base64 text after parsing.
+- `howl-vt/src/kitty/graphics.zig`: `validateBase64RawPayload` currently requires decoded raw length to equal expected length exactly.
+- Completed chunked direct uploads concatenate base64 text and run through `normalizeDirectPayloadOwned` at completion.
+
+Problem:
+
+- Howl rejects direct raw payloads with decoded length in Kitty's accepted `expected_raw_len + 10` slack range.
+- If slack is accepted, Howl must not retain trailing slack bytes as image truth.
+
+Promoted direct raw oversize slack slice:
+
+- Accept uncompressed direct raw payloads whose decoded length is greater than expected raw length and no more than `expected_raw_len + 10`.
+- Retain/publish only the first expected raw bytes, re-encoded as base64.
+- Keep exact-length direct raw behavior unchanged.
+- Keep undersize and invalid-base64 behavior unchanged.
+- Keep larger-than-slack rejection on Howl's existing invalid raw failure path; exact Kitty `EFBIG` taxonomy is deferred.
+- Leave parser payload ownership, PNG, zlib, indirect media, ABI, render, host, storage-model, animation, frame, delete/reset, and generated-placeholder behavior out of scope.
+
+Direct raw oversize slack acceptance tests:
+
+- Single direct RGB raw upload with decoded length `expected + 10` stores only the expected bytes.
+- Single direct RGBA raw upload with decoded length `expected + 10` stores only the expected bytes.
+- Single direct raw upload with decoded length `expected + 11` rejects and stores no image.
+- Chunked direct RGB raw upload with final decoded length `expected + 10` stores only the expected bytes.
+- Chunked direct raw upload with final decoded length `expected + 11` rejects and stores no image.
+
+Research notes for later slices:
+
+- Animation frame dimensions larger than the base image is a researched VT-only candidate with high confidence; keep root-frame edit parity out of that slice.
+- Exact Kitty `EFBIG` response taxonomy for larger-than-slack direct raw remains deferred.
 
 ## Howl-Only Hacks
 
