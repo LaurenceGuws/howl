@@ -1,47 +1,43 @@
-# Current Slice: Delete-All Visible Placement Scope
+# Current Slice: Animation Runtime Edge Cases
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after delete/reset edge-case research.
+Promoted from `graphics-machinery-scratchpad.md` after animation runtime parity research.
 
 ## Goal
 
-Match Kitty delete-all selectors for visible physical placements: default `a=d`, `d=a`, and `d=A` must not delete retained/off-screen physical placements.
+Match Kitty animation runtime edge cases for loading mode, finite loop counts, and gapless frames.
 
 ## Target Files
 
-- `howl-vt/src/test/terminal_graphics.zig`
 - `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
-- Default `a=d` behaves like Kitty `d=a`.
-- `d=a` removes visible physical placements only.
-- `d=a` preserves fully scrolled-above/off-screen retained physical placements.
-- `d=A` removes visible physical placements and frees image data only for images that became unplaced because of matched visible placements.
-- `d=A` preserves image data for images that only have retained/off-screen placements.
-- Virtual and generated/cell placeholder refs remain outside this delete-all physical-placement slice unless existing behavior already deletes them by lifetime through a matched physical parent.
+- `s=2` loading mode waits on the last available frame when no future frame exists.
+- If the last-frame deadline has already passed, `s=2` advances immediately when a future frame arrives.
+- Finite `v>1` runtime looping completes the requested repeat count and does not stop before the first wrap.
+- Frames with gap `0` from negative `z` remain stored but are skipped by runtime publication.
+- Runtime publication continues to update current-frame payloads through VT-owned state only.
 
 ## Hard Constraints
 
-- Do not change frame deletion.
-- Do not change quiet response handling.
-- Do not add persistent generated cell refs.
 - Do not change ABI, render, host, parser, or terminal files.
-- Do not implement full visibility/layer ref machinery beyond delete-all visible physical placement scope.
-- Do not change RIS/reset behavior, generated placeholder publication, render sorting, or layer policy.
+- Do not change frame upload gap parsing semantics already implemented.
+- Do not change quiet response handling, delete/reset behavior, quota, composition, or generated placeholder publication.
+- Do not implement host presentation cadence or render-side animation policy.
+- Do not broaden into decoded/cache storage or PNG behavior.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- `d=a` preserves a fully scrolled-above retained physical placement.
-- Default `a=d` preserves a fully scrolled-above retained physical placement.
-- `d=A` preserves image data for an image that only has off-screen/retained placements.
-- `d=A` removes visible physical placements and frees only images that became unplaced because of matched visible placements.
-- `d=a` removes a visible parent placement and its relative descendants by lifetime.
+- Loading animation advances immediately when a future frame arrives after waiting at the last available frame.
+- Finite `v=2` two-frame animation publishes frame sequence `1 -> 2 -> 1 -> 2` before stopping on the next wrap attempt.
+- Gapless negative-`z` frame is skipped by runtime publication while remaining stored.
 
 ## Verification Required
 
@@ -51,4 +47,4 @@ Match Kitty delete-all selectors for visible physical placements: default `a=d`,
 
 Stop condition:
 
-- If correct behavior requires persistent generated refs, full render-layer visibility state, ABI changes, render changes, or host policy changes, stop and report the exact dependency instead of widening the slice.
+- If correct behavior requires host/runtime presentation policy, render changes, ABI changes, decoded/cache storage, or broader animation scheduling, stop and report the exact dependency instead of widening the slice.

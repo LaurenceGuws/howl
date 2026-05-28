@@ -770,6 +770,42 @@ Delete-all visibility slice completed:
 - `howl-vt` commit `e912e32 vt: limit delete-all to visible placements`.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 11. Animation runtime edge cases differ from Kitty
+
+Severity: medium, protocol/runtime correctness.
+
+Kitty machinery:
+
+- `kitty/graphics.c`: animation progression waits at the last frame in loading mode but advances as soon as a future frame is available after the deadline.
+- `kitty/graphics.c`: finite loop counts are consumed at wrap time after the requested repeat count.
+- `kitty/graphics.c`: frames with non-positive gap are not displayed as visible runtime frames.
+- `kitty_tests/graphics.py`: animation frame loading tests cover loading mode, loop counts, and gapless-frame behavior.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `imageRuntimeObligation`, `progressImageRuntime`, `advanceRuntimeFrame`, and `nextRuntimeFrameNumber` own VT runtime progression.
+- Existing tests cover frame gap storage and one basic runtime advance, but not loading-mode future-frame wake, finite repeat exhaustion, or gapless runtime visibility.
+
+Problem:
+
+- Howl can clear `current_frame_shown_at_ns` while loading waits at the last available frame, then wait another full gap after a future frame arrives.
+- Howl's finite-loop stop check can stop before completing the requested repeat.
+- Howl stores gapless negative-`z` frames but lacks proof that runtime skips them instead of publishing them.
+
+Promoted animation runtime edge-case slice:
+
+- Keep runtime progression VT-owned in `howl-vt/src/kitty/graphics.zig`.
+- Make loading mode preserve enough timing state to advance immediately when a future frame arrives after the current frame's deadline.
+- Fix finite loop accounting only as needed to match Kitty's requested repeat behavior.
+- Ensure runtime skips stored gapless frames and publishes the next positive-gap frame.
+- Leave ABI, render, host, parser, quiet, delete/reset, quota, composition, PNG, and generated-placeholder behavior unchanged.
+
+Animation runtime acceptance tests:
+
+- Loading animation advances immediately when a future frame arrives after waiting at the last available frame.
+- Finite `v=2` two-frame animation publishes frame sequence `1 -> 2 -> 1 -> 2` before stopping on the next wrap attempt.
+- Gapless negative-`z` frame is skipped by runtime publication while remaining stored.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
