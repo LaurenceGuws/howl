@@ -1,4 +1,4 @@
-# Current Slice: PNG Palette Fixture VT Proof
+# Current Slice: Remaining Unicode Placeholder Publication Proof
 
 Owner: workspace root.
 
@@ -6,41 +6,48 @@ Sprint scope: graphics.
 
 ## Goal
 
-Prove valid Kitty-compatible palette PNG (`P`) and palette transparency (`tRNS`)
-normalization through Howl's VT graphics publication path before considering any decoder
-replacement.
+Prove the remaining Kitty Unicode placeholder publication behaviors at Howl's VT
+generated-placement boundary, without adding persistent generated refs or touching render,
+host, or ABI code.
 
 ## Source Truth
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `utils/dev_references/terminals/kitty/kitty/png-reader.c`
+- `utils/dev_references/terminals/kitty/kitty/screen.c`
+- `utils/dev_references/terminals/kitty/kitty/graphics.c`
+- `utils/dev_references/terminals/kitty/kitty/graphics.h`
 - `utils/dev_references/terminals/kitty/kitty_tests/graphics.py`
-- `utils/official_docs/kitty/graphics-protocol.md`
-- `graphics-machinery-scratchpad.md` section `Palette PNG blocker re-research`
+- `graphics-machinery-scratchpad.md` section `Remaining Unicode placeholder publication research`
 
 ## Target Files
 
 - `howl-vt/src/test/terminal_graphics.zig`
-- `howl-vt/src/kitty/graphics.zig` only if a valid fixture exposes a direct VT-path bug
+- `howl-vt/src/kitty/graphics.zig` only if tests expose a direct VT bug
+- `howl-vt/src/terminal.zig` only if tests expose a direct VT publication/dirty bug
 
 ## Required Behavior
 
-- Tests-only unless a valid palette fixture fails through Howl's VT path.
-- Valid palette PNG input must publish normalized RGBA bytes at the VT graphics model
-  boundary.
-- Valid palette PNG with `tRNS` transparency must publish exact alpha bytes.
-- Preserve existing RGBA/RGB/L PNG normalization behavior.
-- Preserve invalid PNG `EBADPNG` behavior.
-- Do not replace the PNG decoder, add custom palette expansion, change render, ABI,
-  host, PNG zlib, color management, storage model, or dependency policy.
+- Tests-first/proof-only unless a real mismatch is exposed.
+- Third combining char must select image-id high byte and publish only matching generated
+  placements.
+- Multiple virtual placements for one image must resolve by underline placement id and
+  publish distinct generated placements with expected source geometry/order.
+- Scroll-region `index`/`reverse_index` over placeholder rows must publish surviving or
+  moved generated placements from VT cell truth.
+- Public `placeholder_run_count` remains `0`; proof-only APIs may be used only for
+  internal assembly assertions.
+- Existing generated placement dirty/publication tests remain green.
+- Do not change render, host, ABI, persistent generated refs, virtual-placement ABI
+  cleanup, storage model, PNG/media, animation, or unrelated parser behavior.
 
 ## Required Tests
 
-- Fixed palette PNG fixture publishes expected palette-expanded RGBA base64.
-- Fixed palette PNG with `tRNS` publishes expected RGBA base64 with transparent alpha.
-- Existing PNG normalization tests remain green.
-- Existing invalid PNG `EBADPNG` tests remain green.
+- Third-combining-char high-byte image id publication proof.
+- Multiple virtual placements for one image and underline placement id publication proof.
+- Scroll-region `index` over placeholder rows publication proof.
+- Scroll-region `reverse_index` over placeholder rows publication proof.
+- Public graphics meta still reports `placeholder_run_count == 0`.
 
 ## Verification Required
 
@@ -52,7 +59,6 @@ replacement.
 
 Stop condition:
 
-- If a valid palette fixture is rejected by direct vendored stb but accepted by
-  Kitty/libpng, stop and report the decoder policy slice needed.
-- If proving parity requires adding/replacing a PNG decoder, ABI/render/host changes,
-  color-management policy, or storage-model work, stop and split the work.
+- If correctness requires render-side placeholder parsing, ABI changes, persistent
+  generated refs, host viewport/render behavior, or broad terminal-screen redesign, stop
+  and report the smaller source-backed slice needed.

@@ -749,6 +749,51 @@ Generated placement dirty/publication proof slice completed:
 - Tests-only slice; no persistent refs, ABI, render, host, or terminal implementation changes.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+Remaining Unicode placeholder publication research:
+
+- Current VT already publishes placeholder-derived generated placements through normal
+  graphics placement publication, including generated flags, destination geometry, and
+  stable render-order keys.
+- Render now consumes normal placement streams and sorts by `z_index`, `image_id`,
+  render-order key, and ordinal; the old named render placeholder helpers are no longer
+  present.
+- The remaining gap is proof against the rest of Kitty's Unicode placeholder behavior,
+  not a render-side protocol interpreter deletion.
+- Persistent Kitty-style generated cell refs remain future work. The next slice should
+  not add them unless tests prove on-demand VT publication cannot match observable
+  behavior.
+
+Promoted remaining Unicode placeholder publication proof slice:
+
+- VT-only, tests-first/proof-only unless a real mismatch is exposed.
+- Port remaining Kitty Unicode placeholder behavior at the VT generated-placement
+  publication boundary.
+- Target `howl-vt/src/test/terminal_graphics.zig` first; fix only direct VT bugs in
+  `howl-vt/src/kitty/graphics.zig` or `howl-vt/src/terminal.zig` if tests expose them.
+- Do not touch render, ABI, host, virtual-placement ABI cleanup, or persistent generated
+  refs in this slice.
+
+Remaining Unicode placeholder acceptance tests:
+
+- Third combining char selects image-id high byte and publishes only matching generated
+  placements.
+- Multiple virtual placements for one image resolve by underline placement id and publish
+  distinct generated placements with expected source geometry/order.
+- Scroll-region `index`/`reverse_index` over placeholder rows publishes surviving/moved
+  generated placements from VT cell truth.
+- Public `placeholder_run_count` remains `0`; proof-only APIs may be used only for
+  internal assembly assertions.
+- Existing generated placement dirty/publication tests remain green.
+
+Stop conditions:
+
+- Stop if correctness requires render-side placeholder parsing.
+- Stop if correctness requires ABI changes.
+- Stop if correctness requires persistent generated refs rather than on-demand VT
+  publication.
+- Stop if the scroll-region case depends on host viewport/render behavior rather than VT
+  cell truth.
+
 ### 10. Delete-all selectors are broader than Kitty visibility scope
 
 Severity: medium, protocol correctness.
