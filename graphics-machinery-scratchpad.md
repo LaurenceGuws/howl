@@ -633,6 +633,47 @@ Frame-gap semantics slice completed:
 - `howl-vt` commit `f911699 vt: match kitty frame gaps`.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 8. Quiet response modes collapse `q=1` and `q=2`
+
+Severity: medium, protocol correctness.
+
+Kitty machinery:
+
+- `kitty_tests/graphics.py`: `test_suppressing_gr_command_responses` covers `q=1` success suppression and `q=2` failure suppression.
+- `utils/official_docs/kitty/graphics-protocol.md`: `q=1` suppresses `OK`; `q=2` suppresses failure responses.
+
+Howl current shape:
+
+- `howl-vt/src/action/vocabulary.zig`: `KittyGraphicsCommand.quiet` is `bool`.
+- `howl-vt/src/kitty/protocol.zig`: parser sets `quiet = parseU32(q) != 0`, collapsing `q=1` and `q=2`.
+- `howl-vt/src/kitty/graphics.zig`: reply sites use `if (!cmd.quiet)` for both successes and failures.
+- `howl-vt/src/test/action_mapping.zig`: current parser test only proves nonzero `q` becomes true.
+
+Problem:
+
+- Howl suppresses all replies for both `q=1` and `q=2`.
+- Kitty emits failures for `q=1` and emits successes for `q=2`.
+- Chunked uploads need to preserve the initiating quiet mode until the final response.
+
+Promoted quiet response mode slice:
+
+- Replace the boolean command quiet state with a small numeric/enum quiet mode.
+- Centralize success/failure suppression enough to avoid ad hoc `q=1`/`q=2` mistakes across reply sites.
+- Preserve existing reply text, image id, placement id, image number, and mutation behavior except for suppression rules.
+- Leave PNG error taxonomy, decode/storage, delete/reset behavior, animation runtime, frame gaps, and ABI/render/host code unchanged.
+
+Quiet response acceptance tests:
+
+- Parser/action mapping keeps `q=0`, `q=1`, and `q=2` distinct.
+- Invalid direct upload with `q=1` still emits an error.
+- Invalid direct upload with `q=2` emits no error.
+- Successful upload/query/placement with `q=1` emits no `OK`.
+- Successful upload/query/placement with `q=2` still emits `OK`.
+- Failed final chunk with initiating `q=1` emits an error.
+- Failed final chunk with initiating `q=2` emits no error.
+- Missing image/frame/parent errors with `q=2` emit no error.
+- Successful animation/frame control with `q=1` emits no `OK`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
