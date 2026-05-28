@@ -1279,6 +1279,16 @@ Direct raw `EFBIG` acceptance tests:
 - Existing `expected + 10` slack tests, undersize tests, and invalid-base64 tests remain
   green with their existing behavior.
 
+Direct raw `EFBIG` taxonomy slice completed:
+
+- `howl-vt` commit `e2b76f2 vt: report oversized raw graphics`.
+- Review rejected the first pass because invalid base64 with a large calculated decoded
+  length was classified before base64 decode validation; the accepted implementation
+  decodes before returning `EFBIG`, preserving invalid-base64 `EINVAL` taxonomy.
+- Verification passed: `zig build test --summary all`,
+  `zig build test:regression:build --summary all`, root `zig build`, root
+  `git diff --check`, and `howl-vt` `git diff --check`.
+
 ### 22. Animation frame dimensions may exceed base image dimensions
 
 Severity: medium, protocol correctness.
