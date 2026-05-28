@@ -1005,6 +1005,11 @@ Ignore-indirect-`m` acceptance tests:
 - Temp-file medium `t=t,m=1` loads, stores payload, deletes the safe temp file, and leaves no active upload.
 - Shared-memory medium `t=s,m=1` loads, stores payload, unlinks the object, and leaves no active upload.
 
+Ignore-indirect-`m` slice completed:
+
+- `howl-vt` commit `21fb500 vt: ignore chunks for indirect graphics`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
