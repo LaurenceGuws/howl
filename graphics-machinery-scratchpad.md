@@ -794,6 +794,17 @@ Stop conditions:
 - Stop if the scroll-region case depends on host viewport/render behavior rather than VT
   cell truth.
 
+Remaining Unicode placeholder publication proof slice completed:
+
+- `howl-vt` commit `70015a6 vt: prove unicode placeholder publication`.
+- Tests-only slice proving high-byte third-combining-char selection, underline placement
+  id resolution across multiple virtual placements, scroll-region `index` and
+  `reverse_index` publication, and public `placeholder_run_count == 0`.
+- No implementation, render, ABI, host, or persistent generated-ref changes were needed.
+- Verification passed: `zig build test --summary all`,
+  `zig build test:regression:build --summary all`, root `zig build`, root
+  `git diff --check`, and `howl-vt` `git diff --check`.
+
 ### 10. Delete-all selectors are broader than Kitty visibility scope
 
 Severity: medium, protocol correctness.
