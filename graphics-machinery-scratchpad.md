@@ -1890,6 +1890,17 @@ Base64 compatibility retirement research:
   compatibility publication for old ABI copy/query APIs.
 - Stop conditions: no old ABI byte changes, no render/host changes, no quota/eviction
   redesign, no broad frame graph rewrite.
+- VT decoded-truth cleanup completed in `howl-vt` commit `e944cdc vt: coalesce graphics
+  from decoded payloads`.
+- Accepted behavior: VT internal image/frame coalescing now reads decoded payload bytes,
+  not old compatibility base64/protocol bytes. Old public payload query/copy ABI remains
+  byte-compatible through `legacy_payload`; decoded query/copy remains unchanged.
+- Verification passed after main-agent review cleanup removing dead base64 RGBA helpers:
+  `zig build test --summary all` in `howl-vt`, `zig build test:regression:build --summary
+  all` in `howl-vt`, root `zig build --summary all`, root `git diff --check`, and
+  `howl-vt git diff --check`.
+- Next safe work: research decoded storage quota/eviction now that VT decoded bytes are
+  model truth. Keep render raster cache quota separate unless source proves dependency.
 
 ## Completed Or Stale Graphics Backlog
 

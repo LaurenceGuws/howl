@@ -1,13 +1,24 @@
-# Current Slice: VT Graphics Decoded-Truth Internal Cleanup
+# Current Slice: Graphics Decoded Quota Research
 
-Owner: howl-vt.
+Owner: workspace research; likely future owner is howl-vt first, with render cache policy
+as a later separate owner.
 
 Sprint scope: graphics.
 
 ## Goal
 
-Make VT decoded graphics bytes the internal image/frame/coalescing truth while preserving
-the existing public base64/protocol payload ABI exactly.
+Design the next source-backed step after VT decoded-truth cleanup: decoded graphics
+storage quota and eviction semantics that match Kitty/Ghostty ownership without widening
+into render cache policy too early.
+
+## Completed Dependency State
+
+- VT direct chunks accumulate decoded transport bytes.
+- VT exposes decoded graphics query/copy ABI.
+- Render accepts decoded graphics commit-slot ABI.
+- Linux host publishes decoded graphics end-to-end.
+- VT coalesces frames from decoded bytes instead of legacy base64 compatibility bytes.
+- Old base64/protocol payload ABIs remain compatibility paths.
 
 ## Source Truth
 
@@ -15,71 +26,46 @@ the existing public base64/protocol payload ABI exactly.
 - `loop.txt`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `graphics-machinery-scratchpad.md`
-- `howl-vt/include/howl_vt.h`
-- `howl-vt/src/ffi.zig`
 - `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
+- `howl-vt/include/howl_vt.h`
+- `howl-render/src/frame/graphics_prepare.zig`
 - `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty/graphics.h`
-- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
 - `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_storage.zig`
+- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
 
-## Source Findings
+## Research Questions
 
-- Old VT base64/protocol payload query/copy APIs are public ABI compatibility and must
-  remain byte-for-byte stable.
-- In-tree host/render now use decoded graphics bytes end-to-end.
-- VT `Image.base64_payload`, `Frame.base64_payload`, and `current_override_payload` are
-  now internal compatibility-publication bytes, not product/model truth.
-- Frame coalescing still decodes from legacy base64 payload fields, which keeps base64 as
-  internal frame graph truth and contradicts Kitty/Ghostty decoded-byte ownership.
-- Render already isolates legacy vs decoded paths with payload kind; no render cleanup
-  should precede VT decoded-truth cleanup unless tests expose a render bug.
+- What exact storage/quota bytes does Kitty account for images, frames, loading data,
+  cache entries, and rendered data?
+- What exact eviction priority does Kitty use for incomplete, unreferenced, placed,
+  animated, and recently used images?
+- What exact storage/quota model does Ghostty implement for decoded images and placements?
+- Which Howl VT decoded/legacy/upload fields should count toward VT-owned protocol
+  storage quota now that decoded bytes are model truth?
+- What can remain a conservative bound for compatibility bytes until old ABI retirement?
+- What is the smallest VT-only quota/eviction slice with tests?
 
-## Required Work
+## Required Output
 
-- VT-only, ABI-preserving.
-- Separate decoded/model payload ownership from legacy compatibility payload ownership in
-  naming and use.
-- Stop using legacy base64/protocol payload bytes as the source for frame coalescing.
-- Coalesce frames from decoded image/frame bytes.
-- Preserve old ABI payload bytes for direct raw, normalized raw, zlib, indirect raw, PNG,
-  and current-frame publication.
-- Preserve decoded ABI metadata and payload bytes.
-- Add assertions around decoded length, legacy length, and format/dimension coherence.
-- Keep compatibility bytes bounded under existing retained payload limits.
-
-## Tests Required
-
-- Old payload copy remains byte-for-byte unchanged for direct raw.
-- Decoded copy remains raw bytes for direct raw.
-- PNG old payload remains original protocol/base64 bytes while decoded payload is RGBA.
-- Zlib/normalized raw old payload and decoded payload remain coherent.
-- Current-frame publication coalesces from decoded truth and preserves old ABI bytes.
-- Stale publication and invalid image index behavior remains unchanged for old and decoded
-  APIs.
+- Research only. Do not edit product code.
+- Return source-backed findings with exact file/line references.
+- Separate VT protocol/storage quota from render raster cache quota.
+- Draft one worker-ready VT implementation slice if safe.
 
 ## Out Of Scope
 
+- No code implementation in this slice.
+- No render cache redesign unless research proves it must precede VT quota.
 - No public ABI changes.
-- No render or host changes.
-- No quota/eviction redesign.
-- No PNG decoder replacement.
-- No persistent generated refs.
-- No broad frame graph rewrite beyond decoded-truth coalescing.
-- No old compatibility API removal or deprecation.
+- No host changes.
 
 ## Verification
 
-- `zig build test --summary all` in `howl-vt`.
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- Root `zig build --summary all`.
-- Root and `howl-vt` `git diff --check`.
+- Scratchpad update must pass root `git diff --check`.
 
-## Stop Conditions
+Stop conditions:
 
-- Stop if old ABI bytes would change.
-- Stop if compatibility bytes cannot remain bounded.
-- Stop if render/host changes become necessary.
-- Stop if broad frame graph redesign is required.
+- Stop if quota/eviction cannot be sliced without broad image identity/ref redesign.
+- Stop if source truth requires a render cache policy decision first.
