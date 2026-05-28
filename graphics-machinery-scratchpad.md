@@ -332,6 +332,12 @@ Image-number identity acceptance tests:
 - Chunked `a=f,I=<number>` stores a frame on the newest image captured by the first chunk.
 - Missing `a=f,I=<number>` target replies not found and does not allocate an image.
 
+Image-number identity slice completed:
+
+- `howl-vt` commit `4fc2e74 vt: allocate graphics image numbers safely`.
+- Root commit `ba0ba8a design: update graphics image identity`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ### 5. Frame, animation, and compose machinery is partial
 
 Severity: medium.
@@ -384,6 +390,34 @@ Acceptance tests:
 What not to do:
 
 - Do not bolt runtime policy into render leaf helpers.
+
+Frame compose research:
+
+- Kitty source truth: `handle_compose_command`, `compose_rectangles`, `get_coalesced_frame_data`, `frame_for_number`, and `update_current_frame` in `kitty/graphics.c`.
+- Kitty docs define `a=c` composition: source frame `r=`, destination frame `c=`, rectangle size `w/h`, destination offset `x/y`, source offset `X/Y`, and operation `C=1` for replacement or default alpha blend.
+- Kitty treats frame `1` as the root image frame; source or destination may be root.
+- Kitty validates missing image/frame as `ENOENT`, out-of-bounds rectangles as `EINVAL`, and same-frame overlapping rectangles as `EINVAL`.
+- Kitty fully coalesces the destination frame after compose and refreshes the current publication if the destination is current.
+- Howl currently rejects `a=c` in `State.handle`, but already has retained root/frame payloads, frame coalescing helpers, raw/RGBA compose helpers, and current-frame publication refresh.
+- Howl parser currently maps `X` to frame-load compose mode and cell x offset, `Y` to background RGBA and cell y offset, and `C` to put cursor policy. The compose slice must source `a=c` replacement mode from `C` without breaking existing `a=T` cursor movement or `a=f` frame-load `X=1` semantics.
+
+Promoted frame compose slice:
+
+- VT-only, ABI-preserving.
+- Add `a=c` handling in `howl-vt/src/kitty/graphics.zig`.
+- Adjust parser/vocabulary only as much as needed to distinguish `a=c,C=1` compose replacement from existing put cursor policy and frame-load `X=1` replacement.
+- Implement root/source/destination frame coalescing, rectangle bounds checks, same-frame overlap rejection, replacement/alpha blend, destination storage, and current-frame publication refresh.
+- Leave decoded cache storage, disk cache quota parity, visibility-driven animation runtime, and full frame graph rewrite for later slices.
+
+Frame compose acceptance tests:
+
+- Compose root frame `r=1` into destination frame `c=2` and store the fully composed destination payload.
+- Compose a source-frame sub-rectangle into a destination-frame sub-rectangle using Kitty offsets.
+- `C=1` replacement differs from default alpha blending for RGBA source data.
+- Missing image/source/destination fails without mutation.
+- Out-of-bounds source or destination rectangles fail without mutation.
+- Same-frame overlapping rectangles fail without mutation.
+- Composing into the selected current frame refreshes publication.
 
 ### 6. Render-layer sorting and grouping differs from Kitty
 

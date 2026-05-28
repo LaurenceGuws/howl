@@ -1,34 +1,37 @@
-# Current Slice: VT Graphics Image-Number Identity
+# Current Slice: VT Graphics Frame Compose Action
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` item 4 after image-number identity research.
+Promoted from `graphics-machinery-scratchpad.md` item 5 after frame/animation compose research.
 
 ## Goal
 
-Match Kitty's observable image-number identity semantics without changing ABI: `I=` uploads allocate a free client image id without colliding with explicit `i=` images, while frame uploads by `I=` target the newest existing image instead of allocating a new one.
+Implement Kitty's `a=c` graphics frame composition without changing ABI: compose a rectangular region from a source frame onto a destination frame in VT-owned retained frame state, and refresh the published current frame when the destination is visible.
 
 ## Target Files
 
 VT only:
 
 - `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/kitty/protocol.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
 - Keep `howl_vt.h`, render, and hosts unchanged.
 - Preserve image publication ABI and payload-copy behavior.
-- `a=t/T,I=<number>` with no `i=` allocates the lowest free positive client image id.
-- `I=` allocation must not replace or delete an existing explicit `i=` image.
-- Repeated `I=<number>` uploads create distinct client ids; future `I=<number>` references resolve to the newest matching image.
-- Reusing a freed client id is allowed when it is the lowest free positive id.
-- `a=f,I=<number>` stores the frame on the newest existing image with that number.
-- Chunked `a=f,I=<number>` stores the frame on the same resolved existing image captured by the first chunk.
-- Missing-image frame uploads by `I=` must not allocate a new image.
-- Existing generated-placeholder, virtual-placement, quota, delete-selector, frame, and replacement behavior remains green.
+- `a=c` resolves the target image by `i=` or newest `I=` using existing image lookup rules.
+- Source frame is `r=<number>`; destination frame is `c=<number>`; frame `1` is the root image.
+- Rectangle size is `w=<pixels>,h=<pixels>`, defaulting to the full image dimensions when omitted.
+- Destination offset is `x=<pixels>,y=<pixels>`; source offset is `X=<pixels>,Y=<pixels>`.
+- `C=1` uses simple replacement; default `C=0` alpha-blends the source over destination where format supports alpha.
+- Missing image/source/destination replies with `ENOENT` and does not mutate state.
+- Out-of-bounds rectangles reply with `EINVAL` and do not mutate state.
+- Same-frame overlapping source/destination rectangles reply with `EINVAL` and do not mutate state.
+- Composing into the selected/current frame refreshes the render-facing published image payload.
+- Existing generated-placeholder, virtual-placement, quota, delete-selector, image-number, frame loading, and replacement behavior remains green.
 
 ## Hard Constraints
 
@@ -37,17 +40,19 @@ VT only:
 - Do not introduce the full internal id/ref/cache rewrite.
 - Do not change placement identity or render-facing publication structs.
 - Do not solve anonymous `image_id == 0` multi-image identity in this slice.
+- Do not add runtime scheduling policy or visibility-driven animation changes.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- `I=` upload after existing `i=1` assigns a non-colliding free id and preserves `i=1`.
-- Repeated `I=<number>` uploads assign distinct ids and placement by `I=<number>` targets the newest image.
-- `I=` allocation reuses the lowest freed positive client id.
-- Direct `a=f,I=<number>` stores a frame on the newest matching image.
-- Chunked `a=f,I=<number>` stores a frame on the newest matching image captured by the first chunk.
-- Missing `a=f,I=<number>` target replies not found and does not allocate an image.
+- Compose root frame `r=1` into destination frame `c=2` and store the fully composed destination payload.
+- Compose a source-frame sub-rectangle into a destination-frame sub-rectangle using `X/Y` as source offset and `x/y` as destination offset.
+- `C=1` replacement differs from default alpha blending for RGBA source data.
+- Missing image, missing source frame, and missing destination frame fail without mutation.
+- Out-of-bounds source or destination rectangles fail without mutation.
+- Same-frame overlapping rectangles fail without mutation.
+- Composing into the currently selected destination frame refreshes `graphicsImageAt` publication.
 
 ## Verification Required
 
@@ -57,4 +62,4 @@ VT only:
 
 Stop condition:
 
-- If correct image-number behavior requires full internal image/ref identity or render ABI changes, stop and report the exact dependency instead of widening the slice.
+- If correct compose behavior requires decoded/cache storage, full internal frame graph surgery, or render ABI changes, stop and report the exact dependency instead of widening the slice.
