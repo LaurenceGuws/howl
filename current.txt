@@ -1,43 +1,49 @@
-# Current Slice: VT Graphics Parser Validation
+# Current Slice: VT Graphics Quota Eviction
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` item 3 after placeholder assembly proof was recorded in root `f83947d`.
+Promoted from `graphics-machinery-scratchpad.md` item 4 after identity/quota research was recorded in root `0095a75`.
 
 ## Goal
 
-Make Kitty graphics control-block parsing reject malformed syntax and invalid flag/integer domains before graphics state mutation, matching Kitty `parse_graphics_code` behavior for parser validation.
+Add ABI-preserving VT-owned Kitty graphics quota eviction for safe candidates before retained-payload limits fail uploads.
 
 ## Target Files
 
-VT:
+VT only:
 
-- `howl-vt/src/kitty/protocol.zig`
-- `howl-vt/src/action/vocabulary.zig`
 - `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/test/action_mapping.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
-- Valid existing graphics commands continue parsing and handling unchanged.
-- Unknown graphics control keys fail parsing and do not reach `State.handle`.
-- Missing `=`, empty fields, trailing comma/incomplete field, malformed separators, invalid flag bytes, empty integer values, non-digit unsigned values, invalid signed values, and overlarge integer values fail parsing.
-- Invalid parser input must not mutate graphics image/placement/upload state.
-- Invalid parser input must not emit graphics protocol replies; Kitty parser logs and does not call `screen_handle_graphics_command`.
-- `a`, `d`, `t`, and `o` flag domains match Kitty's generated parser.
-- `q`, `m`, `C`, and `U` remain integer fields where nonzero maps to true for Howl's bool fields.
+- Keep `howl_vt.h`, render, and hosts unchanged.
+- Keep public `image_id`, `image_number`, `placement_id`, publication order, and payload-copy behavior unchanged.
+- Before returning retained-payload `ConsequenceLimit`, evict safe candidates where possible.
+- First-slice eviction order is conservative: incomplete/aborted upload state if applicable, then unplaced images and their frames/current-frame override payloads.
+- Do not evict images that have physical placements or virtual placements in this slice.
+- Replacement of an existing `image_id` must count bytes freed by the replacement before failing quota.
+- Evicting an image must remove its frames and any current-frame/override payload state.
+- Existing image-number newest lookup, replacement, delete selector, generated-placeholder, and publication behavior must remain green.
 
 ## Hard Constraints
 
-- Do not edit render or host in this slice.
-- Do not reinterpret placeholder protocol diacritics.
-- Do not move base64 payload decoding into the parser in this slice; preserve existing payload ownership unless required for a syntax gate.
-- Do not add renderer-side corrections.
-- Do not make invalid parser input become an `EINVAL` graphics reply; it should fail before state handling.
+- Do not edit render or host.
+- Do not edit `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi.zig`, or `howl-vt/src/terminal.zig` unless a compile blocker proves otherwise.
+- Do not introduce the full internal id/ref/cache rewrite in this slice.
+- Do not treat base64 transport payload as the desired long-term product model, but keep the current payload-copy ABI unchanged for this slice.
+- Do not evict images with physical or virtual placements yet.
+- Do not special-case yazi/panes.
 - Keep the smallest correct diff.
+
+## Required Tests
+
+- Quota evicts an unplaced image before failing or touching a placed image.
+- Quota preserves placed images and returns `ConsequenceLimit` when only placed images could make room.
+- Replacement of the same `image_id` succeeds when it fits after subtracting bytes freed by the old image.
+- Evicting an unplaced image also removes its frames and current-frame/override payload state.
 
 ## Verification Required
 
@@ -47,4 +53,4 @@ VT:
 
 Stop condition:
 
-- If exact Kitty parser behavior conflicts with an existing shipped Howl command shape, stop and report the command and source reference instead of preserving permissive parsing silently.
+- If implementing quota safely requires changing the public graphics ABI or evicting placed images, stop and report the exact dependency instead of widening the slice.
