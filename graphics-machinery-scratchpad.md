@@ -1210,6 +1210,11 @@ Direct raw oversize slack acceptance tests:
 - Chunked direct RGB raw upload with final decoded length `expected + 10` stores only the expected bytes.
 - Chunked direct raw upload with final decoded length `expected + 11` rejects and stores no image.
 
+Direct raw oversize slack slice completed:
+
+- `howl-vt` commit `a086dd2 vt: truncate direct raw graphics slack`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 Research notes for later slices:
 
 - Animation frame dimensions larger than the base image is a researched VT-only candidate with high confidence; keep root-frame edit parity out of that slice.
