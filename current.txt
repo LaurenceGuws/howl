@@ -1,4 +1,4 @@
-# Current Slice: Placeholder Combining Marks And Generated Row Geometry
+# Current Slice: Kitty Graphics Parser Validation
 
 Owner: workspace root.
 
@@ -6,35 +6,50 @@ Sprint scope: graphics.
 
 ## Goal
 
-Keep Kitty Unicode placeholder diacritics attached to their `U+10EEEE` lead cell so yazi placeholder rows materialize as contiguous generated placements, then publish those generated rows with exact pixel bounds.
+Match Kitty graphics control-block parsing closely enough that malformed command metadata
+is rejected before graphics state mutation.
+
+## Source Truth
+
+- `utils/dev_references/terminals/kitty/kitty/parse-graphics-command.h`
+- `utils/dev_references/terminals/kitty/kitty/graphics.h`
+- `utils/dev_references/terminals/kitty/kitty_tests/graphics.py`
 
 ## Target Files
 
-- `howl-vt/src/screen/write.zig`
+- `howl-vt/src/kitty/protocol.zig`
+- `howl-vt/src/kitty/apply.zig`
 - `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/test/screen_state_behavior.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
-- Treat Kitty/yazi row-column diacritics outside the basic `U+0300...U+036F` block as trailing combining codepoints.
-- Preserve existing behavior for basic combining marks, zero-width joiners, variation selectors, and non-combining printable codepoints.
-- Do not special-case yazi or graphics commands in screen writing.
-- Generated placeholder placements must publish exact partial-row destination pixel bounds instead of recomputing them from rounded source aspect ratio.
-- Do not change ABI, render, host, parser control handling, upload/storage, or presentation behavior.
+- Validate graphics control-block syntax before calling `State.handle` or mutating graphics state.
+- Reject unknown keys, missing `=`, invalid action/delete/transmission/compression flags,
+  empty integer fields, invalid integer bytes, overlarge unsigned integers, invalid signed
+  integers, bad separators, and trailing incomplete fields.
+- Invalid parser input must not mutate image, placement, frame, upload, or reply state.
+- Remove dead `unsupported_key` state/handler plumbing if strict parse rejection makes it
+  unreachable.
+- Preserve existing supported command behavior for valid commands.
+- Preserve existing quiet handling for valid commands.
 
 ## Required Tests
 
-- A placeholder lead cell followed by `U+0483` keeps that mark in the lead cell's combining buffer and advances the cursor only once.
-- A generated placeholder placement whose rounded source aspect would overestimate destination height still publishes the exact clipped destination height.
-- Existing screen and graphics tests continue to pass.
+- Invalid action, delete, transmission, and compression flags fail without mutation.
+- Invalid integer fields fail instead of becoming `0`.
+- Unsupported or malformed control keys fail before mutation.
+- Bad separators and trailing incomplete fields fail before mutation.
+- Existing valid graphics tests continue to pass.
 
 ## Verification Required
 
-- `zig build test` in `howl-vt`
-- `zig build test:regression:build` in `howl-vt`
+- `zig build test --summary all` in `howl-vt`
+- `zig build test:regression:build --summary all` in `howl-vt`
+- root `zig build`
 - root `git diff --check`
 
 Stop condition:
 
-- If correct handling requires a full Unicode grapheme/wcwidth table replacement, stop and report that dependency instead of widening this slice.
+- If exact Kitty reply/error taxonomy for parser failures is ambiguous, stop after
+  preventing mutation and report the source ambiguity instead of inventing broad behavior.

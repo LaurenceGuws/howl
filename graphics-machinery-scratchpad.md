@@ -182,6 +182,13 @@ What not to do:
 
 - Do not preserve permissive parsing for convenience.
 
+Parser validation slice completed:
+
+- `howl-vt` commit `e4d96af vt: reject malformed graphics fields`.
+- Verification passed: `zig build test --summary all`,
+  `zig build test:regression:build --summary all`, root `zig build`, root
+  `git diff --check`, and `howl-vt` `git diff --check`.
+
 ### 4. Image identity, refs, storage quota, and eviction are incomplete
 
 Severity: medium-high, product machinery.
