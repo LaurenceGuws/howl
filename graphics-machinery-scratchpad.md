@@ -1089,6 +1089,39 @@ Indirect raw undersize slice completed:
 - `howl-vt` commit `c12a3b7 vt: reject undersized indirect graphics`.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 19. Indirect raw explicit-size oversize is retained as image truth
+
+Severity: medium, protocol correctness.
+
+Kitty/Ghostty machinery:
+
+- Kitty `mmap_img_file` maps `S=` bytes when present, but raw image truth remains `width * height * bytes_per_pixel`.
+- Kitty `process_image_data` accepts indirect raw when mapped bytes are at least expected raw size.
+- Kitty `handle_add_command` stores `currently_loading.data_sz` bytes, so extra mapped bytes are ignored.
+- Ghostty clips local-media reads to the expected raw size and `LoadingImage.complete` requires final data length to match dimensions/depth.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `graphicsReadLength` honors explicit `S=` directly.
+- `howl-vt/src/kitty/graphics.zig`: `loadIndirectPayloadNormalized` rejects undersize but still base64-encodes all loaded indirect raw bytes.
+
+Problem:
+
+- `t=f`, `t=t`, or `t=s` with `f=24`/`f=32` and `S=` larger than expected can retain trailing padding as image payload.
+
+Promoted indirect raw oversize slice:
+
+- For uncompressed indirect raw media, retain and publish only the expected raw byte count.
+- Keep undersize validation and omitted-`S=` behavior unchanged.
+- Preserve safe temp deletion and shared-memory unlink policy.
+- Leave PNG, zlib, direct media, parser, ABI, render, host, storage-model, animation, delete/reset, and generated-placeholder behavior out of scope.
+
+Indirect raw oversize acceptance tests:
+
+- File medium `t=f,S=5,s=1,v=1,f=24` over `ABCXY` stores payload `QUJD` for `ABC` only.
+- Temp-file medium `t=t,S=5,s=1,v=1,f=24` stores `QUJD` and deletes a safe temp file.
+- Shared-memory medium `t=s,S=5,s=1,v=1,f=24` stores `QUJD` and unlinks the object.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter

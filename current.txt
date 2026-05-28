@@ -1,14 +1,14 @@
-# Current Slice: Validate Indirect Raw Undersize
+# Current Slice: Truncate Indirect Raw Oversize
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after indirect raw explicit-size research.
+Promoted from `graphics-machinery-scratchpad.md` after indirect raw explicit-size oversize research.
 
 ## Goal
 
-Match Kitty/Ghostty behavior by rejecting uncompressed indirect raw graphics media whose loaded byte count is smaller than the declared raw image dimensions require.
+Match Kitty/Ghostty behavior by ignoring extra bytes from uncompressed indirect raw graphics media when explicit `S=` is larger than the declared raw image dimensions require.
 
 ## Target Files
 
@@ -17,16 +17,17 @@ Match Kitty/Ghostty behavior by rejecting uncompressed indirect raw graphics med
 
 ## Required Behavior
 
-- For uncompressed indirect raw uploads (`t=f`, `t=t`, or `t=s`, `c` omitted, `f=24` or `f=32`), require the loaded byte count to be at least `width * height * bytes_per_pixel` before retaining or publishing.
-- Explicit `S=` smaller than the required raw byte count fails with the existing insufficient-data graphics failure path.
+- For uncompressed indirect raw uploads (`t=f`, `t=t`, or `t=s`, `c` omitted, `f=24` or `f=32`), retain and publish only `width * height * bytes_per_pixel` bytes.
+- Explicit `S=` larger than the required raw byte count succeeds but ignores trailing bytes.
+- Existing undersize validation remains unchanged.
 - Omitted `S=` valid indirect raw behavior remains unchanged.
-- Safe temp deletion and shared-memory unlink behavior remain unchanged even when validation fails after reading.
+- Safe temp deletion and shared-memory unlink behavior remain unchanged.
 
 ## Hard Constraints
 
 - Do not change ABI, render, host, parser, terminal, FFI, or build files.
 - Do not change direct media behavior, direct chunk lifecycle, parser validation, or quiet response handling.
-- Do not resolve or change `S=` larger-than-expected behavior in this slice.
+- Do not change undersize failure behavior.
 - Do not change EBADPNG behavior, PNG mode behavior, zlib decompression behavior, storage quota, animation, delete/reset, composition, or generated placeholder behavior.
 - Do not replace retained base64 model truth in this slice.
 - Do not special-case yazi/panes.
@@ -34,10 +35,10 @@ Match Kitty/Ghostty behavior by rejecting uncompressed indirect raw graphics med
 
 ## Required Tests
 
-- File medium `t=f,S=2,s=1,v=1,f=24` against a 3-byte file fails with graphics `ENODATA` and stores no image.
-- Temp-file medium `t=t,S=2,s=1,v=1,f=24` fails with graphics `ENODATA`, stores no image, and still deletes a safe temp file.
-- Shared-memory medium `t=s,S=2,s=1,v=1,f=24` fails with graphics `ENODATA`, stores no image, and still unlinks the shared-memory object.
-- Existing valid indirect raw tests with omitted `S=` continue to pass.
+- File medium `t=f,S=5,s=1,v=1,f=24` over bytes `ABCXY` stores retained payload `QUJD` for `ABC` only.
+- Temp-file medium `t=t,S=5,s=1,v=1,f=24` stores `QUJD` and still deletes a safe temp file.
+- Shared-memory medium `t=s,S=5,s=1,v=1,f=24` stores `QUJD` and still unlinks the shared-memory object.
+- Existing undersize and omitted-`S=` indirect raw tests continue to pass.
 
 ## Verification Required
 
@@ -47,4 +48,4 @@ Match Kitty/Ghostty behavior by rejecting uncompressed indirect raw graphics med
 
 Stop condition:
 
-- If correct behavior requires replacing retained base64 model truth, changing larger-than-expected `S=` behavior, parser changes, host/runtime changes, render changes, ABI changes, or broad fixture rewrites, stop and report the exact dependency instead of widening the slice.
+- If correct behavior requires replacing retained base64 model truth, parser changes, host/runtime changes, render changes, ABI changes, or broad fixture rewrites, stop and report the exact dependency instead of widening the slice.
