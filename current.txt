@@ -1,14 +1,14 @@
-# Current Slice: Animation Runtime Edge Cases
+# Current Slice: PNG EBADPNG Protocol Errors
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after animation runtime parity research.
+Promoted from `graphics-machinery-scratchpad.md` after PNG/error parity research.
 
 ## Goal
 
-Match Kitty animation runtime edge cases for loading mode, finite loop counts, and gapless frames.
+Return Kitty-style `EBADPNG` protocol failures for invalid `f=100` PNG payloads instead of asserting or collapsing into generic data errors.
 
 ## Target Files
 
@@ -17,27 +17,26 @@ Match Kitty animation runtime edge cases for loading mode, finite loop counts, a
 
 ## Required Behavior
 
-- `s=2` loading mode waits on the last available frame when no future frame exists.
-- If the last-frame deadline has already passed, `s=2` advances immediately when a future frame arrives.
-- Finite `v>1` runtime looping completes the requested repeat count and does not stop before the first wrap.
-- Frames with gap `0` from negative `z` remain stored but are skipped by runtime publication.
-- Runtime publication continues to update current-frame payloads through VT-owned state only.
+- Invalid direct `f=100` PNG upload replies with `EBADPNG:*` and does not store image data.
+- Invalid `f=100` query replies with `EBADPNG:*` and does not store image data.
+- PNG size/decode helpers return explicit errors instead of asserting or using `unreachable` for stb failures.
+- Valid PNG behavior already covered by existing tests remains green.
 
 ## Hard Constraints
 
 - Do not change ABI, render, host, parser, or terminal files.
-- Do not change frame upload gap parsing semantics already implemented.
-- Do not change quiet response handling, delete/reset behavior, quota, composition, or generated placeholder publication.
-- Do not implement host presentation cadence or render-side animation policy.
-- Do not broaden into decoded/cache storage or PNG behavior.
+- Do not replace stb_image or add libpng.
+- Do not broaden into full PNG mode/color-management/gamma/ICC parity.
+- Do not add PNG zlib support.
+- Do not change indirect media lifecycle, animation, quiet, delete/reset, quota, composition, or generated placeholder behavior.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Loading animation advances immediately when a future frame arrives after waiting at the last available frame.
-- Finite `v=2` two-frame animation publishes frame sequence `1 -> 2 -> 1 -> 2` before stopping on the next wrap attempt.
-- Gapless negative-`z` frame is skipped by runtime publication while remaining stored.
+- Invalid direct PNG upload returns `EBADPNG` and leaves image count unchanged.
+- Invalid PNG query returns `EBADPNG` and leaves image count unchanged.
+- Valid simple PNG decode/current-frame publication remains covered by existing PNG tests or an added focused test if needed.
 
 ## Verification Required
 
@@ -47,4 +46,4 @@ Match Kitty animation runtime edge cases for loading mode, finite loop counts, a
 
 Stop condition:
 
-- If correct behavior requires host/runtime presentation policy, render changes, ABI changes, decoded/cache storage, or broader animation scheduling, stop and report the exact dependency instead of widening the slice.
+- If correct behavior requires replacing the PNG decoder, broad image cache redesign, render changes, ABI changes, or a full PNG color-management matrix, stop and report the exact dependency instead of widening the slice.

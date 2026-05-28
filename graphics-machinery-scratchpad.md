@@ -811,6 +811,42 @@ Animation runtime edge-case slice completed:
 - `howl-vt` commit `210d989 vt: fix graphics animation runtime`.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 12. Invalid PNG payloads do not produce Kitty `EBADPNG`
+
+Severity: medium, protocol correctness and robustness.
+
+Kitty machinery:
+
+- `kitty_tests/graphics.py`: `test_load_png` expects invalid PNG upload failure code `EBADPNG`.
+- `kitty_tests/graphics.py`: `test_load_png_simple` expects bad PNG decode to raise `[EBADPNG]`.
+- `kitty/graphics.c` and `kitty/png-reader.c`: PNG decode failures are reported as command failures, not assertions.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `decodePngSize` asserts stb info success.
+- `howl-vt/src/kitty/graphics.zig`: `decodeBase64PngRgbaOwned` uses `unreachable` for stb load failure.
+- `howl-vt/src/kitty/graphics.zig`: command reply mapping distinguishes generic invalid data but not invalid PNG data.
+- Existing tests cover valid PNG normalization/replay and PNG zlib rejection, but not invalid PNG protocol replies.
+
+Problem:
+
+- Invalid `f=100` payloads can trip assertions/unreachable or collapse into generic data errors instead of returning `EBADPNG`.
+- This is observable at the graphics protocol boundary and should be handled before broader PNG parity work.
+
+Promoted PNG EBADPNG slice:
+
+- Add a PNG-specific decode error in VT graphics.
+- Make PNG size/decode helpers return errors instead of asserting on invalid PNG payloads.
+- Map invalid PNG payloads to `EBADPNG:*` replies for direct upload and query paths.
+- Ensure invalid PNG uploads do not store image data.
+- Leave full PNG mode matrix, color management, decoder replacement, PNG zlib support, ABI, render, host, and image-cache rewrites out of scope.
+
+PNG EBADPNG acceptance tests:
+
+- Invalid direct PNG upload returns `EBADPNG` and leaves image count unchanged.
+- Invalid PNG query returns `EBADPNG` and leaves image count unchanged.
+- Valid PNG normalization/replay tests remain green.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
