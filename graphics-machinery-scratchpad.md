@@ -1217,7 +1217,46 @@ Direct raw oversize slack slice completed:
 
 Research notes for later slices:
 
-- Animation frame dimensions larger than the base image is a researched VT-only candidate with high confidence; keep root-frame edit parity out of that slice.
+- Exact Kitty `EFBIG` response taxonomy for larger-than-slack direct raw remains deferred.
+
+### 22. Animation frame dimensions may exceed base image dimensions
+
+Severity: medium, protocol correctness.
+
+Kitty machinery:
+
+- Kitty `handle_animation_frame_load_command` loads/processes frame payloads, then rejects when loaded frame width is greater than base image width.
+- Kitty also rejects when loaded frame height is greater than base image height.
+- Failure replies are `EINVAL:Frame width {frame_width} larger than image width: {image_width}` and `EINVAL:Frame height {frame_height} larger than image height: {image_height}` through `finish_command_response`.
+- `q=1` still emits failures; `q=2` suppresses failures.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `storePayload` sends `a=f` uploads directly to `storeFrameOwned` after payload normalization.
+- `storeFrameOwned` computes intrinsic frame dimensions but does not reject dimensions larger than the base image before storing or replacing frame state.
+
+Problem:
+
+- Howl can store animation frames whose dimensions exceed the base image dimensions, which Kitty rejects.
+
+Promoted oversized-animation-frame slice:
+
+- Add the smallest pre-mutation check for `a=f` frame uploads.
+- Reject frame width greater than base image width with Kitty-style `EINVAL` failure.
+- Reject frame height greater than base image height with Kitty-style `EINVAL` failure.
+- Preserve existing image/frame state on rejection and honor quiet failure suppression.
+- Leave broader root-frame edit parity, frame graph/ref semantics, cache/storage identity, animation runtime, parser, ABI, render, host, and decoded-storage work out of scope.
+
+Oversized-animation-frame acceptance tests:
+
+- Width-oversized raw frame upload against a `1x1` base image replies with the width `EINVAL` and stores no frame.
+- Height-oversized raw frame upload against a `1x1` base image replies with the height `EINVAL` and stores no frame.
+- Existing-frame edit with oversized dimensions rejects and preserves previous frame payload/metadata.
+- `q=1` emits the failure; `q=2` suppresses the failure and stores no frame.
+
+Research notes for later slices:
+
+- Root-frame edit parity remains broader and should not be pulled into this oversized-frame slice.
 - Exact Kitty `EFBIG` response taxonomy for larger-than-slack direct raw remains deferred.
 
 ## Howl-Only Hacks
