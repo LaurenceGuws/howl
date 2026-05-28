@@ -722,6 +722,12 @@ Generated dirty/publication acceptance tests:
 - Reusing an old `publication_seq` after placeholder row mutation is rejected.
 - Generated placement render-order keys remain stable for unchanged publication content after a non-graphics meta query.
 
+Generated placement dirty/publication proof slice completed:
+
+- `howl-vt` commit `8568194 vt: prove generated placement publication`.
+- Tests-only slice; no persistent refs, ABI, render, host, or terminal implementation changes.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
