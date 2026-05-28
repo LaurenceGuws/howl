@@ -1,6 +1,8 @@
 Research workflow:
+0. TigerBeetle is our bible. It is not inspiration. It is law. Its style must crawl
+   through every line of Howl code. It does not crawl on bad style. Zero tolerance.
 1. Define what we want to know or do plainly and simply.
-2. Read the reference impls and TigerBeetle style to derive the answer.
+2. Read the reference impls and the TigerBeetle bible to derive the answer.
 3. Seed workers with explicit repo gates as stated in `AGENTS.md`:
 
    ## Design Source Order
@@ -10,14 +12,19 @@ Research workflow:
    1. Ghostty does it.
    2. Alacritty does it.
    3. TigerBeetle mandates it.
-   4. If Howl's embeddable render boundary still has no direct match, invent the smallest possible shape and bias it toward a simple Alacritty-like host implementation.
+   4. If Howl's embeddable render boundary still has no direct match, invent the
+      smallest possible shape and bias it toward a simple Alacritty-like host
+      implementation.
 
    Anything outside these rules is presumed stale debt until proved otherwise.
 
    - VT-core shape follows Ghostty first.
    - Host runtime shape follows Alacritty first.
    - Bounds, assertions, simplicity, and proof follow TigerBeetle as a hard gate.
-   - Render-specific novelty is allowed only where the embeddable renderer truly has no direct source model.
+   - Render-specific novelty is allowed only where the embeddable renderer truly has no
+     direct source model.
+   - Howl-only ideas are heavily discouraged until reference-backed options are exhausted.
+   - Broad reshaping is encouraged when the current code shape is itself style debt.
 
    ## References
 
@@ -25,7 +32,23 @@ Research workflow:
 4. Write down findings in the scratchpad.
 
 Code workflow:
-1. Promote the top scratchpad item to `current.txt` and make sure the git tree is clean.
-2. Seed an agent with `current.txt` and explicit paths for context prefilling, so it has 0 room for guessing what the best looks like (0 tolerance).
-3. Review the agent extremely harshly, 0 tolerance for second best. If accepted, commit and start at 1. If rejected, re-prompt the same sub-agent with rejection follow-up requirements.
-4. If the scratchpad is done, or a clear blocker is hit, stop and report that a research round for a sub-scratchpad or new scratchpad is needed.
+1. Main agent reads the TigerBeetle bible, then promotes the top scratchpad item to
+   `current.txt` and makes sure the git tree is clean.
+2. Seed an agent with `current.txt`, explicit paths for context prefilling, and a mandate
+   to read the TigerBeetle bible before editing, so it has 0 room for guessing what the
+   best looks like (0 tolerance).
+3. Reviewer reads the TigerBeetle bible before reviewing the agent extremely harshly,
+   0 tolerance for second best. If accepted, commit and start at 1. If rejected,
+   re-prompt the same sub-agent with rejection follow-up requirements.
+4. If the work gets ambiguous, broad, rushed, or difficult, stop and read the
+   TigerBeetle bible again. Break the problem into smaller source-backed slices. Slow
+   progress is always better than fake progress. Fake progress is failure.
+   Small slices do not require tiny diffs. If the existing shape is wrong, reshape it
+   toward the smallest true owner instead of preserving vibe-coded structure.
+5. If the scratchpad is done, or a clear blocker is hit, stop and report that a research
+   round for a sub-scratchpad or new scratchpad is needed.
+
+TigerBeetle bible:
+
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
