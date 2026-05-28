@@ -1,4 +1,4 @@
-# Current Slice: Omitted-r Animation Frame Upload Proof
+# Current Slice: Kitty Root-Frame Edit Parity
 
 Owner: workspace root.
 
@@ -6,17 +6,17 @@ Sprint scope: graphics.
 
 ## Goal
 
-Prove real Kitty Go animation traffic where `a=f` extra-frame uploads omit `r=` and rely
-on Kitty append semantics.
+Match Kitty `a=f,r=1` root-frame edit behavior without changing render, host, ABI,
+decoded-cache storage, media transport, generated placeholders, or runtime timing.
 
 ## Source Truth
 
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `utils/dev_references/terminals/kitty/kitty/graphics.h`
 - `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty_tests/graphics.py`
-- `utils/dev_references/terminals/kitty/kittens/icat/transmit.go`
-- `utils/dev_references/terminals/kitty/kittens/icat/process_images.go`
-- `utils/dev_references/terminals/kitty/kittens/choose_files/graphics.go`
+- `graphics-machinery-scratchpad.md` section `### 25. Root-frame edits with `a=f,r=1` diverge from Kitty`
 
 ## Target Files
 
@@ -25,28 +25,26 @@ on Kitty append semantics.
 
 ## Required Behavior
 
-- Tests-only unless the replay exposes a real mismatch.
-- `a=f` with omitted `r=` appends the next extra frame.
-- Repeated omitted-`r` `a=f` uploads append frames in order.
-- Chunked omitted-`r` `a=f,m=1` captures the append target from the first chunk and
-  stores exactly one appended frame at completion.
-- Go-style omitted-`r` frame uploads followed by retained combined `a=a` controls run
-  without `EINVAL` and advance runtime.
-- Do not special-case `icat`, `choose_files`, or any other client.
-- Do not change parser, render, host, ABI, decoded-cache storage, frame graph identity,
-  compose/delete, media transports, or runtime timing unless a test exposes a direct bug.
+- Keep omitted `r` and `r=0` on `a=f` as append-new-extra-frame behavior.
+- Normalize too-large explicit `r` to append at the next frame number.
+- Implement `a=f,r=1` as an existing root-frame edit.
+- Partial `a=f,r=1,x/y,s/v` edits must compose the transmitted rectangle onto the
+  existing root at `x/y`.
+- Full root image dimensions must be preserved after a root-frame edit.
+- Omitted or zero `z` must preserve the existing root gap.
+- Nonzero `z` must update the root gap and clamp negative values to `0`.
+- Preserve current successful behavior for explicit extra-frame edits.
 
 ## Required Tests
 
-- Direct omitted-`r` `a=f` after root upload stores frame `2`.
-- A second direct omitted-`r` `a=f` stores frame `3`.
-- Chunked omitted-`r` `a=f,m=1` followed by final chunk stores exactly one appended
-  frame with the expected payload.
-- `icat`-style replay uses omitted-`r` frame upload plus retained `a=a,r/z`, `s=2`,
-  and `s=3`, and then advances runtime.
-- `choose_files`-style replay uses omitted-`r` frame upload plus retained `v=1` and
-  preserves the expected loop state.
-- Existing explicit-`r` animation tests continue to pass.
+- `a=f,r=1,x/y,s/v` composes a smaller payload into the existing root and preserves
+  root dimensions.
+- `a=f,r=1` full-size edit preserves root dimensions and replaces the expected pixels.
+- `a=f,r=1` without `z` preserves root gap.
+- `a=f,r=1,z=0` preserves root gap.
+- `a=f,r=1,z=-1` changes root gap to `0`.
+- Too-large explicit `r` appends at the next frame number.
+- Existing omitted-`r` and `r=0` append tests continue to pass.
 
 ## Verification Required
 
@@ -54,10 +52,10 @@ on Kitty append semantics.
 - `zig build test:regression:build --summary all` in `howl-vt`
 - root `zig build`
 - root `git diff --check`
+- `howl-vt` `git diff --check`
 
 Stop condition:
 
-- If omitted-`r` append semantics conflict with current frame-number allocation
-  invariants, stop and report the smaller source-backed redesign needed.
-- If a replay requires file media, shared memory, compression, render, or host behavior,
-  stop and split that into a separate source-backed slice.
+- If root-frame editing requires decoded/cache storage, file media/shared memory,
+  render behavior, host behavior, ABI changes, or a frame graph redesign, stop and
+  report the smaller source-backed slice needed.
