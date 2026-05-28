@@ -968,6 +968,12 @@ PNG mode matrix acceptance tests:
 - RGB PNG fixture publishes expected RGBA base64 with alpha `ff`.
 - L PNG fixture publishes expected grayscale-expanded RGBA base64.
 
+PNG non-palette mode matrix proof slice completed:
+
+- `howl-vt` commit `9ee74a1 vt: prove png mode normalization`.
+- Tests-only slice covering RGBA, RGB, and grayscale `L`; palette `P` remains blocked on decoder behavior.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
