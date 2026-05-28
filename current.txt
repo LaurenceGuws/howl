@@ -1,50 +1,40 @@
-# Current Slice: Reject Both Image Id Forms
+# Current Slice: Placeholder Combining Marks And Generated Row Geometry
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after image-id/image-number validation research.
-
 ## Goal
 
-Match Kitty behavior by rejecting graphics commands that specify both lowercase `i=` image id and uppercase `I=` image number.
+Keep Kitty Unicode placeholder diacritics attached to their `U+10EEEE` lead cell so yazi placeholder rows materialize as contiguous generated placements, then publish those generated rows with exact pixel bounds.
 
 ## Target Files
 
+- `howl-vt/src/screen/write.zig`
 - `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/test/screen_state_behavior.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
-- Any graphics command with both `cmd.image_id != 0` and `cmd.image_number != 0` rejects before command-specific mutation.
-- Failure reply uses `EINVAL:Must not specify both image id and image number` unless quiet failure suppression applies.
-- Rejection stores no image/frame/placement and does not mutate existing graphics state.
-- Existing commands with only `i=`, only `I=`, or neither keep current behavior.
-
-## Hard Constraints
-
-- Do not change ABI, render, host, parser, terminal, FFI, or build files.
-- Do not change parser validation; this is VT command validation before mutation.
-- Do not change successful upload, query, place, delete, animation, frame, media normalization, quiet semantics, EBADPNG behavior, PNG decoder behavior, zlib/compressed raw, direct/indirect media behavior, storage quota, composition, or generated placeholder behavior.
-- Do not replace retained base64 model truth or identity/ref storage model in this slice.
-- Do not special-case yazi/panes.
-- Keep the smallest correct diff.
+- Treat Kitty/yazi row-column diacritics outside the basic `U+0300...U+036F` block as trailing combining codepoints.
+- Preserve existing behavior for basic combining marks, zero-width joiners, variation selectors, and non-combining printable codepoints.
+- Do not special-case yazi or graphics commands in screen writing.
+- Generated placeholder placements must publish exact partial-row destination pixel bounds instead of recomputing them from rounded source aspect ratio.
+- Do not change ABI, render, host, parser control handling, upload/storage, or presentation behavior.
 
 ## Required Tests
 
-- Direct transmit with both `i=` and `I=` rejects with `EINVAL` and stores no image.
-- Place with both `i=` and `I=` rejects with `EINVAL` instead of `ENOENT` and stores no placement.
-- Animation/control or frame path with both ids rejects before mutation.
-- `q=2` suppresses the mutual-exclusion failure and still does not mutate state.
-- Existing valid image-number-only behavior continues to pass.
+- A placeholder lead cell followed by `U+0483` keeps that mark in the lead cell's combining buffer and advances the cursor only once.
+- A generated placeholder placement whose rounded source aspect would overestimate destination height still publishes the exact clipped destination height.
+- Existing screen and graphics tests continue to pass.
 
 ## Verification Required
 
 - `zig build test` in `howl-vt`
 - `zig build test:regression:build` in `howl-vt`
-- `git diff --check` at workspace root
+- root `git diff --check`
 
 Stop condition:
 
-- If correct behavior requires parser changes, identity/ref storage rewrites, host/runtime changes, render changes, ABI changes, or broader command validation refactors, stop and report the exact dependency instead of widening the slice.
+- If correct handling requires a full Unicode grapheme/wcwidth table replacement, stop and report that dependency instead of widening this slice.

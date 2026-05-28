@@ -8,6 +8,20 @@ Reviewer status: accepted after researcher correction. The first research pass w
 
 Current gate: seed coding workers only after `current.txt` is promoted and the git tree is clean.
 
+## Completed GUI Validation
+
+- User-in-the-loop yazi/Kitty comparison validated the placeholder combining and generated-row geometry slice.
+- Local yazi reference is under ignored `utils/dev_references/terminal_apps/yazi`.
+- Temporary `HOWL_YAZI_PROBE=1` logs were used during diagnosis and removed before commit.
+- First yazi probe showed upload/decode/present all work, but VT row assembly split at `U+0483`, the first yazi column diacritic outside Howl's old basic combining range.
+- Current behavior slice expands screen combining-mark recognition so those diacritics remain attached to the `U+10EEEE` lead cell before graphics placeholder materialization.
+- Second yazi probe reduced resolved placements from `2565` to `154`, but row runs after the first still used `source_y=0` while right-edge fragments advanced. The remaining cause was screen combining attachment preferring a non-empty current cursor cell over the preceding printed placeholder cell when yazi overwrote pane content.
+- Third yazi probe reduced resolved placements to `93` and showed row `source_y` advancing correctly, but the image still bled at pane bottoms.
+- Bottom bleed root cause was generated placeholder geometry losing exact clipped destination height before FFI publication. Partial rows were recomputed from rounded source aspect ratio, so a row that should end at the cell bottom could publish one pixel too tall.
+- Current geometry fix keeps exact generated destination width/height inside VT placement state and publishes those exact bounds without changing the C ABI or adding yazi-specific behavior.
+- User probe after the geometry fix confirmed the first row now publishes `dest_cell_px=(0,7,440,20)`, but the visual issue remains. Added probe-only head/tail placement samples plus VT/render placement bounds to distinguish excessive generated extent from render composition bleed-through.
+- Focused placeholder-cell probe found the pane-bottom smear begins when yazi reaches `U+0657` and later Arabic row diacritics. Howl did not classify `U+0657...U+065E` as trailing combining marks, so each placeholder consumed an extra screen cell and wrapped into pane bottoms. The screen combining range now includes `0x064B...0x065F`, with a `U+0657` regression.
+
 ## Research Truth
 
 - Question 1 primary source is Kitty source, not Ghostty and not only docs.
