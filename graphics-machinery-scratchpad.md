@@ -172,6 +172,8 @@ What not to do:
 
 Severity: medium-high, product machinery.
 
+Research round status: source and Howl-gap research complete; implementation not yet promoted.
+
 Kitty machinery:
 
 - `kitty/graphics.h`: `GraphicsManager`
@@ -221,6 +223,62 @@ Acceptance tests:
 What not to do:
 
 - Do not treat base64 transport payload as long-term product state.
+
+Research questions answered:
+
+- What exact identity model does Kitty use for graphics images, image numbers, anonymous/client ids, refs/placements, frames, access time, storage usage, and quota eviction?
+- Which of those semantics are observable at Howl's C ABI/product boundary, and which are internal-only implementation details?
+- Where does Howl's current `State/Image/Placement/Frame` model diverge, and what is the smallest first implementation slice that improves correctness without an umbrella runtime layer?
+- What tests should gate the slice, especially image-number operations, delete selectors, and quota eviction priority?
+
+Kitty source truth:
+
+- Kitty separates internal image id, client image id, image number, frame id, image ref id, placement id, virtual ref id, cell ref linkage, texture refs, access time, used storage, and cache state.
+- `GraphicsManager.images_by_internal_id` is keyed by internal id; protocol `i=` client id and `I=` image number are lookup attributes, not storage keys.
+- Image-number lookup resolves the newest matching image by greatest internal id.
+- Upload with `I=` and no `i=` creates a new image and assigns the lowest free positive client id.
+- Commands with both `i=` and `I=` are invalid.
+- Re-upload to an existing client id frees old image resources, refs, frames, textures/cache, and storage accounting before replacing data.
+- Placements are `ImageRef`s under an image; `p=` replaces an existing ref with that placement id in the same client-id image context.
+- Virtual refs are prototypes, not directly rendered; Unicode placeholders generate separate cell refs linked to the virtual ref.
+- Cell refs are removed independently when affected rows/cells are dirtied.
+- Storage quota is accounted as image/cache/decoded storage, not base64 transport text.
+- Trim/eviction first removes incomplete or unreferenced images, then oldest remaining images by access time if still over quota; the currently added image is not evicted during its quota pass.
+
+Howl current truth:
+
+- Howl VT currently stores linear arrays for `images`, `placements`, `virtual_placements`, and `frames`; `Image.image_id` is both public/client identity and storage identity.
+- Howl already has partial image-number support: image-number-only uploads allocate `next_image_id`, and `findNewestImageByNumber` scans newest-first.
+- Howl ABI exposes `image_id`, `image_number`, placement geometry, generated-placeholder flags, and retained payload bytes; hosts/render consume the C ABI and should not import Zig internals.
+- Howl quota behavior is hard-limit/fail via retained base64/upload byte caps; it does not evict safe candidates.
+- Payload-copy ABI currently exposes protocol payload bytes as product behavior, so replacing it with decoded/cache storage is a later explicit ABI contract change.
+- Delete selector coverage exists but needs Kitty-port proof, especially image-number and uppercase/free-image selector behavior.
+
+Accepted first implementation direction:
+
+- Do an ABI-preserving VT-only quota/eviction slice before full identity/ref surgery.
+- Keep `howl_vt.h`, render, and hosts unchanged.
+- Keep public `image_id`, `image_number`, `placement_id`, publication order, and payload-copy behavior unchanged for now.
+- Add internal helpers in `howl-vt/src/kitty/graphics.zig` to evict safe candidates before returning retained-payload `ConsequenceLimit`.
+- First-slice eviction order should be conservative: incomplete/aborted upload state if applicable, then unplaced images and their frames/override payloads; do not evict images with physical or virtual placements in the first slice.
+- Replacement of an existing `image_id` must count bytes freed by the replacement before failing quota.
+- Full internal id/ref/cache/decoded-storage model remains a later slice.
+
+First-slice acceptance tests:
+
+- Quota evicts an unplaced image before failing or touching a placed image.
+- Quota preserves placed images and returns `ConsequenceLimit` when only placed images could make room.
+- Replacement of the same `image_id` succeeds when it fits after subtracting bytes freed by the old image.
+- Evicting an unplaced image also removes its frames and current-frame/override payload state.
+- Existing image-number newest lookup and delete selector tests remain green; add focused image-number/delete tests only if quota work exposes ambiguity.
+
+Open questions before broader identity/ref work:
+
+- Exact Kitty delete-by-image-number behavior for each selector: newest only vs all matching refs/images.
+- Whether virtual placements should count as placed for all quota and delete semantics; first slice treats them as placed/protected.
+- Exact access-time update points Howl should eventually model.
+- Exact storage bucket Howl should expose long-term once base64 payload stops being product truth.
+- Whether generated placeholder placements should become stored VT refs or remain publication-derived until the full ref model lands.
 
 ### 5. Frame, animation, and compose machinery is partial
 
