@@ -1855,6 +1855,23 @@ Decoded render bridge research:
   `git diff --check`, and `howl-render git diff --check`.
 - Next safe work: switch Linux host graphics acquisition to VT decoded query/copy and
   render decoded commit ABI. Do not decode or re-encode protocol payloads in host.
+- Linux host decoded graphics bridge completed in `howl-linux-host` commit `966cb78
+  host: publish decoded graphics payloads`.
+- Accepted behavior: host now queries VT decoded image metadata, copies VT decoded payload
+  bytes, and commits through render's decoded graphics slot. Host continues to own only
+  transient ABI copies and does not decode or re-encode protocol payloads.
+- Verification passed: `zig build test:integration:kitty-graphics-replay:build --summary
+  all` in `howl-linux-host`, `zig build
+  test:integration:kitty-graphics-replay:app:build --summary all` in `howl-linux-host`,
+  root `zig build --summary all`, root `git diff --check`, and `howl-linux-host git diff
+  --check`.
+- Broader `zig build test --summary all` in `howl-linux-host` still has an unrelated
+  app-loop failure expecting `error.ActiveTabExited` and receiving `void`; it is not part
+  of this graphics slice.
+- End-to-end decoded graphics publication path is now present from VT through host into
+  render. Remaining work is compatibility/internal cleanup: classify old base64/protocol
+  paths as public ABI compatibility, internal debt, or still-needed bridge before removing
+  anything.
 
 ## Completed Or Stale Graphics Backlog
 
