@@ -1,54 +1,110 @@
 Research workflow:
-0. TigerBeetle is our bible. It is not inspiration. It is law. Its style must crawl
-   through every line of Howl code. It does not crawl on bad style. Zero tolerance.
+
 1. Define what we want to know or do plainly and simply.
-2. Read the reference impls and the TigerBeetle bible to derive the answer.
-3. Seed workers with explicit repo gates as stated in `AGENTS.md`:
+2. Read the TigerBeetle bible before any other source.
+3. Gather information about the problem, current code, official docs, strong references,
+   ABI contracts, and existing tests.
+4. Define explicit research questions and the machinery needed for the scratchpad.
+5. Seed parallel research agents only when the problem can be divided without lowering
+   review quality.
+6. Require every research seed to read the TigerBeetle bible before any other source.
+7. Require research agents to return source-backed findings, proposed shape, exact
+   reference paths, required assertions, required tests, risks, and readiness judgment.
+8. Write the scratchpad in enough detail that slices can be promoted sequentially to `current.txt`.
 
-   ## Design Source Order
+Scratchpad hierarchy:
 
-   When deciding whether a shape is acceptable, use this order:
+1. Start from the active sprint or problem scratchpad.
+2. Promote one proof gap into a child scratchpad when the problem is still too broad.
+3. If the sprint is ready for implementation, produce worker-ready slices with exact
+   file, symbol, invariant, reference, and test requirements.
+4. Keep every scratchpad permanently; close completed sprints with signoff status,
+   accepted commit hashes when available, verification commands, and remaining proof gaps.
+5. Do not touch product code until the active slice is planned deeply enough that
+   workers have no room for guessing.
 
-   1. Ghostty does it.
-   2. Alacritty does it.
-   3. TigerBeetle mandates it.
-   4. If Howl's embeddable render boundary still has no direct match, invent the
-      smallest possible shape and bias it toward a simple Alacritty-like host
-      implementation.
+Design source order:
 
-   Anything outside these rules is presumed stale debt until proved otherwise.
-
-   - VT-core shape follows Ghostty first.
-   - Host runtime shape follows Alacritty first.
-   - Bounds, assertions, simplicity, and proof follow TigerBeetle as a hard gate.
-   - Render-specific novelty is allowed only where the embeddable renderer truly has no
-     direct source model.
-   - Howl-only ideas are heavily discouraged until reference-backed options are exhausted.
-   - Broad reshaping is encouraged when the current code shape is itself style debt.
-
-   ## References
-
-   Use `reference-index.md`.
-4. Write down findings in the scratchpad.
-
-Code workflow:
-1. Main agent reads the TigerBeetle bible, then promotes the top scratchpad item to
-   `current.txt` and makes sure the git tree is clean.
-2. Seed an agent with `current.txt`, explicit paths for context prefilling, and a mandate
-   to read the TigerBeetle bible before editing, so it has 0 room for guessing what the
-   best looks like (0 tolerance).
-3. Reviewer reads the TigerBeetle bible before reviewing the agent extremely harshly,
-   0 tolerance for second best. If accepted, commit and start at 1. If rejected,
-   re-prompt the same sub-agent with rejection follow-up requirements.
-4. If the work gets ambiguous, broad, rushed, or difficult, stop and read the
-   TigerBeetle bible again. Break the problem into smaller source-backed slices. Slow
-   progress is always better than fake progress. Fake progress is failure.
-   Small slices do not require tiny diffs. If the existing shape is wrong, reshape it
-   toward the smallest true owner instead of preserving vibe-coded structure.
-5. If the scratchpad is done, or a clear blocker is hit, stop and report that a research
-   round for a sub-scratchpad or new scratchpad is needed.
+1. Ghostty does it.
+2. Alacritty does it.
+3. TigerBeetle mandates it.
+4. Official docs define protocol, platform, or ABI facts.
+5. If Howl's embeddable render boundary still has no direct match, invent the smallest
+   possible shape and bias it toward a simple Alacritty-like host implementation.
 
 TigerBeetle bible:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+
+Code workflow:
+
+1. Main agent reads the TigerBeetle bible, then promotes exactly one planned slice to `current.txt`.
+2. Main agent checks the git tree and records any pre-existing dirty state without
+   reverting user work.
+3. Main agent seeds worker agents with `current.txt`, exact source paths, exact
+   reference paths, exact invariants, exact tests, and TigerBeetle gates.
+4. Workers implement only the promoted slice.
+5. Parallel workers are allowed only when the main agent can preserve the TigerBeetle review bar.
+6. If the work is not planned down to symbols, go back to research.
+7. Main agent reviews the diff with zero tolerance for less than TigerBeetle style,
+   source-backed ownership, ABI safety, explicit bounds, assertions, and tests.
+8. If review passes, commit when the workflow requires persistence so binary git reverts
+   remain cheap.
+9. If review fails and changes are fixable, reseed the same worker with a rejection seed.
+10. Promote the next slice to `current.txt` and continue.
+11. If the sprint is done, or a clear blocker is hit, check in with the user.
+
+Three-agent sequence:
+
+The autonomous unit is researcher, worker, reviewer. The main agent owns the sequence
+and only advances when the previous agent produced enough proof.
+
+1. Researcher reads the TigerBeetle bible, assigned scratchpad, exact source paths,
+   exact reference paths, and explicit research question.
+2. Researcher returns source-backed facts only: paths read, findings, proposed owner,
+   proposed shape, required assertions, required tests, proof gaps, risks, and whether
+   the slice is worker-ready.
+3. Main agent rejects weak research or promotes exactly one worker-ready slice to
+   `current.txt`.
+4. Worker reads the TigerBeetle bible, `current.txt`, assigned source paths, assigned
+   reference paths, invariants, tests, and non-goals.
+5. Worker edits only the current slice and returns changed files, validation output,
+   unresolved blockers, and follow-up slice candidates.
+6. Reviewer reads the TigerBeetle bible, `current.txt`, scratchpad findings, reference
+   paths, and the worker diff.
+7. Reviewer returns findings first: ownership violations, ABI leaks, hidden bounds, weak
+   assertions, missing tests, source-order failures, scope creep, or explicit acceptance.
+8. Main agent either commits accepted work when the workflow requires persistence,
+   reseeds the same worker with the reviewer rejection, or sends the problem back to
+   research.
+
+Autonomy limit:
+
+- Researcher may not edit.
+- Worker may not broaden scope or touch git.
+- Reviewer may not silently fix by editing unless explicitly assigned a fix slice.
+- Main agent is the only role that promotes slices, accepts work, commits, pushes, or
+  asks the user for a decision.
+
+Rules:
+
+- Slow progress is always better than fake progress.
+- Fake progress is failure.
+- Small slices do not require tiny diffs.
+- If the existing shape is wrong, reshape toward the smallest true owner.
+- Do not add umbrella runtimes, demos, managers, engines, controllers, compatibility
+  aliases, or Zig-shaped host shortcuts.
+- Do not invent Howl-only shapes while Ghostty, Alacritty, TigerBeetle, and official
+  references still have answers.
+- If the problem is intense, calm down and eat the elephant byte by byte.
+
+Tooling:
+
+- Use CLI automation for reference acquisition, repository inspection, generated
+  outputs, bulk mechanical changes, and verification when it is clearer than manual
+  editing.
+- Keep automated changes source-backed, reviewable, and reversible through git.
+- Efficiency and critical thinking matter more than obeying a harness ritual that obscures the work.
+- Scripts and commands are tools for executing explicit decisions, not substitutes for
+  ownership judgment.
