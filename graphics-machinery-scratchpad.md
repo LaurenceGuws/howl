@@ -274,11 +274,31 @@ First-slice acceptance tests:
 
 Open questions before broader identity/ref work:
 
-- Exact Kitty delete-by-image-number behavior for each selector: newest only vs all matching refs/images.
+- Exact Kitty delete-by-image-number behavior for each selector: answered for first slice; `d=n`/`d=N` use newest matching image-number only, not all matching images.
 - Whether virtual placements should count as placed for all quota and delete semantics; first slice treats them as placed/protected.
 - Exact access-time update points Howl should eventually model.
 - Exact storage bucket Howl should expose long-term once base64 payload stops being product truth.
 - Whether generated placeholder placements should become stored VT refs or remain publication-derived until the full ref model lands.
+
+Delete selector research:
+
+- Kitty lowercase selectors remove refs/placements; named image data generally remains.
+- Kitty uppercase selectors remove matching refs and free only images whose matched refs are now gone, plus specific unreferenced-image cases for `d=I`, `d=N`, and `d=R`.
+- `I=` image-number lookup is newest-only by greatest internal id. Delete-by-number uses `d=n`/`d=N,I=<number>` and targets only that newest matching image.
+- `d=i`/`d=I` use client image id. `d=n`/`d=N` use image number. Do not confuse selector `d=I` with parameter `I=`.
+- Kitty positional selectors (`p/P`, `q/Q`, `x/X`, `y/Y`, `z/Z`, `c/C`) skip virtual refs and generated cell refs.
+- `d=a`/`d=A` clear visible non-cell, non-virtual refs; this is not a global image clear.
+- Howl currently deletes image data for lowercase `i`, `n`, and `r`, and uppercase geometry selectors call global `deleteUnplacedImages`, which can sweep unrelated unplaced images. Both differ from Kitty.
+
+Promoted delete selector first slice:
+
+- VT-only, ABI-preserving.
+- Separate removing matched placements/virtual placements from deleting image data.
+- Lowercase `d=i`, `d=n`, and `d=r` should remove matching placements but keep named image data.
+- Uppercase id/number/range selectors may delete image data only for targeted images that are now unplaced.
+- Uppercase geometry selectors may delete image data only for images whose placements matched that selector and are now unplaced; they must not run global unplaced-image cleanup.
+- Add tests for newest-only `d=N,I=<number>`, lowercase named-image retention, uppercase matched-image freeing, and unrelated unplaced image preservation.
+- Leave full visibility filtering for `d=a` and generated cell-ref materialization to later source-proofed slices unless needed by tests.
 
 ### 5. Frame, animation, and compose machinery is partial
 

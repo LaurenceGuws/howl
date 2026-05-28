@@ -1,14 +1,14 @@
-# Current Slice: VT Graphics Quota Eviction
+# Current Slice: VT Graphics Delete Selector Lifetime
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` item 4 after identity/quota research was recorded in root `0095a75`.
+Promoted from `graphics-machinery-scratchpad.md` item 4 after delete-selector research.
 
 ## Goal
 
-Add ABI-preserving VT-owned Kitty graphics quota eviction for safe candidates before retained-payload limits fail uploads.
+Match Kitty's first-order graphics delete selector lifetime semantics without changing ABI: lowercase selectors remove refs/placements while preserving named image data, and uppercase selectors free only targeted images whose matched refs are now gone.
 
 ## Target Files
 
@@ -20,30 +20,31 @@ VT only:
 ## Required Behavior
 
 - Keep `howl_vt.h`, render, and hosts unchanged.
-- Keep public `image_id`, `image_number`, `placement_id`, publication order, and payload-copy behavior unchanged.
-- Before returning retained-payload `ConsequenceLimit`, evict safe candidates where possible.
-- First-slice eviction order is conservative: incomplete/aborted upload state if applicable, then unplaced images and their frames/current-frame override payloads.
-- Do not evict images that have physical placements or virtual placements in this slice.
-- Replacement of an existing `image_id` must count bytes freed by the replacement before failing quota.
-- Evicting an image must remove its frames and any current-frame/override payload state.
-- Existing image-number newest lookup, replacement, delete selector, generated-placeholder, and publication behavior must remain green.
+- Preserve image publication ABI and payload-copy behavior.
+- `d=i,i=<id>` removes matching physical/virtual placements but keeps named image data.
+- `d=I,i=<id>` removes matching placements and deletes that image only if it is now unplaced.
+- `d=n,I=<number>` and `d=N,I=<number>` target only the newest image with that image number.
+- `d=n` keeps named image data after removing refs; `d=N` deletes the targeted image only if now unplaced.
+- `d=r` removes refs for images whose client id is in `x..y` and keeps named image data; `d=R` deletes only targeted images that become unplaced.
+- Uppercase geometry selectors (`C/P/Q/X/Y/Z`) must not sweep unrelated unplaced images.
+- Existing generated-placeholder, virtual-placement, quota, image-number, frame, and replacement behavior remains green.
 
 ## Hard Constraints
 
 - Do not edit render or host.
-- Do not edit `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi.zig`, or `howl-vt/src/terminal.zig` unless a compile blocker proves otherwise.
-- Do not introduce the full internal id/ref/cache rewrite in this slice.
-- Do not treat base64 transport payload as the desired long-term product model, but keep the current payload-copy ABI unchanged for this slice.
-- Do not evict images with physical or virtual placements yet.
+- Do not edit `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi.zig`, or `howl-vt/src/terminal.zig`.
+- Do not introduce the full internal id/ref/cache rewrite.
 - Do not special-case yazi/panes.
+- Do not move delete selector policy to render.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Quota evicts an unplaced image before failing or touching a placed image.
-- Quota preserves placed images and returns `ConsequenceLimit` when only placed images could make room.
-- Replacement of the same `image_id` succeeds when it fits after subtracting bytes freed by the old image.
-- Evicting an unplaced image also removes its frames and current-frame/override payload state.
+- Lowercase `d=i` removes placements but keeps named image data.
+- Uppercase `d=I` removes image data only for the targeted image after refs are gone.
+- `d=N,I=<number>` deletes only newest matching image-number target; older same-number image remains and becomes lookup target.
+- Uppercase geometry selector does not delete an unrelated unplaced image.
+- Lowercase `d=r` preserves image data while removing placements for ids in range; uppercase `d=R` deletes targeted unplaced images only.
 
 ## Verification Required
 
@@ -53,4 +54,4 @@ VT only:
 
 Stop condition:
 
-- If implementing quota safely requires changing the public graphics ABI or evicting placed images, stop and report the exact dependency instead of widening the slice.
+- If correct delete semantics require full internal ref identity or generated cell-ref storage, stop and report the exact dependency instead of widening the slice.
