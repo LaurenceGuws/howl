@@ -1014,6 +1014,16 @@ Stop conditions:
 - Stop if the slice grows into ABI, render storage, color management, or dependency
   policy.
 
+Palette PNG VT proof slice completed:
+
+- `howl-vt` commit `8e4d554 vt: prove palette png graphics`.
+- Tests-only slice proving fixed palette PNG and palette `tRNS` fixtures publish exact
+  normalized RGBA through VT current-frame publication.
+- No decoder replacement or implementation change was needed for these valid fixtures.
+- Verification passed: `zig build test --summary all`,
+  `zig build test:regression:build --summary all`, root `zig build`, root
+  `git diff --check`, and `howl-vt` `git diff --check`.
+
 Promoted PNG non-palette mode matrix VT proof slice:
 
 - Add fixed inline base64 fixtures for `RGBA`, `RGB`, and `L` mode PNGs.
