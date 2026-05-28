@@ -1793,6 +1793,30 @@ Next safe work:
 - Research decoded/cache storage ownership together with the base64-truth replacement.
 - Do not widen quota code independently of the storage model.
 
+Decoded storage ABI research after direct chunk bridge:
+
+- Verdict: first slice is worker-ready.
+- Kitty source truth: parser decodes APC payloads before graphics dispatch; `LoadData`
+  owns decoded bytes for direct payloads, mapped file/temp/shared-memory data, zlib
+  inflated bytes, and PNG-decoded bytes before image/frame storage. Image/frame metadata
+  and cache entries are not base64 payload truth.
+- Ghostty source truth: graphics command parsing returns owned decoded `data`; loading
+  images and completed images own decoded bytes; storage quota/eviction accounts decoded
+  `Image.data.len`.
+- Howl product ABI truth: `HowlVtGraphicsImage.payload_len` and
+  `howl_vt_terminal_copy_graphics_payload` explicitly expose retained protocol/base64
+  bytes and must remain byte-for-byte compatible unless a product-breaking ABI decision
+  is made.
+- Howl stale internal shape: `Image.base64_payload`, `Frame.base64_payload`, current-frame
+  coalescing from retained base64, and render decoding from the old payload ABI. These
+  should be transitioned behind an additive decoded publication path rather than broken
+  in place.
+- Promoted next slice: add parallel VT decoded graphics image query/copy ABI, preserve the
+  existing base64 ABI exactly, keep render/host switchover out of scope, and prove direct
+  raw, zlib, PNG RGBA, chunked direct, and invalid publication/index behavior in VT tests.
+- Stop conditions: no old ABI behavior changes, no render/host switchover, no unbounded
+  decoded memory duplication, no frame-graph redesign hidden in the ABI slice.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
