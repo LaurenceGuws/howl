@@ -682,6 +682,46 @@ Quiet response mode slice completed:
 - Review corrected the initial docs-shaped brief to Kitty source truth: nonzero `q` suppresses success, `q > 1` suppresses failure, and `q` remains a parsed unsigned integer.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 9. Generated placement dirty/publication proof before persistent refs
+
+Severity: medium-high, placeholder machinery confidence.
+
+Kitty machinery:
+
+- `kitty/screen.c`: `screen_dirty_line_graphics` marks placeholder rows dirty and removes stale generated cell refs when rows may move.
+- `kitty/screen.c`: `screen_render_line_graphics` removes row cell refs, rescans placeholders, and recreates refs.
+- `kitty/graphics.c`: `grman_put_cell_image` creates real cell-image refs.
+- `kitty/graphics.c`: `grman_remove_cell_images` removes generated cell refs for row ranges.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `walkResolvedPlaceholderRuns`, `resolvedGeneratedPlacementCount`, `resolvedGeneratedPlacementAt`, and `generatedPlacementFrom` derive generated placements on demand.
+- `howl-vt/src/terminal.zig`: graphics publication is keyed by publication sequence, dirty generation, and active screen state.
+- `howl-vt/src/test/terminal_graphics.zig`: existing tests cover generated placement creation, virtual placement update, clear, stale alt-screen publication rejection, and render-order key stability.
+
+Problem:
+
+- Howl does not have persistent generated cell refs, so Kitty's stale-ref removal model is not directly implemented.
+- On-demand publication should still match Kitty's observable behavior after row and cell mutations.
+- Before adding persistent refs, tests should prove current publication cannot expose stale generated placements for common line/character edit operations.
+
+Promoted generated placement dirty/publication proof slice:
+
+- Add focused VT tests for insert/delete line and insert/delete character mutations across placeholder rows/cells.
+- Prove clearing placeholder ranges removes generated placements and stale `publication_seq` queries are rejected after mutation.
+- Prove unchanged publication content keeps generated render-order keys deterministic.
+- Fix only real bugs exposed by those tests in `howl-vt/src/kitty/graphics.zig` or `howl-vt/src/terminal.zig`.
+- Leave persistent generated refs, scrollback viewport publication, ABI, render, and host code unchanged.
+
+Generated dirty/publication acceptance tests:
+
+- Insert lines over placeholder rows removes/moves generated placements to match resulting screen cells.
+- Delete lines over placeholder rows removes/moves generated placements to match resulting screen cells.
+- Insert/delete chars across placeholder cells updates generated placement runs.
+- Clearing a row/range containing placeholders removes generated placements.
+- Reusing an old `publication_seq` after placeholder row mutation is rejected.
+- Generated placement render-order keys remain stable for unchanged publication content after a non-graphics meta query.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter

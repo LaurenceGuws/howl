@@ -1,54 +1,49 @@
-# Current Slice: Kitty Quiet Response Modes
+# Current Slice: Generated Placeholder Dirty Publication Proof
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after protocol-matrix research.
+Promoted from `graphics-machinery-scratchpad.md` after generated cell-ref parity research.
 
 ## Goal
 
-Preserve Kitty's graphics response suppression modes from source: any nonzero `q` suppresses successful `OK` responses, while `q > 1` also suppresses failure responses.
+Prove Howl's current on-demand generated placeholder publication has Kitty-compatible observable behavior for row/cell mutations before considering persistent generated cell refs.
 
 ## Target Files
 
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/action/vocabulary.zig`
-- `howl-vt/src/kitty/protocol.zig`
-- `howl-vt/src/test/action_mapping.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
+- `howl-vt/src/kitty/graphics.zig` only if a test exposes a real generated-publication bug
+- `howl-vt/src/terminal.zig` only if a test exposes a real publication invalidation bug
 
 ## Required Behavior
 
-- Parser/action vocabulary preserves the numeric quiet mode instead of collapsing nonzero values to `true`.
-- `q=0` and omitted `q` keep current unsuppressed reply behavior.
-- `q=1` suppresses successful `OK` replies but still emits failures.
-- `q>1` suppresses failures and successful `OK` replies.
-- Chunked uploads carry the initiating quiet mode through final success/error handling.
-- Placement, query/transmit, animation/frame, compose, parent, and validation reply sites use success-vs-error suppression rather than a boolean.
+- Generated placements are derived from current VT/screen truth after text-grid mutations.
+- Insert/delete lines over placeholder rows moves or removes generated placements coherently.
+- Insert/delete characters across placeholder cells updates generated placement runs coherently.
+- Clearing placeholder cells removes generated placements from publication.
+- Mutating placeholder rows invalidates stale `publication_seq` queries.
+- Generated placement render-order keys remain deterministic for unchanged publication content.
 
 ## Hard Constraints
 
-- Do not touch ABI, render, host, or terminal files.
-- Do not edit `howl-vt/src/terminal.zig`.
-- Do not expand into PNG `EBADPNG` taxonomy.
-- Do not change image decode/storage semantics.
-- Do not alter delete/reset behavior, animation runtime, frame gaps, or placement geometry.
-- Do not add compatibility aliases that blur `q=1` and `q=2`.
+- Prefer tests only. Implementation changes are allowed only for a bug proved by a new focused test.
+- Do not add persistent generated ref storage.
+- Do not add a new public ABI stream or change render/host code.
+- Do not reintroduce render-side Kitty placeholder parsing.
+- Do not solve scrollback viewport graphics publication.
+- Do not change placeholder protocol decoding rules, render sorting, layer policy, or frame/quiet behavior.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- Parser/action test proves `q=0`, `q=1`, `q=2`, and `q=3` remain distinct.
-- Invalid direct upload with `q=1` still emits an error.
-- Invalid direct upload with `q=2` emits no error.
-- Successful direct upload/query/placement with `q=1` emits no `OK`.
-- Successful direct upload/query/placement with `q=2` emits no `OK`.
-- Failed chunked upload with initiating `q=1` emits final error.
-- Failed chunked upload with initiating `q=2` emits no final error.
-- Missing image/frame/parent errors with `q=2` emit no error.
-- Successful animation/frame control with `q=1` emits no `OK`.
+- Insert lines over placeholder rows removes/moves generated placements to match the resulting screen cells.
+- Delete lines over placeholder rows removes/moves generated placements to match the resulting screen cells.
+- Insert/delete chars across placeholder cells updates generated placement runs.
+- Clearing a row/range containing placeholders removes generated placements.
+- Reusing an old `publication_seq` after placeholder row mutation is rejected.
+- Generated placement render-order keys remain stable for unchanged publication content after a non-graphics meta query.
 
 ## Verification Required
 
@@ -58,4 +53,4 @@ Preserve Kitty's graphics response suppression modes from source: any nonzero `q
 
 Stop condition:
 
-- If correct suppression requires broad reply taxonomy changes beyond source-backed success/failure helpers, stop and report the exact dependency instead of widening the slice.
+- If this proof requires persistent generated refs, scrollback-aware graphics publication, ABI changes, render changes, or host policy changes, stop and report the exact dependency instead of widening the slice.
