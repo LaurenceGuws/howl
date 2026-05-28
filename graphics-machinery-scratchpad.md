@@ -628,6 +628,11 @@ Frame-gap acceptance tests:
 - Editing an existing frame with `z=0` preserves its old gap.
 - Editing an existing frame with `z=-1` changes gap to `0`.
 
+Frame-gap semantics slice completed:
+
+- `howl-vt` commit `f911699 vt: match kitty frame gaps`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
