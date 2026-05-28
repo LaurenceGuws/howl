@@ -1084,6 +1084,11 @@ Indirect raw undersize acceptance tests:
 - Temp-file medium `t=t,S=2,s=1,v=1,f=24` fails with `ENODATA`, stores no image, and deletes a safe temp file.
 - Shared-memory medium `t=s,S=2,s=1,v=1,f=24` fails with `ENODATA`, stores no image, and unlinks the object.
 
+Indirect raw undersize slice completed:
+
+- `howl-vt` commit `c12a3b7 vt: reject undersized indirect graphics`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
