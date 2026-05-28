@@ -1,42 +1,44 @@
-# Current Slice: Ignore Chunk Flag For Indirect Media
+# Current Slice: Validate Raw Direct Payloads
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-machinery-scratchpad.md` after chunk/transmission medium research.
+Promoted from `graphics-machinery-scratchpad.md` after raw direct payload validation research.
 
 ## Goal
 
-Match Kitty/Ghostty behavior by ignoring `m=1` for non-direct graphics media (`t=f`, `t=t`, `t=s`) instead of rejecting the command.
+Match Kitty/Ghostty behavior by validating uncompressed direct raw graphics payloads (`t=d`, `c` omitted, `f=24` or `f=32`) before retaining or publishing them.
 
 ## Target Files
 
-- `howl-vt/src/test/terminal_graphics.zig`
 - `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
-- For file medium `t=f`, `m=1` is ignored and the file is loaded immediately.
-- For temp-file medium `t=t`, `m=1` is ignored, the file is loaded immediately, and safe temp deletion still happens.
-- For shared-memory medium `t=s`, `m=1` is ignored, the object is loaded immediately, and unlink still happens.
-- Direct medium `t=d` chunk semantics remain unchanged.
+- For uncompressed direct raw uploads (`t=d`, `c` omitted, `f=24` or `f=32`), validate base64 syntax.
+- Decode raw payloads only for validation; retain the original base64 transport bytes for the current ABI/product behavior.
+- Require decoded byte length to equal `width * height * bytes_per_pixel` where `f=24` is 3 bytes per pixel and `f=32` is 4 bytes per pixel.
+- Reject zero width or height through the existing raw payload validation path.
+- Preserve direct PNG (`f=100`) validation and zlib-compressed raw behavior.
 
 ## Hard Constraints
 
-- Do not change ABI, render, host, parser, or terminal files.
-- Do not change direct chunk lifecycle or parser validation.
-- Do not change quiet response handling, EBADPNG behavior, storage quota, animation, delete/reset, composition, generated placeholder behavior, or PNG mode behavior.
-- Do not change file permission policy, safe temp deletion rules, or shared-memory unlink policy beyond allowing `m=1` to be ignored.
-- Do not add local-media chunk assembly semantics.
+- Do not change ABI, render, host, parser, terminal, or build files.
+- Do not change direct chunk lifecycle, local media behavior, parser validation, or quiet response handling.
+- Do not change EBADPNG behavior, PNG mode behavior, zlib decompression behavior, storage quota, animation, delete/reset, composition, or generated placeholder behavior.
+- Do not replace retained base64 model truth in this slice.
+- Existing tests that use invalid raw fixtures must be corrected to valid fixture dimensions/payloads if they assert successful upload behavior.
 - Do not special-case yazi/panes.
 - Keep the smallest correct diff.
 
 ## Required Tests
 
-- File medium upload with `m=1` stores the expected payload and leaves no active upload.
-- Temp-file medium upload with `m=1` stores the expected payload, deletes the safe temp file, and leaves no active upload.
-- Shared-memory medium upload with `m=1` stores the expected payload, unlinks the object, and leaves no active upload.
+- Valid `s=1,v=1,t=d,f=24;AAAA` stores successfully.
+- Valid `s=1,v=1,t=d,f=32;AAAAAA==` stores successfully.
+- Invalid base64 direct raw payload fails with graphics `EINVAL` and does not store an image.
+- Decoded-length mismatch such as `s=2,v=1,t=d,f=24;QUJD` fails with graphics `EINVAL` and does not store an image.
 
 ## Verification Required
 
@@ -46,4 +48,4 @@ Match Kitty/Ghostty behavior by ignoring `m=1` for non-direct graphics media (`t
 
 Stop condition:
 
-- If correct behavior requires local-media chunk assembly, parser changes, host/runtime changes, or ABI changes, stop and report the exact dependency instead of widening the slice.
+- If correct behavior requires replacing retained base64 model truth, parser changes, host/runtime changes, render changes, ABI changes, or broad fixture rewrites outside graphics tests, stop and report the exact dependency instead of widening the slice.

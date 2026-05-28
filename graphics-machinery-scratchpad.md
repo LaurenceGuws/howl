@@ -1010,6 +1010,42 @@ Ignore-indirect-`m` slice completed:
 - `howl-vt` commit `21fb500 vt: ignore chunks for indirect graphics`.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 17. Raw direct payloads are retained without validation
+
+Severity: medium, protocol correctness.
+
+Kitty/Ghostty machinery:
+
+- Kitty direct raw uploads accumulate decoded image bytes and reject insufficient or mismatched data size before loading.
+- Kitty validates raw dimensions and requires loaded size to match `width * height * bytes_per_pixel`.
+- Ghostty decodes APC payload base64 before execution and rejects completed images whose decoded data length does not match dimensions/depth.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `normalizeDirectPayloadOwned` duplicates uncompressed non-PNG payload bytes without validating base64 syntax or decoded length.
+- `howl-vt/src/kitty/graphics.zig`: `expectedRawPayloadLen` already defines raw byte-length expectations for compressed raw payloads.
+- Several VT graphics tests use fixture `s=2,v=1,t=d,f=24;QUJD`, which decodes to 3 bytes while the declared raw image requires 6 bytes.
+
+Problem:
+
+- Invalid direct raw data can become Howl image truth and pass through the ABI as retained base64.
+- Existing successful-upload tests may be proving permissive invalid fixtures rather than protocol-correct raw image loading.
+
+Promoted raw direct validation slice:
+
+- Validate base64 syntax for uncompressed direct raw `f=24` and `f=32` uploads.
+- Decode only for validation and keep retaining original base64 transport bytes for current ABI behavior.
+- Require decoded byte length to equal `width * height * bytes_per_pixel`.
+- Correct graphics-test success fixtures that currently declare dimensions larger than the decoded payload.
+- Leave PNG, zlib, chunk lifecycle, parser, ABI, render, host, storage-model, animation, delete/reset, and generated-placeholder behavior out of scope.
+
+Raw direct validation acceptance tests:
+
+- Valid RGB direct raw upload succeeds.
+- Valid RGBA direct raw upload succeeds.
+- Invalid base64 direct raw upload fails with graphics `EINVAL` and stores no image.
+- Decoded-length mismatch direct raw upload fails with graphics `EINVAL` and stores no image.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
