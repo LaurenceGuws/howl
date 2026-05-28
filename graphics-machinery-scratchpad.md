@@ -1323,6 +1323,86 @@ Research notes for later slices:
 - Root-frame edit parity remains broader and should not be pulled into this oversized-frame slice.
 - Exact Kitty `EFBIG` response taxonomy for larger-than-slack direct raw remains deferred.
 
+### 24. Combined animation controls reject real Kitty Go traffic
+
+Severity: medium-high, real client animation compatibility.
+
+Kitty source truth:
+
+- `kitty/graphics.h`: command fields intentionally overlap by action; `s`, `v`, `r`,
+  `c`, `z`, and `C` carry animation/frame meanings for graphics commands.
+- `kitty/parse-graphics-command.h`: accepts `a=a`, `s`, `v`, `r`, `c`, and `z` in the
+  same control block.
+- `kitty/graphics.c:1729-1769`: `handle_animation_control_command` applies all present
+  controls independently in one command: frame gap by `r/z`, current-frame select by
+  `c`, animation state by `s`, and loop count by `v`.
+
+Real Go client traffic:
+
+- `kittens/icat/transmit.go:318-367`: `icat` reuses one animation control command.
+  After root upload it writes `a=a,r=<root>,z=<root_gap>[,v=<loops>]`; after frame 1
+  it writes loading mode by adding `s=2` while retaining `r/z/v`; after all frames it
+  writes running mode by changing `s=3` while still retaining `r/z/v`.
+- `kittens/choose_files/graphics.go:199-247`: `choose_files` uses the same retained
+  command pattern, with `v=1` retained for previews.
+- `kittens/icat/transmit.go:46-81` and `kittens/choose_files/graphics.go:201-227`:
+  extra frames use `a=f`, `z=<delay>`, `C=1` for replacement, `c=<compose_onto>`, and
+  `x/y` frame offsets.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/protocol.zig`: parser already preserves the overlapped fields.
+- `howl-vt/src/kitty/graphics.zig:913-920`: `controlAnimation` counts control
+  categories and rejects commands containing more than one category.
+- Existing runtime tests split controls into separate commands; they do not replay the
+  retained Go command shape.
+
+Problem:
+
+- Real Kitty Go clients can send `a=a,s=2,r=1,z=7,v=1` or `a=a,s=3,r=1,z=7,v=1`.
+- Kitty accepts and applies these combined controls.
+- Howl rejects them as `EINVAL`, so animated `icat` and `choose_files` traffic can fail
+  even though isolated frame upload/runtime tests pass.
+
+Promoted combined-animation-control slice:
+
+- VT-only, ABI-preserving.
+- Change `controlAnimation` so one `a=a` command may apply all present Kitty controls.
+- Apply `r/z` frame-gap edit when `r` is present and `z != 0`.
+- Apply `c` current-frame selection when `c` is present.
+- Apply `s` animation state when `s` is present.
+- Apply `v` loop count when `v` is present.
+- Preserve existing success/failure reply behavior and quiet behavior.
+- Leave parser, render, host, ABI, frame upload, compose, delete, runtime timing,
+  storage identity, and generated placeholders out of scope.
+
+Combined-animation-control acceptance tests:
+
+- `icat`-style direct replay: root upload, extra frame upload, `a=a,r=1,z=7`,
+  `a=a,s=2,r=1,z=7`, then `a=a,s=3,r=1,z=7` produces no `EINVAL`, preserves root gap,
+  reaches running state, and runtime advances.
+- `choose_files`-style replay with retained `v=1`: `a=a,r=1,z=7,v=1`,
+  `a=a,s=2,r=1,z=7,v=1`, then `a=a,s=3,r=1,z=7,v=1` preserves the expected finite-loop
+  state and runtime behavior.
+- Loading replay with retained `r/z/v` still advances immediately when a future frame is
+  uploaded after waiting at the last available frame.
+- Existing split-control runtime tests continue to pass.
+
+Stop conditions:
+
+- Stop if accepting combined controls conflicts with a deeper Howl invariant; reshape
+  `controlAnimation` around Kitty's independent-field model instead of adding a special
+  Go-client exception.
+- Stop if a replay requires chunking, compression, file media, render, or host behavior;
+  keep this slice to animation-control semantics only.
+
+Combined-animation-control slice completed:
+
+- `howl-vt` commit `30cbfc9 vt: accept combined animation controls`.
+- Verification passed: `zig build test --summary all`,
+  `zig build test:regression:build --summary all`, root `zig build`, root
+  `git diff --check`, and `howl-vt` `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter

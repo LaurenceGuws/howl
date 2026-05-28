@@ -1,4 +1,4 @@
-# Current Slice: Kitty Graphics Parser Validation
+# Current Slice: Combined Kitty Animation Controls
 
 Owner: workspace root.
 
@@ -6,41 +6,43 @@ Sprint scope: graphics.
 
 ## Goal
 
-Match Kitty graphics control-block parsing closely enough that malformed command metadata
-is rejected before graphics state mutation.
+Accept Kitty-compatible combined `a=a` animation-control commands emitted by real Kitty
+Go clients.
 
 ## Source Truth
 
-- `utils/dev_references/terminals/kitty/kitty/parse-graphics-command.h`
 - `utils/dev_references/terminals/kitty/kitty/graphics.h`
+- `utils/dev_references/terminals/kitty/kitty/graphics.c`
 - `utils/dev_references/terminals/kitty/kitty_tests/graphics.py`
+- `utils/dev_references/terminals/kitty/kittens/icat/transmit.go`
+- `utils/dev_references/terminals/kitty/kittens/choose_files/graphics.go`
 
 ## Target Files
 
-- `howl-vt/src/kitty/protocol.zig`
-- `howl-vt/src/kitty/apply.zig`
 - `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
 
 ## Required Behavior
 
-- Validate graphics control-block syntax before calling `State.handle` or mutating graphics state.
-- Reject unknown keys, missing `=`, invalid action/delete/transmission/compression flags,
-  empty integer fields, invalid integer bytes, overlarge unsigned integers, invalid signed
-  integers, bad separators, and trailing incomplete fields.
-- Invalid parser input must not mutate image, placement, frame, upload, or reply state.
-- Remove dead `unsupported_key` state/handler plumbing if strict parse rejection makes it
-  unreachable.
-- Preserve existing supported command behavior for valid commands.
-- Preserve existing quiet handling for valid commands.
+- `a=a` may apply multiple Kitty animation controls from the same command.
+- `r/z` edits a frame gap when `r` is present and `z != 0`.
+- `c` selects the current frame when present.
+- `s` sets animation state when present.
+- `v` sets loop count when present.
+- Preserve existing success/failure reply behavior and quiet behavior.
+- Do not special-case `icat`, `choose_files`, or any other client.
+- Do not change parser, render, host, ABI, frame upload, compose, delete, runtime timing,
+  storage identity, or generated-placeholder behavior.
 
 ## Required Tests
 
-- Invalid action, delete, transmission, and compression flags fail without mutation.
-- Invalid integer fields fail instead of becoming `0`.
-- Unsupported or malformed control keys fail before mutation.
-- Bad separators and trailing incomplete fields fail before mutation.
-- Existing valid graphics tests continue to pass.
+- `icat`-style direct replay with retained `r/z` and later `s=2` then `s=3` produces no
+  `EINVAL`, preserves root gap, reaches running state, and runtime advances.
+- `choose_files`-style replay with retained `r/z/v=1` preserves finite-loop state and
+  runtime behavior.
+- Loading replay with retained `r/z/v` still advances immediately when a future frame is
+  uploaded after waiting at the last available frame.
+- Existing split-control animation tests continue to pass.
 
 ## Verification Required
 
@@ -51,5 +53,7 @@ is rejected before graphics state mutation.
 
 Stop condition:
 
-- If exact Kitty reply/error taxonomy for parser failures is ambiguous, stop after
-  preventing mutation and report the source ambiguity instead of inventing broad behavior.
+- If accepting combined controls conflicts with a deeper Howl invariant, stop and report
+  the smaller source-backed redesign needed for `controlAnimation`.
+- If a replay requires chunking, compression, file media, render, or host behavior, stop
+  and keep this slice to animation-control semantics only.
