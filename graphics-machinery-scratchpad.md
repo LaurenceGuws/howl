@@ -930,6 +930,40 @@ Valid PNG query proof slice completed:
 - Tests-only slice.
 - Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
 
+### 15. PNG mode matrix needs fixed-fixture VT proof
+
+Severity: medium, PNG parity confidence.
+
+Kitty machinery:
+
+- `kitty_tests/graphics.py`: `test_load_png` exercises RGBA and RGB, and visibly intends L/P mode coverage.
+- `kitty/png-reader.c`: PNG input is normalized to RGBA by stripping/expanding modes and adding alpha.
+
+Howl current shape:
+
+- `howl-vt/src/kitty/graphics.zig`: `decodeBase64PngRgbaOwned` calls stb with requested channels `4`.
+- Existing tests cover invalid PNG, simple RGBA PNG, valid PNG query, and app-icon replay.
+- No fixed-fixture test covers RGB, grayscale, or palette PNG normalization.
+
+Problem:
+
+- The simple PNG proof covers one RGBA fixture only.
+- A narrow fixed-fixture mode matrix can prove common PNG mode normalization without broad color-management or decoder replacement work.
+
+Promoted PNG mode matrix VT proof slice:
+
+- Add fixed inline base64 fixtures for `RGBA`, `RGB`, `L`, and `P` mode PNGs.
+- For each fixture, exercise current-frame publication and assert normalized raw RGBA output.
+- Keep the slice VT tests-only unless a simple fixture exposes a real decode mismatch.
+- Leave render decode matrix, gamma/ICC/color management, 16-bit/interlace/APNG, PNG zlib, ABI, host, and storage-model changes out of scope.
+
+PNG mode matrix acceptance tests:
+
+- RGBA PNG fixture publishes expected RGBA base64.
+- RGB PNG fixture publishes expected RGBA base64 with alpha `ff`.
+- L PNG fixture publishes expected grayscale-expanded RGBA base64.
+- P PNG fixture publishes expected palette-expanded RGBA base64.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
