@@ -806,6 +806,11 @@ Animation runtime acceptance tests:
 - Finite `v=2` two-frame animation publishes frame sequence `1 -> 2 -> 1 -> 2` before stopping on the next wrap attempt.
 - Gapless negative-`z` frame is skipped by runtime publication while remaining stored.
 
+Animation runtime edge-case slice completed:
+
+- `howl-vt` commit `210d989 vt: fix graphics animation runtime`.
+- Verification passed: `zig build test`, `zig build test:regression:build`, and root `git diff --check`.
+
 ## Howl-Only Hacks
 
 ### 1. Render-side Kitty placeholder interpreter
