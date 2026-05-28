@@ -1,4 +1,4 @@
-# Current Slice: Direct Raw EFBIG Taxonomy
+# Current Slice: PNG Palette Fixture VT Proof
 
 Owner: workspace root.
 
@@ -6,47 +6,41 @@ Sprint scope: graphics.
 
 ## Goal
 
-Match Kitty's `EFBIG:Too much data` failure taxonomy for direct uncompressed raw
-graphics payloads whose decoded length exceeds Kitty's accepted `expected_raw_len + 10`
-slack.
+Prove valid Kitty-compatible palette PNG (`P`) and palette transparency (`tRNS`)
+normalization through Howl's VT graphics publication path before considering any decoder
+replacement.
 
 ## Source Truth
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `utils/dev_references/terminals/kitty/kitty/parse-graphics-command.h`
-- `utils/dev_references/terminals/kitty/kitty/graphics.c`
+- `utils/dev_references/terminals/kitty/kitty/png-reader.c`
 - `utils/dev_references/terminals/kitty/kitty_tests/graphics.py`
-- `graphics-machinery-scratchpad.md` section `Exact direct-raw EFBIG taxonomy research`
+- `utils/official_docs/kitty/graphics-protocol.md`
+- `graphics-machinery-scratchpad.md` section `Palette PNG blocker re-research`
 
 ## Target Files
 
-- `howl-vt/src/kitty/graphics.zig`
 - `howl-vt/src/test/terminal_graphics.zig`
+- `howl-vt/src/kitty/graphics.zig` only if a valid fixture exposes a direct VT-path bug
 
 ## Required Behavior
 
-- Keep direct uncompressed raw decoded payloads up to `expected_raw_len + 10` accepted
-  and truncated to expected image truth.
-- Reject decoded direct raw payloads larger than `expected_raw_len + 10` with graphics
-  reply `EFBIG:Too much data`.
-- Apply the same `EFBIG` taxonomy to completed direct chunked raw uploads.
-- Preserve `q=1` failure emission and `q=2` failure suppression.
-- Preserve existing `EINVAL:invalid kitty graphics data` behavior for undersize raw,
-  invalid base64, zero dimensions, and other non-oversize invalid raw data.
-- Do not change PNG, zlib, indirect media, parser payload ownership, render, host, ABI,
-  storage, placement, animation, delete/reset, or generated-placeholder behavior.
+- Tests-only unless a valid palette fixture fails through Howl's VT path.
+- Valid palette PNG input must publish normalized RGBA bytes at the VT graphics model
+  boundary.
+- Valid palette PNG with `tRNS` transparency must publish exact alpha bytes.
+- Preserve existing RGBA/RGB/L PNG normalization behavior.
+- Preserve invalid PNG `EBADPNG` behavior.
+- Do not replace the PNG decoder, add custom palette expansion, change render, ABI,
+  host, PNG zlib, color management, storage model, or dependency policy.
 
 ## Required Tests
 
-- Single direct RGB raw upload with decoded length `expected + 11` replies
-  `EFBIG:Too much data` and stores no image.
-- Chunked direct RGB raw upload with final decoded length `expected + 11` replies
-  `EFBIG:Too much data`, clears pending upload, and stores no image.
-- Single direct raw `expected + 11,q=1` emits the same `EFBIG` failure reply.
-- Single direct raw `expected + 11,q=2` emits no reply and stores no image.
-- Existing `expected + 10` slack tests remain green.
-- Existing undersize and invalid-base64 tests remain `EINVAL:invalid kitty graphics data`.
+- Fixed palette PNG fixture publishes expected palette-expanded RGBA base64.
+- Fixed palette PNG with `tRNS` publishes expected RGBA base64 with transparent alpha.
+- Existing PNG normalization tests remain green.
+- Existing invalid PNG `EBADPNG` tests remain green.
 
 ## Verification Required
 
@@ -58,6 +52,7 @@ slack.
 
 Stop condition:
 
-- If exact `EFBIG` parity requires parser payload ownership changes, decoded storage
-  redesign, PNG/zlib changes, indirect-media changes, render, host, or ABI changes, stop
-  and report the smaller source-backed slice needed.
+- If a valid palette fixture is rejected by direct vendored stb but accepted by
+  Kitty/libpng, stop and report the decoder policy slice needed.
+- If proving parity requires adding/replacing a PNG decoder, ABI/render/host changes,
+  color-management policy, or storage-model work, stop and split the work.

@@ -976,6 +976,44 @@ Palette PNG blocker found:
 - The fixed `P` fixture is rejected by current `stb_image` validation as `EBADPNG` while Kitty/libpng expands it.
 - This is a decoder behavior dependency and is deferred instead of widening this proof slice.
 
+Palette PNG blocker re-research:
+
+- `kitty/png-reader.c` normalizes PNG input to RGBA. For palette PNGs it calls
+  `png_set_palette_to_rgb`, converts `tRNS` chunks to alpha with
+  `png_set_tRNS_to_alpha`, and adds opaque alpha where no alpha exists.
+- The exact previously failed fixed `P` fixture is not preserved in the current tree or
+  scratchpad, so the failure cannot be audited from committed bytes.
+- Howl's vendored `stb_image` documents palette PNG depalettization and accepts a
+  freshly generated valid palette PNG with `tRNS` when called directly with
+  `stbi_info_from_memory` and `stbi_load_from_memory(..., 4)`.
+- Do not replace the decoder or add custom palette expansion on the old blocker alone;
+  first prove valid palette fixtures through the VT publication path.
+
+Promoted palette PNG VT proof slice:
+
+- Tests-only unless a valid fixture fails through Howl.
+- Add fixed inline base64 fixtures for valid palette PNG and palette PNG with `tRNS`.
+- Exercise current-frame publication and assert `format=32`, dimensions, and exact
+  normalized RGBA payload.
+- Leave decoder replacement, Wuffs/libpng dependency decisions, render decode matrix,
+  gamma/ICC/color management, 16-bit/interlace/APNG, PNG zlib, ABI, host, and
+  storage-model changes out of scope.
+
+Palette PNG proof acceptance tests:
+
+- Palette PNG fixture publishes expected palette-expanded RGBA bytes.
+- Palette PNG with `tRNS` publishes exact alpha bytes.
+- Existing RGBA/RGB/L PNG normalization tests remain green.
+- Existing invalid PNG `EBADPNG` tests remain green.
+
+Stop conditions:
+
+- Stop if a valid palette fixture is rejected by direct vendored stb but accepted by
+  Kitty/libpng.
+- Stop if proving parity requires adding or replacing a PNG decoder.
+- Stop if the slice grows into ABI, render storage, color management, or dependency
+  policy.
+
 Promoted PNG non-palette mode matrix VT proof slice:
 
 - Add fixed inline base64 fixtures for `RGBA`, `RGB`, and `L` mode PNGs.
