@@ -1,53 +1,52 @@
-# Current Slice: Host Placeholder-Run Publication Cleanup
+# Current Slice: Render Placeholder-Run ABI Cleanup
 
 Owner: workspace root.
 
 Sprint scope: graphics.
 
-Promoted from `graphics-generated-placement-transition-scratchpad.md` item 5, after render placeholder path deletion landed in `howl-render` `7bd5b89` and root `891a5c8`.
+Promoted from `graphics-generated-placement-transition-scratchpad.md` item 6, after host placeholder-run publication cleanup landed in `howl-linux-host` `c607a2b` and root `54d039f`.
 
 ## Goal
 
-Remove host-side placeholder-run render-publication plumbing now that VT publishes generated placeholder cells as normal graphics placements and render no longer interprets Kitty placeholder protocol.
+Remove render's public placeholder-run input contract and internal copy/validation plumbing now that VT publishes generated placeholder cells as normal graphics placements and host no longer publishes placeholder-run spans.
 
 ## Target Files
 
-Host:
+Render:
 
-- `howl-linux-host/src/terminal/vt/surface.zig`
-- `howl-linux-host/src/main.zig`
-- `howl-linux-host/src/terminal/terminal_panel.zig`
-- tests under `howl-linux-host/src/terminal/vt/`
-
-Render only if compilation requires matching public-input cleanup:
-
+- `howl-render/include/howl_render.h`
+- `howl-render/src/ffi_types.zig`
 - `howl-render/src/frame/queue.zig`
 - `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/ffi_types.zig`
+- `howl-render/src/ffi.zig`
+- `howl-render/src/test_abi.zig`
+
+Host C ABI consumer updates:
+
+- `howl-linux-host/src/terminal/vt/surface.zig`
 
 ## Required Behavior
 
-- Host no longer allocates, queries, stores, or passes placeholder-run spans for render publication.
-- Host publication to render uses generated graphics placements and an empty placeholder-run span/count.
-- Host graphics diagnostics/logs describe placement truth, not placeholder-run render truth.
-- No Zig-shaped shortcut bypasses the C ABI.
-- Render mixed-stream guard may remain until public render ABI cleanup is deliberately promoted, but host must not rely on placeholder runs.
+- Render publish/source ABI no longer includes placeholder-run count or placeholder-run spans.
+- Render queue no longer stores, clones, frees, compares, validates, or logs placeholder runs.
+- Render still accepts generated placeholder placements as normal placements.
+- Host compiles against the updated render C ABI and no longer sets or asserts removed render placeholder-run fields.
+- VT's public/internal placeholder-run proof API remains unchanged in this slice.
 
 ## Hard Constraints
 
 - Do not edit VT in this slice unless a compile blocker proves otherwise.
-- Do not reintroduce render-side Kitty placeholder parsing.
-- Do not remove VT's public placeholder-run ABI in this slice; VT still owns internal/debug placeholder-run queries unless a later ABI cleanup is promoted.
+- Do not reintroduce render-side Kitty placeholder parsing, placeholder drawing, diacritic handling, fg/underline image-id handling, or virtual placement placeholder semantics.
+- Do not remove generated placement flags or normal placement validation.
 - Do not special-case yazi/panes.
-- Do not publish generated placeholder placements and placeholder-run spans together.
+- Do not add backwards-compatible ignored placeholder-run fields to render; the point is to delete this render input contract.
 
 ## Verification Required
 
+- `zig build test` in `howl-render`
 - `zig build test:unit` in `howl-linux-host`
-- `zig build test` in `howl-render` if render files are touched
-- `zig build test` in `howl-vt` if VT files are touched
 - `git diff --check` at workspace root
 
 Stop condition:
 
-- If host cannot avoid querying/passing placeholder runs because render still requires them for a non-placeholder graphics behavior, stop and report the exact render ABI dependency. Do not recreate placeholder-run drawing in host or render.
+- If render still needs placeholder-run data for a non-dead behavior, stop and report the exact dependency. Do not keep a half-removed ABI field or restore placeholder rendering.

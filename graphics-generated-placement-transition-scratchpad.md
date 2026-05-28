@@ -241,6 +241,43 @@ Acceptance:
 - Graphics logs describe placement truth, not placeholder-run render truth.
 - Host tests pass.
 
+Completed:
+
+- `howl-linux-host` `e05340e host: stop publishing placeholder runs`
+- `howl-linux-host` `c607a2b host: prove generated placeholder replay`
+- root `54d039f design: update host graphics cleanup`
+
+### 6. Render Placeholder-Run ABI Cleanup Commit
+
+Owner: `howl-render` plus `howl-linux-host` C ABI consumer updates.
+
+Purpose: remove the now-dead render-facing placeholder-run stream from render's public input contract.
+
+Research status:
+
+- Host no longer allocates, queries, stores, or passes placeholder-run spans for render publication.
+- Render no longer interprets Kitty placeholders or consumes placeholder-run data for drawing.
+- Remaining render placeholder-run code is validation/copy/storage/test plumbing in `queue.zig`, `surface_text_ffi.zig`, `ffi_types.zig`, `ffi.zig`, `test_abi.zig`, and `include/howl_render.h`.
+- VT placeholder-run proof/query code is separate terminal-owned machinery and should stay unless a later VT ABI cleanup is explicitly promoted.
+
+Required shape:
+
+- Remove `placeholder_run_count` from render's `HowlRenderVtGraphicsMeta` mirror.
+- Remove `HowlRenderVtGraphicsPlaceholderRunSpan` and `graphics_placeholder_runs` from render publish/source ABI structs.
+- Remove render queue storage, clone/free/equality, validation, and tests for placeholder runs.
+- Keep generated placeholder placement flags and normal placement validation.
+- Update host publish call sites/tests to stop setting or asserting removed render fields.
+- Do not remove VT public placeholder-run ABI in this slice.
+- Do not reintroduce any render placeholder parsing or drawing.
+
+Acceptance:
+
+- No `FfiVtGraphicsPlaceholderRun`, `graphics_placeholder_runs`, or `placeholder_run_count` remain in `howl-render/src` or `howl-render/include/howl_render.h`.
+- `howl-linux-host` compiles against the updated render C ABI without publishing placeholder-run fields.
+- `zig build test` in `howl-render` passes.
+- `zig build test:unit` in `howl-linux-host` passes.
+- `git diff --check` passes.
+
 ## Acceptance Tests For Whole Transition
 
 VT:
