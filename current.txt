@@ -1,62 +1,21 @@
-# Current Slice: Graphics Access-Order Quota Eviction
+# Current Slice: None
 
-Owner: howl-vt.
+Owner: workspace root.
 
 Sprint scope: graphics.
 
-## Goal
+Status: `Graphics Access-Order Quota Eviction` completed and accepted.
 
-Make VT graphics quota eviction choose the least-recently-accessed safe unplaced image
-instead of silently using array order.
+Accepted commits:
 
-## Source Truth
+- `howl-vt` `43f53c1 vt: order graphics eviction by access`
 
-- `AGENTS.md`
-- `loop.txt`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `graphics-machinery-scratchpad.md`
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
-- `utils/dev_references/terminals/kitty/kitty/graphics.c`
-- `utils/dev_references/terminals/kitty/kitty/graphics.h`
-- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_storage.zig`
-- `utils/dev_references/terminals/ghostty/src/terminal/kitty/graphics_image.zig`
+Verification passed:
 
-## Required Work
-
-- Edit only `howl-vt/src/kitty/graphics.zig` and
-  `howl-vt/src/test/terminal_graphics.zig` unless a stop condition is hit.
-- Add VT-owned image access order state.
-- Mark image access on root image load/reload and successful physical/virtual placement
-  upsert.
-- Use access order to pick the oldest safe unplaced victim for decoded quota eviction.
-- Use the same access order for retained/base64 compatibility quota eviction.
-- Keep physical and virtual placement preservation unchanged.
-- Keep public ABI unchanged.
-- Keep render and host unchanged.
-- Keep full internal image/ref/LRU redesign out of scope.
-
-## Tests Required
-
-- Decoded quota evicts the least-recently-accessed unplaced image, not necessarily the
-  earliest array element.
-- Retained quota evicts the least-recently-accessed unplaced image.
-- A successful placement access can make an older image survive after its placement is
-  deleted and both images are unplaced again.
-- Existing placed-image preservation and quota tests remain green.
-
-## Stop Conditions
-
-- Stop if access order requires changing public `howl_vt.h`.
-- Stop if the slice requires evicting placed images.
-- Stop if the slice requires generated placeholder materialization.
-- Stop if the slice requires full internal image/ref identity redesign.
-- Stop if render or host changes become necessary.
-
-## Verification
-
-- `zig build test --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-vt` (`638/638` tests).
 - `zig build test:regression:build --summary all` in `howl-vt`.
 - Root `zig build --summary all`.
-- Root and `howl-vt` `git diff --check`.
+- Root `git diff --check`.
+- `howl-vt git diff --check`.
+
+Next work must start with research and a freshly promoted single slice.

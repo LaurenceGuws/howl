@@ -1970,6 +1970,19 @@ Access-order quota research:
 - Stop conditions: stop if this requires public ABI changes, placed-image eviction,
   full internal image/ref identity redesign, generated placeholder materialization, or
   renderer/host changes.
+- VT access-order quota eviction completed in `howl-vt` commit `43f53c1 vt: order
+  graphics eviction by access`.
+- Accepted behavior: VT images now carry a monotonic access order, root image load/reload
+  assigns access order, successful physical and virtual placement upserts refresh access,
+  and retained plus decoded quota eviction pick the least-recently-accessed safe unplaced
+  image rather than array order.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `638/638` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `zig build --summary
+  all`, root `git diff --check`, and `howl-vt git diff --check`.
+- Remaining proof gaps: generated placeholder publication still does not materialize
+  Kitty-style cell refs in VT state, so placeholder realization does not refresh access
+  order. Placed-image LRU eviction remains deliberately out of scope until a full
+  identity/ref/lifetime slice is promoted.
 
 ## Completed Or Stale Graphics Backlog
 
