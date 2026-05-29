@@ -1,30 +1,55 @@
-# Current Slice: None
+# Current Slice: Placeholder Parent Anchor Scan Deletion
 
-Owner: workspace root.
+Owner: howl-vt.
 
 Sprint scope: graphics deletion.
 
-Status: `Placeholder Run ABI Deletion` completed and accepted.
+## Goal
 
-Accepted commits:
+Rip out Howl-only live placeholder-cell scanning used to resolve virtual-parent placement
+anchors.
 
-- `howl-vt` `07d9a4a vt: delete placeholder run ABI`
+## Delegation Requirement
 
-Verification passed:
+- Main agent must not implement this slice directly.
+- Seed a worker with this file and exact source paths.
+- Seed a reviewer after worker output. Reviewer must judge whether live placeholder parent
+  anchor scanning was actually removed.
 
-- `zig build test --summary all` in `howl-vt` (`611/611` tests).
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- Root `git diff --check`.
-- `howl-vt git diff --check`.
+## Required Work
 
-Known broken behavior:
+- Delete live placeholder parent-anchor scan logic from `howl-vt/src/kitty/graphics.zig`,
+  including `scanPlaceholderParentRow` and helpers that now exist only for this scan.
+- Make virtual-parent anchor resolution stop using placeholder cells as parent anchors.
+- Delete tests that assert relative placements resolve parents from live placeholder cells.
+- Do not add replacement generated refs/materialization.
+- Do not touch render or host unless compile break requires minimal deletion follow-up.
 
-- Public VT ABI consumers of placeholder-run count/query now break by design.
-- Placeholder-run publication/query is gone.
-- Unicode placeholder generated renderable placement behavior remains broken from the prior
-  destructive deletion.
+## Candidate Paths
 
-Remaining Howl-only graphics machinery to delete before replacement planning:
+- `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
 
-- Live placeholder parent-anchor scan.
-- Stale generated-placeholder placement flag/destination semantics.
+## Source-Order Reason
+
+- Kitty resolves through real refs/cell images, not a Howl-only public metadata/live-cell
+  parent scan.
+- After generated placement and placeholder-run deletion, live placeholder parent-anchor
+  scan is leftover Howl-only bridge machinery.
+
+## Expected Broken State
+
+- Relative placements that depended on live placeholder cells as virtual parents stop
+  resolving.
+
+## Tests Required
+
+- Run `zig build test --summary all` in `howl-vt` if feasible.
+- Run `zig build test:regression:build --summary all` in `howl-vt` if feasible.
+- Run root and `howl-vt` `git diff --check`.
+- Failing builds/tests are acceptable only if reported precisely.
+
+## Stop Conditions
+
+- Stop if replacement materialized refs are being designed.
+- Stop if render/host replacement architecture becomes necessary.

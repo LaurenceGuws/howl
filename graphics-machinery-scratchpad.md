@@ -2360,6 +2360,24 @@ Placeholder run ABI deletion decision:
   placeholder parent-anchor scan and stale generated-placeholder placement flag/destination
   semantics.
 
+Placeholder parent-anchor scan deletion decision:
+
+- Howl-only behavior: VT resolves relative placements against live placeholder cells via a
+  placeholder parent-anchor scan. After generated placement and placeholder-run deletion,
+  this scan is leftover bridge machinery.
+- Source-order reason: Kitty resolves through real refs/cell images, not a Howl-only
+  metadata/live-cell parent scan. Replacement must be planned from materialized generated
+  refs later.
+- Promoted destructive slice: delete live placeholder parent-anchor scan logic, make
+  virtual-parent anchor resolution stop using placeholder cells as parent anchors, and
+  delete tests that assert this behavior.
+- Candidate paths: `howl-vt/src/kitty/graphics.zig` and
+  `howl-vt/src/test/terminal_graphics.zig`.
+- Expected broken state: relative placements that depended on live placeholder cells as
+  virtual parents stop resolving.
+- Stop conditions: replacement materialized-ref design or render/host replacement
+  architecture.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
