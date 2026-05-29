@@ -2255,6 +2255,30 @@ Graphics app-icon fixture deletion research:
   quarantine, synthetic generated-placeholder order keys, and query-derived generated
   placement publication/materialization gap.
 
+Render legacy graphics payload deletion research:
+
+- Audit verdict: render-side legacy base64/protocol graphics handling is the next deletion
+  candidate, with public ABI layout preserved unless an explicit ABI break is approved.
+- Howl-only behavior: `howl-render` still treats `.legacy_protocol` payloads as a normal
+  internal graphics source and decodes Kitty transport/base64 bytes inside render.
+- Source truth: Kitty decodes protocol payloads before graphics-manager/render
+  consequences; Ghostty terminal graphics storage holds decoded image bytes. Render should
+  consume decoded pixels, not Kitty protocol bytes.
+- Promoted next slice: remove/quarantine `.legacy_protocol` graphics payload handling from
+  render preparation and tests so legacy protocol bytes are not first-class render truth.
+  Preserve public ABI symbols/layout unless the worker stops for explicit ABI break
+  approval.
+- Candidate paths: `howl-render/src/frame/graphics_prepare.zig`,
+  `howl-render/src/frame/queue.zig`, `howl-render/src/frame/surface_text.zig`,
+  `howl-render/src/frame/surface_text_ffi.zig`, `howl-render/src/test_abi.zig`, and
+  `howl-render/include/howl_render.h`.
+- Required invariants: decoded graphics publication remains green; public ABI layout
+  remains unless explicitly approved; non-graphics surface publication remains working; no
+  VT or host changes unless worker stops for a hard dependency.
+- Stop conditions: stop if public ABI layout removal is necessary, decoded graphics
+  publication must change, VT/host changes become necessary, or non-graphics render
+  publication breaks.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers

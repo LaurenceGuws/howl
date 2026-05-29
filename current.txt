@@ -1,32 +1,64 @@
-# Current Slice: None
+# Current Slice: Render Legacy Graphics Payload Deletion
 
-Owner: workspace root.
+Owner: howl-render.
 
 Sprint scope: graphics deletion.
 
-Status: `Graphics App Icon Fixture Deletion` completed and accepted.
+## Goal
 
-Accepted commits:
+Delete or quarantine render-side Kitty transport/base64 graphics payload decoding as
+first-class render truth. Render should consume decoded pixels; Kitty protocol bytes belong
+on the VT side.
 
-- `howl-vt` `a1ac412 vt: delete app icon graphics fixture`
-- `howl-render` `e7b4edb render: delete app icon graphics fixture`
-- `howl-linux-host` `d8bbee7 host: delete app icon graphics fixture`
+## Delegation Requirement
 
-Verification passed/reported:
+- Main agent must not implement this slice directly.
+- Seed a worker with this file, exact source paths, and the invariants below.
+- Seed a reviewer after worker output and reject any diff that preserves legacy protocol
+  bytes as a normal internal graphics path.
 
-- `zig build test --summary all` in `howl-vt` (`638/638` tests).
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- `zig build test --summary all` in `howl-render` (`733/736` tests passed, `3` skipped).
-- `zig build test:integration:kitty-graphics-replay:build --summary all` in
-  `howl-linux-host`.
-- Root `zig build --summary all`.
-- Root, `howl-vt`, `howl-render`, and `howl-linux-host` `git diff --check`.
+## Required Work
 
-Known non-blocking timeouts:
+- Remove or quarantine `.legacy_protocol` graphics payload handling from render preparation
+  so base64/Png protocol bytes are not treated as normal render graphics truth.
+- Preserve public render ABI symbols/layout unless worker stops for explicit ABI break
+  approval.
+- It is acceptable for legacy graphics payload submissions to fail validation or produce no
+  graphics if that is the smallest non-ABI-breaking deletion.
+- Keep decoded-pixels publication path working.
+- Delete or rewrite render tests that present legacy base64 graphics as normal behavior.
 
-- `zig build test --summary all` in `howl-linux-host` timed out after 120s.
-- `zig build test:integration:kitty-graphics-replay --summary all` in `howl-linux-host`
-  timed out after 180s.
+## Candidate Paths
 
-Next work must continue deleting/quarantining Howl-only graphics machinery before any
-replacement planning.
+- `howl-render/src/frame/graphics_prepare.zig`
+- `howl-render/src/frame/queue.zig`
+- `howl-render/src/frame/surface_text.zig`
+- `howl-render/src/frame/surface_text_ffi.zig`
+- `howl-render/src/test_abi.zig`
+- `howl-render/include/howl_render.h`
+
+## Reference Constraints
+
+- Kitty decodes protocol payload before graphics manager/render consequences.
+- Ghostty stores decoded image bytes in terminal graphics storage.
+- Howl render should receive decoded pixels, not Kitty transport/base64 bytes.
+
+## Invariants
+
+- Decoded graphics publication remains green.
+- Public ABI layout remains unless worker stops for explicit approval.
+- Non-graphics surface publication remains working.
+- No VT or host changes unless worker stops and reports a hard dependency.
+
+## Tests Required
+
+- `zig build test --summary all` in `howl-render`.
+- Root `zig build --summary all` if feasible.
+- Root and `howl-render` `git diff --check`.
+
+## Stop Conditions
+
+- Stop if public ABI layout removal is necessary.
+- Stop if decoded graphics publication must change.
+- Stop if VT/host changes become necessary.
+- Stop if non-graphics render publication breaks.
