@@ -2055,6 +2055,26 @@ Placeholder materialization access research:
   instead of retained publication state. This is now an ownership/performance/accounting
   cleanup rather than a public placeholder-run ABI truth gap.
 
+Placeholder streaming scan research:
+
+- Verdict: first cleanup slice is worker-ready and owned by `howl-vt`.
+- Kitty source truth: `screen_render_line_graphics` scans each row directly and emits
+  placeholder runs without allocating a row-side list. Howl currently builds a temporary
+  `ArrayList(PlaceholderCell)` per row, backfills it, then walks it.
+- Howl current truth: `walkResolvedPlaceholderRuns` is the single resolver feeding
+  placeholder-run count/query, generated placement count/query, and placeholder access
+  refresh. Removing its query-time row allocation improves all these paths without render,
+  host, or ABI changes.
+- Promoted next slice: rewrite `walkResolvedPlaceholderRuns` to stream one row left to
+  right, applying the same row-local backfill using a normalized previous cell. Keep the
+  public resolver signatures stable and keep all existing placeholder behavior unchanged.
+- Required tests: existing placeholder-run, generated placement, yazi-like, high-byte,
+  underline placement id, scroll, stale publication, and placeholder access tests remain
+  green. No new behavior test is required if the diff is a pure implementation cleanup and
+  all existing positive/negative placeholder tests still pass.
+- Stop conditions: stop if this requires retained publication state, render/host changes,
+  public ABI changes, or changes placeholder-run semantics.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
