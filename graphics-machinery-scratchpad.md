@@ -2308,6 +2308,22 @@ Generated placeholder bridge deletion decision:
   precisely instead of hidden by preserving the Howl-only bridge.
 - Stop conditions: public ABI layout deletion, replacement materialized-ref design,
   render/host replacement architecture.
+- Generated placeholder bridge deletion completed in `howl-vt` commit `069ec7d vt: delete
+  generated placeholder bridge`.
+- Accepted behavior: `resolvedPlacementCount` and `resolvedPlacementAt` now publish only
+  physical placements; query-derived generated placeholder placement count/query,
+  generated geometry helpers, generated placeholder tests, and the synthetic render-order
+  formula were deleted. Placeholder-run count/query ABI remains for the next deletion
+  decision.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `623/623` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `git diff --check`,
+  and `howl-vt git diff --check`.
+- Known broken behavior: Unicode placeholder cells still publish placeholder runs, but no
+  longer publish generated renderable placements. Placeholder-derived graphics rendering is
+  broken until source-backed materialized refs are planned and implemented.
+- Remaining Howl-only graphics machinery to delete before replacement planning:
+  placeholder-run ABI/query, live placeholder parent-anchor scan, and stale
+  generated-placeholder placement flag/destination semantics.
 
 ## Completed Or Stale Graphics Backlog
 

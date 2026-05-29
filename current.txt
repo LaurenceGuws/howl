@@ -1,66 +1,31 @@
-# Current Slice: Generated Placeholder Bridge Deletion
+# Current Slice: None
 
-Owner: howl-vt.
+Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-## Goal
+Status: `Generated Placeholder Bridge Deletion` completed and accepted.
 
-Rip out Howl-only query-derived generated placeholder placement publication and synthetic
-generated render-order keys, even if Unicode placeholder graphics stop rendering and tests
-break.
+Accepted commits:
 
-## Delegation Requirement
+- `howl-vt` `069ec7d vt: delete generated placeholder bridge`
 
-- Main agent must not implement this slice directly.
-- Seed a worker with this file, the remaining-deletion audit, exact source paths, and the
-  destructive scope below.
-- Seed a reviewer after worker output. Reviewer must judge whether the Howl-only bridge was
-  actually removed, not whether tests are green.
+Verification passed:
 
-## Required Work
+- `zig build test --summary all` in `howl-vt` (`623/623` tests).
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- Root `git diff --check`.
+- `howl-vt git diff --check`.
 
-- Delete query-derived generated placeholder placement publication from
-  `howl-vt/src/kitty/graphics.zig`.
-- Delete the synthetic generated placeholder render-order key formula.
-- Remove generated placeholder placement counts from `graphicsMeta().placement_count` and
-  generated placement indexed query from `graphicsPlacement(...)` publication.
-- Remove tests that assert generated placeholder placement publication/order if they no
-  longer compile; leaving failing tests is acceptable only if the failure is the explicit
-  broken-state proof requested by the user.
-- Preserve placeholder-run count/query ABI unless deleting generated placement code cannot
-  compile without touching it.
-- Do not add replacement materialized refs in this slice.
-- Do not touch render or host unless a compile break requires a minimal deletion follow-up.
+Known broken behavior:
 
-## Candidate Paths
+- Unicode placeholder cells still publish placeholder runs, but no longer publish generated
+  renderable placements.
+- Placeholder-derived graphics rendering through the deleted Howl-only bridge is broken
+  until a source-backed materialized-ref replacement is planned and implemented.
 
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/terminal.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
+Remaining Howl-only graphics machinery to delete before replacement planning:
 
-## Source-Order Reason
-
-- Kitty creates real generated cell-image refs with `grman_put_cell_image`.
-- Ghostty uses internal virtual placeholder iteration/render placement machinery.
-- Howl’s query-derived generated placements and synthetic order keys are a Howl-only bridge
-  that exists because real generated refs/materialization are missing.
-
-## Expected Broken State
-
-- Unicode placeholder generated placement rendering may stop working.
-- Tests covering generated placeholder placement publication/order may fail or be deleted.
-- Replacement planning must happen after deletion and must be reference-backed.
-
-## Tests Required
-
-- Run `zig build test --summary all` in `howl-vt` if feasible.
-- Run `zig build test:regression:build --summary all` in `howl-vt` if feasible.
-- Run root and `howl-vt` `git diff --check`.
-- Failing tests are acceptable only if reported precisely.
-
-## Stop Conditions
-
-- Stop if public ABI layout deletion is required.
-- Stop if the worker starts designing replacement materialized refs.
-- Stop if render/host replacement architecture becomes necessary.
+- Placeholder-run ABI/query.
+- Live placeholder parent-anchor scan.
+- Stale generated-placeholder placement flag/destination semantics.
