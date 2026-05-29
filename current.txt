@@ -1,88 +1,77 @@
-# Current Slice: Rename VT Surface Publication ABI
+# Current Slice: Rename Render Session Work State ABI
 
 Owner: workspace root.
 
 Purpose:
 
-- Break the render C ABI to replace generic publish-slot vocabulary with VT-surface
-  publication vocabulary.
-- The ABI publishes VT surface source data into the render text session.
+- Break the render C ABI to replace vague pending-state vocabulary with
+  session-work-state vocabulary.
+- The ABI reports render text-session work readiness: source, prepare, and submit work.
 - No aliases, no compatibility shims, no old names.
 
 ## ABI Changes
 
 In `howl-render/include/howl_render.h`, rename without old aliases:
 
-- `HowlRenderPublishSlot` -> `HowlRenderVtSurfaceSlot`
-- `HowlRenderPublishSlotCommit` -> `HowlRenderVtSurfaceCommit`
-- `HowlRenderVtPublishResult` -> `HowlRenderVtSurfacePublishResult`
-- `howl_render_text_session_reserve_publish_slot` ->
-  `howl_render_text_session_reserve_vt_surface_slot`
-- `howl_render_text_session_commit_publish_slot` ->
-  `howl_render_text_session_commit_vt_surface`
-- `howl_render_text_session_reject_publish_slot` ->
-  `howl_render_text_session_reject_vt_surface`
-- `howl_render_text_session_cancel_publish_slot` ->
-  `howl_render_text_session_cancel_vt_surface`
+- `HowlRenderPendingState` -> `HowlRenderSessionWorkState`
+- `howl_render_text_session_pending_state` -> `howl_render_text_session_work_state`
+
+Keep struct fields unchanged:
+
+- `status`
+- `source_pending`
+- `prepare_pending`
+- `submit_pending`
+- `reserved0`
 
 ## Render Source Changes
 
-- Rename `howl-render/src/publish_slot.zig` to `howl-render/src/vt_surface.zig`.
-- Update `howl-render/src/libhowl_render.zig` to import `vt_surface.zig` and export
-  the new ABI names.
-- Rename boundary functions:
-  - `reservePublishSlot` -> `reserveVtSurfaceSlot`
-  - `commitPublishSlot` -> `commitVtSurface`
-  - `rejectPublishSlot` -> `rejectVtSurface`
-  - `cancelPublishSlot` -> `cancelVtSurface`
-  - `publishSlotOut` -> `vtSurfaceSlotOut`
-  - `vtPublishResultOut` -> `vtSurfacePublishResultOut`
-  - `vtPublishResultWithStatus` -> `vtSurfacePublishResultWithStatus`
-- Rename internal owner symbols:
-  - `source_vt.VtPublishResult` -> `source_vt.VtSurfacePublishResult`
-  - `source_slot.PublicationSlot` -> `source_slot.VtSurfaceSlot`
-  - `TextSessionOwner.reservePublishSlot` -> `reserveVtSurfaceSlot`
-  - `TextSessionOwner.commitPublishSlot` -> `commitVtSurface`
-  - `TextSessionOwner.rejectPublishSlot` -> `rejectVtSurface`
-  - `TextSessionOwner.cancelPublishSlot` -> `cancelVtSurface`
-- Rename source-slot errors:
-  - `PublishSlotBusy` -> `VtSurfaceSlotBusy`
-  - `PublishSlotOutOfRange` -> `VtSurfaceSlotOutOfRange`
-  - `MissingPublishSlot` -> `MissingVtSurfaceSlot`
+- Rename `howl-render/src/pending_state.zig` to `howl-render/src/work_state.zig`.
+- Update `howl-render/src/libhowl_render.zig` to import `work_state.zig`.
+- Export `work_state.workState` as `howl_render_text_session_work_state`.
+
+Boundary symbols:
+
+- `pendingState` -> `workState`
+- `pendingStateOut` -> `sessionWorkStateOut`
+- `pendingStateFailure` -> `sessionWorkStateFailure`
+
+Internal owner symbols:
+
+- Delete `source_prepare.PendingState` from `howl-render/src/source/prepare_request.zig`.
+- Add `SessionWorkState` in `howl-render/src/session/text.zig`.
+- Rename `TextSessionOwner.pendingState` -> `TextSessionOwner.workState`.
+- Add `SubmittedWorkState` in `howl-render/src/session/submitted.zig`.
+- Rename `Submitted.pendingState` -> `Submitted.workState`.
 
 ## Host Changes
 
-Update `howl-linux-host/src/terminal/vt/surface.zig`:
+Update `howl-linux-host/src/terminal/render/retained.zig`:
 
-- `ReservedPublishSlot` -> `ReservedVtSurfaceSlot`
-- `publishSlotCommit` -> `vtSurfaceCommit`
-- `reservePublishSlot` -> `reserveVtSurfaceSlot`
-- `commitPublishSlot` -> `commitVtSurface`
-- Use:
-  - `c.HowlRenderVtSurfaceSlot`
-  - `c.HowlRenderVtSurfaceCommit`
-  - `c.HowlRenderVtSurfacePublishResult`
-  - `c.howl_render_text_session_reserve_vt_surface_slot`
-  - `c.howl_render_text_session_commit_vt_surface`
-  - `c.howl_render_text_session_reject_vt_surface`
-  - `c.howl_render_text_session_cancel_vt_surface`
+- `c.HowlRenderPendingState` -> `c.HowlRenderSessionWorkState`
+- `c.howl_render_text_session_pending_state` -> `c.howl_render_text_session_work_state`
+- `State.pending(...)` -> `State.workState(...)`
+
+Update `howl-linux-host/src/terminal/context.zig`:
+
+- `self.term.render.pending(...)` -> `self.term.render.workState(...)`
 
 ## Tests
 
 Update `howl-render/src/test/ffi.zig`:
 
-- Import `../vt_surface.zig`.
-- Rename helper aliases to the new ABI type names.
-- Preserve existing publish, invalid-cell, reserve/write/commit/take-prepare tests.
+- Import `../work_state.zig`.
+- Use `c.HowlRenderSessionWorkState`.
+- Call `work_state.workState`.
+
+Preserve existing missing-handle and invalid-argument behavior.
 
 ## Invariants
 
 - Behavior is unchanged.
-- The slot still exposes VT surface cell and dirty metadata write spans.
-- Commit still validates cursor/source/cell/dirty metadata.
-- Invalid commits still cancel or preserve the reserved source exactly as current behavior
-  requires.
-- Reject still returns failed status with no publication and no queued prepare.
+- Session work state remains the aggregate of render-owned source, prepare, and submit work.
+- Host-owned present/bootstrap work stays in host `render_retained.WorkState`.
+- Source prepare does not own submit work.
 - No aliases or old typedefs.
 - No `types.zig`.
 - No `manager`, `controller`, `runtime`, `flow`, `pipeline`, or `queue` owner.
@@ -111,31 +100,17 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 No matches under `howl-render/include`, `howl-render/src`, or `howl-linux-host/src`:
 
-- `HowlRenderPublishSlot`
-- `HowlRenderPublishSlotCommit`
-- `HowlRenderVtPublishResult`
-- `reserve_publish_slot`
-- `commit_publish_slot`
-- `reject_publish_slot`
-- `cancel_publish_slot`
-- `publish_slot`
-- `PublishSlot`
-- `VtPublishResult`
-- `reservePublishSlot`
-- `commitPublishSlot`
-- `rejectPublishSlot`
-- `cancelPublishSlot`
-- `PublicationSlot`
+- `HowlRenderPendingState`
+- `howl_render_text_session_pending_state`
+- `pending_state`
+- `PendingState`
+- `pendingState`
 
 Expected matches:
 
-- `HowlRenderVtSurfaceSlot`
-- `HowlRenderVtSurfaceCommit`
-- `HowlRenderVtSurfacePublishResult`
-- `reserve_vt_surface_slot`
-- `commit_vt_surface`
-- `reject_vt_surface`
-- `cancel_vt_surface`
-- `vt_surface`
-- `VtSurfaceSlot`
-- `VtSurfacePublishResult`
+- `HowlRenderSessionWorkState`
+- `howl_render_text_session_work_state`
+- `work_state`
+- `SessionWorkState`
+- `SubmittedWorkState`
+- `workState`
