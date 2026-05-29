@@ -2325,6 +2325,24 @@ Generated placeholder bridge deletion decision:
   placeholder-run ABI/query, live placeholder parent-anchor scan, and stale
   generated-placeholder placement flag/destination semantics.
 
+Placeholder run ABI deletion decision:
+
+- User decision: continue ripping out Howl-only graphics machinery even if ABI/tests break,
+  then plan reference-backed replacements.
+- Howl-only behavior: placeholder-run count/query is a public VT ABI surface with no Kitty
+  equivalent and no Ghostty public ABI equivalent. It remains after generated placement
+  bridge deletion only as a stale publication/proof seam.
+- Promoted destructive slice: delete placeholder-run public count/query ABI and Zig query
+  machinery, plus tests that prove only that removed ABI. Keep only parser/screen
+  placeholder cell storage needed by other current behavior.
+- Candidate paths: `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi.zig`,
+  `howl-vt/src/libhowl_vt.zig`, `howl-vt/src/terminal.zig`,
+  `howl-vt/src/kitty/graphics.zig`, and `howl-vt/src/test/terminal_graphics.zig`.
+- Expected broken state: public VT ABI consumers of placeholder-run count/query break.
+  Builds/tests may fail and must be reported precisely.
+- Stop conditions: render/host replacement architecture or replacement generated-ref
+  design.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
