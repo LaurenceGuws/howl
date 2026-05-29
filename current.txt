@@ -1,189 +1,191 @@
-# Current Slice: Host `terminal/host/*` Owner Moves
+# Current Slice: Render FFI Cleanup, No Duplicated C Mirrors
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete the false `howl-linux-host/src/terminal/host/` bucket by moving each
-  file to its smallest true owner.
-- Preserve behavior while cutting imports directly with no compatibility aliases.
+- Make `howl-render/include/howl_render.h` the single public C contract and
+  type source for render FFI.
+- Keep `howl-render/src/ffi.zig` as the public-facing C-callable
+  implementation owner, but delete Zig duplicate mirrors of shipped C types.
+- Preserve backend independence: render remains a C ABI state engine and does
+  not own backend publication, presentation, queues, or host cadence.
 
 ## Source Files
 
-- `howl-linux-host/src/terminal/host/input.zig`
-- `howl-linux-host/src/terminal/host/font_size.zig`
-- `howl-linux-host/src/terminal/host/geometry.zig`
-- `howl-linux-host/src/terminal/host/scroll.zig`
-- `howl-linux-host/src/terminal/host/scrollbar.zig`
-- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `howl-render/include/howl_render.h`
+- `howl-render/src/ffi.zig`
+- `howl-render/src/libhowl_render.zig`
+- `howl-render/build.zig`
+- `howl-render/src/test/ffi.zig`
+- `howl-render/src/frame/publication.zig`
 
-## Required Moves
+## Required Build Change
 
-1. Move `howl-linux-host/src/terminal/host/input.zig` to
-   `howl-linux-host/src/terminal/vt/input.zig`.
-2. Move `howl-linux-host/src/terminal/host/font_size.zig` to
-   `howl-linux-host/src/terminal/render/font_size.zig`.
-3. Move `howl-linux-host/src/terminal/host/geometry.zig` to
-   `howl-linux-host/src/terminal/render/frame_layout.zig`.
-4. Move `howl-linux-host/src/terminal/host/scroll.zig` to
-   `howl-linux-host/src/terminal/vt/viewport.zig`.
-5. Move `howl-linux-host/src/terminal/host/scrollbar.zig` to
-   `howl-linux-host/src/window/scrollbar.zig`.
+In `howl-render/build.zig`, add include paths to the module that compiles
+`src/ffi.zig`:
 
-## Symbol Requirements
+- `ffi_mod.addIncludePath(b.path("include"));`
+- `ffi_mod.addIncludePath(b.path("../howl-vt/include"));`
 
-### `terminal/vt/input.zig`
+This is required because `ffi.zig` must use `@cImport` against shipped C
+headers instead of mirroring C structs in Zig.
 
-Keep:
+## Required FFI Change
 
-- `key`
-- `mods`
-- `mouseKind`
-- `mouseButton`
-- `buttons`
-- `publishPaste`
-- `publishKey`
-- `publishMouse`
-- `publishFocus`
-- `wouldReportUnpressedMouseMotion`
-- `wouldReportMouse`
+In `howl-render/src/ffi.zig`, introduce:
 
-Ownership: VT input encoding plus PTY publication.
+```zig
+const c = @cImport({
+    @cInclude("howl_render.h");
+});
+```
 
-### `terminal/render/font_size.zig`
+Then replace all duplicated `Ffi*` and status/type mirrors with direct `c.*`
+references.
 
-Keep:
+Delete these mirrors from `ffi.zig`:
 
-- `adjust`
-- `toggleStress`
-- `reset`
+- `c_size_t`
+- `HowlRenderSurfaceText`
+- `HowlRenderPreparedSurfaceObject`
+- `SurfaceTextHandle`
+- `PreparedSurfaceHandle`
+- `HowlRenderCallStatus`
+- `HowlRenderPrepareStatus`
+- `HowlRenderSubmitStatus`
+- `HowlRenderSubmitDecisionStatus`
+- every `Ffi* extern struct`
 
-Ownership: render font-size mutation.
+Use direct C ABI types:
 
-### `terminal/render/frame_layout.zig`
+- `c.HowlRenderSurfaceTextHandle`
+- `c.HowlRenderPreparedSurfaceHandle`
+- `c.HowlRenderPixelSize`
+- `c.HowlRenderFrameLayoutResult`
+- `c.HowlRenderSurfaceTextConfig`
+- `c.HowlRenderGeometry`
+- `c.HowlRenderGeometryResponse`
+- `c.HowlRenderPublishSlot`
+- `c.HowlRenderPublishSlotCommit`
+- `c.HowlRenderVtPublishResult`
+- `c.HowlRenderPrepareRequest`
+- `c.HowlRenderPreparedFrame`
+- `c.HowlRenderPendingState`
+- `c.HowlRenderPreparedSurfaceInfo`
+- `c.HowlRenderPreparedSurfaceBuffer`
+- `c.HowlRenderPreparedSurfaceDiagnostics`
+- `c.HowlRenderSurfaceExecutionInput`
+- `c.HowlRenderSurfaceFeedback`
 
-Keep:
+Use shipped C constants for statuses:
 
-- `State`
-- `init`
-- `resize`
-- `maybeCommitGridResize`
-- `syncFrameLayout`
-- `frameLayoutSnapshot`
-- `syncCurrentFrameLayout`
-- `snapshotFrameLayoutLocked`
+- `c.HOWL_RENDER_CALL_OK`
+- `c.HOWL_RENDER_CALL_MISSING_HANDLE`
+- `c.HOWL_RENDER_CALL_INVALID_ARGUMENT`
+- `c.HOWL_RENDER_CALL_FAILED`
+- `c.HOWL_RENDER_PREPARE_IDLE`
+- `c.HOWL_RENDER_PREPARE_READY`
+- `c.HOWL_RENDER_PREPARE_FAILED`
+- `c.HOWL_RENDER_SUBMIT_DECISION_*`
+- `c.HOWL_RENDER_SUBMIT_*`
 
-Ownership: render frame-layout synchronization and PTY/VT resize consequences.
+Function return types currently returning Zig status enums must return `c_int`
+or the C enum type consistently. Preferred direct cutover is `c_int` for:
 
-### `terminal/vt/viewport.zig`
+- `takePrepareRequest()`
+- `takeSubmitDecision()`
+- `takeSubmitHandle()`
+- `prepareHandle()`
+- `submit()`
+- `submitHandle()`
 
-Keep:
+Do not add compatibility Zig enum aliases.
 
-- `State`
-- `invalidate`
-- `setFocused`
-- `handlePages`
-- `byRows`
-- `handleMouse`
-- `wantsPassiveHoverWake`
-- `layout`
+## Publication Mirror Cleanup
 
-Update import inside this file:
+Current `howl-render/src/frame/publication.zig` duplicates VT C types:
 
-- Replace `const scrollbar = @import("scrollbar.zig");` with
-  `const scrollbar = @import("../../window/scrollbar.zig");`.
+- `Rgb8`
+- `Color`
+- `RenderColorState`
+- `CellFlags`
+- `CellAttrs`
+- `Cell`
+- `SelectionPos`
+- `Selection`
 
-### `window/scrollbar.zig`
+Preferred path:
 
-Keep:
+- Delete this file as a C mirror.
+- Use `c.HowlVtSurfaceCell`, `c.HowlVtRenderColorState`, and
+  `c.HowlVtSelection` at the FFI publication boundary only.
+- Translate immediately into semantic render-owned internal structs in the true
+  surface publication owner.
 
-- `Model`
-- `View`
-- `MouseResult`
-- `State`
-- `Geometry`
-- `focus`
+Minimum acceptable path for this slice:
 
-Ownership: pure presentation overlay model.
+- Move these types to `howl-render/src/surface/publication_source.zig`.
+- Rename them so they are semantic render source types, not C mirrors:
+  `Rgb8 -> SourceRgb`, `Color -> SourceColor`,
+  `RenderColorState -> SourceColors`, `CellFlags -> SourceCellFlags`,
+  `CellAttrs -> SourceCellAttrs`, `Cell -> SourceCell`,
+  `SelectionPos -> SourceSelectionPoint`, `Selection -> SourceSelection`.
+- Do not preserve field-for-field C naming blindly.
+- FFI conversion functions must be the only C-layout translators.
 
-## Import Changes In `terminal_panel.zig`
+## Test Changes
 
-Replace:
+In `howl-render/src/test/ffi.zig`:
 
-- `const font_size = @import("host/font_size.zig");`
-- `const geometry = @import("host/geometry.zig");`
-- `const term_input = @import("host/input.zig");`
-- `const scroll = @import("host/scroll.zig");`
+- Replace all `ffi.Ffi*` uses with `c.HowlRender*` or `c.HowlVt*`.
+- Delete compile-time `@sizeOf(ffi.Ffi*) == @sizeOf(c.HowlRender*)` checks,
+  because the Zig mirror no longer exists.
+- Keep tests that assert shipped C constants and behavior.
 
-With:
+Examples:
 
-- `const font_size = @import("render/font_size.zig");`
-- `const frame_layout = @import("render/frame_layout.zig");`
-- `const term_input = @import("vt/input.zig");`
-- `const viewport = @import("vt/viewport.zig");`
-
-Then update all symbols:
-
-- `geometry.State` -> `frame_layout.State`
-- `geometry.init` -> `frame_layout.init`
-- `geometry.resize` -> `frame_layout.resize`
-- `geometry.maybeCommitGridResize` -> `frame_layout.maybeCommitGridResize`
-- `geometry.syncFrameLayout` -> `frame_layout.syncFrameLayout`
-- `geometry.frameLayoutSnapshot` -> `frame_layout.frameLayoutSnapshot`
-- `geometry.syncCurrentFrameLayout` -> `frame_layout.syncCurrentFrameLayout`
-- `geometry.snapshotFrameLayoutLocked` -> `frame_layout.snapshotFrameLayoutLocked`
-- `scroll.State` -> `viewport.State`
-- `scroll.handlePages` -> `viewport.handlePages`
-- `scroll.wantsPassiveHoverWake` -> `viewport.wantsPassiveHoverWake`
-- `scroll.layout` -> `viewport.layout`
-- `scroll.setFocused` -> `viewport.setFocused`
-- `scroll.invalidate` -> `viewport.invalidate`
-- `scroll.handleMouse` -> `viewport.handleMouse`
-- `scroll.byRows` -> `viewport.byRows`
-
-## Tests
-
-- Tests move with files.
-- Test name `"frame layout request ignores logical size"` may remain, but it must
-  use/import `frame_layout` rather than `geometry`.
-- Scrollbar tests move under `window/scrollbar.zig`.
-- Font-size tests remain under `terminal/render/font_size.zig`.
+- `ffi.FfiPendingState -> c.HowlRenderPendingState`
+- `ffi.FfiPreparedSurfaceInfo -> c.HowlRenderPreparedSurfaceInfo`
+- `ffi.FfiSurfaceExecutionInput -> c.HowlRenderSurfaceExecutionInput`
+- `ffi.FfiVtCell -> c.HowlVtSurfaceCell`
+- `ffi.FfiVtCellAttrs -> c.HowlVtSurfaceCellAttrs`
 
 ## Invariants
 
-- No `terminal/host` namespace remains.
-- VT input encoding remains under `terminal/vt`.
-- Render layout/font-size mutation remains under `terminal/render`.
-- Scrollbar overlay model is window-owned.
-- Viewport/scrollback mutation is VT-owned.
-- `terminal_panel.zig` and `TerminalPanel` may remain after this slice only because
-  they belong to the later context cutover slice.
-- Do not introduce `host`, `runtime`, `panel`, `manager`, or `controller` owners.
+- `ffi.zig` translates the C FFI only.
+- No Zig duplicate of shipped C structs remains.
+- Public product contract remains `howl-render/include/howl_render.h`.
+- Host still consumes render only via the C ABI boundary.
+- Render owns prepared render data and retained render state only.
+- Render must not own backend publication, presentation, queue scheduling, or
+  host cadence.
+- No compatibility aliases.
+- Do not create/recreate FFI files under `howl-render/src/frame`.
+- Do not add `frame/abi.zig`, renamed ABI modules, `contract.zig`, generic
+  `types.zig`, managers, controllers, runtime buckets, or host shortcuts.
 
 ## Verification
-
-From `/home/home/personal/projects/howl/howl-linux-host`:
-
-- `zig build check`
-- `zig build test:unit`
-- `zig build test:integration`
 
 From `/home/home/personal/projects/howl`:
 
 - `zig build check`
+- `zig build test:abi`
+- `zig build test:unit`
+- `zig build test:integration`
 
 ## Grep Gates
 
-No matches after this slice under `howl-linux-host/src`:
+No matches after this slice in `howl-render/src`:
 
-- `terminal/host`
-- `host/input.zig`
-- `host/font_size.zig`
-- `host/geometry.zig`
-- `host/scroll.zig`
-- `host/scrollbar.zig`
+- `pub const Ffi`
+- `extern struct`
+- `HowlRenderCallStatus =`
+- `HowlRenderPrepareStatus =`
+- `HowlRenderSubmitStatus =`
+- `HowlRenderSubmitDecisionStatus =`
 
-Allowed temporary matches after this slice:
+Allowed:
 
-- `TerminalPanel`
-- `terminal_panel.zig`
+- `@cImport`
+- C FFI type references through `c.HowlRender*` and `c.HowlVt*`
