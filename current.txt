@@ -1,64 +1,22 @@
-# Current Slice: Render Legacy Graphics Payload Deletion
+# Current Slice: None
 
-Owner: howl-render.
+Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-## Goal
+Status: `Render Legacy Graphics Payload Deletion` completed and accepted.
 
-Delete or quarantine render-side Kitty transport/base64 graphics payload decoding as
-first-class render truth. Render should consume decoded pixels; Kitty protocol bytes belong
-on the VT side.
+Accepted commits:
 
-## Delegation Requirement
+- `howl-render` `187acd9 render: delete legacy graphics decoding`
 
-- Main agent must not implement this slice directly.
-- Seed a worker with this file, exact source paths, and the invariants below.
-- Seed a reviewer after worker output and reject any diff that preserves legacy protocol
-  bytes as a normal internal graphics path.
+Verification passed:
 
-## Required Work
+- `zig build test --summary all` in `howl-render` (`730/733` tests passed, `3` skipped).
+- Root `zig build --summary all`.
+- Root `git diff --check`.
+- `howl-render git diff --check`.
 
-- Remove or quarantine `.legacy_protocol` graphics payload handling from render preparation
-  so base64/Png protocol bytes are not treated as normal render graphics truth.
-- Preserve public render ABI symbols/layout unless worker stops for explicit ABI break
-  approval.
-- It is acceptable for legacy graphics payload submissions to fail validation or produce no
-  graphics if that is the smallest non-ABI-breaking deletion.
-- Keep decoded-pixels publication path working.
-- Delete or rewrite render tests that present legacy base64 graphics as normal behavior.
-
-## Candidate Paths
-
-- `howl-render/src/frame/graphics_prepare.zig`
-- `howl-render/src/frame/queue.zig`
-- `howl-render/src/frame/surface_text.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-render/src/test_abi.zig`
-- `howl-render/include/howl_render.h`
-
-## Reference Constraints
-
-- Kitty decodes protocol payload before graphics manager/render consequences.
-- Ghostty stores decoded image bytes in terminal graphics storage.
-- Howl render should receive decoded pixels, not Kitty transport/base64 bytes.
-
-## Invariants
-
-- Decoded graphics publication remains green.
-- Public ABI layout remains unless worker stops for explicit approval.
-- Non-graphics surface publication remains working.
-- No VT or host changes unless worker stops and reports a hard dependency.
-
-## Tests Required
-
-- `zig build test --summary all` in `howl-render`.
-- Root `zig build --summary all` if feasible.
-- Root and `howl-render` `git diff --check`.
-
-## Stop Conditions
-
-- Stop if public ABI layout removal is necessary.
-- Stop if decoded graphics publication must change.
-- Stop if VT/host changes become necessary.
-- Stop if non-graphics render publication breaks.
+Next work must decide the remaining graphics deletion candidates before replacement
+planning: synthetic generated-placeholder order keys and query-derived generated placement
+publication/materialization gap.

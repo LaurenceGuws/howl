@@ -2278,6 +2278,17 @@ Render legacy graphics payload deletion research:
 - Stop conditions: stop if public ABI layout removal is necessary, decoded graphics
   publication must change, VT/host changes become necessary, or non-graphics render
   publication breaks.
+- Render legacy graphics payload deletion completed in `howl-render` commit `187acd9
+  render: delete legacy graphics decoding`.
+- Accepted behavior: render no longer links `stb_image.c`, no longer decodes render-side
+  base64 raw or PNG graphics payloads, and `.legacy_protocol` graphics payloads produce no
+  prepared graphics. Decoded RGB/RGBA publication remains the render graphics path. Public
+  ABI symbols/layout remain for compatibility.
+- Verification passed: `zig build test --summary all` in `howl-render` with `730/733`
+  tests passed and `3` skipped; root `zig build --summary all`; root `git diff --check`;
+  `howl-render git diff --check`.
+- Remaining deletion candidates before replacement planning: synthetic generated-placeholder
+  order keys and query-derived generated placement publication/materialization gap.
 
 ## Completed Or Stale Graphics Backlog
 
