@@ -1,0 +1,42 @@
+# Current Research Slice: Delete Render `flow` By Owner Split
+
+Owner: workspace root.
+
+Purpose:
+
+- Produce a worker-ready implementation slice to delete
+  `howl-render/src/surface/flow.zig` without changing the C ABI.
+- Separate VT/source input ownership from prepared/submitted output ownership.
+- Do not edit product code in this research slice.
+
+## Required Reads
+
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+- `render-ownership-restart-scratchpad.md`
+- `howl-render/src/surface/flow.zig`
+- `howl-render/src/surface/text.zig`
+- `howl-render/src/surface/input.zig`
+- `howl-render/src/surface/types.zig`
+- `howl-render/src/surface/prepared_owner.zig`
+- `howl-render/src/ffi.zig`
+- `howl-render/include/howl_render.h`
+- Alacritty reference:
+  - `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
+  - `utils/dev_references/terminals/alacritty/alacritty/src/display/damage.rs`
+  - `utils/dev_references/terminals/alacritty/alacritty_terminal/src/term/mod.rs`
+
+## Research Output Required
+
+Return exact, source-backed implementation planning for one code slice:
+
+- Exact files to add, move, delete, and update.
+- Exact symbols that move out of `surface/flow.zig` and their destination owners.
+- Exact `SurfaceTextOwner` field replacement for `flow: flow.Flow`.
+- Exact import changes in `ffi.zig`, `surface/text.zig`, and `surface/input.zig`.
+- Tests that move with each symbol.
+- New tests needed to prove source input and submitted output owners are separate.
+- Verification commands and grep gates.
+- Risks and blockers.
+
+Do not implement in this research slice.

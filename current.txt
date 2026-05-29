@@ -1,152 +1,40 @@
-# Current Slice: Final Host Context Cutover
+# Current Slice: Render Ownership Restart Research
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete banned host `terminal_panel.zig` path and `TerminalPanel` vocabulary.
-- Move the per-terminal aggregate to `terminal/context.zig`.
-- Rename the exported aggregate type from `TerminalPanel` to `Context` with no
-  aliases or shims.
+- Restart the render cleanup from source-backed ownership facts.
+- Produce one worker-ready implementation slice to delete
+  `howl-render/src/surface/flow.zig` without changing the public C ABI.
+- Separate VT/source input ownership from prepared/submitted output ownership.
 
-## Source Files
+## Status
 
-- `howl-linux-host/src/terminal/terminal_panel.zig`
-- `howl-linux-host/src/main.zig`
-- `howl-linux-host/src/test/host.zig`
-- `howl-linux-host/src/test_root.zig`
-- `howl-linux-host/src/test/integration_entry.zig`
+Research only. Do not edit product code for this slice.
 
-## Required Move
+## Required Source
 
-Move:
+- `render-ownership-restart-scratchpad.md`
+- `render-ownership-research-current.txt`
 
-- From: `howl-linux-host/src/terminal/terminal_panel.zig`
-- To: `howl-linux-host/src/terminal/context.zig`
+## Required Outcome
 
-Type rename:
+Produce exact implementation planning for the first code slice:
 
-- `TerminalPanel` -> `Context`
+- files to add/move/delete/update
+- symbols moved out of `surface/flow.zig`
+- destination owner for every moved symbol
+- `SurfaceTextOwner` replacement fields for `flow: flow.Flow`
+- import changes
+- tests and grep gates
+- risks/blockers
 
-No aliases. Do not leave `terminal_panel.zig` as a compatibility shim.
+## Hard Invariants
 
-## Main Import And Symbol Changes
-
-In `howl-linux-host/src/main.zig`, replace:
-
-- `const TerminalPanel = @import("terminal/terminal_panel.zig").TerminalPanel;`
-
-With:
-
-- `const TerminalContext = @import("terminal/context.zig").Context;`
-
-Then update:
-
-- `TabSlots.panels` -> `contexts` or `terms`.
-- `[max_tabs]TerminalPanel` -> `[max_tabs]TerminalContext`.
-- `active_tabs: [max_tabs]*TerminalPanel` -> `[max_tabs]*TerminalContext`.
-- `fn items(self: *TabSlots) []*TerminalPanel` -> `[]*TerminalContext`.
-- `activePanel()` -> `activeContext()`.
-- `activeTab()` may remain because it refers to tab index, but its returned type
-  must be `*TerminalContext`.
-- `TerminalPanel.DrainInputOutcome` -> `TerminalContext.DrainInputOutcome`.
-- `TerminalPanel.TurnResult` -> `TerminalContext.TurnResult`.
-- `TerminalPanel.TurnStep` -> `TerminalContext.TurnStep`.
-
-Do not leave an `activePanel` helper name. It contains banned panel vocabulary.
-
-## Test Export Changes
-
-In `howl-linux-host/src/test/host.zig`, replace:
-
-- `pub const TerminalPanel = @import("../terminal/terminal_panel.zig");`
-
-With:
-
-- `pub const TerminalContext = @import("../terminal/context.zig");`
-
-In `howl-linux-host/src/test_root.zig`, replace:
-
-- `pub const TerminalPanel = Host.TerminalPanel;`
-
-With:
-
-- `pub const TerminalContext = Host.TerminalContext;`
-
-In `howl-linux-host/src/test/integration_entry.zig`, replace:
-
-- `_ = @import("host").TerminalPanel;`
-
-With:
-
-- `_ = @import("host").TerminalContext;`
-
-No `TerminalPanel` alias.
-
-## Internal `context.zig` Symbol Changes
-
-Within moved file:
-
-- `pub const TerminalPanel = struct` -> `pub const Context = struct`.
-- `TerminalPanelOps` -> `ContextOps`.
-- `TerminalPanel.DrainInputOutcome` -> `Context.DrainInputOutcome`.
-- `TerminalPanel.ScrollMouseOutcome` -> `Context.ScrollMouseOutcome`.
-- Test fake names containing `FakePanel` -> `FakeContext`.
-- Function/local variable names using `panel` -> `context` where they refer to
-  the per-terminal aggregate.
-- Field names that are not exported but contain panel vocabulary should be
-  renamed.
-
-Keep user-facing tab vocabulary where it truly means tab.
-
-## Invariants
-
-- `terminal/context.zig` is the per-terminal aggregate only.
-- It composes true owners:
-  - `terminal/pty/*`
-  - `terminal/vt/*`
-  - `terminal/render/*`
-  - `window/*`
-- It must not become a new runtime, host, panel, manager, or controller bucket.
-- Host still uses only shipped C ABI through `terminal/c.zig`.
-- No compatibility aliases.
-- Do not recreate `terminal/runtime/`, `terminal/host/`, or
-  `terminal/terminal_panel.zig`.
-
-## Verification
-
-From `/home/home/personal/projects/howl`:
-
-- `zig build check`
-- `zig build test:unit`
-- `zig build test:integration`
-- `zig build test`
-
-If root `test:unit` is blocked by a known package build-taxonomy issue, record
-the exact failure and run host package gates from
-`/home/home/personal/projects/howl/howl-linux-host`:
-
-- `zig build check`
-- `zig build test:unit`
-- `zig build test:integration`
-
-## Final Grep Gates
-
-No matches under `howl-linux-host/src`:
-
-- `terminal_panel`
-- `TerminalPanel`
-- `activePanel`
-- `FakePanel`
-- `terminal/runtime`
-- `terminal/host`
-- `/runtime/`
-- `/host/`
-
-No replacement banned owners under `howl-linux-host/src`:
-
-- `manager`
-- `controller`
-- `runtime2`
-- `host2`
-- `panel`
+- No C ABI change in the first implementation slice unless research proves it is
+  unavoidable.
+- No compatibility shims.
+- No new umbrella owner.
+- `surface/flow.zig` must be deleted by the first implementation slice.
+- Input/source and output/prepared/submitted owners must be separate.
