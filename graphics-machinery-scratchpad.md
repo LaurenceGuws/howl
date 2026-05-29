@@ -2142,6 +2142,24 @@ Render/host virtual placement forwarding deletion research:
   base64 path quarantine, synthetic generated-placeholder order keys, and query-derived
   generated placement publication/materialization gap.
 
+Placeholder proof API deletion research:
+
+- Audit verdict: next narrow VT deletion slice is worker-ready.
+- Howl-only behavior: `Terminal.graphicsPlaceholderRunProofCount` and
+  `Terminal.graphicsPlaceholderRunProof` are duplicate proof-only Zig APIs used by tests
+  after the real placeholder-run publication/query path exists.
+- Source truth: Kitty has no proof-only placeholder-run query seam; Ghostty has internal
+  placeholder iteration rather than a duplicate public/proof API pair.
+- Promoted next slice: delete the proof-only Zig methods and update tests to assert through
+  `graphicsMeta().placeholder_run_count` and `graphicsPlaceholderRun(...)` directly.
+- Candidate paths: `howl-vt/src/terminal.zig` and
+  `howl-vt/src/test/terminal_graphics.zig`.
+- Required invariants: public C ABI unchanged; placeholder-run count/query semantics
+  unchanged; stale publication rejection unchanged; generated placement behavior
+  unchanged; render/host untouched.
+- Stop conditions: stop if public C ABI deletion, placeholder-run semantic changes,
+  generated placement changes, or render/host changes become necessary.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers

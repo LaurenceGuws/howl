@@ -1,24 +1,60 @@
-# Current Slice: None
+# Current Slice: Graphics Placeholder Proof API Deletion
 
-Owner: workspace root.
+Owner: howl-vt.
 
 Sprint scope: graphics deletion.
 
-Status: `Graphics Virtual Placement Forwarding Deletion` completed and accepted.
+## Goal
 
-Accepted commits:
+Delete proof-only placeholder-run Zig APIs and move tests onto the real public
+placeholder-run publication/query path.
 
-- `howl-render` `c19bbfe render: ignore virtual placement forwarding`
-- `howl-linux-host` `383c0ac host: stop forwarding virtual placements`
+## Delegation Requirement
 
-Verification reported by worker/reviewer:
+- Main agent must not implement this slice directly.
+- Seed a worker with this file, the audit findings, exact source paths, and the invariants
+  below.
+- Seed a reviewer after worker output and reject any diff that deletes public C ABI,
+  changes placeholder-run semantics, or broadens into generated placement materialization.
 
-- `zig build test --summary all` in `howl-render` (`736/739` tests passed, `3` skipped).
-- `zig build test:integration:kitty-graphics-replay:build --summary all` in
-  `howl-linux-host`.
-- `zig build test:integration:kitty-graphics-replay:app:build --summary all` in
-  `howl-linux-host`.
-- Root `zig build --summary all`.
-- Root, `howl-render`, and `howl-linux-host` `git diff --check`.
+## Required Work
 
-Next work must continue the delegated rip-out audit before any replacement planning.
+- Delete `Terminal.graphicsPlaceholderRunProofCount` and
+  `Terminal.graphicsPlaceholderRunProof` from `howl-vt/src/terminal.zig`.
+- Update `howl-vt/src/test/terminal_graphics.zig` tests to use
+  `graphicsMeta().placeholder_run_count` and `graphicsPlaceholderRun(...)` directly.
+- Do not touch `howl-vt/include/howl_vt.h` or `howl-vt/src/ffi.zig` unless the worker stops
+  and reports an unexpected dependency.
+- Do not change placeholder-run resolution, generated placement publication, FFI, or public
+  ABI behavior.
+
+## Candidate Paths
+
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
+
+## Reference Constraints
+
+- Kitty does not expose a proof-only placeholder-run query seam.
+- Ghostty uses internal placeholder iteration, not a duplicate public/proof API pair.
+- Howl tests should prove the actual public Zig/FFI surface, not a duplicate proof path.
+
+## Invariants
+
+- `graphicsMeta().placeholder_run_count` remains the resolved placeholder-run count.
+- `graphicsPlaceholderRun(publication_seq, idx)` remains the single Zig query path.
+- Stale publication rejection behavior remains unchanged.
+- Public C ABI remains unchanged.
+
+## Tests Required
+
+- `zig build test --summary all` in `howl-vt`.
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- Root and `howl-vt` `git diff --check`.
+
+## Stop Conditions
+
+- Stop if public C ABI deletion becomes necessary.
+- Stop if placeholder-run count/query semantics need to change.
+- Stop if generated placement behavior needs to change.
+- Stop if render/host changes become necessary.
