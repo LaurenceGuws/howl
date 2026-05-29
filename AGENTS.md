@@ -12,6 +12,7 @@ Purpose: agent accountability, ABI boundary, source order, and project law.
 - Hosts own platform UX, event loops, wake policy, presentation cadence, runtime
   orchestration, and backend resource realization.
 - Howl owns PTY, VT, render, ABI contracts, and the exact consequences those contracts expose.
+- This is a young, private product, we do not have any downstream. We move fast and hard, not slow, small slices.
 
 ## Core Premise
 
@@ -111,6 +112,8 @@ Required TigerBeetle readings before non-trivial work:
 - Broad reshaping is required when current shape is style debt.
 - Do not preserve bad structure for minimal-diff comfort.
 - No `manager`, `engine`, `controller`, or `utils` owners.
+- No `types.zig` files anywhere in Howl. `types` is not ownership; split symbols
+  into their smallest true owner files.
 
 ## Runtime Rules
 

@@ -73,8 +73,16 @@ This file also mixes unrelated concepts:
 - prepared render output: `PreparedSurface`
 - host execution feedback: `RenderSurfaceFeedback`
 
-The file name `types.zig` is tolerated only because it was the previous explicit
-move target. It is not an owner and must not survive the restart.
+The file name `types.zig` is banned. It is not an owner and must not survive the
+restart.
+
+Project-wide banned files found on 2026-05-29:
+
+- `howl-render/src/surface/types.zig`
+- `howl-vt/src/kitty/types.zig`
+- `howl-vt/src/input/types.zig`
+
+Delete them slice by slice. Do not replace them with another ownerless bucket.
 
 ### `howl-render/src/surface/text.zig`
 
@@ -255,9 +263,11 @@ Goal:
 
 - `howl-render/src/surface/flow.zig`
 
-### First-Slice File To Keep Temporarily
+### First-Slice File Kept Temporarily And Now Rejected
 
 - `howl-render/src/surface/types.zig`
+
+This temporary exception is closed. The next render slice deletes this file.
 
 Reason: it is still a bad mixed owner, but deleting `flow.zig` is already a large
 owner split. The next slice must delete or decompose `surface/types.zig`.

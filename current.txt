@@ -1,174 +1,136 @@
-# Current Slice: Delete Render `surface/flow.zig`
+# Current Slice: Delete Render `surface/types.zig`
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete `howl-render/src/surface/flow.zig`.
-- Replace the false `Flow` owner with explicit owners for source input,
-  prepare-request lifecycle, submitted output, and geometry.
+- Delete `howl-render/src/surface/types.zig`.
+- Split every symbol into its smallest true owner. Do not create another
+  ownerless bucket or compatibility shim.
 - Keep `howl-render/include/howl_render.h` byte-for-byte unchanged.
 
 ## Source Files
 
-- `howl-render/src/surface/flow.zig`
+- `howl-render/src/surface/types.zig`
 - `howl-render/src/surface/text.zig`
 - `howl-render/src/surface/input.zig`
 - `howl-render/src/surface/prepared_owner.zig`
+- `howl-render/src/surface/buffer.zig`
+- `howl-render/src/surface/clip_rect.zig`
+- `howl-render/src/surface/geometry.zig`
 - `howl-render/src/ffi.zig`
-
-## Files To Add
-
 - `howl-render/src/source/vt.zig`
-- `howl-render/src/source/damage.zig`
 - `howl-render/src/source/slot.zig`
 - `howl-render/src/source/prepare_request.zig`
 - `howl-render/src/render/geometry.zig`
-- `howl-render/src/session/submitted.zig`
+- `howl-render/src/test/benchmark.zig`
+- `howl-render/src/test/unit.zig`
+
+## Files To Add
+
+- `howl-render/src/render/geometry_contract.zig`
+- `howl-render/src/source/cell.zig`
+- `howl-render/src/prepared/surface.zig`
+- `howl-render/src/prepared/feedback.zig`
 
 ## File To Delete
 
-- `howl-render/src/surface/flow.zig`
+- `howl-render/src/surface/types.zig`
 
 Do not leave a shim or compatibility import.
 
 ## Symbol Movement
 
-Move from `surface/flow.zig` to `source/vt.zig`:
+Move from `surface/types.zig` to `render/geometry_contract.zig`:
 
-- `VtSnapshot`
-- `PublicationSource`
-- `ReservedSourceMeta`
-- `VtPublishResult`
-- `validatePublicationSourceBoundary`
+- `CellSize`
+- `PixelSize`
+- `GridSize`
+- `FramePixels`
+- `Geometry`
+- `GeometryResponse`
+- `PrepareLayout`
+- `SurfaceLayout`
 
-Move from `surface/flow.zig` to `source/damage.zig`:
+Move from `surface/types.zig` to `source/cell.zig`:
 
-- `validateDirtySource`
-- `canonicalizeDirtyMetadata`
-- `cursorPresentationChanged`
-- `colorPresentationChanged`
-- `setSourceCursorBlinkVisible`
-- `samePublicationSource`
-- `classifyDirty`
-- `sameSnapshotToken` if shared
-- `slotCellCountChecked` if needed
+- `Color`
+- `CellFlags`
+- `CellAttrs`
+- `UnderlineStyle`
+- `Cell`
+- `GridModel`
+- `DamageInfo`
+- `ViewportInfo`
+- `CursorShape`
+- `CursorInfo`
+- `FrameData`
 
-Move from `surface/flow.zig` to `source/slot.zig`:
+Move from `surface/types.zig` to `prepared/surface.zig`:
 
-- `PublicationSlot`
-- `PublicationState.RetainedSlot` as `RetainedSlot`
-- `slotCellCount`
-- retained slot methods
-- reserved source slot methods
+- `PreparedSurface`
+- methods on `PreparedSurface`
 
-Exported owner name: `SourceSlot`.
+Move from `surface/types.zig` to `prepared/feedback.zig`:
 
-Move from `surface/flow.zig` to `source/prepare_request.zig`:
+- `RenderSurfaceHandle`
+- `RenderMetrics`
+- `RenderSurfaceFeedback`
 
-- `PrepareConsume`
-- `Publication`
-- `ActivePrepare`
-- pending/active/blink lifecycle fields and methods
-- source classification bridge methods
+Delete if unused rather than moving:
 
-Exported owner name: `PrepareRequests`.
-
-Move from `surface/flow.zig` to `session/submitted.zig`:
-
-- `ThreadMutex`
-- `lockMutex`
-- `SubmitDecision`
-- `TerminalSurface` renamed to `Submitted`
-- `SubmitMailbox`
-- `submitted_frame`
-- submitted/prepared validation methods
-- `prepareTokenForRetainedState`
-- `forceFull`
-- `fullPrepareReason`
-
-Move from `surface/flow.zig` to `render/geometry.zig`:
-
-- geometry fields and `syncGeometry` as a `GeometryOwner.sync()` method
-- `prepareLayout`
-
-Keep `source_dirty_epoch` in `SurfaceTextOwner`, not geometry.
-
-## `SurfaceTextOwner` Replacement
-
-Replace `flow: flow.Flow` with explicit fields:
-
-```zig
-geometry: render_geometry.GeometryOwner,
-source_slot: source_slot.SourceSlot,
-prepare_requests: source_prepare.PrepareRequests,
-submitted: session_submitted.Submitted,
-source_dirty_epoch: u64 = 0,
-cursor_blink_visible: bool = true,
-```
-
-Add composition methods on `SurfaceTextOwner`:
-
-- `nextSourceDirtyEpoch()`
-- `submittedToken()`
-- `syncGeometry()`
-- `setCursorBlinkVisible()`
-- `reservePublishSlot()`
-- `commitPublishSlot()`
-- `cancelPublishSlot()`
-- `rejectPublishSlot()`
-- `prepare()`
-- `publishPrepared()`
-- `submit()`
-- `acceptSubmitted()`
-- `pendingState()`
-
-These methods replace `owner.flow.*` in `ffi.zig`. Do not introduce a new
-umbrella owner.
+- `SurfaceState`
+- `FillRect`
+- `GlyphQuad`
+- `AtlasUpload`
+- `RenderStats`
+- `PrepareMetrics` only if all users can use the true text/render metrics owner
 
 ## Required Import Changes
 
+Rename local aliases to true owners. Do not use `surface_types`, `types`, or
+`*_types` aliases.
+
 In `ffi.zig`:
 
-- Remove `const flow = @import("surface/flow.zig");`.
-- Replace `owner.flow.*` with `owner.*` composition methods.
-- Replace direct `.publication_state` access with an explicit `SourceSlot`
-  accessor.
+- Import `render/geometry_contract.zig`, `source/cell.zig`,
+  `prepared/surface.zig`, and `prepared/feedback.zig` only for the symbols that
+  cross the C boundary.
 
 In `surface/text.zig`:
 
-- Remove `const flow = @import("flow.zig");`.
-- Import new owners:
-  - `../render/geometry.zig`
-  - `../source/vt.zig`
-  - `../source/slot.zig`
-  - `../source/prepare_request.zig`
-  - `../session/submitted.zig`
-- `PrepareInput.state` becomes `source_vt.PublicationSource`.
+- Import geometry contracts, prepared surface, prepared feedback, and source
+  cell contracts explicitly.
 
 In `surface/input.zig`:
 
-- Remove `const flow = @import("flow.zig");`.
-- Use `source_vt.PublicationSource` for source input parameters.
+- Import `source/cell.zig` for legacy cell tests and source-to-scene mapping.
+
+In `surface/prepared_owner.zig` and `surface/buffer.zig`:
+
+- Import prepared surface/feedback and geometry contracts explicitly.
+
+In `source/*`:
+
+- Import `source/cell.zig` for source cursor/cell structs only.
+- Import `render/geometry_contract.zig` only when a prepare request must carry
+  render layout.
 
 ## Tests
 
-- Move tests with their owners as recorded in
-  `render-ownership-restart-scratchpad.md`.
-- Rename moved tests away from `flow` vocabulary.
-- Add tests:
-  - `surface text owner keeps source and submitted owners separate`
-  - `submitted owner has no source publication state`
-  - `prepare requests do not own submitted mailbox`
-  - `source slot commit returns source without prepare or submit state`
+- Move tests with the owners when practical.
+- Keep behavior unchanged.
+- Add at least one compile/usage test proving `FramePixels` and `PreparedSurface`
+  are no longer in the same owner module.
 
 ## Invariants
 
 - No public C ABI changes.
 - No compatibility shims.
-- No `Flow` owner or replacement umbrella owner.
-- Source input and submitted/prepared output owners are separate files and
-  separate `SurfaceTextOwner` fields.
+- No `types.zig` file remains under `howl-render/src`.
+- No `surface_types`, `types`, or `*_types` aliases remain under
+  `howl-render/src`.
+- Source input and prepared/submitted output owners stay separate.
 - Render still does not own backend presentation or host cadence.
 
 ## Verification
@@ -187,23 +149,10 @@ From `/home/home/personal/projects/howl/howl-render` if needed:
 
 No matches under `howl-render/src`:
 
-- `flow.zig`
-- `@import("flow.zig")`
-- `surface/flow.zig`
-- `\bFlow\b`
-- `flow:`
-- `owner.flow`
-- `.publication_state`
-
-No matches under `howl-render/src/source` or `howl-render/src/render`:
-
-- `SubmitMailbox`
-- `submitted_frame`
-- `SubmitDecision`
-
-No matches under `howl-render/src/source`:
-
-- `RenderSurfaceFeedback`
+- `types.zig`
+- `@import\(.*types.zig`
+- `surface_types`
+- `\btypes\b`
 
 No new owner names under `howl-render/src/source`, `howl-render/src/render`,
 `howl-render/src/session`, or `howl-render/src/prepared`:
