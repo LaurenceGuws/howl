@@ -2407,6 +2407,26 @@ Generated placeholder flag deletion decision:
   design.
 - Stop conditions: replacement generated-ref architecture or public ABI layout removal
   beyond the stale flag.
+- Generated placeholder flag deletion completed in `howl-vt` commit `6d5854d vt: delete
+  generated placeholder flag`, `howl-render` commit `c44d53c render: drop generated
+  placeholder flag mirror`, and `howl-linux-host` commit `4db4691 host: delete placeholder
+  replay flag dependency`.
+- Accepted behavior: stale generated-placeholder flag constants, VT generated-placeholder
+  destination geometry branch/fields, and host replay dependency on generated flags were
+  deleted. `HowlVtGraphicsPlacement.flags` struct layout remains and VT FFI now publishes
+  `flags = 0`.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `606/606` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, `zig build test --summary
+  all` in `howl-render` with `730/733` tests passed and `3` skipped, `zig build
+  test:integration:kitty-graphics-replay:build --summary all` and `zig build
+  test:integration:kitty-graphics-replay --summary all` in `howl-linux-host`, root `zig
+  build --summary all`, and root/VT/render/host `git diff --check`.
+- Known broken behavior: any consumer checking
+  `HOWL_VT_GRAPHICS_PLACEMENT_GENERATED_PLACEHOLDER` now breaks by design. Unicode
+  placeholder generated renderable placement behavior remains broken until a separately
+  promoted source-backed replacement slice.
+- Generated-placeholder deletion queue is complete. Replacement planning can now start from
+  reference-backed generated cell refs.
 
 ## Completed Or Stale Graphics Backlog
 

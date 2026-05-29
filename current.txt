@@ -1,49 +1,34 @@
-# Current Slice: Generated Placeholder Flag Deletion
+# Current Slice: None
 
-Owner: howl-vt with ABI mirror follow-up as needed.
+Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-## Goal
+Status: `Generated Placeholder Flag Deletion` completed and accepted.
 
-Rip out stale generated-placeholder placement flag semantics after generated placeholder
-publication has been deleted.
+Accepted commits:
 
-## Delegation Requirement
+- `howl-vt` `6d5854d vt: delete generated placeholder flag`
+- `howl-render` `c44d53c render: drop generated placeholder flag mirror`
+- `howl-linux-host` `4db4691 host: delete placeholder replay flag dependency`
 
-- Main agent must not implement this slice directly.
-- Seed a worker with this file and exact source paths.
-- Seed a reviewer after worker output.
+Verification passed:
 
-## Required Work
+- `zig build test --summary all` in `howl-vt` (`606/606` tests).
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-render` (`730/733` tests passed, `3` skipped).
+- `zig build test:integration:kitty-graphics-replay:build --summary all` in
+  `howl-linux-host`.
+- `zig build test:integration:kitty-graphics-replay --summary all` in `howl-linux-host`.
+- Root `zig build --summary all`.
+- Root, `howl-vt`, `howl-render`, and `howl-linux-host` `git diff --check`.
 
-- Delete `HOWL_VT_GRAPHICS_PLACEMENT_GENERATED_PLACEHOLDER` and Zig mirror constants.
-- Delete generated-placeholder-specific destination geometry branches from VT placement
-  resolution if they now exist only for deleted generated placements.
-- Update or delete tests that still require generated-placeholder placement flags.
-- Touch render/host ABI mirrors only as needed to compile after VT ABI deletion.
-- Do not add replacement generated refs/materialization.
+Known broken behavior:
 
-## Candidate Paths
+- Any consumer checking `HOWL_VT_GRAPHICS_PLACEMENT_GENERATED_PLACEHOLDER` now breaks by
+  design.
+- Unicode placeholder generated renderable placement behavior remains broken until a
+  separately promoted source-backed replacement slice.
 
-- `howl-vt/include/howl_vt.h`
-- `howl-vt/src/ffi.zig`
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
-- `howl-render/src/ffi_types.zig`
-- `howl-linux-host/src/test/kitty_graphics_replay.zig`
-
-## Expected Broken State
-
-- Any consumer still checking generated-placeholder flags breaks by design.
-
-## Tests Required
-
-- Run impacted VT/render/host tests if feasible.
-- Run root and touched submodule `git diff --check`.
-- Failing builds/tests are acceptable only if reported precisely.
-
-## Stop Conditions
-
-- Stop if replacement generated-ref architecture is being designed.
-- Stop if public ABI layout removal beyond the stale flag is required.
+Generated-placeholder deletion queue is complete. Replacement planning can now start from
+reference-backed generated cell refs.
