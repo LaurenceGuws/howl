@@ -2043,6 +2043,17 @@ Placeholder materialization access research:
   placeholder-run publication tests green.
 - Stop conditions: stop if this requires render/host changes, public ABI changes, retained
   generated-placement storage, or changing generated placement geometry.
+- VT placeholder access refresh completed in `howl-vt` commit `65c14d2 vt: refresh
+  placeholder graphics access`.
+- Accepted behavior: `graphicsMeta` now marks existing images referenced by resolved
+  placeholder runs as accessed before returning publication counts. Missing-image
+  placeholder cells remain non-fatal and do not fabricate image state.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `640/640` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `zig build --summary
+  all`, root `git diff --check`, and `howl-vt git diff --check`.
+- Remaining proof gap: placeholder runs and generated placements are still query-derived
+  instead of retained publication state. This is now an ownership/performance/accounting
+  cleanup rather than a public placeholder-run ABI truth gap.
 
 ## Completed Or Stale Graphics Backlog
 
