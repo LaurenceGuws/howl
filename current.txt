@@ -1,20 +1,66 @@
-# Current Slice: None
+# Current Slice: Host Graphics Proof API Deletion
 
-Owner: workspace root.
+Owner: howl-linux-host.
 
 Sprint scope: graphics deletion.
 
-Status: `Graphics Placeholder Proof API Deletion` completed and accepted.
+## Goal
 
-Accepted commits:
+Delete or quarantine graphics proof/debug APIs from the product `TerminalPanel` owner.
+Product host UI should not expose internal graphics proof snapshots as runtime surface.
 
-- `howl-vt` `70dd12e vt: delete placeholder proof APIs`
+## Delegation Requirement
 
-Verification passed:
+- Main agent must not implement this slice directly.
+- Seed a worker with this file, exact source paths, and the invariants below.
+- Seed a reviewer after worker output and reject any diff that changes runtime graphics
+  behavior, VT/render ABI behavior, or broadens into replacement architecture.
 
-- `zig build test --summary all` in `howl-vt` (`639/639` tests).
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- Root `git diff --check`.
-- `howl-vt git diff --check`.
+## Required Work
 
-Next work must continue the delegated rip-out audit before replacement planning.
+- Remove product-facing proof/debug APIs from
+  `howl-linux-host/src/terminal/terminal_panel.zig` where possible:
+  `GraphicsTruthSnapshot`, `GraphicsUploadObservation`, `GraphicsProofSnapshot`,
+  `GraphicsPlacementProofSnapshot`, `GraphicsVirtualPlacementProofSnapshot`,
+  `graphicsProofSnapshot`, `firstGraphicsPlacementProofSnapshot`,
+  `firstGraphicsVirtualPlacementProofSnapshot`, and `firstGeneratedPlaceholderPlacement`.
+- Update `howl-linux-host/src/test/kitty_graphics_replay.zig` to avoid depending on
+  product panel proof APIs. Prefer deleting stale proof assertions over creating new
+  product seams.
+- Keep product runtime graphics behavior unchanged.
+- Do not touch VT, render, public ABI, or generated placement semantics.
+
+## Candidate Paths
+
+- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `howl-linux-host/src/test/kitty_graphics_replay.zig`
+
+## Reference Constraints
+
+- Host runtime shape should stay focused on UX/event loop/render orchestration.
+- Proof helpers belong in tests, not product panel owners.
+- Deletion is preferred over moving proof APIs unless tests require a narrow local helper.
+
+## Invariants
+
+- Runtime panel rendering, upload recording needed by product behavior, and drawn-feedback
+  bridge remain intact.
+- No VT/render ABI changes.
+- No placeholder-run or generated placement semantic changes.
+- Integration tests should not reintroduce product proof seams.
+
+## Tests Required
+
+- `zig build test:integration:kitty-graphics-replay:build --summary all` in
+  `howl-linux-host`.
+- `zig build test:integration:kitty-graphics-replay:app:build --summary all` in
+  `howl-linux-host`.
+- Root `zig build --summary all` if feasible.
+- Root and `howl-linux-host` `git diff --check`.
+
+## Stop Conditions
+
+- Stop if deleting proof APIs requires product runtime behavior changes.
+- Stop if VT/render ABI changes become necessary.
+- Stop if this requires a replacement graphics proof architecture.
+- Stop if generated placement or drawn-feedback semantics need to change.

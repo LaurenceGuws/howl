@@ -2172,6 +2172,29 @@ Placeholder proof API deletion research:
   synthetic generated-placeholder order keys, and query-derived generated placement
   publication/materialization gap.
 
+Host graphics proof API deletion research:
+
+- Audit verdict: next narrow host deletion slice is worker-ready if scoped to product
+  proof/debug APIs and their direct integration-test callers.
+- Howl-only behavior: `TerminalPanel` exposes `GraphicsTruthSnapshot`,
+  `GraphicsUploadObservation`, `GraphicsProofSnapshot`, `GraphicsPlacementProofSnapshot`,
+  `GraphicsVirtualPlacementProofSnapshot`, `graphicsProofSnapshot`,
+  `firstGraphicsPlacementProofSnapshot`, `firstGraphicsVirtualPlacementProofSnapshot`, and
+  `firstGeneratedPlaceholderPlacement` from the product panel owner.
+- Source truth: host runtime owners should own UX/event loop/render orchestration, not test
+  proof surfaces. Tests should use test-local helpers or drop stale proof assertions.
+- Promoted next slice: delete or quarantine these product proof/debug APIs and update
+  `howl-linux-host/src/test/kitty_graphics_replay.zig` so it does not depend on product
+  panel proof seams.
+- Candidate paths: `howl-linux-host/src/terminal/terminal_panel.zig` and
+  `howl-linux-host/src/test/kitty_graphics_replay.zig`.
+- Required invariants: runtime panel rendering and drawn-feedback bridge unchanged; no
+  VT/render ABI changes; no placeholder-run/generated placement semantic changes; no new
+  product proof seam.
+- Stop conditions: stop if deletion requires runtime behavior changes, VT/render ABI
+  changes, replacement proof architecture, generated placement changes, or drawn-feedback
+  semantic changes.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
