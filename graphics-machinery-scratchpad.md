@@ -2007,6 +2007,19 @@ Placeholder run publication research:
 - Stop conditions: stop if this needs public ABI layout changes, render/host changes, or
   retained generated-placement storage. Retained materialization and access refresh on
   placeholder realization remain a follow-up slice.
+- VT placeholder-run publication completed in `howl-vt` commit `549e3f1 vt: publish
+  graphics placeholder runs`.
+- Accepted behavior: `Terminal.graphicsMeta().placeholder_run_count` now reports the
+  resolved placeholder-run count, `Terminal.graphicsPlaceholderRun` returns those runs,
+  and proof APIs alias the same resolver. FFI tests now prove the existing C ABI exposes
+  placeholder runs without layout changes.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `638/638` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `zig build --summary
+  all`, root `git diff --check`, and `howl-vt git diff --check`.
+- Remaining proof gap: placeholder runs and generated placements are still recomputed from
+  screen state during a valid publication instead of retained as materialized VT state.
+  The next slice should either materialize publication runs/placements or explicitly prove
+  the publication-sequence invariant is sufficient and bounded.
 
 ## Completed Or Stale Graphics Backlog
 

@@ -1,46 +1,21 @@
-# Current Slice: Graphics Placeholder Run Publication
+# Current Slice: None
 
-Owner: howl-vt.
+Owner: workspace root.
 
 Sprint scope: graphics.
 
-## Goal
+Status: `Graphics Placeholder Run Publication` completed and accepted.
 
-Make the existing VT placeholder-run ABI report the same resolved placeholder runs that
-already drive generated graphics placements.
+Accepted commits:
 
-## Required Work
+- `howl-vt` `549e3f1 vt: publish graphics placeholder runs`
 
-- Edit only `howl-vt/src/terminal.zig` and `howl-vt/src/test/terminal_graphics.zig`
-  unless a stop condition is hit.
-- Change `Terminal.graphicsMeta().placeholder_run_count` from hardcoded zero to the
-  resolved placeholder-run count.
-- Change `Terminal.graphicsPlaceholderRun` from always-null to the resolved placeholder
-  run at the requested index.
-- Keep proof APIs as temporary aliases to the same resolver.
-- Do not change public ABI layout.
-- Do not change render or host.
-- Do not add retained generated-placement storage in this slice.
+Verification passed:
 
-## Tests Required
-
-- Existing placeholder-run tests must expect real `placeholder_run_count` values.
-- At least one test must prove `graphicsPlaceholderRun` equals the existing proof run.
-- Clearing placeholder cells must drop both generated placement count and placeholder-run
-  count.
-- Missing image/virtual placement cases must still report zero runs.
-- Stale publication rejection must remain intact for placeholder-run query.
-
-## Stop Conditions
-
-- Stop if this requires `howl_vt.h` layout changes.
-- Stop if render or host changes become necessary.
-- Stop if retained placeholder-run/materialized generated-placement storage becomes
-  necessary.
-
-## Verification
-
-- `zig build test --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-vt` (`638/638` tests).
 - `zig build test:regression:build --summary all` in `howl-vt`.
 - Root `zig build --summary all`.
-- Root and `howl-vt` `git diff --check`.
+- Root `git diff --check`.
+- `howl-vt git diff --check`.
+
+Next work must start with research and a freshly promoted single slice.
