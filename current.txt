@@ -1,63 +1,32 @@
-# Current Slice: Graphics App Icon Fixture Deletion
+# Current Slice: None
 
-Owner: howl-vt, howl-render, and howl-linux-host tests.
+Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-## Goal
+Status: `Graphics App Icon Fixture Deletion` completed and accepted.
 
-Delete Howl app-icon based graphics proof fixtures and tests. A product icon asset is not a
-source-backed Kitty/Ghostty graphics protocol proof.
+Accepted commits:
 
-## Delegation Requirement
+- `howl-vt` `a1ac412 vt: delete app icon graphics fixture`
+- `howl-render` `e7b4edb render: delete app icon graphics fixture`
+- `howl-linux-host` `d8bbee7 host: delete app icon graphics fixture`
 
-- Main agent must not implement this slice directly.
-- Seed a worker with this file, exact source paths, and the invariants below.
-- Seed a reviewer after worker output and reject any diff that deletes runtime graphics
-  behavior or replaces the fixture with another unsourced convenience path.
+Verification passed/reported:
 
-## Required Work
+- `zig build test --summary all` in `howl-vt` (`638/638` tests).
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-render` (`733/736` tests passed, `3` skipped).
+- `zig build test:integration:kitty-graphics-replay:build --summary all` in
+  `howl-linux-host`.
+- Root `zig build --summary all`.
+- Root, `howl-vt`, `howl-render`, and `howl-linux-host` `git diff --check`.
 
-- Delete tests and helpers that use the Howl window icon as a Kitty graphics fixture.
-- Delete app-icon replay fixture files if no longer referenced.
-- Prefer deletion over replacement in this slice.
-- Do not change product runtime graphics code except removing test-only helpers.
-- Do not alter parser/decoder/render semantics.
+Known non-blocking timeouts:
 
-## Candidate Paths
+- `zig build test --summary all` in `howl-linux-host` timed out after 120s.
+- `zig build test:integration:kitty-graphics-replay --summary all` in `howl-linux-host`
+  timed out after 180s.
 
-- `howl-vt/src/test/terminal_graphics.zig`
-- `howl-render/src/frame/surface_buffer.zig`
-- `howl-linux-host/src/terminal/vt/surface.zig`
-- `howl-linux-host/src/test/kitty_graphics_replay.zig`
-- `howl-linux-host/src/test/kitty_graphics_replay_app.zig`
-- `howl-linux-host/src/test/fixtures/kitty_graphics_app_icon_replay.sh`
-- `utils/send_app_icon_kitty.py`
-
-## Reference Constraints
-
-- Tests should prove exact protocol facts with fixed Kitty/Ghostty-style fixtures, not a
-  Howl product asset.
-- This slice deletes stale Howl-only proof. Replacement protocol fixtures are a later
-  source-backed slice.
-
-## Invariants
-
-- Runtime graphics upload/decode/render behavior remains unchanged.
-- No public ABI changes.
-- No VT parser/decoder semantic changes.
-- No render composition semantic changes.
-- Host replay tests may lose app-icon-specific coverage, but must not lose unrelated
-  unicode-placeholder coverage.
-
-## Tests Required
-
-- Run impacted VT/render/host tests discovered by worker.
-- Root `zig build --summary all` if feasible.
-- Root and touched submodules `git diff --check`.
-
-## Stop Conditions
-
-- Stop if deleting app-icon fixtures requires runtime graphics code changes.
-- Stop if replacement fixtures are needed to keep unrelated tests meaningful.
-- Stop if public ABI or protocol semantics need to change.
+Next work must continue deleting/quarantining Howl-only graphics machinery before any
+replacement planning.

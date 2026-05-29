@@ -2234,6 +2234,26 @@ Graphics app-icon fixture deletion research:
 - Stop conditions: stop if deletion requires runtime graphics code changes, replacement
   fixtures to keep unrelated tests meaningful, public ABI changes, or protocol semantic
   changes.
+- Graphics app-icon fixture deletion completed in `howl-vt` commit `a1ac412 vt: delete
+  app icon graphics fixture`, `howl-render` commit `e7b4edb render: delete app icon
+  graphics fixture`, and `howl-linux-host` commit `d8bbee7 host: delete app icon graphics
+  fixture`. Root utility `utils/send_app_icon_kitty.py` was deleted with the acceptance
+  commit.
+- Accepted behavior: app-icon PNG replay/proof tests/helpers are gone across VT, render,
+  host, and utilities. Host unicode-placeholder replay remains. No runtime parser,
+  decoder, render, host graphics, or public ABI semantics changed.
+- Verification passed/reported: `zig build test --summary all` in `howl-vt` with
+  `638/638` tests; `zig build test:regression:build --summary all` in `howl-vt`; `zig
+  build test --summary all` in `howl-render` with `733/736` tests passed and `3` skipped;
+  `zig build test:integration:kitty-graphics-replay:build --summary all` in
+  `howl-linux-host`; root `zig build --summary all`; root, `howl-vt`, `howl-render`, and
+  `howl-linux-host` `git diff --check`.
+- Known non-blocking timeouts: `zig build test --summary all` in `howl-linux-host` timed
+  out after 120s; `zig build test:integration:kitty-graphics-replay --summary all` in
+  `howl-linux-host` timed out after 180s.
+- Remaining deletion candidates before replacement planning: legacy render base64 path
+  quarantine, synthetic generated-placeholder order keys, and query-derived generated
+  placement publication/materialization gap.
 
 ## Completed Or Stale Graphics Backlog
 
