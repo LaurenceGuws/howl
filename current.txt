@@ -1,21 +1,67 @@
-# Current Slice: None
+# Current Slice: Graphics Publication Count Consolidation
 
-Owner: workspace root.
+Owner: howl-vt.
 
 Sprint scope: graphics.
 
-Status: `Graphics Placeholder Streaming Scan` completed and accepted.
+## Goal
 
-Accepted commits:
+Make `Terminal.graphicsMeta()` derive placeholder-run count, generated placement count,
+and placeholder image access refresh from one VT placeholder resolver pass while preserving
+current public behavior.
 
-- `howl-vt` `925528f vt: stream placeholder graphics runs`
+## Delegation Requirement
 
-Verification passed:
+- Main agent must not implement this slice directly.
+- Seed a worker with this file, the scratchpad entry, exact source/reference paths, and the
+  invariants below.
+- Seed a reviewer after worker output and reject any diff that changes behavior, broadens
+  scope, or weakens ABI/source-order accountability.
 
-- `zig build test --summary all` in `howl-vt` (`640/640` tests).
+## Required Work
+
+- Worker edits only `howl-vt/src/kitty/graphics.zig` and `howl-vt/src/terminal.zig` unless
+  a stop condition is hit.
+- Add one graphics-state method for `graphicsMeta()` publication counts:
+  resolved stored placement count plus successful generated placeholder placement count,
+  and resolved placeholder-run count.
+- In that method, mark existing images for every resolved placeholder run during the same
+  placeholder resolver pass used for the counts.
+- Use the new method from `Terminal.graphicsMeta()`.
+- Keep `graphicsPlacement`, `graphicsPlaceholderRun`, and proof indexed queries
+  query-derived in this slice.
+- Keep render, host, FFI, and public ABI unchanged.
+
+## Invariants
+
+- `placeholder_run_count` remains resolved placeholder-run count, not generated placement
+  count.
+- `placement_count` remains resolved stored placements plus successful generated placeholder
+  placements.
+- Generated placement count increments only when `generatedPlacementFrom(...)` succeeds.
+- Access refresh remains run-based for existing images; missing images remain a no-op and
+  do not fabricate image state.
+- Publication sequence and stale-token behavior stay unchanged.
+- Generated placement geometry, order, and render order keys stay unchanged.
+
+## Tests Required
+
+- Existing generated placement tests remain green.
+- Existing placeholder-run publication tests remain green.
+- Existing stale publication tests remain green.
+- Existing high-byte, underline placement id, scroll, and placeholder access tests remain
+  green.
+
+## Stop Conditions
+
+- Stop if this requires retained publication snapshots.
+- Stop if render, host, FFI, or public ABI changes become necessary.
+- Stop if generated placement geometry or ordering needs to change.
+- Stop if access semantics need to change to successful-generated-placement-only.
+
+## Verification
+
+- `zig build test --summary all` in `howl-vt`.
 - `zig build test:regression:build --summary all` in `howl-vt`.
 - Root `zig build --summary all`.
-- Root `git diff --check`.
-- `howl-vt git diff --check`.
-
-Next work must start with research and a freshly promoted single slice.
+- Root and `howl-vt` `git diff --check`.

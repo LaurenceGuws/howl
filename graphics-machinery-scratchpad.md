@@ -2087,6 +2087,35 @@ Placeholder streaming scan research:
   indexed query. The next source-backed cleanup should either retain a publication snapshot
   or consolidate count/query to bounded owner state.
 
+Placeholder publication count consolidation delegated research:
+
+- Research agents read TigerBeetle style/architecture first, then current Howl graphics
+  publication paths and Kitty/Ghostty reference paths.
+- Howl current truth: `Terminal.graphicsMeta()` walks resolved placeholder runs three
+  times for one metadata publication: access refresh, generated placement count through
+  `resolvedPlacementCount`, and placeholder-run count. Indexed `graphicsPlacement` and
+  `graphicsPlaceholderRun` queries are separate query-derived paths.
+- Kitty reference truth: `screen_render_line_graphics` scans rows into compatible runs and
+  calls `grman_put_cell_image`; `grman_put_cell_image` updates image `atime` only after a
+  real generated cell-image ref is created. Kitty has no public Howl-like
+  `placeholder_run_count` ABI.
+- Tie-breaker verdict: preserve current Howl semantics for this cleanup. Do not change
+  access refresh to successful-generated-placement-only in a consolidation slice.
+- Promoted next slice: add a VT graphics-state metadata count/access method used only by
+  `Terminal.graphicsMeta()` that counts resolved stored placements, counts resolved
+  placeholder runs, counts successful generated placeholder placements, and marks existing
+  images for every resolved placeholder run during one placeholder resolver pass.
+- Required invariants: `placeholder_run_count` remains resolved placeholder-run count;
+  `placement_count` remains resolved stored placements plus successful generated
+  placements; access refresh remains run-based and missing-image no-op; indexed query/proof
+  APIs remain query-derived; publication sequence/stale-token behavior unchanged; render,
+  host, and public ABI unchanged.
+- Required tests: existing placeholder-run, generated placement, stale publication,
+  high-byte, underline placement id, scroll, and placeholder access tests remain green.
+- Stop conditions: stop if this requires retained publication snapshots, render/host
+  changes, public ABI changes, or changes generated placement geometry/order/access
+  semantics.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
