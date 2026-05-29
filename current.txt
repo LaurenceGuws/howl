@@ -1,77 +1,72 @@
-# Current Slice: Delete Host Terminal ABI Wrapper Buckets
+# Current Slice: Flatten Terminal Policy Config Wrappers
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete vague host wrapper buckets:
-  - `howl-linux-host/src/terminal/render/abi.zig`
-  - `howl-linux-host/src/terminal/vt/abi.zig`
-- Use the imported C ABI directly from `terminal/c.zig` at the true owner files.
-- Move hidden helper behavior to the smallest existing true owner instead of replacing
-  wrappers with new buckets.
-- No compatibility aliases, no shim files, no new `abi`, `api`, `wrapper`, `manager`, or
-  `types` owners.
+- Kill terminal config fake grouping wrappers that own no lifetime.
+- Keep true lifetime owners for loaded strings, font stacks, and bindings.
+- Preserve Lua config syntax, defaults, parse behavior, heap ownership, and deinit.
 
 ## Source Changes
 
-Delete:
+Edit only:
 
-- `howl-linux-host/src/terminal/render/abi.zig`
-- `howl-linux-host/src/terminal/vt/abi.zig`
-
-Render wrapper behavior:
-
-- Move render text-session initialization/config helpers from `render/abi.zig` into
-  `terminal/context.zig`, where terminal initialization already owns resolved fonts,
-  launch config, text session creation, PTY init, and VT init.
-- Move surface-layout derivation/commit logic from `render/abi.zig` into
-  `terminal/render/surface_layout.zig`, where host render surface geometry is owned.
-- Move `pixelToCol` and `pixelToRow` logic into `terminal/context.zig` or another exact
-  call-site owner, not a replacement wrapper.
-- Move font-size render call from `render/abi.zig` into `terminal/render/font_size.zig`.
-- Use `c.HowlRenderHostSurface`, `retained.SurfaceLayout`, and
-  `retained.SurfaceLayoutSync` directly instead of aliases from `render/abi.zig`.
-
-VT wrapper behavior:
-
-- Move VT init/deinit with default history capacity into `terminal/context.zig`, where VT
-  lifecycle is owned.
-- Move VT call status helpers needed by source publication into `terminal/vt/surface.zig`.
-- Move VT input type aliases/status handling into `terminal/vt/input.zig` or replace with
-  direct C ABI types.
-- Move VT feed status check in `terminal/pty/pump.zig` to direct comparison with
-  `c.HOWL_VT_CALL_OK`.
-- Keep existing runtime helpers in `terminal/vt/retained.zig`; do not route through a
-  wrapper.
-
-## Required Call-Site Updates
-
-Update imports and references in:
-
+- `howl-linux-host/src/config/terminal.zig`
+- `howl-linux-host/src/main.zig`
 - `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/render/surface_layout.zig`
-- `howl-linux-host/src/terminal/render/font_size.zig`
-- `howl-linux-host/src/terminal/vt/surface.zig`
-- `howl-linux-host/src/terminal/vt/input.zig`
-- `howl-linux-host/src/terminal/pty/pump.zig`
+
+In `terminal.zig`, remove these wrapper structs:
+
+- `Clipboard`
+- `Links`
+- `MousePolicy`
+- `Cursor`
+
+Keep:
+
+- `Config`
+- `FontStack`
+- `Input.Bindings`
+- policy enums
+
+In `terminal.Config`, replace:
+
+- `cursor: Cursor`
+- `clipboard: Clipboard`
+- `links: Links`
+- `mouse: MousePolicy`
+
+with direct fields:
+
+- `cursor_style: CursorStyle`
+- `cursor_blink: bool`
+- `clipboard_osc_52: ClipboardOsc52Policy`
+- `link_open: LinkOpenPolicy`
+- `link_hover: LinkHoverPolicy`
+- `link_underline: LinkUnderlineStyle`
+- `mouse_bypass_mod: Input.Mod`
+
+Update all call sites in `main.zig` and `terminal/context.zig` to use direct field names.
+
+## Non-Goals
+
+- Do not rename `Config.State`.
+- Do not remove or change `FontStack`.
+- Do not remove window mouse policy.
+- Do not remove window bindings.
+- Do not change config file syntax.
 
 ## Invariants
 
-- Host still uses the beautiful C ABI from `terminal/c.zig` directly.
-- Terminal context owns terminal lifecycle: render text session, VT handle, PTY handle,
-  startup and deinit ordering.
-- `render/surface_layout.zig` owns host render surface layout derivation and resize
-  side effects.
-- `render/font_size.zig` owns font-size mutation calls.
-- `vt/input.zig` owns host-input to VT-input translation and encoding.
-- `vt/surface.zig` owns VT visible source publication and its status assertions.
-- Behavior is unchanged.
-- No old wrapper imports remain.
-- No shim files remain at deleted paths.
-- No `types.zig`.
-- No new `api`, `abi`, `wrapper`, `manager`, `controller`, `runtime`, `flow`, or `queue`
-  owner.
+- `Config.deinit()` still frees only `shell`, `start_path`, `command`, `fonts`, and
+  `bindings`.
+- Cursor default remains `block` and blink `true`.
+- Clipboard OSC 52 default remains `deny`.
+- Link defaults remain `disabled`, `underline_and_cursor`, and `straight`.
+- Mouse bypass default remains empty `Input.Mod{}`.
+- No new heap allocations or deinit paths.
+- No aliases or shim wrapper structs.
 
 ## Verification
 
@@ -89,27 +84,27 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 ## Grep Gates
 
-No files:
+No matches under `howl-linux-host/src/config/terminal.zig`:
 
-- `howl-linux-host/src/terminal/render/abi.zig`
-- `howl-linux-host/src/terminal/vt/abi.zig`
+- `pub const Clipboard = struct`
+- `pub const Links = struct`
+- `pub const MousePolicy = struct`
+- `pub const Cursor = struct`
 
 No matches under `howl-linux-host/src`:
 
-- `render/abi.zig`
-- `vt/abi.zig`
-- `render_api`
-- `vt_api`
-- `vt_abi`
-- `const api = @import("abi.zig")`
+- `.conf.links`
+- `.conf.clipboard`
+- `.conf.term.mouse`
+- `.cursor.style`
+- `.cursor.blink`
 
-No new files matching:
+Expected matches:
 
-- `**/types.zig`
-- `**/api.zig`
-- `**/abi.zig`
-
-Expected direct C ABI usage remains through:
-
-- `const c = @import("../c.zig").c`
-- `const terminal_c = @import("c.zig").c`
+- `cursor_style`
+- `cursor_blink`
+- `clipboard_osc_52`
+- `link_open`
+- `link_hover`
+- `link_underline`
+- `mouse_bypass_mod`
