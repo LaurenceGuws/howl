@@ -2021,6 +2021,29 @@ Placeholder run publication research:
   The next slice should either materialize publication runs/placements or explicitly prove
   the publication-sequence invariant is sufficient and bounded.
 
+Placeholder materialization access research:
+
+- Verdict: first source-backed follow-up slice is worker-ready and owned by `howl-vt`.
+- Kitty source truth: `grman_put_cell_image` updates `img->atime = monotonic()` when
+  placeholder cells are materialized into generated cell-image refs. This makes visible
+  Unicode placeholder use count as image access for later quota decisions.
+- Howl current truth: after `549e3f1`, `graphicsMeta` and `graphicsPlaceholderRun` expose
+  resolved placeholder runs, and generated placements are published from those runs, but
+  resolving placeholder runs still does not refresh image access order.
+- Boundary decision: treat `Terminal.graphicsMeta()` as Howl VT's placeholder
+  materialization point for this slice. It already mints/validates a graphics publication
+  and computes generated placement counts; marking access there keeps ownership in VT and
+  avoids render/host policy.
+- Promoted next slice: add a VT method that scans resolved placeholder runs and marks the
+  referenced image as accessed when the image still exists. Call it from `graphicsMeta`
+  before counts are returned. Keep public ABI, render, host, and retained materialization
+  unchanged.
+- Required tests: prove a placeholder-resolved image becomes newer for decoded quota
+  eviction, prove missing-image placeholder runs do not crash or fabricate access, and keep
+  placeholder-run publication tests green.
+- Stop conditions: stop if this requires render/host changes, public ABI changes, retained
+  generated-placement storage, or changing generated placement geometry.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers

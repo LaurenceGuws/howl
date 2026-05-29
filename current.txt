@@ -1,21 +1,42 @@
-# Current Slice: None
+# Current Slice: Graphics Placeholder Access Refresh
 
-Owner: workspace root.
+Owner: howl-vt.
 
 Sprint scope: graphics.
 
-Status: `Graphics Placeholder Run Publication` completed and accepted.
+## Goal
 
-Accepted commits:
+Make resolved Unicode placeholder publication count as image access for VT quota ordering,
+matching Kitty's `grman_put_cell_image` access-time consequence.
 
-- `howl-vt` `549e3f1 vt: publish graphics placeholder runs`
+## Required Work
 
-Verification passed:
+- Edit only `howl-vt/src/kitty/graphics.zig`, `howl-vt/src/terminal.zig`, and
+  `howl-vt/src/test/terminal_graphics.zig` unless a stop condition is hit.
+- Add a VT-owned method that scans resolved placeholder runs and marks existing referenced
+  images as accessed.
+- Call that method from `Terminal.graphicsMeta()` before returning graphics counts.
+- Missing image ids in placeholder cells must not fabricate images or fail publication.
+- Keep public ABI layout unchanged.
+- Keep render and host unchanged.
+- Do not add retained generated-placement storage in this slice.
 
-- `zig build test --summary all` in `howl-vt` (`638/638` tests).
+## Tests Required
+
+- A placeholder-resolved image becomes newer for decoded quota eviction.
+- Missing-image placeholder runs report zero generated placements/runs and do not crash.
+- Existing placeholder-run publication tests remain green.
+
+## Stop Conditions
+
+- Stop if this requires render or host changes.
+- Stop if this requires public ABI changes.
+- Stop if retained generated-placement storage becomes necessary.
+- Stop if generated placement geometry changes become necessary.
+
+## Verification
+
+- `zig build test --summary all` in `howl-vt`.
 - `zig build test:regression:build --summary all` in `howl-vt`.
 - Root `zig build --summary all`.
-- Root `git diff --check`.
-- `howl-vt git diff --check`.
-
-Next work must start with research and a freshly promoted single slice.
+- Root and `howl-vt` `git diff --check`.
