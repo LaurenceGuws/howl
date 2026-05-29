@@ -1,61 +1,89 @@
-# Current Slice: Rename Render SurfaceText ABI To TextSession
+# Current Slice: Rename VT Surface Publication ABI
 
 Owner: workspace root.
 
 Purpose:
 
-- Break the render C ABI to replace the false `SurfaceText` noun with `TextSession`.
-- The object is a render text session: it coordinates VT source publication, geometry,
-  prepared-surface lifecycle, submitted state, retained pixels, font config, and text
-  preparation.
+- Break the render C ABI to replace generic publish-slot vocabulary with VT-surface
+  publication vocabulary.
+- The ABI publishes VT surface source data into the render text session.
 - No aliases, no compatibility shims, no old names.
 
 ## ABI Changes
 
 In `howl-render/include/howl_render.h`, rename without old aliases:
 
-- `HowlRenderSurfaceText` -> `HowlRenderTextSession`
-- `HowlRenderSurfaceTextHandle` -> `HowlRenderTextSessionHandle`
-- `HowlRenderSurfaceTextConfig` -> `HowlRenderTextConfig`
-- every `howl_render_surface_text_*` symbol -> `howl_render_text_session_*`
-
-Keep out of this slice:
-
-- `PendingState` -> `SessionWorkState`
-- `PublishSlot` -> `VtSurfaceSlot`
-- broader prepared/submit/source owner reshaping not required by the rename
+- `HowlRenderPublishSlot` -> `HowlRenderVtSurfaceSlot`
+- `HowlRenderPublishSlotCommit` -> `HowlRenderVtSurfaceCommit`
+- `HowlRenderVtPublishResult` -> `HowlRenderVtSurfacePublishResult`
+- `howl_render_text_session_reserve_publish_slot` ->
+  `howl_render_text_session_reserve_vt_surface_slot`
+- `howl_render_text_session_commit_publish_slot` ->
+  `howl_render_text_session_commit_vt_surface`
+- `howl_render_text_session_reject_publish_slot` ->
+  `howl_render_text_session_reject_vt_surface`
+- `howl_render_text_session_cancel_publish_slot` ->
+  `howl_render_text_session_cancel_vt_surface`
 
 ## Render Source Changes
 
-- Rename `howl-render/src/surface_text.zig` to `howl-render/src/text_session.zig`.
-- Move `howl-render/src/surface/text.zig` to `howl-render/src/session/text.zig`.
-- Rename internal symbols:
-  - `SurfaceTextConfig` -> `TextSessionConfig`
-  - `SurfaceText` -> `TextSession`
-  - `SurfaceTextOwner` -> `TextSessionOwner`
-  - `handle.surfaceTextOwner()` -> `handle.textSessionOwner()`
-- Update all render boundary modules, tests, and imports to use the text-session noun.
-- Do not create aliases for the old names.
+- Rename `howl-render/src/publish_slot.zig` to `howl-render/src/vt_surface.zig`.
+- Update `howl-render/src/libhowl_render.zig` to import `vt_surface.zig` and export
+  the new ABI names.
+- Rename boundary functions:
+  - `reservePublishSlot` -> `reserveVtSurfaceSlot`
+  - `commitPublishSlot` -> `commitVtSurface`
+  - `rejectPublishSlot` -> `rejectVtSurface`
+  - `cancelPublishSlot` -> `cancelVtSurface`
+  - `publishSlotOut` -> `vtSurfaceSlotOut`
+  - `vtPublishResultOut` -> `vtSurfacePublishResultOut`
+  - `vtPublishResultWithStatus` -> `vtSurfacePublishResultWithStatus`
+- Rename internal owner symbols:
+  - `source_vt.VtPublishResult` -> `source_vt.VtSurfacePublishResult`
+  - `source_slot.PublicationSlot` -> `source_slot.VtSurfaceSlot`
+  - `TextSessionOwner.reservePublishSlot` -> `reserveVtSurfaceSlot`
+  - `TextSessionOwner.commitPublishSlot` -> `commitVtSurface`
+  - `TextSessionOwner.rejectPublishSlot` -> `rejectVtSurface`
+  - `TextSessionOwner.cancelPublishSlot` -> `cancelVtSurface`
+- Rename source-slot errors:
+  - `PublishSlotBusy` -> `VtSurfaceSlotBusy`
+  - `PublishSlotOutOfRange` -> `VtSurfaceSlotOutOfRange`
+  - `MissingPublishSlot` -> `MissingVtSurfaceSlot`
 
 ## Host Changes
 
-Update host call sites under `howl-linux-host/src`:
+Update `howl-linux-host/src/terminal/vt/surface.zig`:
 
-- Use `HowlRenderTextSessionHandle`.
-- Use `howl_render_text_session_*` symbols.
-- Rename host retained field/local variables from `surface_text` to `text_session` where
-  they refer to the render session handle.
+- `ReservedPublishSlot` -> `ReservedVtSurfaceSlot`
+- `publishSlotCommit` -> `vtSurfaceCommit`
+- `reservePublishSlot` -> `reserveVtSurfaceSlot`
+- `commitPublishSlot` -> `commitVtSurface`
+- Use:
+  - `c.HowlRenderVtSurfaceSlot`
+  - `c.HowlRenderVtSurfaceCommit`
+  - `c.HowlRenderVtSurfacePublishResult`
+  - `c.howl_render_text_session_reserve_vt_surface_slot`
+  - `c.howl_render_text_session_commit_vt_surface`
+  - `c.howl_render_text_session_reject_vt_surface`
+  - `c.howl_render_text_session_cancel_vt_surface`
+
+## Tests
+
+Update `howl-render/src/test/ffi.zig`:
+
+- Import `../vt_surface.zig`.
+- Rename helper aliases to the new ABI type names.
+- Preserve existing publish, invalid-cell, reserve/write/commit/take-prepare tests.
 
 ## Invariants
 
-- No old `SurfaceText` ABI or Zig aliases remain.
-- Behavior is a semantic rename only.
-- Status/error behavior is unchanged.
-- Init still rejects zero surface size and zero font size.
-- Fallback font count remains bounded by `HOWL_RENDER_MAX_FALLBACK_FONTS`.
-- Text session handle owns the same session state and prepared handle lifecycle as before.
-- `HowlRenderPreparedSurfaceHandle`, submit-result, prepared-surface-token, and VT
-  publish-slot vocabulary remain unchanged except for the handle parameter type/prefix.
+- Behavior is unchanged.
+- The slot still exposes VT surface cell and dirty metadata write spans.
+- Commit still validates cursor/source/cell/dirty metadata.
+- Invalid commits still cancel or preserve the reserved source exactly as current behavior
+  requires.
+- Reject still returns failed status with no publication and no queued prepare.
+- No aliases or old typedefs.
 - No `types.zig`.
 - No `manager`, `controller`, `runtime`, `flow`, `pipeline`, or `queue` owner.
 
@@ -83,22 +111,31 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 No matches under `howl-render/include`, `howl-render/src`, or `howl-linux-host/src`:
 
-- `SurfaceText`
-- `SurfaceTextOwner`
-- `SurfaceTextConfig`
-- `surface_text`
-- `howl_render_surface_text`
-- `HowlRenderSurfaceText`
-
-No match under `howl-render/src`:
-
-- `surface/text.zig`
+- `HowlRenderPublishSlot`
+- `HowlRenderPublishSlotCommit`
+- `HowlRenderVtPublishResult`
+- `reserve_publish_slot`
+- `commit_publish_slot`
+- `reject_publish_slot`
+- `cancel_publish_slot`
+- `publish_slot`
+- `PublishSlot`
+- `VtPublishResult`
+- `reservePublishSlot`
+- `commitPublishSlot`
+- `rejectPublishSlot`
+- `cancelPublishSlot`
+- `PublicationSlot`
 
 Expected matches:
 
-- `TextSession`
-- `TextSessionOwner`
-- `TextSessionConfig`
-- `text_session`
-- `howl_render_text_session`
-- `HowlRenderTextSession`
+- `HowlRenderVtSurfaceSlot`
+- `HowlRenderVtSurfaceCommit`
+- `HowlRenderVtSurfacePublishResult`
+- `reserve_vt_surface_slot`
+- `commit_vt_surface`
+- `reject_vt_surface`
+- `cancel_vt_surface`
+- `vt_surface`
+- `VtSurfaceSlot`
+- `VtSurfacePublishResult`
