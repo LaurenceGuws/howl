@@ -2194,6 +2194,19 @@ Host graphics proof API deletion research:
 - Stop conditions: stop if deletion requires runtime behavior changes, VT/render ABI
   changes, replacement proof architecture, generated placement changes, or drawn-feedback
   semantic changes.
+- Host graphics proof API deletion completed in `howl-linux-host` commit `1c1e940 host:
+  delete graphics proof APIs`.
+- Accepted behavior: product `TerminalPanel` no longer exposes graphics proof/debug
+  snapshot APIs or upload observation recording. Replay tests use test-local VT ABI helpers
+  and dropped stale upload-observation assertions. Runtime render upload, texture upload,
+  submit, and drawn-feedback behavior remain intact.
+- Verification passed: `zig build test:integration:kitty-graphics-replay:build --summary
+  all` and `zig build test:integration:kitty-graphics-replay:app:build --summary all` in
+  `howl-linux-host`, root `zig build --summary all`, root `git diff --check`, and
+  `howl-linux-host git diff --check`.
+- Remaining deletion candidates before replacement planning: app-icon graphics replay
+  fixture, legacy render base64 path quarantine, synthetic generated-placeholder order
+  keys, and query-derived generated placement publication/materialization gap.
 
 ## Completed Or Stale Graphics Backlog
 
