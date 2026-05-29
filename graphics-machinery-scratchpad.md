@@ -2023,37 +2023,20 @@ Placeholder run publication research:
 
 Placeholder materialization access research:
 
-- Verdict: first source-backed follow-up slice is worker-ready and owned by `howl-vt`.
+- Status: superseded by the placeholder access refresh deletion record below.
 - Kitty source truth: `grman_put_cell_image` updates `img->atime = monotonic()` when
   placeholder cells are materialized into generated cell-image refs. This makes visible
   Unicode placeholder use count as image access for later quota decisions.
-- Howl current truth: after `549e3f1`, `graphicsMeta` and `graphicsPlaceholderRun` expose
-  resolved placeholder runs, and generated placements are published from those runs, but
-  resolving placeholder runs still does not refresh image access order.
-- Boundary decision: treat `Terminal.graphicsMeta()` as Howl VT's placeholder
-  materialization point for this slice. It already mints/validates a graphics publication
-  and computes generated placement counts; marking access there keeps ownership in VT and
-  avoids render/host policy.
-- Promoted next slice: add a VT method that scans resolved placeholder runs and marks the
-  referenced image as accessed when the image still exists. Call it from `graphicsMeta`
-  before counts are returned. Keep public ABI, render, host, and retained materialization
-  unchanged.
-- Required tests: prove a placeholder-resolved image becomes newer for decoded quota
-  eviction, prove missing-image placeholder runs do not crash or fabricate access, and keep
-  placeholder-run publication tests green.
-- Stop conditions: stop if this requires render/host changes, public ABI changes, retained
-  generated-placement storage, or changing generated placement geometry.
-- VT placeholder access refresh completed in `howl-vt` commit `65c14d2 vt: refresh
-  placeholder graphics access`.
-- Accepted behavior: `graphicsMeta` now marks existing images referenced by resolved
-  placeholder runs as accessed before returning publication counts. Missing-image
-  placeholder cells remain non-fatal and do not fabricate image state.
-- Verification passed: `zig build test --summary all` in `howl-vt` with `640/640` tests,
-  `zig build test:regression:build --summary all` in `howl-vt`, root `zig build --summary
-  all`, root `git diff --check`, and `howl-vt git diff --check`.
-- Remaining proof gap: placeholder runs and generated placements are still query-derived
-  instead of retained publication state. This is now an ownership/performance/accounting
-  cleanup rather than a public placeholder-run ABI truth gap.
+- Superseded Howl behavior: `Terminal.graphicsMeta()` was temporarily treated as a
+  placeholder materialization point and marked images referenced by resolved placeholder
+  runs as accessed. That run-based refresh has been deleted as Howl-only.
+- Current rule: `graphicsMeta()` may publish counts and query-derived generated placements,
+  but it must not refresh image access merely because placeholder runs resolve.
+- Future replacement rule: access refresh may return only with Kitty-style successful
+  generated cell-ref/materialization in a separately promoted, source-backed slice.
+- Preserved semantics: missing-image placeholder cells remain non-fatal and do not
+  fabricate image state; placeholder-run publication remains a count/query truth, not an
+  access-refresh mechanism.
 
 Placeholder streaming scan research:
 
@@ -2062,24 +2045,24 @@ Placeholder streaming scan research:
   placeholder runs without allocating a row-side list. Howl currently builds a temporary
   `ArrayList(PlaceholderCell)` per row, backfills it, then walks it.
 - Howl current truth: `walkResolvedPlaceholderRuns` is the single resolver feeding
-  placeholder-run count/query, generated placement count/query, and placeholder access
-  refresh. Removing its query-time row allocation improves all these paths without render,
-  host, or ABI changes.
+  placeholder-run count/query and generated placement count/query. The former access
+  refresh consumer has since been deleted as Howl-only. Removing its query-time row
+  allocation improved the remaining publication/query paths without render, host, or ABI
+  changes.
 - Promoted next slice: rewrite `walkResolvedPlaceholderRuns` to stream one row left to
   right, applying the same row-local backfill using a normalized previous cell. Keep the
   public resolver signatures stable and keep all existing placeholder behavior unchanged.
 - Required tests: existing placeholder-run, generated placement, yazi-like, high-byte,
-  underline placement id, scroll, stale publication, and placeholder access tests remain
-  green. No new behavior test is required if the diff is a pure implementation cleanup and
-  all existing positive/negative placeholder tests still pass.
+  underline placement id, scroll, stale publication, and missing-image placeholder
+  publication tests remain green. No new behavior test is required if the diff is a pure
+  implementation cleanup and all existing positive/negative placeholder tests still pass.
 - Stop conditions: stop if this requires retained publication state, render/host changes,
   public ABI changes, or changes placeholder-run semantics.
 - VT placeholder streaming scan completed in `howl-vt` commit `925528f vt: stream
   placeholder graphics runs`.
 - Accepted behavior: `walkResolvedPlaceholderRuns` now streams each row left-to-right and
   applies the same backfill rules without allocating a temporary row `ArrayList`. The
-  single resolver still feeds placeholder-run publication, generated placements, and
-  placeholder access refresh.
+  single resolver still feeds placeholder-run publication and generated placements.
 - Verification passed: `zig build test --summary all` in `howl-vt` with `640/640` tests,
   `zig build test:regression:build --summary all` in `howl-vt`, root `zig build --summary
   all`, root `git diff --check`, and `howl-vt git diff --check`.
@@ -2087,34 +2070,26 @@ Placeholder streaming scan research:
   indexed query. The next source-backed cleanup should either retain a publication snapshot
   or consolidate count/query to bounded owner state.
 
-Placeholder publication count consolidation delegated research:
+Placeholder access refresh deletion record:
 
-- Research agents read TigerBeetle style/architecture first, then current Howl graphics
-  publication paths and Kitty/Ghostty reference paths.
-- Howl current truth: `Terminal.graphicsMeta()` walks resolved placeholder runs three
-  times for one metadata publication: access refresh, generated placement count through
-  `resolvedPlacementCount`, and placeholder-run count. Indexed `graphicsPlacement` and
-  `graphicsPlaceholderRun` queries are separate query-derived paths.
-- Kitty reference truth: `screen_render_line_graphics` scans rows into compatible runs and
-  calls `grman_put_cell_image`; `grman_put_cell_image` updates image `atime` only after a
-  real generated cell-image ref is created. Kitty has no public Howl-like
-  `placeholder_run_count` ABI.
-- Tie-breaker verdict: preserve current Howl semantics for this cleanup. Do not change
-  access refresh to successful-generated-placement-only in a consolidation slice.
-- Promoted next slice: add a VT graphics-state metadata count/access method used only by
-  `Terminal.graphicsMeta()` that counts resolved stored placements, counts resolved
-  placeholder runs, counts successful generated placeholder placements, and marks existing
-  images for every resolved placeholder run during one placeholder resolver pass.
-- Required invariants: `placeholder_run_count` remains resolved placeholder-run count;
-  `placement_count` remains resolved stored placements plus successful generated
-  placements; access refresh remains run-based and missing-image no-op; indexed query/proof
-  APIs remain query-derived; publication sequence/stale-token behavior unchanged; render,
-  host, and public ABI unchanged.
-- Required tests: existing placeholder-run, generated placement, stale publication,
-  high-byte, underline placement id, scroll, and placeholder access tests remain green.
-- Stop conditions: stop if this requires retained publication snapshots, render/host
-  changes, public ABI changes, or changes generated placement geometry/order/access
-  semantics.
+- Prior delegated worker deleted run-based Unicode placeholder image access refresh from
+  `howl-vt/src/terminal.zig` and `howl-vt/src/kitty/graphics.zig`. Reviewer accepted that
+  product-code deletion.
+- Deleted behavior: `Terminal.graphicsMeta()` no longer marks images as accessed merely
+  because resolved placeholder runs reference them.
+- Reason: run-based placeholder access refresh was Howl-only. Kitty updates image access
+  at successful generated cell-ref/materialization (`grman_put_cell_image`), not during a
+  public metadata/run-count walk.
+- Accountability cleanup: remove stale tests and active planning text that preserve or
+  consolidate run-based access refresh.
+- Test update: delete or replace
+  `kitty graphics decoded quota treats placeholder publication as image access` so the
+  suite no longer asserts run-based access refresh.
+- Future replacement rule: any access refresh reintroduction must be Kitty-style
+  successful generated cell-ref/materialization only, in a separately promoted and
+  source-backed slice.
+- Non-goals: do not broaden this deletion to generated placement materialization, retained
+  publication snapshots, render, host, FFI, or public ABI changes.
 
 ## Completed Or Stale Graphics Backlog
 

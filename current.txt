@@ -1,4 +1,4 @@
-# Current Slice: Graphics Publication Count Consolidation
+# Current Slice: Graphics Placeholder Access Refresh Deletion
 
 Owner: howl-vt.
 
@@ -6,62 +6,58 @@ Sprint scope: graphics.
 
 ## Goal
 
-Make `Terminal.graphicsMeta()` derive placeholder-run count, generated placement count,
-and placeholder image access refresh from one VT placeholder resolver pass while preserving
-current public behavior.
+Delete stale accountability for run-based Unicode placeholder image access refresh.
+
+Run-based placeholder access refresh was Howl-only behavior. Product code already removed
+the refresh from `Terminal.graphicsMeta()` and `kitty.graphics.State`; this slice removes
+the remaining stale test/planning records that would preserve or reintroduce it.
 
 ## Delegation Requirement
 
 - Main agent must not implement this slice directly.
-- Seed a worker with this file, the scratchpad entry, exact source/reference paths, and the
-  invariants below.
-- Seed a reviewer after worker output and reject any diff that changes behavior, broadens
-  scope, or weakens ABI/source-order accountability.
+- Seed a worker with this file, the scratchpad entry, the existing `howl-vt` product-code
+  deletion diff, and the required edit list below.
+- Seed a reviewer after worker output and reject any diff that preserves run-based access
+  refresh, broadens into materialization, or touches render/host.
 
 ## Required Work
 
-- Worker edits only `howl-vt/src/kitty/graphics.zig` and `howl-vt/src/terminal.zig` unless
-  a stop condition is hit.
-- Add one graphics-state method for `graphicsMeta()` publication counts:
-  resolved stored placement count plus successful generated placeholder placement count,
-  and resolved placeholder-run count.
-- In that method, mark existing images for every resolved placeholder run during the same
-  placeholder resolver pass used for the counts.
-- Use the new method from `Terminal.graphicsMeta()`.
-- Keep `graphicsPlacement`, `graphicsPlaceholderRun`, and proof indexed queries
-  query-derived in this slice.
-- Keep render, host, FFI, and public ABI unchanged.
+- Delete or replace the stale test
+  `kitty graphics decoded quota treats placeholder publication as image access` in
+  `howl-vt/src/test/terminal_graphics.zig` so tests no longer assert run-based access
+  refresh.
+- Do not add a replacement unless it is source-backed and narrow.
+- Replace the wrong preservation/consolidation record in `current.txt` and
+  `graphics-machinery-scratchpad.md` with this deletion record.
+- Record that any future replacement must be Kitty-style successful generated
+  cell-ref/materialization only.
+- Do not broaden to generated placement materialization.
+- Do not touch render or host.
 
 ## Invariants
 
-- `placeholder_run_count` remains resolved placeholder-run count, not generated placement
-  count.
-- `placement_count` remains resolved stored placements plus successful generated placeholder
-  placements.
-- Generated placement count increments only when `generatedPlacementFrom(...)` succeeds.
-- Access refresh remains run-based for existing images; missing images remain a no-op and
-  do not fabricate image state.
-- Publication sequence and stale-token behavior stay unchanged.
-- Generated placement geometry, order, and render order keys stay unchanged.
+- `graphicsMeta()` must not refresh image access merely because placeholder runs resolve.
+- Tests must not encode run-based placeholder access refresh as product behavior.
+- Future access refresh, if reintroduced, must be tied to Kitty-style successful generated
+  cell-ref/materialization, not a public metadata/run-count walk.
+- Placeholder-run count/query and generated placement publication remain current behavior.
+- Render, host, FFI, and public ABI remain unchanged.
 
 ## Tests Required
 
-- Existing generated placement tests remain green.
-- Existing placeholder-run publication tests remain green.
-- Existing stale publication tests remain green.
-- Existing high-byte, underline placement id, scroll, and placeholder access tests remain
-  green.
+- `zig build test --summary all` in `howl-vt`.
+- `zig build test:regression:build --summary all` in `howl-vt` if unit tests pass.
+- Root `git diff --check`.
+- `howl-vt` `git diff --check`.
 
 ## Stop Conditions
 
-- Stop if this requires retained publication snapshots.
+- Stop if the cleanup requires generated placement materialization.
 - Stop if render, host, FFI, or public ABI changes become necessary.
-- Stop if generated placement geometry or ordering needs to change.
-- Stop if access semantics need to change to successful-generated-placement-only.
+- Stop if placeholder-run geometry, count, or ordering semantics need to change.
 
 ## Verification
 
 - `zig build test --summary all` in `howl-vt`.
 - `zig build test:regression:build --summary all` in `howl-vt`.
-- Root `zig build --summary all`.
 - Root and `howl-vt` `git diff --check`.
