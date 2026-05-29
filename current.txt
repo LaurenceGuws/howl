@@ -1,77 +1,131 @@
-# Current Slice: Delete Render Boundary `frame.zig`
+# Current Slice: Replace Render Submit Feedback Vocabulary
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete `howl-render/src/frame.zig`.
-- Render does not own “frames” as a product noun at the C boundary.
-- Render knows VT surface/events and render surface/events.
-- Keep `howl-render/include/howl_render.h` unchanged even though the C ABI still
-  has shipped `HowlRenderPreparedFrame` names.
+- Delete vague render submit “feedback” vocabulary from the C ABI and source.
+- Replace it with submit-result and host-surface nouns.
+- Break the ABI intentionally; do not preserve old names or aliases.
 
 ## Source Files
 
-- `howl-render/src/frame.zig`
-- `howl-render/src/prepare_request.zig`
+- `howl-render/include/howl_render.h`
+- `howl-render/src/surface_feedback.zig`
+- `howl-render/src/prepared/feedback.zig`
+- `howl-render/src/surface/text.zig`
+- `howl-render/src/surface/submit_feedback.zig`
+- `howl-render/src/surface/prepared_owner.zig`
 - `howl-render/src/prepared_surface.zig`
 - `howl-render/src/submission.zig`
-- `howl-render/src/surface/tokens.zig`
 - `howl-render/src/libhowl_render.zig`
+- `howl-render/src/test/ffi.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/render/abi.zig`
+- `howl-linux-host/src/window/term_texture.zig`
 
-## File To Delete
+## ABI Changes
 
-- `howl-render/src/frame.zig`
+In `howl-render/include/howl_render.h`, rename without old aliases:
 
-Do not leave a shim or compatibility import.
+- `HowlRenderSurfaceMetrics` -> `HowlRenderMetrics`
+- `HowlRenderSurfaceHandle` -> `HowlRenderHostSurface`
+- `HowlRenderSurfaceExecutionInput` -> `HowlRenderSubmitExecution`
+- `HowlRenderSurfaceFeedback` -> `HowlRenderSubmitResult`
 
-## Symbol Movement
+Prefer field vocabulary:
 
-Move from `frame.zig` to `prepare_request.zig`:
+- `HowlRenderSubmitExecution.host_surface`
+- `HowlRenderSubmitResult.host_surface`
 
-- `prepareRequestOut()`
-- `prepareTokenIn()`
+Update submit function signatures to use:
 
-Move from `frame.zig` to `submission.zig`:
+- `const HowlRenderSubmitExecution *execution_in`
+- `HowlRenderSubmitResult *result_out`
 
-- `preparedFrameOut()`
-- `preparedFrameIn()`
-- `samePreparedFrame()`
+Do not change function names in this slice unless build requires it. The noun
+cleanup here is type/result vocabulary only.
 
-Move or duplicate only where needed, with the smallest true owner:
+## Render Source Changes
 
-- `damageKindIn()` may move to `prepare_request.zig` if only prepare request
-  parsing needs it, or to `submission.zig` if submission parsing needs it too.
-- Prefer a private helper in each file over a new shared generic module for this
-  slice, unless duplication becomes unsafe.
+Delete/rename `howl-render/src/surface_feedback.zig`:
 
-## Required Import Changes
+- New file: `howl-render/src/submit_result.zig`
+- `surfaceMetricsOut()` -> `metricsOut()`
+- `surfaceFeedbackOut()` -> `submitResultOut()`
+- `failedSurfaceFeedback()` -> `failedSubmitResult()`
+- `executionInputIn()` -> `submitExecutionIn()`
 
-In `prepare_request.zig`:
+In `howl-render/src/prepared/feedback.zig`:
 
-- Remove `@import("frame.zig")`.
-- Own C `HowlRenderPrepareRequest` translation locally.
+- Rename internal nouns:
+  - `RenderSurfaceHandle` -> `HostSurface`
+  - `RenderSurfaceFeedback` -> `SubmitResult`
+  - `RenderMetrics` -> `Metrics` if mechanical; otherwise do not leave
+    `SurfaceMetrics` anywhere.
+
+In `howl-render/src/surface/text.zig`:
+
+- `SurfaceText.RenderSurfaceExecutionInput` -> `SurfaceText.SubmitExecution`
+- `submitSurface()` returns submit result, not feedback.
+
+In `howl-render/src/surface/submit_feedback.zig`:
+
+- Remove feedback vocabulary.
+- Rename/move to `howl-render/src/prepared/submit.zig` if practical.
+- No `feedback` names may remain under render source after this slice.
 
 In `prepared_surface.zig`:
 
-- Remove `@import("frame.zig")`.
-- Import `prepare_request.zig` for `prepareTokenIn()` only.
+- Import `submit_result.zig` for metrics output.
 
 In `submission.zig`:
 
-- Remove `@import("frame.zig")`.
-- Own C `HowlRenderPreparedFrame` translation locally.
+- Replace `surface_feedback` import with `submit_result`.
+- Use `HowlRenderSubmitExecution` and `HowlRenderSubmitResult`.
+- Use `failedSubmitResult()`, `submitResultOut()`, and `submitExecutionIn()`.
+
+## Host Changes
+
+In `howl-linux-host/src/terminal/context.zig`:
+
+- `HowlRenderSurfaceFeedback` -> `HowlRenderSubmitResult`
+- `HowlRenderSurfaceExecutionInput` -> `HowlRenderSubmitExecution`
+- `feedback.surface` -> `result.host_surface`
+
+In `howl-linux-host/src/terminal/render/retained.zig`:
+
+- Same type updates.
+- Assertions use `result.host_surface`.
+
+In `howl-linux-host/src/window/term_texture.zig`:
+
+- `HowlRenderSurfaceHandle` -> `HowlRenderHostSurface`
+
+In `howl-linux-host/src/terminal/render/abi.zig`:
+
+- Replace `RenderSurface` alias with `HostSurface` or direct new C type.
+
+## Tests
+
+- Preserve current behavior.
+- Update render ABI tests to use `HowlRenderSubmitResult` and
+  `HowlRenderSubmitExecution`.
+- Add or preserve test that failed submit initializes result status to
+  `HOWL_RENDER_CALL_FAILED`.
+- Update host retained tests to assert nonzero `host_surface_id`, width, height
+  through the new host-surface noun.
 
 ## Invariants
 
-- No C header change.
-- No behavior change.
-- No `frame.zig` file remains under `howl-render/src`.
-- No `@import("frame.zig")` remains.
-- No compatibility shim.
+- No old typedefs or aliases.
+- No compatibility shims.
+- No `feedback` vocabulary remains under `howl-render/src`.
+- No old `HowlRenderSurfaceFeedback`, `HowlRenderSurfaceExecutionInput`, or
+  `HowlRenderSurfaceHandle` remains in `howl_render.h`.
 - No `types.zig`.
 - No `manager`, `controller`, `runtime`, `flow`, `pipeline`, or `queue` owner.
-- Do not rename public C ABI symbols in this slice.
 
 ## Verification
 
@@ -79,29 +133,38 @@ From `/home/home/personal/projects/howl`:
 
 - `zig build check`
 - `zig build test`
+- `git diff --check`
 
-From `/home/home/personal/projects/howl/howl-render` if needed:
+From `/home/home/personal/projects/howl/howl-render`:
 
 - `zig build check`
 - `zig build test`
 - `git diff --check`
 
+From `/home/home/personal/projects/howl/howl-linux-host` if needed:
+
+- `zig build check`
+- `zig build test`
+
 ## Grep Gates
 
 No matches under `howl-render/src`:
 
-- `@import("frame.zig")`
+- `SurfaceFeedback`
+- `surfaceFeedback`
+- `surface_feedback`
+- `RenderSurfaceFeedback`
+- `failedSurfaceFeedback`
+- `executionInputIn`
 
-No file:
+No matches under `howl-render/include/howl_render.h`:
 
-- `howl-render/src/frame.zig`
+- `HowlRenderSurfaceFeedback`
+- `HowlRenderSurfaceExecutionInput`
+- `HowlRenderSurfaceHandle`
 
-No new paths/names under `howl-render/src` matching:
+No old aliases anywhere:
 
-- `types.zig`
-- `manager`
-- `controller`
-- `runtime`
-- `flow`
-- `pipeline`
-- `queue`
+- `typedef .*HowlRenderSurfaceFeedback`
+- `typedef .*HowlRenderSurfaceExecutionInput`
+- `typedef .*HowlRenderSurfaceHandle`
