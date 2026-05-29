@@ -2208,6 +2208,33 @@ Host graphics proof API deletion research:
   fixture, legacy render base64 path quarantine, synthetic generated-placeholder order
   keys, and query-derived generated placement publication/materialization gap.
 
+Graphics app-icon fixture deletion research:
+
+- Audit verdict: app-icon graphics proof fixtures are a deletion candidate before
+  replacement planning.
+- Howl-only behavior: VT, render, host bridge, and host replay tests use
+  `howl-linux-host/assets/icon/howl_window_icon.png` or
+  `kitty_graphics_app_icon_replay.sh` as proof that graphics paths work.
+- Source truth: a Howl product asset is not a Kitty/Ghostty protocol fixture. Exact
+  protocol facts should be proved with fixed raw/PNG fixtures in a later source-backed
+  replacement slice.
+- Promoted next slice: delete app-icon based graphics proof tests/helpers/fixtures without
+  replacing them in this slice, preserving unrelated runtime graphics behavior and
+  unicode-placeholder replay coverage.
+- Candidate paths: `howl-vt/src/test/terminal_graphics.zig`,
+  `howl-render/src/frame/surface_buffer.zig`,
+  `howl-linux-host/src/terminal/vt/surface.zig`,
+  `howl-linux-host/src/test/kitty_graphics_replay.zig`,
+  `howl-linux-host/src/test/kitty_graphics_replay_app.zig`,
+  `howl-linux-host/src/test/fixtures/kitty_graphics_app_icon_replay.sh`, and
+  `utils/send_app_icon_kitty.py`.
+- Required invariants: runtime graphics upload/decode/render behavior unchanged; no public
+  ABI changes; no VT parser/decoder or render composition semantic changes; host
+  unicode-placeholder replay coverage remains.
+- Stop conditions: stop if deletion requires runtime graphics code changes, replacement
+  fixtures to keep unrelated tests meaningful, public ABI changes, or protocol semantic
+  changes.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
