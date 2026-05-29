@@ -8,6 +8,9 @@ Purpose:
 - Keep render publication and host metadata separate from runtime obligation truth.
 - Invent the smallest Howl-owned shape that can support VT-owned autonomous work such as Kitty animation.
 
+Status: stale historical scratchpad. Graphics publication paths listed below include deleted
+APIs. Use `graphics-machinery-scratchpad.md` and current headers for current truth.
+
 ## Current VT Outward Paths
 
 ### 1. Render publication path

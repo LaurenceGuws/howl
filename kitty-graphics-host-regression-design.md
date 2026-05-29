@@ -7,6 +7,9 @@ Purpose:
 - Define the smallest acceptable host-owned proof surface for the deterministic Kitty graphics crash repro.
 - Set the acceptance gate before implementation so the regression harness does not degrade into smoke coverage.
 
+Status: stale historical design. The replay target and fixture named here were deleted. Do
+not use this file as current graphics work input.
+
 ## Governing Inputs
 
 - `AGENTS.md`

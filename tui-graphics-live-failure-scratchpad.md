@@ -8,6 +8,11 @@ Purpose:
 - Reset the workflow back to research -> narrow promotion -> test-first code.
 - Capture only owner-true facts proved from the recent `yazi` and `terminal-doom` live repros.
 
+Status: stale historical scratchpad. Do not use this as current graphics truth. It references
+deleted app-icon replay, virtual-placement publication, placeholder bridge, render cache, and
+host replay paths. Current truth is recorded in `graphics-machinery-scratchpad.md` and
+`current.txt`.
+
 ## User-Visible Problem
 
 - `utils/send_app_icon_kitty.py` works.

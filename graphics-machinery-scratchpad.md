@@ -1101,12 +1101,12 @@ PNG non-palette mode matrix proof slice completed:
 
 ### 16. Non-direct media incorrectly rejects `m=1`
 
-Severity: medium, protocol compatibility.
+Severity: medium, protocol fit.
 
 Kitty/Ghostty machinery:
 
 - Kitty `load_image_data` treats chunking as meaningful only for direct payloads and loads `t=f`, `t=t`, and `t=s` immediately.
-- Ghostty explicitly ignores `m` for local-only media and notes Kitty/mpv compatibility.
+- Ghostty explicitly ignores `m` for local-only media and notes Kitty/mpv behavior.
 
 Howl current shape:
 
@@ -1478,7 +1478,7 @@ Research notes for later slices:
 
 ### 24. Combined animation controls reject real Kitty Go traffic
 
-Severity: medium-high, real client animation compatibility.
+Severity: medium-high, real client animation behavior.
 
 Kitty source truth:
 
@@ -1891,14 +1891,14 @@ Decoded render bridge research:
   app-loop failure expecting `error.ActiveTabExited` and receiving `void`; it is not part
   of this graphics slice.
 - End-to-end decoded graphics publication path is now present from VT through host into
-  render. Remaining work is compatibility/internal cleanup: classify old base64/protocol
-  paths as public ABI compatibility, internal debt, or still-needed bridge before removing
+  render. Remaining work is legacy/internal cleanup: classify old base64/protocol
+  paths as old public ABI surface, internal debt, or still-needed bridge before removing
   anything.
 
-Base64 compatibility retirement research:
+Base64 legacy retirement research:
 
 - Verdict: first cleanup slice is worker-ready and owned by `howl-vt`.
-- Public ABI compatibility that must remain: VT `HowlVtGraphicsImage.payload_len`,
+- Old public ABI surface that must remain: VT `HowlVtGraphicsImage.payload_len`,
   `howl_vt_terminal_query_graphics_image`, `howl_vt_terminal_copy_graphics_payload`,
   render `HowlRenderPublishSlotCommit`, `HowlRenderVtSurface.graphics_payload_bytes`,
   and `howl_render_surface_text_commit_publish_slot`.
@@ -1909,13 +1909,13 @@ Base64 compatibility retirement research:
   decoded VT-to-render bridge.
 - Promoted next slice: VT-only decoded-truth internal cleanup. Decoded image/frame bytes
   become the source for frame coalescing while old base64/protocol bytes remain bounded
-  compatibility publication for old ABI copy/query APIs.
+  legacy publication for old ABI copy/query APIs.
 - Stop conditions: no old ABI byte changes, no render/host changes, no quota/eviction
   redesign, no broad frame graph rewrite.
 - VT decoded-truth cleanup completed in `howl-vt` commit `e944cdc vt: coalesce graphics
   from decoded payloads`.
 - Accepted behavior: VT internal image/frame coalescing now reads decoded payload bytes,
-  not old compatibility base64/protocol bytes. Old public payload query/copy ABI remains
+  not old base64/protocol bytes. Old public payload query/copy ABI remains
   byte-compatible through `legacy_payload`; decoded query/copy remains unchanged.
 - Verification passed after main-agent review cleanup removing dead base64 RGBA helpers:
   `zig build test --summary all` in `howl-vt`, `zig build test:regression:build --summary
@@ -1938,7 +1938,7 @@ Decoded quota research:
   decoded payloads, current decoded override payloads, and in-flight decoded upload bytes.
   Render raster cache quota remains render-owned and separate.
 - Compatibility decision: legacy/base64 bytes stay under the existing retained-payload
-  compatibility bound until old public ABI retirement is explicitly decided.
+  legacy byte bound until old public ABI retirement is explicitly decided.
 - Promoted next slice: make `ensureDecodedPayloadStore` evict safe unplaced images before
   failing, preserve physical and virtual placements, count replacement-freed decoded bytes,
   and prove eviction removes frames/current overrides.
@@ -1948,8 +1948,8 @@ Decoded quota research:
   graphics payloads`.
 - Accepted behavior: decoded quota now evicts safe unplaced images before failing,
   preserves physical and virtual placements, counts decoded bytes freed by replacement,
-  removes frame/current override bytes with evicted images, and leaves the legacy/base64
-  compatibility quota separate.
+  removes frame/current override bytes with evicted images, and leaves the old base64 quota
+  separate.
 - Main-agent review found and fixed a root-frame compose pointer-shift bug introduced by
   decoded quota eviction. Compose now reacquires the protected image after eviction before
   mutating it, with a regression proving an earlier unplaced image can be evicted safely.
@@ -2131,7 +2131,7 @@ Render/host virtual placement forwarding deletion research:
   internally and does not forward virtual placements as render ABI truth.
 - Promoted next slice: remove host dependence on forwarding virtual placements to render
   and make render ignore/stop validating virtual placement spans in decoded publication
-  paths while preserving public ABI layout as compatibility unless an explicit ABI break is
+  paths while preserving public ABI layout unless an explicit ABI break is
   required.
 - Candidate paths: `howl-render/include/howl_render.h`,
   `howl-render/src/frame/queue.zig`, `howl-render/src/frame/surface_text.zig`,
@@ -2152,7 +2152,7 @@ Render/host virtual placement forwarding deletion research:
 - Accepted behavior: host no longer allocates, queries, stores, or forwards VT virtual
   placements into decoded render publication; decoded render commit sends zero virtual
   placements; render decoded commit normalizes virtual placement metadata to zero while
-  preserving public ABI layout as compatibility.
+  preserving public ABI layout.
 - Verification passed/reported: `zig build test --summary all` in `howl-render` with
   `736/739` tests passed and `3` skipped; `zig build
   test:integration:kitty-graphics-replay:build --summary all` and `zig build
@@ -2305,7 +2305,7 @@ Render legacy graphics payload deletion research:
 - Accepted behavior: render no longer links `stb_image.c`, no longer decodes render-side
   base64 raw or PNG graphics payloads, and `.legacy_protocol` graphics payloads produce no
   prepared graphics. Decoded RGB/RGBA publication remains the render graphics path. Public
-  ABI symbols/layout remain for compatibility.
+  ABI symbols/layout remain for old callers.
 - Verification passed: `zig build test --summary all` in `howl-render` with `730/733`
   tests passed and `3` skipped; root `zig build --summary all`; root `git diff --check`;
   `howl-render git diff --check`.
@@ -2452,11 +2452,11 @@ Generated placeholder flag deletion decision:
 
 Legacy graphics ABI deletion decision:
 
-- User rejection: replacement planning was not ready while legacy graphics ABI compatibility
+- User rejection: replacement planning was not ready while legacy graphics ABI support
   remained. Delete it before claiming pure/accountable replacement readiness.
 - Promoted destructive slice: delete VT legacy graphics image/payload query ABI, render
   legacy publish ABI, render legacy payload kind, host legacy bridge dependencies, retained
-  graphics transport/base64 image/frame storage, and tests that assert removed compatibility.
+  graphics transport/base64 image/frame storage, and tests that assert removed legacy support.
 - Review rejection 1: exported symbols were removed, but render still kept an internal
   legacy-shaped `FfiVtGraphicsImage` mirror and payload-kind switch, and VT still retained
   `legacy_payload` state. Worker was reseeded to delete those instead of preserving shims.
@@ -2541,6 +2541,32 @@ Render graphics raster cache deletion decision:
   passed and `3` skipped, and `howl-render git diff --check`.
 - Known broken behavior: render no longer reuses decoded graphics rasters across
   publications.
+
+Remaining made-up graphics deletion batch:
+
+- User correction: graphics ABI preservation is not a deletion blocker for this repository;
+  the host in this tree is the consumer that matters.
+- Deleted VT public virtual-placement query ABI because Kitty virtual refs are internal
+  prototypes skipped by layer update/render. Concrete renderable cell-image refs are a
+  separate source-backed future problem.
+- Deleted stale placement `flags` fields because the generated-placeholder flag and
+  generated-placeholder publication bridge were already deleted and VT published only zero.
+- Deleted render prepared-placement `placement_id` and `placement_ordinal`; Kitty render data
+  sorts by z, image identity, and ref identity, and Howl already carries `render_order_key`.
+- Deleted the render ordinal fallback test that proved only the removed fallback.
+- Deleted empty host graphics replay target and stale fixture scripts after generated
+  placeholder/app-icon replay paths were removed.
+- Accepted commits: `howl-vt` `42f4194 vt: delete virtual graphics ABI`, `howl-render`
+  `da51b98 render: delete graphics placement debris`, and `howl-linux-host` `b84a389 host:
+  delete graphics replay scaffolding`.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `530/530` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, `zig build test --summary
+  all` in `howl-render` with `701/704` tests passed and `3` skipped, `zig build
+  test:integration:build --summary all` in `howl-linux-host`, `zig build --summary all` in
+  `howl-linux-host`, root `zig build --summary all`, and root/VT/render/host `git diff
+  --check`.
+- Known broken behavior: public virtual-placement query ABI, placement flags, and host
+  graphics replay build steps are gone by design.
 
 ## Completed Or Stale Graphics Backlog
 

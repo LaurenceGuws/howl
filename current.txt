@@ -1,43 +1,57 @@
-# Current Slice: Drawn Graphics Feedback ABI Deletion Accepted
+# Current Batch: Remaining Made-Up Graphics Deletions Accepted
 
 Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-Status: accepted by reviewer, verified locally, and committed in submodules.
+Status: accepted by reviewers, verified locally, and committed in submodules.
 
 Accepted commits:
 
-- `howl-vt` `a599769 vt: delete drawn graphics feedback`
-- `howl-render` `cb526f5 render: delete drawn graphics feedback ABI`
-- `howl-linux-host` `fddd43e host: stop reporting drawn graphics`
+- `howl-vt` `42f4194 vt: delete virtual graphics ABI`
+- `howl-render` `da51b98 render: delete graphics placement debris`
+- `howl-linux-host` `b84a389 host: delete graphics replay scaffolding`
 
 ## Accepted Deletion
 
-- Deleted VT public drawn-feedback ABI/export/FFI/Terminal path:
-  `howl_vt_terminal_note_drawn_graphics`, `terminalNoteDrawnGraphics`, and
-  `Terminal.noteDrawnGraphics`.
-- Deleted `Graphics.State.noteDrawnImageRefs` and feedback-only tests.
-- Deleted render prepared-surface graphics-ref query ABI that existed to feed the host
-  feedback callback.
-- Deleted host collection/submission of prepared drawn graphics refs.
-- Added no replacement visibility scheduler, cache model, generated refs, or ABI.
+- Deleted VT public virtual-placement query ABI:
+  `virtual_placement_count`, `HowlVtGraphicsVirtualPlacement`,
+  `HowlVtGraphicsVirtualPlacementResult`,
+  `howl_vt_terminal_query_graphics_virtual_placement`, FFI mirrors, export, and
+  `Terminal.graphicsVirtualPlacement`.
+- Deleted stale VT/render placement `flags` fields and layout assertions.
+- Deleted render internal prepared-placement debris:
+  `PreparedGraphicsPlacement.placement_id`, `PreparedGraphicsPlacement.placement_ordinal`,
+  ordinal sort fallback, and tests that proved only that fallback.
+- Deleted empty host graphics replay target, build-step wiring, and stale replay fixture
+  scripts.
+- Added no replacement ABI, scheduler, render path, replay harness, or proof seam.
+
+## Kept Deliberately
+
+- Internal VT virtual-placement protocol state and `U=1` parser behavior remain.
+- VT `Image.drawn` remains because Kitty has `Image.is_drawn`; its update path is still a
+  later source-backed problem.
+- Decoded VT-to-render bridge and host presentation/resource upload path remain.
 
 ## Verification Passed
 
-- `zig build test --summary all` in `howl-vt` (`532/532` tests passed).
-- `zig build test --summary all` in `howl-render` (`704/707` tests passed, `3` skipped).
+- `zig build test --summary all` in `howl-vt` (`530/530` tests passed).
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-render` (`701/704` tests passed, `3` skipped).
+- `zig build test:integration:build --summary all` in `howl-linux-host`.
 - `zig build --summary all` in `howl-linux-host`.
 - Root `zig build --summary all`.
 - Root, `howl-vt`, `howl-render`, and `howl-linux-host` `git diff --check`.
 
 ## Known Broken State
 
-- Graphics animation drawn/visibility gating no longer receives render feedback.
-- Animation progress may remain inert or wrong until a source-backed Kitty-like layer/update
-  model exists.
+- Public virtual-placement query ABI is gone.
+- Placement flags are gone.
+- Host `test:integration:kitty-graphics-replay` and
+  `test:integration:kitty-graphics-replay:build` are gone.
 
 ## Next Gate
 
-No replacement slice is active. Continue deleting or proving remaining Howl-only graphics
-ideas that are not Kitty-identical/source-backed before replacement work.
+No replacement slice is active. Any remaining graphics work must start from current source
+truth and reference-backed ownership, not old replay or placeholder bridge notes.

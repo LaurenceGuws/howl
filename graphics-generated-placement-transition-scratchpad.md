@@ -4,6 +4,10 @@ Owner: workspace root.
 
 Purpose: coordinated VT/render/host plan for replacing render-side Kitty placeholder interpretation with VT-owned generated placeholder placements.
 
+Status: stale historical transition plan. It references deleted placeholder-run,
+generated-placeholder flag, render placeholder, and virtual-placement publication paths. Do
+not use this file as current graphics implementation guidance.
+
 Reviewer status: research accepted with amendment. The core invariant is accepted. The exact public ABI extension remains a design gate: add only fields needed by render/host/product behavior, not debug convenience.
 
 ## Core Invariant
