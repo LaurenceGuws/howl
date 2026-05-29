@@ -1,138 +1,189 @@
-# Current Slice: Host Runtime Owner Moves
+# Current Slice: Host `terminal/host/*` Owner Moves
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete the false `howl-linux-host/src/terminal/runtime/` bucket by moving each file
-  to its smallest true owner.
-- Preserve behavior while cutting imports and test exports directly with no
-  compatibility aliases.
+- Delete the false `howl-linux-host/src/terminal/host/` bucket by moving each
+  file to its smallest true owner.
+- Preserve behavior while cutting imports directly with no compatibility aliases.
 
 ## Source Files
 
-- `howl-linux-host/src/terminal/runtime/thread.zig`
-- `howl-linux-host/src/terminal/runtime/progress.zig`
-- `howl-linux-host/src/terminal/runtime/fonts_linux.zig`
-- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/terminal/host/input.zig`
+- `howl-linux-host/src/terminal/host/font_size.zig`
+- `howl-linux-host/src/terminal/host/geometry.zig`
+- `howl-linux-host/src/terminal/host/scroll.zig`
+- `howl-linux-host/src/terminal/host/scrollbar.zig`
 - `howl-linux-host/src/terminal/terminal_panel.zig`
-- `howl-linux-host/src/test/host.zig`
-- `howl-linux-host/src/test/integration_entry.zig`
 
 ## Required Moves
 
-1. Move `howl-linux-host/src/terminal/runtime/thread.zig` to
-   `howl-linux-host/src/terminal/pty/wait_thread.zig`.
-2. Move `howl-linux-host/src/terminal/runtime/progress.zig` to
-   `howl-linux-host/src/terminal/pty/pump.zig`.
-3. Move `howl-linux-host/src/terminal/runtime/fonts_linux.zig` to
-   `howl-linux-host/src/terminal/render/fonts_linux.zig`.
+1. Move `howl-linux-host/src/terminal/host/input.zig` to
+   `howl-linux-host/src/terminal/vt/input.zig`.
+2. Move `howl-linux-host/src/terminal/host/font_size.zig` to
+   `howl-linux-host/src/terminal/render/font_size.zig`.
+3. Move `howl-linux-host/src/terminal/host/geometry.zig` to
+   `howl-linux-host/src/terminal/render/frame_layout.zig`.
+4. Move `howl-linux-host/src/terminal/host/scroll.zig` to
+   `howl-linux-host/src/terminal/vt/viewport.zig`.
+5. Move `howl-linux-host/src/terminal/host/scrollbar.zig` to
+   `howl-linux-host/src/window/scrollbar.zig`.
 
 ## Symbol Requirements
 
-### `thread.zig` -> `pty/wait_thread.zig`
+### `terminal/vt/input.zig`
 
-Keep these symbols unless a direct full call-site rename is chosen:
+Keep:
+
+- `key`
+- `mods`
+- `mouseKind`
+- `mouseButton`
+- `buttons`
+- `publishPaste`
+- `publishKey`
+- `publishMouse`
+- `publishFocus`
+- `wouldReportUnpressedMouseMotion`
+- `wouldReportMouse`
+
+Ownership: VT input encoding plus PTY publication.
+
+### `terminal/render/font_size.zig`
+
+Keep:
+
+- `adjust`
+- `toggleStress`
+- `reset`
+
+Ownership: render font-size mutation.
+
+### `terminal/render/frame_layout.zig`
+
+Keep:
 
 - `State`
-- `progressThreadMain`
-- `wakePending`
-- `ackWake`
+- `init`
+- `resize`
+- `maybeCommitGridResize`
+- `syncFrameLayout`
+- `frameLayoutSnapshot`
+- `syncCurrentFrameLayout`
+- `snapshotFrameLayoutLocked`
 
-Optional direct rename:
+Ownership: render frame-layout synchronization and PTY/VT resize consequences.
 
-- `progressThreadMain` -> `waitThreadMain`
-
-If renamed, update every call site in this slice. Do not leave aliases.
-
-### `progress.zig` -> `pty/pump.zig`
-
-Keep:
-
-- `Outcome`
-- `driveOnce`
-- `pumpTransportSlice`
-- `progressRuntimeLocked`
-- `drainTerminalReplyLocked`
-
-This file owns bounded PTY/VT progress, not generic runtime. Do not recreate a
-`runtime` or `progress` directory.
-
-### `fonts_linux.zig` -> `terminal/render/fonts_linux.zig`
+### `terminal/vt/viewport.zig`
 
 Keep:
 
-- `ResolvedFonts`
-- `resolve`
+- `State`
+- `invalidate`
+- `setFocused`
+- `handlePages`
+- `byRows`
+- `handleMouse`
+- `wantsPassiveHoverWake`
+- `layout`
 
-This file uses render ABI constant `HOWL_RENDER_MAX_FALLBACK_FONTS` and belongs
-under host-side render support.
+Update import inside this file:
 
-## Import Changes
+- Replace `const scrollbar = @import("scrollbar.zig");` with
+  `const scrollbar = @import("../../window/scrollbar.zig");`.
 
-In `howl-linux-host/src/main.zig`:
+### `window/scrollbar.zig`
 
-- Replace `const runtime_thread = @import("terminal/runtime/thread.zig");`
-  with `const pty_wait_thread = @import("terminal/pty/wait_thread.zig");`.
-- Replace `runtime_thread.wakePending(tab)` with
-  `pty_wait_thread.wakePending(tab)`.
+Keep:
 
-In `howl-linux-host/src/terminal/terminal_panel.zig`:
+- `Model`
+- `View`
+- `MouseResult`
+- `State`
+- `Geometry`
+- `focus`
 
-- Replace `const runtime_progress = @import("runtime/progress.zig");` with
-  `const pty_pump = @import("pty/pump.zig");`.
-- Replace `const runtime_thread = @import("runtime/thread.zig");` with
-  `const pty_wait_thread = @import("pty/wait_thread.zig");`.
-- Replace `const fonts_linux = @import("runtime/fonts_linux.zig");` with
-  `const fonts_linux = @import("render/fonts_linux.zig");`.
-- Replace `runtime_thread.State` with `pty_wait_thread.State`.
-- Replace `runtime_thread.ackWake()` with `pty_wait_thread.ackWake()`.
-- Replace `runtime_thread.wakePending()` with `pty_wait_thread.wakePending()`.
-- Replace `runtime_thread.progressThreadMain` with
-  `pty_wait_thread.progressThreadMain` or the chosen direct rename.
-- Replace `runtime_progress.Outcome` with `pty_pump.Outcome`.
-- Replace `runtime_progress.driveOnce()` with `pty_pump.driveOnce()`.
+Ownership: pure presentation overlay model.
 
-In `howl-linux-host/src/test/host.zig`:
+## Import Changes In `terminal_panel.zig`
 
-- Replace `pub const Thread = @import("../terminal/runtime/thread.zig");` with
-  `pub const PtyWaitThread = @import("../terminal/pty/wait_thread.zig");`.
+Replace:
 
-In `howl-linux-host/src/test/integration_entry.zig`:
+- `const font_size = @import("host/font_size.zig");`
+- `const geometry = @import("host/geometry.zig");`
+- `const term_input = @import("host/input.zig");`
+- `const scroll = @import("host/scroll.zig");`
 
-- Replace `_ = @import("host").Thread;` with
-  `_ = @import("host").PtyWaitThread;`.
+With:
 
-No compatibility `Thread` alias is allowed.
+- `const font_size = @import("render/font_size.zig");`
+- `const frame_layout = @import("render/frame_layout.zig");`
+- `const term_input = @import("vt/input.zig");`
+- `const viewport = @import("vt/viewport.zig");`
+
+Then update all symbols:
+
+- `geometry.State` -> `frame_layout.State`
+- `geometry.init` -> `frame_layout.init`
+- `geometry.resize` -> `frame_layout.resize`
+- `geometry.maybeCommitGridResize` -> `frame_layout.maybeCommitGridResize`
+- `geometry.syncFrameLayout` -> `frame_layout.syncFrameLayout`
+- `geometry.frameLayoutSnapshot` -> `frame_layout.frameLayoutSnapshot`
+- `geometry.syncCurrentFrameLayout` -> `frame_layout.syncCurrentFrameLayout`
+- `geometry.snapshotFrameLayoutLocked` -> `frame_layout.snapshotFrameLayoutLocked`
+- `scroll.State` -> `viewport.State`
+- `scroll.handlePages` -> `viewport.handlePages`
+- `scroll.wantsPassiveHoverWake` -> `viewport.wantsPassiveHoverWake`
+- `scroll.layout` -> `viewport.layout`
+- `scroll.setFocused` -> `viewport.setFocused`
+- `scroll.invalidate` -> `viewport.invalidate`
+- `scroll.handleMouse` -> `viewport.handleMouse`
+- `scroll.byRows` -> `viewport.byRows`
+
+## Tests
+
+- Tests move with files.
+- Test name `"frame layout request ignores logical size"` may remain, but it must
+  use/import `frame_layout` rather than `geometry`.
+- Scrollbar tests move under `window/scrollbar.zig`.
+- Font-size tests remain under `terminal/render/font_size.zig`.
 
 ## Invariants
 
-- Background PTY thread only wakes owner thread; it never drives terminal
-  mutation itself.
-- Bounded PTY/VT work remains in `pty/pump.zig`.
-- Font path resolution remains host-side render support, not runtime.
-- `terminal/host`, `terminal_panel.zig`, and `TerminalPanel` may remain after
-  this slice only because they belong to later promoted slices.
+- No `terminal/host` namespace remains.
+- VT input encoding remains under `terminal/vt`.
+- Render layout/font-size mutation remains under `terminal/render`.
+- Scrollbar overlay model is window-owned.
+- Viewport/scrollback mutation is VT-owned.
+- `terminal_panel.zig` and `TerminalPanel` may remain after this slice only because
+  they belong to the later context cutover slice.
+- Do not introduce `host`, `runtime`, `panel`, `manager`, or `controller` owners.
 
 ## Verification
 
-From `/home/home/personal/projects/howl`:
+From `/home/home/personal/projects/howl/howl-linux-host`:
 
 - `zig build check`
 - `zig build test:unit`
 - `zig build test:integration`
 
+From `/home/home/personal/projects/howl`:
+
+- `zig build check`
+
 ## Grep Gates
 
-No matches after this slice:
+No matches after this slice under `howl-linux-host/src`:
 
-- `terminal/runtime`
-- `runtime/thread.zig`
-- `runtime/progress.zig`
-- `runtime/fonts_linux.zig`
+- `terminal/host`
+- `host/input.zig`
+- `host/font_size.zig`
+- `host/geometry.zig`
+- `host/scroll.zig`
+- `host/scrollbar.zig`
 
 Allowed temporary matches after this slice:
 
 - `TerminalPanel`
-- `terminal/host`
 - `terminal_panel.zig`
