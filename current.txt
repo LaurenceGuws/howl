@@ -1,159 +1,152 @@
-# Current Slice: Render `frame/` Namespace Deletion
+# Current Slice: Final Host Context Cutover
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete the broad `howl-render/src/frame/` namespace.
-- Move each file to the smallest true render owner under `surface/`.
-- Preserve the render/host boundary: render owns prepared render data and
-  retained render state, not backend publication, presentation, queue
-  scheduling, or host cadence.
+- Delete banned host `terminal_panel.zig` path and `TerminalPanel` vocabulary.
+- Move the per-terminal aggregate to `terminal/context.zig`.
+- Rename the exported aggregate type from `TerminalPanel` to `Context` with no
+  aliases or shims.
 
-## Source Directory To Delete
+## Source Files
 
-- `howl-render/src/frame/`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/test/host.zig`
+- `howl-linux-host/src/test_root.zig`
+- `howl-linux-host/src/test/integration_entry.zig`
 
-## Target Directory
-
-- `howl-render/src/surface/`
-
-## File Moves
+## Required Move
 
 Move:
 
-- `frame/surface.zig` -> `surface/types.zig`
-- `frame/surface_text.zig` -> `surface/text.zig`
-- `frame/pipeline.zig` -> `surface/tokens.zig`
-- `frame/queue.zig` -> `surface/flow.zig`
-- `frame/prepared_surface_owner.zig` -> `surface/prepared_owner.zig`
-- `frame/surface_buffer.zig` -> `surface/buffer.zig`
-- `frame/input.zig` -> `surface/input.zig`
-- `frame/geometry.zig` -> `surface/geometry.zig`
-- `frame/submit_feedback.zig` -> `surface/submit_feedback.zig`
-- `frame/clip_rect.zig` -> `surface/clip_rect.zig`
-- `frame/rgba.zig` -> `surface/rgba.zig`
+- From: `howl-linux-host/src/terminal/terminal_panel.zig`
+- To: `howl-linux-host/src/terminal/context.zig`
 
-Already deleted in the previous slice:
+Type rename:
 
-- `frame/publication.zig`
+- `TerminalPanel` -> `Context`
 
-Already present from the previous slice:
+No aliases. Do not leave `terminal_panel.zig` as a compatibility shim.
 
-- `surface/publication_source.zig`
+## Main Import And Symbol Changes
 
-## Import Changes
+In `howl-linux-host/src/main.zig`, replace:
 
-In `howl-render/src/ffi.zig`:
+- `const TerminalPanel = @import("terminal/terminal_panel.zig").TerminalPanel;`
 
-- `frame/pipeline.zig` -> `surface/tokens.zig`
-- `frame/prepared_surface_owner.zig` -> `surface/prepared_owner.zig`
-- `frame/surface_text.zig` -> `surface/text.zig`
-- `frame/queue.zig` -> `surface/flow.zig`
-- `frame/surface.zig` -> `surface/types.zig`
-- keep `surface/publication_source.zig`
+With:
 
-In `howl-render/src/text/contract.zig`:
+- `const TerminalContext = @import("terminal/context.zig").Context;`
 
-- `../frame/rgba.zig` -> `../surface/rgba.zig`
+Then update:
 
-In `howl-render/src/text/font/ft_hb/support.zig`:
+- `TabSlots.panels` -> `contexts` or `terms`.
+- `[max_tabs]TerminalPanel` -> `[max_tabs]TerminalContext`.
+- `active_tabs: [max_tabs]*TerminalPanel` -> `[max_tabs]*TerminalContext`.
+- `fn items(self: *TabSlots) []*TerminalPanel` -> `[]*TerminalContext`.
+- `activePanel()` -> `activeContext()`.
+- `activeTab()` may remain because it refers to tab index, but its returned type
+  must be `*TerminalContext`.
+- `TerminalPanel.DrainInputOutcome` -> `TerminalContext.DrainInputOutcome`.
+- `TerminalPanel.TurnResult` -> `TerminalContext.TurnResult`.
+- `TerminalPanel.TurnStep` -> `TerminalContext.TurnStep`.
 
-- `../../../frame/surface_text.zig` -> `../../../surface/text.zig`
-- `../../../frame/surface.zig` -> `../../../surface/types.zig`
+Do not leave an `activePanel` helper name. It contains banned panel vocabulary.
 
-In `howl-render/src/text/font/ft_hb/glyph_raster.zig`:
+## Test Export Changes
 
-- `../../../frame/surface_text.zig` -> `../../../surface/text.zig`
+In `howl-linux-host/src/test/host.zig`, replace:
 
-In `howl-render/src/test/unit.zig`:
+- `pub const TerminalPanel = @import("../terminal/terminal_panel.zig");`
 
-- `../frame/geometry.zig` -> `../surface/geometry.zig`
-- `../frame/surface.zig` -> `../surface/types.zig`
+With:
 
-In `howl-render/src/test/benchmark.zig`:
+- `pub const TerminalContext = @import("../terminal/context.zig");`
 
-- `../frame/surface.zig` -> `../surface/types.zig`
+In `howl-linux-host/src/test_root.zig`, replace:
 
-In `howl-render/src/test/ffi.zig`:
+- `pub const TerminalPanel = Host.TerminalPanel;`
 
-- `../frame/surface_text.zig` -> `../surface/text.zig`
+With:
 
-Update any remaining imports that point to moved files. Use direct relative
-imports from the new owner files. Do not preserve compatibility shims.
+- `pub const TerminalContext = Host.TerminalContext;`
 
-## Symbol Rename Pressure
+In `howl-linux-host/src/test/integration_entry.zig`, replace:
 
-Use direct owner names:
+- `_ = @import("host").TerminalPanel;`
 
-- `pipeline.DamageKind` -> `tokens.DamageKind`
-- `pipeline.SnapshotToken` -> `tokens.SnapshotToken`
-- `pipeline.PreparedFrame` -> `tokens.PreparedSurfaceToken`, unless the C ABI
-  still needs `PreparedFrame` vocabulary at the FFI edge.
-- `queue.Flow` -> `flow.State` or `flow.SurfaceFlow`.
-- `queue.PublicationSource` -> `flow.PublicationSource` or
-  `publication_source.Source`.
-- `surface.PreparedSurface` remains acceptable if in `surface/types.zig`.
+With:
 
-Do not use:
+- `_ = @import("host").TerminalContext;`
 
-- `frame`
-- `runtime`
-- `host`
-- `panel`
-- `manager`
-- `controller`
+No `TerminalPanel` alias.
 
-## Tests
+## Internal `context.zig` Symbol Changes
 
-- Move tests with files.
-- Update test names that include `frame_input` or `frame geometry`:
-  - `frame_input converts frame state to text scene input` ->
-    `surface input converts VT source to text scene input`
-  - `frame geometry helpers derive grid deterministically` ->
-    `surface geometry derives grid deterministically`
-- Keep behavior unchanged except for owner/import/name cleanup.
+Within moved file:
+
+- `pub const TerminalPanel = struct` -> `pub const Context = struct`.
+- `TerminalPanelOps` -> `ContextOps`.
+- `TerminalPanel.DrainInputOutcome` -> `Context.DrainInputOutcome`.
+- `TerminalPanel.ScrollMouseOutcome` -> `Context.ScrollMouseOutcome`.
+- Test fake names containing `FakePanel` -> `FakeContext`.
+- Function/local variable names using `panel` -> `context` where they refer to
+  the per-terminal aggregate.
+- Field names that are not exported but contain panel vocabulary should be
+  renamed.
+
+Keep user-facing tab vocabulary where it truly means tab.
 
 ## Invariants
 
-- `howl-render/src/frame/` must not exist after this slice.
-- Render owns prepared render data and retained render state.
-- Render does not own backend publication or presentation.
-- `submit` means render consumes host execution feedback; it must not mean
-  present or publish to a backend.
-- No compatibility aliases or shim files.
-- Do not add `frame/abi.zig`, renamed ABI modules, `contract.zig`, generic
-  `types.zig` outside the explicit `surface/types.zig` move, managers,
-  controllers, runtime buckets, or host shortcuts.
+- `terminal/context.zig` is the per-terminal aggregate only.
+- It composes true owners:
+  - `terminal/pty/*`
+  - `terminal/vt/*`
+  - `terminal/render/*`
+  - `window/*`
+- It must not become a new runtime, host, panel, manager, or controller bucket.
+- Host still uses only shipped C ABI through `terminal/c.zig`.
+- No compatibility aliases.
+- Do not recreate `terminal/runtime/`, `terminal/host/`, or
+  `terminal/terminal_panel.zig`.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
 - `zig build check`
+- `zig build test:unit`
+- `zig build test:integration`
 - `zig build test`
-- `zig build test:abi`
+
+If root `test:unit` is blocked by a known package build-taxonomy issue, record
+the exact failure and run host package gates from
+`/home/home/personal/projects/howl/howl-linux-host`:
+
+- `zig build check`
 - `zig build test:unit`
 - `zig build test:integration`
 
-Known current build taxonomy issue:
+## Final Grep Gates
 
-- Root `test:abi` and `test:unit` may still fail because `howl-render` does not
-  expose package steps with those exact names. If so, record the exact failure
-  and also run available render package steps from
-  `/home/home/personal/projects/howl/howl-render`:
-  - `zig build check`
-  - `zig build test`
+No matches under `howl-linux-host/src`:
 
-## Grep Gates
+- `terminal_panel`
+- `TerminalPanel`
+- `activePanel`
+- `FakePanel`
+- `terminal/runtime`
+- `terminal/host`
+- `/runtime/`
+- `/host/`
 
-No matches after this slice in `howl-render/src`:
+No replacement banned owners under `howl-linux-host/src`:
 
-- `@import("frame/`
-- `@import("../frame`
-- `src/frame`
-- `/frame/`
-
-No directory after this slice:
-
-- `howl-render/src/frame/`
+- `manager`
+- `controller`
+- `runtime2`
+- `host2`
+- `panel`
