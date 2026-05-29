@@ -1,191 +1,159 @@
-# Current Slice: Render FFI Cleanup, No Duplicated C Mirrors
+# Current Slice: Render `frame/` Namespace Deletion
 
 Owner: workspace root.
 
 Purpose:
 
-- Make `howl-render/include/howl_render.h` the single public C contract and
-  type source for render FFI.
-- Keep `howl-render/src/ffi.zig` as the public-facing C-callable
-  implementation owner, but delete Zig duplicate mirrors of shipped C types.
-- Preserve backend independence: render remains a C ABI state engine and does
-  not own backend publication, presentation, queues, or host cadence.
+- Delete the broad `howl-render/src/frame/` namespace.
+- Move each file to the smallest true render owner under `surface/`.
+- Preserve the render/host boundary: render owns prepared render data and
+  retained render state, not backend publication, presentation, queue
+  scheduling, or host cadence.
 
-## Source Files
+## Source Directory To Delete
 
-- `howl-render/include/howl_render.h`
-- `howl-render/src/ffi.zig`
-- `howl-render/src/libhowl_render.zig`
-- `howl-render/build.zig`
-- `howl-render/src/test/ffi.zig`
-- `howl-render/src/frame/publication.zig`
+- `howl-render/src/frame/`
 
-## Required Build Change
+## Target Directory
 
-In `howl-render/build.zig`, add include paths to the module that compiles
-`src/ffi.zig`:
+- `howl-render/src/surface/`
 
-- `ffi_mod.addIncludePath(b.path("include"));`
-- `ffi_mod.addIncludePath(b.path("../howl-vt/include"));`
+## File Moves
 
-This is required because `ffi.zig` must use `@cImport` against shipped C
-headers instead of mirroring C structs in Zig.
+Move:
 
-## Required FFI Change
+- `frame/surface.zig` -> `surface/types.zig`
+- `frame/surface_text.zig` -> `surface/text.zig`
+- `frame/pipeline.zig` -> `surface/tokens.zig`
+- `frame/queue.zig` -> `surface/flow.zig`
+- `frame/prepared_surface_owner.zig` -> `surface/prepared_owner.zig`
+- `frame/surface_buffer.zig` -> `surface/buffer.zig`
+- `frame/input.zig` -> `surface/input.zig`
+- `frame/geometry.zig` -> `surface/geometry.zig`
+- `frame/submit_feedback.zig` -> `surface/submit_feedback.zig`
+- `frame/clip_rect.zig` -> `surface/clip_rect.zig`
+- `frame/rgba.zig` -> `surface/rgba.zig`
 
-In `howl-render/src/ffi.zig`, introduce:
+Already deleted in the previous slice:
 
-```zig
-const c = @cImport({
-    @cInclude("howl_render.h");
-});
-```
+- `frame/publication.zig`
 
-Then replace all duplicated `Ffi*` and status/type mirrors with direct `c.*`
-references.
+Already present from the previous slice:
 
-Delete these mirrors from `ffi.zig`:
+- `surface/publication_source.zig`
 
-- `c_size_t`
-- `HowlRenderSurfaceText`
-- `HowlRenderPreparedSurfaceObject`
-- `SurfaceTextHandle`
-- `PreparedSurfaceHandle`
-- `HowlRenderCallStatus`
-- `HowlRenderPrepareStatus`
-- `HowlRenderSubmitStatus`
-- `HowlRenderSubmitDecisionStatus`
-- every `Ffi* extern struct`
+## Import Changes
 
-Use direct C ABI types:
+In `howl-render/src/ffi.zig`:
 
-- `c.HowlRenderSurfaceTextHandle`
-- `c.HowlRenderPreparedSurfaceHandle`
-- `c.HowlRenderPixelSize`
-- `c.HowlRenderFrameLayoutResult`
-- `c.HowlRenderSurfaceTextConfig`
-- `c.HowlRenderGeometry`
-- `c.HowlRenderGeometryResponse`
-- `c.HowlRenderPublishSlot`
-- `c.HowlRenderPublishSlotCommit`
-- `c.HowlRenderVtPublishResult`
-- `c.HowlRenderPrepareRequest`
-- `c.HowlRenderPreparedFrame`
-- `c.HowlRenderPendingState`
-- `c.HowlRenderPreparedSurfaceInfo`
-- `c.HowlRenderPreparedSurfaceBuffer`
-- `c.HowlRenderPreparedSurfaceDiagnostics`
-- `c.HowlRenderSurfaceExecutionInput`
-- `c.HowlRenderSurfaceFeedback`
+- `frame/pipeline.zig` -> `surface/tokens.zig`
+- `frame/prepared_surface_owner.zig` -> `surface/prepared_owner.zig`
+- `frame/surface_text.zig` -> `surface/text.zig`
+- `frame/queue.zig` -> `surface/flow.zig`
+- `frame/surface.zig` -> `surface/types.zig`
+- keep `surface/publication_source.zig`
 
-Use shipped C constants for statuses:
+In `howl-render/src/text/contract.zig`:
 
-- `c.HOWL_RENDER_CALL_OK`
-- `c.HOWL_RENDER_CALL_MISSING_HANDLE`
-- `c.HOWL_RENDER_CALL_INVALID_ARGUMENT`
-- `c.HOWL_RENDER_CALL_FAILED`
-- `c.HOWL_RENDER_PREPARE_IDLE`
-- `c.HOWL_RENDER_PREPARE_READY`
-- `c.HOWL_RENDER_PREPARE_FAILED`
-- `c.HOWL_RENDER_SUBMIT_DECISION_*`
-- `c.HOWL_RENDER_SUBMIT_*`
+- `../frame/rgba.zig` -> `../surface/rgba.zig`
 
-Function return types currently returning Zig status enums must return `c_int`
-or the C enum type consistently. Preferred direct cutover is `c_int` for:
+In `howl-render/src/text/font/ft_hb/support.zig`:
 
-- `takePrepareRequest()`
-- `takeSubmitDecision()`
-- `takeSubmitHandle()`
-- `prepareHandle()`
-- `submit()`
-- `submitHandle()`
+- `../../../frame/surface_text.zig` -> `../../../surface/text.zig`
+- `../../../frame/surface.zig` -> `../../../surface/types.zig`
 
-Do not add compatibility Zig enum aliases.
+In `howl-render/src/text/font/ft_hb/glyph_raster.zig`:
 
-## Publication Mirror Cleanup
+- `../../../frame/surface_text.zig` -> `../../../surface/text.zig`
 
-Current `howl-render/src/frame/publication.zig` duplicates VT C types:
+In `howl-render/src/test/unit.zig`:
 
-- `Rgb8`
-- `Color`
-- `RenderColorState`
-- `CellFlags`
-- `CellAttrs`
-- `Cell`
-- `SelectionPos`
-- `Selection`
+- `../frame/geometry.zig` -> `../surface/geometry.zig`
+- `../frame/surface.zig` -> `../surface/types.zig`
 
-Preferred path:
+In `howl-render/src/test/benchmark.zig`:
 
-- Delete this file as a C mirror.
-- Use `c.HowlVtSurfaceCell`, `c.HowlVtRenderColorState`, and
-  `c.HowlVtSelection` at the FFI publication boundary only.
-- Translate immediately into semantic render-owned internal structs in the true
-  surface publication owner.
-
-Minimum acceptable path for this slice:
-
-- Move these types to `howl-render/src/surface/publication_source.zig`.
-- Rename them so they are semantic render source types, not C mirrors:
-  `Rgb8 -> SourceRgb`, `Color -> SourceColor`,
-  `RenderColorState -> SourceColors`, `CellFlags -> SourceCellFlags`,
-  `CellAttrs -> SourceCellAttrs`, `Cell -> SourceCell`,
-  `SelectionPos -> SourceSelectionPoint`, `Selection -> SourceSelection`.
-- Do not preserve field-for-field C naming blindly.
-- FFI conversion functions must be the only C-layout translators.
-
-## Test Changes
+- `../frame/surface.zig` -> `../surface/types.zig`
 
 In `howl-render/src/test/ffi.zig`:
 
-- Replace all `ffi.Ffi*` uses with `c.HowlRender*` or `c.HowlVt*`.
-- Delete compile-time `@sizeOf(ffi.Ffi*) == @sizeOf(c.HowlRender*)` checks,
-  because the Zig mirror no longer exists.
-- Keep tests that assert shipped C constants and behavior.
+- `../frame/surface_text.zig` -> `../surface/text.zig`
 
-Examples:
+Update any remaining imports that point to moved files. Use direct relative
+imports from the new owner files. Do not preserve compatibility shims.
 
-- `ffi.FfiPendingState -> c.HowlRenderPendingState`
-- `ffi.FfiPreparedSurfaceInfo -> c.HowlRenderPreparedSurfaceInfo`
-- `ffi.FfiSurfaceExecutionInput -> c.HowlRenderSurfaceExecutionInput`
-- `ffi.FfiVtCell -> c.HowlVtSurfaceCell`
-- `ffi.FfiVtCellAttrs -> c.HowlVtSurfaceCellAttrs`
+## Symbol Rename Pressure
+
+Use direct owner names:
+
+- `pipeline.DamageKind` -> `tokens.DamageKind`
+- `pipeline.SnapshotToken` -> `tokens.SnapshotToken`
+- `pipeline.PreparedFrame` -> `tokens.PreparedSurfaceToken`, unless the C ABI
+  still needs `PreparedFrame` vocabulary at the FFI edge.
+- `queue.Flow` -> `flow.State` or `flow.SurfaceFlow`.
+- `queue.PublicationSource` -> `flow.PublicationSource` or
+  `publication_source.Source`.
+- `surface.PreparedSurface` remains acceptable if in `surface/types.zig`.
+
+Do not use:
+
+- `frame`
+- `runtime`
+- `host`
+- `panel`
+- `manager`
+- `controller`
+
+## Tests
+
+- Move tests with files.
+- Update test names that include `frame_input` or `frame geometry`:
+  - `frame_input converts frame state to text scene input` ->
+    `surface input converts VT source to text scene input`
+  - `frame geometry helpers derive grid deterministically` ->
+    `surface geometry derives grid deterministically`
+- Keep behavior unchanged except for owner/import/name cleanup.
 
 ## Invariants
 
-- `ffi.zig` translates the C FFI only.
-- No Zig duplicate of shipped C structs remains.
-- Public product contract remains `howl-render/include/howl_render.h`.
-- Host still consumes render only via the C ABI boundary.
-- Render owns prepared render data and retained render state only.
-- Render must not own backend publication, presentation, queue scheduling, or
-  host cadence.
-- No compatibility aliases.
-- Do not create/recreate FFI files under `howl-render/src/frame`.
+- `howl-render/src/frame/` must not exist after this slice.
+- Render owns prepared render data and retained render state.
+- Render does not own backend publication or presentation.
+- `submit` means render consumes host execution feedback; it must not mean
+  present or publish to a backend.
+- No compatibility aliases or shim files.
 - Do not add `frame/abi.zig`, renamed ABI modules, `contract.zig`, generic
-  `types.zig`, managers, controllers, runtime buckets, or host shortcuts.
+  `types.zig` outside the explicit `surface/types.zig` move, managers,
+  controllers, runtime buckets, or host shortcuts.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
 - `zig build check`
+- `zig build test`
 - `zig build test:abi`
 - `zig build test:unit`
 - `zig build test:integration`
+
+Known current build taxonomy issue:
+
+- Root `test:abi` and `test:unit` may still fail because `howl-render` does not
+  expose package steps with those exact names. If so, record the exact failure
+  and also run available render package steps from
+  `/home/home/personal/projects/howl/howl-render`:
+  - `zig build check`
+  - `zig build test`
 
 ## Grep Gates
 
 No matches after this slice in `howl-render/src`:
 
-- `pub const Ffi`
-- `extern struct`
-- `HowlRenderCallStatus =`
-- `HowlRenderPrepareStatus =`
-- `HowlRenderSubmitStatus =`
-- `HowlRenderSubmitDecisionStatus =`
+- `@import("frame/`
+- `@import("../frame`
+- `src/frame`
+- `/frame/`
 
-Allowed:
+No directory after this slice:
 
-- `@cImport`
-- C FFI type references through `c.HowlRender*` and `c.HowlVt*`
+- `howl-render/src/frame/`
