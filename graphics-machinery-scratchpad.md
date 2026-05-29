@@ -1716,41 +1716,63 @@ Next safe work:
   `ConsequenceLimit` now aborts the pending upload, and retained-payload accounting counts
   pending decoded upload bytes by their final base64 encoded size.
 
-### 2. Animation runtime is not drawn-visibility gated
+### 2. Animation runtime drawn-visibility feedback was deleted
 
 Ownership: VT/runtime plus render/host visibility truth; likely cross-submodule.
 
-Risk: completed for drawn-feedback gate; remaining cache/presentation edge cases are
-medium.
+Risk: high; current animation display/runtime can be inert or wrong until a source-backed
+Kitty-like layer/update model exists.
 
 Source truth:
 
 - Kitty updates image visibility/drawn state from visible refs and advances animations
   only for drawn images.
-- Howl now gates `imageNeedsRuntime` on VT image drawn state, which is fed by render
-  prepared graphics image refs through the host and C ABI.
+- Kitty does not update drawn state through a public cross-ABI host/render callback into the
+  terminal.
 
-Completed slice:
+Deleted Howl-only shape:
 
-- Kitty `grman_update_layers()` resets `Image.is_drawn`, skips virtual refs, skips
-  off-screen refs, and sets drawn only after visible non-virtual render data exists;
-  `image_is_animatable()` requires that drawn bit.
-- Ghostty has no direct runtime model because Kitty graphics animation is not
-  implemented there.
-- VT images now carry stable nonzero `image_ref_id` values.
-- Render preserves `image_ref_id` through visible/clipped/raster-bound prepared
-  graphics refs and exposes those refs from prepared surfaces.
-- Host reports rendered prepared image refs to VT with
+- Howl fed render-prepared graphics image refs back through host into
   `howl_vt_terminal_note_drawn_graphics`.
-- VT tests cover unplaced animation, deleted-placement plus empty drawn feedback,
-  and virtual-only/no-placeholder animation having no runtime obligation.
-- Render tests cover visible placement preserving the image ref id and fully
-  off-screen placement producing no prepared image refs.
+- Render exposed `howl_render_prepared_surface_graphics_image_ref` and prepared-surface
+  graphics ref counts solely to feed that callback.
+- Host collected those refs from prepared uploads and called the VT feedback ABI after
+  submission.
 
-Remaining caution:
+Deletion decision:
 
-- The drawn set is render-feedback cached, matching Kitty's layer-update model more
-  closely than eager VT mutation. Do not replace it with VT placement-count policy.
+- That feedback loop was not Kitty-identical, so it was deleted without adding replacement
+  visibility scheduling, generated refs, cache state, or runtime architecture.
+
+Accepted commits:
+
+- `howl-vt` `a599769 vt: delete drawn graphics feedback`
+- `howl-render` `cb526f5 render: delete drawn graphics feedback ABI`
+- `howl-linux-host` `fddd43e host: stop reporting drawn graphics`
+
+Accepted behavior:
+
+- VT public drawn-feedback ABI/export/FFI/Terminal path is gone.
+- `Graphics.State.noteDrawnImageRefs` is gone.
+- Render prepared-surface graphics-ref query ABI is gone.
+- Host no longer collects or submits drawn graphics refs.
+- Feedback-only animation tests were deleted; remaining non-feedback idle checks stay at the
+  current VT boundary.
+
+Verification passed:
+
+- `zig build test --summary all` in `howl-vt` with `532/532` tests.
+- `zig build test --summary all` in `howl-render` with `704/707` tests passed and `3`
+  skipped.
+- `zig build --summary all` in `howl-linux-host`.
+- Root `zig build --summary all`.
+- Root, VT, render, and host `git diff --check`.
+
+Known broken behavior:
+
+- Graphics animation drawn/visibility gating no longer receives render feedback.
+- Any future visibility/runtime restoration must be source-backed against Kitty's
+  layer/update model instead of reintroducing a host feedback ABI.
 
 ### 3. Persistent generated cell refs are not implemented
 
