@@ -2290,6 +2290,25 @@ Render legacy graphics payload deletion research:
 - Remaining deletion candidates before replacement planning: synthetic generated-placeholder
   order keys and query-derived generated placement publication/materialization gap.
 
+Generated placeholder bridge deletion decision:
+
+- Remaining-deletion audit initially classified query-derived generated placement
+  publication and synthetic generated render-order keys as unsafe to delete because they
+  keep Unicode placeholder rendering alive until reference-backed materialized refs exist.
+- User decision: do not preserve Howl-only code because it keeps behavior working. Rip out
+  the bridge first, accept broken generated placeholder behavior/tests, then plan a
+  replacement from references only.
+- Promoted destructive slice: delete query-derived generated placeholder placement
+  publication from `howl-vt`, including generated placement counts/queries and the
+  synthetic render-order key formula. Preserve placeholder-run count/query ABI unless
+  compilation forces a narrower deletion follow-up. Do not add materialized refs or any
+  replacement in this slice.
+- Expected broken state: Unicode placeholder generated placement rendering may stop
+  working and generated-placement tests may fail or be deleted. Failures must be reported
+  precisely instead of hidden by preserving the Howl-only bridge.
+- Stop conditions: public ABI layout deletion, replacement materialized-ref design,
+  render/host replacement architecture.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
