@@ -2124,6 +2124,23 @@ Render/host virtual placement forwarding deletion research:
 - Stop conditions: stop if this requires public ABI layout removal, generated
   cell-ref/materialization replacement, VT placeholder semantic changes, or render
   scheduling redesign.
+- Render/host virtual placement forwarding deletion completed in `howl-render` commit
+  `c19bbfe render: ignore virtual placement forwarding` and `howl-linux-host` commit
+  `383c0ac host: stop forwarding virtual placements`.
+- Accepted behavior: host no longer allocates, queries, stores, or forwards VT virtual
+  placements into decoded render publication; decoded render commit sends zero virtual
+  placements; render decoded commit normalizes virtual placement metadata to zero while
+  preserving public ABI layout as compatibility.
+- Verification passed/reported: `zig build test --summary all` in `howl-render` with
+  `736/739` tests passed and `3` skipped; `zig build
+  test:integration:kitty-graphics-replay:build --summary all` and `zig build
+  test:integration:kitty-graphics-replay:app:build --summary all` in `howl-linux-host`;
+  root `zig build --summary all`; root, `howl-render`, and `howl-linux-host` `git diff
+  --check`.
+- Remaining deletion candidates before replacement planning: proof-only placeholder APIs,
+  host panel graphics proof/debug APIs, app-icon graphics replay fixture, legacy render
+  base64 path quarantine, synthetic generated-placeholder order keys, and query-derived
+  generated placement publication/materialization gap.
 
 ## Completed Or Stale Graphics Backlog
 

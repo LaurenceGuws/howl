@@ -1,69 +1,24 @@
-# Current Slice: Graphics Virtual Placement Forwarding Deletion
+# Current Slice: None
 
-Owner: howl-render and howl-linux-host.
+Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-## Goal
+Status: `Graphics Virtual Placement Forwarding Deletion` completed and accepted.
 
-Delete or quarantine Howl-only render/host forwarding of virtual placements from decoded
-graphics publication. Render should consume renderable placements, not Kitty virtual
-placement prototypes.
+Accepted commits:
 
-## Delegation Requirement
+- `howl-render` `c19bbfe render: ignore virtual placement forwarding`
+- `howl-linux-host` `383c0ac host: stop forwarding virtual placements`
 
-- Main agent must not implement this slice directly.
-- Seed a worker with this file, the render/host audit findings, exact source/reference
-  paths, and the invariants below.
-- Seed a reviewer after worker output and reject any diff that broadens into ABI removal,
-  generated placement materialization, VT placeholder semantics, or render scheduling.
+Verification reported by worker/reviewer:
 
-## Required Work
+- `zig build test --summary all` in `howl-render` (`736/739` tests passed, `3` skipped).
+- `zig build test:integration:kitty-graphics-replay:build --summary all` in
+  `howl-linux-host`.
+- `zig build test:integration:kitty-graphics-replay:app:build --summary all` in
+  `howl-linux-host`.
+- Root `zig build --summary all`.
+- Root, `howl-render`, and `howl-linux-host` `git diff --check`.
 
-- Worker edits only render/host graphics forwarding paths unless a stop condition is hit.
-- Remove host dependence on forwarding VT virtual placements into render publication.
-- Make render ignore or stop validating virtual placement spans in the decoded publication
-  path if they are currently stale inputs.
-- Preserve public render ABI layout unless deletion is impossible without an explicit ABI
-  break decision.
-- Do not touch VT placeholder-run/generation behavior.
-- Do not add a replacement system.
-
-## Candidate Paths
-
-- `howl-render/include/howl_render.h`
-- `howl-render/src/frame/queue.zig`
-- `howl-render/src/frame/surface_text.zig`
-- `howl-render/src/frame/surface_text_ffi.zig`
-- `howl-linux-host/src/terminal/vt/surface.zig`
-- `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/terminal/render/abi.zig`
-- `howl-linux-host/src/terminal/vt/abi.zig`
-
-## Reference Constraints
-
-- Kitty virtual refs are prototypes and are not rendered directly; render uses real
-  non-virtual refs/cell images.
-- Ghostty exposes virtual placeholder iteration internally, not as render ABI forwarding.
-- Howl render should receive renderable placements only.
-
-## Invariants
-
-- Rendered physical/generated placements remain unchanged.
-- Public ABI layout remains unchanged unless worker stops and reports that deletion needs
-  explicit ABI break approval.
-- Host no longer treats virtual placement forwarding as render truth.
-- No VT, FFI, or placeholder-run public behavior changes.
-
-## Tests Required
-
-- Run targeted render/host tests discovered by the worker.
-- Run root `zig build --summary all` if feasible.
-- Root and touched submodules `git diff --check`.
-
-## Stop Conditions
-
-- Stop if deleting forwarding requires public ABI layout removal.
-- Stop if this requires generated cell-ref/materialization replacement.
-- Stop if VT placeholder-run/generation semantics must change.
-- Stop if render scheduling or retained-frame architecture must change.
+Next work must continue the delegated rip-out audit before any replacement planning.
