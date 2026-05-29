@@ -1,137 +1,148 @@
-# Current Slice: Delete Render `surface/types.zig`
+# Current Slice: Delete VT `types.zig` Files
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete `howl-render/src/surface/types.zig`.
+- Delete the remaining `types.zig` files in Howl.
 - Split every symbol into its smallest true owner. Do not create another
   ownerless bucket or compatibility shim.
-- Keep `howl-render/include/howl_render.h` byte-for-byte unchanged.
+- Preserve public root exports where they are curated API surfaces, but do not
+  route them through `types.zig` or a replacement namespace bucket.
 
 ## Source Files
 
-- `howl-render/src/surface/types.zig`
-- `howl-render/src/surface/text.zig`
-- `howl-render/src/surface/input.zig`
-- `howl-render/src/surface/prepared_owner.zig`
-- `howl-render/src/surface/buffer.zig`
-- `howl-render/src/surface/clip_rect.zig`
-- `howl-render/src/surface/geometry.zig`
-- `howl-render/src/ffi.zig`
-- `howl-render/src/source/vt.zig`
-- `howl-render/src/source/slot.zig`
-- `howl-render/src/source/prepare_request.zig`
-- `howl-render/src/render/geometry.zig`
-- `howl-render/src/test/benchmark.zig`
-- `howl-render/src/test/unit.zig`
+- `howl-vt/src/kitty/types.zig`
+- `howl-vt/src/kitty/state.zig`
+- `howl-vt/src/kitty/apply.zig`
+- `howl-vt/src/kitty.zig`
+- `howl-vt/src/input/types.zig`
+- `howl-vt/src/input.zig`
+- `howl-vt/src/input/keyboard.zig`
+- `howl-vt/src/input/mouse.zig`
+- `howl-vt/src/input/encode.zig`
 
 ## Files To Add
 
-- `howl-render/src/render/geometry_contract.zig`
-- `howl-render/src/source/cell.zig`
-- `howl-render/src/prepared/surface.zig`
-- `howl-render/src/prepared/feedback.zig`
+- `howl-vt/src/input/event.zig`
+- `howl-vt/src/input/encoded.zig`
 
-## File To Delete
+## Files To Delete
 
-- `howl-render/src/surface/types.zig`
+- `howl-vt/src/kitty/types.zig`
+- `howl-vt/src/input/types.zig`
 
 Do not leave a shim or compatibility import.
 
 ## Symbol Movement
 
-Move from `surface/types.zig` to `render/geometry_contract.zig`:
+Move from `kitty/types.zig` to existing true owners:
 
-- `CellSize`
-- `PixelSize`
-- `GridSize`
-- `FramePixels`
-- `Geometry`
-- `GeometryResponse`
-- `PrepareLayout`
-- `SurfaceLayout`
+- `ScreenState` -> `kitty/state.zig`
+- `GlobalState` -> `kitty/state.zig`
+- `ShellMark` -> `kitty/state.zig`
+- `NotificationRequest` -> `kitty/state.zig`
 
-Move from `surface/types.zig` to `source/cell.zig`:
+Delete namespace aliases instead of moving:
 
+- `Key`
+- `Pointer`
 - `Color`
-- `CellFlags`
-- `CellAttrs`
-- `UnderlineStyle`
-- `Cell`
-- `GridModel`
-- `DamageInfo`
-- `ViewportInfo`
-- `CursorShape`
-- `CursorInfo`
-- `FrameData`
 
-Move from `surface/types.zig` to `prepared/surface.zig`:
+Users must import `kitty/key.zig`, `kitty/pointer.zig`, or `kitty/color.zig`
+directly when they need those owners. Public `kitty.zig` may still curate root
+exports directly from the owner files.
 
-- `PreparedSurface`
-- methods on `PreparedSurface`
+Move from `input/types.zig` to existing true owners:
 
-Move from `surface/types.zig` to `prepared/feedback.zig`:
+- keyboard-owned exports stay in `input/keyboard.zig`:
+  - `Key`
+  - `Modifier`
+  - `mod_none`
+  - `mod_shift`
+  - `mod_alt`
+  - `mod_ctrl`
+  - all `key_*` aliases
+- mouse-owned exports stay in `input/mouse.zig`:
+  - `MouseButton`
+  - `MouseEventKind`
+  - `MouseEvent`
+  - `MouseTrackingMode`
+  - `MouseProtocol`
+  - `mouse_button_*`
+  - `mouse_press`
+  - `mouse_release`
+  - `mouse_move`
+  - `mouse_wheel`
 
-- `RenderSurfaceHandle`
-- `RenderMetrics`
-- `RenderSurfaceFeedback`
+Move from `input/types.zig` to new true owners:
 
-Delete if unused rather than moving:
+- `KeyEvent`, `FocusEvent`, `Event` -> `input/event.zig`
+- `Encoded` -> `input/encoded.zig`
 
-- `SurfaceState`
-- `FillRect`
-- `GlyphQuad`
-- `AtlasUpload`
-- `RenderStats`
-- `PrepareMetrics` only if all users can use the true text/render metrics owner
+Delete namespace aliases instead of moving:
+
+- `Key`
+- `Modifier`
+- mouse type aliases that duplicate `input/mouse.zig`
 
 ## Required Import Changes
 
-Rename local aliases to true owners. Do not use `surface_types`, `types`, or
-`*_types` aliases.
+Rename local aliases to true owners. Do not use `types`, `KittyNs`,
+`kitty_types`, `input_types`, or `*_types` aliases.
 
-In `ffi.zig`:
+In `kitty/state.zig`:
 
-- Import `render/geometry_contract.zig`, `source/cell.zig`,
-  `prepared/surface.zig`, and `prepared/feedback.zig` only for the symbols that
-  cross the C boundary.
+- Own `ScreenState`, `GlobalState`, `ShellMark`, and `NotificationRequest`.
+- Import `key.zig`, `pointer.zig`, and `color.zig` directly.
+- `State` fields use local `ScreenState` and `GlobalState`.
 
-In `surface/text.zig`:
+In `kitty/apply.zig`:
 
-- Import geometry contracts, prepared surface, prepared feedback, and source
-  cell contracts explicitly.
+- Import `kitty/state.zig` and `kitty/color.zig` directly.
+- `setShellMark` takes `*kitty_state.ShellMark`.
+- `appendNotification` takes `*std.ArrayList(kitty_state.NotificationRequest)`.
+- Kitty color stack operations call `kitty_color.pushState` / `popState`.
 
-In `surface/input.zig`:
+In `kitty.zig`:
 
-- Import `source/cell.zig` for legacy cell tests and source-to-scene mapping.
+- Export public names directly from true owners:
+  - `Key` from `kitty/key.zig`
+  - `Pointer` from `kitty/pointer.zig`
+  - `Color` from `kitty/color.zig`
+  - state structs from `kitty/state.zig`
 
-In `surface/prepared_owner.zig` and `surface/buffer.zig`:
+In `input.zig`:
 
-- Import prepared surface/feedback and geometry contracts explicitly.
+- Export public names directly from true owners:
+  - keyboard constants from `input/keyboard.zig`
+  - mouse constants from `input/mouse.zig`
+  - events from `input/event.zig`
+  - `Encoded` from `input/encoded.zig`
 
-In `source/*`:
+In `input/encode.zig`:
 
-- Import `source/cell.zig` for source cursor/cell structs only.
-- Import `render/geometry_contract.zig` only when a prepare request must carry
-  render layout.
+- If it currently depends on `input.zig` public root for `Encoded`, prefer
+  importing `input/encoded.zig` directly only if needed. Do not introduce cycles.
 
 ## Tests
 
 - Move tests with the owners when practical.
 - Keep behavior unchanged.
-- Add at least one compile/usage test proving `FramePixels` and `PreparedSurface`
-  are no longer in the same owner module.
+- Add or preserve owner-local tests proving:
+  - `kitty/state.zig` owns notification storage/deinit.
+  - `input/event.zig` owns event union tags.
+  - `input/encoded.zig` owns encoded buffer deinit.
 
 ## Invariants
 
-- No public C ABI changes.
 - No compatibility shims.
-- No `types.zig` file remains under `howl-render/src`.
-- No `surface_types`, `types`, or `*_types` aliases remain under
-  `howl-render/src`.
-- Source input and prepared/submitted output owners stay separate.
-- Render still does not own backend presentation or host cadence.
+- No `types.zig` file remains anywhere in Howl.
+- No import of `types.zig` remains anywhere in Howl.
+- No `types`, `KittyNs`, or `*_types` owner aliases remain under `howl-vt/src`.
+- Public root files (`kitty.zig`, `input.zig`) curate exports only; they do not
+  own state or mutation.
+- No ABI contract changes unless build proves these are Zig-only curated roots.
 
 ## Verification
 
@@ -140,22 +151,25 @@ From `/home/home/personal/projects/howl`:
 - `zig build check`
 - `zig build test`
 
-From `/home/home/personal/projects/howl/howl-render` if needed:
+From `/home/home/personal/projects/howl/howl-vt` if needed:
 
 - `zig build check`
 - `zig build test`
 
 ## Grep Gates
 
-No matches under `howl-render/src`:
+No matches under `/home/home/personal/projects/howl`:
 
 - `types.zig`
 - `@import\(.*types.zig`
-- `surface_types`
-- `\btypes\b`
+- `\b[a-zA-Z0-9_]+_types\b`
 
-No new owner names under `howl-render/src/source`, `howl-render/src/render`,
-`howl-render/src/session`, or `howl-render/src/prepared`:
+No matches under `howl-vt/src`:
+
+- `\btypes\b`
+- `KittyNs`
+
+No new owner names under `howl-vt/src`:
 
 - `manager`
 - `controller`
