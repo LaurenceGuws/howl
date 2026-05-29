@@ -1,82 +1,63 @@
-# Current Slice: Split Render Source ABI From VT Types
+# Current Slice: Delete Terminal C Import Bucket
 
 Owner: workspace root.
 
 Purpose:
 
-- Remove `howl-render` public C ABI dependency on `howl-vt` public C structs.
-- Keep VT as owner of terminal state truth.
-- Keep render as owner of render source structs, retained prepare state, shaping, prepared surfaces, and submit contracts.
-- Prepare the ground for a later Zig 0.16 build-system translate-C migration in `howl-linux-host` without combined C buckets.
+- Delete `howl-linux-host/src/terminal/c.zig` as a broad C import bucket.
+- Follow Zig 0.16 release notes: `@cImport` is deprecated; C translation belongs in `build.zig` via `b.addTranslateC` and module imports.
+- Split host C imports by owner namespace so files import only SDL/window, PTY, VT, or render C ABI as needed.
 
-## Source Research
+## Source Facts
 
-Use `render-vt-abi-decoupling-scratchpad.md` as the sprint scratchpad.
-
-Reference verdict:
-
-- Ghostty supports VT-owned render-state adaptation, not renderer backend ABI owning VT cell truth.
-- Alacritty adapts terminal `Cell` into display `RenderableCell`; renderer consumes adapted renderable content.
-- Kitty privately couples renderer to `Screen *`, but public/renderer-facing draw data is packed draw state, not terminal structs as public ABI.
+- Zig 0.16.0 release notes section `@cImport Moving to Build System` shows replacing `c.zig` with a C header plus `b.addTranslateC` and `@import("c")` module imports.
+- `howl-linux-host/src/terminal/c.zig` currently imports SDL, OpenGL, PTY, VT, and render in one file.
+- `howl-render/include/howl_render.h` no longer imports `howl_vt.h`, so render and VT C modules can be translated separately.
+- `howl-linux-host/src/window/term_texture.zig` currently reaches render C ABI through `../terminal/c.zig`, which is a false terminal dependency.
+- `howl-linux-host/build.zig` already owns include paths and library linkage for SDL, PTY, VT, and render.
 
 ## Source Changes
 
 Edit only:
 
-- `howl-render/include/howl_render.h`
-- `howl-render/src/vt_surface.zig`
-- `howl-render/src/source/vt.zig`
-- `howl-render/src/source/slot.zig` only if needed for render-owned names/layouts
-- `howl-render/src/test/*` only for required test updates
-- `howl-linux-host/src/terminal/vt/surface.zig` for host VT-to-render source conversion
-- `howl-linux-host/src/terminal/vt/retained.zig` only if needed for retained VT scratch storage used by the conversion
+- `howl-linux-host/build.zig`
+- `howl-linux-host/src/terminal/c.zig`
+- `howl-linux-host/src/test/host.zig`
+- `howl-linux-host/src/test_root.zig` only to remove `TerminalC` if needed
+- files under `howl-linux-host/src/terminal/` that import `terminal/c.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+- new C header roots under `howl-linux-host/src/` if needed for translate-C roots
 
 Required shape:
 
-- Remove `#include "howl_vt.h"` from `howl-render/include/howl_render.h`.
-- Add render-owned public ABI structs for the data render consumes:
-  - `HowlRenderSourceRgb`
-  - `HowlRenderSourceColor`
-  - `HowlRenderSourceCellFlags`
-  - `HowlRenderSourceCellAttrs`
-  - `HowlRenderSourceCell`
-  - `HowlRenderSourceColors`
-  - `HowlRenderSourceSelectionPos`
-  - `HowlRenderSourceSelection`
-  - `HowlRenderSourceCursor`
-- Replace render ABI payload fields that currently use `HowlVt*` with `HowlRenderSource*`.
-- Keep render publication function names stable for this slice unless renaming is necessary for correctness.
-- Remove layout assertions against `c.HowlVt*` in `howl-render/src/vt_surface.zig`.
-- Add layout assertions between `HowlRenderSource*` ABI structs and render-owned `source_vt` / `source_cell` structs.
-- Host VT publication must explicitly convert VT ABI values into render source ABI values before committing to render.
-- Host VT publication must not allocate per publish; if VT cells need temporary storage before conversion, store it in retained VT state with explicit capacity and deinit ownership.
+- Add build-system translate-C modules for owner-scoped imports:
+  - SDL/OpenGL for window/host code if needed.
+  - Howl PTY C ABI for PTY owner files.
+  - Howl VT C ABI for VT owner files.
+  - Howl render C ABI for render owner files and host texture code that needs render host-surface types.
+- Replace `@import("terminal/c.zig").c`, `@import("../terminal/c.zig").c`, `@import("../c.zig").c`, and `@import("c.zig").c` with explicit generated C module imports.
+- Delete `howl-linux-host/src/terminal/c.zig`.
+- Delete `TerminalC` test export; no replacement wrapper.
 
 ## Non-Goals
 
-- Do not migrate `howl-linux-host/src/terminal/c.zig` in this slice.
-- Do not change VT public ABI structs in `howl-vt/include/howl_vt.h`.
-- Do not introduce combined translate-C modules as a workaround.
-- Do not add compatibility aliases or shims.
-- Do not change render prepared surface semantics, text shaping behavior, dirty semantics, or submit behavior.
+- Do not change public C ABI headers.
+- Do not change link dependencies except where needed for translate-C modules.
+- Do not migrate unrelated `@cImport` sites outside the terminal bucket path, such as `window/window.zig`, `window/icon.zig`, or stress tools, unless required to make the owner-scoped imports work.
+- Do not introduce new Zig wrapper modules around generated C imports.
+- Do not add aliases or compatibility shims.
+- Do not rename product ABI symbols.
 
 ## Invariants
 
-- VT remains the terminal state truth owner.
-- Render public header has no dependency on `howl_vt.h`.
-- Render source structs are render-owned C ABI product structs.
-- Cell count remains `cols * rows` with existing bounds validation.
-- Dirty row/column metadata validation remains unchanged or stronger.
-- Cursor, colors, and selection are copied/adapted into render-owned source structs without changing meaning.
-- No per-publish heap allocation in VT visible-surface acquisition or conversion.
-- Existing host behavior remains equivalent.
+- Host still consumes Howl PTY, VT, and render through C headers and exported C symbols only.
+- No host file gains Zig-shaped imports of Howl internals.
+- SDL/OpenGL calls remain host/window ownership.
+- Render host surface types are imported from render C ABI, not terminal ownership.
+- PTY owner files do not import render or VT C modules unless they already truly need that ABI.
+- VT owner files may import VT and render C modules where they explicitly adapt VT source into render source.
 
 ## Verification
-
-From `/home/home/personal/projects/howl/howl-render`:
-
-- `zig build check`
-- `zig build test`
-- `git diff --check`
 
 From `/home/home/personal/projects/howl/howl-linux-host`:
 
@@ -92,17 +73,22 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-No matches:
+No matches under `howl-linux-host/src`:
 
-- `howl-render/include/howl_render.h`: `howl_vt.h`
-- `howl-render/include/howl_render.h`: `HowlVt`
-- `howl-render/src/vt_surface.zig`: `c.HowlVt`
-- `howl-render/src`: `HowlVtSurfaceCell`
-- `howl-render/src`: `HowlVtCursor`
-- `howl-render/src`: `HowlVtRenderColorState`
-- `howl-render/src`: `HowlVtSelection`
+- `@import("../terminal/c.zig")`
+- `@import("terminal/c.zig")`
+- `@import("../c.zig").c`
+- `@import("c.zig").c`
+- `TerminalC`
+
+No file:
+
+- `howl-linux-host/src/terminal/c.zig`
 
 Expected:
 
-- `howl-render/include/howl_render.h` defines `HowlRenderSource*` structs.
-- `howl-linux-host/src/terminal/vt/surface.zig` imports both render and VT C ABIs as needed and converts VT values into render source values explicitly.
+- `howl-linux-host/build.zig` contains owner-scoped `addTranslateC` modules.
+- Terminal PTY owner files import a PTY C module.
+- Terminal VT owner files import a VT C module and render C module only where needed.
+- Terminal render owner files import a render C module.
+- Window host texture code imports render C directly.
