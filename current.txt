@@ -1,79 +1,61 @@
-# Current Slice: Delete Render ABI Frame Vocabulary
+# Current Slice: Rename Render SurfaceText ABI To TextSession
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete render ABI `Frame` vocabulary.
-- Render owns VT source input, prepared render surfaces, submit execution/result,
-  and submitted state. It does not own presentation frames.
-- Break the ABI intentionally; do not preserve old names or aliases.
+- Break the render C ABI to replace the false `SurfaceText` noun with `TextSession`.
+- The object is a render text session: it coordinates VT source publication, geometry,
+  prepared-surface lifecycle, submitted state, retained pixels, font config, and text
+  preparation.
+- No aliases, no compatibility shims, no old names.
 
 ## ABI Changes
 
 In `howl-render/include/howl_render.h`, rename without old aliases:
 
-- `HowlRenderPreparedFrame` -> `HowlRenderPreparedSurfaceToken`
-- `HowlRenderFrameLayoutResult` -> `HowlRenderLayoutResult`
-- `howl_render_surface_text_derive_frame_layout` ->
-  `howl_render_surface_text_derive_layout`
+- `HowlRenderSurfaceText` -> `HowlRenderTextSession`
+- `HowlRenderSurfaceTextHandle` -> `HowlRenderTextSessionHandle`
+- `HowlRenderSurfaceTextConfig` -> `HowlRenderTextConfig`
+- every `howl_render_surface_text_*` symbol -> `howl_render_text_session_*`
 
 Keep out of this slice:
 
-- `SurfaceText` -> `TextSession`
 - `PendingState` -> `SessionWorkState`
-- VT publish slot names
+- `PublishSlot` -> `VtSurfaceSlot`
+- broader prepared/submit/source owner reshaping not required by the rename
 
 ## Render Source Changes
 
-In `howl-render/src/surface/tokens.zig`:
-
-- `PreparedFrame` -> `PreparedSurfaceToken`
-- `SubmittedFrame` -> `SubmittedSurfaceToken`
-- `PreparedFrameWith()` -> `PreparedSurfaceTokenWith()`
-- `validatePreparedFrame()` -> `validatePreparedSurfaceToken()`
-
-In prepared/session owners:
-
-- `pipelineFrame()` -> `preparedSurfaceToken()`
-- All internal function/parameter names should stop using prepared-frame when
-  they mean prepared-surface token.
-
-In boundary files:
-
-- `preparedFrameOut()` -> `preparedSurfaceTokenOut()`
-- `preparedFrameIn()` -> `preparedSurfaceTokenIn()`
-- `samePreparedFrame()` -> `samePreparedSurfaceToken()`
-- Use `c.HowlRenderPreparedSurfaceToken`.
-
-In geometry boundary:
-
-- `deriveFrameLayout()` -> `deriveLayout()`
-- Use `c.HowlRenderLayoutResult`.
-
-In `libhowl_render.zig`:
-
-- Export `surface_geometry.deriveLayout` as
-  `howl_render_surface_text_derive_layout`.
+- Rename `howl-render/src/surface_text.zig` to `howl-render/src/text_session.zig`.
+- Move `howl-render/src/surface/text.zig` to `howl-render/src/session/text.zig`.
+- Rename internal symbols:
+  - `SurfaceTextConfig` -> `TextSessionConfig`
+  - `SurfaceText` -> `TextSession`
+  - `SurfaceTextOwner` -> `TextSessionOwner`
+  - `handle.surfaceTextOwner()` -> `handle.textSessionOwner()`
+- Update all render boundary modules, tests, and imports to use the text-session noun.
+- Do not create aliases for the old names.
 
 ## Host Changes
 
-In `howl-linux-host/src/terminal/render/abi.zig`:
+Update host call sites under `howl-linux-host/src`:
 
-- Call `howl_render_surface_text_derive_layout`.
-- Use `HowlRenderLayoutResult`.
-
-Update any host uses of `HowlRenderPreparedFrame` to
-`HowlRenderPreparedSurfaceToken`.
+- Use `HowlRenderTextSessionHandle`.
+- Use `howl_render_text_session_*` symbols.
+- Rename host retained field/local variables from `surface_text` to `text_session` where
+  they refer to the render session handle.
 
 ## Invariants
 
-- No old typedefs or aliases.
-- No compatibility shims.
-- No `HowlRenderPreparedFrame` or `HowlRenderFrameLayoutResult` in render header.
-- No `derive_frame_layout` C symbol use remains.
-- No internal `PreparedFrame`, `SubmittedFrame`, or `pipelineFrame` remains under
-  `howl-render/src`.
+- No old `SurfaceText` ABI or Zig aliases remain.
+- Behavior is a semantic rename only.
+- Status/error behavior is unchanged.
+- Init still rejects zero surface size and zero font size.
+- Fallback font count remains bounded by `HOWL_RENDER_MAX_FALLBACK_FONTS`.
+- Text session handle owns the same session state and prepared handle lifecycle as before.
+- `HowlRenderPreparedSurfaceHandle`, submit-result, prepared-surface-token, and VT
+  publish-slot vocabulary remain unchanged except for the handle parameter type/prefix.
 - No `types.zig`.
 - No `manager`, `controller`, `runtime`, `flow`, `pipeline`, or `queue` owner.
 
@@ -99,22 +81,24 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 ## Grep Gates
 
-No matches under `howl-render/include/howl_render.h`:
+No matches under `howl-render/include`, `howl-render/src`, or `howl-linux-host/src`:
 
-- `HowlRenderPreparedFrame`
-- `HowlRenderFrameLayoutResult`
-- `derive_frame_layout`
+- `SurfaceText`
+- `SurfaceTextOwner`
+- `SurfaceTextConfig`
+- `surface_text`
+- `howl_render_surface_text`
+- `HowlRenderSurfaceText`
 
-No matches under `howl-render/src`:
+No match under `howl-render/src`:
 
-- `PreparedFrame`
-- `SubmittedFrame`
-- `pipelineFrame`
-- `preparedFrame`
-- `deriveFrameLayout`
+- `surface/text.zig`
 
-No matches under `howl-linux-host/src`:
+Expected matches:
 
-- `HowlRenderPreparedFrame`
-- `HowlRenderFrameLayoutResult`
-- `derive_frame_layout`
+- `TextSession`
+- `TextSessionOwner`
+- `TextSessionConfig`
+- `text_session`
+- `howl_render_text_session`
+- `HowlRenderTextSession`
