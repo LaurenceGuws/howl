@@ -1,27 +1,49 @@
-# Current Slice: None
+# Current Slice: Generated Placeholder Flag Deletion
 
-Owner: workspace root.
+Owner: howl-vt with ABI mirror follow-up as needed.
 
 Sprint scope: graphics deletion.
 
-Status: `Placeholder Parent Anchor Scan Deletion` completed and accepted.
+## Goal
 
-Accepted commits:
+Rip out stale generated-placeholder placement flag semantics after generated placeholder
+publication has been deleted.
 
-- `howl-vt` `e6a89f3 vt: delete placeholder parent scan`
+## Delegation Requirement
 
-Verification passed:
+- Main agent must not implement this slice directly.
+- Seed a worker with this file and exact source paths.
+- Seed a reviewer after worker output.
 
-- `zig build test --summary all` in `howl-vt` (`606/606` tests).
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- Root `git diff --check`.
-- `howl-vt git diff --check`.
+## Required Work
 
-Known broken behavior:
+- Delete `HOWL_VT_GRAPHICS_PLACEMENT_GENERATED_PLACEHOLDER` and Zig mirror constants.
+- Delete generated-placeholder-specific destination geometry branches from VT placement
+  resolution if they now exist only for deleted generated placements.
+- Update or delete tests that still require generated-placeholder placement flags.
+- Touch render/host ABI mirrors only as needed to compile after VT ABI deletion.
+- Do not add replacement generated refs/materialization.
 
-- Relative placements whose parent is a virtual placement no longer resolve through live
-  Unicode placeholder cells.
+## Candidate Paths
 
-Remaining Howl-only graphics machinery to delete before replacement planning:
+- `howl-vt/include/howl_vt.h`
+- `howl-vt/src/ffi.zig`
+- `howl-vt/src/kitty/graphics.zig`
+- `howl-vt/src/test/terminal_graphics.zig`
+- `howl-render/src/ffi_types.zig`
+- `howl-linux-host/src/test/kitty_graphics_replay.zig`
 
-- Stale generated-placeholder placement flag/destination semantics.
+## Expected Broken State
+
+- Any consumer still checking generated-placeholder flags breaks by design.
+
+## Tests Required
+
+- Run impacted VT/render/host tests if feasible.
+- Run root and touched submodule `git diff --check`.
+- Failing builds/tests are acceptable only if reported precisely.
+
+## Stop Conditions
+
+- Stop if replacement generated-ref architecture is being designed.
+- Stop if public ABI layout removal beyond the stale flag is required.

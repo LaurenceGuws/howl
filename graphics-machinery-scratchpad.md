@@ -2392,6 +2392,22 @@ Placeholder parent-anchor scan deletion decision:
 - Remaining Howl-only graphics machinery to delete before replacement planning: stale
   generated-placeholder placement flag/destination semantics.
 
+Generated placeholder flag deletion decision:
+
+- Howl-only behavior: `HOWL_VT_GRAPHICS_PLACEMENT_GENERATED_PLACEHOLDER` and
+  generated-placeholder-specific destination handling remain after generated placeholder
+  publication was deleted.
+- Promoted destructive slice: delete the stale generated-placeholder flag and destination
+  semantics, updating ABI mirrors/tests only as required to compile. Do not add generated
+  ref replacements.
+- Candidate paths: `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi.zig`,
+  `howl-vt/src/kitty/graphics.zig`, `howl-vt/src/test/terminal_graphics.zig`,
+  `howl-render/src/ffi_types.zig`, and `howl-linux-host/src/test/kitty_graphics_replay.zig`.
+- Expected broken state: any consumer still checking generated-placeholder flags breaks by
+  design.
+- Stop conditions: replacement generated-ref architecture or public ABI layout removal
+  beyond the stale flag.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
