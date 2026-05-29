@@ -1984,6 +1984,30 @@ Access-order quota research:
   order. Placed-image LRU eviction remains deliberately out of scope until a full
   identity/ref/lifetime slice is promoted.
 
+Placeholder run publication research:
+
+- Verdict: first source-backed slice is worker-ready and owned by `howl-vt`.
+- Kitty source truth: `screen_render_line_graphics` scans placeholder cells into row runs
+  and calls `grman_put_cell_image`; generated cell-image refs are Kitty's retained
+  publication consequence. Howl already converts placeholder runs into generated
+  placements, but only through proof/query-time paths.
+- Howl current truth: `Terminal.graphicsMeta` hardcodes `placeholder_run_count = 0`,
+  `Terminal.graphicsPlaceholderRun` always returns null, while proof APIs and generated
+  placement publication already resolve the same placeholder runs. This is an ABI truth
+  gap inside VT: the public placeholder-run count/query lies even when generated
+  placements are present.
+- Promoted next slice: make the existing VT placeholder-run ABI report and query resolved
+  placeholder runs through the same VT resolver used by generated placements. Keep render
+  and host unchanged, keep proof APIs temporarily as aliases to the same behavior, and do
+  not add retained materialization yet.
+- Required tests: update placeholder-run tests so `meta.placeholder_run_count` equals the
+  proof/resolved count, `graphicsPlaceholderRun` returns the same run as the proof path,
+  stale publication rejection still works, clearing placeholder cells drops both generated
+  placements and placeholder runs, and missing virtual/image cases still report zero.
+- Stop conditions: stop if this needs public ABI layout changes, render/host changes, or
+  retained generated-placement storage. Retained materialization and access refresh on
+  placeholder realization remain a follow-up slice.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
