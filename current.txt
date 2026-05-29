@@ -1,4 +1,4 @@
-# Current Slice: Render Virtual Placement ABI Deletion Accepted
+# Current Slice: Render Graphics Raster Cache Deletion Accepted
 
 Owner: workspace root.
 
@@ -6,33 +6,27 @@ Sprint scope: graphics deletion.
 
 Status: accepted by reviewer, verified locally, and committed.
 
-Accepted commits:
+Accepted commit:
 
-- `howl-render` `bab273c render: delete virtual placement ABI`
-- `howl-linux-host` `f70c1cb host: drop render virtual placement fields`
+- `howl-render` `e940674 render: delete graphics raster cache`
 
 ## Accepted Deletion
 
-- Deleted render-side virtual placement commit ABI fields and spans.
-- Deleted render queue storage, clone/deinit, snapshot, validation, and tests for virtual
-  placement input.
-- Deleted host initialization/tests for render virtual placement commit fields.
-- Left VT virtual placement protocol state and public VT ABI untouched.
+- Deleted render decoded graphics raster cache keys and cross-publication reuse policy:
+  `DecodedGraphicsKey`, `GraphicsPublicationImageKey`, cache lookup, sweep, and key tests.
+- `GraphicsPreparer` now decodes fresh rasters for the current publication only.
+- Kept `GraphicsPreparer.raster()` as a view into current publication rasters.
+- Deleted tests that asserted cache reuse/replacement by payload key.
 
 ## Verification Passed
 
-- `zig build test --summary all` in `howl-render` (`710/713` tests passed, `3` skipped).
-- `zig build --summary all` in `howl-linux-host`.
-- Root `zig build --summary all`.
-- Root, `howl-render`, and `howl-linux-host` `git diff --check`.
+- `zig build test --summary all` in `howl-render` (`704/707` tests passed, `3` skipped).
+- `howl-render` `git diff --check`.
 
 ## Known Broken State
 
-- External render ABI consumers using the deleted virtual placement commit fields break by
-  design.
-- Virtual Kitty refs remain VT protocol state only and are not render input.
-- Unicode placeholder generated renderable placement behavior remains broken until a
-  separately promoted source-backed generated-ref replacement slice.
+- Render no longer reuses decoded graphics rasters across publications.
+- Any performance benefit from the old Howl-only cache is gone by design.
 
 ## Next Gate
 

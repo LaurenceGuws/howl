@@ -2501,6 +2501,25 @@ Render virtual placement ABI deletion decision:
 - Known broken behavior: external render ABI consumers using the deleted virtual placement
   commit fields break by design.
 
+Render graphics raster cache deletion decision:
+
+- Howl-only behavior: render kept a decoded graphics raster cache keyed by payload hash and
+  image ref for cross-publication reuse. It had no Kitty-equivalent image/frame cache
+  identity, texture refs, access tracking, or quota policy.
+- Source-order reason: Kitty's cache is tied to graphics manager image/frame identity and
+  storage policy. Keeping Howl's independent payload-hash cache would preserve an invented
+  render-side lifetime model.
+- Promoted destructive slice: delete decoded raster cache keys, publication image keys,
+  lookup/reuse, sweep logic, and cache-behavior tests. Decode fresh rasters for the current
+  publication only; do not add a replacement cache/quota/identity model.
+- Accepted behavior: `GraphicsPreparer` owns only current-publication decoded rasters, and
+  `raster()` views those current rasters.
+- Accepted commit: `howl-render` `e940674 render: delete graphics raster cache`.
+- Verification passed: `zig build test --summary all` in `howl-render` with `704/707` tests
+  passed and `3` skipped, and `howl-render git diff --check`.
+- Known broken behavior: render no longer reuses decoded graphics rasters across
+  publications.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
