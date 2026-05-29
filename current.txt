@@ -1,148 +1,142 @@
-# Current Slice: Delete VT `types.zig` Files
+# Current Slice: Remove Render FFI Publish Scratch
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete the remaining `types.zig` files in Howl.
-- Split every symbol into its smallest true owner. Do not create another
-  ownerless bucket or compatibility shim.
-- Preserve public root exports where they are curated API surfaces, but do not
-  route them through `types.zig` or a replacement namespace bucket.
+- Remove retained publication scratch and source publication policy from
+  `howl-render/src/ffi.zig`.
+- Keep `howl-render/include/howl_render.h` byte-for-byte unchanged.
+- Follow the Alacritty-derived split: source owns VT-derived publication
+  storage and validation; FFI exposes C spans and translates C status/fields
+  only.
+
+## Source Facts
+
+- Alacritty `Term` owns source grid/damage and display borrows/adapts it.
+- Howl `source/slot.zig` already owns retained `[]source_vt.SourceCell` storage.
+- `HowlRenderPublishSlot.cells` remains `HowlVtSurfaceCell *` in the stable C ABI.
+- Therefore source-owned retained cells are the temporary writable C publication
+  span; FFI only casts and returns the span.
 
 ## Source Files
 
-- `howl-vt/src/kitty/types.zig`
-- `howl-vt/src/kitty/state.zig`
-- `howl-vt/src/kitty/apply.zig`
-- `howl-vt/src/kitty.zig`
-- `howl-vt/src/input/types.zig`
-- `howl-vt/src/input.zig`
-- `howl-vt/src/input/keyboard.zig`
-- `howl-vt/src/input/mouse.zig`
-- `howl-vt/src/input/encode.zig`
+- `howl-render/include/howl_render.h`
+- `howl-render/src/ffi.zig`
+- `howl-render/src/source/vt.zig`
+- `howl-render/src/source/slot.zig`
+- `howl-render/src/source/damage.zig`
+- `howl-render/src/surface/text.zig`
+- `howl-render/src/test/ffi.zig`
+- `howl-vt/include/howl_vt.h`
 
-## Files To Add
+## Required Edits
 
-- `howl-vt/src/input/event.zig`
-- `howl-vt/src/input/encoded.zig`
+In `howl-render/src/source/vt.zig`:
 
-## Files To Delete
+- Add source-owned validation:
+  - `validateSourceCell(cell: SourceCell) !void`
+  - `validateSourceCells(cells: []const SourceCell) !void`
+  - `validateReservedSourceMeta(meta: ReservedSourceMeta) !void`
+- Validate:
+  - `codepoint <= std.math.maxInt(u21)`
+  - `combining_len <= combining.len`
+  - every active combining codepoint <= `u21`
+  - `SourceColor.kind` is `0`, `1`, or `2`
+  - indexed color value <= `u8`
+  - rgb color value <= `u24`
+  - underline style is `0...4`
+  - `snapshot_seq != 0`
+- Do not import C.
 
-- `howl-vt/src/kitty/types.zig`
-- `howl-vt/src/input/types.zig`
+In `howl-render/src/source/slot.zig`:
 
-Do not leave a shim or compatibility import.
+- Keep `SourceSlot` as owner of retained `[]source_vt.SourceCell` storage.
+- In `commitReservedSource()`:
+  - validate `ReservedSourceMeta` through `source_vt`
+  - validate retained source cells through `source_vt`
+  - keep dirty validation/canonicalization in `source/damage.zig`
+  - preserve retained-storage behavior
 
-## Symbol Movement
+In `howl-render/src/surface/text.zig`:
 
-Move from `kitty/types.zig` to existing true owners:
+- `SurfaceTextOwner.commitPublishSlot()` remains composition only:
+  - call source slot commit
+  - set cursor phase
+  - pass source to prepare request owner
+- Do not expose source-slot reservation internals to FFI.
 
-- `ScreenState` -> `kitty/state.zig`
-- `GlobalState` -> `kitty/state.zig`
-- `ShellMark` -> `kitty/state.zig`
-- `NotificationRequest` -> `kitty/state.zig`
+In `howl-render/src/ffi.zig`:
 
-Delete namespace aliases instead of moving:
-
-- `Key`
-- `Pointer`
-- `Color`
-
-Users must import `kitty/key.zig`, `kitty/pointer.zig`, or `kitty/color.zig`
-directly when they need those owners. Public `kitty.zig` may still curate root
-exports directly from the owner files.
-
-Move from `input/types.zig` to existing true owners:
-
-- keyboard-owned exports stay in `input/keyboard.zig`:
-  - `Key`
-  - `Modifier`
-  - `mod_none`
-  - `mod_shift`
-  - `mod_alt`
-  - `mod_ctrl`
-  - all `key_*` aliases
-- mouse-owned exports stay in `input/mouse.zig`:
-  - `MouseButton`
-  - `MouseEventKind`
-  - `MouseEvent`
-  - `MouseTrackingMode`
-  - `MouseProtocol`
-  - `mouse_button_*`
-  - `mouse_press`
-  - `mouse_release`
-  - `mouse_move`
-  - `mouse_wheel`
-
-Move from `input/types.zig` to new true owners:
-
-- `KeyEvent`, `FocusEvent`, `Event` -> `input/event.zig`
-- `Encoded` -> `input/encoded.zig`
-
-Delete namespace aliases instead of moving:
-
-- `Key`
-- `Modifier`
-- mouse type aliases that duplicate `input/mouse.zig`
-
-## Required Import Changes
-
-Rename local aliases to true owners. Do not use `types`, `KittyNs`,
-`kitty_types`, `input_types`, or `*_types` aliases.
-
-In `kitty/state.zig`:
-
-- Own `ScreenState`, `GlobalState`, `ShellMark`, and `NotificationRequest`.
-- Import `key.zig`, `pointer.zig`, and `color.zig` directly.
-- `State` fields use local `ScreenState` and `GlobalState`.
-
-In `kitty/apply.zig`:
-
-- Import `kitty/state.zig` and `kitty/color.zig` directly.
-- `setShellMark` takes `*kitty_state.ShellMark`.
-- `appendNotification` takes `*std.ArrayList(kitty_state.NotificationRequest)`.
-- Kitty color stack operations call `kitty_color.pushState` / `popState`.
-
-In `kitty.zig`:
-
-- Export public names directly from true owners:
-  - `Key` from `kitty/key.zig`
-  - `Pointer` from `kitty/pointer.zig`
-  - `Color` from `kitty/color.zig`
-  - state structs from `kitty/state.zig`
-
-In `input.zig`:
-
-- Export public names directly from true owners:
-  - keyboard constants from `input/keyboard.zig`
-  - mouse constants from `input/mouse.zig`
-  - events from `input/event.zig`
-  - `Encoded` from `input/encoded.zig`
-
-In `input/encode.zig`:
-
-- If it currently depends on `input.zig` public root for `Encoded`, prefer
-  importing `input/encoded.zig` directly only if needed. Do not introduce cycles.
+- Delete invented FFI state:
+  - `PublishScratch`
+  - `ScratchMutex`
+  - `publish_scratch_mutex`
+  - `publish_scratch_entries`
+  - `reservePublishScratch()`
+  - `copyPublishScratch()`
+  - `removePublishScratch()`
+- Delete direct source publication policy:
+  - no `owner.source_slot.reservedSource()`
+  - no source cell validation loop
+  - no `validatePublicationCellValue()`
+- `reservePublishSlot()`:
+  - call `owner.reservePublishSlot(cols, rows)`
+  - return C writable cell span by casting owner-owned `[]source_vt.SourceCell`
+    to `HowlVtSurfaceCell *`
+  - return dirty spans directly
+- `commitPublishSlot()`:
+  - translate `HowlRenderPublishSlotCommit` to `source_vt.ReservedSourceMeta`
+  - call `owner.commitPublishSlot(meta)`
+  - map owner errors to C status
+  - do not own cancel policy beyond public owner calls
+- Add FFI-only compile-time ABI layout assertions proving the stable cast:
+  - source cell size/alignment equals `c.HowlVtSurfaceCell`
+  - offset equality for `codepoint`, `combining_len`, `combining`, `flags`,
+    `fg_color`, `bg_color`, `underline_color`, `underline_style`, `attrs`,
+    `link_id`
+  - source color size/alignment/field offsets equal `c.HowlVtColor`
+  - source attrs/flags size and offsets equal C
+- Delete unused `cellValueIn()` and `byteSpanIn()` if no remaining callers.
 
 ## Tests
 
-- Move tests with the owners when practical.
-- Keep behavior unchanged.
-- Add or preserve owner-local tests proving:
-  - `kitty/state.zig` owns notification storage/deinit.
-  - `input/event.zig` owns event union tags.
-  - `input/encoded.zig` owns encoded buffer deinit.
+Add/adjust owner-local tests:
+
+- In `source/vt.zig`:
+  - rejects source cell codepoint > `u21`
+  - rejects combining_len > 3
+  - rejects active combining codepoint > `u21`
+  - rejects invalid color kind
+  - rejects indexed color value > `u8`
+  - rejects rgb color value > `u24`
+  - rejects underline style > 4
+  - rejects `ReservedSourceMeta.snapshot_seq == 0`
+- In `source/slot.zig`:
+  - source slot exposes retained source cell storage for publication
+  - source slot commit rejects invalid source cell without FFI scratch
+  - test exact reserved-state behavior after invalid commit/cancel policy
+- In `test/ffi.zig`:
+  - preserve publish slot translation tests
+  - invalid cell codepoint through ABI returns invalid argument
+  - invalid underline style through ABI returns invalid argument
+  - invalid color kind through ABI returns invalid argument
+  - reserve slot, write through returned C pointer, commit, and take prepare
+    request succeeds
 
 ## Invariants
 
+- No C header change.
+- No `@cImport` outside `ffi.zig`.
+- No global mutable publication scratch in FFI.
+- Source slot owns retained writable publication storage.
+- Source owner validates source cells and dirty metadata before publication is
+  accepted.
+- FFI never reads or writes `owner.source_slot.reservedSource()`.
+- FFI does not decide source cancel policy beyond public owner calls.
 - No compatibility shims.
-- No `types.zig` file remains anywhere in Howl.
-- No import of `types.zig` remains anywhere in Howl.
-- No `types`, `KittyNs`, or `*_types` owner aliases remain under `howl-vt/src`.
-- Public root files (`kitty.zig`, `input.zig`) curate exports only; they do not
-  own state or mutation.
-- No ABI contract changes unless build proves these are Zig-only curated roots.
+- No `types.zig`.
+- No `manager`, `controller`, `runtime`, `flow`, `pipeline`, or `queue` owner.
 
 ## Verification
 
@@ -151,29 +145,38 @@ From `/home/home/personal/projects/howl`:
 - `zig build check`
 - `zig build test`
 
-From `/home/home/personal/projects/howl/howl-vt` if needed:
+From `/home/home/personal/projects/howl/howl-render` if needed:
 
 - `zig build check`
 - `zig build test`
+- `git diff --check`
 
 ## Grep Gates
 
-No matches under `/home/home/personal/projects/howl`:
+No matches in `howl-render/src/ffi.zig`:
+
+- `PublishScratch`
+- `ScratchMutex`
+- `publish_scratch`
+- `reservePublishScratch`
+- `copyPublishScratch`
+- `removePublishScratch`
+- `validatePublicationCellValue`
+- `reservedSource`
+- `owner.source_slot`
+
+No matches outside `howl-render/src/ffi.zig`:
+
+- `@cImport`
+- `HowlVtSurfaceCell`
+- `HowlRenderPublishSlot`
+
+No new names under `howl-render/src`:
 
 - `types.zig`
-- `@import\(.*types.zig`
-- `\b[a-zA-Z0-9_]+_types\b`
-
-No matches under `howl-vt/src`:
-
-- `\btypes\b`
-- `KittyNs`
-
-No new owner names under `howl-vt/src`:
-
 - `manager`
 - `controller`
 - `runtime`
-- `screen`
+- `flow`
 - `pipeline`
 - `queue`
