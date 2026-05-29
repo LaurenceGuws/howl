@@ -1,60 +1,78 @@
-# Current Slice: Delete Host VT Viewport Lie
+# Current Slice: Split Render Source ABI From VT Types
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete `howl-linux-host/src/terminal/vt/viewport.zig` as a false VT owner.
-- Keep VT scrollback/display offset mutation in `terminal/vt/retained.zig`.
-- Move host scrollbar/input/layout adaptation to a host terminal owner file.
-- Follow Alacritty's split: terminal/grid owns display offset; event/display context only translates host input and rendering overlays.
+- Remove `howl-render` public C ABI dependency on `howl-vt` public C structs.
+- Keep VT as owner of terminal state truth.
+- Keep render as owner of render source structs, retained prepare state, shaping, prepared surfaces, and submit contracts.
+- Prepare the ground for a later Zig 0.16 build-system translate-C migration in `howl-linux-host` without combined C buckets.
 
-## Source Facts
+## Source Research
 
-- Alacritty `alacritty_terminal/src/term/mod.rs` owns `Term::scroll_display`.
-- Alacritty `alacritty_terminal/src/grid/mod.rs` owns `Grid::scroll_display` and `display_offset`.
-- Alacritty app `alacritty/src/event.rs` translates input into `terminal.scroll_display(...)` and marks host dirty state.
-- Howl `terminal/vt/retained.zig` already owns `scrollback_offset`, `setScrollbackOffset`, `followLiveBottom`, and clamping.
-- Howl `terminal/vt/viewport.zig` imports window geometry, host input, scrollbar state, and SDL time, so it is not a VT owner.
+Use `render-vt-abi-decoupling-scratchpad.md` as the sprint scratchpad.
+
+Reference verdict:
+
+- Ghostty supports VT-owned render-state adaptation, not renderer backend ABI owning VT cell truth.
+- Alacritty adapts terminal `Cell` into display `RenderableCell`; renderer consumes adapted renderable content.
+- Kitty privately couples renderer to `Screen *`, but public/renderer-facing draw data is packed draw state, not terminal structs as public ABI.
 
 ## Source Changes
 
 Edit only:
 
-- `howl-linux-host/src/terminal/vt/viewport.zig`
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/render/surface_layout.zig`
-- new host terminal owner file under `howl-linux-host/src/terminal/`
+- `howl-render/include/howl_render.h`
+- `howl-render/src/vt_surface.zig`
+- `howl-render/src/source/vt.zig`
+- `howl-render/src/source/slot.zig` only if needed for render-owned names/layouts
+- `howl-render/src/test/*` only for required test updates
+- `howl-linux-host/src/terminal/vt/surface.zig` for host VT-to-render source conversion
+- `howl-linux-host/src/terminal/vt/retained.zig` only if needed for retained VT scratch storage used by the conversion
 
 Required shape:
 
-- Delete `terminal/vt/viewport.zig`.
-- Create a host terminal scrollbar/input adapter with an owner-true name under `terminal/`.
-- Export `State = window.scrollbar.State` only from the new host terminal adapter if needed by `Context`.
-- Keep all VT mutation calls routed through `vt_retained.setScrollbackOffset` and `vt_retained.followLiveBottom`.
-- Update imports and call sites to the new owner name.
+- Remove `#include "howl_vt.h"` from `howl-render/include/howl_render.h`.
+- Add render-owned public ABI structs for the data render consumes:
+  - `HowlRenderSourceRgb`
+  - `HowlRenderSourceColor`
+  - `HowlRenderSourceCellFlags`
+  - `HowlRenderSourceCellAttrs`
+  - `HowlRenderSourceCell`
+  - `HowlRenderSourceColors`
+  - `HowlRenderSourceSelectionPos`
+  - `HowlRenderSourceSelection`
+  - `HowlRenderSourceCursor`
+- Replace render ABI payload fields that currently use `HowlVt*` with `HowlRenderSource*`.
+- Keep render publication function names stable for this slice unless renaming is necessary for correctness.
+- Remove layout assertions against `c.HowlVt*` in `howl-render/src/vt_surface.zig`.
+- Add layout assertions between `HowlRenderSource*` ABI structs and render-owned `source_vt` / `source_cell` structs.
+- Host VT publication must explicitly convert VT ABI values into render source ABI values before committing to render.
+- Host VT publication must not allocate per publish; if VT cells need temporary storage before conversion, store it in retained VT state with explicit capacity and deinit ownership.
 
 ## Non-Goals
 
-- Do not move scrollback offset into host code.
-- Do not change public C ABI.
-- Do not change scrollbar behavior, mouse behavior, page-scroll behavior, layout geometry, passive hover wake behavior, focus behavior, or redraw policy.
-- Do not rename unrelated `viewport` terminology in Alacritty references, render comments, or damage code.
-- Do not introduce aliases, shims, or compatibility wrappers.
+- Do not migrate `howl-linux-host/src/terminal/c.zig` in this slice.
+- Do not change VT public ABI structs in `howl-vt/include/howl_vt.h`.
+- Do not introduce combined translate-C modules as a workaround.
+- Do not add compatibility aliases or shims.
+- Do not change render prepared surface semantics, text shaping behavior, dirty semantics, or submit behavior.
 
 ## Invariants
 
-- Alternate screen still rejects host scrollback movement.
-- Page scroll still moves by `max(visible_rows - 1, 1)` rows.
-- Wheel fallback still moves 3 rows.
-- Scrollbar mouse drag still clamps offset through VT retained state.
-- Scrollbar invalidation still occurs only when focus/geometry/offset changes require it.
-- Passive hover wake remains a host scrollbar concern, not VT state.
-- No imports from `terminal/vt/` to `window/`, `input/`, or SDL for this adapter remain.
+- VT remains the terminal state truth owner.
+- Render public header has no dependency on `howl_vt.h`.
+- Render source structs are render-owned C ABI product structs.
+- Cell count remains `cols * rows` with existing bounds validation.
+- Dirty row/column metadata validation remains unchanged or stronger.
+- Cursor, colors, and selection are copied/adapted into render-owned source structs without changing meaning.
+- No per-publish heap allocation in VT visible-surface acquisition or conversion.
+- Existing host behavior remains equivalent.
 
 ## Verification
 
-From `/home/home/personal/projects/howl`:
+From `/home/home/personal/projects/howl/howl-render`:
 
 - `zig build check`
 - `zig build test`
@@ -66,16 +84,25 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 - `zig build test`
 - `git diff --check`
 
+From `/home/home/personal/projects/howl`:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+
 ## Grep Gates
 
 No matches:
 
-- `howl-linux-host/src/terminal/vt/viewport.zig`
-- `@import("vt/viewport.zig")`
-- `@import("../vt/viewport.zig")`
-- `terminal/vt/viewport`
+- `howl-render/include/howl_render.h`: `howl_vt.h`
+- `howl-render/include/howl_render.h`: `HowlVt`
+- `howl-render/src/vt_surface.zig`: `c.HowlVt`
+- `howl-render/src`: `HowlVtSurfaceCell`
+- `howl-render/src`: `HowlVtCursor`
+- `howl-render/src`: `HowlVtRenderColorState`
+- `howl-render/src`: `HowlVtSelection`
 
 Expected:
 
-- `terminal/vt/retained.zig` remains the scrollback offset mutation owner.
-- The new host terminal adapter imports `window/scrollbar.zig`, `input/input.zig`, and `vt/retained.zig`.
+- `howl-render/include/howl_render.h` defines `HowlRenderSource*` structs.
+- `howl-linux-host/src/terminal/vt/surface.zig` imports both render and VT C ABIs as needed and converts VT values into render source values explicitly.
