@@ -1,166 +1,77 @@
-# Current Slice: Split Render C Boundary Nouns
+# Current Slice: Delete Render Boundary `frame.zig`
 
 Owner: workspace root.
 
 Purpose:
 
-- Split `howl-render/src/ffi.zig` into smaller noun files under
-  `howl-render/src/`.
-- Keep `howl-render/src/ffi.zig` as the single C import seam only.
-- Keep `howl-render/include/howl_render.h` byte-for-byte unchanged.
-- Preserve all exported C symbol names and behavior.
+- Delete `howl-render/src/frame.zig`.
+- Render does not own “frames” as a product noun at the C boundary.
+- Render knows VT surface/events and render surface/events.
+- Keep `howl-render/include/howl_render.h` unchanged even though the C ABI still
+  has shipped `HowlRenderPreparedFrame` names.
 
 ## Source Files
 
-- `howl-render/include/howl_render.h`
-- `howl-render/src/ffi.zig`
-- `howl-render/src/libhowl_render.zig`
-- `howl-render/src/surface/text.zig`
-- `howl-render/src/surface/prepared_owner.zig`
-- `howl-render/src/surface/tokens.zig`
-- `howl-render/src/source/vt.zig`
-- `howl-render/src/source/slot.zig`
-- `howl-render/src/source/cell.zig`
-- `howl-render/src/prepared/feedback.zig`
-- `howl-render/src/render/geometry_contract.zig`
-
-## Files To Add
-
-- `howl-render/src/handle.zig`
-- `howl-render/src/surface_text.zig`
-- `howl-render/src/surface_geometry.zig`
-- `howl-render/src/publish_slot.zig`
 - `howl-render/src/frame.zig`
 - `howl-render/src/prepare_request.zig`
 - `howl-render/src/prepared_surface.zig`
-- `howl-render/src/surface_feedback.zig`
 - `howl-render/src/submission.zig`
-- `howl-render/src/pending_state.zig`
+- `howl-render/src/surface/tokens.zig`
+- `howl-render/src/libhowl_render.zig`
 
-Do not create `ffi/`, `ffi_types.zig`, or any generic bucket.
+## File To Delete
 
-## Target Shape
+- `howl-render/src/frame.zig`
 
-`howl-render/src/ffi.zig` owns only:
-
-```zig
-pub const c = @cImport({
-    @cInclude("howl_render.h");
-});
-```
-
-All other C boundary files use:
-
-```zig
-const c = @import("ffi.zig").c;
-```
-
-`libhowl_render.zig` exports from noun files, not from `ffi.zig`.
+Do not leave a shim or compatibility import.
 
 ## Symbol Movement
 
-Move from `ffi.zig` to `handle.zig`:
-
-- `ownerFromHandle()` renamed to `surfaceTextOwner()`
-- `opaquePreparedHandle()`
-- `abiPreparedHandle()`
-
-Move from `ffi.zig` to `surface_text.zig`:
-
-- `init()`
-- `deinit()`
-- `isValidFont()`
-- `setFontSize()`
-- `setFontPath()`
-- `setFallbackFontPaths()`
-- `setCursorBlinkVisible()`
-
-Move from `ffi.zig` to `surface_geometry.zig`:
-
-- `deriveFrameLayout()`
-- `syncGeometry()`
-- `pixelIn()`
-- `geometryOut()`
-
-Move from `ffi.zig` to `publish_slot.zig`:
-
-- `reservePublishSlot()`
-- `commitPublishSlot()`
-- `rejectPublishSlot()`
-- `cancelPublishSlot()`
-- `publishSlotOut()`
-- `sourceCellsOut()`
-- `vtPublishResultOut()`
-- `vtPublishResultWithStatus()`
-- `colorStateIn()`
-- `selectionIn()`
-- `cursorIn()`
-- `assertVtCellLayout()`
-- `assertOffset()`
-- `comptime { assertVtCellLayout(); }`
-
-Move from `ffi.zig` to `frame.zig`:
+Move from `frame.zig` to `prepare_request.zig`:
 
 - `prepareRequestOut()`
-- `preparedFrameOut()`
 - `prepareTokenIn()`
+
+Move from `frame.zig` to `submission.zig`:
+
+- `preparedFrameOut()`
 - `preparedFrameIn()`
 - `samePreparedFrame()`
-- `damageKindIn()`
 
-Move from `ffi.zig` to `prepare_request.zig`:
+Move or duplicate only where needed, with the smallest true owner:
 
-- `takePrepareRequest()`
+- `damageKindIn()` may move to `prepare_request.zig` if only prepare request
+  parsing needs it, or to `submission.zig` if submission parsing needs it too.
+- Prefer a private helper in each file over a new shared generic module for this
+  slice, unless duplication becomes unsafe.
 
-Move from `ffi.zig` to `prepared_surface.zig`:
+## Required Import Changes
 
-- `prepareHandle()`
-- `release()`
-- `describe()`
-- `buffer()`
-- `diagnostics()`
-- `preparedInfoOut()`
-- `infoFailure()`
-- `preparedBufferOut()`
-- `bufferFailure()`
-- `preparedDiagnosticsOut()`
-- `diagnosticsFailure()`
+In `prepare_request.zig`:
 
-Move from `ffi.zig` to `surface_feedback.zig`:
+- Remove `@import("frame.zig")`.
+- Own C `HowlRenderPrepareRequest` translation locally.
 
-- `surfaceMetricsOut()`
-- `surfaceFeedbackOut()`
-- `failedSurfaceFeedback()`
-- `executionInputIn()`
+In `prepared_surface.zig`:
 
-Move from `ffi.zig` to `submission.zig`:
+- Remove `@import("frame.zig")`.
+- Import `prepare_request.zig` for `prepareTokenIn()` only.
 
-- `publishPrepared()`
-- `publishPreparedHandle()`
-- `takeSubmitDecision()`
-- `takeSubmitHandle()`
-- `acceptSubmitted()`
-- `submit()`
-- `submitHandle()`
+In `submission.zig`:
 
-Move from `ffi.zig` to `pending_state.zig`:
-
-- `pendingState()`
-- `pendingStateOut()`
-- `pendingStateFailure()`
+- Remove `@import("frame.zig")`.
+- Own C `HowlRenderPreparedFrame` translation locally.
 
 ## Invariants
 
 - No C header change.
 - No behavior change.
-- Exported C names unchanged.
-- Only `howl-render/src/ffi.zig` contains `@cImport`.
-- `ffi.zig` contains no `callconv(.c)` functions after this slice.
-- Boundary noun files translate C contracts only; real policy remains in
-  source/session/prepared/render owners.
-- No compatibility shims.
+- No `frame.zig` file remains under `howl-render/src`.
+- No `@import("frame.zig")` remains.
+- No compatibility shim.
 - No `types.zig`.
 - No `manager`, `controller`, `runtime`, `flow`, `pipeline`, or `queue` owner.
+- Do not rename public C ABI symbols in this slice.
 
 ## Verification
 
@@ -177,17 +88,20 @@ From `/home/home/personal/projects/howl/howl-render` if needed:
 
 ## Grep Gates
 
-- `@cImport` appears only in `howl-render/src/ffi.zig` for render's shipped C
-  output boundary. Pre-existing third-party `text/font/ft_hb/c_api.zig` is not
-  part of this render C output boundary.
-- No `callconv(.c)` in `howl-render/src/ffi.zig`.
-- No C header diff:
-  - `git diff -- howl-render/include/howl_render.h` must be empty.
-- No new paths/names under `howl-render/src` matching:
-  - `types.zig`
-  - `manager`
-  - `controller`
-  - `runtime`
-  - `flow`
-  - `pipeline`
-  - `queue`
+No matches under `howl-render/src`:
+
+- `@import("frame.zig")`
+
+No file:
+
+- `howl-render/src/frame.zig`
+
+No new paths/names under `howl-render/src` matching:
+
+- `types.zig`
+- `manager`
+- `controller`
+- `runtime`
+- `flow`
+- `pipeline`
+- `queue`
