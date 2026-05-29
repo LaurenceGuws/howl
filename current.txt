@@ -1,34 +1,50 @@
-# Current Slice: None
+# Current Slice: Legacy Graphics ABI Deletion Accepted
 
 Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-Status: `Generated Placeholder Flag Deletion` completed and accepted.
+Status: accepted by reviewer, verified locally, and committed.
 
 Accepted commits:
 
-- `howl-vt` `6d5854d vt: delete generated placeholder flag`
-- `howl-render` `c44d53c render: drop generated placeholder flag mirror`
-- `howl-linux-host` `4db4691 host: delete placeholder replay flag dependency`
+- `howl-vt` `4374df8 vt: delete legacy graphics ABI`
+- `howl-render` `96b4f29 render: delete legacy graphics ABI`
+- `howl-linux-host` `61351e4 host: use decoded graphics publish ABI`
 
-Verification passed:
+## Accepted Deletion
 
-- `zig build test --summary all` in `howl-vt` (`606/606` tests).
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- `zig build test --summary all` in `howl-render` (`730/733` tests passed, `3` skipped).
-- `zig build test:integration:kitty-graphics-replay:build --summary all` in
-  `howl-linux-host`.
-- `zig build test:integration:kitty-graphics-replay --summary all` in `howl-linux-host`.
+- Deleted VT legacy graphics image/payload public ABI:
+  `HowlVtGraphicsImage`, `HowlVtGraphicsImageResult`,
+  `howl_vt_terminal_query_graphics_image`, and
+  `howl_vt_terminal_copy_graphics_payload`.
+- Deleted stale internal `Terminal.graphicsImage()` query path.
+- Deleted retained graphics transport/base64 image and frame storage; VT graphics image/frame
+  truth is decoded payload state only.
+- Deleted render legacy publish ABI:
+  `HowlRenderPublishSlotCommit`, `howl_render_surface_text_publish_vt_source`, and
+  `howl_render_surface_text_commit_publish_slot`.
+- Deleted render `.legacy_protocol`, `GraphicsPayloadKind`, internal legacy image mirror, and
+  legacy payload slicing path.
+- Updated host publishing to acquire decoded VT graphics and commit decoded render slots.
+- Restored targeted VT graphics tests after review rejected broad test deletion.
+
+## Verification Passed
+
+- `zig build test --summary all` in `howl-vt` (`538/538` tests).
+- `zig build test --summary all` in `howl-render` (`722/725` tests passed, `3` skipped).
+- `zig build --summary all` in `howl-linux-host`.
 - Root `zig build --summary all`.
 - Root, `howl-vt`, `howl-render`, and `howl-linux-host` `git diff --check`.
 
-Known broken behavior:
+## Known Broken State
 
-- Any consumer checking `HOWL_VT_GRAPHICS_PLACEMENT_GENERATED_PLACEHOLDER` now breaks by
-  design.
+- Public consumers of deleted legacy VT/render graphics ABI break by design.
+- Transport/base64 graphics payload bytes are no longer retained as image/frame publication
+  truth.
 - Unicode placeholder generated renderable placement behavior remains broken until a
-  separately promoted source-backed replacement slice.
+  separately promoted source-backed generated-ref replacement slice.
 
-Generated-placeholder deletion queue is complete. Replacement planning can now start from
-reference-backed generated cell refs.
+## Next Gate
+
+No replacement slice is active. Promote the next source-backed slice before product edits.

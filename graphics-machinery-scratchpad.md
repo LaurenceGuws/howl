@@ -2428,6 +2428,38 @@ Generated placeholder flag deletion decision:
 - Generated-placeholder deletion queue is complete. Replacement planning can now start from
   reference-backed generated cell refs.
 
+Legacy graphics ABI deletion decision:
+
+- User rejection: replacement planning was not ready while legacy graphics ABI compatibility
+  remained. Delete it before claiming pure/accountable replacement readiness.
+- Promoted destructive slice: delete VT legacy graphics image/payload query ABI, render
+  legacy publish ABI, render legacy payload kind, host legacy bridge dependencies, retained
+  graphics transport/base64 image/frame storage, and tests that assert removed compatibility.
+- Review rejection 1: exported symbols were removed, but render still kept an internal
+  legacy-shaped `FfiVtGraphicsImage` mirror and payload-kind switch, and VT still retained
+  `legacy_payload` state. Worker was reseeded to delete those instead of preserving shims.
+- Review rejection 2: renaming `legacy_payload` to `encoded_payload` was still retained
+  transport/base64 graphics truth. Worker was reseeded to delete encoded retention and stale
+  `Terminal.graphicsImage()`.
+- Review rejection 3: deleting all `terminal_graphics.zig` tests removed current decoded and
+  protocol accountability and hid a root-frame double-free. Worker restored targeted tests
+  and fixed ownership.
+- Accepted behavior: VT public legacy image/payload ABI, internal old image query path,
+  retained graphics transport/base64 image/frame storage, render `publish_vt_source`, render
+  legacy commit slot ABI, `.legacy_protocol`, render internal legacy image mirror, and host
+  legacy commit bridge are deleted. Remaining graphics image publication is decoded only.
+- Accepted commits: `howl-vt` `4374df8 vt: delete legacy graphics ABI`, `howl-render`
+  `96b4f29 render: delete legacy graphics ABI`, and `howl-linux-host` `61351e4 host: use
+  decoded graphics publish ABI`.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `538/538` tests,
+  `zig build test --summary all` in `howl-render` with `722/725` tests passed and `3`
+  skipped, `zig build --summary all` in `howl-linux-host`, root `zig build --summary all`,
+  and root/VT/render/host `git diff --check`.
+- Known broken behavior: public consumers of the deleted legacy graphics ABI break by design;
+  transport/base64 graphics payload bytes are not retained as publication truth; Unicode
+  placeholder generated renderable placement remains broken until a separate source-backed
+  generated-ref replacement slice.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
