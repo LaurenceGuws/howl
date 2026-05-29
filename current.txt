@@ -1,78 +1,55 @@
-# Current Slice: Rename Render Session Work State ABI
+# Current Slice: Delete Dead Render Cell ABI Structs
 
 Owner: workspace root.
 
 Purpose:
 
-- Break the render C ABI to replace vague pending-state vocabulary with
-  session-work-state vocabulary.
-- The ABI reports render text-session work readiness: source, prepare, and submit work.
+- Delete stale render-cell ABI structs that are unused at the public render boundary.
+- Preserve VT-owned source publication through `HowlVtSurfaceCell` and `HowlVtCursor`.
+- Preserve used layout/draw ABI types such as `HowlRenderCellSize` and
+  `HowlRenderColorDraw`.
 - No aliases, no compatibility shims, no old names.
 
 ## ABI Changes
 
-In `howl-render/include/howl_render.h`, rename without old aliases:
+In `howl-render/include/howl_render.h`, delete these typedefs entirely:
 
-- `HowlRenderPendingState` -> `HowlRenderSessionWorkState`
-- `howl_render_text_session_pending_state` -> `howl_render_text_session_work_state`
+- `HowlRenderCellFlags`
+- `HowlRenderColor`
+- `HowlRenderCellAttrs`
+- `HowlRenderCell`
+- `HowlRenderCursor`
 
-Keep struct fields unchanged:
+Do not add replacement render-cell typedefs.
 
-- `status`
-- `source_pending`
-- `prepare_pending`
-- `submit_pending`
-- `reserved0`
+Do not touch:
 
-## Render Source Changes
+- `HowlRenderCellSize`
+- `HowlRenderColorDraw`
+- `HowlRenderDecorationDraw`
+- `HowlRenderColorDrawSpan`
+- `HowlRenderDecorationDrawSpan`
+- `HowlRenderVtCellWriteSpan`
+- `HowlRenderVtSurfaceCommit`
 
-- Rename `howl-render/src/pending_state.zig` to `howl-render/src/work_state.zig`.
-- Update `howl-render/src/libhowl_render.zig` to import `work_state.zig`.
-- Export `work_state.workState` as `howl_render_text_session_work_state`.
+## Source Changes
 
-Boundary symbols:
+No Zig source changes are expected unless compile errors prove an undiscovered use.
 
-- `pendingState` -> `workState`
-- `pendingStateOut` -> `sessionWorkStateOut`
-- `pendingStateFailure` -> `sessionWorkStateFailure`
+The active source boundary must remain:
 
-Internal owner symbols:
-
-- Delete `source_prepare.PendingState` from `howl-render/src/source/prepare_request.zig`.
-- Add `SessionWorkState` in `howl-render/src/session/text.zig`.
-- Rename `TextSessionOwner.pendingState` -> `TextSessionOwner.workState`.
-- Add `SubmittedWorkState` in `howl-render/src/session/submitted.zig`.
-- Rename `Submitted.pendingState` -> `Submitted.workState`.
-
-## Host Changes
-
-Update `howl-linux-host/src/terminal/render/retained.zig`:
-
-- `c.HowlRenderPendingState` -> `c.HowlRenderSessionWorkState`
-- `c.howl_render_text_session_pending_state` -> `c.howl_render_text_session_work_state`
-- `State.pending(...)` -> `State.workState(...)`
-
-Update `howl-linux-host/src/terminal/context.zig`:
-
-- `self.term.render.pending(...)` -> `self.term.render.workState(...)`
-
-## Tests
-
-Update `howl-render/src/test/ffi.zig`:
-
-- Import `../work_state.zig`.
-- Use `c.HowlRenderSessionWorkState`.
-- Call `work_state.workState`.
-
-Preserve existing missing-handle and invalid-argument behavior.
+- `HowlRenderVtCellWriteSpan.ptr` is `HowlVtSurfaceCell *`.
+- `HowlRenderVtSurfaceCommit.cursor` is `HowlVtCursor`.
+- `howl-render/src/vt_surface.zig` asserts layout against `HowlVtSurfaceCell`,
+  `HowlVtColor`, `HowlVtSurfaceCellFlags`, and `HowlVtSurfaceCellAttrs`.
 
 ## Invariants
 
-- Behavior is unchanged.
-- Session work state remains the aggregate of render-owned source, prepare, and submit work.
-- Host-owned present/bootstrap work stays in host `render_retained.WorkState`.
-- Source prepare does not own submit work.
-- No aliases or old typedefs.
+- VT owns terminal cell and cursor ABI truth.
+- Render does not expose duplicate cell/cursor ABI structs.
+- Host VT publish path continues to copy `HowlVtSurfaceCell` into render-reserved VT slots.
+- No aliases.
+- No shims.
 - No `types.zig`.
 - No `manager`, `controller`, `runtime`, `flow`, `pipeline`, or `queue` owner.
 
@@ -100,17 +77,16 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 No matches under `howl-render/include`, `howl-render/src`, or `howl-linux-host/src`:
 
-- `HowlRenderPendingState`
-- `howl_render_text_session_pending_state`
-- `pending_state`
-- `PendingState`
-- `pendingState`
+- `HowlRenderCellFlags`
+- `HowlRenderColor`
+- `HowlRenderCellAttrs`
+- `HowlRenderCell\b`
+- `HowlRenderCursor`
 
-Expected matches:
+Expected matches remain:
 
-- `HowlRenderSessionWorkState`
-- `howl_render_text_session_work_state`
-- `work_state`
-- `SessionWorkState`
-- `SubmittedWorkState`
-- `workState`
+- `HowlVtSurfaceCell`
+- `HowlVtCursor`
+- `HowlRenderVtCellWriteSpan`
+- `HowlRenderCellSize`
+- `HowlRenderColorDraw`
