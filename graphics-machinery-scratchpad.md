@@ -2159,6 +2159,18 @@ Placeholder proof API deletion research:
   unchanged; render/host untouched.
 - Stop conditions: stop if public C ABI deletion, placeholder-run semantic changes,
   generated placement changes, or render/host changes become necessary.
+- VT placeholder proof API deletion completed in `howl-vt` commit `70dd12e vt: delete
+  placeholder proof APIs`.
+- Accepted behavior: `Terminal.graphicsPlaceholderRunProofCount` and
+  `Terminal.graphicsPlaceholderRunProof` are gone; tests now assert placeholder-run truth
+  through `graphicsMeta().placeholder_run_count` and `graphicsPlaceholderRun(...)`.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `639/639` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `git diff --check`,
+  and `howl-vt git diff --check`.
+- Remaining deletion candidates before replacement planning: host panel graphics
+  proof/debug APIs, app-icon graphics replay fixture, legacy render base64 path quarantine,
+  synthetic generated-placeholder order keys, and query-derived generated placement
+  publication/materialization gap.
 
 ## Completed Or Stale Graphics Backlog
 

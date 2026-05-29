@@ -1,60 +1,20 @@
-# Current Slice: Graphics Placeholder Proof API Deletion
+# Current Slice: None
 
-Owner: howl-vt.
+Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-## Goal
+Status: `Graphics Placeholder Proof API Deletion` completed and accepted.
 
-Delete proof-only placeholder-run Zig APIs and move tests onto the real public
-placeholder-run publication/query path.
+Accepted commits:
 
-## Delegation Requirement
+- `howl-vt` `70dd12e vt: delete placeholder proof APIs`
 
-- Main agent must not implement this slice directly.
-- Seed a worker with this file, the audit findings, exact source paths, and the invariants
-  below.
-- Seed a reviewer after worker output and reject any diff that deletes public C ABI,
-  changes placeholder-run semantics, or broadens into generated placement materialization.
+Verification passed:
 
-## Required Work
-
-- Delete `Terminal.graphicsPlaceholderRunProofCount` and
-  `Terminal.graphicsPlaceholderRunProof` from `howl-vt/src/terminal.zig`.
-- Update `howl-vt/src/test/terminal_graphics.zig` tests to use
-  `graphicsMeta().placeholder_run_count` and `graphicsPlaceholderRun(...)` directly.
-- Do not touch `howl-vt/include/howl_vt.h` or `howl-vt/src/ffi.zig` unless the worker stops
-  and reports an unexpected dependency.
-- Do not change placeholder-run resolution, generated placement publication, FFI, or public
-  ABI behavior.
-
-## Candidate Paths
-
-- `howl-vt/src/terminal.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
-
-## Reference Constraints
-
-- Kitty does not expose a proof-only placeholder-run query seam.
-- Ghostty uses internal placeholder iteration, not a duplicate public/proof API pair.
-- Howl tests should prove the actual public Zig/FFI surface, not a duplicate proof path.
-
-## Invariants
-
-- `graphicsMeta().placeholder_run_count` remains the resolved placeholder-run count.
-- `graphicsPlaceholderRun(publication_seq, idx)` remains the single Zig query path.
-- Stale publication rejection behavior remains unchanged.
-- Public C ABI remains unchanged.
-
-## Tests Required
-
-- `zig build test --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-vt` (`639/639` tests).
 - `zig build test:regression:build --summary all` in `howl-vt`.
-- Root and `howl-vt` `git diff --check`.
+- Root `git diff --check`.
+- `howl-vt git diff --check`.
 
-## Stop Conditions
-
-- Stop if public C ABI deletion becomes necessary.
-- Stop if placeholder-run count/query semantics need to change.
-- Stop if generated placement behavior needs to change.
-- Stop if render/host changes become necessary.
+Next work must continue the delegated rip-out audit before replacement planning.
