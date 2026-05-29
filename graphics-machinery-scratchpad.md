@@ -2074,6 +2074,18 @@ Placeholder streaming scan research:
   all existing positive/negative placeholder tests still pass.
 - Stop conditions: stop if this requires retained publication state, render/host changes,
   public ABI changes, or changes placeholder-run semantics.
+- VT placeholder streaming scan completed in `howl-vt` commit `925528f vt: stream
+  placeholder graphics runs`.
+- Accepted behavior: `walkResolvedPlaceholderRuns` now streams each row left-to-right and
+  applies the same backfill rules without allocating a temporary row `ArrayList`. The
+  single resolver still feeds placeholder-run publication, generated placements, and
+  placeholder access refresh.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `640/640` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `zig build --summary
+  all`, root `git diff --check`, and `howl-vt git diff --check`.
+- Remaining proof gap: generated placement publication still recomputes runs for count and
+  indexed query. The next source-backed cleanup should either retain a publication snapshot
+  or consolidate count/query to bounded owner state.
 
 ## Completed Or Stale Graphics Backlog
 

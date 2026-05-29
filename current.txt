@@ -1,43 +1,21 @@
-# Current Slice: Graphics Placeholder Streaming Scan
+# Current Slice: None
 
-Owner: howl-vt.
+Owner: workspace root.
 
 Sprint scope: graphics.
 
-## Goal
+Status: `Graphics Placeholder Streaming Scan` completed and accepted.
 
-Remove query-time row allocation from VT placeholder-run resolution while preserving the
-current placeholder-run and generated-placement behavior.
+Accepted commits:
 
-## Required Work
+- `howl-vt` `925528f vt: stream placeholder graphics runs`
 
-- Edit only `howl-vt/src/kitty/graphics.zig` unless a stop condition is hit.
-- Rewrite `walkResolvedPlaceholderRuns` to stream placeholder cells left-to-right per row.
-- Preserve the current row-local backfill rules exactly:
-  - missing row, column, and high-byte values inherit only from a contiguous compatible
-    previous placeholder cell on the same row.
-  - otherwise missing values default to zero.
-- Keep public resolver signatures stable.
-- Keep render, host, and public ABI unchanged.
-- Do not add retained generated-placement storage in this slice.
+Verification passed:
 
-## Tests Required
-
-- Existing placeholder-run tests remain green.
-- Existing generated placement tests remain green.
-- Existing yazi-like, high-byte, underline placement id, scroll, stale publication, and
-  placeholder access tests remain green.
-
-## Stop Conditions
-
-- Stop if this requires retained publication state.
-- Stop if render or host changes become necessary.
-- Stop if public ABI changes become necessary.
-- Stop if placeholder-run semantics need to change.
-
-## Verification
-
-- `zig build test --summary all` in `howl-vt`.
+- `zig build test --summary all` in `howl-vt` (`640/640` tests).
 - `zig build test:regression:build --summary all` in `howl-vt`.
 - Root `zig build --summary all`.
-- Root and `howl-vt` `git diff --check`.
+- Root `git diff --check`.
+- `howl-vt git diff --check`.
+
+Next work must start with research and a freshly promoted single slice.
