@@ -1,113 +1,77 @@
-# Current Slice: Rename Host Terminal Render Frames To Surfaces
+# Current Slice: Delete Host Terminal ABI Wrapper Buckets
 
 Owner: workspace root.
 
 Purpose:
 
-- Make `howl-linux-host/src/terminal/render/` name what it owns: render surfaces, not
-  presentation frames.
-- Rename terminal render layout and readiness nouns from frame vocabulary to surface
-  vocabulary.
-- Keep app/window-level frame pacing and presentation frame names in `main.zig` intact
-  except references required by renamed terminal API.
-
-## Required Reading
-
-Read first:
-
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-
-Then read:
-
-- `AGENTS.md`
-- `loop.txt`
-- `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/terminal/render/abi.zig`
-- `howl-linux-host/src/terminal/render/frame_layout.zig`
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/vt/retained.zig`
-- `howl-linux-host/src/main.zig`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
-- `utils/dev_references/terminals/alacritty/alacritty/src/display/damage.rs`
+- Delete vague host wrapper buckets:
+  - `howl-linux-host/src/terminal/render/abi.zig`
+  - `howl-linux-host/src/terminal/vt/abi.zig`
+- Use the imported C ABI directly from `terminal/c.zig` at the true owner files.
+- Move hidden helper behavior to the smallest existing true owner instead of replacing
+  wrappers with new buckets.
+- No compatibility aliases, no shim files, no new `abi`, `api`, `wrapper`, `manager`, or
+  `types` owners.
 
 ## Source Changes
 
-In `howl-linux-host/src/terminal/render/retained.zig`:
+Delete:
 
-- Rename `FrameLayout` to `SurfaceLayout`.
-- Rename `FrameLayoutSync` to `SurfaceLayoutSync`.
-- Rename `State.frame_layout` to `State.surface_layout`.
-- Rename `frameLayoutSync` to `surfaceLayoutSync`.
-- Rename `commitFrameLayout` to `commitSurfaceLayout`.
-- Rename `syncFrameLayout` to `syncSurfaceLayout`.
-- Rename `frameLayoutChanged` to `surfaceLayoutChanged`.
-- Rename test helpers and test descriptions from frame layout to surface layout.
-- Rename `WorkState.wantsFrame()` to `needsRenderSurface()`.
+- `howl-linux-host/src/terminal/render/abi.zig`
+- `howl-linux-host/src/terminal/vt/abi.zig`
 
-In `howl-linux-host/src/terminal/render/abi.zig`:
+Render wrapper behavior:
 
-- Export `SurfaceLayout`, `SurfaceLayoutRequest`, and `SurfaceLayoutSync`.
-- Rename `initFrameLayout` to `initSurfaceLayout`.
-- Rename `deriveFrameLayout` to `deriveSurfaceLayout`.
-- Rename `commitFrameLayout` to `commitSurfaceLayout`.
-- Update `pixelToCol` and `pixelToRow` to read `term.render.surface_layout`.
+- Move render text-session initialization/config helpers from `render/abi.zig` into
+  `terminal/context.zig`, where terminal initialization already owns resolved fonts,
+  launch config, text session creation, PTY init, and VT init.
+- Move surface-layout derivation/commit logic from `render/abi.zig` into
+  `terminal/render/surface_layout.zig`, where host render surface geometry is owned.
+- Move `pixelToCol` and `pixelToRow` logic into `terminal/context.zig` or another exact
+  call-site owner, not a replacement wrapper.
+- Move font-size render call from `render/abi.zig` into `terminal/render/font_size.zig`.
+- Use `c.HowlRenderHostSurface`, `retained.SurfaceLayout`, and
+  `retained.SurfaceLayoutSync` directly instead of aliases from `render/abi.zig`.
 
-Rename file:
+VT wrapper behavior:
 
-- `howl-linux-host/src/terminal/render/frame_layout.zig`
-  to
+- Move VT init/deinit with default history capacity into `terminal/context.zig`, where VT
+  lifecycle is owned.
+- Move VT call status helpers needed by source publication into `terminal/vt/surface.zig`.
+- Move VT input type aliases/status handling into `terminal/vt/input.zig` or replace with
+  direct C ABI types.
+- Move VT feed status check in `terminal/pty/pump.zig` to direct comparison with
+  `c.HOWL_VT_CALL_OK`.
+- Keep existing runtime helpers in `terminal/vt/retained.zig`; do not route through a
+  wrapper.
+
+## Required Call-Site Updates
+
+Update imports and references in:
+
+- `howl-linux-host/src/terminal/context.zig`
 - `howl-linux-host/src/terminal/render/surface_layout.zig`
-
-Inside the renamed file:
-
-- Rename local functions from `FrameLayout` to `SurfaceLayout` vocabulary:
-  - `syncFrameLayout` -> `syncSurfaceLayout`
-  - `frameLayoutSnapshot` -> `surfaceLayoutSnapshot`
-  - `syncCurrentFrameLayout` -> `syncCurrentSurfaceLayout`
-  - `snapshotFrameLayoutLocked` -> `snapshotSurfaceLayoutLocked`
-- Keep `State` as the host-side geometry state owner for this slice.
-- Keep resize behavior unchanged.
-
-In `howl-linux-host/src/terminal/context.zig`:
-
-- Import `render/surface_layout.zig`.
-- Alias `SurfaceLayoutRequest`.
-- Field remains `geometry`, but its type comes from `surface_layout.State`.
-- Rename public methods:
-  - `syncFrameLayout` -> `syncSurfaceLayout`
-  - `frameLayoutSnapshot` -> `surfaceLayoutSnapshot`
-- Rename internal vars:
-  - `frame_request` -> `surface_request`
-  - `frame_layout` values -> `surface_layout`
-- Rename `TermInit.frame_layout` to `TermInit.surface_layout`.
-- Replace `workState().wantsFrame()` with `workState().needsRenderSurface()`.
-- Rename `TurnStep.no_frame` to `TurnStep.surface_idle`.
-- Update tests that mention terminal frame layout or `no_frame`.
-
-In `howl-linux-host/src/terminal/vt/retained.zig`:
-
-- Update `scrollStateLocked` to read `term.render.surface_layout.rows`.
-
-In `howl-linux-host/src/main.zig`:
-
-- Do not rename app/window-level frame pacing nouns.
-- Only update references to the terminal enum variant:
-  - `.no_frame` -> `.surface_idle`
-- Keep `RenderFrame`, `FramePacingState`, `PresentReason.terminal_frame`, and frame
-  pacing tests as app/window presentation vocabulary.
+- `howl-linux-host/src/terminal/render/font_size.zig`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-linux-host/src/terminal/vt/input.zig`
+- `howl-linux-host/src/terminal/pty/pump.zig`
 
 ## Invariants
 
-- Terminal render builds render surfaces, not presentation frames.
-- App/window owns presentation cadence and presentation frames.
-- Surface layout fields and semantics are unchanged.
-- Grid resize side effects and ordering are unchanged.
-- `needsRenderSurface()` preserves old `wantsFrame()` boolean behavior.
-- No compatibility aliases.
-- No shims.
+- Host still uses the beautiful C ABI from `terminal/c.zig` directly.
+- Terminal context owns terminal lifecycle: render text session, VT handle, PTY handle,
+  startup and deinit ordering.
+- `render/surface_layout.zig` owns host render surface layout derivation and resize
+  side effects.
+- `render/font_size.zig` owns font-size mutation calls.
+- `vt/input.zig` owns host-input to VT-input translation and encoding.
+- `vt/surface.zig` owns VT visible source publication and its status assertions.
+- Behavior is unchanged.
+- No old wrapper imports remain.
+- No shim files remain at deleted paths.
 - No `types.zig`.
-- No new manager/controller/runtime owner.
+- No new `api`, `abi`, `wrapper`, `manager`, `controller`, `runtime`, `flow`, or `queue`
+  owner.
 
 ## Verification
 
@@ -125,31 +89,27 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 ## Grep Gates
 
-No matches under `howl-linux-host/src/terminal/render`,
-`howl-linux-host/src/terminal/context.zig`, or
-`howl-linux-host/src/terminal/vt/retained.zig`:
+No files:
 
-- `FrameLayout`
-- `FrameLayoutRequest`
-- `FrameLayoutSync`
-- `frame_layout`
-- `frameLayout`
-- `wantsFrame`
-- `no_frame`
+- `howl-linux-host/src/terminal/render/abi.zig`
+- `howl-linux-host/src/terminal/vt/abi.zig`
 
-Expected matches may remain in `howl-linux-host/src/main.zig`:
+No matches under `howl-linux-host/src`:
 
-- `FramePacingState`
-- `RenderFrame`
-- `terminal_frame`
-- `frame_pacing`
+- `render/abi.zig`
+- `vt/abi.zig`
+- `render_api`
+- `vt_api`
+- `vt_abi`
+- `const api = @import("abi.zig")`
 
-Expected new matches:
+No new files matching:
 
-- `SurfaceLayout`
-- `SurfaceLayoutRequest`
-- `SurfaceLayoutSync`
-- `surface_layout`
-- `surfaceLayout`
-- `needsRenderSurface`
-- `surface_idle`
+- `**/types.zig`
+- `**/api.zig`
+- `**/abi.zig`
+
+Expected direct C ABI usage remains through:
+
+- `const c = @import("../c.zig").c`
+- `const terminal_c = @import("c.zig").c`
