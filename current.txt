@@ -1,67 +1,117 @@
-# Current Slice: Delete Dead Render Cell ABI Structs
+# Current Slice: Rename Host Terminal Render Frames To Surfaces
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete stale render-cell ABI structs that are unused at the public render boundary.
-- Preserve VT-owned source publication through `HowlVtSurfaceCell` and `HowlVtCursor`.
-- Preserve used layout/draw ABI types such as `HowlRenderCellSize` and
-  `HowlRenderColorDraw`.
-- No aliases, no compatibility shims, no old names.
+- Make `howl-linux-host/src/terminal/render/` name what it owns: render surfaces, not
+  presentation frames.
+- Rename terminal render layout and readiness nouns from frame vocabulary to surface
+  vocabulary.
+- Keep app/window-level frame pacing and presentation frame names in `main.zig` intact
+  except references required by renamed terminal API.
 
-## ABI Changes
+## Required Reading
 
-In `howl-render/include/howl_render.h`, delete these typedefs entirely:
+Read first:
 
-- `HowlRenderCellFlags`
-- `HowlRenderColor`
-- `HowlRenderCellAttrs`
-- `HowlRenderCell`
-- `HowlRenderCursor`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 
-Do not add replacement render-cell typedefs.
+Then read:
 
-Do not touch:
-
-- `HowlRenderCellSize`
-- `HowlRenderColorDraw`
-- `HowlRenderDecorationDraw`
-- `HowlRenderColorDrawSpan`
-- `HowlRenderDecorationDrawSpan`
-- `HowlRenderVtCellWriteSpan`
-- `HowlRenderVtSurfaceCommit`
+- `AGENTS.md`
+- `loop.txt`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/render/abi.zig`
+- `howl-linux-host/src/terminal/render/frame_layout.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/vt/retained.zig`
+- `howl-linux-host/src/main.zig`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/damage.rs`
 
 ## Source Changes
 
-No Zig source changes are expected unless compile errors prove an undiscovered use.
+In `howl-linux-host/src/terminal/render/retained.zig`:
 
-The active source boundary must remain:
+- Rename `FrameLayout` to `SurfaceLayout`.
+- Rename `FrameLayoutSync` to `SurfaceLayoutSync`.
+- Rename `State.frame_layout` to `State.surface_layout`.
+- Rename `frameLayoutSync` to `surfaceLayoutSync`.
+- Rename `commitFrameLayout` to `commitSurfaceLayout`.
+- Rename `syncFrameLayout` to `syncSurfaceLayout`.
+- Rename `frameLayoutChanged` to `surfaceLayoutChanged`.
+- Rename test helpers and test descriptions from frame layout to surface layout.
+- Rename `WorkState.wantsFrame()` to `needsRenderSurface()`.
 
-- `HowlRenderVtCellWriteSpan.ptr` is `HowlVtSurfaceCell *`.
-- `HowlRenderVtSurfaceCommit.cursor` is `HowlVtCursor`.
-- `howl-render/src/vt_surface.zig` asserts layout against `HowlVtSurfaceCell`,
-  `HowlVtColor`, `HowlVtSurfaceCellFlags`, and `HowlVtSurfaceCellAttrs`.
+In `howl-linux-host/src/terminal/render/abi.zig`:
+
+- Export `SurfaceLayout`, `SurfaceLayoutRequest`, and `SurfaceLayoutSync`.
+- Rename `initFrameLayout` to `initSurfaceLayout`.
+- Rename `deriveFrameLayout` to `deriveSurfaceLayout`.
+- Rename `commitFrameLayout` to `commitSurfaceLayout`.
+- Update `pixelToCol` and `pixelToRow` to read `term.render.surface_layout`.
+
+Rename file:
+
+- `howl-linux-host/src/terminal/render/frame_layout.zig`
+  to
+- `howl-linux-host/src/terminal/render/surface_layout.zig`
+
+Inside the renamed file:
+
+- Rename local functions from `FrameLayout` to `SurfaceLayout` vocabulary:
+  - `syncFrameLayout` -> `syncSurfaceLayout`
+  - `frameLayoutSnapshot` -> `surfaceLayoutSnapshot`
+  - `syncCurrentFrameLayout` -> `syncCurrentSurfaceLayout`
+  - `snapshotFrameLayoutLocked` -> `snapshotSurfaceLayoutLocked`
+- Keep `State` as the host-side geometry state owner for this slice.
+- Keep resize behavior unchanged.
+
+In `howl-linux-host/src/terminal/context.zig`:
+
+- Import `render/surface_layout.zig`.
+- Alias `SurfaceLayoutRequest`.
+- Field remains `geometry`, but its type comes from `surface_layout.State`.
+- Rename public methods:
+  - `syncFrameLayout` -> `syncSurfaceLayout`
+  - `frameLayoutSnapshot` -> `surfaceLayoutSnapshot`
+- Rename internal vars:
+  - `frame_request` -> `surface_request`
+  - `frame_layout` values -> `surface_layout`
+- Rename `TermInit.frame_layout` to `TermInit.surface_layout`.
+- Replace `workState().wantsFrame()` with `workState().needsRenderSurface()`.
+- Rename `TurnStep.no_frame` to `TurnStep.surface_idle`.
+- Update tests that mention terminal frame layout or `no_frame`.
+
+In `howl-linux-host/src/terminal/vt/retained.zig`:
+
+- Update `scrollStateLocked` to read `term.render.surface_layout.rows`.
+
+In `howl-linux-host/src/main.zig`:
+
+- Do not rename app/window-level frame pacing nouns.
+- Only update references to the terminal enum variant:
+  - `.no_frame` -> `.surface_idle`
+- Keep `RenderFrame`, `FramePacingState`, `PresentReason.terminal_frame`, and frame
+  pacing tests as app/window presentation vocabulary.
 
 ## Invariants
 
-- VT owns terminal cell and cursor ABI truth.
-- Render does not expose duplicate cell/cursor ABI structs.
-- Host VT publish path continues to copy `HowlVtSurfaceCell` into render-reserved VT slots.
-- No aliases.
+- Terminal render builds render surfaces, not presentation frames.
+- App/window owns presentation cadence and presentation frames.
+- Surface layout fields and semantics are unchanged.
+- Grid resize side effects and ordering are unchanged.
+- `needsRenderSurface()` preserves old `wantsFrame()` boolean behavior.
+- No compatibility aliases.
 - No shims.
 - No `types.zig`.
-- No `manager`, `controller`, `runtime`, `flow`, `pipeline`, or `queue` owner.
+- No new manager/controller/runtime owner.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
-
-- `zig build check`
-- `zig build test`
-- `git diff --check`
-
-From `/home/home/personal/projects/howl/howl-render`:
 
 - `zig build check`
 - `zig build test`
@@ -75,18 +125,31 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 ## Grep Gates
 
-No matches under `howl-render/include`, `howl-render/src`, or `howl-linux-host/src`:
+No matches under `howl-linux-host/src/terminal/render`,
+`howl-linux-host/src/terminal/context.zig`, or
+`howl-linux-host/src/terminal/vt/retained.zig`:
 
-- `HowlRenderCellFlags`
-- `HowlRenderColor`
-- `HowlRenderCellAttrs`
-- `HowlRenderCell\b`
-- `HowlRenderCursor`
+- `FrameLayout`
+- `FrameLayoutRequest`
+- `FrameLayoutSync`
+- `frame_layout`
+- `frameLayout`
+- `wantsFrame`
+- `no_frame`
 
-Expected matches remain:
+Expected matches may remain in `howl-linux-host/src/main.zig`:
 
-- `HowlVtSurfaceCell`
-- `HowlVtCursor`
-- `HowlRenderVtCellWriteSpan`
-- `HowlRenderCellSize`
-- `HowlRenderColorDraw`
+- `FramePacingState`
+- `RenderFrame`
+- `terminal_frame`
+- `frame_pacing`
+
+Expected new matches:
+
+- `SurfaceLayout`
+- `SurfaceLayoutRequest`
+- `SurfaceLayoutSync`
+- `surface_layout`
+- `surfaceLayout`
+- `needsRenderSurface`
+- `surface_idle`
