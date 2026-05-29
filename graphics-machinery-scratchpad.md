@@ -2377,6 +2377,20 @@ Placeholder parent-anchor scan deletion decision:
   virtual parents stop resolving.
 - Stop conditions: replacement materialized-ref design or render/host replacement
   architecture.
+- Placeholder parent-anchor scan deletion completed in `howl-vt` commit `e6a89f3 vt:
+  delete placeholder parent scan`.
+- Accepted behavior: live placeholder parent-anchor scanning, scan-only helpers/constants,
+  and tests asserting virtual-parent resolution from live placeholder cells were deleted.
+  `resolvePlacementAnchor` now returns null for `parent_is_virtual` instead of scanning
+  screen/history placeholder cells. No replacement refs, render changes, or host changes
+  were added.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `606/606` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `git diff --check`,
+  and `howl-vt git diff --check`.
+- Known broken behavior: relative placements whose parent is a virtual placement no longer
+  resolve through live Unicode placeholder cells.
+- Remaining Howl-only graphics machinery to delete before replacement planning: stale
+  generated-placeholder placement flag/destination semantics.
 
 ## Completed Or Stale Graphics Backlog
 
