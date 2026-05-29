@@ -1,65 +1,30 @@
-# Current Slice: Placeholder Run ABI Deletion
+# Current Slice: None
 
-Owner: howl-vt.
+Owner: workspace root.
 
 Sprint scope: graphics deletion.
 
-## Goal
+Status: `Placeholder Run ABI Deletion` completed and accepted.
 
-Rip out Howl-only placeholder-run publication/query ABI and resolver surface before
-replacement planning.
+Accepted commits:
 
-## Delegation Requirement
+- `howl-vt` `07d9a4a vt: delete placeholder run ABI`
 
-- Main agent must not implement this slice directly.
-- Seed a worker with this file, exact source paths, and the destructive scope below.
-- Seed a reviewer after worker output. Reviewer must judge whether placeholder-run ABI and
-  query machinery were actually removed, not whether previous placeholder tests survive.
+Verification passed:
 
-## Required Work
+- `zig build test --summary all` in `howl-vt` (`611/611` tests).
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- Root `git diff --check`.
+- `howl-vt git diff --check`.
 
-- Delete public placeholder-run count/query from VT C ABI if required:
-  `placeholder_run_count`, `HowlVtGraphicsPlaceholderRun`,
-  `HowlVtGraphicsPlaceholderRunResult`, and
-  `howl_vt_terminal_query_graphics_placeholder_run`.
-- Delete Zig `Terminal.graphicsPlaceholderRun` and graphics-state placeholder-run indexed
-  query/count APIs as needed.
-- Delete placeholder-run tests that only prove the removed ABI.
-- Keep parser placeholder cell storage only if still required by other current behavior;
-  otherwise delete dead resolver pieces too.
-- Do not add replacement generated refs/materialization.
-- Do not touch render or host unless compile break requires minimal ABI follow-up.
+Known broken behavior:
 
-## Candidate Paths
+- Public VT ABI consumers of placeholder-run count/query now break by design.
+- Placeholder-run publication/query is gone.
+- Unicode placeholder generated renderable placement behavior remains broken from the prior
+  destructive deletion.
 
-- `howl-vt/include/howl_vt.h`
-- `howl-vt/src/ffi.zig`
-- `howl-vt/src/libhowl_vt.zig`
-- `howl-vt/src/terminal.zig`
-- `howl-vt/src/kitty/graphics.zig`
-- `howl-vt/src/test/terminal_graphics.zig`
+Remaining Howl-only graphics machinery to delete before replacement planning:
 
-## Source-Order Reason
-
-- Kitty does not expose placeholder runs as public ABI.
-- Ghostty does not expose a duplicate public placeholder-run query ABI.
-- Howl placeholder-run publication exists only because the deleted generated-placement
-  bridge needed a query/proof seam.
-
-## Expected Broken State
-
-- Public VT ABI breaks for consumers of placeholder-run count/query.
-- Placeholder-run tests should disappear or fail until reference-backed replacement work
-  defines a real ABI consequence.
-
-## Tests Required
-
-- Run `zig build test --summary all` in `howl-vt` if feasible.
-- Run `zig build test:regression:build --summary all` in `howl-vt` if feasible.
-- Run root and `howl-vt` `git diff --check`.
-- Failing builds/tests are acceptable only if reported precisely.
-
-## Stop Conditions
-
-- Stop if render/host replacement architecture becomes necessary.
-- Stop if the worker starts designing replacement generated refs/materialization.
+- Live placeholder parent-anchor scan.
+- Stale generated-placeholder placement flag/destination semantics.

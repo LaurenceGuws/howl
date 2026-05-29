@@ -2342,6 +2342,23 @@ Placeholder run ABI deletion decision:
   Builds/tests may fail and must be reported precisely.
 - Stop conditions: render/host replacement architecture or replacement generated-ref
   design.
+- Placeholder run ABI deletion completed in `howl-vt` commit `07d9a4a vt: delete
+  placeholder run ABI`.
+- Accepted behavior: `placeholder_run_count`, `HowlVtGraphicsPlaceholderRun`,
+  `HowlVtGraphicsPlaceholderRunResult`, `howl_vt_terminal_query_graphics_placeholder_run`,
+  Zig `Terminal.graphicsPlaceholderRun`, graphics-state placeholder-run resolver/count/query
+  machinery, FFI export/conversion, and placeholder-run-only tests were deleted. Placeholder
+  cell parsing helpers remain only for live virtual parent-anchor scan.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `611/611` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `git diff --check`,
+  and `howl-vt git diff --check`.
+- Known broken behavior: public VT ABI consumers of placeholder-run count/query now break
+  by design; placeholder-run publication/query is unavailable; Unicode placeholder
+  generated renderable placement behavior remains broken from the prior destructive
+  deletion.
+- Remaining Howl-only graphics machinery to delete before replacement planning: live
+  placeholder parent-anchor scan and stale generated-placeholder placement flag/destination
+  semantics.
 
 ## Completed Or Stale Graphics Backlog
 
