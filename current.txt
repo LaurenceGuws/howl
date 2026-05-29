@@ -1,4 +1,4 @@
-# Current Slice: Legacy Graphics ABI Deletion Accepted
+# Current Slice: Current Frame Publication Override Deletion Accepted
 
 Owner: workspace root.
 
@@ -6,45 +6,37 @@ Sprint scope: graphics deletion.
 
 Status: accepted by reviewer, verified locally, and committed.
 
-Accepted commits:
+Accepted commit:
 
-- `howl-vt` `4374df8 vt: delete legacy graphics ABI`
-- `howl-render` `96b4f29 render: delete legacy graphics ABI`
-- `howl-linux-host` `61351e4 host: use decoded graphics publish ABI`
+- `howl-vt` `b3f199a vt: delete frame publication override`
 
 ## Accepted Deletion
 
-- Deleted VT legacy graphics image/payload public ABI:
-  `HowlVtGraphicsImage`, `HowlVtGraphicsImageResult`,
-  `howl_vt_terminal_query_graphics_image`, and
-  `howl_vt_terminal_copy_graphics_payload`.
-- Deleted stale internal `Terminal.graphicsImage()` query path.
-- Deleted retained graphics transport/base64 image and frame storage; VT graphics image/frame
-  truth is decoded payload state only.
-- Deleted render legacy publish ABI:
-  `HowlRenderPublishSlotCommit`, `howl_render_surface_text_publish_vt_source`, and
-  `howl_render_surface_text_commit_publish_slot`.
-- Deleted render `.legacy_protocol`, `GraphicsPayloadKind`, internal legacy image mirror, and
-  legacy payload slicing path.
-- Updated host publishing to acquire decoded VT graphics and commit decoded render slots.
-- Restored targeted VT graphics tests after review rejected broad test deletion.
+- Deleted Howl-only current-frame publication override state:
+  `current_override_format`, `current_override_width`, `current_override_height`, and
+  `current_override_decoded_payload`.
+- Deleted `refreshCurrentFramePublication` and every call that existed only to populate that
+  duplicate publication payload.
+- `imageAt()` and `decodedImageAt()` now publish only the root image decoded payload state.
+- Decoded quota/free accounting no longer counts a second current-frame publication copy.
+- Tests now assert the expected broken state: selecting frame `2` updates current-frame
+  metadata but leaves decoded image publication on root bytes.
 
 ## Verification Passed
 
 - `zig build test --summary all` in `howl-vt` (`538/538` tests).
-- `zig build test --summary all` in `howl-render` (`722/725` tests passed, `3` skipped).
-- `zig build --summary all` in `howl-linux-host`.
-- Root `zig build --summary all`.
-- Root, `howl-vt`, `howl-render`, and `howl-linux-host` `git diff --check`.
+- `zig build test:regression:build --summary all` in `howl-vt`.
+- `howl-vt` `git diff --check`.
 
 ## Known Broken State
 
-- Public consumers of deleted legacy VT/render graphics ABI break by design.
-- Transport/base64 graphics payload bytes are no longer retained as image/frame publication
-  truth.
+- Selecting or advancing animation frames no longer changes decoded image publication bytes.
+- Current-frame animation display remains broken until a source-backed frame/render model is
+  designed later.
 - Unicode placeholder generated renderable placement behavior remains broken until a
   separately promoted source-backed generated-ref replacement slice.
 
 ## Next Gate
 
-No replacement slice is active. Promote the next source-backed slice before product edits.
+No replacement slice is active. Continue deleting or proving remaining Howl-only graphics
+ideas before replacement work.

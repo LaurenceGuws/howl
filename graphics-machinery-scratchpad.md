@@ -2460,6 +2460,27 @@ Legacy graphics ABI deletion decision:
   placeholder generated renderable placement remains broken until a separate source-backed
   generated-ref replacement slice.
 
+Current frame publication override deletion decision:
+
+- Howl-only behavior: after legacy transport/base64 deletion, VT still kept a second decoded
+  publication payload on `Image.current_override_*` and made `imageAt()` publish that copy
+  when `current_frame_number != 1`.
+- Source-order reason: Kitty keeps current-frame identity (`current_frame_index`) and updates
+  render/cache state through `update_current_frame`; it does not store a duplicate image
+  publication payload on the image record.
+- Promoted destructive slice: delete current-frame publication override fields,
+  `refreshCurrentFramePublication`, override quota/free accounting, and tests proving the
+  duplicate publication bridge. Do not add a replacement render/cache/current-frame model.
+- Accepted behavior: `imageAt()` and `decodedImageAt()` publish only root decoded image state.
+  Selecting or advancing frames can still update frame metadata/timing, but no longer changes
+  decoded image publication bytes.
+- Accepted commit: `howl-vt` `b3f199a vt: delete frame publication override`.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `538/538` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, and `howl-vt git diff
+  --check`.
+- Known broken behavior: current-frame animation display remains broken until a source-backed
+  frame/render model is designed later.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
