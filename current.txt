@@ -1,40 +1,216 @@
-# Current Slice: Render Ownership Restart Research
+# Current Slice: Delete Render `surface/flow.zig`
 
 Owner: workspace root.
 
 Purpose:
 
-- Restart the render cleanup from source-backed ownership facts.
-- Produce one worker-ready implementation slice to delete
-  `howl-render/src/surface/flow.zig` without changing the public C ABI.
-- Separate VT/source input ownership from prepared/submitted output ownership.
+- Delete `howl-render/src/surface/flow.zig`.
+- Replace the false `Flow` owner with explicit owners for source input,
+  prepare-request lifecycle, submitted output, and geometry.
+- Keep `howl-render/include/howl_render.h` byte-for-byte unchanged.
 
-## Status
+## Source Files
 
-Research only. Do not edit product code for this slice.
+- `howl-render/src/surface/flow.zig`
+- `howl-render/src/surface/text.zig`
+- `howl-render/src/surface/input.zig`
+- `howl-render/src/surface/prepared_owner.zig`
+- `howl-render/src/ffi.zig`
 
-## Required Source
+## Files To Add
 
-- `render-ownership-restart-scratchpad.md`
-- `render-ownership-research-current.txt`
+- `howl-render/src/source/vt.zig`
+- `howl-render/src/source/damage.zig`
+- `howl-render/src/source/slot.zig`
+- `howl-render/src/source/prepare_request.zig`
+- `howl-render/src/render/geometry.zig`
+- `howl-render/src/session/submitted.zig`
 
-## Required Outcome
+## File To Delete
 
-Produce exact implementation planning for the first code slice:
+- `howl-render/src/surface/flow.zig`
 
-- files to add/move/delete/update
-- symbols moved out of `surface/flow.zig`
-- destination owner for every moved symbol
-- `SurfaceTextOwner` replacement fields for `flow: flow.Flow`
-- import changes
-- tests and grep gates
-- risks/blockers
+Do not leave a shim or compatibility import.
 
-## Hard Invariants
+## Symbol Movement
 
-- No C ABI change in the first implementation slice unless research proves it is
-  unavoidable.
+Move from `surface/flow.zig` to `source/vt.zig`:
+
+- `VtSnapshot`
+- `PublicationSource`
+- `ReservedSourceMeta`
+- `VtPublishResult`
+- `validatePublicationSourceBoundary`
+
+Move from `surface/flow.zig` to `source/damage.zig`:
+
+- `validateDirtySource`
+- `canonicalizeDirtyMetadata`
+- `cursorPresentationChanged`
+- `colorPresentationChanged`
+- `setSourceCursorBlinkVisible`
+- `samePublicationSource`
+- `classifyDirty`
+- `sameSnapshotToken` if shared
+- `slotCellCountChecked` if needed
+
+Move from `surface/flow.zig` to `source/slot.zig`:
+
+- `PublicationSlot`
+- `PublicationState.RetainedSlot` as `RetainedSlot`
+- `slotCellCount`
+- retained slot methods
+- reserved source slot methods
+
+Exported owner name: `SourceSlot`.
+
+Move from `surface/flow.zig` to `source/prepare_request.zig`:
+
+- `PrepareConsume`
+- `Publication`
+- `ActivePrepare`
+- pending/active/blink lifecycle fields and methods
+- source classification bridge methods
+
+Exported owner name: `PrepareRequests`.
+
+Move from `surface/flow.zig` to `session/submitted.zig`:
+
+- `ThreadMutex`
+- `lockMutex`
+- `SubmitDecision`
+- `TerminalSurface` renamed to `Submitted`
+- `SubmitMailbox`
+- `submitted_frame`
+- submitted/prepared validation methods
+- `prepareTokenForRetainedState`
+- `forceFull`
+- `fullPrepareReason`
+
+Move from `surface/flow.zig` to `render/geometry.zig`:
+
+- geometry fields and `syncGeometry` as a `GeometryOwner.sync()` method
+- `prepareLayout`
+
+Keep `source_dirty_epoch` in `SurfaceTextOwner`, not geometry.
+
+## `SurfaceTextOwner` Replacement
+
+Replace `flow: flow.Flow` with explicit fields:
+
+```zig
+geometry: render_geometry.GeometryOwner,
+source_slot: source_slot.SourceSlot,
+prepare_requests: source_prepare.PrepareRequests,
+submitted: session_submitted.Submitted,
+source_dirty_epoch: u64 = 0,
+cursor_blink_visible: bool = true,
+```
+
+Add composition methods on `SurfaceTextOwner`:
+
+- `nextSourceDirtyEpoch()`
+- `submittedToken()`
+- `syncGeometry()`
+- `setCursorBlinkVisible()`
+- `reservePublishSlot()`
+- `commitPublishSlot()`
+- `cancelPublishSlot()`
+- `rejectPublishSlot()`
+- `prepare()`
+- `publishPrepared()`
+- `submit()`
+- `acceptSubmitted()`
+- `pendingState()`
+
+These methods replace `owner.flow.*` in `ffi.zig`. Do not introduce a new
+umbrella owner.
+
+## Required Import Changes
+
+In `ffi.zig`:
+
+- Remove `const flow = @import("surface/flow.zig");`.
+- Replace `owner.flow.*` with `owner.*` composition methods.
+- Replace direct `.publication_state` access with an explicit `SourceSlot`
+  accessor.
+
+In `surface/text.zig`:
+
+- Remove `const flow = @import("flow.zig");`.
+- Import new owners:
+  - `../render/geometry.zig`
+  - `../source/vt.zig`
+  - `../source/slot.zig`
+  - `../source/prepare_request.zig`
+  - `../session/submitted.zig`
+- `PrepareInput.state` becomes `source_vt.PublicationSource`.
+
+In `surface/input.zig`:
+
+- Remove `const flow = @import("flow.zig");`.
+- Use `source_vt.PublicationSource` for source input parameters.
+
+## Tests
+
+- Move tests with their owners as recorded in
+  `render-ownership-restart-scratchpad.md`.
+- Rename moved tests away from `flow` vocabulary.
+- Add tests:
+  - `surface text owner keeps source and submitted owners separate`
+  - `submitted owner has no source publication state`
+  - `prepare requests do not own submitted mailbox`
+  - `source slot commit returns source without prepare or submit state`
+
+## Invariants
+
+- No public C ABI changes.
 - No compatibility shims.
-- No new umbrella owner.
-- `surface/flow.zig` must be deleted by the first implementation slice.
-- Input/source and output/prepared/submitted owners must be separate.
+- No `Flow` owner or replacement umbrella owner.
+- Source input and submitted/prepared output owners are separate files and
+  separate `SurfaceTextOwner` fields.
+- Render still does not own backend presentation or host cadence.
+
+## Verification
+
+From `/home/home/personal/projects/howl`:
+
+- `zig build check`
+- `zig build test`
+
+From `/home/home/personal/projects/howl/howl-render` if needed:
+
+- `zig build check`
+- `zig build test`
+
+## Grep Gates
+
+No matches under `howl-render/src`:
+
+- `flow.zig`
+- `@import("flow.zig")`
+- `surface/flow.zig`
+- `\bFlow\b`
+- `flow:`
+- `owner.flow`
+- `.publication_state`
+
+No matches under `howl-render/src/source` or `howl-render/src/render`:
+
+- `SubmitMailbox`
+- `submitted_frame`
+- `SubmitDecision`
+
+No matches under `howl-render/src/source`:
+
+- `RenderSurfaceFeedback`
+
+No new owner names under `howl-render/src/source`, `howl-render/src/render`,
+`howl-render/src/session`, or `howl-render/src/prepared`:
+
+- `manager`
+- `controller`
+- `runtime`
+- `screen`
+- `pipeline`
+- `queue`

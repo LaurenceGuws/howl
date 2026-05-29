@@ -228,6 +228,341 @@ Likely first implementation slice, pending research validation:
 
 This candidate is not worker-ready until exact symbol movement is recorded.
 
+## Accepted Research: First Implementation Slice
+
+Status: worker-ready.
+
+Goal:
+
+- Delete `howl-render/src/surface/flow.zig` without changing
+  `howl-render/include/howl_render.h`.
+- Replace `SurfaceTextOwner.flow` with explicit owners:
+  - source slot storage
+  - source prepare-request lifecycle
+  - submitted/prepared-output mailbox
+  - render geometry epoch/layout
+
+### Files To Add
+
+- `howl-render/src/source/vt.zig`
+- `howl-render/src/source/damage.zig`
+- `howl-render/src/source/slot.zig`
+- `howl-render/src/source/prepare_request.zig`
+- `howl-render/src/render/geometry.zig`
+- `howl-render/src/session/submitted.zig`
+
+### File To Delete
+
+- `howl-render/src/surface/flow.zig`
+
+### First-Slice File To Keep Temporarily
+
+- `howl-render/src/surface/types.zig`
+
+Reason: it is still a bad mixed owner, but deleting `flow.zig` is already a large
+owner split. The next slice must delete or decompose `surface/types.zig`.
+
+### Symbol Movement
+
+Move from `surface/flow.zig` to `source/vt.zig`:
+
+- `VtSnapshot`
+- `PublicationSource`
+- `ReservedSourceMeta`
+- `VtPublishResult`
+- `validatePublicationSourceBoundary`
+- test helpers `testSourceFromSnapshot` and `ownedTestSource` only if needed by
+  moved tests
+
+Move or fold `surface/publication_source.zig` into `source/vt.zig` if practical:
+
+- `SourceRgb`
+- `SourceColor`
+- `SourceColors`
+- `SourceCellFlags`
+- `SourceCellAttrs`
+- `SourceCell`
+- `SourceSelectionPoint`
+- `SourceSelection`
+
+If the worker keeps `surface/publication_source.zig` temporarily, it must remain
+a narrow VT source shape and must not become a compatibility shim for `flow`.
+
+Move from `surface/flow.zig` to `source/damage.zig`:
+
+- `validateDirtySource`
+- `canonicalizeDirtyMetadata`
+- `cursorPresentationChanged`
+- `colorPresentationChanged`
+- `setSourceCursorBlinkVisible`
+- `samePublicationSource`
+- `classifyDirty`
+- `sameSnapshotToken` if shared by source/prepare/submitted tests
+- `slotCellCountChecked` only if boundary validation needs it
+
+Move from `surface/flow.zig` to `source/slot.zig`:
+
+- `PublicationSlot`
+- `PublicationState.RetainedSlot` renamed to `RetainedSlot`
+- `slotCellCount`
+- `RetainedSlot.deinit`
+- `RetainedSlot.ensureCapacity`
+- `RetainedSlot.canHold`
+- `RetainedSlot.publicationSlot`
+- `syncReservedSlotCapacity`
+- `reserveSourceSlot`
+- `cancelReservedSource`
+- `commitReservedSource`
+- `retainedSource`
+- `retainedSlotInUse`
+- `refreshRetainedSlotViews`
+- `refreshRetainedSource`
+
+Exported owner name: `SourceSlot`, not `PublicationState`.
+
+Move from `surface/flow.zig` to `source/prepare_request.zig`:
+
+- `PrepareConsume`
+- `Publication`
+- `ActivePrepare`
+- pending/active/blink lifecycle fields formerly in `PublicationState`
+- `acceptSource`
+- `takePrepareRequest`
+- `consumePrepare`
+- `latestToken`
+- `requestFullPrepare`
+- `retryTakenPrepare`
+- `setCursorBlinkVisible`
+- `requestBlinkRefresh`
+- `retireAtOrBefore`
+- `retirePendingAtOrBefore`
+- `sourcePending`
+- `preparePending`
+- `replacePending`
+- `dropActive`
+- `activatePending`
+- `classify`
+- `priorSource`
+
+Exported owner name: `PrepareRequests`.
+
+Move from `surface/flow.zig` to `session/submitted.zig`:
+
+- `ThreadMutex`
+- `lockMutex`
+- `SubmitDecision`
+- `TerminalSurface` renamed to `Submitted`
+- `SubmitMailbox`
+- `submitted_frame`
+- `publishPrepared`
+- `takeValidatedSubmitWithLatest`
+- `validatePrepared`
+- `acceptSubmitted`
+- `pendingState`
+- `prepareTokenForRetainedState`
+- `forceFull`
+- `isStalePrepared`
+- `fullPrepareReason`
+
+Move from `surface/flow.zig` to `render/geometry.zig`:
+
+- `Flow.render_px`
+- `Flow.grid_px`
+- `Flow.cell_px`
+- `Flow.geometry_epoch`
+- `Flow.syncGeometry` renamed to `sync`
+- `Flow.prepareLayout` renamed to `prepareLayout`
+
+Do not move `source_dirty_epoch` to geometry. Keep it in `SurfaceTextOwner` as
+source input sequencing.
+
+### `SurfaceTextOwner` Replacement Fields
+
+Replace:
+
+```zig
+flow: flow.Flow,
+```
+
+With:
+
+```zig
+geometry: render_geometry.GeometryOwner,
+source_slot: source_slot.SourceSlot,
+prepare_requests: source_prepare.PrepareRequests,
+submitted: session_submitted.Submitted,
+source_dirty_epoch: u64 = 0,
+cursor_blink_visible: bool = true,
+```
+
+Required imports in `surface/text.zig`:
+
+```zig
+const render_geometry = @import("../render/geometry.zig");
+const source_vt = @import("../source/vt.zig");
+const source_slot = @import("../source/slot.zig");
+const source_prepare = @import("../source/prepare_request.zig");
+const session_submitted = @import("../session/submitted.zig");
+```
+
+Required session-owner methods:
+
+- `nextSourceDirtyEpoch()`
+- `submittedToken()`
+- `syncGeometry()`
+- `setCursorBlinkVisible()`
+- `reservePublishSlot()`
+- `commitPublishSlot()`
+- `cancelPublishSlot()`
+- `rejectPublishSlot()`
+- `prepare()`
+- `publishPrepared()`
+- `submit()`
+- `acceptSubmitted()`
+- `pendingState()`
+
+These methods are explicit composition points. Do not replace `flow.Flow` with a
+new umbrella owner.
+
+### Required Call-Site Changes
+
+In `ffi.zig`:
+
+- Remove `const flow = @import("surface/flow.zig");`.
+- Replace every `owner.flow.*` call with the matching `owner.*` composition
+  method.
+- Replace direct `owner.flow.publication_state.reserved` access with an explicit
+  `SourceSlot` accessor.
+- Replace helper types:
+  - `flow.VtPublishResult` -> `source_vt.VtPublishResult`
+  - `flow.PublicationSlot` -> `source_slot.PublicationSlot`
+  - `flow.PendingState` -> session/source pending DTO selected by worker
+
+In `surface/text.zig`:
+
+- Remove `const flow = @import("flow.zig");`.
+- `PrepareInput.state` becomes `source_vt.PublicationSource`.
+- `prepareHandle()` consumes from `prepare_requests` and `geometry`, not `flow`.
+- Tests initialize explicit owners, preferably through `SurfaceTextOwner.create`.
+
+In `surface/input.zig`:
+
+- Remove `const flow = @import("flow.zig");`.
+- Function parameters use `source_vt.PublicationSource`.
+- Source cell/color symbols come from `source_vt` if folded, otherwise from the
+  temporary narrow publication-source file.
+
+In `surface/prepared_owner.zig`:
+
+- No behavior change expected if `SurfaceTextOwner` retained-pixel and session
+  methods keep the same names.
+
+### Tests To Move
+
+Move submitted-output tests to `session/submitted.zig`:
+
+- `surface validates submit candidates before GPU mutation`
+- `surface keeps submitted identity as retained base only`
+- `surface reports stale submit when newer snapshot already won`
+
+Move prepare lifecycle tests to `source/prepare_request.zig`:
+
+- `flow keeps blink refresh out of source publication queue`
+- `flow redraws blinking cursor phase without a fresh vt source`
+- `new vt source supersedes pending blink refresh`
+- `failed taken prepare is retryable without blink refresh`
+- `full prepare after submitted frame carries no retained base`
+- `flow coalesces snapshots into latest prepare request`
+- `flow turns partial snapshot full without retained base`
+- `flow keeps latest source when publish A then B before prepare`
+- `flow rejects mismatched prepare token against retained source`
+- `flow forces full snapshot damage while prior snapshot is still pending`
+- `flow forces full snapshot on scroll row change`
+- `flow drops clean snapshot`
+
+Move source damage tests to `source/damage.zig`:
+
+- `cursor movement republishes clean later vt snapshot`
+- `cursor shape change republishes clean later vt snapshot`
+- `color state change republishes clean later vt snapshot`
+- `flow canonicalizes clean dirty metadata before equality dedupe`
+- `flow preserves dirty row spans and sentinels while canonicalizing`
+- `flow boundary rejects invalid dirty metadata before canonicalization`
+
+Move source slot tests to `source/slot.zig`:
+
+- `flow reuses retained publish slot storage across reservations`
+- `flow commit publish slot rejects dirty row byte outside boolean domain`
+- `flow commit publish slot accepts dirty row span sentinel without dirty columns`
+- `flow commit publish slot canonicalizes clean dirty metadata`
+
+Keep full composition tests in `surface/text.zig`:
+
+- `flow rejects stale submit and requests full latest prepare`
+- `flow drops pending prepare at submitted token`
+- `flow exposes source pending before queue preparation`
+- tests that require geometry, source slot, prepare requests, and submitted
+  owner together
+
+Rename moved test names away from `flow`.
+
+### New Tests Required
+
+- `surface text owner keeps source and submitted owners separate`
+- `submitted owner has no source publication state`
+- `prepare requests do not own submitted mailbox`
+- `source slot commit returns source without prepare or submit state`
+
+### Verification
+
+From `/home/home/personal/projects/howl`:
+
+- `zig build check`
+- `zig build test`
+
+If root build taxonomy blocks a package-specific aggregate, also run from
+`/home/home/personal/projects/howl/howl-render`:
+
+- `zig build check`
+- `zig build test`
+
+### Grep Gates
+
+No matches under `howl-render/src`:
+
+- `flow.zig`
+- `@import("flow.zig")`
+- `surface/flow.zig`
+- `\bFlow\b`
+- `flow:`
+- `owner.flow`
+- `.publication_state`
+
+No submitted-output owner symbols under `howl-render/src/source` or
+`howl-render/src/render`:
+
+- `SubmitMailbox`
+- `submitted_frame`
+- `SubmitDecision`
+
+No prepared/submitted output ownership under `howl-render/src/source`:
+
+- `RenderSurfaceFeedback`
+
+Allowed in `source/prepare_request.zig`:
+
+- `tokens.RenderRequest`
+- `tokens.SnapshotToken`
+
+No new owner names under the new folders:
+
+- `manager`
+- `controller`
+- `runtime`
+- `screen`
+- `pipeline`
+- `queue`
+
 ## Hard Gates For Restart
 
 - No `howl-render/src/surface/flow.zig`.
