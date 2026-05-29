@@ -1,57 +1,40 @@
-# Current Batch: Remaining Made-Up Graphics Deletions Accepted
+# Current Batch: Image Protocol Purge
 
 Owner: workspace root.
 
-Sprint scope: graphics deletion.
+Sprint scope: remove all terminal image/graphics protocol traces from Howl.
 
-Status: accepted by reviewers, verified locally, and committed in submodules.
+Status: active.
 
-Accepted commits:
+## Requirement
 
-- `howl-vt` `42f4194 vt: delete virtual graphics ABI`
-- `howl-render` `da51b98 render: delete graphics placement debris`
-- `howl-linux-host` `b84a389 host: delete graphics replay scaffolding`
+- Delete remaining Kitty graphics/image protocol parsing, state, ABI, render bridge, host
+  acquisition, tests, and deleted-module references.
+- Preserve unrelated terminal behavior, text surface publishing, selection, clipboard, input,
+  modes, color, hyperlink, and non-graphics Kitty protocols.
+- Do not restore user-deleted graphics files.
+- Do not add replacement image/graphics architecture, compatibility aliases, or host shortcuts.
 
-## Accepted Deletion
+## Dirty State To Preserve
 
-- Deleted VT public virtual-placement query ABI:
-  `virtual_placement_count`, `HowlVtGraphicsVirtualPlacement`,
-  `HowlVtGraphicsVirtualPlacementResult`,
-  `howl_vt_terminal_query_graphics_virtual_placement`, FFI mirrors, export, and
-  `Terminal.graphicsVirtualPlacement`.
-- Deleted stale VT/render placement `flags` fields and layout assertions.
-- Deleted render internal prepared-placement debris:
-  `PreparedGraphicsPlacement.placement_id`, `PreparedGraphicsPlacement.placement_ordinal`,
-  ordinal sort fallback, and tests that proved only that fallback.
-- Deleted empty host graphics replay target, build-step wiring, and stale replay fixture
-  scripts.
-- Added no replacement ABI, scheduler, render path, replay harness, or proof seam.
+- `howl-vt/src/kitty/graphics.zig` is deleted.
+- `howl-render/src/ffi_types.zig`, `src/frame/graphics_prepare.zig`,
+  `src/frame/graphics_viewport.zig`, `src/frame/surface_text_ffi.zig`, `src/stb_image.c`,
+  `src/stb_image.h`, and `src/stb_image.zig` are deleted.
+- `howl-linux-host/src/terminal/terminal_panel.zig` has the selection mouse-release
+  auto-copy deletion and must not be reverted.
 
-## Kept Deliberately
+## Slice
 
-- Internal VT virtual-placement protocol state and `U=1` parser behavior remain.
-- VT `Image.drawn` remains because Kitty has `Image.is_drawn`; its update path is still a
-  later source-backed problem.
-- Decoded VT-to-render bridge and host presentation/resource upload path remain.
+1. Remove VT graphics/image C ABI exports and implementation.
+2. Remove VT Kitty graphics action/parser/state paths and tests.
+3. Remove render decoded-graphics publish ABI and surface preparation state while keeping the
+   non-graphics text publish path.
+4. Remove host graphics acquisition/publish bridge.
+5. Verify with focused submodule builds/tests and diff checks.
 
-## Verification Passed
+## Non-Goals
 
-- `zig build test --summary all` in `howl-vt` (`530/530` tests passed).
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- `zig build test --summary all` in `howl-render` (`701/704` tests passed, `3` skipped).
-- `zig build test:integration:build --summary all` in `howl-linux-host`.
-- `zig build --summary all` in `howl-linux-host`.
-- Root `zig build --summary all`.
-- Root, `howl-vt`, `howl-render`, and `howl-linux-host` `git diff --check`.
-
-## Known Broken State
-
-- Public virtual-placement query ABI is gone.
-- Placement flags are gone.
-- Host `test:integration:kitty-graphics-replay` and
-  `test:integration:kitty-graphics-replay:build` are gone.
-
-## Next Gate
-
-No replacement slice is active. Any remaining graphics work must start from current source
-truth and reference-backed ownership, not old replay or placeholder bridge notes.
+- No new image/graphics protocol support.
+- No Lua copy-selection mapping in this slice.
+- No unrelated payload/clipboard/paste deletion unless tied to graphics/image protocol.
