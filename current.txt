@@ -1,0 +1,138 @@
+# Current Slice: Host Runtime Owner Moves
+
+Owner: workspace root.
+
+Purpose:
+
+- Delete the false `howl-linux-host/src/terminal/runtime/` bucket by moving each file
+  to its smallest true owner.
+- Preserve behavior while cutting imports and test exports directly with no
+  compatibility aliases.
+
+## Source Files
+
+- `howl-linux-host/src/terminal/runtime/thread.zig`
+- `howl-linux-host/src/terminal/runtime/progress.zig`
+- `howl-linux-host/src/terminal/runtime/fonts_linux.zig`
+- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/terminal/terminal_panel.zig`
+- `howl-linux-host/src/test/host.zig`
+- `howl-linux-host/src/test/integration_entry.zig`
+
+## Required Moves
+
+1. Move `howl-linux-host/src/terminal/runtime/thread.zig` to
+   `howl-linux-host/src/terminal/pty/wait_thread.zig`.
+2. Move `howl-linux-host/src/terminal/runtime/progress.zig` to
+   `howl-linux-host/src/terminal/pty/pump.zig`.
+3. Move `howl-linux-host/src/terminal/runtime/fonts_linux.zig` to
+   `howl-linux-host/src/terminal/render/fonts_linux.zig`.
+
+## Symbol Requirements
+
+### `thread.zig` -> `pty/wait_thread.zig`
+
+Keep these symbols unless a direct full call-site rename is chosen:
+
+- `State`
+- `progressThreadMain`
+- `wakePending`
+- `ackWake`
+
+Optional direct rename:
+
+- `progressThreadMain` -> `waitThreadMain`
+
+If renamed, update every call site in this slice. Do not leave aliases.
+
+### `progress.zig` -> `pty/pump.zig`
+
+Keep:
+
+- `Outcome`
+- `driveOnce`
+- `pumpTransportSlice`
+- `progressRuntimeLocked`
+- `drainTerminalReplyLocked`
+
+This file owns bounded PTY/VT progress, not generic runtime. Do not recreate a
+`runtime` or `progress` directory.
+
+### `fonts_linux.zig` -> `terminal/render/fonts_linux.zig`
+
+Keep:
+
+- `ResolvedFonts`
+- `resolve`
+
+This file uses render ABI constant `HOWL_RENDER_MAX_FALLBACK_FONTS` and belongs
+under host-side render support.
+
+## Import Changes
+
+In `howl-linux-host/src/main.zig`:
+
+- Replace `const runtime_thread = @import("terminal/runtime/thread.zig");`
+  with `const pty_wait_thread = @import("terminal/pty/wait_thread.zig");`.
+- Replace `runtime_thread.wakePending(tab)` with
+  `pty_wait_thread.wakePending(tab)`.
+
+In `howl-linux-host/src/terminal/terminal_panel.zig`:
+
+- Replace `const runtime_progress = @import("runtime/progress.zig");` with
+  `const pty_pump = @import("pty/pump.zig");`.
+- Replace `const runtime_thread = @import("runtime/thread.zig");` with
+  `const pty_wait_thread = @import("pty/wait_thread.zig");`.
+- Replace `const fonts_linux = @import("runtime/fonts_linux.zig");` with
+  `const fonts_linux = @import("render/fonts_linux.zig");`.
+- Replace `runtime_thread.State` with `pty_wait_thread.State`.
+- Replace `runtime_thread.ackWake()` with `pty_wait_thread.ackWake()`.
+- Replace `runtime_thread.wakePending()` with `pty_wait_thread.wakePending()`.
+- Replace `runtime_thread.progressThreadMain` with
+  `pty_wait_thread.progressThreadMain` or the chosen direct rename.
+- Replace `runtime_progress.Outcome` with `pty_pump.Outcome`.
+- Replace `runtime_progress.driveOnce()` with `pty_pump.driveOnce()`.
+
+In `howl-linux-host/src/test/host.zig`:
+
+- Replace `pub const Thread = @import("../terminal/runtime/thread.zig");` with
+  `pub const PtyWaitThread = @import("../terminal/pty/wait_thread.zig");`.
+
+In `howl-linux-host/src/test/integration_entry.zig`:
+
+- Replace `_ = @import("host").Thread;` with
+  `_ = @import("host").PtyWaitThread;`.
+
+No compatibility `Thread` alias is allowed.
+
+## Invariants
+
+- Background PTY thread only wakes owner thread; it never drives terminal
+  mutation itself.
+- Bounded PTY/VT work remains in `pty/pump.zig`.
+- Font path resolution remains host-side render support, not runtime.
+- `terminal/host`, `terminal_panel.zig`, and `TerminalPanel` may remain after
+  this slice only because they belong to later promoted slices.
+
+## Verification
+
+From `/home/home/personal/projects/howl`:
+
+- `zig build check`
+- `zig build test:unit`
+- `zig build test:integration`
+
+## Grep Gates
+
+No matches after this slice:
+
+- `terminal/runtime`
+- `runtime/thread.zig`
+- `runtime/progress.zig`
+- `runtime/fonts_linux.zig`
+
+Allowed temporary matches after this slice:
+
+- `TerminalPanel`
+- `terminal/host`
+- `terminal_panel.zig`
