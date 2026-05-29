@@ -1,4 +1,4 @@
-# Current Slice: Current Frame Publication Override Deletion Accepted
+# Current Slice: Render Virtual Placement ABI Deletion Accepted
 
 Owner: workspace root.
 
@@ -6,37 +6,35 @@ Sprint scope: graphics deletion.
 
 Status: accepted by reviewer, verified locally, and committed.
 
-Accepted commit:
+Accepted commits:
 
-- `howl-vt` `b3f199a vt: delete frame publication override`
+- `howl-render` `bab273c render: delete virtual placement ABI`
+- `howl-linux-host` `f70c1cb host: drop render virtual placement fields`
 
 ## Accepted Deletion
 
-- Deleted Howl-only current-frame publication override state:
-  `current_override_format`, `current_override_width`, `current_override_height`, and
-  `current_override_decoded_payload`.
-- Deleted `refreshCurrentFramePublication` and every call that existed only to populate that
-  duplicate publication payload.
-- `imageAt()` and `decodedImageAt()` now publish only the root image decoded payload state.
-- Decoded quota/free accounting no longer counts a second current-frame publication copy.
-- Tests now assert the expected broken state: selecting frame `2` updates current-frame
-  metadata but leaves decoded image publication on root bytes.
+- Deleted render-side virtual placement commit ABI fields and spans.
+- Deleted render queue storage, clone/deinit, snapshot, validation, and tests for virtual
+  placement input.
+- Deleted host initialization/tests for render virtual placement commit fields.
+- Left VT virtual placement protocol state and public VT ABI untouched.
 
 ## Verification Passed
 
-- `zig build test --summary all` in `howl-vt` (`538/538` tests).
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- `howl-vt` `git diff --check`.
+- `zig build test --summary all` in `howl-render` (`710/713` tests passed, `3` skipped).
+- `zig build --summary all` in `howl-linux-host`.
+- Root `zig build --summary all`.
+- Root, `howl-render`, and `howl-linux-host` `git diff --check`.
 
 ## Known Broken State
 
-- Selecting or advancing animation frames no longer changes decoded image publication bytes.
-- Current-frame animation display remains broken until a source-backed frame/render model is
-  designed later.
+- External render ABI consumers using the deleted virtual placement commit fields break by
+  design.
+- Virtual Kitty refs remain VT protocol state only and are not render input.
 - Unicode placeholder generated renderable placement behavior remains broken until a
   separately promoted source-backed generated-ref replacement slice.
 
 ## Next Gate
 
-No replacement slice is active. Continue deleting or proving remaining Howl-only graphics
-ideas before replacement work.
+No replacement slice is active. Continue deleting Howl-only graphics ideas that are not
+Kitty-identical/source-backed before replacement work.

@@ -2481,6 +2481,26 @@ Current frame publication override deletion decision:
 - Known broken behavior: current-frame animation display remains broken until a source-backed
   frame/render model is designed later.
 
+Render virtual placement ABI deletion decision:
+
+- Howl-only behavior: after host virtual-placement forwarding was deleted, render still kept
+  virtual placement commit ABI fields, queue storage, validation, and tests. The decoded FFI
+  path forced `virtual_placement_count = 0`, proving the fields were stale bridge shape.
+- Source-order reason: Kitty virtual refs are protocol/storage refs, not render input. Render
+  should receive concrete drawable refs only after VT materializes them.
+- Promoted destructive slice: delete render virtual-placement commit spans/counts, queue
+  fields, FFI parsing, tests, and host initialization/tests. Do not touch VT virtual placement
+  protocol ABI/state.
+- Accepted behavior: render no longer accepts or stores virtual placement input. VT virtual
+  placement state remains VT-owned protocol truth.
+- Accepted commits: `howl-render` `bab273c render: delete virtual placement ABI` and
+  `howl-linux-host` `f70c1cb host: drop render virtual placement fields`.
+- Verification passed: `zig build test --summary all` in `howl-render` with `710/713` tests
+  passed and `3` skipped, `zig build --summary all` in `howl-linux-host`, root `zig build
+  --summary all`, and root/render/host `git diff --check`.
+- Known broken behavior: external render ABI consumers using the deleted virtual placement
+  commit fields break by design.
+
 ## Completed Or Stale Graphics Backlog
 
 - Render-side Kitty placeholder interpreter: completed/stale. The named render helpers
