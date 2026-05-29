@@ -1,72 +1,56 @@
-# Current Slice: Flatten Terminal Policy Config Wrappers
+# Current Slice: Delete Host VT Viewport Lie
 
 Owner: workspace root.
 
 Purpose:
 
-- Kill terminal config fake grouping wrappers that own no lifetime.
-- Keep true lifetime owners for loaded strings, font stacks, and bindings.
-- Preserve Lua config syntax, defaults, parse behavior, heap ownership, and deinit.
+- Delete `howl-linux-host/src/terminal/vt/viewport.zig` as a false VT owner.
+- Keep VT scrollback/display offset mutation in `terminal/vt/retained.zig`.
+- Move host scrollbar/input/layout adaptation to a host terminal owner file.
+- Follow Alacritty's split: terminal/grid owns display offset; event/display context only translates host input and rendering overlays.
+
+## Source Facts
+
+- Alacritty `alacritty_terminal/src/term/mod.rs` owns `Term::scroll_display`.
+- Alacritty `alacritty_terminal/src/grid/mod.rs` owns `Grid::scroll_display` and `display_offset`.
+- Alacritty app `alacritty/src/event.rs` translates input into `terminal.scroll_display(...)` and marks host dirty state.
+- Howl `terminal/vt/retained.zig` already owns `scrollback_offset`, `setScrollbackOffset`, `followLiveBottom`, and clamping.
+- Howl `terminal/vt/viewport.zig` imports window geometry, host input, scrollbar state, and SDL time, so it is not a VT owner.
 
 ## Source Changes
 
 Edit only:
 
-- `howl-linux-host/src/config/terminal.zig`
-- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/terminal/vt/viewport.zig`
 - `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/render/surface_layout.zig`
+- new host terminal owner file under `howl-linux-host/src/terminal/`
 
-In `terminal.zig`, remove these wrapper structs:
+Required shape:
 
-- `Clipboard`
-- `Links`
-- `MousePolicy`
-- `Cursor`
-
-Keep:
-
-- `Config`
-- `FontStack`
-- `Input.Bindings`
-- policy enums
-
-In `terminal.Config`, replace:
-
-- `cursor: Cursor`
-- `clipboard: Clipboard`
-- `links: Links`
-- `mouse: MousePolicy`
-
-with direct fields:
-
-- `cursor_style: CursorStyle`
-- `cursor_blink: bool`
-- `clipboard_osc_52: ClipboardOsc52Policy`
-- `link_open: LinkOpenPolicy`
-- `link_hover: LinkHoverPolicy`
-- `link_underline: LinkUnderlineStyle`
-- `mouse_bypass_mod: Input.Mod`
-
-Update all call sites in `main.zig` and `terminal/context.zig` to use direct field names.
+- Delete `terminal/vt/viewport.zig`.
+- Create a host terminal scrollbar/input adapter with an owner-true name under `terminal/`.
+- Export `State = window.scrollbar.State` only from the new host terminal adapter if needed by `Context`.
+- Keep all VT mutation calls routed through `vt_retained.setScrollbackOffset` and `vt_retained.followLiveBottom`.
+- Update imports and call sites to the new owner name.
 
 ## Non-Goals
 
-- Do not rename `Config.State`.
-- Do not remove or change `FontStack`.
-- Do not remove window mouse policy.
-- Do not remove window bindings.
-- Do not change config file syntax.
+- Do not move scrollback offset into host code.
+- Do not change public C ABI.
+- Do not change scrollbar behavior, mouse behavior, page-scroll behavior, layout geometry, passive hover wake behavior, focus behavior, or redraw policy.
+- Do not rename unrelated `viewport` terminology in Alacritty references, render comments, or damage code.
+- Do not introduce aliases, shims, or compatibility wrappers.
 
 ## Invariants
 
-- `Config.deinit()` still frees only `shell`, `start_path`, `command`, `fonts`, and
-  `bindings`.
-- Cursor default remains `block` and blink `true`.
-- Clipboard OSC 52 default remains `deny`.
-- Link defaults remain `disabled`, `underline_and_cursor`, and `straight`.
-- Mouse bypass default remains empty `Input.Mod{}`.
-- No new heap allocations or deinit paths.
-- No aliases or shim wrapper structs.
+- Alternate screen still rejects host scrollback movement.
+- Page scroll still moves by `max(visible_rows - 1, 1)` rows.
+- Wheel fallback still moves 3 rows.
+- Scrollbar mouse drag still clamps offset through VT retained state.
+- Scrollbar invalidation still occurs only when focus/geometry/offset changes require it.
+- Passive hover wake remains a host scrollbar concern, not VT state.
+- No imports from `terminal/vt/` to `window/`, `input/`, or SDL for this adapter remain.
 
 ## Verification
 
@@ -84,27 +68,14 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 ## Grep Gates
 
-No matches under `howl-linux-host/src/config/terminal.zig`:
+No matches:
 
-- `pub const Clipboard = struct`
-- `pub const Links = struct`
-- `pub const MousePolicy = struct`
-- `pub const Cursor = struct`
+- `howl-linux-host/src/terminal/vt/viewport.zig`
+- `@import("vt/viewport.zig")`
+- `@import("../vt/viewport.zig")`
+- `terminal/vt/viewport`
 
-No matches under `howl-linux-host/src`:
+Expected:
 
-- `.conf.links`
-- `.conf.clipboard`
-- `.conf.term.mouse`
-- `.cursor.style`
-- `.cursor.blink`
-
-Expected matches:
-
-- `cursor_style`
-- `cursor_blink`
-- `clipboard_osc_52`
-- `link_open`
-- `link_hover`
-- `link_underline`
-- `mouse_bypass_mod`
+- `terminal/vt/retained.zig` remains the scrollback offset mutation owner.
+- The new host terminal adapter imports `window/scrollbar.zig`, `input/input.zig`, and `vt/retained.zig`.
