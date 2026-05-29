@@ -2090,6 +2090,40 @@ Placeholder access refresh deletion record:
   source-backed slice.
 - Non-goals: do not broaden this deletion to generated placement materialization, retained
   publication snapshots, render, host, FFI, or public ABI changes.
+- VT placeholder access refresh deletion completed in `howl-vt` commit `ccb38de vt:
+  delete placeholder access refresh` and root commit `312d372 design: accept placeholder
+  access deletion`.
+- Verification passed: `zig build test --summary all` in `howl-vt` with `639/639` tests,
+  `zig build test:regression:build --summary all` in `howl-vt`, root `git diff --check`,
+  and `howl-vt git diff --check`.
+
+Render/host virtual placement forwarding deletion research:
+
+- Audit verdict: next narrow deletion slice is worker-ready after placeholder access
+  deletion.
+- Howl-only behavior: render/host decoded publication still forwards VT virtual placement
+  spans even though render consumes prepared renderable placements and no longer interprets
+  placeholders directly.
+- Reference truth: Kitty virtual refs are prototypes and are skipped for rendering; real
+  generated cell-image refs are renderable. Ghostty uses virtual placeholder iteration
+  internally and does not forward virtual placements as render ABI truth.
+- Promoted next slice: remove host dependence on forwarding virtual placements to render
+  and make render ignore/stop validating virtual placement spans in decoded publication
+  paths while preserving public ABI layout as compatibility unless an explicit ABI break is
+  required.
+- Candidate paths: `howl-render/include/howl_render.h`,
+  `howl-render/src/frame/queue.zig`, `howl-render/src/frame/surface_text.zig`,
+  `howl-render/src/frame/surface_text_ffi.zig`,
+  `howl-linux-host/src/terminal/vt/surface.zig`,
+  `howl-linux-host/src/terminal/render/retained.zig`,
+  `howl-linux-host/src/terminal/render/abi.zig`, and
+  `howl-linux-host/src/terminal/vt/abi.zig`.
+- Required invariants: physical/generated renderable placements stay unchanged; public ABI
+  layout stays unchanged unless worker stops for explicit approval; no VT placeholder-run,
+  generated placement, render scheduling, or retained-frame architecture changes.
+- Stop conditions: stop if this requires public ABI layout removal, generated
+  cell-ref/materialization replacement, VT placeholder semantic changes, or render
+  scheduling redesign.
 
 ## Completed Or Stale Graphics Backlog
 

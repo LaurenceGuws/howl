@@ -1,63 +1,69 @@
-# Current Slice: Graphics Placeholder Access Refresh Deletion
+# Current Slice: Graphics Virtual Placement Forwarding Deletion
 
-Owner: howl-vt.
+Owner: howl-render and howl-linux-host.
 
-Sprint scope: graphics.
+Sprint scope: graphics deletion.
 
 ## Goal
 
-Delete stale accountability for run-based Unicode placeholder image access refresh.
-
-Run-based placeholder access refresh was Howl-only behavior. Product code already removed
-the refresh from `Terminal.graphicsMeta()` and `kitty.graphics.State`; this slice removes
-the remaining stale test/planning records that would preserve or reintroduce it.
+Delete or quarantine Howl-only render/host forwarding of virtual placements from decoded
+graphics publication. Render should consume renderable placements, not Kitty virtual
+placement prototypes.
 
 ## Delegation Requirement
 
 - Main agent must not implement this slice directly.
-- Seed a worker with this file, the scratchpad entry, the existing `howl-vt` product-code
-  deletion diff, and the required edit list below.
-- Seed a reviewer after worker output and reject any diff that preserves run-based access
-  refresh, broadens into materialization, or touches render/host.
+- Seed a worker with this file, the render/host audit findings, exact source/reference
+  paths, and the invariants below.
+- Seed a reviewer after worker output and reject any diff that broadens into ABI removal,
+  generated placement materialization, VT placeholder semantics, or render scheduling.
 
 ## Required Work
 
-- Delete or replace the stale test
-  `kitty graphics decoded quota treats placeholder publication as image access` in
-  `howl-vt/src/test/terminal_graphics.zig` so tests no longer assert run-based access
-  refresh.
-- Do not add a replacement unless it is source-backed and narrow.
-- Replace the wrong preservation/consolidation record in `current.txt` and
-  `graphics-machinery-scratchpad.md` with this deletion record.
-- Record that any future replacement must be Kitty-style successful generated
-  cell-ref/materialization only.
-- Do not broaden to generated placement materialization.
-- Do not touch render or host.
+- Worker edits only render/host graphics forwarding paths unless a stop condition is hit.
+- Remove host dependence on forwarding VT virtual placements into render publication.
+- Make render ignore or stop validating virtual placement spans in the decoded publication
+  path if they are currently stale inputs.
+- Preserve public render ABI layout unless deletion is impossible without an explicit ABI
+  break decision.
+- Do not touch VT placeholder-run/generation behavior.
+- Do not add a replacement system.
+
+## Candidate Paths
+
+- `howl-render/include/howl_render.h`
+- `howl-render/src/frame/queue.zig`
+- `howl-render/src/frame/surface_text.zig`
+- `howl-render/src/frame/surface_text_ffi.zig`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/render/abi.zig`
+- `howl-linux-host/src/terminal/vt/abi.zig`
+
+## Reference Constraints
+
+- Kitty virtual refs are prototypes and are not rendered directly; render uses real
+  non-virtual refs/cell images.
+- Ghostty exposes virtual placeholder iteration internally, not as render ABI forwarding.
+- Howl render should receive renderable placements only.
 
 ## Invariants
 
-- `graphicsMeta()` must not refresh image access merely because placeholder runs resolve.
-- Tests must not encode run-based placeholder access refresh as product behavior.
-- Future access refresh, if reintroduced, must be tied to Kitty-style successful generated
-  cell-ref/materialization, not a public metadata/run-count walk.
-- Placeholder-run count/query and generated placement publication remain current behavior.
-- Render, host, FFI, and public ABI remain unchanged.
+- Rendered physical/generated placements remain unchanged.
+- Public ABI layout remains unchanged unless worker stops and reports that deletion needs
+  explicit ABI break approval.
+- Host no longer treats virtual placement forwarding as render truth.
+- No VT, FFI, or placeholder-run public behavior changes.
 
 ## Tests Required
 
-- `zig build test --summary all` in `howl-vt`.
-- `zig build test:regression:build --summary all` in `howl-vt` if unit tests pass.
-- Root `git diff --check`.
-- `howl-vt` `git diff --check`.
+- Run targeted render/host tests discovered by the worker.
+- Run root `zig build --summary all` if feasible.
+- Root and touched submodules `git diff --check`.
 
 ## Stop Conditions
 
-- Stop if the cleanup requires generated placement materialization.
-- Stop if render, host, FFI, or public ABI changes become necessary.
-- Stop if placeholder-run geometry, count, or ordering semantics need to change.
-
-## Verification
-
-- `zig build test --summary all` in `howl-vt`.
-- `zig build test:regression:build --summary all` in `howl-vt`.
-- Root and `howl-vt` `git diff --check`.
+- Stop if deleting forwarding requires public ABI layout removal.
+- Stop if this requires generated cell-ref/materialization replacement.
+- Stop if VT placeholder-run/generation semantics must change.
+- Stop if render scheduling or retained-frame architecture must change.
