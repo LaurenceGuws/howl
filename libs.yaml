@@ -151,7 +151,6 @@ howl-vt:
     terminal: howl-vt/src/terminal.zig
     stream_terminal: howl-vt/src/stream_terminal.zig
     parser:
-      root: howl-vt/src/parser.zig
       owners:
         main: howl-vt/src/parser/main.zig
         events: howl-vt/src/parser/events.zig
