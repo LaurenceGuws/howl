@@ -257,7 +257,6 @@ howl-render:
     surface:
       owners:
         input: howl-render/src/surface/input.zig
-        rgba: howl-render/src/surface/rgba.zig
     render:
       owners:
         geometry: howl-render/src/render/geometry.zig
