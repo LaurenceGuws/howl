@@ -394,3 +394,5 @@ Accepted plan:
   seeds, op counts, and dimensions, but `zig build test:regression` exceeded the ordinary 120s review
   budget, so moving it into `test` would make canonical validation too slow without a separate slow
   test policy or reduced scenario cost.
+- Render `test:build` now aggregates `test:unit:build` and `test:abi:build`; render `check` keeps
+  depending on `test:build` for compile-only deterministic test coverage.

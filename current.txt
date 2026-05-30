@@ -1,12 +1,12 @@
-# Current Slice: Decide VT Regression Gate Policy
+# Current Slice: Normalize Render Test Build Coverage
 
-Owner: `howl-vt`.
+Owner: `howl-render`.
 
 Purpose:
 
-- Decide whether deterministic VT regression proofs belong in canonical `zig build test`.
-- Preserve the decision and review evidence in project memory.
-- Do not change build code unless regression fits ordinary deterministic test expectations.
+- Make render `test:build` compile the split test categories rather than the old combined root.
+- Keep `check` depending on package-local compile-only test coverage.
+- Preserve test run behavior and product code exactly.
 
 ## Source Research
 
@@ -15,53 +15,52 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-hygiene-audit/build-test-architecture-plan.md`
-- `research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
+- `research/2026-05-30-hygiene-audit/render-test-build-coverage.md`
+- `howl-render/build.zig`
+- `howl-pty/build.zig`
 - `howl-vt/build.zig`
-- `howl-vt/src/test/scrollback_regression.zig`
-- `howl-vt/src/test_regression_snapshot.zig`
-- `howl-vt/src/fuzz/scrollback.zig`
 
 ## Source Changes
 
 Exact files:
 
-- `research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
-- `project-memory.md`
+- `howl-render/build.zig`
 
 ## Required Shape
 
-- Keep `test:regression` as the named VT regression category.
-- Keep `test:regression` outside canonical `test` because it exceeded the ordinary 120s review budget.
-- Do not pull `fuzz`, `benchmark:m7_baseline`, or any stress-like surface into `test`.
+- Keep render `test:build` as a package-local aggregate.
+- Make `test:build` depend on `test:unit:build` and `test:abi:build`.
+- Keep `check` depending on `test:build`.
 
 ## Non-Goals
 
-- Do not change VT product code.
-- Do not change regression test bodies or assertions.
-- Do not add runtime knobs.
+- Do not change render product code.
+- Do not change test bodies or assertions.
 - Do not change C headers or exported symbols.
-- Do not change `howl-vt/build.zig` in the accepted outcome.
+- Do not remove the old combined `test-render` root in this slice.
 
 ## Invariants
 
-- `howl-vt` `test:regression` remains explicit.
-- `howl-vt` `test` remains unchanged and bounded for ordinary validation.
-- Root `test` remains unchanged.
+- `howl-render` `zig build test:build` builds unit and ABI category roots.
+- `howl-render` `zig build check` still builds the shipped C ABI library and compile-only proof targets.
+- Root `zig build check` still passes.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
 - `zig build check`
-- `zig build test`
+- from `howl-render`: `zig build test:build`
+- from `howl-render`: `zig build test:unit:build`
+- from `howl-render`: `zig build test:abi:build`
 - `git diff --check`
 
 ## Grep Gates
 
-- `rg 'test:regression|120s|ordinary' research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
-- `rg 'test_regression_step|test_step\.dependOn' howl-vt/build.zig` supports review that build code is unchanged.
+- `rg 'test_build_step\.dependOn|test_unit_build_step|test_abi_build_step|check_step\.dependOn' howl-render/build.zig`
+- `rg 'test_build_step\.dependOn\(&tests\.step\)' howl-render/build.zig` prints nothing.
 
 ## Stop Conditions
 
-- Stop if regression tests are flaky or unbounded in ordinary deterministic test expectations.
-- Stop if adding regression to `test` requires changing tests or product code.
+- Stop if `test:build` cannot build both category roots without changing product code.
+- Stop if the old combined root is required for coverage not represented by `test:unit` or `test:abi`.
