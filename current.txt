@@ -1,12 +1,12 @@
-# Current Slice: Move Render Token Contract Owner
+# Current Slice: Delete Stale Render Surface Remainders
 
 Owner: `howl-render`.
 
 Purpose:
 
-- Move render snapshot/prepared/submitted token contracts out of the stale `surface/*` bucket.
-- Preserve token validation, latest-mailbox, source/prepared/session/FFI behavior exactly.
-- Do not split token semantics in this slice.
+- Delete unreferenced stale `surface/*` files after exact owners already exist elsewhere.
+- Preserve render behavior and C ABI exactly.
+- Continue reducing stale render `surface/*` taxonomy without touching source/text adaptation.
 
 ## Source Research
 
@@ -15,30 +15,32 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-hygiene-audit/render-surface-taxonomy.md`
-- `howl-render/src/surface/tokens.zig`
-- all current importers of `surface/tokens.zig`
+- `howl-render/src/surface/publication_source.zig`
+- `howl-render/src/source/vt.zig`
+- `howl-render/src/surface/clip_rect.zig`
+- grep results for `publication_source`, `SourceRgb`, `ClipRect`, and `clipRect`
 - `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- Move `howl-render/src/surface/tokens.zig` to `howl-render/src/render/tokens.zig`.
-- Update importers under `howl-render/src`.
-- Update `libs.yaml` owner metadata.
+- Delete `howl-render/src/surface/publication_source.zig`.
+- Delete `howl-render/src/surface/clip_rect.zig`.
+- Remove both owner entries from `libs.yaml`.
 
 ## Non-Goals
 
-- Do not split `LatestMailbox` out of token contracts in this slice.
-- Do not change token validation behavior.
-- Do not move source publication, input adaptation, clip, or rgba files.
-- Do not alter C ABI or FFI behavior.
+- Do not delete or move `surface/input.zig`.
+- Do not delete or move `surface/rgba.zig` in this slice.
+- Do not edit `source/vt.zig`.
+- Do not change C ABI, FFI layout assertions, source publication behavior, or render geometry behavior.
 
 ## Invariants
 
-- `render/tokens.zig` owns render work identity contracts shared across source, prepared, session, and FFI.
-- `surface/tokens.zig` no longer exists.
-- No imports refer to `surface/tokens.zig`.
+- `source/vt.zig` remains the source publication contract owner.
+- No source imports `publication_source.zig` or `clip_rect.zig`.
+- `libs.yaml` must not reference deleted files.
 
 ## Verification
 
@@ -50,9 +52,9 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'surface/tokens\.zig' howl-render/src libs.yaml` prints nothing.
-- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-render/src/render/tokens.zig` prints nothing relevant to this slice.
+- `rg 'publication_source|clip_rect|surface/publication_source\.zig|surface/clip_rect\.zig' howl-render/src libs.yaml` prints nothing.
 
 ## Stop Conditions
 
-- Stop if moving tokens requires changing source, prepared, session, or FFI behavior.
+- Stop if either file is imported by build/test paths not captured by grep.
+- Stop if deletion requires replacing symbols or adding compatibility aliases.
