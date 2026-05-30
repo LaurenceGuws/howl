@@ -1,12 +1,12 @@
-# Current Slice: Move Render Work State Translator
+# Current Slice: Move Render Surface Geometry Translator
 
 Owner: workspace root.
 
 Purpose:
 
-- Continue the accepted `howl-render` C translator lane with the smallest remaining translator move.
-- Move only `work_state.zig` from the render root into `src/ffi/`.
-- Preserve exported symbols and session-work-state behavior exactly.
+- Continue the accepted `howl-render` C translator lane.
+- Move only `surface_geometry.zig` from the render root into `src/ffi/`.
+- Preserve exported symbols, geometry conversion, and layout/sync behavior exactly.
 
 ## Source Research
 
@@ -16,28 +16,31 @@ Use:
 - `howl-render/design.md`
 - `howl-render/include/howl_render.h`
 - `howl-render/src/libhowl_render.zig`
-- `howl-render/src/work_state.zig`
+- `howl-render/src/surface_geometry.zig`
+- `howl-render/src/text_session.zig`
 - `howl-render/src/test/ffi.zig`
-- `howl-render/src/session/text.zig`
+- `howl-render/src/render/geometry_contract.zig`
 
 ## Source Changes
 
 Edit only:
 
 - `howl-render/src/libhowl_render.zig`
-- `howl-render/src/work_state.zig`
-- `howl-render/src/ffi/work_state.zig`
+- `howl-render/src/surface_geometry.zig`
+- `howl-render/src/ffi/surface_geometry.zig`
+- `howl-render/src/text_session.zig`
 - `howl-render/src/test/ffi.zig`
 
-Do not edit any other file unless the build exposes a direct `work_state.zig` import missed by this slice.
+Do not edit any other file unless the build exposes a direct `surface_geometry.zig` import missed by this slice.
 If that happens, stop and report the exact import before broadening scope.
 
 ## Required Shape
 
-- Move `howl-render/src/work_state.zig` to `howl-render/src/ffi/work_state.zig`.
-- Update `libhowl_render.zig` to import the moved translator from `ffi/work_state.zig`.
+- Move `howl-render/src/surface_geometry.zig` to `howl-render/src/ffi/surface_geometry.zig`.
+- Update `libhowl_render.zig` to import the moved translator from `ffi/surface_geometry.zig`.
+- Update `text_session.zig` to import the moved translator for `pixelIn` only.
 - Update `test/ffi.zig` to import the moved translator.
-- Remove the old root `howl-render/src/work_state.zig`; do not leave a compatibility wrapper.
+- Remove the old root `howl-render/src/surface_geometry.zig`; do not leave a compatibility wrapper.
 - Keep `libhowl_render.zig` as an export table only.
 
 ## Non-Goals
@@ -46,23 +49,23 @@ If that happens, stop and report the exact import before broadening scope.
 - Do not move `submission.zig`.
 - Do not move `prepared_surface.zig`.
 - Do not move `text_session.zig`.
-- Do not move `surface_geometry.zig`.
-- Do not move `prepare_request.zig` again.
+- Do not move `prepare_request.zig` or `work_state.zig` again.
 - Do not rename any `HowlRender*` C type.
 - Do not rename any `howl_render_*` symbol.
 - Do not change `howl-render/include/howl_render.h`.
-- Do not change session work-state semantics.
+- Do not change geometry policy or validation semantics.
 - Do not add compatibility aliases.
 
 ## Invariants
 
 - The public root curates exports only.
-- `howl_render_text_session_work_state` keeps the same exported symbol.
-- `HowlRenderSessionWorkState` layout and field meanings do not change.
-- Missing handle still writes `sessionWorkStateFailure(c.HOWL_RENDER_CALL_MISSING_HANDLE)` when output is present.
-- Missing output with a valid handle still returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
-- Valid handle and output still maps `owner.workState()` through `sessionWorkStateOut`.
-- The translator calls the session owner; it does not own session state.
+- `howl_render_text_session_derive_layout` keeps the same exported symbol.
+- `howl_render_text_session_sync_geometry` keeps the same exported symbol.
+- `HowlRenderPixelSize`, `HowlRenderLayoutResult`, and `HowlRenderGeometryResponse` field meanings do not change.
+- Missing handle and invalid argument responses remain identical.
+- `pixelIn` and `geometryOut` conversions move unchanged except import path fixes.
+- `text_session.zig` may keep using `pixelIn`; it must not gain geometry policy.
+- The translator calls session/render owners; it does not own render geometry policy.
 
 ## Verification
 
@@ -74,19 +77,19 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg '@import\("work_state\.zig"\)' howl-render/src`
-- `rg 'howl_render_text_session_work_state|HowlRenderSessionWorkState|sessionWorkStateOut|sessionWorkStateFailure' howl-render/src`
-- `rg 'vt_surface.zig|submission.zig|prepared_surface.zig|text_session.zig|surface_geometry.zig' howl-render/src/libhowl_render.zig`
+- `rg '@import\("surface_geometry\.zig"\)' howl-render/src`
+- `rg 'howl_render_text_session_derive_layout|howl_render_text_session_sync_geometry|HowlRenderLayoutResult|HowlRenderGeometryResponse|pixelIn|geometryOut' howl-render/src`
+- `rg 'vt_surface.zig|submission.zig|prepared_surface.zig|text_session.zig' howl-render/src/libhowl_render.zig`
 
 Expected results:
 
 - The first gate prints no stale root import.
-- The second gate supports manual review that symbols and C work-state translation moved only.
+- The second gate supports manual review that symbols and C geometry translation moved only.
 - The third gate proves this slice did not move other remaining root translators.
 
 ## Stop Conditions
 
-- Stop if moving `work_state.zig` requires changing behavior.
+- Stop if moving `surface_geometry.zig` requires changing behavior.
 - Stop if the new lane needs a compatibility wrapper at the old root path.
-- Stop if an import cycle appears between `ffi/work_state.zig` and another translator.
-- Stop if `sessionWorkStateOut` or `sessionWorkStateFailure` cannot move unchanged with the translator.
+- Stop if an import cycle appears between `ffi/surface_geometry.zig` and `text_session.zig`.
+- Stop if `pixelIn` or `geometryOut` cannot move unchanged with the translator.
