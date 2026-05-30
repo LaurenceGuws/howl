@@ -258,13 +258,13 @@ howl-render:
       owners:
         publication_source: howl-render/src/surface/publication_source.zig
         clip_rect: howl-render/src/surface/clip_rect.zig
-        geometry: howl-render/src/surface/geometry.zig
         input: howl-render/src/surface/input.zig
         rgba: howl-render/src/surface/rgba.zig
         tokens: howl-render/src/surface/tokens.zig
     render:
       owners:
         geometry: howl-render/src/render/geometry.zig
+        grid_geometry: howl-render/src/render/grid_geometry.zig
         geometry_contract: howl-render/src/render/geometry_contract.zig
     text:
       root: howl-render/src/text/text.zig
