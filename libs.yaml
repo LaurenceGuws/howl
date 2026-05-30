@@ -1,0 +1,306 @@
+version: 2026-05-30
+purpose: Public owner map for Howl's embeddable terminal libraries.
+
+howl-linux-host:
+  kind: host_app
+  public_entry:
+    executable: howl
+    source: howl-linux-host/src/main.zig
+  owns:
+    - platform_ux
+    - event_loop
+    - wake_policy
+    - presentation_cadence
+    - backend_resource_realization
+    - runtime_orchestration
+  embeds:
+    howl-pty:
+      via: howl-pty/include/howl_pty.h
+      translated_c_module: howl_pty_c
+    howl-vt:
+      via: howl-vt/include/howl_vt.h
+      translated_c_module: howl_vt_c
+    howl-render:
+      via: howl-render/include/howl_render.h
+      translated_c_module: howl_render_c
+  owners:
+    app:
+      source: howl-linux-host/src/main.zig
+      owns:
+        - process_bootstrap
+        - event_loop_admission
+        - terminal_input_forwarding
+        - tab_lifecycle
+        - present_submission_and_completion
+    config:
+      source: howl-linux-host/src/config/config.zig
+      owners:
+        terminal: howl-linux-host/src/config/terminal.zig
+        window: howl-linux-host/src/config/window.zig
+        tab_bar: howl-linux-host/src/config/tab_bar.zig
+        environment: howl-linux-host/src/config/env.zig
+    cli:
+      source: howl-linux-host/src/cli/args.zig
+      owns:
+        - command_line_arguments
+    input:
+      source: howl-linux-host/src/input/input.zig
+      owns:
+        - sdl_event_pumping
+        - bounded_input_buffers
+        - text_chunking
+        - key_translation
+        - mouse_translation
+        - redraw_geometry_focus_pending_bits
+      owners:
+        window_signals: howl-linux-host/src/input/window.zig
+        keys: howl-linux-host/src/input/keys.zig
+        mouse: howl-linux-host/src/input/mouse.zig
+    tab_bar:
+      source: howl-linux-host/src/tab_bar/tab_bar.zig
+      owns:
+        - tab_bar_layout
+        - tab_bar_hit_testing
+      owners:
+        slots: howl-linux-host/src/tab_bar/slots.zig
+    window:
+      source: howl-linux-host/src/window/window.zig
+      owns:
+        - sdl_window_lifecycle
+        - clipboard_calls
+        - cursor_shape
+        - url_opening
+        - gl_context_setup
+      translated_c_modules:
+        sdl_c: howl-linux-host/src/window/sdl_c.h
+        gl_c: howl-linux-host/src/window/gl_c.h
+      owners:
+        pacing: howl-linux-host/src/window/pacing.zig
+        present: howl-linux-host/src/window/present.zig
+        layout: howl-linux-host/src/window/layout.zig
+        texture: howl-linux-host/src/window/texture.zig
+        term_texture: howl-linux-host/src/window/term_texture.zig
+        draw: howl-linux-host/src/window/draw.zig
+        scrollbar_layout: howl-linux-host/src/window/scrollbar.zig
+        icon: howl-linux-host/src/window/icon.zig
+    terminal:
+      source: howl-linux-host/src/terminal/context.zig
+      owns:
+        - one_terminal_session_surface
+        - pty_vt_render_lifecycle
+        - input_event_routing
+        - cursor_blink_cadence
+        - clipboard_osc52_application
+        - render_prepare_submit_upload
+        - title_refresh
+        - scrollbar_adaptation
+      owners:
+        term_handles: howl-linux-host/src/terminal/term.zig
+        selection_gestures: howl-linux-host/src/terminal/selection.zig
+        visible_links: howl-linux-host/src/terminal/links.zig
+        scrollbar_adapter: howl-linux-host/src/terminal/scrollbar.zig
+        pty:
+          owners:
+            session: howl-linux-host/src/terminal/pty/session.zig
+            retained: howl-linux-host/src/terminal/pty/retained.zig
+            pump: howl-linux-host/src/terminal/pty/pump.zig
+            wait_thread: howl-linux-host/src/terminal/pty/wait_thread.zig
+            feed_record: howl-linux-host/src/terminal/pty/feed_record.zig
+        vt:
+          owners:
+            surface_adapter: howl-linux-host/src/terminal/vt/surface.zig
+            input_adapter: howl-linux-host/src/terminal/vt/input.zig
+            retained: howl-linux-host/src/terminal/vt/retained.zig
+        render:
+          owners:
+            retained: howl-linux-host/src/terminal/render/retained.zig
+            surface_layout: howl-linux-host/src/terminal/render/surface_layout.zig
+            fonts_linux: howl-linux-host/src/terminal/render/fonts_linux.zig
+            font_size: howl-linux-host/src/terminal/render/font_size.zig
+
+howl-pty:
+  kind: c_abi_library
+  public_header: howl-pty/include/howl_pty.h
+  public_root: howl-pty/src/libhowl_pty.zig
+  owns:
+    - pty_variants
+    - child_io
+    - resize_delivery
+    - control_signals
+    - transport_state
+  owners:
+    ffi: howl-pty/src/ffi.zig
+    session: howl-pty/src/session.zig
+    pty_root: howl-pty/src/pty.zig
+    posix_backend: howl-pty/src/pty/posix.zig
+    unix_backend: howl-pty/src/pty/unix.zig
+
+howl-vt:
+  kind: c_abi_library
+  public_header: howl-vt/include/howl_vt.h
+  public_root: howl-vt/src/libhowl_vt.zig
+  owns:
+    - parser_state
+    - terminal_state
+    - selection_truth
+    - input_encoding
+    - host_facing_protocol_consequences
+    - vt_surface_truth
+  owners:
+    ffi: howl-vt/src/ffi.zig
+    terminal: howl-vt/src/terminal.zig
+    stream_terminal: howl-vt/src/stream_terminal.zig
+    parser:
+      root: howl-vt/src/parser.zig
+      owners:
+        main: howl-vt/src/parser/main.zig
+        events: howl-vt/src/parser/events.zig
+        utf8: howl-vt/src/parser/utf8.zig
+        string_control: howl-vt/src/parser/string_control.zig
+        owned_actions: howl-vt/src/parser/owned_actions.zig
+    action:
+      root: howl-vt/src/action.zig
+      owners:
+        route: howl-vt/src/action/route.zig
+        vocabulary: howl-vt/src/action/vocabulary.zig
+    screen:
+      root: howl-vt/src/screen.zig
+      owners:
+        cell: howl-vt/src/screen/cell.zig
+        style: howl-vt/src/screen/style.zig
+        color: howl-vt/src/screen/color.zig
+        cursor: howl-vt/src/screen/cursor.zig
+        write: howl-vt/src/screen/write.zig
+        erase: howl-vt/src/screen/erase.zig
+        resize: howl-vt/src/screen/resize.zig
+        scroll: howl-vt/src/screen/scroll.zig
+        history: howl-vt/src/screen/history.zig
+        margins: howl-vt/src/screen/margins.zig
+        tabs: howl-vt/src/screen/tabs.zig
+        dirty: howl-vt/src/screen/dirty.zig
+    host:
+      owners:
+        state: howl-vt/src/host/state.zig
+        apply: howl-vt/src/host/apply.zig
+    input:
+      root: howl-vt/src/input.zig
+      owners:
+        event: howl-vt/src/input/event.zig
+        encode: howl-vt/src/input/encode.zig
+        mouse: howl-vt/src/input/mouse.zig
+        keyboard: howl-vt/src/input/keyboard.zig
+        tokens: howl-vt/src/input/tokens.zig
+        encoded: howl-vt/src/input/encoded.zig
+    xterm:
+      owners:
+        c0: howl-vt/src/xterm/c0.zig
+        esc: howl-vt/src/xterm/esc.zig
+        csi: howl-vt/src/xterm/csi.zig
+        osc: howl-vt/src/xterm/osc.zig
+        dcs: howl-vt/src/xterm/dcs.zig
+    kitty:
+      root: howl-vt/src/kitty.zig
+      owners:
+        state: howl-vt/src/kitty/state.zig
+        protocol: howl-vt/src/kitty/protocol.zig
+        apply: howl-vt/src/kitty/apply.zig
+        key: howl-vt/src/kitty/key.zig
+        color: howl-vt/src/kitty/color.zig
+        pointer: howl-vt/src/kitty/pointer.zig
+    selection:
+      root: howl-vt/src/selection.zig
+      owners:
+        state: howl-vt/src/selection/state.zig
+
+howl-render:
+  kind: c_abi_library
+  public_header: howl-render/include/howl_render.h
+  public_root: howl-render/src/libhowl_render.zig
+  owns:
+    - render_contracts
+    - geometry_policy
+    - retained_frame_state
+    - prepare_submit_scheduling
+    - render_surface_contracts
+    - text_shaping
+  owners:
+    ffi: howl-render/src/ffi.zig
+    text_session: howl-render/src/text_session.zig
+    handle: howl-render/src/handle.zig
+    work_state: howl-render/src/work_state.zig
+    source:
+      owners:
+        vt: howl-render/src/source/vt.zig
+        cell: howl-render/src/source/cell.zig
+        slot: howl-render/src/source/slot.zig
+        damage: howl-render/src/source/damage.zig
+        prepare_request: howl-render/src/source/prepare_request.zig
+    session:
+      owners:
+        text: howl-render/src/session/text.zig
+        submitted: howl-render/src/session/submitted.zig
+    prepared:
+      owners:
+        surface: howl-render/src/prepared/surface.zig
+        submit: howl-render/src/prepared/submit.zig
+        submit_result: howl-render/src/prepared/submit_result.zig
+    surface:
+      owners:
+        buffer: howl-render/src/surface/buffer.zig
+        prepared_owner: howl-render/src/surface/prepared_owner.zig
+        publication_source: howl-render/src/surface/publication_source.zig
+        clip_rect: howl-render/src/surface/clip_rect.zig
+        geometry: howl-render/src/surface/geometry.zig
+        input: howl-render/src/surface/input.zig
+        rgba: howl-render/src/surface/rgba.zig
+        tokens: howl-render/src/surface/tokens.zig
+    render:
+      owners:
+        geometry: howl-render/src/render/geometry.zig
+        geometry_contract: howl-render/src/render/geometry_contract.zig
+    text:
+      root: howl-render/src/text/text.zig
+      owns:
+        - shaping
+        - glyph_classification
+        - scene_building
+        - raster_cache_use
+      owners:
+        contract: howl-render/src/text/contract.zig
+        frame_preparer: howl-render/src/text/frame_preparer.zig
+        scene: howl-render/src/text/scene.zig
+        direct_scene: howl-render/src/text/direct_scene.zig
+        direct_normal: howl-render/src/text/direct_normal.zig
+        text_flow: howl-render/src/text/pipeline.zig
+        shape:
+          owners:
+            cluster: howl-render/src/text/shape/cluster.zig
+            run: howl-render/src/text/shape/run.zig
+            grouping: howl-render/src/text/shape/grouping.zig
+        classify:
+          owners:
+            lane: howl-render/src/text/classify/lane.zig
+            special_glyphs: howl-render/src/text/classify/special_glyphs.zig
+            symbol: howl-render/src/text/classify/symbol.zig
+            symbol_map: howl-render/src/text/classify/symbol_map.zig
+        raster:
+          owners:
+            rasterizer: howl-render/src/text/raster/rasterizer.zig
+            atlas: howl-render/src/text/raster/atlas.zig
+            cache: howl-render/src/text/raster/cache.zig
+            fallback: howl-render/src/text/raster/fallback.zig
+            key: howl-render/src/text/raster/key.zig
+            special: howl-render/src/text/raster/special.zig
+        font:
+          owners:
+            provider: howl-render/src/text/font/provider.zig
+            session: howl-render/src/text/font/session.zig
+            resolver: howl-render/src/text/font/resolver.zig
+            ft_hb:
+              owners:
+                c_translation: howl-render/src/text/font/ft_hb/c_api.zig
+                cache: howl-render/src/text/font/ft_hb/cache.zig
+                glyph_raster: howl-render/src/text/font/ft_hb/glyph_raster.zig
+                provider: howl-render/src/text/font/ft_hb/provider.zig
+                special_sprite: howl-render/src/text/font/ft_hb/special_sprite.zig
+                support: howl-render/src/text/font/ft_hb/support.zig
