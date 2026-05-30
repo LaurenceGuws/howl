@@ -1,76 +1,70 @@
-# Current Slice: Normalize ABI Export Root Order
+# Current Slice: Render C Translator Lane Decision
 
 Owner: workspace root.
 
 Purpose:
 
-- Make `libhowl_*.zig` public export roots read as mechanical C ABI export tables.
-- Align export order with the accepted header grammar and current public headers.
-- Preserve all exported symbols and behavior exactly.
+- Decide the exact C translator lane shape for `howl-render` before moving any root translator files.
+- Classify every current render root ABI file as translator, owner, or stale.
+- Select one bounded first implementation move for the next slice.
 
 ## Source Research
 
 Use:
 
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 2.1
+- `research/2026-05-30-hygiene-audit/synthesis.md`
 - `research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 1.3
-- current public headers:
-  - `howl-pty/include/howl_pty.h`
-  - `howl-vt/include/howl_vt.h`
-  - `howl-render/include/howl_render.h`
+- `howl-render/design.md`
+- `howl-render/include/howl_render.h`
+- `howl-render/src/libhowl_render.zig`
 
 ## Source Changes
 
 Edit only:
 
-- `howl-pty/src/libhowl_pty.zig`
-- `howl-vt/src/libhowl_vt.zig`
-- `howl-render/src/libhowl_render.zig`
+- new `research/2026-05-30-hygiene-audit/render-c-lane.md`
 
-## Required Shape
+## Required Content
 
-- Public roots curate exports only.
-- Export order follows the corresponding public header function order.
-- Imports are ordered to support the export table.
-- PTY and VT remain single-`ffi` export tables.
-- Render may still import current translator files in this slice, but imports/exports must be explicit
-  and mechanically ordered.
+- Decide whether render uses one `ffi.zig` translator or an `ffi/` translator lane grouped by ABI nouns.
+- Classify these current root files as translator, owner, or stale:
+  - `howl-render/src/vt_surface.zig`
+  - `howl-render/src/prepare_request.zig`
+  - `howl-render/src/submission.zig`
+  - `howl-render/src/prepared_surface.zig`
+  - `howl-render/src/text_session.zig`
+  - `howl-render/src/surface_geometry.zig`
+  - `howl-render/src/work_state.zig`
+- Preserve render ownership:
+  - `source/*` owns VT-derived input snapshots.
+  - `prepared/*` owns prepared output.
+  - `session/*` composes the C handle.
+  - `render/*` and `text/*` own rendering and shaping.
+- Select the first implementation move and explain why it is bounded.
+- Include exact files, non-goals, verification, grep gates, and stop conditions for that next slice.
 
 ## Non-Goals
 
-- Do not move render translator files.
-- Do not edit headers.
-- Do not edit `ffi.zig` or translator implementations.
-- Do not rename exported C symbols.
-- Do not change ABI behavior.
-- Do not add compatibility aliases.
-
-## Invariants
-
-- All previously exported C symbols remain exported exactly once.
-- Root files contain imports, `comptime` export blocks, and tests only if already present.
-- No owner behavior, state, helpers, or policy appears in public roots.
+- Do not edit render code.
+- Do not move files.
+- Do not rename ABI symbols.
+- Do not change headers.
+- Do not introduce `manager`, `controller`, `engine`, `runtime`, `types.zig`, `api.zig`, or broad
+  owner buckets.
 
 ## Verification
 
-From each changed subrepo:
-
-- `zig build check`
-- `zig build test`
-- `git diff --check`
-
 From `/home/home/personal/projects/howl`:
 
-- `zig build check`
-- `zig build test`
 - `git diff --check`
 
 ## Grep Gates
 
-- `rg '^const .* = @import|@export\(' howl-pty/src/libhowl_pty.zig howl-vt/src/libhowl_vt.zig howl-render/src/libhowl_render.zig`
-- `rg 'pub fn|var |const [A-Z].*= struct' howl-pty/src/libhowl_pty.zig howl-vt/src/libhowl_vt.zig howl-render/src/libhowl_render.zig` prints nothing.
+- `rg 'vt_surface.zig|prepare_request.zig|submission.zig|prepared_surface.zig|text_session.zig|surface_geometry.zig|work_state.zig' research/2026-05-30-hygiene-audit/render-c-lane.md`
+- `rg 'manager|controller|engine|runtime|types.zig|api.zig' research/2026-05-30-hygiene-audit/render-c-lane.md` must not propose banned owners.
 
 ## Stop Conditions
 
-- Stop if render root order cannot be made intelligible without moving translator files.
-- Stop if any implementation file must change.
+- Stop if the document cannot distinguish translator files from true render owners.
+- Stop if the only proposed shape is a generic `types.zig` or vague C bucket.
