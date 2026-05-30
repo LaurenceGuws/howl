@@ -1,12 +1,12 @@
-# Current Slice: Move Render Raster Operation Contracts
+# Current Slice: Move Render Text Prepare Counters
 
 Owner: workspace root.
 
 Purpose:
 
-- Continue splitting `howl-render/src/text/pipeline.zig` by moving raster operation contracts.
-- Move `RasterizeRequest`, `RasterizeOutput`, `RasterizeGlyphFn`, and `RasterizeGlyphOp` to a true raster owner.
-- Preserve raster request/output fields, deinit behavior, and callback dispatch exactly.
+- Continue splitting `howl-render/src/text/pipeline.zig` by moving prepare counters to the frame-preparation owner.
+- Move only `TextPrepareCounters` to a true prepare counter owner.
+- Preserve counter fields and defaults exactly.
 
 ## Source Research
 
@@ -14,53 +14,43 @@ Use:
 
 - `research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
 - `howl-render/src/text/pipeline.zig`
-- `howl-render/src/session/text.zig`
 - `howl-render/src/text/frame_preparer.zig`
 - `howl-render/src/text/direct_normal.zig`
-- `howl-render/src/text/font/provider.zig`
-- `howl-render/src/text/font/ft_hb/provider.zig`
 
 ## Source Changes
 
 Edit only:
 
 - `howl-render/src/text/pipeline.zig`
-- `howl-render/src/text/raster/operation.zig`
-- `howl-render/src/session/text.zig`
+- `howl-render/src/text/prepare_counters.zig`
 - `howl-render/src/text/frame_preparer.zig`
 - `howl-render/src/text/direct_normal.zig`
-- `howl-render/src/text/font/provider.zig`
-- `howl-render/src/text/font/ft_hb/provider.zig`
 
-The first implementation attempt exposed one missed direct raster operation importer:
-`howl-render/src/text/frame_preparer.zig`. It is now explicitly in scope only for repairing
-`RasterizeGlyphOp` imports/usages.
+Do not edit any other file unless the build exposes a direct `TextPrepareCounters` use missed by this slice.
+If that happens, stop and report the exact import before broadening scope.
 
 ## Required Shape
 
-- Add `howl-render/src/text/raster/operation.zig`.
-- Move only `RasterizeRequest`, `RasterizeOutput`, `RasterizeGlyphFn`, and `RasterizeGlyphOp` out of `pipeline.zig`.
-- Update listed importers to use the new file for moved symbols.
+- Add `howl-render/src/text/prepare_counters.zig`.
+- Move only `TextPrepareCounters` out of `pipeline.zig`.
+- Update `frame_preparer.zig` and `direct_normal.zig` to use the new owner.
 - Keep `pipeline.zig` for all non-moved symbols; do not add aliases from `pipeline.zig` to moved symbols.
-- Move the raster portion of the old pipeline test into the new owner so dispatch and output ownership remain covered.
 
 ## Non-Goals
 
 - Do not rename or delete `pipeline.zig`.
-- Do not move `TextPrepareCounters`.
 - Do not move shape operation symbols.
 - Do not move build/group request-output symbols.
 - Do not change headers or exported C ABI symbols.
-- Do not change rasterization behavior, scene preparation, shaping, prepared metrics, submit metrics, or submit behavior.
+- Do not change scene preparation, shaping, rasterization, prepared metrics, submit metrics, or submit behavior.
 - Do not add compatibility aliases.
 
 ## Invariants
 
-- `RasterizeRequest` fields and defaults remain identical.
-- `RasterizeOutput` fields and `deinit` behavior remain identical.
-- `RasterizeGlyphFn` signature remains identical.
-- `RasterizeGlyphOp.rasterize` dispatch behavior remains identical and tested in the new owner.
-- Import repairs are symbol-directed only.
+- `TextPrepareCounters` fields and zero defaults remain identical.
+- `frame_preparer.TextFramePreparer.counters` keeps the same semantics.
+- `direct_normal.counters` keeps the same return values.
+- `applyCounters` still adds the same fields.
 
 ## Verification
 
@@ -72,20 +62,20 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'RasterizeRequest|RasterizeOutput|RasterizeGlyphFn|RasterizeGlyphOp' howl-render/src/text/pipeline.zig`
-- `rg 'RasterizeRequest|RasterizeOutput|RasterizeGlyphFn|RasterizeGlyphOp' howl-render/src/text/raster/operation.zig`
-- `rg 'text_pipeline\.Rasterize|pipeline\.Rasterize' howl-render/src`
+- `rg 'TextPrepareCounters' howl-render/src/text/pipeline.zig`
+- `rg 'TextPrepareCounters' howl-render/src/text/prepare_counters.zig howl-render/src/text/frame_preparer.zig howl-render/src/text/direct_normal.zig`
+- `rg 'pipeline\.TextPrepareCounters|text_pipeline\.TextPrepareCounters' howl-render/src`
 - `rg 'types\.zig|api\.zig|manager|controller|engine|runtime' howl-render/src/text howl-render/src/prepared howl-render/src/session`
 
 Expected results:
 
 - The first gate prints nothing.
-- The second gate proves moved symbols live in the new owner.
+- The second gate proves the moved counter type and direct uses.
 - The third gate prints nothing.
 - The fourth gate prints nothing except unrelated pre-existing terms if explicitly reviewed.
 
 ## Stop Conditions
 
-- Stop if moving raster operation symbols requires changing fields, defaults, allocator ownership, or dispatch behavior.
+- Stop if moving prepare counters requires changing fields, defaults, or accumulation behavior.
 - Stop if a direct importer requires both old and new names through an alias.
-- Stop if implementation begins moving prepare counters, shape symbols, or build/group symbols.
+- Stop if implementation begins moving shape, build, or group symbols.
