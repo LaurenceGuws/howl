@@ -190,6 +190,11 @@ Canonical source scratchpads archived into this section:
 - The render text `pipeline.zig` proof gap is complete in current source:
   `howl-render/src/text/pipeline.zig` no longer exists and no render Zig source
   contains `pipeline`, `text_pipeline`, or `text_flow` owner vocabulary.
+- Render ABI layout assertions live beside the translator noun that proves the C
+  layout. Current source keeps VT source publication layout assertions in
+  `howl-render/src/ffi/vt_surface.zig`; `howl-render/src/ffi.zig` remains only the
+  shared C import boundary. Do not move layout assertions into a generic
+  ownerless bucket.
 
 ### Accepted Render Direction
 

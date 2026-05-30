@@ -1354,7 +1354,6 @@ promoting any listed worker-ready slice, verify current source and
 already complete in current source.
 
 - Whether headers should stay hand-maintained with generated-looking grammar or eventually be generated from ABI metadata.
-- Where ABI layout assertions should live after render translator lane movement: one `ffi.zig` or owner-specific ABI adapter files.
 - Whether `howl-vt/src/howl_vt.zig` is a necessary internal root/test aggregator or stale Zig-shaped lane.
 - Whether VT `runtime_obligation` is accepted ABI vocabulary or banned owner vocabulary leaking into product API.
 - Capacity design for VT host consequences using `ArrayList`, `dupe`, and allocation in protocol paths.
