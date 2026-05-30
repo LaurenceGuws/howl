@@ -250,12 +250,12 @@ howl-render:
     prepared:
       owners:
         buffer: howl-render/src/prepared/buffer.zig
+        owner: howl-render/src/prepared/owner.zig
         surface: howl-render/src/prepared/surface.zig
         submit: howl-render/src/prepared/submit.zig
         submit_result: howl-render/src/prepared/submit_result.zig
     surface:
       owners:
-        prepared_owner: howl-render/src/surface/prepared_owner.zig
         publication_source: howl-render/src/surface/publication_source.zig
         clip_rect: howl-render/src/surface/clip_rect.zig
         geometry: howl-render/src/surface/geometry.zig
