@@ -45,6 +45,7 @@ const test_abi_mappings = [_]Mapping{
 };
 
 const test_integration_mappings = [_]Mapping{
+    .{ .package_dir = "howl-pty", .step_name = "test:integration" },
     .{ .package_dir = "howl-linux-host", .step_name = "test:integration" },
 };
 

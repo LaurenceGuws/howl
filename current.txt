@@ -1,60 +1,76 @@
-# Current Slice: Move PTY FFI Tests Out Of Production
+# Current Slice: Host Lock Graph Normalization (Slice 1)
 
-Owner: `howl-pty` ABI/FFI test accountability.
+Owner: `howl-linux-host` terminal synchronization ownership.
+
+Sprint scratchpad (authoritative):
+
+- `research/2026-05-30-alacritty-host-fair-mutex-sprint.md`
 
 Purpose:
 
-- Remove production `howl-pty/src/ffi.zig` dependency on test-only PTY doubles.
-- Move FFI behavior tests beside ABI tests, where test helpers are allowed.
-- Preserve product behavior and exported ABI exactly.
+- Remove render-turn nested re-lock cycles on `term.mutex`.
+- Preserve serialization between VT mutation and VT surface copy.
+- Land a deadlock-free first render turn without inventing new host-loop policy.
 
-## Source Research
+## Source Order (Mandatory)
 
-Read before editing:
+Read in order before editing:
 
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `research/2026-05-30-test-war/offender-inventory.md`
-- `howl-pty/src/ffi.zig`
-- `howl-pty/src/test/abi.zig`
-- `howl-pty/src/pty/pty_test.zig`
-- `howl-pty/build.zig`
+1. `utils/dev_references/terminals/alacritty/alacritty_terminal/src/sync.rs`
+2. `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
+3. `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
+4. `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
+5. `utils/official_docs/ziglang.org/download/0.16.0/release-notes.html`
+6. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+7. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+8. `howl-linux-host/src/terminal/term.zig`
+9. `howl-linux-host/src/terminal/context.zig`
+10. `howl-linux-host/src/terminal/pty/pump.zig`
+11. `howl-linux-host/src/terminal/vt/surface.zig`
+12. `howl-linux-host/src/terminal/vt/retained.zig`
+13. `howl-linux-host/src/main.zig`
 
-## Source Changes
+## Exact Change Scope
 
-Exact files:
+Allowed files:
 
-- `howl-pty/src/ffi.zig`
-- Add `howl-pty/src/test/ffi.zig` or equivalent ABI-owned test module.
-- Update `howl-pty/src/test/abi.zig` only to import the new FFI test module.
-- Update `howl-pty/build.zig` only if module imports are required.
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-linux-host/src/terminal/pty/pump.zig`
+- `howl-linux-host/src/terminal/term.zig` (only if needed for lock API normalization)
+- `howl-linux-host/src/main.zig` (diagnostic log removal only)
 
 ## Required Shape
 
-- `howl-pty/src/ffi.zig` imports production owners only.
-- FFI tests still exercise the shipped translator functions through ABI test wiring.
-- No production file imports `pty/pty_test.zig`.
+- No function may hold `term.mutex` and call another function that can lock `term.mutex`.
+- Locked vs unlocked variants are explicit where necessary.
+- `renderTurn` path is deadlock-free.
+- VT copy path remains serialized against VT mutation.
 
 ## Non-Goals
 
-- Do not split PTY integration/runtime tests in this slice.
-- Do not redesign PTY test helpers in this slice.
-- Do not change C headers, exported symbols, or product behavior.
+- Do not finish full fair-mutex feature parity in this slice.
+- Do not refactor unrelated host modules.
+- Do not change ABI contracts.
 
 ## Invariants
 
-- FFI remains a translator only.
-- Test doubles remain reachable only from test modules.
-- Existing PTY ABI tests continue to run.
+- First render turn cannot self-deadlock.
+- No concurrent VT feed+copy on shared terminal state.
+- No temporary trace logs remain in final diff.
 
 ## Verification
 
-From `/home/home/personal/projects/howl/howl-pty`:
+From `/home/home/personal/projects/howl/howl-linux-host`:
 
 - `zig build check`
 - `zig build test`
-- `zig build test:abi`
-- `zig build test:unit`
+- `zig build run` (manual: no startup deadlock at first render turn)
+
+From `/home/home/personal/projects/howl/howl-vt`:
+
+- `zig build check`
+- `zig build test`
 
 From `/home/home/personal/projects/howl`:
 
@@ -62,13 +78,8 @@ From `/home/home/personal/projects/howl`:
 - `zig build test`
 - `git diff --check`
 
-## Grep Gates
-
-- `rg 'pty_test|test_pty' howl-pty/src/ffi.zig` prints nothing.
-- `rg '@import\("pty/pty_test\.zig"\)' howl-pty/src` prints nothing.
-- `rg 'pty_test' howl-pty/src/test` shows test-only ownership only if the helper is imported there.
-
 ## Stop Conditions
 
-- Stop if moving the tests requires product API changes.
-- Stop if ABI tests cannot import the required test doubles without production imports.
+- Stop if lock ownership remains ambiguous at any render-turn boundary.
+- Stop if fix requires unscoped broad locking that regresses boundedness.
+- Stop if any ABI boundary change is required.
