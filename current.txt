@@ -1,12 +1,12 @@
-# Current Slice: Delete VT Action Bucket
+# Current Slice: Delete VT Kitty Root
 
 Owner: `howl-vt`.
 
 Purpose:
 
-- Delete `howl-vt/src/action.zig` as broad re-export glue.
-- Replace internal imports with exact action owners.
-- Preserve protocol vocabulary, parser behavior, screen behavior, and C ABI exactly.
+- Delete `howl-vt/src/kitty.zig` as stale root glue.
+- Preserve exact Kitty owners under `howl-vt/src/kitty/`.
+- Preserve Kitty protocol behavior, parser behavior, host-facing ABI, and tests exactly.
 
 ## Source Research
 
@@ -14,63 +14,44 @@ Read before editing:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 3.3
-- `howl-vt/src/action.zig`
-- `howl-vt/src/action/route.zig`
-- `howl-vt/src/action/vocabulary.zig`
-- all current importers of `action.zig` under `howl-vt/src`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 3.4
+- `howl-vt/src/kitty.zig`
+- `howl-vt/src/kitty/state.zig`
+- `howl-vt/src/kitty/protocol.zig`
+- `howl-vt/src/kitty/apply.zig`
+- `howl-vt/src/kitty/key.zig`
+- `howl-vt/src/kitty/color.zig`
+- `howl-vt/src/kitty/pointer.zig`
+- current importers of `kitty.zig` under `howl-vt/src`
 - `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- Delete `howl-vt/src/action.zig`.
-- Edit direct importers under `howl-vt/src`.
-- Edit `libs.yaml` to remove stale `howl-vt/src/action.zig` owner/root entry.
+- Delete `howl-vt/src/kitty.zig`.
+- Edit `libs.yaml` to remove stale `kitty.root`.
 
-Known importers and exact owners:
-
-- `howl-vt/src/test/action_mapping.zig`
-  - `process`: `../action/route.zig`
-  - `Event`: `../parser/events.zig`
-  - `SemanticEvent`, `EraseMode`, `LegacyControlKind`: `../action/vocabulary.zig`
-- `howl-vt/src/screen.zig`
-  - `screenAction`: `action/route.zig`
-  - `SemanticEvent`, `ScreenAction`, `EraseMode`: `action/vocabulary.zig`
-- `howl-vt/src/test/screen_state_behavior.zig`
-  - `SemanticEvent`, `EraseMode`: `../action/vocabulary.zig`
-- `howl-vt/src/test/terminal_modes_reports.zig`
-  - `DcsPayloadKind`, `LegacyControlKind`: `../action/vocabulary.zig`
-- `howl-vt/src/control/report.zig`
-  - `ReportAction`, `SemanticEvent.RectArea`: `../action/vocabulary.zig`
-- `howl-vt/src/control/locator.zig`
-  - `SemanticEvent.OptionalRectArea`: `../action/vocabulary.zig`
-- `howl-vt/src/control/mode.zig`
-  - `ModeAction`: `../action/vocabulary.zig`
-- `howl-vt/src/host/state.zig`
-  - `DcsPayloadKind`, `LegacyControlKind`, `DcsPayload`: `../action/vocabulary.zig`
-- `howl-vt/src/screen/apply.zig`
-  - `ScreenAction`: `../action/vocabulary.zig`
-- `howl-vt/src/screen/rect.zig`
-  - `SemanticEvent`: `../action/vocabulary.zig`
-- `howl-vt/src/howl_vt.zig`
-  - package test aggregation: `action/route.zig`, `action/vocabulary.zig`
+No import replacements are expected because `kitty.zig` currently has zero direct importers under `howl-vt/src`.
 
 ## Non-Goals
 
-- Do not change parser event semantics.
-- Do not rename action vocabulary.
-- Do not change ESC/CSI/OSC/DCS mapping.
-- Do not change screen behavior.
-- Do not combine with parser or Kitty root cleanup.
-- Do not add compatibility aliases, replacement buckets, managers, controllers, runtimes, `types.zig`, `api.zig`, or `abi.zig`.
+- Do not change Kitty behavior.
+- Do not change parser behavior.
+- Do not change protocol vocabulary.
+- Do not change host-facing ABI.
+- Do not combine with parser root deletion.
+- Do not add compatibility aliases or replacement buckets.
 
 ## Invariants
 
-- `action/route.zig` remains the behavior owner for parsed-event routing.
-- `action/vocabulary.zig` remains the owner for action nouns and payload types.
-- Tests may import exact owners, not convenience buckets.
+- Exact Kitty owners remain:
+  - `howl-vt/src/kitty/state.zig`
+  - `howl-vt/src/kitty/protocol.zig`
+  - `howl-vt/src/kitty/apply.zig`
+  - `howl-vt/src/kitty/key.zig`
+  - `howl-vt/src/kitty/color.zig`
+  - `howl-vt/src/kitty/pointer.zig`
 - `libs.yaml` must not reference deleted files.
 
 ## Verification
@@ -83,14 +64,12 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg '@import\("action\.zig"\)|@import\("\.\./action\.zig"\)|@import\("\.\./\.\./action\.zig"\)' howl-vt/src` prints nothing.
-- `rg 'action\.zig' howl-vt/src libs.yaml` prints nothing.
-- `rg 'pub const .* = .*\.' howl-vt/src/action.zig` is impossible because the file is deleted.
+- `rg '@import\("kitty\.zig"\)|@import\("\.\./kitty\.zig"\)|@import\("\.\./\.\./kitty\.zig"\)' howl-vt/src` prints nothing.
+- `rg 'kitty\.zig' howl-vt/src libs.yaml` prints nothing.
 
 ## Stop Conditions
 
-- Stop if any protocol vocabulary rename appears.
-- Stop if parser, C0, CSI, OSC, DCS, or screen behavior changes.
-- Stop if a compatibility alias/root bucket is added.
-- Stop if deleting `action.zig` requires unrelated parser/root cleanup.
-- Stop if dirty tree appears before work; do not build on unowned changes.
+- Stop if any `kitty.zig` importer appears.
+- Stop if deleting the root requires touching Kitty behavior.
+- Stop if protocol vocabulary, parser behavior, Kitty behavior, or host-facing ABI changes appear.
+- Stop if the working tree is dirty before work starts.
