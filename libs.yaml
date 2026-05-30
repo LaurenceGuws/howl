@@ -181,7 +181,6 @@ howl-vt:
         state: howl-vt/src/host/state.zig
         apply: howl-vt/src/host/apply.zig
     input:
-      root: howl-vt/src/input.zig
       owners:
         event: howl-vt/src/input/event.zig
         encode: howl-vt/src/input/encode.zig
