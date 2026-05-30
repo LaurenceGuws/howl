@@ -1,19 +1,20 @@
-# Current Slice: Research VT Selection Ghostty Shape
+# Current Slice: Extract VT Selection Projection From FFI
 
-Owner: workspace root.
+Owner: `howl-vt`.
 
 Purpose:
 
-- Stop before moving VT selection behavior out of `ffi.zig` until the owner shape is anchored in Ghostty.
-- Record whether Howl's next selection cleanup is a mechanical FFI extraction or a deeper screen/selection redesign.
-- Preserve C ABI and product behavior; this slice edits research/planning only.
+- Move C-free VT selection projection/copy behavior out of `howl-vt/src/ffi.zig`.
+- Preserve current coordinate semantics exactly as an honest temporary Howl stopgap.
+- Keep C ABI translation in `ffi.zig` and keep Ghostty-style tracked selection as a later screen/page proof gap.
 
 ## Source Research
 
-Use:
+Read before editing:
 
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 3.1
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 3.2
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Phase 3 top-down flow note and Slice 3.2
 - `research/2026-05-30-hygiene-audit/vt-selection-ghostty-shape.md`
 - `utils/dev_references/terminals/ghostty/src/terminal/Selection.zig`
 - `utils/dev_references/terminals/ghostty/src/terminal/Screen.zig`
@@ -22,57 +23,98 @@ Use:
 - `howl-vt/src/selection.zig`
 - `howl-vt/src/selection/state.zig`
 - `howl-vt/src/screen_set.zig`
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/test/terminal_surface.zig`
 
 ## Source Changes
 
-Edit only research/planning files in this slice:
+Exact files:
 
-- `research/2026-05-30-hygiene-audit/vt-selection-ghostty-shape.md`
-- `current.txt`
-
-Do not edit product code in this slice.
+- Edit `howl-vt/src/ffi.zig`.
+- Create `howl-vt/src/selection/projection.zig`.
+- Edit `howl-vt/src/screen_set.zig` only if a C-free row/content helper truly belongs there.
+- Do not edit `howl-vt/include/howl_vt.h`.
+- Do not edit public C export names.
 
 ## Required Shape
 
-- Document Ghostty's selection ownership: `Screen` owns selection, `Selection` owns tracked bounds, `Screen.selectionString` owns text extraction.
-- Document current Howl mismatch: coordinate selection state lives under `selection/state.zig`, while projection/copy behavior is still in `ffi.zig`.
-- Decide whether the next implementation slice is bounded FFI extraction or a deeper screen/page redesign.
-- If bounded extraction is acceptable, define exact files, non-goals, invariants, tests, and grep gates.
+Move out of `ffi.zig`:
+
+- `selectionRowSource`
+- `selectionContentEndExclusive`
+- `visibleSelectionRow`
+- `visibleSelectionRange`
+- `copySelectionText`
+
+Create `howl-vt/src/selection/projection.zig` with exact C-free selection projection/copy ownership:
+
+- `pub const Range = struct { start: u16, end_exclusive: u16 }`
+- `pub fn rowSource(screen_state: *const screen_set.Set, row: i32) ?screen_set.RowSource`
+- `pub fn contentEndExclusive(screen_state: *const screen_set.Set, row: i32) u16`
+- `pub fn visibleRow(view: screen_set.View, row: u16) i32`
+- `pub fn visibleRange(view: screen_set.View, selected: state.TerminalSelection, row: u16) ?Range`
+- `pub fn copyText(allocator: std.mem.Allocator, screen_state: *const screen_set.Set, selected: ?state.TerminalSelection) ![]const u8`
+
+In `ffi.zig`, retain only:
+
+- handle casts
+- C status mapping
+- C buffer validation/copying
+- final writes to `FfiSurfaceCell.attrs.selected` by applying ranges returned from `selection/projection.zig`
 
 ## Non-Goals
 
-- Do not change `howl-vt/include/howl_vt.h`.
-- Do not edit `howl-vt/src/ffi.zig` yet.
-- Do not move selection helper behavior yet.
-- Do not introduce Ghostty-style pins yet.
-- Do not change C enum values, struct layout, exported names, or behavior.
+- Do not introduce Ghostty pins.
+- Do not redesign selection ABI.
+- Do not change history/live/visible coordinate semantics.
+- Do not change exported `howl_vt_*` functions.
+- Do not move screen/page storage.
+- Do not introduce `HowlVt*` or `Ffi*` names in `selection/projection.zig`.
+- Do not create compatibility aliases, module buckets, `types.zig`, `api.zig`, or `abi.zig`.
 
 ## Invariants
 
-- Ghostty remains the first source for VT owner shape.
-- FFI is a C translator boundary, not the owner of selection projection/copy behavior.
-- Howl's immediate cleanup may preserve coordinate semantics, but must state that this is not equivalent to Ghostty's tracked pin model.
-- Any future implementation slice must prove history/live row semantics and alternate-screen isolation with tests.
+- History rows remain addressed by negative selection rows.
+- Alternate screen selection copy/projection must not read primary history.
+- Visible selection marking remains based on `screen_set.View.rowSource`.
+- End-column handling remains inclusive from user endpoint to exclusive internal range.
+- Empty rows and space-only rows keep current copy/projection behavior.
+- Copied text allocation remains caller-owned through the terminal allocator; FFI still copies into the C caller buffer and frees the owned slice.
+- This slice is a Howl stopgap, not Ghostty-equivalent tracked selection.
+
+## Required Tests
+
+Preserve existing tests:
+
+- FFI selection query/copy history-aware behavior.
+- FFI surface selection viewport/content hugging behavior.
+- `terminal_surface.zig` alternate-screen selection clear behavior.
+
+Add or preserve tests proving:
+
+- History-to-live selection copy still returns the same text and visible selected cells.
+- Alternate screen with primary history active does not copy/project primary history from negative rows.
+- Selection copy short-buffer behavior remains unchanged if touched.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
+- `zig build check`
+- `zig build test`
 - `git diff --check`
 
 ## Grep Gates
 
-- `rg 'Screen\.select|selectionString|tracked selection|Selection.init' research/2026-05-30-hygiene-audit/vt-selection-ghostty-shape.md`
-- `rg 'HowlVt|howl_vt_' research/2026-05-30-hygiene-audit/vt-selection-ghostty-shape.md` must mention these only as C ABI non-goals/gates, not proposed owner imports.
-- `rg 'manager|controller|runtime|flow|pipeline|types\.zig|api\.zig|abi\.zig' research/2026-05-30-hygiene-audit/vt-selection-ghostty-shape.md` prints nothing except banned vocabulary in gates/non-goals.
-
-Expected results:
-
-- The research file cites Ghostty's concrete owner paths and exact Howl seams.
-- The next implementation slice is explicitly bounded or sent back to deeper research.
+- `rg 'fn copySelectionText|fn applyVisibleSelection|fn visibleSelectionRange|fn selectionRowSource|fn selectionContentEndExclusive|fn visibleSelectionRow' howl-vt/src/ffi.zig` prints nothing.
+- `rg 'HowlVt|Ffi' howl-vt/src/selection howl-vt/src/screen_set.zig` prints nothing unless only pre-existing unrelated text is explained.
+- `rg 'manager|controller|runtime|flow|pipeline|types\.zig|api\.zig|abi\.zig' howl-vt/src/selection howl-vt/src/screen_set.zig` has no new owner vocabulary hits.
+- `rg 'projection\.zig|visibleRange|copyText' howl-vt/src/ffi.zig howl-vt/src/selection howl-vt/src/screen_set.zig` supports review of the new seam.
 
 ## Stop Conditions
 
-- Stop if Ghostty evidence suggests this cannot be safely handled as FFI extraction.
-- Stop if the next slice cannot name exact owners without vague bucket vocabulary.
-- Stop if the proposed extraction would hide a screen/page selection redesign.
+- Stop if extraction requires importing C ABI structs into `selection/projection.zig`.
+- Stop if coordinate semantics, C enum values, C structs, or exported names must change.
+- Stop if alternate-screen selection copy/projection cannot be proved without deeper screen/page work.
+- Stop if the new owner becomes a vague bucket or reintroduces behavior under a different FFI helper name.
+- Stop if allocation ownership for copied text is ambiguous after movement.
