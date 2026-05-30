@@ -116,6 +116,11 @@ Canonical source scratchpads archived into this section:
 - No promoted host follow-up slice is active after the 2026-05-30 owner cleanup.
 - Future work should start from fresh research against current source, not the
   archived pre-cleanup slice specs.
+- `howl-linux-host/src/main.zig` still contains app-owner tests. Do not extract
+  them by making private app helpers public or by inventing a test taxonomy. Test
+  relocation is blocked on the build/test architecture plan unless a future
+  source-backed host slice moves a helper to its exact true owner with behavior
+  tests in the same owner file.
 
 ### Host Verification Gates
 

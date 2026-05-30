@@ -1355,5 +1355,4 @@ already complete in current source.
 
 - Capacity design for VT host consequences using `ArrayList`, `dupe`, and allocation in protocol paths.
 - First true owner seam inside `howl-vt/src/screen.zig` beyond surface publication.
-- Test taxonomy for moving host `main.zig` tests without adding public helper aliases.
 - Build/test architecture strategy for adding durable grep gates or generated checks.
