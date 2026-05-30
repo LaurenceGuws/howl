@@ -1,56 +1,52 @@
-# Current Slice: Move Render Text Prepare Counters
+# Current Slice: Delete Render Text Pipeline Remainder
 
 Owner: workspace root.
 
 Purpose:
 
-- Continue splitting `howl-render/src/text/pipeline.zig` by moving prepare counters to the frame-preparation owner.
-- Move only `TextPrepareCounters` to a true prepare counter owner.
-- Preserve counter fields and defaults exactly.
+- Delete the remaining unused `howl-render/src/text/pipeline.zig` file after all live symbols moved to true owners.
+- Remove the stale `text_flow` owner-map entry.
+- Preserve behavior by deleting only unimported Zig-only contracts and their self-test.
 
 ## Source Research
 
 Use:
 
 - `research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
+- current grep proving no direct importers of `pipeline.zig`
 - `howl-render/src/text/pipeline.zig`
-- `howl-render/src/text/frame_preparer.zig`
-- `howl-render/src/text/direct_normal.zig`
+- `libs.yaml`
 
 ## Source Changes
 
 Edit only:
 
 - `howl-render/src/text/pipeline.zig`
-- `howl-render/src/text/prepare_counters.zig`
-- `howl-render/src/text/frame_preparer.zig`
-- `howl-render/src/text/direct_normal.zig`
-
-Do not edit any other file unless the build exposes a direct `TextPrepareCounters` use missed by this slice.
-If that happens, stop and report the exact import before broadening scope.
+- `libs.yaml`
 
 ## Required Shape
 
-- Add `howl-render/src/text/prepare_counters.zig`.
-- Move only `TextPrepareCounters` out of `pipeline.zig`.
-- Update `frame_preparer.zig` and `direct_normal.zig` to use the new owner.
-- Keep `pipeline.zig` for all non-moved symbols; do not add aliases from `pipeline.zig` to moved symbols.
+- Delete `howl-render/src/text/pipeline.zig`.
+- Remove `text_flow: howl-render/src/text/pipeline.zig` from `libs.yaml`.
+- Do not create a replacement bucket file.
 
 ## Non-Goals
 
-- Do not rename or delete `pipeline.zig`.
-- Do not move shape operation symbols.
-- Do not move build/group request-output symbols.
+- Do not move any more render symbols.
+- Do not edit render code besides deleting the unimported file.
 - Do not change headers or exported C ABI symbols.
-- Do not change scene preparation, shaping, rasterization, prepared metrics, submit metrics, or submit behavior.
 - Do not add compatibility aliases.
+- Do not add `types.zig`, `api.zig`, manager, controller, engine, runtime, flow, or pipeline owner files.
 
 ## Invariants
 
-- `TextPrepareCounters` fields and zero defaults remain identical.
-- `frame_preparer.TextFramePreparer.counters` keeps the same semantics.
-- `direct_normal.counters` keeps the same return values.
-- `applyCounters` still adds the same fields.
+- No source file imports `pipeline.zig` before deletion.
+- Deleted symbols are not used outside the deleted file.
+- Build and tests continue to pass.
+- Live split owners remain:
+  - `text/font/resolve.zig`
+  - `text/raster/operation.zig`
+  - `text/prepare_counters.zig`
 
 ## Verification
 
@@ -62,20 +58,17 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'TextPrepareCounters' howl-render/src/text/pipeline.zig`
-- `rg 'TextPrepareCounters' howl-render/src/text/prepare_counters.zig howl-render/src/text/frame_preparer.zig howl-render/src/text/direct_normal.zig`
-- `rg 'pipeline\.TextPrepareCounters|text_pipeline\.TextPrepareCounters' howl-render/src`
-- `rg 'types\.zig|api\.zig|manager|controller|engine|runtime' howl-render/src/text howl-render/src/prepared howl-render/src/session`
+- `rg 'pipeline\.zig|text_flow|text_pipeline|pipeline\.' howl-render/src libs.yaml`
+- `rg 'BuildRunsRequest|BuildRunsOutput|GroupGlyphsRequest|GroupGlyphsOutput|ShapeRequest|ShapeOutput|ShapeClustersFn|ShapeClustersOp' howl-render/src`
+- `rg 'types\.zig|api\.zig|manager|controller|engine|runtime|text_flow|pipeline' howl-render/src/text howl-render/src/prepared howl-render/src/session libs.yaml`
 
 Expected results:
 
-- The first gate prints nothing.
-- The second gate proves the moved counter type and direct uses.
-- The third gate prints nothing.
-- The fourth gate prints nothing except unrelated pre-existing terms if explicitly reviewed.
+- The first two gates print nothing.
+- The third gate prints nothing except unrelated pre-existing terms if explicitly reviewed; it must not show `text_flow` or `pipeline` owner usage.
 
 ## Stop Conditions
 
-- Stop if moving prepare counters requires changing fields, defaults, or accumulation behavior.
-- Stop if a direct importer requires both old and new names through an alias.
-- Stop if implementation begins moving shape, build, or group symbols.
+- Stop if any file still imports `pipeline.zig`.
+- Stop if any deleted symbol is referenced outside `pipeline.zig`.
+- Stop if deleting the file requires adding a replacement bucket.

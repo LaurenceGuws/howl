@@ -279,7 +279,6 @@ howl-render:
         scene: howl-render/src/text/scene.zig
         direct_scene: howl-render/src/text/direct_scene.zig
         direct_normal: howl-render/src/text/direct_normal.zig
-        text_flow: howl-render/src/text/pipeline.zig
         shape:
           owners:
             cluster: howl-render/src/text/shape/cluster.zig
