@@ -1,65 +1,95 @@
-# Current Slice: Classify Render Text Pipeline Taxonomy
+# Current Slice: Move Render Resolve Observability
 
 Owner: workspace root.
 
 Purpose:
 
-- Classify `howl-render/src/text/pipeline.zig` before any rename or split.
-- Decide whether the file should be renamed whole or split into smaller true owners.
-- Select exactly one bounded implementation move for the next slice.
+- Start splitting `howl-render/src/text/pipeline.zig` by moving the full resolve group.
+- Move resolve stage/result/callback/observability symbols to a true resolve owner.
+- Preserve enum tags, counter fields/defaults, and telemetry behavior exactly.
 
 ## Source Research
 
 Use:
 
-- `research/2026-05-30-hygiene-audit/roadmap.md` Phase 2 render taxonomy guidance
-- `research/2026-05-30-hygiene-audit/synthesis.md` render taxonomy finding
-- `howl-render/design.md`
-- `libs.yaml`
+- `research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
 - `howl-render/src/text/pipeline.zig`
-- all direct importers of `text/pipeline.zig`
+- `howl-render/src/session/text.zig`
+- `howl-render/src/text/font/ft_hb/support.zig`
+- `howl-render/src/text/font/resolver.zig`
+- `howl-render/src/prepared/surface.zig`
+- `howl-render/src/prepared/submit_result.zig`
 
 ## Source Changes
 
 Edit only:
 
-- new `research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
+- `howl-render/src/text/pipeline.zig`
+- `howl-render/src/text/font/resolve_observability.zig`
+- `howl-render/src/session/text.zig`
+- `howl-render/src/text/font/ft_hb/support.zig`
+- `howl-render/src/text/font/resolver.zig`
+- `howl-render/src/prepared/surface.zig`
+- `howl-render/src/prepared/submit_result.zig`
 
-## Required Content
+Do not edit any other file unless the build exposes a direct resolve-observability import missed by this slice.
+If that happens, stop and report the exact import before broadening scope.
 
-- Inventory every public symbol in `howl-render/src/text/pipeline.zig`.
-- For each symbol, classify the true owner category, such as resolve, prepare counters, shape operation, raster operation, build/group request-output, or other.
-- List every importer and exactly which symbols it uses.
-- Decide whether the next implementation should be a whole-file rename or a split.
-- If split, select one first file move with exact files, symbols, import repairs, non-goals, invariants, verification, grep gates, and stop conditions.
-- Explain why the selected first move is bounded.
+## Required Shape
+
+- Add `howl-render/src/text/font/resolve_observability.zig`.
+- Move `ResolveStage`, `ResolveRequest`, `ResolveHit`, `ResolveMiss`, `ResolveResult`,
+  `ResolveCounters`, `ResolveObservability`, `ResolveFallbackFaceFn`, and `ResolveFallbackFaceOp`
+  out of `pipeline.zig`.
+- Update the five listed importers to use the new file for moved symbols.
+- Keep `pipeline.zig` for all non-moved symbols; do not add aliases from `pipeline.zig` to the moved symbols.
 
 ## Non-Goals
 
-- Do not edit render code.
-- Do not move or rename `pipeline.zig` in this slice.
-- Do not change public ABI headers or symbols.
-- Do not invent `types.zig`, `api.zig`, `manager`, `controller`, `engine`, `runtime`, or another vague bucket.
-- Do not claim a whole-file rename is safe unless every public symbol has the same true owner.
+- Do not rename or delete `pipeline.zig`.
+- Do not move raster operation symbols.
+- Do not move prepare counters.
+- Do not move shape, build, group, or raster operation symbols.
+- Do not change headers or exported C ABI symbols.
+- Do not change prepared metrics, submit metrics, shaping, rasterization, scene preparation, or submit behavior.
+- Do not add compatibility aliases.
+
+## Invariants
+
+- `ResolveStage` remains `enum(u5)` with identical tags and order.
+- `ResolveRequest`, `ResolveHit`, `ResolveMiss`, and `ResolveResult` keep identical fields and tags.
+- `ResolveCounters` fields and zero defaults remain identical.
+- `ResolveObservability` fields and defaults remain identical.
+- `ResolveFallbackFaceFn` and `ResolveFallbackFaceOp` keep identical dispatch behavior.
+- `ResolveFallbackFaceOp.resolve` remains covered by a focused test in the new owner file.
+- `ResolveObservability` remains the prepared/submit resolve telemetry shape.
+- Import repairs are symbol-directed only; no behavior moves with these types.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
+- `zig build check`
+- `zig build test`
 - `git diff --check`
 
 ## Grep Gates
 
-- `rg 'ResolveStage|ResolveRequest|ResolveHit|ResolveMiss|ResolveResult|ResolveCounters|ResolveObservability|TextPrepareCounters|BuildRunsRequest|BuildRunsOutput|GroupGlyphsRequest|GroupGlyphsOutput|ShapeRequest|ShapeOutput|RasterizeRequest|RasterizeOutput|ShapeClustersFn|RasterizeGlyphFn|ResolveFallbackFaceFn|ShapeClustersOp|RasterizeGlyphOp|ResolveFallbackFaceOp' research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
-- `rg 'session/text\.zig|frame_preparer\.zig|direct_normal\.zig|font/provider\.zig|font/resolver\.zig|font/ft_hb/support\.zig|font/ft_hb/provider\.zig|prepared/surface\.zig|prepared/submit_result\.zig' research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
-- `rg 'types\.zig|api\.zig|manager|controller|engine|runtime' research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
+- `rg 'ResolveStage|ResolveRequest|ResolveHit|ResolveMiss|ResolveResult|ResolveCounters|ResolveObservability|ResolveFallbackFaceFn|ResolveFallbackFaceOp' howl-render/src/text/pipeline.zig`
+- `rg 'ResolveStage|ResolveRequest|ResolveHit|ResolveMiss|ResolveResult|ResolveCounters|ResolveObservability|ResolveFallbackFaceFn|ResolveFallbackFaceOp' howl-render/src/text/font/resolve.zig`
+- `rg 'text_pipeline\.Resolve|pipeline\.Resolve' howl-render/src`
+- `rg 'types\.zig|api\.zig|manager|controller|engine|runtime' howl-render/src/text howl-render/src/prepared howl-render/src/session`
 
 Expected results:
 
-- The first two gates prove the document covers all known symbols and importers.
-- The banned-vocabulary gate must show rejected context only, if anything.
+- The first gate prints nothing.
+- The second gate proves the moved symbols live in the new owner.
+- The third gate prints nothing.
+- The fourth gate prints nothing except unrelated pre-existing terms if explicitly reviewed.
 
 ## Stop Conditions
 
-- Stop if symbol ownership cannot be classified from current source.
-- Stop if importers use symbols in a way that makes the first implementation move ambiguous.
+- Stop if moving the resolve symbols requires changing field names, enum tags, backing type, defaults, or dispatch behavior.
+- Stop if a direct importer requires both old and new names through an alias.
+- Stop if the move exposes a cycle between `font/resolver.zig`, `font/ft_hb/support.zig`, `prepared/*`, and `session/text.zig`.
+- Stop if implementation begins moving raster, shape, grouping, or prepare counter symbols.
