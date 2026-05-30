@@ -1353,6 +1353,8 @@ promoting any listed worker-ready slice, verify current source and
 `surface/*` source-bucket deletion, and VT scalar `C0`/`EraseMode` vocabulary are
 already complete in current source.
 
-- Capacity design for VT host consequences using `ArrayList`, `dupe`, and allocation in protocol paths.
-- First true owner seam inside `howl-vt/src/screen.zig` beyond surface publication.
+- Deeper VT capacity design after the accepted heap-backed capacity contracts: parser aggregate
+  byte/int/aux bounds, total hyperlink URI bytes, and product-sized static storage remain unproved.
+- Deeper VT screen seams after accepted dirty state extraction: history authority, resize temporary
+  storage, cursor, margins, and tabs still need fresh scratchpads before movement.
 - Build/test architecture strategy for adding durable grep gates or generated checks.
