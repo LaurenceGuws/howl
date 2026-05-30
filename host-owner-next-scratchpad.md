@@ -277,7 +277,7 @@ Grep gates:
 
 ### Slice D: Split Terminal Context Host Selection/Link Owners
 
-Status: research-ready.
+Status: worker-ready.
 
 Current offending source:
 
@@ -294,6 +294,42 @@ Required next research:
 - Decide whether host selection and link hover should be separate files under `terminal/selection.zig`
   and `terminal/links.zig`, or one `terminal/pointer.zig` owner if pointer gesture ordering is the
   true invariant.
+
+Research verdict:
+
+- Use separate bounded owner files:
+  - `howl-linux-host/src/terminal/selection.zig`
+  - `howl-linux-host/src/terminal/links.zig`
+- Do not create `terminal/pointer.zig`; pointer events are entry points, not the owner.
+- `terminal/context.zig` remains the event-routing owner.
+- Current context fields remain context-owned for this slice.
+- Move helper behavior only:
+  - host selection gesture adaptation, pending-copy handling, and selection pointer updates move to
+    `terminal/selection.zig`.
+  - visible link hover/open behavior moves to `terminal/links.zig`.
+- Do not move VT mouse protocol encoding or event routing.
+
+Required shape:
+
+- `terminal/context.zig` imports moved owners as `terminal_selection` and `terminal_links`.
+- Moved helpers are free functions over `context: anytype` where this preserves existing context
+  storage without fake wrapper state.
+- Keep behavior exact; the change is ownership extraction only.
+- Keep imports minimal and owner-true.
+
+Verification:
+
+- `howl-linux-host`: `zig build check`, `zig build test`, `git diff --check`.
+- root: `zig build check`, `zig build test`, `git diff --check`.
+
+Grep gates:
+
+- No `howl-linux-host/src/terminal/pointer.zig`.
+- No new owner files named `manager`, `controller`, `runtime`, `flow`, `queue`, `utils`, `types`,
+  `api`, or `abi`.
+- `terminal/context.zig` imports `terminal_selection` and `terminal_links`.
+- `terminal/selection.zig` owns moved selection helper functions.
+- `terminal/links.zig` owns moved visible-link helper functions.
 
 ## Recommended Promotion
 
