@@ -293,6 +293,28 @@ Active gaps to preserve:
     Carry VT cursor `blink` truth through ABI while keeping cadence host-owned;
     host config should seed default/reset policy without overriding DECSCUSR truth.
 
+## 2026-05-30 VT Hygiene Decisions
+
+Canonical source scratchpads archived into this section:
+
+- `research/2026-05-30-hygiene-audit/vt-host-consequence-capacity.md`
+- `research/2026-05-30-hygiene-audit/vt-screen-owner-seams.md`
+- `research/2026-05-30-hygiene-audit/vt-runtime-obligation-vocabulary.md`
+
+Accepted decisions:
+
+- `runtime` is accepted ABI and host scheduling vocabulary when it names a VT
+  scheduling obligation or host wake/admission fact.
+- `runtime` remains banned as an owner or module name. Do not add `runtime.zig`,
+  `RuntimeManager`, or a VT runtime owner.
+- VT host consequence storage is bounded but heap-backed today. Pending output,
+  retained payloads, retained metadata, titles, hyperlink target count, and parser
+  event count have explicit owner constants; static storage conversion still needs
+  product capacity proof.
+- Screen dirty state is the first accepted deeper screen seam. History authority,
+  resize temporary storage, cursor, margins, and tabs require later scratchpads or
+  promoted slices before movement.
+
 ## 2026-05-30 Build/Test Architecture Blocker
 
 Canonical source scratchpad archived into this section:
