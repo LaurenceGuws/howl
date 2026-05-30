@@ -1,12 +1,12 @@
-# Current Slice: Move Render Prepared Buffer Owner
+# Current Slice: Move Render Prepared Handle Owner
 
 Owner: `howl-render`.
 
 Purpose:
 
-- Move prepared output pixel composition out of the stale `surface/*` bucket.
-- Preserve prepared surface buffer behavior exactly.
-- Do not move prepared handle lifecycle, source adaptation, token contracts, geometry, or FFI behavior.
+- Move prepared handle lifecycle owner out of the stale `surface/*` bucket.
+- Preserve prepared handle ABI, lifecycle, submit, diagnostics, and buffer behavior exactly.
+- Continue reducing render `surface/*` taxonomy debt one exact owner at a time.
 
 ## Source Research
 
@@ -15,32 +15,35 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-hygiene-audit/render-surface-taxonomy.md`
-- `howl-render/src/surface/buffer.zig`
 - `howl-render/src/surface/prepared_owner.zig`
+- current importers of `surface/prepared_owner.zig`
 - `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- Move `howl-render/src/surface/buffer.zig` to `howl-render/src/prepared/buffer.zig`.
-- Update `howl-render/src/surface/prepared_owner.zig` import.
+- Move `howl-render/src/surface/prepared_owner.zig` to `howl-render/src/prepared/owner.zig`.
+- Update importers:
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/ffi/submission.zig`
+  - `howl-render/src/ffi/prepared_surface.zig`
+  - `howl-render/src/ffi/handle.zig`
+- Update internal imports in moved file.
 - Update `libs.yaml` owner metadata.
 
 ## Non-Goals
 
-- Do not move `prepared_owner.zig` in this slice.
-- Do not move `tokens.zig`, `publication_source.zig`, `input.zig`, `geometry.zig`, `clip_rect.zig`, or `rgba.zig`.
-- Do not change prepared surface composition behavior.
-- Do not alter C ABI or FFI behavior.
+- Do not move token contracts.
+- Do not move source publication, source/text adaptation, geometry, clip, or rgba files.
+- Do not change prepared handle state machine or ABI behavior.
 - Do not add compatibility aliases or umbrella replacement buckets.
 
 ## Invariants
 
-- `prepared/buffer.zig` owns prepared RGBA output realization only.
-- Existing `prepared_owner.zig` remains the prepared-handle lifecycle owner until a later slice.
-- `surface/buffer.zig` no longer exists.
-- No imports refer to `surface/buffer.zig`.
+- `prepared/owner.zig` owns prepared handle lifecycle and copied prepared RGBA payload.
+- `surface/prepared_owner.zig` no longer exists.
+- No imports refer to `surface/prepared_owner.zig`.
 
 ## Verification
 
@@ -52,10 +55,10 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'surface/buffer\.zig|@import\("buffer\.zig"\)' howl-render/src libs.yaml` shows no stale surface buffer import/path.
-- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-render/src/prepared/buffer.zig howl-render/src/surface/prepared_owner.zig` prints nothing relevant to this slice.
+- `rg 'surface/prepared_owner\.zig|prepared_owner\.zig' howl-render/src libs.yaml` prints nothing.
+- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-render/src/prepared/owner.zig` prints nothing relevant to this slice.
 
 ## Stop Conditions
 
-- Stop if moving `buffer.zig` requires moving prepared-owner lifecycle or submit/session behavior.
-- Stop if import rewiring changes behavior or exposes a broader taxonomy decision.
+- Stop if moving prepared owner requires token, session, FFI, or submit behavior changes.
+- Stop if import rewiring exposes a broader prepared/session taxonomy decision.
