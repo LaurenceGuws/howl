@@ -198,7 +198,6 @@ howl-vt:
         osc: howl-vt/src/xterm/osc.zig
         dcs: howl-vt/src/xterm/dcs.zig
     kitty:
-      root: howl-vt/src/kitty.zig
       owners:
         state: howl-vt/src/kitty/state.zig
         protocol: howl-vt/src/kitty/protocol.zig
