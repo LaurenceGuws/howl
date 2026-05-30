@@ -1,47 +1,43 @@
-# Current Slice: Move Render Prepare Request Translator
+# Current Slice: Move Render Work State Translator
 
 Owner: workspace root.
 
 Purpose:
 
-- Start the accepted `howl-render` C translator lane with the smallest file move.
-- Move only `prepare_request.zig` from the render root into `src/ffi/`.
-- Preserve exported symbols, token translation, and prepare scheduling behavior exactly.
+- Continue the accepted `howl-render` C translator lane with the smallest remaining translator move.
+- Move only `work_state.zig` from the render root into `src/ffi/`.
+- Preserve exported symbols and session-work-state behavior exactly.
 
 ## Source Research
 
 Use:
 
 - `research/2026-05-30-hygiene-audit/render-c-lane.md`
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 2.1 follow-up
 - `howl-render/design.md`
 - `howl-render/include/howl_render.h`
 - `howl-render/src/libhowl_render.zig`
-- `howl-render/src/prepare_request.zig`
-- `howl-render/src/prepared_surface.zig`
+- `howl-render/src/work_state.zig`
+- `howl-render/src/test/ffi.zig`
+- `howl-render/src/session/text.zig`
 
 ## Source Changes
 
 Edit only:
 
 - `howl-render/src/libhowl_render.zig`
-- `howl-render/src/prepare_request.zig`
-- `howl-render/src/ffi/prepare_request.zig`
-- `howl-render/src/prepared_surface.zig`
+- `howl-render/src/work_state.zig`
+- `howl-render/src/ffi/work_state.zig`
 - `howl-render/src/test/ffi.zig`
 
-The build exposed one direct import path missed by the decision doc:
-`howl-render/src/test/ffi.zig`. This file is now explicitly in scope only for repairing
-its `prepare_request.zig` import.
+Do not edit any other file unless the build exposes a direct `work_state.zig` import missed by this slice.
+If that happens, stop and report the exact import before broadening scope.
 
 ## Required Shape
 
-- Create `howl-render/src/ffi/` if needed.
-- Move `howl-render/src/prepare_request.zig` to `howl-render/src/ffi/prepare_request.zig`.
-- Update `libhowl_render.zig` to import the moved translator from `ffi/prepare_request.zig`.
-- Update `prepared_surface.zig` to import the moved translator.
+- Move `howl-render/src/work_state.zig` to `howl-render/src/ffi/work_state.zig`.
+- Update `libhowl_render.zig` to import the moved translator from `ffi/work_state.zig`.
 - Update `test/ffi.zig` to import the moved translator.
-- Remove the old root `howl-render/src/prepare_request.zig`; do not leave a compatibility wrapper.
+- Remove the old root `howl-render/src/work_state.zig`; do not leave a compatibility wrapper.
 - Keep `libhowl_render.zig` as an export table only.
 
 ## Non-Goals
@@ -51,23 +47,22 @@ its `prepare_request.zig` import.
 - Do not move `prepared_surface.zig`.
 - Do not move `text_session.zig`.
 - Do not move `surface_geometry.zig`.
-- Do not move `work_state.zig`.
+- Do not move `prepare_request.zig` again.
 - Do not rename any `HowlRender*` C type.
 - Do not rename any `howl_render_*` symbol.
 - Do not change `howl-render/include/howl_render.h`.
-- Do not change token validation semantics.
-- Do not change prepare scheduling semantics.
+- Do not change session work-state semantics.
 - Do not add compatibility aliases.
 
 ## Invariants
 
 - The public root curates exports only.
-- `howl_render_text_session_take_prepare_request` keeps the same exported symbol.
-- `HowlRenderPrepareRequest` layout and field meanings do not change.
-- `takePrepareRequest` still zeroes the output before owner access.
-- Missing output, missing handle, idle, ready, and failed status behavior remains identical.
-- `prepareTokenIn` remains the single C-to-owner token translator used by `prepared_surface.zig`.
-- The translator calls the session/source owner; it does not own source state.
+- `howl_render_text_session_work_state` keeps the same exported symbol.
+- `HowlRenderSessionWorkState` layout and field meanings do not change.
+- Missing handle still writes `sessionWorkStateFailure(c.HOWL_RENDER_CALL_MISSING_HANDLE)` when output is present.
+- Missing output with a valid handle still returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
+- Valid handle and output still maps `owner.workState()` through `sessionWorkStateOut`.
+- The translator calls the session owner; it does not own session state.
 
 ## Verification
 
@@ -77,24 +72,21 @@ From `/home/home/personal/projects/howl`:
 - `zig build test`
 - `git diff --check`
 
-If root build verification is blocked by unrelated build architecture, run the render package equivalent if available
-and report the blocker with the exact failure.
-
 ## Grep Gates
 
-- `rg '@import\("prepare_request\.zig"\)' howl-render/src`
-- `rg 'howl_render_text_session_take_prepare_request|HowlRenderPrepareRequest' howl-render/src`
-- `rg 'vt_surface.zig|submission.zig|prepared_surface.zig|text_session.zig|surface_geometry.zig|work_state.zig' howl-render/src/libhowl_render.zig`
+- `rg '@import\("work_state\.zig"\)' howl-render/src`
+- `rg 'howl_render_text_session_work_state|HowlRenderSessionWorkState|sessionWorkStateOut|sessionWorkStateFailure' howl-render/src`
+- `rg 'vt_surface.zig|submission.zig|prepared_surface.zig|text_session.zig|surface_geometry.zig' howl-render/src/libhowl_render.zig`
 
 Expected results:
 
-- The first gate prints only the accepted `ffi/prepare_request.zig` import path or no stale root import.
-- The second gate supports manual review that symbols and C request translation moved only.
-- The third gate proves this slice did not move other translators.
+- The first gate prints no stale root import.
+- The second gate supports manual review that symbols and C work-state translation moved only.
+- The third gate proves this slice did not move other remaining root translators.
 
 ## Stop Conditions
 
-- Stop if moving `prepare_request.zig` requires changing behavior.
+- Stop if moving `work_state.zig` requires changing behavior.
 - Stop if the new lane needs a compatibility wrapper at the old root path.
-- Stop if an import cycle appears between `ffi/prepare_request.zig` and another translator.
-- Stop if `prepareTokenIn` cannot remain the exact C token translation used by `prepared_surface.zig`.
+- Stop if an import cycle appears between `ffi/work_state.zig` and another translator.
+- Stop if `sessionWorkStateOut` or `sessionWorkStateFailure` cannot move unchanged with the translator.
