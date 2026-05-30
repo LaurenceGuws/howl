@@ -57,6 +57,15 @@ Current Howl lock graph sources:
 - Zig 0.16 synchronization semantics are `std.Io` runtime-bound and lock primitives must respect that model.
 - Current Howl deadlock edges are nested re-locks on `term.mutex` in render-turn path.
 - Current Howl crash path is VT copy concurrent with VT mutation when serialization is not correctly enforced.
+- Accepted 2026-05-30: `howl-linux-host/src/terminal/pty/pump.zig` now reserves
+  `term.mutex.next` before transport work, performs PTY reads without
+  `term.mutex.data`, feeds VT only while `term.mutex.data` is held, uses unfair
+  try-lock for the normal feed path, and forces unfair lock only when bounded
+  backlog/read limits require draining already-read bytes.
+- Accepted 2026-05-30: PTY pump tests assert the lock protocol directly:
+  opportunistic lock failure continues leased reads without feeding, forced lock
+  occurs at the backlog threshold, and locked feed work is capped by an explicit
+  byte bound.
 
 ## Non-Goals
 

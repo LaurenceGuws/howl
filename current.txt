@@ -1,4 +1,4 @@
-# Current Slice: Host Lock Graph Normalization (Slice 1)
+# Current Slice: Host PTY Critical Section Alacritty Parity
 
 Owner: `howl-linux-host` terminal synchronization ownership.
 
@@ -8,56 +8,55 @@ Sprint scratchpad (authoritative):
 
 Purpose:
 
-- Remove render-turn nested re-lock cycles on `term.mutex`.
-- Preserve serialization between VT mutation and VT surface copy.
-- Land a deadlock-free first render turn without inventing new host-loop policy.
+- Narrow PTY read/feed critical sections toward Alacritty's `event_loop.rs` model.
+- Preserve VT feed/copy serialization through `term.mutex`.
+- Prove bounded lock work with tests/assertions.
 
 ## Source Order (Mandatory)
 
 Read in order before editing:
 
-1. `utils/dev_references/terminals/alacritty/alacritty_terminal/src/sync.rs`
-2. `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
-3. `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
-4. `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
-5. `utils/official_docs/ziglang.org/download/0.16.0/release-notes.html`
-6. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-7. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-8. `howl-linux-host/src/terminal/term.zig`
-9. `howl-linux-host/src/terminal/context.zig`
-10. `howl-linux-host/src/terminal/pty/pump.zig`
-11. `howl-linux-host/src/terminal/vt/surface.zig`
-12. `howl-linux-host/src/terminal/vt/retained.zig`
-13. `howl-linux-host/src/main.zig`
+1. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+3. `utils/dev_references/terminals/alacritty/alacritty_terminal/src/sync.rs`
+4. `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
+5. `howl-linux-host/src/terminal/term.zig`
+6. `howl-linux-host/src/terminal/pty/pump.zig`
+7. `howl-linux-host/src/terminal/pty/session.zig`
+8. `howl-linux-host/src/terminal/context.zig`
+9. `howl-linux-host/src/terminal/render/surface_layout.zig`
+10. `howl-linux-host/src/terminal/vt/retained.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/vt/surface.zig`
 - `howl-linux-host/src/terminal/pty/pump.zig`
-- `howl-linux-host/src/terminal/term.zig` (only if needed for lock API normalization)
-- `howl-linux-host/src/main.zig` (diagnostic log removal only)
+- `howl-linux-host/src/terminal/pty/session.zig`
+- `howl-linux-host/src/terminal/term.zig` only if assertions/API naming require it
+- `howl-linux-host/src/terminal/context.zig` tests only if needed for proof
+- `research/2026-05-30-alacritty-host-fair-mutex-sprint.md` to record accepted lock facts
+
+Do not change ABI contracts.
+Do not change render behavior.
+Do not add temporary logs to final diff.
+
+## Alacritty Facts To Preserve
+
+- `FairMutex.lease()` reserves the next terminal lock.
+- PTY read path reads bytes before terminal state lock when possible.
+- `try_lock_unfair()` is the normal PTY terminal-lock acquisition attempt.
+- Forced unfair lock is only acceptable at a bounded backlog threshold.
+- Locked parse/mutation work is capped (`MAX_LOCKED_READ` in Alacritty).
+- Wakeup is requested only after terminal state actually changes or synchronized output requires it.
 
 ## Required Shape
 
-- No function may hold `term.mutex` and call another function that can lock `term.mutex`.
-- Locked vs unlocked variants are explicit where necessary.
-- `renderTurn` path is deadlock-free.
-- VT copy path remains serialized against VT mutation.
-
-## Non-Goals
-
-- Do not finish full fair-mutex feature parity in this slice.
-- Do not refactor unrelated host modules.
-- Do not change ABI contracts.
-
-## Invariants
-
-- First render turn cannot self-deadlock.
-- No concurrent VT feed+copy on shared terminal state.
-- No temporary trace logs remain in final diff.
+- `pumpTransportSlice` must not hold `term.mutex.data` while blocking or unbounded PTY reads.
+- PTY reads may happen while holding `term.mutex.lease()` but before holding `term.mutex.data`.
+- Terminal feed still happens only while holding `term.mutex.data`.
+- The loop must have explicit byte/read bounds and assertions on those bounds.
+- Tests must cover opportunistic lock failure, forced lock threshold, and locked-work cap behavior.
 
 ## Verification
 
@@ -65,12 +64,7 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 - `zig build check`
 - `zig build test`
-- `zig build run` (manual: no startup deadlock at first render turn)
-
-From `/home/home/personal/projects/howl/howl-vt`:
-
-- `zig build check`
-- `zig build test`
+- `zig build run` manual smoke: shell appears, no startup deadlock/crash.
 
 From `/home/home/personal/projects/howl`:
 
@@ -80,6 +74,6 @@ From `/home/home/personal/projects/howl`:
 
 ## Stop Conditions
 
-- Stop if lock ownership remains ambiguous at any render-turn boundary.
-- Stop if fix requires unscoped broad locking that regresses boundedness.
-- Stop if any ABI boundary change is required.
+- Stop if PTY read ownership cannot be represented without ABI changes.
+- Stop if tests cannot distinguish bounded locked work from unbounded locked work.
+- Stop if any path can feed VT concurrently with VT surface copy.
