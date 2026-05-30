@@ -176,6 +176,9 @@ howl-vt:
         margins: howl-vt/src/screen/margins.zig
         tabs: howl-vt/src/screen/tabs.zig
         dirty: howl-vt/src/screen/dirty.zig
+    surface:
+      owners:
+        publication: howl-vt/src/surface/publication.zig
     host:
       owners:
         state: howl-vt/src/host/state.zig

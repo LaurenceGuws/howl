@@ -1,12 +1,12 @@
-# Current Slice: Delete VT Parser Root
+# Current Slice: Extract VT Surface Publication State
 
 Owner: `howl-vt`.
 
 Purpose:
 
-- Delete `howl-vt/src/parser.zig` as broad re-export glue for `parser/main.zig`.
-- Replace internal imports with exact parser owner imports.
-- Preserve parser table behavior, parser vocabulary, terminal behavior, and C ABI exactly.
+- Move surface publication sequence/ack metadata out of `Terminal` into an exact owner.
+- Preserve `Terminal` as the host-facing mutation/query entrypoint.
+- Preserve C ABI, visible-surface data, dirty-row semantics, and snapshot sequence behavior exactly.
 
 ## Source Research
 
@@ -14,61 +14,55 @@ Read before editing:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 3.4
-- `howl-vt/src/parser.zig`
-- `howl-vt/src/parser/main.zig`
-- `howl-vt/src/parser/events.zig`
-- `howl-vt/src/parser/utf8.zig`
-- `howl-vt/src/parser/string_control.zig`
-- `howl-vt/src/parser/owned_actions.zig`
-- all current importers of `parser.zig` under `howl-vt/src`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 4.1
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/screen_set.zig`
+- `howl-vt/src/ffi.zig`
+- `howl-vt/src/test/terminal_surface.zig`
 - `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- Delete `howl-vt/src/parser.zig`.
-- Edit direct importers:
-  - `howl-vt/src/host/state.zig`
-  - `howl-vt/src/test/screen_state_behavior.zig`
-  - `howl-vt/src/screen.zig`
-  - `howl-vt/src/test/action_mapping.zig`
-  - `howl-vt/src/xterm/csi/params.zig`
-  - `howl-vt/src/action/vocabulary.zig`
-  - `howl-vt/src/test/terminal_surface.zig`
-  - `howl-vt/src/terminal.zig`
-  - `howl-vt/src/screen/style.zig`
-  - `howl-vt/src/xterm/osc.zig`
-  - `howl-vt/src/test/parser_behavior.zig`
-  - `howl-vt/src/test/parser_csi_behavior.zig`
-- Edit `libs.yaml` to remove stale `parser.root`.
+- Add `howl-vt/src/surface/publication.zig`.
+- Edit `howl-vt/src/terminal.zig`.
+- Edit `howl-vt/src/test/terminal_surface.zig` only if direct owner tests need adding or existing tests need exact delegation updates.
+- Edit `libs.yaml` to record the new owner.
 
-Exact import replacements:
+Exact movement:
 
-- `@import("../parser.zig")` -> `@import("../parser/main.zig")`
-- `@import("parser.zig")` -> `@import("parser/main.zig")`
-- `@import("../../parser.zig")` -> `@import("../../parser/main.zig")`
+- Move these fields out of `Terminal` into `surface/publication.zig` `State`:
+  - `surface_snapshot_seq`
+  - `surface_snapshot_dirty_generation`
+  - `surface_snapshot_scrollback_offset`
+  - `surface_snapshot_start`
+  - `surface_snapshot_rows`
+  - `surface_snapshot_cols`
+  - `surface_snapshot_alt`
+- Move `noteSurfacePublication` behavior into `surface/publication.zig`.
+- Keep `Terminal.ackSurface`, `Terminal.surfaceSnapshot`, and `Terminal.visibleMeta` as thin entrypoint methods.
 
 ## Non-Goals
 
-- Do not change parser tables.
-- Do not change parser state-machine behavior.
-- Do not change CSI/OSC/DCS/APC vocabulary.
-- Do not change Kitty behavior.
-- Do not change screen or terminal behavior.
-- Do not add compatibility aliases, replacement roots, buckets, managers, controllers, runtimes, `types.zig`, `api.zig`, or `abi.zig`.
+- Do not change C ABI symbols, structs, statuses, or argument validation.
+- Do not move selection projection/copy behavior.
+- Do not move dirty-row storage, screen-set visible-view logic, parser stream, host consequences, Kitty state, or runtime obligation behavior.
+- Do not rename `Terminal`.
+- Do not add a broad `surface.zig`, `surface` root bucket, compatibility alias, manager, controller, runtime, `types.zig`, `api.zig`, or `abi.zig`.
 
 ## Invariants
 
-- `parser/main.zig` remains the parser API owner for current parser root exports.
-- Exact parser owners remain:
-  - `howl-vt/src/parser/main.zig`
-  - `howl-vt/src/parser/events.zig`
-  - `howl-vt/src/parser/utf8.zig`
-  - `howl-vt/src/parser/string_control.zig`
-  - `howl-vt/src/parser/owned_actions.zig`
-- `libs.yaml` must not reference deleted files.
+- `Terminal` composes the publication owner and remains the external entrypoint.
+- New owner owns only publication identity/ack metadata.
+- `surfaceSnapshot` still derives view/dirty/selection from `screen_set.surfaceSnapshot`.
+- First valid publication keeps sequence `1`.
+- Changed dirty generation, scrollback offset, view start, rows, cols, or alternate-screen state changes the sequence after the first publication.
+- Re-publishing the same dirty generation and view keeps the same sequence.
+- `ackSurface(0)` returns false and does not clear dirty rows.
+- Ack clears dirty rows only when the acked sequence equals the current publication sequence and the publication dirty generation equals current `dirty_generation`.
+- Stale ack remains idempotent success and does not clear newer dirty rows.
+- `libs.yaml` must not introduce a `surface` root; it records only the exact publication owner.
 
 ## Verification
 
@@ -80,12 +74,14 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg '@import\("parser\.zig"\)|@import\("\.\./parser\.zig"\)|@import\("\.\./\.\./parser\.zig"\)' howl-vt/src` prints nothing.
-- `rg 'parser\.zig' howl-vt/src libs.yaml` prints nothing.
+- `rg 'surface_snapshot_' howl-vt/src/terminal.zig` prints nothing.
+- `rg 'ackSurface|surfaceSnapshot|visibleMeta|noteSurfacePublication' howl-vt/src/terminal.zig` shows only thin `Terminal` delegation and no local publication metadata owner logic.
+- `rg 'HowlVt|Ffi' howl-vt/src/surface/publication.zig` prints nothing.
+- `rg 'surface:.*root|root: howl-vt/src/surface' libs.yaml` prints nothing.
 
 ## Stop Conditions
 
-- Stop if parser table, state-machine behavior, OSC/CSI/DCS/APC vocabulary, Kitty protocol behavior, or screen behavior changes.
-- Stop if a new broad replacement root/bucket is introduced.
-- Stop if tests require a test-taxonomy decision beyond exact imports.
-- Stop if dirty tree appears before work; do not build on unowned changes.
+- Stop if publication extraction requires inventing a broad `surface` umbrella.
+- Stop if C ABI translation changes beyond calling unchanged `Terminal` methods.
+- Stop if screen visible-view, dirty-row storage, selection, host, Kitty, parser, or runtime behavior needs movement.
+- Stop if tests require a broader terminal/screen owner decision.
