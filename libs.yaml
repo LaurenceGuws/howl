@@ -159,7 +159,6 @@ howl-vt:
         string_control: howl-vt/src/parser/string_control.zig
         owned_actions: howl-vt/src/parser/owned_actions.zig
     action:
-      root: howl-vt/src/action.zig
       owners:
         route: howl-vt/src/action/route.zig
         vocabulary: howl-vt/src/action/vocabulary.zig
