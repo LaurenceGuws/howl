@@ -183,6 +183,13 @@ Canonical source scratchpads archived into this section:
 - `surface` is a product term at the ABI boundary, not an umbrella source folder.
 - `howl-render/src/source/text_input.zig` owns the final source-to-text adapter
   formerly stored at `surface/input.zig`; do not recreate `howl-render/src/surface/`.
+- The render C translator lane is complete in current source: `libhowl_render.zig`
+  is an export table importing `ffi/*` translator nouns, with `ffi.zig` as the
+  shared C import/boundary entry. Do not promote old roadmap slices that move
+  root translator files unless fresh source shows root translators returned.
+- The render text `pipeline.zig` proof gap is complete in current source:
+  `howl-render/src/text/pipeline.zig` no longer exists and no render Zig source
+  contains `pipeline`, `text_pipeline`, or `text_flow` owner vocabulary.
 
 ### Accepted Render Direction
 
@@ -317,6 +324,11 @@ Accepted decisions:
 - Screen dirty state is the first accepted deeper screen seam. History authority,
   resize temporary storage, cursor, margins, and tabs require later scratchpads or
   promoted slices before movement.
+- VT protocol scalar vocabulary Slice A is complete in current source for its
+  originally promoted scope: `xterm/c0.zig` has a typed `C0` enum and
+  `action/vocabulary.zig` carries erase operations as `EraseMode`, not raw `u2`.
+  Future scalar work must start from fresh source-backed research, not the stale
+  Slice A checklist.
 
 ## 2026-05-30 Build/Test Architecture Blocker
 

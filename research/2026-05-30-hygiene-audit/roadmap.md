@@ -1347,10 +1347,14 @@ Documentation-only slices in the root should be committed as root-only commits a
 
 ## Open Proof Gaps
 
+Status note, 2026-05-30: parts of this roadmap are now historical. Before
+promoting any listed worker-ready slice, verify current source and
+`project-memory.md`. In particular, the render `ffi/*` C translator lane, render
+`surface/*` source-bucket deletion, and VT scalar `C0`/`EraseMode` vocabulary are
+already complete in current source.
+
 - Whether headers should stay hand-maintained with generated-looking grammar or eventually be generated from ABI metadata.
 - Where ABI layout assertions should live after render translator lane movement: one `ffi.zig` or owner-specific ABI adapter files.
-- Whether `howl-render/src/surface/*` remains true owner taxonomy or stale after accepted `source/*`, `prepared/*`, `session/*`, `render/*` direction.
-- Exact replacement owner names for `howl-render/src/text/pipeline.zig` symbols.
 - Whether `howl-vt/src/howl_vt.zig` is a necessary internal root/test aggregator or stale Zig-shaped lane.
 - Whether VT `runtime_obligation` is accepted ABI vocabulary or banned owner vocabulary leaking into product API.
 - Capacity design for VT host consequences using `ArrayList`, `dupe`, and allocation in protocol paths.
