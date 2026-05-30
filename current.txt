@@ -1,13 +1,12 @@
-# Current Slice: Normalize Render Test Categories
+# Current Slice: Decide VT Regression Gate Policy
 
-Owner: `howl-render`.
+Owner: `howl-vt`.
 
 Purpose:
 
-- Make render package test steps match the root build/test contract.
-- Split render deterministic test execution into `test:unit` and `test:abi` categories without
-  changing product code or test assertions.
-- Preserve root aggregation for `zig build test`, `zig build test:unit`, and `zig build test:abi`.
+- Decide whether deterministic VT regression proofs belong in canonical `zig build test`.
+- Preserve the decision and review evidence in project memory.
+- Do not change build code unless regression fits ordinary deterministic test expectations.
 
 ## Source Research
 
@@ -16,41 +15,38 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-hygiene-audit/build-test-architecture-plan.md`
-- `build.zig`
-- `howl-render/build.zig`
-- `howl-render/src/test.zig`
-- `howl-render/src/test/unit.zig`
-- `howl-render/src/test/ffi.zig`
+- `research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
+- `howl-vt/build.zig`
+- `howl-vt/src/test/scrollback_regression.zig`
+- `howl-vt/src/test_regression_snapshot.zig`
+- `howl-vt/src/fuzz/scrollback.zig`
 
 ## Source Changes
 
 Exact files:
 
-- `howl-render/build.zig`
-- Add render test entry roots only if direct roots cannot preserve current coverage cleanly.
+- `research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
+- `project-memory.md`
 
 ## Required Shape
 
-- Add `test:unit` and `test:unit:build` for render owner-local tests.
-- Add `test:abi` and `test:abi:build` for render C ABI/FFI tests.
-- Keep `test` as the aggregate of `test:unit` and `test:abi`.
-- Keep `check` compiling the shipped render C ABI library and fast compile-only proof targets.
+- Keep `test:regression` as the named VT regression category.
+- Keep `test:regression` outside canonical `test` because it exceeded the ordinary 120s review budget.
+- Do not pull `fuzz`, `benchmark:m7_baseline`, or any stress-like surface into `test`.
 
 ## Non-Goals
 
-- Do not change render product code.
-- Do not change test assertions or behavior.
+- Do not change VT product code.
+- Do not change regression test bodies or assertions.
+- Do not add runtime knobs.
 - Do not change C headers or exported symbols.
-- Do not make private helpers public for tests.
-- Do not redesign benchmark ownership in this slice unless the existing build shape blocks category
-  normalization.
+- Do not change `howl-vt/build.zig` in the accepted outcome.
 
 ## Invariants
 
-- Root `zig build test`, `zig build test:unit`, and `zig build test:abi` work.
-- Package `zig build test`, `zig build test:unit`, and `zig build test:abi` work from `howl-render`.
-- Render ABI tests still cover `libhowl_render.zig` exported declarations and `test/ffi.zig`.
-- Render unit tests still cover `test/unit.zig`.
+- `howl-vt` `test:regression` remains explicit.
+- `howl-vt` `test` remains unchanged and bounded for ordinary validation.
+- Root `test` remains unchanged.
 
 ## Verification
 
@@ -58,18 +54,14 @@ From `/home/home/personal/projects/howl`:
 
 - `zig build check`
 - `zig build test`
-- `zig build test:unit`
-- `zig build test:abi`
 - `git diff --check`
 
 ## Grep Gates
 
-- `rg 'test:unit|test:abi|test:unit:build|test:abi:build' howl-render/build.zig`
-- `rg 'test:unit|test:abi' build.zig howl-render/build.zig`
-- `rg 'pub fn|pub const' howl-render/src/test` must not show broad public helper aliases added for tests.
+- `rg 'test:regression|120s|ordinary' research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
+- `rg 'test_regression_step|test_step\.dependOn' howl-vt/build.zig` supports review that build code is unchanged.
 
 ## Stop Conditions
 
-- Stop if splitting render tests requires product-code visibility changes.
-- Stop if `test/ffi.zig` depends on unit-only imports in a way that requires moving product code.
-- Stop if benchmark compilation requires a separate owner decision.
+- Stop if regression tests are flaky or unbounded in ordinary deterministic test expectations.
+- Stop if adding regression to `test` requires changing tests or product code.

@@ -279,9 +279,103 @@ Grep gates:
 
 ## Later Slices
 
-- Decide whether VT regression tests are part of canonical `test` or remain explicit slow proofs, with
-  a documented runtime bound.
-- Decide host app-owner test placement after build/test root taxonomy is stable; do not expose private
-  app helpers for tests.
-- Add durable grep/audit gates only after the build system has an accepted owner for generated or
-  scripted checks.
+### Slice 2: Decide VT Regression Gate Policy
+
+Owner: `howl-vt` and workspace root documentation.
+
+Research output required before implementation:
+
+- Inventory `howl-vt/build.zig` regression roots and step wiring.
+- Read `howl-vt/src/test/scrollback_regression.zig` and `howl-vt/src/test_regression_snapshot.zig`.
+- Decide whether regression tests are bounded enough for canonical `test` or must remain explicit
+  `test:regression` proofs.
+- Record exact runtime bounds, fixture/input ownership, and stop conditions.
+
+Implementation if source-backed:
+
+- If bounded and deterministic, make `howl-vt` `test` depend on `test:regression`.
+- If not bounded enough, leave build code unchanged and record why `test:regression` remains explicit.
+- Update `project-memory.md` with the accepted policy.
+
+Verification:
+
+- `zig build test` from `howl-vt` if build code changes.
+- `zig build test:regression` from `howl-vt` for either outcome.
+- Root `zig build test` if build code changes.
+- `git diff --check`.
+
+### Slice 3: Normalize Render Test Build Coverage
+
+Owner: `howl-render`.
+
+Research output required before implementation:
+
+- Inspect whether `check` should depend on the old aggregate `test:build`, category build steps, or
+  both after render `test:unit`/`test:abi` normalization.
+- Decide whether `test:build` is an aggregate compatibility step or a canonical deterministic build
+  category.
+
+Implementation if source-backed:
+
+- Keep behavior compile-only.
+- Make `test:build` explicitly aggregate `test:unit:build` and `test:abi:build`, or make `check`
+  depend directly on category build steps.
+- Do not change tests or product code.
+
+Verification:
+
+- `zig build check`
+- `zig build test:build`
+- `zig build test:unit:build`
+- `zig build test:abi:build`
+- Root `zig build check`
+- `git diff --check`
+
+### Slice 4: Host App Test Root Decision
+
+Owner: workspace root documentation first; `howl-linux-host` only if one exact helper/test move is
+proved.
+
+Research output required before implementation:
+
+- Inventory every `test` in `howl-linux-host/src/main.zig`.
+- For each test, name the exact helper or app-owner behavior it proves.
+- Classify each test as:
+  - stays in `main.zig` because it proves app owner behavior;
+  - moves with a helper to an exact true owner;
+  - blocked by the no public-test-helper rule.
+
+Implementation if source-backed:
+
+- Move at most one exact helper/test pair per slice.
+- Do not create public aliases for tests.
+- Do not invent a generic host app test bucket.
+
+Verification:
+
+- `zig build check`
+- `zig build test`
+- `zig build test:unit`
+- `zig build test:integration` if integration seams are touched
+- `git diff --check`
+
+### Slice 5: Audit Gate Owner Decision
+
+Owner: workspace root documentation first.
+
+Research output required before implementation:
+
+- Decide whether grep/audit gates are root build steps, scripts, or reviewer commands.
+- Name the owner of any executable audit surface.
+- Prove the gate is deterministic, bounded, and does not require generated metadata.
+
+Implementation if source-backed:
+
+- Add one bounded audit step only if owner and command are exact.
+- Prefer documented reviewer commands if a build-step owner would become a vague `tools` bucket.
+
+Verification:
+
+- The new audit step if added.
+- `zig build check`
+- `git diff --check`

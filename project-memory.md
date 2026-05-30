@@ -384,3 +384,13 @@ Accepted plan:
   surfaces, not substitutes for deterministic `check` or `test`.
 - First accepted implementation slice normalized render `test:unit` and
   `test:abi` categories without product-code or test assertion changes.
+- Accepted execution queue after render category normalization:
+  1. Decide VT regression gate policy from current regression roots and bounds.
+  2. Normalize render `test:build`/`check` compile-only category coverage.
+  3. Inventory host `main.zig` app-owner tests before moving any helper/test pair.
+  4. Decide the owner for durable audit/grep gates before adding executable checks.
+- VT regression gate policy decision: `test:regression` remains an explicit named proof surface and is
+  not part of canonical `test` today. The regression roots are deterministic and bounded by fixed
+  seeds, op counts, and dimensions, but `zig build test:regression` exceeded the ordinary 120s review
+  budget, so moving it into `test` would make canonical validation too slow without a separate slow
+  test policy or reduced scenario cost.
