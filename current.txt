@@ -1,89 +1,65 @@
-# Current Slice: Move Render Handle Translator
+# Current Slice: Classify Render Text Pipeline Taxonomy
 
 Owner: workspace root.
 
 Purpose:
 
-- Move the remaining root render C handle translator into the accepted `src/ffi/` lane.
-- Move only `handle.zig` from the render root into `src/ffi/`.
-- Preserve C handle-to-owner pointer translation exactly.
+- Classify `howl-render/src/text/pipeline.zig` before any rename or split.
+- Decide whether the file should be renamed whole or split into smaller true owners.
+- Select exactly one bounded implementation move for the next slice.
 
 ## Source Research
 
 Use:
 
+- `research/2026-05-30-hygiene-audit/roadmap.md` Phase 2 render taxonomy guidance
+- `research/2026-05-30-hygiene-audit/synthesis.md` render taxonomy finding
 - `howl-render/design.md`
 - `libs.yaml`
-- `howl-render/src/handle.zig`
-- `howl-render/src/ffi/*.zig`
-- `howl-render/src/surface/prepared_owner.zig`
-- `howl-render/src/session/text.zig`
+- `howl-render/src/text/pipeline.zig`
+- all direct importers of `text/pipeline.zig`
 
 ## Source Changes
 
 Edit only:
 
-- `howl-render/src/handle.zig`
-- `howl-render/src/ffi/handle.zig`
-- `howl-render/src/ffi/prepare_request.zig`
-- `howl-render/src/ffi/work_state.zig`
-- `howl-render/src/ffi/surface_geometry.zig`
-- `howl-render/src/ffi/text_session.zig`
-- `howl-render/src/ffi/vt_surface.zig`
-- `howl-render/src/ffi/prepared_surface.zig`
-- `howl-render/src/ffi/submission.zig`
-- `howl-render/design.md`
-- `libs.yaml`
+- new `research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
 
-Do not edit any other file unless the build exposes a direct `handle.zig` import missed by this slice.
-If that happens, stop and report the exact import before broadening scope.
+## Required Content
 
-## Required Shape
-
-- Move `howl-render/src/handle.zig` to `howl-render/src/ffi/handle.zig`.
-- Update `src/ffi/*.zig` translators to import `handle.zig` from the same `ffi/` lane.
-- Remove the old root `howl-render/src/handle.zig`; do not leave a compatibility wrapper.
-- Update `howl-render/design.md` and `libs.yaml` to include handle translation in the `ffi/` lane.
+- Inventory every public symbol in `howl-render/src/text/pipeline.zig`.
+- For each symbol, classify the true owner category, such as resolve, prepare counters, shape operation, raster operation, build/group request-output, or other.
+- List every importer and exactly which symbols it uses.
+- Decide whether the next implementation should be a whole-file rename or a split.
+- If split, select one first file move with exact files, symbols, import repairs, non-goals, invariants, verification, grep gates, and stop conditions.
+- Explain why the selected first move is bounded.
 
 ## Non-Goals
 
-- Do not rename `src/ffi.zig`.
-- Do not move `src/libhowl_render.zig` or `src/test.zig`.
-- Do not move prepared/session owner files.
-- Do not rename any `HowlRender*` C type.
-- Do not rename any `howl_render_*` symbol.
-- Do not change `howl-render/include/howl_render.h`.
-- Do not change pointer cast, null-handle, or prepared-handle semantics.
-- Do not add compatibility aliases.
-
-## Invariants
-
-- `textSessionOwner`, `opaquePreparedHandle`, and `abiPreparedHandle` move unchanged except import path fixes.
-- All FFI translators still use the same handle translator functions.
-- The handle translator casts C handles only; session and prepared owners keep behavior.
+- Do not edit render code.
+- Do not move or rename `pipeline.zig` in this slice.
+- Do not change public ABI headers or symbols.
+- Do not invent `types.zig`, `api.zig`, `manager`, `controller`, `engine`, `runtime`, or another vague bucket.
+- Do not claim a whole-file rename is safe unless every public symbol has the same true owner.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
-- `zig build check`
-- `zig build test`
 - `git diff --check`
 
 ## Grep Gates
 
-- `rg '@import\("(\.\./)?handle\.zig"\)' howl-render/src`
-- `rg 'textSessionOwner|opaquePreparedHandle|abiPreparedHandle' howl-render/src/ffi`
-- `rg 'howl-render/src/handle\.zig' howl-render/design.md libs.yaml`
+- `rg 'ResolveStage|ResolveRequest|ResolveHit|ResolveMiss|ResolveResult|ResolveCounters|ResolveObservability|TextPrepareCounters|BuildRunsRequest|BuildRunsOutput|GroupGlyphsRequest|GroupGlyphsOutput|ShapeRequest|ShapeOutput|RasterizeRequest|RasterizeOutput|ShapeClustersFn|RasterizeGlyphFn|ResolveFallbackFaceFn|ShapeClustersOp|RasterizeGlyphOp|ResolveFallbackFaceOp' research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
+- `rg 'session/text\.zig|frame_preparer\.zig|direct_normal\.zig|font/provider\.zig|font/resolver\.zig|font/ft_hb/support\.zig|font/ft_hb/provider\.zig|prepared/surface\.zig|prepared/submit_result\.zig' research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
+- `rg 'types\.zig|api\.zig|manager|controller|engine|runtime' research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
 
 Expected results:
 
-- The first gate prints no stale root import; same-directory `@import("handle.zig")` inside `src/ffi/` is expected.
-- The second gate supports manual review that handle translation moved only.
-- The third gate prints nothing.
+- The first two gates prove the document covers all known symbols and importers.
+- The banned-vocabulary gate must show rejected context only, if anything.
 
 ## Stop Conditions
 
-- Stop if moving `handle.zig` requires changing behavior.
-- Stop if the new lane needs a compatibility wrapper at the old root path.
-- Stop if an import cycle appears inside `src/ffi/`.
+- Stop if symbol ownership cannot be classified from current source.
+- Stop if importers use symbols in a way that makes the first implementation move ambiguous.
