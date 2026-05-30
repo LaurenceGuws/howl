@@ -431,6 +431,17 @@ Goal: remove VT convenience buckets and move owner behavior out of C translation
 
 Dependencies: Phase 1. Render phases can run independently after Phase 1, but VT FFI slices must not run before header grammar so ABI translator conventions are settled.
 
+Top-down flow note:
+
+- Keep public ABI shape pristine first.
+- Then make owners small and honest, even if they are not final.
+- Slow down only where VT internals require wider design proof.
+- Branch design-heavy VT seams into child scratchpads instead of letting them derail the outer hygiene roadmap.
+- Current child scratchpads:
+  - `research/2026-05-30-hygiene-audit/vt-selection-ghostty-shape.md`
+  - `research/2026-05-30-hygiene-audit/vt-data-type-maturity.md`
+- These child scratchpads keep Phase 3 honest without prematurely redesigning the whole VT layer. The rule for now is: first make it simple, then defensive, then good.
+
 Acceptance criteria:
 
 - Internal code imports exact VT owners instead of broad buckets where promoted.
@@ -496,7 +507,15 @@ Risks and stop conditions:
 
 Owner/repo: `howl-vt`.
 
-Status: worker-ready after Slice 3.1 or independently after Phase 1 if selected.
+Status: paused for child-scratchpad proof after Slice 3.1.
+
+Child scratchpad:
+
+- `research/2026-05-30-hygiene-audit/vt-selection-ghostty-shape.md`
+
+Reason:
+
+- The original extraction looked mechanical, but Ghostty proves selection is a screen-owned, tracked-position concept, not merely an FFI helper. Howl may still do a bounded FFI extraction, but only after the child scratchpad defines the temporary owner honestly and records the later Ghostty-like screen/page proof gap.
 
 Exact files likely edited:
 
@@ -586,6 +605,57 @@ Reviewer checklist:
 Risks and stop conditions:
 
 - Stop if parser/action call graph is not fully inventoried.
+
+### Slice 3.3a: VT Protocol Scalar Vocabulary
+
+Owner/repo: `howl-vt`.
+
+Status: child-scratchpad proposed; not promoted until selection FFI extraction is accepted or deliberately deferred.
+
+Child scratchpad:
+
+- `research/2026-05-30-hygiene-audit/vt-data-type-maturity.md`
+
+Goal:
+
+- Replace raw numeric protocol domains with small exact types where the type prevents semantic mixups, while preserving parser tables and ABI behavior.
+
+Likely exact files:
+
+- `howl-vt/src/xterm/c0.zig`
+- `howl-vt/src/xterm/csi/params.zig`
+- `howl-vt/src/action/vocabulary.zig`
+- Direct screen/action call sites exposed by the type change.
+
+Exact non-goals:
+
+- Do not rewrite parser tables.
+- Do not change public C ABI.
+- Do not redesign screen storage.
+- Do not create `types.zig` or any broad scalar bucket.
+
+Invariants:
+
+- Dense byte/state parser transitions remain table-driven and source-order auditable.
+- Semantic dispatch remains union/switch-driven where that is clearer than lookup tables.
+- Raw `u2` erase mode and raw handled C0 control meaning should become named protocol types if the diff remains bounded.
+
+Verification commands:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+
+Grep gates:
+
+- `rg 'erase_display: u2|erase_line: u2|selective_erase_display: u2|selective_erase_line: u2' howl-vt/src/action/vocabulary.zig` prints nothing after replacement.
+- `rg '0x0A|0x0B|0x0C|0x0D|0x08|0x09' howl-vt/src/xterm/c0.zig` supports review that C0 byte constants are named or intentionally mapped.
+
+Risks and stop conditions:
+
+- Stop if type changes spread into ABI names or C structs.
+- Stop if the slice starts packing screen cell/style storage; that belongs to Phase 4 child research.
+- Stop if the new types only wrap values without improving owner truth or reviewability.
 
 ### Slice 3.4: Reduce VT `parser.zig` And `kitty.zig` Buckets
 
