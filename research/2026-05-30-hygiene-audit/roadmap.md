@@ -1353,9 +1353,6 @@ promoting any listed worker-ready slice, verify current source and
 `surface/*` source-bucket deletion, and VT scalar `C0`/`EraseMode` vocabulary are
 already complete in current source.
 
-- Whether headers should stay hand-maintained with generated-looking grammar or eventually be generated from ABI metadata.
-- Whether `howl-vt/src/howl_vt.zig` is a necessary internal root/test aggregator or stale Zig-shaped lane.
-- Whether VT `runtime_obligation` is accepted ABI vocabulary or banned owner vocabulary leaking into product API.
 - Capacity design for VT host consequences using `ArrayList`, `dupe`, and allocation in protocol paths.
 - First true owner seam inside `howl-vt/src/screen.zig` beyond surface publication.
 - Test taxonomy for moving host `main.zig` tests without adding public helper aliases.
