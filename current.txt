@@ -1,67 +1,55 @@
-# Current Slice: Apply C ABI Header Grammar Without Semantic Changes
+# Current Slice: Normalize ABI Export Root Order
 
 Owner: workspace root.
 
 Purpose:
 
-- Apply the accepted C ABI header grammar to PTY, VT, and render public headers.
-- Make the public ABI lane read as one generated-looking product surface.
-- Preserve C symbols, enum values, struct layout, and behavior exactly.
+- Make `libhowl_*.zig` public export roots read as mechanical C ABI export tables.
+- Align export order with the accepted header grammar and current public headers.
+- Preserve all exported symbols and behavior exactly.
 
 ## Source Research
 
 Use:
 
 - `research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 1.2
-- `research/2026-05-30-hygiene-audit/synthesis.md`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 1.3
+- current public headers:
+  - `howl-pty/include/howl_pty.h`
+  - `howl-vt/include/howl_vt.h`
+  - `howl-render/include/howl_render.h`
 
 ## Source Changes
 
 Edit only:
 
-- `howl-pty/include/howl_pty.h`
-- `howl-vt/include/howl_vt.h`
-- `howl-render/include/howl_render.h`
+- `howl-pty/src/libhowl_pty.zig`
+- `howl-vt/src/libhowl_vt.zig`
+- `howl-render/src/libhowl_render.zig`
 
 ## Required Shape
 
-- Follow the exact header order from `c-abi-header-grammar.md`:
-  1. Include guard.
-  2. C includes.
-  3. `extern "C"` block.
-  4. Opaque handles.
-  5. Limits/macros.
-  6. Status/result enums.
-  7. Product enums.
-  8. Structs.
-  9. Functions grouped by owner handle and operation order.
-- Use one opaque handle declaration style:
-  - `typedef struct Howl<Package><Owner>Opaque *Howl<Package><Owner>Handle;`
-- Wrap all function prototypes to stay under 100 columns.
-- Remove ornamental banners, numbered sections, table-of-contents comments, and one-off prose comments
-  that compensate for bad order.
-- Keep only comments that explain ABI consequence, lifetime, ownership, units, or value permanence.
+- Public roots curate exports only.
+- Export order follows the corresponding public header function order.
+- Imports are ordered to support the export table.
+- PTY and VT remain single-`ffi` export tables.
+- Render may still import current translator files in this slice, but imports/exports must be explicit
+  and mechanically ordered.
 
 ## Non-Goals
 
-- No C symbol renames.
-- No enum numeric changes.
-- No struct field additions, removals, reorders, or type changes.
-- No behavior changes.
-- No Zig source edits.
-- No compatibility typedefs, compatibility enum values, or macro aliases.
-- No generation tooling.
-- Do not normalize `libhowl_*.zig` roots in this slice.
+- Do not move render translator files.
+- Do not edit headers.
+- Do not edit `ffi.zig` or translator implementations.
+- Do not rename exported C symbols.
+- Do not change ABI behavior.
+- Do not add compatibility aliases.
 
 ## Invariants
 
-- Declaration dependencies still compile as C and C++ headers through current Zig translate-C tests.
-- PTY remains compact and direct.
-- VT loses numbered banners and starts reading as a product header, not a hand table of contents.
-- Render loses one-off section prose and long prototype lines.
-- All public function prototypes are at most 100 columns.
-- ABI layout tests still pass.
+- All previously exported C symbols remain exported exactly once.
+- Root files contain imports, `comptime` export blocks, and tests only if already present.
+- No owner behavior, state, helpers, or policy appears in public roots.
 
 ## Verification
 
@@ -79,14 +67,10 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `awk 'length($0)>100 {print FILENAME ":" FNR ":" $0}' howl-*/include/*.h` prints nothing.
-- `rg '/\* -{5,}|/\* [0-9]+\.|Shell input enums|Owned prepared-surface' howl-*/include/*.h` prints nothing.
-- `rg 'compatibility alias|old-name typedef|Zig-shaped host shortcut' howl-*/include/*.h` prints nothing.
-- Manual review of `rg 'typedef .*Handle|enum|struct|howl_' howl-*/include/*.h` confirms grammar order.
+- `rg '^const .* = @import|@export\(' howl-pty/src/libhowl_pty.zig howl-vt/src/libhowl_vt.zig howl-render/src/libhowl_render.zig`
+- `rg 'pub fn|var |const [A-Z].*= struct' howl-pty/src/libhowl_pty.zig howl-vt/src/libhowl_vt.zig howl-render/src/libhowl_render.zig` prints nothing.
 
 ## Stop Conditions
 
-- Stop if any header cannot satisfy the grammar without a C symbol, enum value, struct layout, or
-  behavior change.
-- Stop if Zig source changes appear necessary.
-- Stop if a worker wants to preserve banners instead of making order do navigation.
+- Stop if render root order cannot be made intelligible without moving translator files.
+- Stop if any implementation file must change.
