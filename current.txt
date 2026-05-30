@@ -1,12 +1,12 @@
-# Current Slice: Document VT Consequence Capacity Contracts
+# Current Slice: Extract Host Cursor Blink Owner
 
-Owner: `howl-vt`.
+Owner: `howl-linux-host`.
 
 Purpose:
 
-- Make current bounded-but-heap-backed VT consequence storage contracts explicit in owner code.
-- Preserve behavior while documenting exact capacity ownership and proof gaps.
-- Avoid fake static-storage conversion before capacity decisions are source-backed.
+- Move host cursor blink cadence state and pure deadline/phase policy out of terminal `Context`.
+- Keep VT cursor blink truth VT-owned and render visibility application behind existing context/term calls.
+- Preserve host wake/present cadence, render-turn sequencing, input behavior, and C ABI usage.
 
 ## Source Research
 
@@ -14,43 +14,47 @@ Read before editing:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `research/2026-05-30-hygiene-audit/vt-host-consequence-capacity.md`
-- `howl-vt/src/host/state.zig`
-- `howl-vt/src/parser/events.zig`
+- `research/2026-05-30-hygiene-audit/host-admission-gate.md`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 5.2
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/vt/surface.zig`
+- `howl-linux-host/src/terminal/vt/retained.zig`
+- `howl-linux-host/src/main.zig` cursor blink wait call sites
 
 ## Source Changes
 
 Exact files:
 
-- `howl-vt/src/host/state.zig`
-- `howl-vt/src/parser/events.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- Add `howl-linux-host/src/terminal/cursor_blink.zig`
+- `libs.yaml` if owner metadata should record the new host owner
 
-Exact changes:
+Exact movement:
 
-- Add compile-time assertions for host consequence capacity constants.
-- Add compile-time assertions for parser event/string-control capacity constants.
-- Add a short owner comment above `host.State` stating that heap storage is currently bounded by
-  constants in `host/state.zig` and owned by host consequence retention.
-- Add a short owner comment above `ParsedEvents` stating that parser-event materialization is bounded
-  for queued events and string-control payloads, with aggregate byte/int/aux storage still a proof gap.
+- Move `cursor_blink_interval_ms`, `cursor_blink_interval_ns`, `CursorBlinkPlan`,
+  `nextCursorBlinkDeadline`, `cursorBlinkWaitMs`, and `planCursorBlink` into `cursor_blink.zig`.
+- Replace `Context.cursor_blink_visible` and `Context.cursor_blink_deadline_ns` with one
+  `cursor_blink: cursor_blink.State` field.
+- Keep `Context.syncCursorBlinkCadence`, `resetCursorBlinkActivity`, and
+  `nextCursorBlinkWaitMs` as context methods because they read VT truth and call render.
 
 ## Non-Goals
 
-- Do not convert `ArrayList` storage.
-- Do not alter allocation behavior.
-- Do not change OSC 52, hyperlink, title, DCS, parser event, or report semantics.
-- Do not add static buffers, capacity structs, managers, controllers, runtimes, `types.zig`, `api.zig`, or `abi.zig`.
+- Do not move render turn sequencing.
+- Do not move VT runtime obligation adaptation.
+- Do not move input drains, clipboard policy, link hover, selection, or PTY progress.
+- Do not change cursor blink interval or visible/deadline behavior.
+- Do not change host wake/present cadence.
+- Do not introduce manager, controller, runtime, `types.zig`, `api.zig`, or `abi.zig`.
 
 ## Invariants
 
-- `pending_output_max_bytes == parser.max_large_osc_control_bytes`.
-- `retained_payload_max_bytes == parser.max_large_osc_control_bytes`.
-- `retained_metadata_max_bytes == parser.max_metadata_control_bytes`.
-- `title_max_bytes <= retained_metadata_max_bytes`.
-- `hyperlink_target_max_count > 0`.
-- `ParsedEvents.max_queued_events > 0`.
-- `parser.max_metadata_control_bytes > 0`.
-- `parser.max_apc_control_bytes > parser.max_metadata_control_bytes`.
+- Host owns blink cadence; VT owns cursor visible/blink truth.
+- `State.resetActivity(now_ns)` sets the next deadline to `now_ns + interval` and makes blink visible.
+- Non-animated cursor returns no wait and forces visible state.
+- Animated cursor with no deadline starts a deadline without toggling visibility.
+- Expired deadlines toggle visibility and advance by fixed intervals until after `now_ns`.
+- Context remains responsible for applying render cursor blink visibility through render C ABI.
 
 ## Verification
 
@@ -62,11 +66,10 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'pending_output_max_bytes|retained_payload_max_bytes|retained_metadata_max_bytes|title_max_bytes|hyperlink_target_max_count|max_queued_events' howl-vt/src/host/state.zig howl-vt/src/parser/events.zig`
-- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-vt/src/host/state.zig howl-vt/src/parser/events.zig` prints nothing relevant to this slice.
+- `rg 'cursor_blink_deadline_ns|cursor_blink_visible|cursor_blink_interval|planCursorBlink|cursorBlinkWaitMs|nextCursorBlinkDeadline' howl-linux-host/src/terminal/context.zig howl-linux-host/src/terminal/cursor_blink.zig`
+- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-linux-host/src/terminal/context.zig howl-linux-host/src/terminal/cursor_blink.zig` prints nothing relevant to this slice.
 
 ## Stop Conditions
 
-- Stop if a capacity assertion fails and requires a product capacity decision.
-- Stop if documenting capacity reveals behavior changes are needed.
-- Stop if static storage conversion looks tempting; that belongs to a later capacity-backed slice.
+- Stop if extraction requires moving event-loop, render-turn, PTY, VT runtime obligation, input, clipboard, link, or selection policy.
+- Stop if tests require changing cursor blink semantics instead of preserving owner shape.
