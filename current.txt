@@ -1,12 +1,12 @@
-# Current Slice: Move Render Prepared Handle Owner
+# Current Slice: Move Render Surface Geometry Helper
 
 Owner: `howl-render`.
 
 Purpose:
 
-- Move prepared handle lifecycle owner out of the stale `surface/*` bucket.
-- Preserve prepared handle ABI, lifecycle, submit, diagnostics, and buffer behavior exactly.
-- Continue reducing render `surface/*` taxonomy debt one exact owner at a time.
+- Move render grid derivation helper out of stale `surface/*` bucket.
+- Preserve geometry behavior exactly.
+- Do not move source/text adaptation, token contracts, clip helpers, or rgba contracts.
 
 ## Source Research
 
@@ -15,35 +15,32 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-hygiene-audit/render-surface-taxonomy.md`
-- `howl-render/src/surface/prepared_owner.zig`
-- current importers of `surface/prepared_owner.zig`
+- `howl-render/src/surface/geometry.zig`
+- current importers of `surface/geometry.zig`
 - `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- Move `howl-render/src/surface/prepared_owner.zig` to `howl-render/src/prepared/owner.zig`.
+- Move `howl-render/src/surface/geometry.zig` to `howl-render/src/render/grid_geometry.zig`.
 - Update importers:
   - `howl-render/src/session/text.zig`
-  - `howl-render/src/ffi/submission.zig`
-  - `howl-render/src/ffi/prepared_surface.zig`
-  - `howl-render/src/ffi/handle.zig`
-- Update internal imports in moved file.
+  - `howl-render/src/test/unit.zig`
 - Update `libs.yaml` owner metadata.
 
 ## Non-Goals
 
-- Do not move token contracts.
-- Do not move source publication, source/text adaptation, geometry, clip, or rgba files.
-- Do not change prepared handle state machine or ABI behavior.
-- Do not add compatibility aliases or umbrella replacement buckets.
+- Do not move `clip_rect.zig` in this slice.
+- Do not move token contracts, source publication, input adaptation, or rgba files.
+- Do not change geometry derivation behavior.
+- Do not change C ABI or render/session behavior.
 
 ## Invariants
 
-- `prepared/owner.zig` owns prepared handle lifecycle and copied prepared RGBA payload.
-- `surface/prepared_owner.zig` no longer exists.
-- No imports refer to `surface/prepared_owner.zig`.
+- `render/grid_geometry.zig` owns render grid derivation from pixel/cell sizes.
+- `surface/geometry.zig` no longer exists.
+- No imports refer to `surface/geometry.zig`.
 
 ## Verification
 
@@ -55,10 +52,9 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'surface/prepared_owner\.zig|prepared_owner\.zig' howl-render/src libs.yaml` prints nothing.
-- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-render/src/prepared/owner.zig` prints nothing relevant to this slice.
+- `rg 'surface/geometry\.zig' howl-render/src libs.yaml` prints nothing.
+- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-render/src/render/grid_geometry.zig` prints nothing relevant to this slice.
 
 ## Stop Conditions
 
-- Stop if moving prepared owner requires token, session, FFI, or submit behavior changes.
-- Stop if import rewiring exposes a broader prepared/session taxonomy decision.
+- Stop if moving geometry requires changing session layout, source, prepared, or FFI behavior.
