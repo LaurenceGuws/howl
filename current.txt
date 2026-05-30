@@ -1,12 +1,12 @@
-# Current Slice: Fold Render Rgba Contract
+# Current Slice: Move Render Source Text Input Adapter
 
 Owner: `howl-render`.
 
 Purpose:
 
-- Delete stale `surface/rgba.zig` by moving `Rgba8` into the text contract owner that already exports it.
-- Preserve all color contract behavior exactly.
-- Leave large `surface/input.zig` for a separate source-to-text adaptation decision.
+- Move the final render `surface/*` file to its true owner: source publication to text-scene input adaptation.
+- Preserve source cell/style/color/cursor mapping and text frame input behavior exactly.
+- Delete the stale render `surface/` folder from source metadata.
 
 ## Source Research
 
@@ -15,30 +15,31 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-hygiene-audit/render-surface-taxonomy.md`
-- `howl-render/src/surface/rgba.zig`
-- `howl-render/src/text/contract.zig`
-- grep results for `Rgba8`
+- full `howl-render/src/surface/input.zig`
+- `howl-render/src/session/text.zig`
 - `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- Edit `howl-render/src/text/contract.zig` to define `Rgba8` directly.
-- Delete `howl-render/src/surface/rgba.zig`.
-- Remove the `rgba` owner entry from `libs.yaml`.
+- Move `howl-render/src/surface/input.zig` to `howl-render/src/source/text_input.zig`.
+- Update `howl-render/src/session/text.zig` import.
+- Update internal imports in moved file.
+- Update `libs.yaml` owner metadata.
 
 ## Non-Goals
 
-- Do not move `surface/input.zig`.
-- Do not change any color fields or defaults.
-- Do not change C ABI or FFI layout behavior.
+- Do not split mapping/theme/style functions in this slice.
+- Do not change source publication, text scene, frame preparation, or session behavior.
+- Do not change C ABI or FFI behavior.
+- Do not add a replacement `surface` bucket or compatibility alias.
 
 ## Invariants
 
-- `contract.Rgba8` remains the public Zig type used by text/prepared code.
-- `surface/rgba.zig` no longer exists.
-- No imports refer to `surface/rgba.zig`.
+- `source/text_input.zig` owns source publication to text-scene/frame input adaptation.
+- `surface/input.zig` no longer exists.
+- No imports or metadata refer to `howl-render/src/surface/`.
 
 ## Verification
 
@@ -50,8 +51,10 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'surface/rgba\.zig' howl-render/src libs.yaml` prints nothing.
+- `rg 'surface/' howl-render/src libs.yaml` prints nothing for `howl-render`.
+- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-render/src/source/text_input.zig` prints nothing relevant to this slice.
 
 ## Stop Conditions
 
-- Stop if folding `Rgba8` requires changing source, text, prepared, or ABI behavior.
+- Stop if moving the adapter requires splitting theme, style, or source publication behavior.
+- Stop if behavior changes are needed to empty the stale folder.

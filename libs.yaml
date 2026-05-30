@@ -243,6 +243,7 @@ howl-render:
         slot: howl-render/src/source/slot.zig
         damage: howl-render/src/source/damage.zig
         prepare_request: howl-render/src/source/prepare_request.zig
+        text_input: howl-render/src/source/text_input.zig
     session:
       owners:
         text: howl-render/src/session/text.zig
@@ -254,9 +255,6 @@ howl-render:
         surface: howl-render/src/prepared/surface.zig
         submit: howl-render/src/prepared/submit.zig
         submit_result: howl-render/src/prepared/submit_result.zig
-    surface:
-      owners:
-        input: howl-render/src/surface/input.zig
     render:
       owners:
         geometry: howl-render/src/render/geometry.zig

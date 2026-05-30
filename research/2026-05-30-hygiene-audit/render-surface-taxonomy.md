@@ -87,9 +87,13 @@ Stop conditions:
   imported only by `session/text.zig`, and it needs a dedicated scratchpad before movement because it
   mixes VT publication color mapping, source cell style mapping, cursor shape mapping, frame theme
   defaults, and text frame input construction.
+- Final follow-up decision after reading the full file: `surface/input.zig` is source publication to
+  text-scene/frame-input adaptation. It belongs at `source/text_input.zig`, not under a replacement
+  `surface` bucket and not under `text/` because it translates VT/source publication truth into text
+  contracts before frame preparation.
 
 ## Remaining Proof Gap
 
-`howl-render/src/surface/input.zig` is the last render `surface/*` file. Before moving it, read the
-full file and decide whether the true owner is `source/input.zig`, `source/text_input.zig`, or a text
-frame adaptation owner. Do not move it merely to empty the folder.
+Closed by the `source/text_input.zig` decision above. The remaining rule is that future changes must
+not recreate `howl-render/src/surface/` as a source bucket; `surface` remains only ABI/product
+vocabulary or prepared-surface contract vocabulary under exact owners.

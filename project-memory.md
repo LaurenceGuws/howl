@@ -174,12 +174,15 @@ Canonical source scratchpads archived into this section:
 - `SurfaceTextOwner` should compose explicit owners: geometry, source slot,
   prepare requests, submitted state, source dirty epoch, and cursor blink phase.
 - `source/*` owns VT-derived input snapshots, publication storage, dirty/source
-  metadata, and source validation only.
+  metadata, source validation, and source publication to text-scene/frame-input
+  adaptation.
 - `prepared/*` owns prepared render output and prepared-handle lifecycle only.
 - `session/*` composes the public render object behind the C handle and owns
   submitted/retained token state and submit mailbox decisions.
 - `render/*` owns text rendering and render geometry, not VT source slot storage.
 - `surface` is a product term at the ABI boundary, not an umbrella source folder.
+- `howl-render/src/source/text_input.zig` owns the final source-to-text adapter
+  formerly stored at `surface/input.zig`; do not recreate `howl-render/src/surface/`.
 
 ### Accepted Render Direction
 
