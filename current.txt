@@ -1,12 +1,12 @@
-# Current Slice: Extract Screen Dirty State
+# Current Slice: Document VT Consequence Capacity Contracts
 
 Owner: `howl-vt`.
 
 Purpose:
 
-- Move dirty-row publication state in `Screen` behind a narrow `screen/dirty.zig` state owner.
-- Keep `Screen` as the terminal screen mutation entrypoint.
-- Preserve dirty row semantics, surface ack behavior, resize behavior, C ABI, and visible surface output.
+- Make current bounded-but-heap-backed VT consequence storage contracts explicit in owner code.
+- Preserve behavior while documenting exact capacity ownership and proof gaps.
+- Avoid fake static-storage conversion before capacity decisions are source-backed.
 
 ## Source Research
 
@@ -14,53 +14,43 @@ Read before editing:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `research/2026-05-30-hygiene-audit/vt-screen-owner-seams.md`
-- `howl-vt/src/screen.zig`
-- `howl-vt/src/screen/dirty.zig`
-- `howl-vt/src/screen/resize.zig`
-- `howl-vt/src/screen_set.zig`
-- `howl-vt/src/test/terminal_surface.zig`
+- `research/2026-05-30-hygiene-audit/vt-host-consequence-capacity.md`
+- `howl-vt/src/host/state.zig`
+- `howl-vt/src/parser/events.zig`
 
 ## Source Changes
 
 Exact files:
 
-- `howl-vt/src/screen.zig`
-- `howl-vt/src/screen/dirty.zig`
-- `howl-vt/src/screen/resize.zig` only if field installation/freeing needs direct update
-- `howl-vt/src/test/terminal_surface.zig` only if existing dirty behavior coverage needs exact owner assertions
-- `libs.yaml` only if owner metadata needs sharper wording
+- `howl-vt/src/host/state.zig`
+- `howl-vt/src/parser/events.zig`
 
-Exact movement:
+Exact changes:
 
-- Introduce `dirty.State` holding:
-  - `rows: ?DirtyRows`
-  - `cols_start: ?[]u16`
-  - `cols_end: ?[]u16`
-- Replace `Screen.dirty_rows`, `Screen.dirty_cols_start`, and `Screen.dirty_cols_end` with one
-  `dirty_state: dirty.State` field.
-- Keep `Screen.peekDirtyRows`, `clearDirtyRows`, `markDirtyRow`, `markDirtyCols`, `markDirtyRows`,
-  and `markAllRowsDirty` as entrypoints that delegate to dirty owner behavior.
-- Preserve allocation ownership: initialization and resize still allocate/free dirty column buffers
-  with the screen allocator in this slice.
+- Add compile-time assertions for host consequence capacity constants.
+- Add compile-time assertions for parser event/string-control capacity constants.
+- Add a short owner comment above `host.State` stating that heap storage is currently bounded by
+  constants in `host/state.zig` and owned by host consequence retention.
+- Add a short owner comment above `ParsedEvents` stating that parser-event materialization is bounded
+  for queued events and string-control payloads, with aggregate byte/int/aux storage still a proof gap.
 
 ## Non-Goals
 
-- Do not change C ABI.
-- Do not change dirty row semantics, surface ack semantics, resize reflow behavior, or visible surface output.
-- Do not move history, cursor, margins, tabs, visible cell storage, selection, parser, host, Kitty, or runtime behavior.
-- Do not introduce broad `screen/state.zig`, `types.zig`, manager, controller, runtime, compatibility alias, or umbrella owner.
+- Do not convert `ArrayList` storage.
+- Do not alter allocation behavior.
+- Do not change OSC 52, hyperlink, title, DCS, parser event, or report semantics.
+- Do not add static buffers, capacity structs, managers, controllers, runtimes, `types.zig`, `api.zig`, or `abi.zig`.
 
 ## Invariants
 
-- `Screen` remains the owner entrypoint for screen mutation.
-- `dirty.State` owns only dirty publication ranges and dirty column buffers.
-- `dirty.State.rows` is null when there are no dirty rows or the screen has zero rows.
-- Dirty column start/end buffers remain optional and row-count sized when allocated.
-- `clearDirtyRows` resets dirty rows to null and resets start/end buffers exactly as before.
-- `markRow`, `markCols`, `markRows`, and `markAllRows` preserve current bounds and clamping behavior.
-- Resize installs new dirty buffers and frees old buffers exactly once.
-- Surface ack tests keep proving dirty rows clear only through valid current snapshot ack.
+- `pending_output_max_bytes == parser.max_large_osc_control_bytes`.
+- `retained_payload_max_bytes == parser.max_large_osc_control_bytes`.
+- `retained_metadata_max_bytes == parser.max_metadata_control_bytes`.
+- `title_max_bytes <= retained_metadata_max_bytes`.
+- `hyperlink_target_max_count > 0`.
+- `ParsedEvents.max_queued_events > 0`.
+- `parser.max_metadata_control_bytes > 0`.
+- `parser.max_apc_control_bytes > parser.max_metadata_control_bytes`.
 
 ## Verification
 
@@ -72,11 +62,11 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'dirty_rows|dirty_cols_start|dirty_cols_end' howl-vt/src/screen.zig howl-vt/src/screen/resize.zig howl-vt/src/screen/dirty.zig` shows only intentional compatibility field names inside `dirty.State` or no old `Screen.` field ownership.
-- `rg 'screen/state|types\.zig|manager|controller|runtime' howl-vt/src/screen.zig howl-vt/src/screen/dirty.zig howl-vt/src/screen/resize.zig` prints nothing relevant to this slice.
+- `rg 'pending_output_max_bytes|retained_payload_max_bytes|retained_metadata_max_bytes|title_max_bytes|hyperlink_target_max_count|max_queued_events' howl-vt/src/host/state.zig howl-vt/src/parser/events.zig`
+- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-vt/src/host/state.zig howl-vt/src/parser/events.zig` prints nothing relevant to this slice.
 
 ## Stop Conditions
 
-- Stop if resize reflow must be reshaped beyond installing/freeing dirty state.
-- Stop if history, cursor, margins, tabs, visible storage, selection, host, Kitty, parser, or runtime behavior must move.
-- Stop if dirty semantics tests fail in a way that requires behavior changes instead of owner movement.
+- Stop if a capacity assertion fails and requires a product capacity decision.
+- Stop if documenting capacity reveals behavior changes are needed.
+- Stop if static storage conversion looks tempting; that belongs to a later capacity-backed slice.
