@@ -1,12 +1,12 @@
-# Current Slice: Move Render Resolve Observability
+# Current Slice: Move Render Raster Operation Contracts
 
 Owner: workspace root.
 
 Purpose:
 
-- Start splitting `howl-render/src/text/pipeline.zig` by moving the full resolve group.
-- Move resolve stage/result/callback/observability symbols to a true resolve owner.
-- Preserve enum tags, counter fields/defaults, and telemetry behavior exactly.
+- Continue splitting `howl-render/src/text/pipeline.zig` by moving raster operation contracts.
+- Move `RasterizeRequest`, `RasterizeOutput`, `RasterizeGlyphFn`, and `RasterizeGlyphOp` to a true raster owner.
+- Preserve raster request/output fields, deinit behavior, and callback dispatch exactly.
 
 ## Source Research
 
@@ -15,55 +15,52 @@ Use:
 - `research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
 - `howl-render/src/text/pipeline.zig`
 - `howl-render/src/session/text.zig`
-- `howl-render/src/text/font/ft_hb/support.zig`
-- `howl-render/src/text/font/resolver.zig`
-- `howl-render/src/prepared/surface.zig`
-- `howl-render/src/prepared/submit_result.zig`
+- `howl-render/src/text/frame_preparer.zig`
+- `howl-render/src/text/direct_normal.zig`
+- `howl-render/src/text/font/provider.zig`
+- `howl-render/src/text/font/ft_hb/provider.zig`
 
 ## Source Changes
 
 Edit only:
 
 - `howl-render/src/text/pipeline.zig`
-- `howl-render/src/text/font/resolve_observability.zig`
+- `howl-render/src/text/raster/operation.zig`
 - `howl-render/src/session/text.zig`
-- `howl-render/src/text/font/ft_hb/support.zig`
-- `howl-render/src/text/font/resolver.zig`
-- `howl-render/src/prepared/surface.zig`
-- `howl-render/src/prepared/submit_result.zig`
+- `howl-render/src/text/frame_preparer.zig`
+- `howl-render/src/text/direct_normal.zig`
+- `howl-render/src/text/font/provider.zig`
+- `howl-render/src/text/font/ft_hb/provider.zig`
 
-Do not edit any other file unless the build exposes a direct resolve-observability import missed by this slice.
-If that happens, stop and report the exact import before broadening scope.
+The first implementation attempt exposed one missed direct raster operation importer:
+`howl-render/src/text/frame_preparer.zig`. It is now explicitly in scope only for repairing
+`RasterizeGlyphOp` imports/usages.
 
 ## Required Shape
 
-- Add `howl-render/src/text/font/resolve_observability.zig`.
-- Move `ResolveStage`, `ResolveRequest`, `ResolveHit`, `ResolveMiss`, `ResolveResult`,
-  `ResolveCounters`, `ResolveObservability`, `ResolveFallbackFaceFn`, and `ResolveFallbackFaceOp`
-  out of `pipeline.zig`.
-- Update the five listed importers to use the new file for moved symbols.
-- Keep `pipeline.zig` for all non-moved symbols; do not add aliases from `pipeline.zig` to the moved symbols.
+- Add `howl-render/src/text/raster/operation.zig`.
+- Move only `RasterizeRequest`, `RasterizeOutput`, `RasterizeGlyphFn`, and `RasterizeGlyphOp` out of `pipeline.zig`.
+- Update listed importers to use the new file for moved symbols.
+- Keep `pipeline.zig` for all non-moved symbols; do not add aliases from `pipeline.zig` to moved symbols.
+- Move the raster portion of the old pipeline test into the new owner so dispatch and output ownership remain covered.
 
 ## Non-Goals
 
 - Do not rename or delete `pipeline.zig`.
-- Do not move raster operation symbols.
-- Do not move prepare counters.
-- Do not move shape, build, group, or raster operation symbols.
+- Do not move `TextPrepareCounters`.
+- Do not move shape operation symbols.
+- Do not move build/group request-output symbols.
 - Do not change headers or exported C ABI symbols.
-- Do not change prepared metrics, submit metrics, shaping, rasterization, scene preparation, or submit behavior.
+- Do not change rasterization behavior, scene preparation, shaping, prepared metrics, submit metrics, or submit behavior.
 - Do not add compatibility aliases.
 
 ## Invariants
 
-- `ResolveStage` remains `enum(u5)` with identical tags and order.
-- `ResolveRequest`, `ResolveHit`, `ResolveMiss`, and `ResolveResult` keep identical fields and tags.
-- `ResolveCounters` fields and zero defaults remain identical.
-- `ResolveObservability` fields and defaults remain identical.
-- `ResolveFallbackFaceFn` and `ResolveFallbackFaceOp` keep identical dispatch behavior.
-- `ResolveFallbackFaceOp.resolve` remains covered by a focused test in the new owner file.
-- `ResolveObservability` remains the prepared/submit resolve telemetry shape.
-- Import repairs are symbol-directed only; no behavior moves with these types.
+- `RasterizeRequest` fields and defaults remain identical.
+- `RasterizeOutput` fields and `deinit` behavior remain identical.
+- `RasterizeGlyphFn` signature remains identical.
+- `RasterizeGlyphOp.rasterize` dispatch behavior remains identical and tested in the new owner.
+- Import repairs are symbol-directed only.
 
 ## Verification
 
@@ -75,21 +72,20 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'ResolveStage|ResolveRequest|ResolveHit|ResolveMiss|ResolveResult|ResolveCounters|ResolveObservability|ResolveFallbackFaceFn|ResolveFallbackFaceOp' howl-render/src/text/pipeline.zig`
-- `rg 'ResolveStage|ResolveRequest|ResolveHit|ResolveMiss|ResolveResult|ResolveCounters|ResolveObservability|ResolveFallbackFaceFn|ResolveFallbackFaceOp' howl-render/src/text/font/resolve.zig`
-- `rg 'text_pipeline\.Resolve|pipeline\.Resolve' howl-render/src`
+- `rg 'RasterizeRequest|RasterizeOutput|RasterizeGlyphFn|RasterizeGlyphOp' howl-render/src/text/pipeline.zig`
+- `rg 'RasterizeRequest|RasterizeOutput|RasterizeGlyphFn|RasterizeGlyphOp' howl-render/src/text/raster/operation.zig`
+- `rg 'text_pipeline\.Rasterize|pipeline\.Rasterize' howl-render/src`
 - `rg 'types\.zig|api\.zig|manager|controller|engine|runtime' howl-render/src/text howl-render/src/prepared howl-render/src/session`
 
 Expected results:
 
 - The first gate prints nothing.
-- The second gate proves the moved symbols live in the new owner.
+- The second gate proves moved symbols live in the new owner.
 - The third gate prints nothing.
 - The fourth gate prints nothing except unrelated pre-existing terms if explicitly reviewed.
 
 ## Stop Conditions
 
-- Stop if moving the resolve symbols requires changing field names, enum tags, backing type, defaults, or dispatch behavior.
+- Stop if moving raster operation symbols requires changing fields, defaults, allocator ownership, or dispatch behavior.
 - Stop if a direct importer requires both old and new names through an alias.
-- Stop if the move exposes a cycle between `font/resolver.zig`, `font/ft_hb/support.zig`, `prepared/*`, and `session/text.zig`.
-- Stop if implementation begins moving raster, shape, grouping, or prepare counter symbols.
+- Stop if implementation begins moving prepare counters, shape symbols, or build/group symbols.
