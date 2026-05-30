@@ -1,101 +1,90 @@
-# Current Slice: Move Tab Slots Out Of Main
+# Current Slice: Move Frame Pacing Out Of Main
 
 Owner: workspace root.
 
 Purpose:
 
-- Move bounded tab slot storage and active/free ordering out of `howl-linux-host/src/main.zig`.
-- Keep `main.zig` as the event-loop/app dispatch owner, not the tab slot storage owner.
-- Follow Ghostty/Alacritty host shape: app/event processor owns a list of terminal surfaces/windows,
-  while each terminal context owns one terminal widget/session.
+- Move host frame/present admission state out of `howl-linux-host/src/main.zig` into a window-owned
+  pacing file.
+- Keep `main.zig` as the app/event-loop dispatch owner.
+- Do not invent a scheduler or frame deadline in this slice.
 
 ## Source Research
 
-Use `host-owner-next-scratchpad.md` as the sprint scratchpad.
+Use `host-owner-next-scratchpad.md` Slice B and the frame-pacing research result as the sprint
+scratchpad.
 
 Reference findings:
 
-- Ghostty `App` owns the list of active surfaces separately from `Surface` terminal behavior:
-  - `utils/dev_references/terminals/ghostty/src/App.zig:21-27`
-  - `utils/dev_references/terminals/ghostty/src/App.zig:164-217`
-- Ghostty `Surface` is one terminal widget/session and the runtime decides whether it is a window,
-  tab, split, or pane:
-  - `utils/dev_references/terminals/ghostty/src/Surface.zig:1-11`
-- Alacritty `Processor` owns a map of window contexts:
-  - `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:83-101`
-- Alacritty `WindowContext` owns one terminal window context:
-  - `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs:47-70`
-- TigerBeetle requires explicit bounded storage, assertions, and direct ownership:
+- Alacritty owns frame/timer topics separately from per-window event handling:
+  - `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs:24-32`
+  - `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs:43-72`
+- Alacritty `WindowContext` requests redraw only when dirty, frame-ready, and not already handling a
+  redraw event:
+  - `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs:400-494`
+- Alacritty display requests the next frame after swap:
+  - `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:1019-1046`
+- Ghostty top-level app drains explicit mailbox messages and dispatches redraw centrally:
+  - `utils/dev_references/terminals/ghostty/src/App.zig:126-132`
+  - `utils/dev_references/terminals/ghostty/src/App.zig:237-289`
+- TigerBeetle requires explicit bounded control flow, assertions, and centralized state mutation:
   - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md:90-147`
   - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md:161-184`
 
 ## Current Source Facts
 
-- `howl-linux-host/src/main.zig:21-82` currently defines `TabSlots` inside the app loop owner.
-- `TabSlots` owns:
-  - `[max_tabs]TerminalContext` backing storage.
-  - active tab pointer order.
-  - active slot indices.
-  - free slot stack.
-  - active/free counts.
-  - acquire, append, release, ordered-remove invariants.
-- `main.zig` also owns helpers coupled to tab storage and active index:
-  - `destroyTabs`
-  - `activeTab`
-  - `activeContext`
-  - `tabIndexInRange`
-  - `openTab`
-  - `closeActiveTab`
-  - `selectRelative`
-  - `selectTab`
-  - `syncTerminalFocus`
-  - `tabTitles`
-- `TabBar.TabIndex` and `TabBar.max_tabs` are the current tab index/capacity source.
+- `howl-linux-host/src/main.zig` currently defines `FramePacingState` inside the app/event-loop owner.
+- `App.frame_pacing` stores that state directly.
+- `computeLoopAdmission`, `runLoopTurn`, and `submitPresent` call pacing methods.
+- `PresentReason` is currently in `main.zig` and is consumed by `presentSubmissionPermission`.
+- `loopWaitMs` already accepts a `frame_pacer_wait_ms` hook, but callers pass `null`.
+- A real frame deadline requires a scheduler owner and post-swap scheduling, so it is out of scope.
 
 ## Source Changes
 
 Edit only:
 
 - `howl-linux-host/src/main.zig`
-- one new owner file, either:
-  - `howl-linux-host/src/tab_bar/slots.zig`, or
-  - `howl-linux-host/src/terminal/tabs.zig`
-- tests in the same moved owner file or `main.zig` as needed.
+- new `howl-linux-host/src/window/pacing.zig`
 
 Required shape:
 
-- Move `TabSlots` out of `main.zig` into the chosen owner file.
-- Preserve bounded arrays. Do not replace with dynamic allocation.
-- Preserve `TabBar.TabIndex` and `TabBar.max_tabs` unless a compile failure proves a better minimal
-  owner shape is required.
-- The moved owner must expose operations needed by `main.zig` without accepting `*App`.
-- Keep terminal creation/destruction orchestration in `main.zig` for this slice unless a small helper
-  must move for slot release invariants.
-- Preserve active ordering and free slot reuse semantics.
-- Preserve behavior and tests.
+- Add `window/pacing.zig`.
+- Move `FramePacingState` to `window/pacing.zig` as `pub const State`.
+- Move `LoopPending` shape to `window/pacing.zig` as `pub const Pending`.
+- Move `PresentReason` to `window/pacing.zig` as `pub const PresentReason`.
+- Add a small `pub const Submission = struct { reason: PresentReason, submitted: bool };` if needed
+  so pacing does not depend on `main.zig`'s `PresentSubmission`.
+- Move pure pacing tests from `main.zig` to `window/pacing.zig`.
+- Keep broader integration tests in `main.zig`, updating type aliases only as needed.
+- Keep `derivePresentReason` in `main.zig` unless moving it would not couple `window/pacing.zig` to
+  `TerminalContext.TurnStep`.
+- Keep `PresentPlan`, `PresentSubmission`, `RenderFrame`, present submit/record/drain orchestration,
+  and loop order in `main.zig`.
 
 ## Non-Goals
 
-- Do not split frame pacing.
+- Do not implement a scheduler.
+- Do not implement a real frame deadline.
+- Do not change present token behavior.
 - Do not split terminal context.
-- Do not migrate `window.c_win` or SDL/OpenGL C imports.
-- Do not rename `TerminalContext`.
-- Do not change public C ABI headers.
-- Do not change tab UI drawing.
+- Do not migrate SDL/OpenGL C imports.
+- Do not change tab slots.
 - Do not introduce `manager`, `controller`, `runtime`, `flow`, `queue`, `utils`, `types`, `api`, or
   `abi` owner files.
 
 ## Invariants
 
-- Active tab count is always `<= max_tabs`.
-- Free slot count is always `<= max_tabs`.
-- Acquired slot index is always `< max_tabs`.
-- Appended active slot index is always `< max_tabs`.
-- `items()` returns active tabs in active tab order.
-- Removing an active tab preserves relative order of remaining active tabs.
-- Releasing a slot makes it available for later acquire.
-- Closing the last tab is still ignored by `main.zig`.
-- Focus/title sync behavior remains unchanged.
+- `present_complete_pending` implies `present_in_flight`.
+- `frame_permit_ready == false` after a submitted present.
+- `frame_permit_ready == true` after present completion.
+- `present_in_flight == false` after present completion.
+- `renderPermission()` is false when `frame_permit_ready == false`.
+- Redraw/render work records intent, not frame permission.
+- Runtime wake prevents blocking, but does not grant render permission.
+- `.none` and `.terminal_retire` are never submit-permitted.
+- `.host_damage` and `.terminal_frame` require frame permit and no in-flight present.
+- `noteRenderSubmitted()` clears `redraw_requested`, matching current behavior.
 
 ## Verification
 
@@ -115,9 +104,12 @@ From `/home/home/personal/projects/howl`:
 
 No matches:
 
-- `howl-linux-host/src/main.zig`: `const TabSlots = struct`
+- `howl-linux-host/src/main.zig`: `const FramePacingState = struct`
 
 Expected:
 
-- New tab slots owner contains assertions for active/free count bounds and slot index bounds.
-- Existing tab slot tests move with the owner or remain valid and source-backed.
+- `howl-linux-host/src/window/pacing.zig` contains:
+  - `pub const State`
+  - `pub const Pending`
+  - `pub const PresentReason`
+- No real frame deadline implementation unless a scheduler owner is introduced in a later slice.

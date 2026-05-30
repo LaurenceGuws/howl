@@ -148,7 +148,7 @@ Grep gates:
 
 ### Slice B: Move Frame Pacing Out Of Main
 
-Status: research-ready after Slice A or independently worker-ready if no tab conflicts exist.
+Status: worker-ready.
 
 Current offending source:
 
@@ -163,9 +163,48 @@ Reference pressure:
 
 Required next research:
 
-- Decide whether Howl's current `FramePacingState` belongs under `window/pacing.zig`,
-  `window/present_pacing.zig`, or `main` remains valid until a scheduler owner exists.
-- Determine whether the frame deadline input in `loopWaitMs` should be real now or deferred.
+- Research verdict: move current `FramePacingState` to `howl-linux-host/src/window/pacing.zig` as
+  `pub const State`.
+- Move `PresentReason` to the same owner because it is the reason consumed by present-submission
+  permission.
+- Move `LoopPending` shape to the same owner as `pub const Pending` because it is the exact input to
+  the pacing wait decision.
+- Do not implement a real frame deadline yet. Current `loopWaitMs` has a frame-pacer hook, but a real
+  deadline needs an Alacritty-like scheduler owner and post-swap scheduling. Adding a fake deadline
+  now would be fake progress.
+
+Required shape:
+
+- Add `howl-linux-host/src/window/pacing.zig`.
+- Move pure pacing state and tests out of `main.zig`.
+- Keep `derivePresentReason` in `main.zig` unless moving it would not couple `window/pacing.zig` to
+  `TerminalContext.TurnStep`.
+- Keep `PresentPlan`, `PresentSubmission`, `RenderFrame`, submit/record/drain present orchestration
+  in `main.zig` for this slice.
+- `main.zig` imports `const FramePacing = @import("window/pacing.zig");` and aliases
+  `const PresentReason = FramePacing.PresentReason;`.
+
+Required invariants:
+
+- `present_complete_pending` implies `present_in_flight`.
+- `frame_permit_ready == false` after submitted present.
+- `frame_permit_ready == true` after present completion.
+- `present_in_flight == false` after present completion.
+- Redraw/render work records intent, not frame permission.
+- Runtime wake prevents blocking, but does not grant render permission.
+- `.none` and `.terminal_retire` are never submit-permitted.
+- `.host_damage` and `.terminal_frame` require frame permit and no in-flight present.
+
+Verification:
+
+- `howl-linux-host`: `zig build check`, `zig build test`, `git diff --check`.
+- root: `zig build check`, `zig build test`, `git diff --check`.
+
+Grep gates:
+
+- No `const FramePacingState = struct` in `howl-linux-host/src/main.zig`.
+- `howl-linux-host/src/window/pacing.zig` contains `pub const State`, `pub const Pending`, and
+  `pub const PresentReason`.
 
 ### Slice C: Delete Window C Bucket
 
