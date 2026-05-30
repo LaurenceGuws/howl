@@ -345,6 +345,7 @@ Accepted decisions:
 Canonical source scratchpad archived into this section:
 
 - `build-test-architecture-blocker-scratchpad.md`
+- `research/2026-05-30-hygiene-audit/build-test-architecture-plan.md`
 
 Blocker:
 
@@ -367,3 +368,19 @@ Research goal:
 Constraint:
 
 - Planning only until a follow-up review loop accepts a code/build change slice.
+
+Accepted plan:
+
+- Root build orchestration aggregates package-owned steps only and must not
+  import package internals.
+- Normal deterministic package steps are `check`, `test`, `test:unit`,
+  `test:unit:build`, `test:abi`, and `test:abi:build` where applicable.
+- `test:unit` owns owner-local invariant and behavior tests.
+- `test:abi` owns shipped C header, exported symbol, layout, value, handle,
+  status, and FFI translation proofs.
+- `test:integration` owns cross-package embedding behavior through shipped ABIs,
+  primarily in hosts.
+- `test:regression`, `fuzz`, `stress`, and `benchmark` are explicit named
+  surfaces, not substitutes for deterministic `check` or `test`.
+- First accepted implementation slice normalized render `test:unit` and
+  `test:abi` categories without product-code or test assertion changes.
