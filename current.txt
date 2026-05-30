@@ -1,12 +1,12 @@
-# Current Slice: Record Render FFI Lane Ownership
+# Current Slice: Move Render Submit Result Translator
 
 Owner: workspace root.
 
 Purpose:
 
-- Update persistent project owner docs after moving render C translators into `src/ffi/`.
-- Record that `src/ffi.zig` is only the C import root, while `src/ffi/*` files translate ABI nouns.
-- Remove stale render owner-map entries that still point at root translator files.
+- Move the remaining root render C translator helper into the accepted `src/ffi/` lane.
+- Move only `submit_result.zig` from the render root into `src/ffi/`.
+- Preserve submit-result, submit-execution, and metrics C conversion exactly.
 
 ## Source Research
 
@@ -15,48 +15,73 @@ Use:
 - `research/2026-05-30-hygiene-audit/render-c-lane.md`
 - `howl-render/design.md`
 - `libs.yaml`
-- current `howl-render/src/libhowl_render.zig`
-- current `howl-render/src/ffi.zig`
-- current `howl-render/src/ffi/*.zig`
+- `howl-render/src/submit_result.zig`
+- `howl-render/src/ffi/submission.zig`
+- `howl-render/src/ffi/prepared_surface.zig`
+- `howl-render/src/prepared/submit_result.zig`
+- `howl-render/src/session/text.zig`
 
 ## Source Changes
 
 Edit only:
 
+- `howl-render/src/submit_result.zig`
+- `howl-render/src/ffi/submit_result.zig`
+- `howl-render/src/ffi/submission.zig`
+- `howl-render/src/ffi/prepared_surface.zig`
 - `howl-render/design.md`
 - `libs.yaml`
 
+Do not edit any other file unless the build exposes a direct `submit_result.zig` import missed by this slice.
+If that happens, stop and report the exact import before broadening scope.
+
 ## Required Shape
 
-- `howl-render/design.md` must say `src/ffi.zig` imports `include/howl_render.h` only.
-- `howl-render/design.md` must say `src/ffi/` contains C ABI translators grouped by ABI noun.
-- `howl-render/design.md` must not claim root `src/text_session.zig` composes the C handle.
-- `libs.yaml` must map moved render translator owners under `howl-render/src/ffi/`.
-- Keep owner names specific; no generic `api`, `types`, `manager`, `controller`, `engine`, or `runtime` bucket.
-- Do not rewrite old research evidence paths in `research/2026-05-30-hygiene-audit/render-c-lane.md`; it is historical evidence.
+- Move `howl-render/src/submit_result.zig` to `howl-render/src/ffi/submit_result.zig`.
+- Update `ffi/submission.zig` and `ffi/prepared_surface.zig` to import the moved helper.
+- Remove the old root `howl-render/src/submit_result.zig`; do not leave a compatibility wrapper.
+- Update `howl-render/design.md` and `libs.yaml` to include the submit-result translator in the `ffi/` lane.
 
 ## Non-Goals
 
-- Do not edit code.
+- Do not move `handle.zig`.
 - Do not rename `src/ffi.zig`.
-- Do not move `submit_result.zig`.
-- Do not change public headers or ABI symbols.
-- Do not change README unless verification shows it is stale for this exact ownership fact.
+- Do not move prepared/session owner files.
+- Do not rename any `HowlRender*` C type.
+- Do not rename any `howl_render_*` symbol.
+- Do not change `howl-render/include/howl_render.h`.
+- Do not change metrics, submit execution, submit result, or failed-result semantics.
+- Do not add compatibility aliases.
+
+## Invariants
+
+- `metricsOut`, `submitResultOut`, `failedSubmitResult`, and `submitExecutionIn` move unchanged except import path fixes.
+- `ffi/submission.zig` still uses this helper for submit execution/result/default failed result.
+- `ffi/prepared_surface.zig` still uses this helper for prepare and resolve metrics conversion.
+- The helper translates C ABI facts only; prepared/session owners keep behavior.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
+- `zig build check`
+- `zig build test`
 - `git diff --check`
-- `rg 'src/text_session\.zig|src/work_state\.zig|src/vt_surface\.zig|src/prepared_surface\.zig|src/submission\.zig|src/surface_geometry\.zig|src/prepare_request\.zig' howl-render/design.md libs.yaml`
-- `rg 'types\.zig|api\.zig|manager|controller|engine|runtime' howl-render/design.md libs.yaml`
+
+## Grep Gates
+
+- `rg '@import\("(\.\./)?submit_result\.zig"\)' howl-render/src`
+- `rg 'metricsOut|submitResultOut|failedSubmitResult|submitExecutionIn' howl-render/src/ffi howl-render/src/libhowl_render.zig`
+- `rg 'howl-render/src/submit_result\.zig' howl-render/design.md libs.yaml`
 
 Expected results:
 
-- The stale root translator path grep prints nothing.
-- The banned-vocabulary grep prints nothing except existing unrelated historical words if already present outside the changed render section; if it prints, review context and do not introduce new banned owners.
+- The first gate prints no stale root import.
+- The second gate supports manual review that submit-result C conversion moved only.
+- The third gate prints nothing.
 
 ## Stop Conditions
 
-- Stop if documenting the lane requires deciding a code rename for `src/ffi.zig`.
-- Stop if `libs.yaml` cannot represent `src/ffi.zig` plus `src/ffi/*` without a vague bucket.
+- Stop if moving `submit_result.zig` requires changing behavior.
+- Stop if the new lane needs a compatibility wrapper at the old root path.
+- Stop if an import cycle appears between `ffi/submit_result.zig`, `ffi/submission.zig`, and `ffi/prepared_surface.zig`.
