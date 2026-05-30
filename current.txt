@@ -1,52 +1,65 @@
-# Current Slice: Delete Render Text Pipeline Remainder
+# Current Slice: Shrink VT Input Bucket Imports
 
 Owner: workspace root.
 
 Purpose:
 
-- Delete the remaining unused `howl-render/src/text/pipeline.zig` file after all live symbols moved to true owners.
-- Remove the stale `text_flow` owner-map entry.
-- Preserve behavior by deleting only unimported Zig-only contracts and their self-test.
+- Start reducing `howl-vt/src/input.zig` by replacing internal broad-bucket imports with exact input owners.
+- Preserve C ABI values and input encoding behavior exactly.
+- Leave `input.zig` in place only until remaining test/root compatibility is intentionally resolved.
 
 ## Source Research
 
 Use:
 
-- `research/2026-05-30-hygiene-audit/render-text-pipeline-taxonomy.md`
-- current grep proving no direct importers of `pipeline.zig`
-- `howl-render/src/text/pipeline.zig`
-- `libs.yaml`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 3.1
+- `research/2026-05-30-hygiene-audit/synthesis.md` VT wrapper finding
+- `howl-vt/src/input.zig`
+- direct importers of `input.zig`:
+  - `howl-vt/src/host/apply.zig`
+  - `howl-vt/src/kitty/apply.zig`
+  - `howl-vt/src/ffi.zig`
+  - `howl-vt/src/test/terminal_modes_reports.zig`
+  - `howl-vt/src/host/state.zig`
+  - `howl-vt/src/control/mode.zig`
+  - `howl-vt/src/test/terminal_surface.zig`
+  - `howl-vt/src/howl_vt.zig`
+  - `howl-vt/src/control/report.zig`
+  - `howl-vt/src/control/locator.zig`
+- exact owners under `howl-vt/src/input/`
 
 ## Source Changes
 
-Edit only:
+Edit only direct importers listed above and `howl-vt/src/input.zig` if it can be narrowed after import repairs.
 
-- `howl-render/src/text/pipeline.zig`
-- `libs.yaml`
+Do not edit any other file unless the build exposes a direct `input.zig` importer missed by this slice.
+If that happens, stop and report the exact import before broadening scope.
 
 ## Required Shape
 
-- Delete `howl-render/src/text/pipeline.zig`.
-- Remove `text_flow: howl-render/src/text/pipeline.zig` from `libs.yaml`.
-- Do not create a replacement bucket file.
+- Replace broad `input.zig` imports in internal owner files with exact input owner imports:
+  - `input/encode.zig` for `Scratch` and encode functions.
+  - `input/encoded.zig` for `Encoded`.
+  - `input/event.zig` for `Event`, `KeyEvent`, and `FocusEvent`.
+  - `input/keyboard.zig` for key/modifier types and key constants.
+  - `input/mouse.zig` for mouse types and constants.
+- Keep `input.zig` only if needed as a temporary module index for tests/root; if kept, do not add new aliases.
+- Do not delete `input.zig` unless all importers are repaired and tests prove it is unused.
 
 ## Non-Goals
 
-- Do not move any more render symbols.
-- Do not edit render code besides deleting the unimported file.
-- Do not change headers or exported C ABI symbols.
-- Do not add compatibility aliases.
-- Do not add `types.zig`, `api.zig`, manager, controller, engine, runtime, flow, or pipeline owner files.
+- Do not change `howl-vt/include/howl_vt.h`.
+- Do not change C enum values or struct layout.
+- Do not rewrite input encoding.
+- Do not touch `action.zig`, `parser.zig`, or `kitty.zig` buckets beyond exact import repair in `kitty/apply.zig`.
+- Do not delete tests or change test intent.
 
 ## Invariants
 
-- No source file imports `pipeline.zig` before deletion.
-- Deleted symbols are not used outside the deleted file.
-- Build and tests continue to pass.
-- Live split owners remain:
-  - `text/font/resolve.zig`
-  - `text/raster/operation.zig`
-  - `text/prepare_counters.zig`
+- C input constants preserve exact numeric values.
+- FFI exports and status behavior remain unchanged.
+- Internal callers import exact owner files instead of `input.zig` wherever possible.
+- If `input.zig` remains, it is a temporary module index only, not a behavior owner.
 
 ## Verification
 
@@ -58,17 +71,18 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'pipeline\.zig|text_flow|text_pipeline|pipeline\.' howl-render/src libs.yaml`
-- `rg 'BuildRunsRequest|BuildRunsOutput|GroupGlyphsRequest|GroupGlyphsOutput|ShapeRequest|ShapeOutput|ShapeClustersFn|ShapeClustersOp' howl-render/src`
-- `rg 'types\.zig|api\.zig|manager|controller|engine|runtime|text_flow|pipeline' howl-render/src/text howl-render/src/prepared howl-render/src/session libs.yaml`
+- `rg '@import\("input\.zig"\)|@import\("\.\./input\.zig"\)' howl-vt/src`
+- `rg 'pub const key_|pub const mouse_|pub const encode' howl-vt/src/input.zig`
+- `rg 'HOWL_VT_|HowlVtInput|HowlVtMouse' howl-vt/include/howl_vt.h howl-vt/src`
 
 Expected results:
 
-- The first two gates print nothing.
-- The third gate prints nothing except unrelated pre-existing terms if explicitly reviewed; it must not show `text_flow` or `pipeline` owner usage.
+- The first gate shrinks to only explicitly justified temporary module-index/test/root uses or prints nothing.
+- The second gate supports review that `input.zig` is no longer a broad behavior alias bucket if it remains.
+- The third gate supports manual numeric ABI review; values and public names must not change.
 
 ## Stop Conditions
 
-- Stop if any file still imports `pipeline.zig`.
-- Stop if any deleted symbol is referenced outside `pipeline.zig`.
-- Stop if deleting the file requires adding a replacement bucket.
+- Stop if any numeric ABI value must change.
+- Stop if a test/root import requires deciding whether `input.zig` is a public internal root.
+- Stop if import repairs require behavior changes in input encoding.
