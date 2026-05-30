@@ -96,6 +96,7 @@ howl-linux-host:
         - scrollbar_adaptation
       owners:
         term_handles: howl-linux-host/src/terminal/term.zig
+        cursor_blink: howl-linux-host/src/terminal/cursor_blink.zig
         selection_gestures: howl-linux-host/src/terminal/selection.zig
         visible_links: howl-linux-host/src/terminal/links.zig
         scrollbar_adapter: howl-linux-host/src/terminal/scrollbar.zig
