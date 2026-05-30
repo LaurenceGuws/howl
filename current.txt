@@ -1,15 +1,12 @@
-# Current Slice: Root Truth Reset
+# Current Slice: Move PTY FFI Tests Out Of Production
 
-Owner: workspace root docs/current truth.
+Owner: `howl-pty` ABI/FFI test accountability.
 
 Purpose:
 
-- Stop root docs and current slice state from advertising deleted root/VT
-  `test:regression` steps.
-- Mark stale build/test plans as superseded where they describe old source.
-- Record that VT deterministic workload generation is named `simulate`, and
-  that `zig build simulate` currently exposes a parser assertion failure.
-- Do not touch package code in this slice.
+- Remove production `howl-pty/src/ffi.zig` dependency on test-only PTY doubles.
+- Move FFI behavior tests beside ABI tests, where test helpers are allowed.
+- Preserve product behavior and exported ABI exactly.
 
 ## Source Research
 
@@ -18,48 +15,46 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-test-war/offender-inventory.md`
-- `project-memory.md`
-- `build-test-architecture-spec.md`
-- `build-test-verification-ledger.md`
-- `research/2026-05-30-hygiene-audit/build-test-architecture-plan.md`
-- `research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
-- `research/2026-05-30-hygiene-audit/vt-regression-bucket-removal.md`
+- `howl-pty/src/ffi.zig`
+- `howl-pty/src/test/abi.zig`
+- `howl-pty/src/pty/pty_test.zig`
+- `howl-pty/build.zig`
 
 ## Source Changes
 
 Exact files:
 
-- `current.txt`
-- `project-memory.md`
-- `build-test-architecture-spec.md`
-- `build-test-verification-ledger.md`
-- `research/2026-05-30-hygiene-audit/build-test-architecture-plan.md`
-- `research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
-- `research/2026-05-30-hygiene-audit/vt-regression-bucket-removal.md`
-- Root `build.zig` only if needed to keep already-present removal of stale
-  root `test:regression` mapping true.
+- `howl-pty/src/ffi.zig`
+- Add `howl-pty/src/test/ffi.zig` or equivalent ABI-owned test module.
+- Update `howl-pty/src/test/abi.zig` only to import the new FFI test module.
+- Update `howl-pty/build.zig` only if module imports are required.
 
 ## Required Shape
 
-- Root docs do not actively claim root or VT `test:regression` exists.
-- Stale plans that mention old source are explicitly superseded or historical.
-- Current memory records VT `simulate` as deterministic simulation/replay work.
-- The failing `simulate` run is recorded as follow-up bug evidence, not hidden.
+- `howl-pty/src/ffi.zig` imports production owners only.
+- FFI tests still exercise the shipped translator functions through ABI test wiring.
+- No production file imports `pty/pty_test.zig`.
 
 ## Non-Goals
 
-- Do not change package code.
-- Do not fix the VT simulation assertion failure in this slice.
-- Do not delete historical scratchpads.
+- Do not split PTY integration/runtime tests in this slice.
+- Do not redesign PTY test helpers in this slice.
+- Do not change C headers, exported symbols, or product behavior.
 
 ## Invariants
 
-- Workspace root remains orchestration and audit only.
-- Package owners still own their build/test surfaces.
-- `current.txt` names exactly this root-truth slice until the next slice is
-  promoted.
+- FFI remains a translator only.
+- Test doubles remain reachable only from test modules.
+- Existing PTY ABI tests continue to run.
 
 ## Verification
+
+From `/home/home/personal/projects/howl/howl-pty`:
+
+- `zig build check`
+- `zig build test`
+- `zig build test:abi`
+- `zig build test:unit`
 
 From `/home/home/personal/projects/howl`:
 
@@ -69,12 +64,11 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'test:regression' build.zig *.md research/2026-05-30-hygiene-audit/*.md research/2026-05-30-test-war/*.md`
-  has no active root/VT existence claims outside superseded or historical docs.
-- `rg 'simulate|simulation' project-memory.md build-test-verification-ledger.md build-test-architecture-spec.md`
-  records the VT surface and the failing run follow-up.
+- `rg 'pty_test|test_pty' howl-pty/src/ffi.zig` prints nothing.
+- `rg '@import\("pty/pty_test\.zig"\)' howl-pty/src` prints nothing.
+- `rg 'pty_test' howl-pty/src/test` shows test-only ownership only if the helper is imported there.
 
 ## Stop Conditions
 
-- Stop if cleanup requires changing package code.
-- Stop if fixing the simulation workload assertion failure becomes necessary.
+- Stop if moving the tests requires product API changes.
+- Stop if ABI tests cannot import the required test doubles without production imports.
