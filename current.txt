@@ -1,12 +1,12 @@
-# Current Slice: Extract VT Selection Projection From FFI
+# Current Slice: VT Protocol Scalar Vocabulary
 
 Owner: `howl-vt`.
 
 Purpose:
 
-- Move C-free VT selection projection/copy behavior out of `howl-vt/src/ffi.zig`.
-- Preserve current coordinate semantics exactly as an honest temporary Howl stopgap.
-- Keep C ABI translation in `ffi.zig` and keep Ghostty-style tracked selection as a later screen/page proof gap.
+- Introduce exact protocol scalar types for handled C0 controls and erase modes.
+- Preserve parser tables, C ABI, and behavior exactly.
+- Improve semantic reviewability without broad wrapper churn.
 
 ## Source Research
 
@@ -14,87 +14,122 @@ Read before editing:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `research/2026-05-30-hygiene-audit/roadmap.md` Phase 3 top-down flow note and Slice 3.2
-- `research/2026-05-30-hygiene-audit/vt-selection-ghostty-shape.md`
-- `utils/dev_references/terminals/ghostty/src/terminal/Selection.zig`
-- `utils/dev_references/terminals/ghostty/src/terminal/Screen.zig`
-- `utils/dev_references/terminals/ghostty/src/terminal/ScreenSet.zig`
-- `howl-vt/src/ffi.zig`
-- `howl-vt/src/selection.zig`
-- `howl-vt/src/selection/state.zig`
-- `howl-vt/src/screen_set.zig`
-- `howl-vt/src/terminal.zig`
-- `howl-vt/src/test/terminal_surface.zig`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 3.3a
+- `research/2026-05-30-hygiene-audit/vt-data-type-maturity.md` Slice A
+- `utils/dev_references/terminals/ghostty/src/terminal/ansi.zig`
+- `utils/dev_references/terminals/ghostty/src/terminal/Parser.zig`
+- `howl-vt/src/xterm/c0.zig`
+- `howl-vt/src/xterm/csi/params.zig`
+- `howl-vt/src/xterm/csi/plain.zig`
+- `howl-vt/src/xterm/csi/private.zig`
+- `howl-vt/src/xterm/csi/intermediate.zig`
+- `howl-vt/src/action/vocabulary.zig`
+- `howl-vt/src/action/route.zig`
+- `howl-vt/src/screen/apply.zig`
+- `howl-vt/src/screen/erase.zig`
+- `howl-vt/src/screen.zig`
+- `howl-vt/src/test/action_mapping.zig`
+- `howl-vt/src/test/screen_state_behavior.zig`
 
 ## Source Changes
 
 Exact files:
 
-- Edit `howl-vt/src/ffi.zig`.
-- Create `howl-vt/src/selection/projection.zig`.
-- Edit `howl-vt/src/screen_set.zig` only if a C-free row/content helper truly belongs there.
-- Do not edit `howl-vt/include/howl_vt.h`.
-- Do not edit public C export names.
+- `howl-vt/src/xterm/c0.zig`
+- `howl-vt/src/xterm/csi/params.zig`
+- `howl-vt/src/xterm/csi/plain.zig`
+- `howl-vt/src/xterm/csi/private.zig`
+- `howl-vt/src/action/vocabulary.zig`
+- `howl-vt/src/action/route.zig`
+- `howl-vt/src/screen/apply.zig`
+- `howl-vt/src/screen/erase.zig`
+- `howl-vt/src/screen.zig`
+- `howl-vt/src/test/action_mapping.zig`
+- `howl-vt/src/test/screen_state_behavior.zig`
+
+Do not edit public C headers or parser table files.
 
 ## Required Shape
 
-Move out of `ffi.zig`:
+In `xterm/c0.zig`:
 
-- `selectionRowSource`
-- `selectionContentEndExclusive`
-- `visibleSelectionRow`
-- `visibleSelectionRange`
-- `copySelectionText`
+- Create `pub const C0 = enum(u8)` with named handled controls:
+  - `backspace = 0x08`
+  - `horizontal_tab = 0x09`
+  - `line_feed = 0x0A`
+  - `vertical_tab = 0x0B`
+  - `form_feed = 0x0C`
+  - `carriage_return = 0x0D`
+  - `file_separator = 0x1C`
+  - `group_separator = 0x1D`
+  - `record_separator = 0x1E`
+  - `unit_separator = 0x1F`
+  - non-exhaustive `_`
+- Add `pub fn fromByte(byte: u8) C0`.
+- Change `action` and `process` to accept `C0`, not raw `u8`.
+- Convert parser raw control bytes at the action route boundary.
 
-Create `howl-vt/src/selection/projection.zig` with exact C-free selection projection/copy ownership:
+In `action/vocabulary.zig`:
 
-- `pub const Range = struct { start: u16, end_exclusive: u16 }`
-- `pub fn rowSource(screen_state: *const screen_set.Set, row: i32) ?screen_set.RowSource`
-- `pub fn contentEndExclusive(screen_state: *const screen_set.Set, row: i32) u16`
-- `pub fn visibleRow(view: screen_set.View, row: u16) i32`
-- `pub fn visibleRange(view: screen_set.View, selected: state.TerminalSelection, row: u16) ?Range`
-- `pub fn copyText(allocator: std.mem.Allocator, screen_state: *const screen_set.Set, selected: ?state.TerminalSelection) ![]const u8`
+- Create `pub const EraseMode = enum(u2)`:
+  - `cursor_to_end = 0`
+  - `start_to_cursor = 1`
+  - `all = 2`
+  - `scrollback = 3`
+- Change `SemanticEvent` and `ScreenAction` erase payloads from raw `u2` to `EraseMode`:
+  - `erase_display`
+  - `erase_line`
+  - `selective_erase_display`
+  - `selective_erase_line`
 
-In `ffi.zig`, retain only:
+In `xterm/csi/params.zig`:
 
-- handle casts
-- C status mapping
-- C buffer validation/copying
-- final writes to `FfiSurfaceCell.attrs.selected` by applying ranges returned from `selection/projection.zig`
+- Change `eraseMode` to return `events.EraseMode`.
+- Preserve invalid/default behavior exactly: values other than 1, 2, and 3 map to `.cursor_to_end`.
+
+In screen erase/apply files:
+
+- Accept and switch on `EraseMode` enum tags, not raw integers.
+- Preserve all behavior, including `.scrollback` clearing scrollback for ED and no-op for EL/selective modes where mode 3 currently no-ops.
 
 ## Non-Goals
 
-- Do not introduce Ghostty pins.
-- Do not redesign selection ABI.
-- Do not change history/live/visible coordinate semantics.
-- Do not change exported `howl_vt_*` functions.
-- Do not move screen/page storage.
-- Do not introduce `HowlVt*` or `Ffi*` names in `selection/projection.zig`.
-- Do not create compatibility aliases, module buckets, `types.zig`, `api.zig`, or `abi.zig`.
+- Do not rewrite parser tables.
+- Do not type OSC command identities.
+- Do not type cursor style params.
+- Do not touch coordinate spaces.
+- Do not touch screen storage packing/style packing.
+- Do not reduce `action.zig` bucket in this slice.
+- Do not create `types.zig`, scalar buckets, compatibility aliases, wrappers, managers, controllers, or runtimes.
+- Do not change C ABI headers, symbols, enum values, or struct layouts.
 
 ## Invariants
 
-- History rows remain addressed by negative selection rows.
-- Alternate screen selection copy/projection must not read primary history.
-- Visible selection marking remains based on `screen_set.View.rowSource`.
-- End-column handling remains inclusive from user endpoint to exclusive internal range.
-- Empty rows and space-only rows keep current copy/projection behavior.
-- Copied text allocation remains caller-owned through the terminal allocator; FFI still copies into the C caller buffer and frees the owned slice.
-- This slice is a Howl stopgap, not Ghostty-equivalent tracked selection.
+- Dense byte/state parser transitions remain table-driven and source-order auditable.
+- Parser output may remain raw `u8`; conversion to `C0` happens at the route boundary.
+- LF, VT, and FF map to line feed exactly as before.
+- BS, HT, and CR map exactly as before.
+- `0x1C..0x1F` legacy controls map exactly as before.
+- Ignored controls still return null.
+- Invalid erase modes still collapse to cursor-to-end behavior.
 
 ## Required Tests
 
 Preserve existing tests:
 
-- FFI selection query/copy history-aware behavior.
-- FFI surface selection viewport/content hugging behavior.
-- `terminal_surface.zig` alternate-screen selection clear behavior.
+- `howl-vt/src/test/action_mapping.zig`
+- `howl-vt/src/test/screen_state_behavior.zig`
 
 Add or preserve tests proving:
 
-- History-to-live selection copy still returns the same text and visible selected cells.
-- Alternate screen with primary history active does not copy/project primary history from negative rows.
-- Selection copy short-buffer behavior remains unchanged if touched.
+- LF, VT, and FF all map to line feed.
+- BS, HT, and CR map to current semantic events.
+- `0x1C..0x1F` map to current legacy events.
+- An ignored C0 such as NUL or BEL returns null.
+- ED invalid mode maps to `.cursor_to_end`.
+- DECSED invalid mode maps to `.cursor_to_end`.
+- DECSEL invalid mode maps to `.cursor_to_end`.
+- ED 3 scrollback behavior remains covered.
 
 ## Verification
 
@@ -106,15 +141,17 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'fn copySelectionText|fn applyVisibleSelection|fn visibleSelectionRange|fn selectionRowSource|fn selectionContentEndExclusive|fn visibleSelectionRow' howl-vt/src/ffi.zig` prints nothing.
-- `rg 'HowlVt|Ffi' howl-vt/src/selection howl-vt/src/screen_set.zig` prints nothing unless only pre-existing unrelated text is explained.
-- `rg 'manager|controller|runtime|flow|pipeline|types\.zig|api\.zig|abi\.zig' howl-vt/src/selection howl-vt/src/screen_set.zig` has no new owner vocabulary hits.
-- `rg 'projection\.zig|visibleRange|copyText' howl-vt/src/ffi.zig howl-vt/src/selection howl-vt/src/screen_set.zig` supports review of the new seam.
+- `rg 'erase_display: u2|erase_line: u2|selective_erase_display: u2|selective_erase_line: u2' howl-vt/src` prints nothing.
+- `rg 'eraseDisplay\(self: .*u2|eraseLine\(self: .*u2|selectiveEraseDisplay\(self: .*u2|selectiveEraseLine\(self: .*u2' howl-vt/src` prints nothing.
+- `rg 'pub fn eraseMode\(.*\) u2' howl-vt/src` prints nothing.
+- `rg '0x0A|0x0B|0x0C|0x0D|0x08|0x09' howl-vt/src/xterm/c0.zig` shows only named enum assignments/assertions, not dispatch raw literals.
+- `rg 'types\.zig|Scalar|ProtocolScalar|wrapper|compat' howl-vt/src` must not reveal a new broad scalar bucket or compatibility alias.
+- `rg 'HowlVt|howl_vt_' howl-vt/src/xterm howl-vt/src/action howl-vt/src/screen` must not show ABI leakage from this slice.
 
 ## Stop Conditions
 
-- Stop if extraction requires importing C ABI structs into `selection/projection.zig`.
-- Stop if coordinate semantics, C enum values, C structs, or exported names must change.
-- Stop if alternate-screen selection copy/projection cannot be proved without deeper screen/page work.
-- Stop if the new owner becomes a vague bucket or reintroduces behavior under a different FFI helper name.
-- Stop if allocation ownership for copied text is ambiguous after movement.
+- Stop if any public C ABI header, C symbol, enum value, or struct layout must change.
+- Stop if the diff expands into parser tables, OSC typing, cursor style typing, coordinate spaces, screen storage packing, action bucket reduction, or selection work.
+- Stop if enum conversion changes invalid erase behavior.
+- Stop if C0 raw byte conversion spreads beyond the parser/action boundary instead of becoming more local.
+- Stop if tests cannot prove unchanged invalid/default erase behavior and handled/ignored C0 behavior.
