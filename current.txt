@@ -1,16 +1,18 @@
-# Current Slice: Host PTY Critical Section Alacritty Parity
+# Current Slice: Render Protocol V0 Contract Draft
 
-Owner: `howl-linux-host` terminal synchronization ownership.
+Owner: workspace root render protocol design accountability.
 
 Sprint scratchpad (authoritative):
 
-- `research/2026-05-30-alacritty-host-fair-mutex-sprint.md`
+- `research/2026-05-31-howl-render-protocol-sprint.md`
 
 Purpose:
 
-- Narrow PTY read/feed critical sections toward Alacritty's `event_loop.rs` model.
-- Preserve VT feed/copy serialization through `term.mutex`.
-- Prove bounded lock work with tests/assertions.
+- Draft the narrow `howl-render-protocol` V0 contract as a C ABI consequence
+  protocol.
+- Name exact owners, lifetimes, bounds, invalid-input behavior, and required
+  tests before any product code changes.
+- Prevent the protocol from becoming a generic scene graph or backend abstraction.
 
 ## Source Order (Mandatory)
 
@@ -18,62 +20,95 @@ Read in order before editing:
 
 1. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-3. `utils/dev_references/terminals/alacritty/alacritty_terminal/src/sync.rs`
-4. `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
-5. `howl-linux-host/src/terminal/term.zig`
-6. `howl-linux-host/src/terminal/pty/pump.zig`
-7. `howl-linux-host/src/terminal/pty/session.zig`
-8. `howl-linux-host/src/terminal/context.zig`
-9. `howl-linux-host/src/terminal/render/surface_layout.zig`
-10. `howl-linux-host/src/terminal/vt/retained.zig`
+3. `research/2026-05-31-howl-render-protocol-sprint.md`
+4. `howl-render/include/howl_render.h`
+5. `howl-render/src/prepared/buffer.zig`
+6. `howl-render/src/prepared/owner.zig`
+7. `howl-linux-host/src/window/term_texture.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/terminal/pty/pump.zig`
-- `howl-linux-host/src/terminal/pty/session.zig`
-- `howl-linux-host/src/terminal/term.zig` only if assertions/API naming require it
-- `howl-linux-host/src/terminal/context.zig` tests only if needed for proof
-- `research/2026-05-30-alacritty-host-fair-mutex-sprint.md` to record accepted lock facts
+- `research/2026-05-31-howl-render-protocol-sprint.md`
+- `docs/render-protocol-v0.md`
 
-Do not change ABI contracts.
-Do not change render behavior.
-Do not add temporary logs to final diff.
+No product code.
+No C header changes.
+No Zig code changes.
+No host code changes.
+No deletion of `HowlRenderPreparedSurfaceBuffer`.
+No replacement of `prepared_buffer.compose()`.
+No GL implementation.
+No benchmarks or performance claims.
 
-## Alacritty Facts To Preserve
+## Required Contract Shape
 
-- `FairMutex.lease()` reserves the next terminal lock.
-- PTY read path reads bytes before terminal state lock when possible.
-- `try_lock_unfair()` is the normal PTY terminal-lock acquisition attempt.
-- Forced unfair lock is only acceptable at a bounded backlog threshold.
-- Locked parse/mutation work is capped (`MAX_LOCKED_READ` in Alacritty).
-- Wakeup is requested only after terminal state actually changes or synchronized output requires it.
+- V0 is a C ABI protocol, not a Zig internal import path.
+- Render owns protocol resources, command/upload/damage production, shaping,
+  glyph identity, atlas packing decisions, and protocol lifetime state.
+- Host owns backend object realization, event loop, wake policy, presentation
+  cadence, platform UX, and swap/present.
+- Every public list has a named fixed maximum.
+- Every resource has explicit create/update/use/retire/ack lifetime rules.
+- No backend object crosses ABI.
+- No generic scene graph.
+- Full RGBA surface is fallback/test oracle only, not normal path.
+- Deletion of current full-surface behavior is forbidden until equivalence and
+  host-consumption tests exist.
 
-## Required Shape
+## Minimum V0 Content To Draft
 
-- `pumpTransportSlice` must not hold `term.mutex.data` while blocking or unbounded PTY reads.
-- PTY reads may happen while holding `term.mutex.lease()` but before holding `term.mutex.data`.
-- Terminal feed still happens only while holding `term.mutex.data`.
-- The loop must have explicit byte/read bounds and assertions on those bounds.
-- Tests must cover opportunistic lock failure, forced lock threshold, and locked-work cap behavior.
+- One frame object with protocol version, snapshot token, render pixel size,
+  cell size/grid size, bounded damage span, bounded upload span, bounded command
+  span, bounded create span, and bounded retire span if resources are introduced.
+- Host acknowledgement is host-to-render input, not render-produced frame data.
+- Named bounds for max frames/snapshots in flight, max damage items per frame,
+  max uploads per frame, max commands per frame, max glyphs per glyph run, max
+  upload bytes per frame, and max atlas pages/resources.
+- Initial commands limited to clear/fill rect, draw glyph run, and draw sprite
+  only if current renderer already requires sprite raster consequences.
+- Invalid-input behavior for null spans, malformed spans, invalid counts, invalid
+  dimensions, stale tokens, unknown/retired resources, and out-of-order
+  submit/ack.
+- Required test gates before ABI skeleton, software realizer, host consumer, and
+  full-surface deletion.
+
+## Current Full-Surface Facts To Cite
+
+- `howl-render/include/howl_render.h` exposes `HowlRenderPreparedSurfaceBuffer`
+  with `rgba_pixels` and `uploads_committed` only.
+- `howl-render/src/prepared/buffer.zig` `compose()` allocates
+  `width * height * 4` and produces a complete CPU RGBA surface.
+- `howl-render/src/prepared/buffer.zig` `seedSurfacePixels()` states hosts only
+  consume one complete prepared surface.
+- `howl-linux-host/src/window/term_texture.zig` `uploadPreparedBuffer()` performs
+  one full `glTexSubImage2D()` for the complete terminal surface.
 
 ## Verification
 
-From `/home/home/personal/projects/howl/howl-linux-host`:
-
-- `zig build check`
-- `zig build test`
-- `zig build run` manual smoke: shell appears, no startup deadlock/crash.
-
 From `/home/home/personal/projects/howl`:
 
-- `zig build check`
-- `zig build test`
 - `git diff --check`
+
+Document review must verify:
+
+- no `TBD` bounds
+- no backend objects in ABI
+- no generic scene graph language
+- all lifetimes named
+- invalid-input behavior listed
+- tests listed before product code
 
 ## Stop Conditions
 
-- Stop if PTY read ownership cannot be represented without ABI changes.
-- Stop if tests cannot distinguish bounded locked work from unbounded locked work.
-- Stop if any path can feed VT concurrently with VT surface copy.
+- Stop if max counts are unnamed or vague.
+- Stop if resource lifetime lacks create/update/use/retire/ack ordering.
+- Stop if span pointer lifetime is ambiguous.
+- Stop if protocol includes GL/Metal/Vulkan/backend objects.
+- Stop if command model permits arbitrary scene graph behavior.
+- Stop if full RGBA surface remains the only normal host-visible consequence.
+- Stop if tests are not defined before deletion.
+- Stop if software realizer equivalence is skipped.
+- Stop if host fallback to full `glTexSubImage2D()` is not explicitly tested
+  against.

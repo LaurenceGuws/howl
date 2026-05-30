@@ -2,7 +2,8 @@
 
 Owner: workspace root.
 
-Status: sprint seed. No product code is authorized by this document yet.
+Status: Phase 2 complete. Contract-draft slice may be promoted. No product code
+is authorized by this document yet.
 
 ## Purpose
 
@@ -69,7 +70,208 @@ Checkpoint verification performed 2026-05-31:
   - `zig build test`
   - `git diff --check`
 
-Checkpoint remains uncommitted pending an explicit commit decision.
+Checkpoint committed and pushed 2026-05-31:
+
+- `howl-linux-host` `47dbe56` - `host: add process accounting checkpoints`
+- root `12f0f01` - `design: seed render protocol sprint`
+
+Phase 0 is complete. Root and `howl-linux-host` were clean after push.
+
+## Phase 1 Research A: Current Howl Render Truth
+
+Status: accepted as current-state research input. Still no implementation slice.
+
+Research Agent A read TigerBeetle style/architecture first, then this scratchpad,
+then the current render ABI, render internals, and Linux host consumption path.
+
+Paths read:
+
+- `howl-render/include/howl_render.h`
+- `howl-render/src/ffi.zig`
+- `howl-render/src/libhowl_render.zig`
+- `howl-render/src/ffi/*.zig`
+- `howl-render/src/source/*.zig`
+- `howl-render/src/prepared/*.zig`
+- `howl-render/src/session/text.zig`
+- `howl-render/src/text/*.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+- `howl-linux-host/src/window/present.zig`
+
+Current ABI call graph facts:
+
+- `howl-render/src/libhowl_render.zig` exports the C ABI declared in
+  `howl-render/include/howl_render.h`.
+- Host `initTextSession()` calls `howl_render_text_session_init`, font setters,
+  and validation in `howl-linux-host/src/terminal/context.zig`.
+- `howl-render/src/ffi/text_session.zig:init()` creates `TextSessionOwner`.
+- Host VT publication fills `HowlRenderVtSurfaceSlot` and commits
+  `HowlRenderVtSurfaceCommit` from `howl-render/include/howl_render.h`.
+- `howl-render/src/ffi/vt_surface.zig` maps reserve/commit calls to
+  `TextSessionOwner.reserveVtSurfaceSlot()` and
+  `TextSessionOwner.commitVtSurface()`.
+- Host render turn calls `self.term.render.prepare()` in
+  `howl-linux-host/src/terminal/context.zig`.
+- `howl-linux-host/src/terminal/render/retained.zig` calls
+  `howl_render_text_session_take_prepare_request()` and
+  `howl_render_text_session_prepare_handle()`.
+- `howl-render/src/ffi/prepare_request.zig:takePrepareRequest()` calls
+  `TextSessionOwner.prepare()`.
+- `howl-render/src/ffi/prepared_surface.zig:prepareHandle()` calls
+  `TextSessionOwner.prepareHandle()`.
+- `TextSessionOwner.prepareHandle()` consumes active source, calls
+  `TextSession.prepareSurface()`, then creates `prepared_owner.Owner`.
+- Host `submitPreparedLocked()` obtains prepared info/buffer, uploads pixels, then
+  calls `self.term.render.submit()` in `howl-linux-host/src/terminal/context.zig`.
+- `howl-render/src/ffi/submission.zig:submitHandle()` validates the prepared
+  handle and calls `Owner.submitOwned()`.
+- `howl-render/src/prepared/owner.zig:performSubmit()` calls
+  `TextSession.submitSurface()`, retains RGBA pixels, and consumes the owner.
+
+Current ownership facts:
+
+- `TextSessionOwner` owns render session state, geometry, source slot, prepare
+  queue, submitted state, prepared handles, font paths, and retained full-surface
+  pixels in `howl-render/src/session/text.zig`.
+- `TextSession` owns text backend state, mutex, optional `TextFramePreparer`, and
+  retained `cell_input_scratch` in `howl-render/src/session/text.zig`.
+- `SourceSlot` owns retained source-cell and dirty-row storage in
+  `howl-render/src/source/slot.zig`.
+- `PrepareRequests` owns pending/active publication state and damage
+  classification in `howl-render/src/source/prepare_request.zig`.
+- `prepared_owner.Owner` owns prepared handle payload, lifecycle state, copied
+  RGBA pixels, required upload count, metrics, and diagnostics in
+  `howl-render/src/prepared/owner.zig`.
+- Linux host owns GL texture identity through `Context.term_texture` and
+  `howl-linux-host/src/window/term_texture.zig`.
+
+Current allocation/copy/upload facts:
+
+- `SourceSlot.ensureCapacity()` allocates cells, dirty rows, dirty start columns,
+  and dirty end columns in `howl-render/src/source/slot.zig`.
+- `TextSession.ensureCellInputScratchCapacity()` may allocate or grow
+  `cell_input_scratch` in `howl-render/src/session/text.zig`.
+- `TextFramePreparer.ensureTextPreparer()` may allocate the preparer and ensure
+  scratch capacities in `howl-render/src/session/text.zig`.
+- `direct_normal.Scratch.reset()` ensures capacities for renderable, missing,
+  draw arrays, cursor, and raster requests in `howl-render/src/text/direct_normal.zig`.
+- `scene.RetainedScratch.reset()` ensures draw-list capacities in
+  `howl-render/src/text/scene.zig`.
+- `prepared_buffer.compose()` allocates `width * height * 4` bytes in
+  `howl-render/src/prepared/buffer.zig`.
+- `prepared_buffer.compose()` seeds a full surface from retained base or clears it,
+  then applies clear/background/decoration/sprite/cursor CPU passes.
+- `Owner.copySurfaceBuffer()` always stores the composed RGBA pixels on the
+  prepared owner in `howl-render/src/prepared/owner.zig`.
+- Host obtains `HowlRenderPreparedSurfaceBuffer.rgba_pixels` through retained
+  render wrapper `preparedUpload()`.
+- `Context.submitPreparedLocked()` converts `rgba_pixels` into a Zig slice and
+  calls `term_texture.uploadPreparedBuffer()`.
+- `term_texture.uploadPreparedBuffer()` performs one full `glTexSubImage2D()` for
+  `surface.width` by `surface.height`.
+- `present.submitPresent()` clears framebuffer, draws cached tab bar, draws the
+  terminal texture, draws scrollbar, and swaps.
+
+Exact full-surface assumptions:
+
+- `HowlRenderPreparedSurfaceBuffer` exposes only `rgba_pixels` and
+  `uploads_committed`; there is no host-visible rect span, command list, upload
+  list, or resource lifetime list.
+- `prepared_surface.buffer()` returns the owner's full `rgba_pixels` span and
+  upload count.
+- `prepared_buffer.compose()` computes and allocates `width * height * 4` pixels.
+- `seedSurfacePixels()` says hosts only consume one complete prepared surface and
+  asserts the retained base and output pixel lengths match.
+- `term_texture.uploadPreparedBuffer()` documents that the prepared buffer is the
+  complete realized surface and that the host does one full upload rather than
+  reconstructing from render-side damage rectangles.
+- Submit validation checks host surface width/height and upload count, not rect
+  coverage or command/resource lifetime.
+
+Damage facts available but not host-consumed:
+
+- `HowlRenderVtSurfaceSlot` includes `dirty_rows`, `dirty_cols_start`, and
+  `dirty_cols_end` in `howl-render/include/howl_render.h`.
+- `howl-render/src/source/damage.zig` preserves dirty row spans and the clean-row
+  sentinel.
+- Damage classification returns `.none`, `.partial`, or `.full` from source dirty
+  metadata.
+- Prepare tokens carry `damage_base_seq` and `damage_kind`.
+- Prepared tokens carry `required_base_seq` and `damage_kind`.
+- Text scene has `full_redraw` plus per-draw `first_cell`/`cell_span` facts for
+  clear, background, sprite, decoration, and raster requests.
+- `scene.normalizedDamage()` and `direct_scene.Damage.init()` preserve valid row
+  spans internally.
+- Scene builders can skip or draw by damage spans through `includeSpan()`.
+- Linux host consumes none of those damage facts as damage; it only uses prepared
+  info for dimensions and prepared buffer for full upload.
+
+Tests that currently lock behavior:
+
+- `howl-render/src/prepared/buffer.zig` has `compose preserves retained content
+  outside partial updates`.
+- `howl-render/src/session/text.zig` has `retainSurfacePixels adopts full pixels
+  for later partial prepares`.
+- `howl-render/src/prepared/owner.zig` has `owner validates realized uploads and
+  host surface dimensions before submit`.
+- `howl-render/src/source/damage.zig` tests canonicalization, sentinel
+  preservation, and invalid dirty metadata rejection.
+- `howl-render/src/source/text_input.zig` tests threading partial damage into text
+  scene input and mapping only dirty ranges.
+- `howl-render/src/text/scene.zig` tests explicit clears for transparent default
+  backgrounds on partial damage.
+- `howl-linux-host/src/terminal/render/retained.zig` tests present in-flight
+  gating.
+- `howl-linux-host/src/window/present.zig` tests monotonic nonzero present tokens
+  and single drain behavior.
+
+Minimal safe deletion candidates after protocol replacement proves equivalent:
+
+- Normal-path `HowlRenderPreparedSurfaceBuffer.rgba_pixels` as the only
+  host-visible render consequence.
+- `howl_render_prepared_surface_buffer()` as the normal-path render output.
+- `prepared_buffer.compose()` full CPU composition.
+- `Owner.copySurfaceBuffer()` full RGBA retention.
+- `term_texture.uploadPreparedBuffer()` full upload path.
+- `Context.submitPreparedLocked()` pixel-slice upload block.
+
+These are not safe to delete before a replacement protocol has exact ABI structs,
+bounds, lifetime rules, invalid-input behavior, and equivalence tests.
+
+Required assertions and tests for protocol work:
+
+- ABI size/layout tests for every new frame, upload, command, and damage struct,
+  following the existing `assertVtCellLayout()` style.
+- Bound tests for max damage items, max uploads, max commands, max glyphs per run,
+  max retained snapshots, and max atlas/resources.
+- Invalid-input tests mirroring current ABI rejection style in
+  `prepareTokenIn()` and `preparedSurfaceTokenIn()`.
+- Explicit owner/state lifetime tests equivalent in strictness to current prepared
+  handle state transitions.
+- Software protocol realization equivalence tests against current
+  `prepared_buffer.compose()` for full and partial rows before deletion.
+- Host consumption tests proving damage/commands/resources are consumed instead
+  of silently falling back to full `glTexSubImage2D()`.
+
+Proof gaps after Research A:
+
+- No current host-consumable damage rectangle/span ABI exists.
+- No bounded command/upload protocol structs exist in the current header.
+- No test proves full-surface upload is absent; current code proves the opposite.
+- Current hot path still allocates or grows multiple buffers after init, including
+  full `prepared_buffer.compose()` pixels and several scratch buffers.
+- The sprint seed was correct about the full-surface boundary, but understated how
+  much source/scene damage exists internally before being collapsed into the full
+  host-facing surface.
+
+Readiness judgment:
+
+- Not worker-ready for `howl-render-protocol` implementation.
+- Current truth is enough to reject the existing normal path as the final protocol
+  boundary.
+- Worker readiness requires exact C ABI structs, bounds, owner states,
+  invalid-input behavior, equivalence tests, and host-consumption tests.
 
 ## Current Measurement Facts
 
@@ -395,6 +597,422 @@ Return exactly:
 - ABI risks
 - test strategy
 - first worker-ready implementation slice if, and only if, ready
+
+## Phase 1 Research B: Alacritty Render Model
+
+Status: accepted as constraint input. Not a protocol design.
+
+Research Agent B read TigerBeetle style/architecture first, then this scratchpad,
+then the assigned Alacritty render/display paths. Additional batching files were
+read for concrete batch bounds: `renderer/text/glsl3.rs` and
+`renderer/text/gles2.rs`.
+
+Damage model facts:
+
+- `DamageTracker` owns display damage in `alacritty/src/display/damage.rs`.
+- It tracks two `FrameDamage` slots and swaps/reset frames through
+  `swap_damage()`.
+- `FrameDamage` stores `full`, per-terminal-line `LineDamageBounds`, and extra
+  viewport `Rect` damage.
+- `Display::draw()` imports `TermDamage::Full` or `TermDamage::Partial`, then
+  resets terminal damage.
+- UI/cursor/selection/IME/hyperlink/timer consequences add damage, sometimes to
+  current and next frames.
+- `shape_frame_damage()` converts terminal line damage plus viewport damage into
+  pixel rectangles.
+- `RenderDamageIterator::overdamage()` expands around damaged cells for wide
+  characters and clamps to viewport bounds.
+- Important constraint: Alacritty damage is primarily present/swap damage.
+  `Display::draw()` still collects and draws all renderable non-empty grid cells
+  each frame, then uses shaped damage for Wayland damaged swap.
+
+Glyph cache and atlas facts:
+
+- `GlyphCache` owns CPU rasterizer and glyph map in
+  `alacritty/src/renderer/text/glyph_cache.rs`.
+- `LoadGlyph` is the seam from rasterized glyph to graphics memory.
+- `Glyph` contains backend atlas reference data including GL texture id; that is
+  not ABI-safe for Howl.
+- `GlyphCache::get()` returns cached glyphs, rasterizes misses, handles fallback,
+  and inserts into the cache.
+- ASCII glyphs and common font styles are preloaded.
+- `Atlas` in `alacritty/src/renderer/text/atlas.rs` is GL-coupled: fixed
+  `ATLAS_SIZE = 1024`, `GLuint` texture id, `gl::TexImage2D()`,
+  `gl::TexSubImage2D()`, and `Vec<Atlas>` growth on full pages.
+- Alacritty supports glyph bitmap uploads into retained atlas pages plus draw
+  references, not per-frame full terminal RGBA surfaces.
+
+Draw batching facts:
+
+- `TextRenderer::draw_cells()` iterates renderable cells and calls the render API.
+- `TextRenderApi::add_render_item()` flushes when texture changes and when batch
+  is full.
+- GLSL3 has `BATCH_MAX = 0x1_0000` items.
+- GLES2 derives `BATCH_MAX` from the `u16` index range.
+- Batches upload instance/vertex data and issue GL draws.
+- `Renderer::draw_rects()` batches rectangles to prevent excessive program swaps.
+- Howl should preserve bounded glyph-run/command batches and resource-change
+  boundaries, not Alacritty's direct GL emission.
+
+Frame/present facts:
+
+- `Display::draw()` owns the frame: collect renderable content, import/reset
+  damage, release terminal lock, make GL context current, clear, draw text,
+  draw rect/cursor/UI, notify pre-present, swap, finish where required, and
+  advance damage frames.
+- Wayland can use `swap_buffers_with_damage`; other paths use plain swap.
+- `Window::pre_present_notify()` and frame timers are display/window concerns.
+- Present cadence and platform swap remain host-owned for Howl.
+
+CPU vs GPU division facts:
+
+- CPU computes renderable cells, cursor/colors/selection/search/hints, damage,
+  and rasterizes missing glyphs.
+- GPU/backend owns atlas texture creation/upload, buffer uploads, draw calls, and
+  swap.
+- Alacritty does not expose or build a complete CPU RGBA terminal framebuffer on
+  the normal paths inspected.
+
+Boundedness facts and warnings:
+
+- Source-backed bounds include atlas page size, glyph-too-large rejection, GLSL3
+  batch max, GLES2 batch max, minimum screen size, and damage-line storage sized
+  to viewport lines.
+- Do not copy Alacritty's unbounded or hot-path allocations into Howl ABI:
+  `Vec<RenderableCell>` each frame, unbounded glyph `HashMap`, unbounded atlas
+  `Vec<Atlas>`, `shape_frame_damage() -> Vec<Rect>`, and RGB-to-RGBA upload
+  conversion allocation.
+
+Howl mapping constraints from Alacritty:
+
+- Expose host-consumable damage regions if Howl wants Alacritty-like damaged
+  present.
+- Include terminal and non-terminal render consequences in damage where those
+  consequences affect visible output.
+- Test overdamage and bounds clamping for wide glyphs.
+- Render should own glyph identity/rasterization decisions/atlas packing/upload
+  data; host-visible references must not be GL ids.
+- Atlas/page growth must be bounded in Howl.
+- Text draw consequences should be batched by resource identity and explicit max
+  item counts.
+- Present, frame timers, platform swap, and backend choice are host-owned.
+
+Alacritty facts not to copy:
+
+- GL/window-specific objects: `glutin::surface::Rect`, `GLuint`, GL function
+  calls, winit/glutin present hooks.
+- Per-frame `Vec<RenderableCell>` collection as an ABI model.
+- Unbounded glyph `HashMap` and atlas `Vec<Atlas>` growth.
+- Alacritty damage semantics as proof of damage-limited draw work; it still draws
+  all renderable grid cells.
+- Renderer selection and shader/backend policy.
+
+Required tests from Alacritty branch:
+
+- ABI layout tests for every public damage/upload/command/resource struct.
+- Bound tests for max damage, uploads, commands, glyphs per run, atlas pages,
+  resources, and retained frames.
+- Damage tests for full damage, partial row spans, wide-glyph overdamage, bounds
+  clamping, and current/next-frame consequences.
+- Glyph/atlas tests for oversized glyphs, atlas full behavior, upload byte/rect
+  correctness, and references to retired/nonexistent resources.
+- Command tests for batch splitting, valid resource references, overflow failure,
+  and resource-change boundaries.
+- Lifetime and negative ABI tests for stale tokens, malformed spans, invalid
+  counts, null pointers, and invalid dimensions.
+
+Proof gaps from Alacritty branch:
+
+- Alacritty has no C ABI boundary.
+- Alacritty does not prove a damage-limited command stream.
+- Atlas and glyph cache growth are not TigerBeetle-bounded.
+- Alacritty has no host-independent resource ids, protocol token lifetimes, or
+  cross-language layout guarantees.
+
+## Phase 1 Research C: Ghostty Render Model
+
+Status: accepted as constraint input. Not a protocol design.
+
+Research Agent C read TigerBeetle style/architecture first, then this scratchpad,
+then the assigned Ghostty paths. Additional seam/lifetime paths were read:
+`renderer/generic.zig`, `renderer/backend.zig`, `renderer/Thread.zig`,
+`renderer/State.zig`, `font/SharedGrid.zig`, `font/SharedGridSet.zig`,
+`apprt/embedded.zig`, and `apprt/runtime.zig`.
+
+Renderer owner facts:
+
+- `ghostty/src/renderer.zig` is a public aggregation/root and comptime backend
+  selector, not the owner itself.
+- The concrete generic owner is `renderer/generic.zig:Renderer(GraphicsAPI)`.
+- It owns render configuration, terminal render state, font shaper/cache, image
+  state, swap chain, shader pipelines, backend API state, and draw mutex.
+- `Surface.zig` owns the renderer instance per surface and deinitializes renderer
+  thread/state in order.
+- Render update and draw are split: `renderer.Thread.renderCallback()` calls
+  `updateFrame()` then `drawFrame(false)`.
+- `updateFrame()` extracts terminal state, rebuilds cells, updates image/upload
+  state, and ends the shaper frame; `drawFrame()` syncs buffers/textures and
+  emits backend render passes.
+
+Font atlas owner facts:
+
+- `font/Atlas.zig:Atlas` owns CPU atlas bytes, packing nodes, format, and
+  `modified`/`resized` counters.
+- `Atlas.Region` is an extern rectangle with `x`, `y`, `width`, and `height`.
+- `Atlas.set()` asserts region bounds, copies bytes into atlas, and increments
+  `modified`.
+- `Atlas.grow()` reallocates larger atlas data, preserves old bytes, and bumps
+  `modified` and `resized`.
+- `font/SharedGrid.zig:SharedGrid` owns grayscale/color atlases and glyph cache.
+- `SharedGrid.renderGlyph()` chooses atlas by presentation, renders glyphs into
+  atlas, grows on `AtlasFull`, and stores atlas coordinates in the glyph cache.
+- Backend texture lifetime is renderer-owned per swap-chain frame, not CPU
+  atlas-owned.
+- `drawFrame()` observes atlas modification counters and syncs atlas data into
+  per-frame textures.
+
+Shaping/raster facts:
+
+- `font/shaper/run.zig:TextRun` is valid only for one `Shaper` instance and until
+  the next run is created.
+- Runs are row-local and never cross rows.
+- `RunIterator.next()` trims empty right side, skips invisible cells, and splits
+  on selection, style, cursor, font, and ligature boundaries.
+- `generic.Renderer.rebuildRow()` uses `font_shaper.runIterator()`, consults
+  `font_shaper_cache`, shapes misses, and caches results.
+- `SharedGrid.renderGlyph()` owns glyph raster cache insertion into atlas.
+- Special sprite drawing functions are render-owned raster/resource production,
+  not backend commands or host policy.
+
+Backend seam facts:
+
+- `renderer/backend.zig:Backend` selects OpenGL, Metal, or WebGL by build target.
+- `renderer/generic.zig` documents backend abstraction objects such as
+  `GraphicsAPI`, `Target`, `Frame`, `RenderPass`, `Pipeline`, `Buffer`, and
+  `Texture`; these stay behind the backend seam.
+- `apprt.zig` routes library builds to embedded runtime.
+- `apprt/embedded.zig` uses host callbacks for wake/action/clipboard/close.
+- `Surface.zig` describes a terminal widget independent of window/tab/split
+  policy.
+- `renderer/Thread.zig` owns Ghostty renderer wakeup, timers, mailbox, and render
+  loop; mailbox capacity is fixed at 64.
+
+Resource lifetime facts:
+
+- `Surface` owns per-surface renderer/thread/PTY/input state and stops threads
+  before deinit.
+- Font grid lifetime is shared/refcounted through `SharedGridSet.ref()` and
+  `SharedGridSet.deref()`.
+- Font size changes transfer ownership through renderer mailbox and dereference
+  old grids on the renderer side.
+- Swap chain owns frame states and uses a semaphore to prevent CPU/GPU data races.
+- `SwapChain.deinit()` waits for in-flight frames before freeing.
+- CPU atlas `modified`/`resized` counters drive backend texture sync.
+
+Howl mapping constraints from Ghostty:
+
+- CPU atlas ownership plus explicit `Region` and modification counters map well
+  to render-owned atlas packing and host-visible bounded uploads/resource ids.
+- Backend texture/buffer/pass objects must remain host/backend-owned.
+- Howl can borrow the split: render produces cells/glyphs/atlas consequences;
+  backend realizes buffers/textures/passes.
+- Embedded runtime reinforces that event loop, wake policy, platform UX, and
+  presentation cadence are host-owned.
+- Row-local shaping runs support bounded glyph-run commands better than full
+  framebuffer upload.
+
+Ghostty facts not to copy:
+
+- Zig comptime backend selection into the C ABI.
+- Ghostty renderer thread/runtime/mailbox ownership into Howl render.
+- Hot-path dynamic growth without protocol bounds: atlas node allocation, atlas
+  grow, and atlas doubling on full.
+- Backend objects such as `Texture`, `Buffer`, `Target`, `RenderPass`, and
+  `Pipeline` in Howl ABI.
+- Whole-atlas texture replacement as the only upload shape.
+- Ghostty `Surface` as a Howl product boundary; Howl keeps PTY, VT, render, and
+  host contracts separate.
+
+Required tests from Ghostty branch:
+
+- ABI size/alignment tests for every frame/resource/upload/command/damage struct.
+- Bound tests for commands, uploads, damage spans, glyphs per run, atlas pages,
+  resources, and retained snapshots.
+- Resource create/update/use/retire/ack ordering tests.
+- Tests preventing commands from referencing retired or unknown resources.
+- Tests preventing double-submit and out-of-order acknowledge.
+- Atlas region bounds tests equivalent to `Atlas.set()` assertions.
+- Atlas full behavior tests: bounded failure or explicit new-page/resource event,
+  never unbounded growth.
+- Tests that dirty glyph upload rects are minimal/bounded and host-visible.
+- Glyph-run tests proving runs never cross rows and split on style/font/cursor/
+  selection boundaries.
+- Software reference realizer equivalence tests against current full-surface
+  renderer before deleting fallback.
+
+Proof gaps from Ghostty branch:
+
+- Exact backend command structs were not fully inspected.
+- `renderer/OpenGL.zig`, `renderer/Metal.zig`, shader buffer structs, full
+  `font/shape.zig`, `font/ShaperCache`, concrete shaper backends, and Kitty image
+  upload path need deeper proof if the protocol depends on those details.
+- Ghostty atlas sync replaces a full atlas region; whether backend implementations
+  optimize internally was not proved.
+- Worst-case per-frame allocation bounds in shaping/cache paths were not
+  established.
+
+Combined Phase 1 readiness:
+
+- A, B, and C are accepted as research input.
+- No implementation slice is worker-ready.
+- The protocol challenge is now the next required step.
+- Strongest shared constraints so far:
+  - render owns shaping, glyph identity, atlas packing, command/upload/damage
+    consequences, and explicit protocol lifetimes;
+  - host owns backend resource realization, event loop, wake policy, presentation
+    cadence, platform UX, and swap;
+  - C ABI must expose bounded resources, uploads, commands, damage, and lifetimes;
+  - no GL/Metal/Vulkan/Zig runtime objects cross the ABI;
+  - full CPU RGBA surface is acceptable only as software fallback/test oracle, not
+    normal path.
+
+## Phase 2 Research D: Protocol Challenge
+
+Status: accepted. Boundary accepted only as a narrow C ABI consequence protocol.
+
+Research Agent D read TigerBeetle style/architecture first, then this scratchpad,
+then spot-checked current full-surface source paths:
+
+- `howl-render/include/howl_render.h`
+- `howl-render/src/prepared/buffer.zig`
+- `howl-render/src/prepared/owner.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+
+Strongest argument against `howl-render-protocol`:
+
+- The protocol can become a premature generic scene graph.
+- The candidate V0 list is broad enough to hide backend policy, resource lifetime,
+  allocation, and command semantics behind plausible nouns unless one owner and
+  one exact lifetime path are named for every resource.
+- TigerBeetle rejects unnamed limits, vague ownership, hidden allocation, and
+  happy-path-only tests.
+- Current code is not merely missing protocol structs; it is architecturally
+  full-surface through `prepared_buffer.compose()`, `seedSurfacePixels()`, and
+  host `glTexSubImage2D()`.
+- If the protocol means “invent a large renderer ABI now,” it is not ready.
+
+Strongest argument for `howl-render-protocol`:
+
+- The existing ABI is the wrong normal product boundary.
+- `HowlRenderPreparedSurfaceBuffer` exposes only `rgba_pixels` and
+  `uploads_committed`.
+- Dirty metadata already exists at VT input through `HowlRenderVtSurfaceSlot`, but
+  the host-visible consequence is still a full CPU framebuffer.
+- Research A/B/C converge on retained resources, uploads, damage, and draw
+  references rather than a full CPU terminal surface.
+- The boundary is justified only as a bounded C ABI description of render-owned
+  consequences that hosts realize with backend-owned resources.
+
+Minimum viable V0 constraints:
+
+- One frame object with protocol version, snapshot token, render pixel size, cell
+  size/grid size, bounded damage span, bounded upload span, bounded command span,
+  and bounded retire/ack span if resources are introduced.
+- No backend objects: no GL texture ids, Metal objects, Vulkan handles, shader
+  handles, command encoders, windows, or swapchains.
+- Render owns shaping decisions, glyph identity, atlas packing decisions, upload
+  bytes/rects, command stream, protocol resource ids, and lifetime state.
+- Host owns backend resource realization, event loop, wake policy, presentation
+  cadence, swap/present, and platform UX.
+- Bounds must be named before ABI code: max frames/snapshots in flight, max damage
+  items per frame, max uploads per frame, max commands per frame, max glyphs per
+  glyph run, max upload bytes per frame, and max atlas pages/resources.
+- V0 commands should be limited to clear/fill rect, draw glyph run, and draw
+  sprite only if current renderer already requires sprite raster consequences.
+- No generic node tree, retained scene graph, arbitrary pipeline state, or backend
+  object references.
+- Full RGBA surface may exist only as software oracle/debug fallback, not normal
+  protocol consequence.
+
+ABI risks to resolve in the contract draft:
+
+- Layout drift for every new public struct.
+- Span lifetime ambiguity.
+- Stale token and out-of-order frame risk.
+- Resource id reuse across create/update/use/retire/ack.
+- Compatibility trap where `rgba_pixels` remains the only normal consequence.
+- Hidden hot-path allocation in command/upload production.
+
+Required test strategy before product code/deletion:
+
+- ABI layout tests for all V0 frame/resource/upload/command/damage structs.
+- Bound tests for damage, uploads, commands, glyphs per run, atlas pages/resources,
+  retained snapshots, and upload bytes.
+- Invalid ABI tests for null pointers, malformed spans, invalid counts, invalid
+  dimensions, stale tokens, unknown/retired resources, and out-of-order
+  submit/ack.
+- Lifetime tests for create/update/use/retire/ack ordering, double-submit
+  rejection, use-after-retire rejection, and ack-before-use rejection.
+- Damage tests for full, partial row spans, clamping, and wide-glyph overdamage.
+- Software reference realizer equivalence tests against current
+  `prepared_buffer.compose()` before deleting current behavior.
+- Host tests proving V0 upload/command consumption and preventing silent fallback
+  to full `glTexSubImage2D()`.
+
+Accepted next slice:
+
+- Ready for contract-draft slice only.
+- Not ready for ABI skeleton, product code, host consumer, or full-surface deletion.
+
+Allowed files:
+
+- this scratchpad
+- optional `docs/render-protocol-v0.md`
+
+Non-goals:
+
+- no changes to `howl-render/include/howl_render.h`
+- no Zig product code
+- no host code
+- no deletion of `HowlRenderPreparedSurfaceBuffer`
+- no replacement of `prepared_buffer.compose()`
+- no GL implementation
+- no benchmarks or performance claims
+
+Contract-draft invariants:
+
+- V0 is a C ABI protocol, not a Zig internal import path.
+- Render owns protocol resources, command/upload/damage production, shaping,
+  glyph identity, and atlas packing decisions.
+- Host owns backend object realization, event loop, wake policy, presentation
+  cadence, platform UX, and swap.
+- Every public list has a named fixed maximum.
+- Every resource has explicit create/update/use/retire/ack lifetime rules.
+- No backend object crosses ABI.
+- No generic scene graph.
+- Full RGBA surface is fallback/test oracle only, not normal path.
+- Deletion of current full-surface behavior is forbidden until equivalence and
+  host-consumption tests exist.
+
+Reviewer refinement while drafting:
+
+- Resource creation must be explicit render output, not implicit through first
+  upload or command reference.
+- Host acknowledgement must be host-to-render input, not a render-produced frame
+  span.
+
+Stop before product code if any remain unresolved:
+
+- max counts are unnamed or `TBD`
+- resource lifetime lacks create/update/use/retire/ack ordering
+- span pointer lifetime is ambiguous
+- protocol includes GL/Metal/Vulkan/backend objects
+- command model permits arbitrary scene graph behavior
+- full RGBA surface remains the only normal host-visible consequence
+- tests are not defined before deletion
+- software realizer equivalence is skipped
+- host fallback to full `glTexSubImage2D()` is not explicitly tested against
+- V0 depends on unresolved Ghostty/Alacritty backend proof gaps
 
 ## Sprint Phases
 
