@@ -1,90 +1,92 @@
-# Current Slice: Define C ABI Header Grammar
+# Current Slice: Apply C ABI Header Grammar Without Semantic Changes
 
 Owner: workspace root.
 
 Purpose:
 
-- Define the exact generated-looking grammar for Howl public C ABI headers.
-- Give later header workers concrete ordering, comment, wrapping, and review gates.
-- Do not edit product headers or code in this slice.
+- Apply the accepted C ABI header grammar to PTY, VT, and render public headers.
+- Make the public ABI lane read as one generated-looking product surface.
+- Preserve C symbols, enum values, struct layout, and behavior exactly.
 
 ## Source Research
 
 Use:
 
-- `research/2026-05-30-hygiene-audit/researcher-a.md`
-- `research/2026-05-30-hygiene-audit/researcher-b.md`
-- `research/2026-05-30-hygiene-audit/researcher-c.md`
+- `research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 1.2
 - `research/2026-05-30-hygiene-audit/synthesis.md`
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 1.1
-
-Reference pressure:
-
-- ABIs are product: `AGENTS.md`.
-- Public roots curate exports only and FFI translates contracts only: `AGENTS.md`.
-- TigerBeetle naming, top-down order, comments, assertions, and line-length pressure:
-  - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- Ghostty shows a separately auditable C lane, but Howl must not copy Ghostty's broad Zig module lane.
 
 ## Source Changes
 
 Edit only:
 
-- new `research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
+- `howl-pty/include/howl_pty.h`
+- `howl-vt/include/howl_vt.h`
+- `howl-render/include/howl_render.h`
 
-## Required Content
+## Required Shape
 
-The grammar document must define one exact header order:
-
-1. Include guard.
-2. C includes.
-3. `extern "C"` block.
-4. Opaque handles.
-5. Limits/macros.
-6. Status/result enums.
-7. Product enums.
-8. Structs.
-9. Functions grouped by owner handle and operation order.
-
-The document must also define:
-
-- One handle declaration style.
-- One status/result enum style.
-- One macro/limit style.
-- One function prototype wrapping style under 100 columns.
-- One comment rule: comments explain ABI consequence/lifetime only; ordering does navigation.
-- Header banners are banned unless generated consistently by future tooling.
-- No compatibility aliases or old-name typedefs.
-- No Zig-shaped host shortcut or Ghostty-style broad Zig module lane.
-- How to pair header declarations with Zig ABI layout assertions and FFI translators.
-- Review checklist for later header implementation.
-- Grep gates for later implementation.
+- Follow the exact header order from `c-abi-header-grammar.md`:
+  1. Include guard.
+  2. C includes.
+  3. `extern "C"` block.
+  4. Opaque handles.
+  5. Limits/macros.
+  6. Status/result enums.
+  7. Product enums.
+  8. Structs.
+  9. Functions grouped by owner handle and operation order.
+- Use one opaque handle declaration style:
+  - `typedef struct Howl<Package><Owner>Opaque *Howl<Package><Owner>Handle;`
+- Wrap all function prototypes to stay under 100 columns.
+- Remove ornamental banners, numbered sections, table-of-contents comments, and one-off prose comments
+  that compensate for bad order.
+- Keep only comments that explain ABI consequence, lifetime, ownership, units, or value permanence.
 
 ## Non-Goals
 
-- Do not edit `howl-pty/include/howl_pty.h`.
-- Do not edit `howl-vt/include/howl_vt.h`.
-- Do not edit `howl-render/include/howl_render.h`.
-- Do not edit Zig source files.
-- Do not change C symbols, numeric values, struct layout, or behavior.
-- Do not add generation tooling.
-- Do not resolve build/test architecture.
+- No C symbol renames.
+- No enum numeric changes.
+- No struct field additions, removals, reorders, or type changes.
+- No behavior changes.
+- No Zig source edits.
+- No compatibility typedefs, compatibility enum values, or macro aliases.
+- No generation tooling.
+- Do not normalize `libhowl_*.zig` roots in this slice.
 
 ## Invariants
 
-- The document is exact enough that a later worker cannot invent ordering.
-- The grammar supports one small intuitive C lane for Howl.
-- The grammar does not create new buckets such as `manager`, `controller`, `runtime`, `pipeline`,
-  `queue`, `types`, `api`, or `abi` owners.
-- The grammar is compatible with PTY, VT, and render public headers.
+- Declaration dependencies still compile as C and C++ headers through current Zig translate-C tests.
+- PTY remains compact and direct.
+- VT loses numbered banners and starts reading as a product header, not a hand table of contents.
+- Render loses one-off section prose and long prototype lines.
+- All public function prototypes are at most 100 columns.
+- ABI layout tests still pass.
 
 ## Verification
 
+From each changed subrepo:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+
 From `/home/home/personal/projects/howl`:
 
+- `zig build check`
+- `zig build test`
 - `git diff --check`
 
 ## Grep Gates
 
-- `rg "include guard|opaque handles|status/result enums|functions grouped by owner" research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
-- `rg "compatibility alias|Zig-shaped host shortcut" research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
+- `awk 'length($0)>100 {print FILENAME ":" FNR ":" $0}' howl-*/include/*.h` prints nothing.
+- `rg '/\* -{5,}|/\* [0-9]+\.|Shell input enums|Owned prepared-surface' howl-*/include/*.h` prints nothing.
+- `rg 'compatibility alias|old-name typedef|Zig-shaped host shortcut' howl-*/include/*.h` prints nothing.
+- Manual review of `rg 'typedef .*Handle|enum|struct|howl_' howl-*/include/*.h` confirms grammar order.
+
+## Stop Conditions
+
+- Stop if any header cannot satisfy the grammar without a C symbol, enum value, struct layout, or
+  behavior change.
+- Stop if Zig source changes appear necessary.
+- Stop if a worker wants to preserve banners instead of making order do navigation.
