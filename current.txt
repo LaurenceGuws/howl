@@ -1,12 +1,12 @@
-# Current Slice: Delete VT Kitty Root
+# Current Slice: Delete VT Parser Root
 
 Owner: `howl-vt`.
 
 Purpose:
 
-- Delete `howl-vt/src/kitty.zig` as stale root glue.
-- Preserve exact Kitty owners under `howl-vt/src/kitty/`.
-- Preserve Kitty protocol behavior, parser behavior, host-facing ABI, and tests exactly.
+- Delete `howl-vt/src/parser.zig` as broad re-export glue for `parser/main.zig`.
+- Replace internal imports with exact parser owner imports.
+- Preserve parser table behavior, parser vocabulary, terminal behavior, and C ABI exactly.
 
 ## Source Research
 
@@ -15,43 +15,59 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-hygiene-audit/roadmap.md` Slice 3.4
-- `howl-vt/src/kitty.zig`
-- `howl-vt/src/kitty/state.zig`
-- `howl-vt/src/kitty/protocol.zig`
-- `howl-vt/src/kitty/apply.zig`
-- `howl-vt/src/kitty/key.zig`
-- `howl-vt/src/kitty/color.zig`
-- `howl-vt/src/kitty/pointer.zig`
-- current importers of `kitty.zig` under `howl-vt/src`
+- `howl-vt/src/parser.zig`
+- `howl-vt/src/parser/main.zig`
+- `howl-vt/src/parser/events.zig`
+- `howl-vt/src/parser/utf8.zig`
+- `howl-vt/src/parser/string_control.zig`
+- `howl-vt/src/parser/owned_actions.zig`
+- all current importers of `parser.zig` under `howl-vt/src`
 - `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- Delete `howl-vt/src/kitty.zig`.
-- Edit `libs.yaml` to remove stale `kitty.root`.
+- Delete `howl-vt/src/parser.zig`.
+- Edit direct importers:
+  - `howl-vt/src/host/state.zig`
+  - `howl-vt/src/test/screen_state_behavior.zig`
+  - `howl-vt/src/screen.zig`
+  - `howl-vt/src/test/action_mapping.zig`
+  - `howl-vt/src/xterm/csi/params.zig`
+  - `howl-vt/src/action/vocabulary.zig`
+  - `howl-vt/src/test/terminal_surface.zig`
+  - `howl-vt/src/terminal.zig`
+  - `howl-vt/src/screen/style.zig`
+  - `howl-vt/src/xterm/osc.zig`
+  - `howl-vt/src/test/parser_behavior.zig`
+  - `howl-vt/src/test/parser_csi_behavior.zig`
+- Edit `libs.yaml` to remove stale `parser.root`.
 
-No import replacements are expected because `kitty.zig` currently has zero direct importers under `howl-vt/src`.
+Exact import replacements:
+
+- `@import("../parser.zig")` -> `@import("../parser/main.zig")`
+- `@import("parser.zig")` -> `@import("parser/main.zig")`
+- `@import("../../parser.zig")` -> `@import("../../parser/main.zig")`
 
 ## Non-Goals
 
+- Do not change parser tables.
+- Do not change parser state-machine behavior.
+- Do not change CSI/OSC/DCS/APC vocabulary.
 - Do not change Kitty behavior.
-- Do not change parser behavior.
-- Do not change protocol vocabulary.
-- Do not change host-facing ABI.
-- Do not combine with parser root deletion.
-- Do not add compatibility aliases or replacement buckets.
+- Do not change screen or terminal behavior.
+- Do not add compatibility aliases, replacement roots, buckets, managers, controllers, runtimes, `types.zig`, `api.zig`, or `abi.zig`.
 
 ## Invariants
 
-- Exact Kitty owners remain:
-  - `howl-vt/src/kitty/state.zig`
-  - `howl-vt/src/kitty/protocol.zig`
-  - `howl-vt/src/kitty/apply.zig`
-  - `howl-vt/src/kitty/key.zig`
-  - `howl-vt/src/kitty/color.zig`
-  - `howl-vt/src/kitty/pointer.zig`
+- `parser/main.zig` remains the parser API owner for current parser root exports.
+- Exact parser owners remain:
+  - `howl-vt/src/parser/main.zig`
+  - `howl-vt/src/parser/events.zig`
+  - `howl-vt/src/parser/utf8.zig`
+  - `howl-vt/src/parser/string_control.zig`
+  - `howl-vt/src/parser/owned_actions.zig`
 - `libs.yaml` must not reference deleted files.
 
 ## Verification
@@ -64,12 +80,12 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg '@import\("kitty\.zig"\)|@import\("\.\./kitty\.zig"\)|@import\("\.\./\.\./kitty\.zig"\)' howl-vt/src` prints nothing.
-- `rg 'kitty\.zig' howl-vt/src libs.yaml` prints nothing.
+- `rg '@import\("parser\.zig"\)|@import\("\.\./parser\.zig"\)|@import\("\.\./\.\./parser\.zig"\)' howl-vt/src` prints nothing.
+- `rg 'parser\.zig' howl-vt/src libs.yaml` prints nothing.
 
 ## Stop Conditions
 
-- Stop if any `kitty.zig` importer appears.
-- Stop if deleting the root requires touching Kitty behavior.
-- Stop if protocol vocabulary, parser behavior, Kitty behavior, or host-facing ABI changes appear.
-- Stop if the working tree is dirty before work starts.
+- Stop if parser table, state-machine behavior, OSC/CSI/DCS/APC vocabulary, Kitty protocol behavior, or screen behavior changes.
+- Stop if a new broad replacement root/bucket is introduced.
+- Stop if tests require a test-taxonomy decision beyond exact imports.
+- Stop if dirty tree appears before work; do not build on unowned changes.
