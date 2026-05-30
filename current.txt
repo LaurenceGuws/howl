@@ -1,90 +1,103 @@
-# Current Slice: Move Frame Pacing Out Of Main
+# Current Slice: Delete Window C Import Bucket
 
 Owner: workspace root.
 
 Purpose:
 
-- Move host frame/present admission state out of `howl-linux-host/src/main.zig` into a window-owned
-  pacing file.
-- Keep `main.zig` as the app/event-loop dispatch owner.
-- Do not invent a scheduler or frame deadline in this slice.
+- Delete `window.c_win` as a broad SDL/OpenGL C import bucket.
+- Move production SDL/OpenGL translation to build-owned C modules.
+- Keep host/window ownership of SDL/OpenGL behavior without exporting a raw combined C namespace.
 
 ## Source Research
 
-Use `host-owner-next-scratchpad.md` Slice B and the frame-pacing research result as the sprint
+Use `host-owner-next-scratchpad.md` Slice C and the C-bucket research result as the sprint
 scratchpad.
 
 Reference findings:
 
-- Alacritty owns frame/timer topics separately from per-window event handling:
-  - `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs:24-32`
-  - `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs:43-72`
-- Alacritty `WindowContext` requests redraw only when dirty, frame-ready, and not already handling a
-  redraw event:
-  - `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs:400-494`
-- Alacritty display requests the next frame after swap:
-  - `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:1019-1046`
-- Ghostty top-level app drains explicit mailbox messages and dispatches redraw centrally:
-  - `utils/dev_references/terminals/ghostty/src/App.zig:126-132`
-  - `utils/dev_references/terminals/ghostty/src/App.zig:237-289`
-- TigerBeetle requires explicit bounded control flow, assertions, and centralized state mutation:
+- Zig 0.16 release notes move `@cImport` to build-system `b.addTranslateC` modules.
+- `howl-linux-host/build.zig` already has `translateCModule()` and build-owned Howl C imports.
+- Alacritty separates window/display ownership from renderer/GL platform ownership:
+  - `utils/dev_references/terminals/alacritty/alacritty/src/display/window.rs`
+  - `utils/dev_references/terminals/alacritty/alacritty/src/renderer/mod.rs`
+- TigerBeetle rejects broad buckets and hidden ownership:
   - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md:90-147`
-  - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md:161-184`
 
 ## Current Source Facts
 
-- `howl-linux-host/src/main.zig` currently defines `FramePacingState` inside the app/event-loop owner.
-- `App.frame_pacing` stores that state directly.
-- `computeLoopAdmission`, `runLoopTurn`, and `submitPresent` call pacing methods.
-- `PresentReason` is currently in `main.zig` and is consumed by `presentSubmissionPermission`.
-- `loopWaitMs` already accepts a `frame_pacer_wait_ms` hook, but callers pass `null`.
-- A real frame deadline requires a scheduler owner and post-swap scheduling, so it is out of scope.
+- `howl-linux-host/src/window/window.zig` still has production `@cImport` and exports it as
+  `pub const c_win = c`.
+- Current raw `window.c_win` consumers include:
+  - `window/window.zig`
+  - `window/term_texture.zig`
+  - `input/window.zig`
+  - `input/input.zig`
+  - `terminal/context.zig`
+  - `terminal/render/surface_layout.zig`
+  - `terminal/scrollbar.zig`
+  - `terminal/pty/wait_thread.zig`
+- `window/icon.zig` and stress tools still use direct `@cImport`; they are explicit non-goals.
 
 ## Source Changes
 
 Edit only:
 
-- `howl-linux-host/src/main.zig`
-- new `howl-linux-host/src/window/pacing.zig`
+- `howl-linux-host/build.zig`
+- `howl-linux-host/src/window/window.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+- `howl-linux-host/src/window/present.zig`
+- `howl-linux-host/src/window/texture.zig`
+- `howl-linux-host/src/window/draw.zig` if needed by GL namespace split
+- `howl-linux-host/src/input/window.zig`
+- `howl-linux-host/src/input/input.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/render/surface_layout.zig`
+- `howl-linux-host/src/terminal/scrollbar.zig`
+- `howl-linux-host/src/terminal/pty/wait_thread.zig`
+- new `howl-linux-host/src/window/sdl_c.h`
+- new `howl-linux-host/src/window/gl_c.h`
 
 Required shape:
 
-- Add `window/pacing.zig`.
-- Move `FramePacingState` to `window/pacing.zig` as `pub const State`.
-- Move `LoopPending` shape to `window/pacing.zig` as `pub const Pending`.
-- Move `PresentReason` to `window/pacing.zig` as `pub const PresentReason`.
-- Add a small `pub const Submission = struct { reason: PresentReason, submitted: bool };` if needed
-  so pacing does not depend on `main.zig`'s `PresentSubmission`.
-- Move pure pacing tests from `main.zig` to `window/pacing.zig`.
-- Keep broader integration tests in `main.zig`, updating type aliases only as needed.
-- Keep `derivePresentReason` in `main.zig` unless moving it would not couple `window/pacing.zig` to
-  `TerminalContext.TurnStep`.
-- Keep `PresentPlan`, `PresentSubmission`, `RenderFrame`, present submit/record/drain orchestration,
-  and loop order in `main.zig`.
+- Add build-owned translate-C modules:
+  - `sdl_c` from `src/window/sdl_c.h` containing `#include <SDL3/SDL.h>`.
+  - `gl_c` from `src/window/gl_c.h` containing `#include <SDL3/SDL_opengl.h>`.
+- Add both imports to host modules and host integration test modules.
+- Delete `pub const c_win = c` from `window/window.zig`.
+- Delete production `@cImport` from `window/window.zig`.
+- `window/window.zig` imports `sdl_c` for SDL window/clipboard/cursor/URL calls and `gl_c` if needed
+  for GL context types/constants.
+- `window/term_texture.zig`, `window/present.zig`, `window/texture.zig`, and `window/draw.zig`
+  import `gl_c` directly for GL calls/types.
+- `input/window.zig` and `input/input.zig` import `sdl_c` directly for SDL event/wake/timer/semaphore
+  calls/types.
+- Terminal files must not import a raw window C bucket. Use owner wrappers when available:
+  - `InputWindow.nowNs()` for SDL ticks.
+  - wrapper functions/types in `input/window.zig` for semaphores if needed.
 
 ## Non-Goals
 
-- Do not implement a scheduler.
-- Do not implement a real frame deadline.
+- Do not edit `window/icon.zig`.
+- Do not edit stress tools.
+- Do not change public Howl C ABI headers.
+- Do not change SDL/OpenGL behavior.
 - Do not change present token behavior.
 - Do not split terminal context.
-- Do not migrate SDL/OpenGL C imports.
-- Do not change tab slots.
+- Do not introduce new Zig wrapper modules around generated C imports beyond owner functions already
+  required by `input/window.zig`.
 - Do not introduce `manager`, `controller`, `runtime`, `flow`, `queue`, `utils`, `types`, `api`, or
   `abi` owner files.
 
 ## Invariants
 
-- `present_complete_pending` implies `present_in_flight`.
-- `frame_permit_ready == false` after a submitted present.
-- `frame_permit_ready == true` after present completion.
-- `present_in_flight == false` after present completion.
-- `renderPermission()` is false when `frame_permit_ready == false`.
-- Redraw/render work records intent, not frame permission.
-- Runtime wake prevents blocking, but does not grant render permission.
-- `.none` and `.terminal_retire` are never submit-permitted.
-- `.host_damage` and `.terminal_frame` require frame permit and no in-flight present.
-- `noteRenderSubmitted()` clears `redraw_requested`, matching current behavior.
+- No `window.c_win` export remains.
+- No terminal owner reaches through `window` for raw SDL/GL.
+- Input owner keeps bounded SDL burst behavior.
+- Time source remains SDL ticks; only access path changes.
+- Present behavior remains equivalent.
+- GL context setup remains window/present ownership.
+- GL drawing/upload remains GL ownership.
+- `window/icon.zig` remains untouched.
 
 ## Verification
 
@@ -104,12 +117,19 @@ From `/home/home/personal/projects/howl`:
 
 No matches:
 
-- `howl-linux-host/src/main.zig`: `const FramePacingState = struct`
+- `window.c_win`
+- `pub const c_win`
+- `@import("window.zig").c_win`
+- `@cImport` in `howl-linux-host/src/window/window.zig`
+
+Allowed remaining `@cImport` only in:
+
+- `howl-linux-host/src/window/icon.zig`
+- `howl-linux-host/src/stress/ascii_rain_stress.zig`
+- `howl-linux-host/src/stress/visual_rain_stress.zig`
 
 Expected:
 
-- `howl-linux-host/src/window/pacing.zig` contains:
-  - `pub const State`
-  - `pub const Pending`
-  - `pub const PresentReason`
-- No real frame deadline implementation unless a scheduler owner is introduced in a later slice.
+- `@import("sdl_c")` in SDL-owning files.
+- `@import("gl_c")` in GL-owning files.
+- `build.zig` contains translate-C entries for `sdl_c` and `gl_c`.

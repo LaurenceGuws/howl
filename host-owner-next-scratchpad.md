@@ -208,7 +208,7 @@ Grep gates:
 
 ### Slice C: Delete Window C Bucket
 
-Status: research-ready.
+Status: worker-ready.
 
 Current offending source:
 
@@ -225,9 +225,55 @@ Reference pressure:
 
 Required next research:
 
-- Decide whether to add `sdl_c` and `gl_c` translate-C modules separately or a single
-  `sdl_window_c` module is the smallest owner-true C root for SDL window + OpenGL calls.
-- Keep `window/icon.zig` and stress tools as explicit non-goals unless the slice says otherwise.
+- Research verdict: use two build-owned translated C modules, not one SDL/OpenGL bucket:
+  - `sdl_c`: `#include <SDL3/SDL.h>`.
+  - `gl_c`: `#include <SDL3/SDL_opengl.h>`.
+- Rationale:
+  - Zig 0.16 deprecates `@cImport` and moves translation to build-system modules.
+  - `build.zig` already owns `translateCModule()` for Howl C imports.
+  - A single SDL/OpenGL module would rename the current `window.c_win` bucket instead of splitting
+    owner facts.
+  - Alacritty separates display/window from renderer/GL platform ownership.
+- Current `window.c_win` consumers include:
+  - `window/window.zig`
+  - `window/term_texture.zig`
+  - `input/window.zig`
+  - `input/input.zig`
+  - `terminal/context.zig`
+  - `terminal/render/surface_layout.zig`
+  - `terminal/scrollbar.zig`
+  - `terminal/pty/wait_thread.zig`
+
+Required shape:
+
+- Add `howl-linux-host/src/window/sdl_c.h`.
+- Add `howl-linux-host/src/window/gl_c.h`.
+- Add `sdl_c` and `gl_c` translate-C modules in `howl-linux-host/build.zig`.
+- Add the imports to host modules and integration host test modules.
+- Delete `pub const c_win = c` from `window/window.zig`.
+- `window/window.zig` imports `sdl_c` and `gl_c` directly.
+- `window/term_texture.zig`, `window/present.zig`, `window/texture.zig`, and `window/draw.zig`
+  import `gl_c` where they need OpenGL.
+- `input/window.zig` and `input/input.zig` import `sdl_c`.
+- Terminal files must not reach through `window.c_win`; prefer `InputWindow.nowNs()` or explicit
+  SDL wrapper functions/types from `input/window.zig` where needed.
+- Keep `window/icon.zig` and stress tools as non-goals.
+
+Verification:
+
+- `howl-linux-host`: `zig build check`, `zig build test`, `git diff --check`.
+- root: `zig build check`, `zig build test`, `git diff --check`.
+
+Grep gates:
+
+- No `window.c_win`.
+- No `pub const c_win`.
+- No `@import("window.zig").c_win`.
+- No `@cImport` in `howl-linux-host/src/window/window.zig`.
+- Remaining `@cImport` only in explicit non-goals:
+  - `howl-linux-host/src/window/icon.zig`
+  - `howl-linux-host/src/stress/ascii_rain_stress.zig`
+  - `howl-linux-host/src/stress/visual_rain_stress.zig`
 
 ### Slice D: Split Terminal Context Host Selection/Link Owners
 
