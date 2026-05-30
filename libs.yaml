@@ -224,10 +224,17 @@ howl-render:
     - render_surface_contracts
     - text_shaping
   owners:
-    ffi: howl-render/src/ffi.zig
-    text_session: howl-render/src/text_session.zig
+    ffi:
+      c_import: howl-render/src/ffi.zig
+      owners:
+        text_session: howl-render/src/ffi/text_session.zig
+        surface_geometry: howl-render/src/ffi/surface_geometry.zig
+        vt_surface: howl-render/src/ffi/vt_surface.zig
+        prepared_surface: howl-render/src/ffi/prepared_surface.zig
+        prepare_request: howl-render/src/ffi/prepare_request.zig
+        submission: howl-render/src/ffi/submission.zig
+        work_state: howl-render/src/ffi/work_state.zig
     handle: howl-render/src/handle.zig
-    work_state: howl-render/src/work_state.zig
     source:
       owners:
         vt: howl-render/src/source/vt.zig
