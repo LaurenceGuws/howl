@@ -380,8 +380,8 @@ Accepted plan:
   status, and FFI translation proofs.
 - `test:integration` owns cross-package embedding behavior through shipped ABIs,
   primarily in hosts.
-- `test:regression`, `fuzz`, `stress`, and `benchmark` are explicit named
-  surfaces, not substitutes for deterministic `check` or `test`.
+- `simulate`, `stress`, and `benchmark` are explicit named surfaces, not
+  substitutes for deterministic `check` or `test`.
 - First accepted implementation slice normalized render `test:unit` and
   `test:abi` categories without product-code or test assertion changes.
 - Accepted execution queue after render category normalization:
@@ -389,10 +389,11 @@ Accepted plan:
   2. Normalize render `test:build`/`check` compile-only category coverage.
   3. Inventory host `main.zig` app-owner tests before moving any helper/test pair.
   4. Decide the owner for durable audit/grep gates before adding executable checks.
-- VT regression gate policy decision: `test:regression` remains an explicit named proof surface and is
-  not part of canonical `test` today. The regression roots are deterministic and bounded by fixed
-  seeds, op counts, and dimensions, but `zig build test:regression` exceeded the ordinary 120s review
-  budget, so moving it into `test` would make canonical validation too slow without a separate slow
-  test policy or reduced scenario cost.
+- VT regression bucket decision: `test:regression` is deleted. Snapshot behavior
+  tests remain ordinary unit tests; seeded protocol and scrollback churn now live
+  under the explicit `simulate` surface.
+- Test-war correction: VT simulation naming is fixed, but `zig build simulate`
+  currently exposes a parser assertion failure. Treat `simulate:build` as the
+  compile gate and the failing run as the next simulation accountability bug.
 - Render `test:build` now aggregates `test:unit:build` and `test:abi:build`; render `check` keeps
   depending on `test:build` for compile-only deterministic test coverage.

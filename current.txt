@@ -1,12 +1,15 @@
-# Current Slice: Normalize Render Test Build Coverage
+# Current Slice: Root Truth Reset
 
-Owner: `howl-render`.
+Owner: workspace root docs/current truth.
 
 Purpose:
 
-- Make render `test:build` compile the split test categories rather than the old combined root.
-- Keep `check` depending on package-local compile-only test coverage.
-- Preserve test run behavior and product code exactly.
+- Stop root docs and current slice state from advertising deleted root/VT
+  `test:regression` steps.
+- Mark stale build/test plans as superseded where they describe old source.
+- Record that VT deterministic workload generation is named `simulate`, and
+  that `zig build simulate` currently exposes a parser assertion failure.
+- Do not touch package code in this slice.
 
 ## Source Research
 
@@ -14,53 +17,64 @@ Read before editing:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+- `research/2026-05-30-test-war/offender-inventory.md`
+- `project-memory.md`
+- `build-test-architecture-spec.md`
+- `build-test-verification-ledger.md`
 - `research/2026-05-30-hygiene-audit/build-test-architecture-plan.md`
-- `research/2026-05-30-hygiene-audit/render-test-build-coverage.md`
-- `howl-render/build.zig`
-- `howl-pty/build.zig`
-- `howl-vt/build.zig`
+- `research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
+- `research/2026-05-30-hygiene-audit/vt-regression-bucket-removal.md`
 
 ## Source Changes
 
 Exact files:
 
-- `howl-render/build.zig`
+- `current.txt`
+- `project-memory.md`
+- `build-test-architecture-spec.md`
+- `build-test-verification-ledger.md`
+- `research/2026-05-30-hygiene-audit/build-test-architecture-plan.md`
+- `research/2026-05-30-hygiene-audit/vt-regression-gate-policy.md`
+- `research/2026-05-30-hygiene-audit/vt-regression-bucket-removal.md`
+- Root `build.zig` only if needed to keep already-present removal of stale
+  root `test:regression` mapping true.
 
 ## Required Shape
 
-- Keep render `test:build` as a package-local aggregate.
-- Make `test:build` depend on `test:unit:build` and `test:abi:build`.
-- Keep `check` depending on `test:build`.
+- Root docs do not actively claim root or VT `test:regression` exists.
+- Stale plans that mention old source are explicitly superseded or historical.
+- Current memory records VT `simulate` as deterministic simulation/replay work.
+- The failing `simulate` run is recorded as follow-up bug evidence, not hidden.
 
 ## Non-Goals
 
-- Do not change render product code.
-- Do not change test bodies or assertions.
-- Do not change C headers or exported symbols.
-- Do not remove the old combined `test-render` root in this slice.
+- Do not change package code.
+- Do not fix the VT simulation assertion failure in this slice.
+- Do not delete historical scratchpads.
 
 ## Invariants
 
-- `howl-render` `zig build test:build` builds unit and ABI category roots.
-- `howl-render` `zig build check` still builds the shipped C ABI library and compile-only proof targets.
-- Root `zig build check` still passes.
+- Workspace root remains orchestration and audit only.
+- Package owners still own their build/test surfaces.
+- `current.txt` names exactly this root-truth slice until the next slice is
+  promoted.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
 - `zig build check`
-- from `howl-render`: `zig build test:build`
-- from `howl-render`: `zig build test:unit:build`
-- from `howl-render`: `zig build test:abi:build`
+- `zig build test`
 - `git diff --check`
 
 ## Grep Gates
 
-- `rg 'test_build_step\.dependOn|test_unit_build_step|test_abi_build_step|check_step\.dependOn' howl-render/build.zig`
-- `rg 'test_build_step\.dependOn\(&tests\.step\)' howl-render/build.zig` prints nothing.
+- `rg 'test:regression' build.zig *.md research/2026-05-30-hygiene-audit/*.md research/2026-05-30-test-war/*.md`
+  has no active root/VT existence claims outside superseded or historical docs.
+- `rg 'simulate|simulation' project-memory.md build-test-verification-ledger.md build-test-architecture-spec.md`
+  records the VT surface and the failing run follow-up.
 
 ## Stop Conditions
 
-- Stop if `test:build` cannot build both category roots without changing product code.
-- Stop if the old combined root is required for coverage not represented by `test:unit` or `test:abi`.
+- Stop if cleanup requires changing package code.
+- Stop if fixing the simulation workload assertion failure becomes necessary.

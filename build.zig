@@ -48,12 +48,8 @@ const test_integration_mappings = [_]Mapping{
     .{ .package_dir = "howl-linux-host", .step_name = "test:integration" },
 };
 
-const test_regression_mappings = [_]Mapping{
-    .{ .package_dir = "howl-vt", .step_name = "test:regression" },
-};
-
-const fuzz_mappings = [_]Mapping{
-    .{ .package_dir = "howl-vt", .step_name = "fuzz" },
+const simulate_mappings = [_]Mapping{
+    .{ .package_dir = "howl-vt", .step_name = "simulate" },
 };
 
 const stress_mappings = [_]Mapping{
@@ -74,8 +70,7 @@ const root_aggregates = [_]RootAggregate{
     .{ .name = "test:unit", .description = "Run package unit proofs across the workspace", .mappings = &test_unit_mappings },
     .{ .name = "test:abi", .description = "Run product-package ABI proofs across the workspace", .mappings = &test_abi_mappings },
     .{ .name = "test:integration", .description = "Run host-owned ABI seam integration proofs across the workspace", .mappings = &test_integration_mappings },
-    .{ .name = "test:regression", .description = "Run currently exposed package regression proofs across the workspace", .mappings = &test_regression_mappings },
-    .{ .name = "fuzz", .description = "Run currently exposed package fuzz surfaces across the workspace", .mappings = &fuzz_mappings },
+    .{ .name = "simulate", .description = "Run deterministic package simulation workloads across the workspace", .mappings = &simulate_mappings },
     .{ .name = "stress", .description = "Run currently exposed named package stress surfaces across the workspace", .mappings = &stress_mappings },
     .{ .name = "benchmark", .description = "Run currently exposed named package benchmarks across the workspace", .mappings = &benchmark_mappings },
 };

@@ -1,5 +1,10 @@
 # Build/Test Architecture Plan
 
+Superseded for current source truth by `project-memory.md` and
+`build-test-verification-ledger.md` after the 2026-05-30 test-war audit. This
+file is historical planning context. Its root/VT `test:regression` inventory and
+later-slice plan describe deleted source and must not seed new work.
+
 Date: 2026-05-30
 
 Owner: workspace root.

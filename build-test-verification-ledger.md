@@ -4,8 +4,16 @@ Owner: workspace root.
 
 Purpose:
 
-- Record the current repository state for build, run, test, fuzz, stress, benchmark, FFI, and install surfaces.
+- Record the current repository state for build, run, test, simulation, stress, benchmark, FFI, and install surfaces.
 - Audit that current state against `build-test-architecture-spec.md` without proposing migration work in this document.
+
+Current correction:
+
+- This ledger supersedes earlier root/VT `test:regression` entries. The workspace
+  root and VT package no longer expose an active `test:regression` step.
+- VT deterministic workload generation is now named `simulate`. The run step
+  currently exposes a parser assertion failure during simulation; `simulate:build`
+  remains the non-running compile gate.
 
 ## Governing Inputs
 
@@ -50,12 +58,11 @@ Purpose:
 | Entry | Owner | Root file | Install behavior today | Run behavior today | Current classification | Target classification | Proof statement or proof gap |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Plain `zig build` / root `check` | workspace root | `build.zig` aggregate over package `check` steps | No root-owned install behavior | Runs no root-owned executable | Root orchestration aggregate | `check` | Concrete proof: the root depends only on `howl-pty:check`, `howl-vt:check`, `howl-render:check`, and `howl-linux-host:check`, preserving package ownership and ABI seams. |
-| `test` | workspace root | Aggregate over package `test` steps | No root-owned install behavior | Runs package-local routine `test` surfaces only | Root orchestration aggregate | `test` | Concrete proof: the root maps directly to `howl-pty:test`, `howl-vt:test`, `howl-render:test`, and `howl-linux-host:test`; regression, fuzz, stress, and benchmark surfaces remain explicit root steps. |
+| `test` | workspace root | Aggregate over package `test` steps | No root-owned install behavior | Runs package-local routine `test` surfaces only | Root orchestration aggregate | `test` | Concrete proof: the root maps directly to `howl-pty:test`, `howl-vt:test`, `howl-render:test`, and `howl-linux-host:test`; simulation, stress, and benchmark surfaces remain explicit root steps. |
 | `test:unit` | workspace root | Aggregate over package `test:unit` steps | No root-owned install behavior | Runs package-local unit surfaces only | Root orchestration aggregate | `test:unit` | Concrete proof: the root maps directly to the four package `test:unit` steps and therefore stays owner-local in meaning. |
 | `test:abi` | workspace root | Aggregate over product-package `test:abi` steps | No root-owned install behavior | Runs product-package ABI proofs only | Root orchestration aggregate | `test:abi` | Concrete proof: the root maps directly to `howl-pty:test:abi`, `howl-vt:test:abi`, and `howl-render:test:abi`; the host is absent because it does not own a shipped product ABI. |
 | `test:integration` | workspace root | Aggregate over host `test:integration` only | No root-owned install behavior | Runs host-owned integration proof only | Root orchestration aggregate | `test:integration` | Concrete proof: the root maps only to `howl-linux-host:test:integration`, which is the package that owns cross-package ABI-seam proof. |
-| `test:regression` | workspace root | Aggregate over `howl-vt:test:regression` only | No root-owned install behavior | Runs one package-local regression surface | Root orchestration aggregate | `test:regression` | Honest proof gap: the root aggregate is intentionally partial today because only `howl-vt` exposes a canonical `test:regression` step. |
-| `fuzz` | workspace root | Aggregate over `howl-vt:fuzz` only | No root-owned install behavior | Runs one package-local fuzz surface | Root orchestration aggregate | `fuzz` | Honest proof gap: the root aggregate is intentionally partial today because only `howl-vt` exposes a canonical `fuzz` step. |
+| `simulate` | workspace root | Aggregate over `howl-vt:simulate` only | No root-owned install behavior | Runs one package-local deterministic simulation surface | Root orchestration aggregate | `simulate` | Concrete proof: root aggregates only the VT-owned deterministic simulation run step. Current proof gap: the run exposes a parser assertion failure and must be fixed before treating simulation as green evidence. |
 | `stress` | workspace root | Aggregate over host named stress steps | No root-owned install behavior | Runs `howl-linux-host:stress:rain`, `stress:rain:ascii`, `stress:rain:mixed`, and `stress:rain:visual` | Root orchestration aggregate | Aggregate `stress` over canonical named steps | Concrete proof: the root exposes no invented stress behavior; it only aggregates existing canonical named host stress steps. |
 | `benchmark` | workspace root | Aggregate over named benchmark steps | No root-owned install behavior | Runs `howl-vt:benchmark:m7_baseline` and `howl-render:benchmark:render` | Root orchestration aggregate | Aggregate `benchmark` over canonical named steps | Concrete proof: the root exposes no invented benchmark behavior; it only aggregates existing canonical named package benchmark steps. |
 
@@ -96,7 +103,7 @@ Purpose:
 
 - `howl-vt/build.zig` does not override `b.default_step`, so plain `zig build` is the package install step.
 - Today plain `zig build` installs the dynamic library artifact `howl_vt` and the public header `include/howl_vt.h` (`howl-vt/build.zig:60-68`).
-- Today plain `zig build` does not run tests, fuzzers, or the benchmark.
+- Today plain `zig build` does not run tests, simulations, or the benchmark.
 
 ### Ledger
 
@@ -106,17 +113,14 @@ Purpose:
 | Shipped ABI library artifact `howl_vt` | `howl-vt` | `src/libhowl_vt.zig` | Installed by plain `zig build`; also installed again by `ffi:build` (`build.zig:60-68`) | No run behavior | Product artifact | Product `install` artifact | Concrete proof: root exports the VT C ABI entrypoints such as terminal lifecycle, feed, surface copy, selection, graphics, runtime progress, and input encoders (`src/libhowl_vt.zig:3-37`). |
 | Shipped ABI header `include/howl_vt.h` | `howl-vt` | `include/howl_vt.h` | Installed by plain `zig build` through `b.installFile()` (`build.zig:68`) | No run behavior | Product artifact | Product `install` artifact | Concrete proof: header declares the public VT handle, surface, selection, graphics, and input ABI. |
 | `ffi:build` | `howl-vt` | `src/libhowl_vt.zig` | Installs the same dynamic library artifact via `addInstallArtifact()` (`build.zig:65-67`) | Does not run anything | FFI build step with install behavior | No accepted canonical public step family | Mismatch: current step name says build, but behavior is install. The canonical contract does not accept `ffi:build` as a public step family. |
-| `test` | `howl-vt` | Aggregate over `test:abi` and `test:unit` | No install wiring of its own | Runs the VT ABI and unit suites only | Routine aggregate test step | `test` | Concrete proof: the public aggregate now avoids VT regression and fuzz execution; expensive bug-history proof is explicit under `test:regression`. |
+| `test` | `howl-vt` | Aggregate over `test:abi` and `test:unit` | No install wiring of its own | Runs the VT ABI and unit suites only | Routine aggregate test step | `test` | Concrete proof: the public aggregate avoids simulation execution; snapshot behavior lives in unit tests. |
 | `test:unit` | `howl-vt` | `src/howl_vt.zig` | No install wiring of its own | Runs the `test-unit` Zig test binary (`build.zig:34-50`) | Large owner-local correctness suite under a unit label | Split target is `test:unit`, plus any ABI-specific assertions should live under `test:abi` | Mismatch: `src/howl_vt.zig` still imports `ffi` directly (`src/howl_vt.zig:16-35`), so the current unit step mixes owner-local tests with FFI/ABI-flavored coverage. Regression-flavored coverage has been moved out. |
 | `test:unit:build` | `howl-vt` | `src/howl_vt.zig` | Installs the `test-unit` test binary via `addInstallArtifact()` (`build.zig:47-49`) | Does not run it | Build-only mirror in name, install step in behavior | `test:unit:build` | Mismatch: current step is named as build-only, but today it installs the test artifact. |
 | Unit test root `test-unit` | `howl-vt` | `src/howl_vt.zig` | Installed only when `test:unit:build` is invoked | Run by `test:unit` | Mixed owner-local test root | Primary target is `test:unit`; some imported coverage wants `test:abi` classification | Concrete proof: root imports parser, screen, selection, terminal, and multiple test modules such as terminal graphics/end-to-end behavior; it also imports `ffi` (`src/howl_vt.zig:1-35`). |
-| `test:regression` | `howl-vt` | Aggregate over `src/test_regression_snapshot.zig` and `src/test/scrollback_regression.zig` | No install wiring of its own | Runs the VT regression Zig test binaries | Regression test surface | `test:regression` | Concrete proof: the step explicitly aggregates VT bug-history proofs such as snapshot regression and deterministic scrollback churn, keeping them out of routine `test`. |
-| `test:regression:build` | `howl-vt` | `src/test/scrollback_regression.zig` | Installs the regression test binary via `addInstallArtifact()` (`build.zig:88-90`) | Does not run it | Build-only mirror in name, install step in behavior | `test:regression:build` | Mismatch: current step is named as build-only, but today it installs the test artifact. |
-| Regression test roots | `howl-vt` | `src/test_regression_snapshot.zig` and `src/test/scrollback_regression.zig` | Installed only when `test:regression:build` is invoked | Run by `test:regression` | Regression | `test:regression` | Concrete proof: snapshot regression uses the normal VT module graph, while scrollback regression imports the shared scrollback helper under `scrollback_verifier`; both replay explicit regression scenarios only. |
-| `fuzz` | `howl-vt` | `src/fuzz/fuzz_tests.zig` | No install wiring of its own | Runs `howl_vt_fuzz` with forwarded `b.args` | Fuzz surface | `fuzz` | Concrete proof: root explicitly states that it searches VT-owned protocol and scrollback churn state space for invariant violations and is fuzz evidence rather than unit or regression proof. |
-| `fuzz:build` | `howl-vt` | `src/fuzz/fuzz_tests.zig` | Installs the `howl_vt_fuzz` executable via `addInstallArtifact()` (`build.zig:105-107`) | Does not run it | Build-only mirror in name, install step in behavior | `fuzz:build` | Mismatch: current step is named as build-only, but today it installs the fuzz executable. |
-| Fuzz executable `howl_vt_fuzz` | `howl-vt` | `src/fuzz/fuzz_tests.zig` | Installed only when `fuzz:build` is invoked | Run by `fuzz` | Fuzz executable root | `fuzz` / `fuzz:build` pair | Concrete proof: root exposes CLI-selected `smoke`, `protocol`, and `scrollback` fuzz search modes and keeps them under one fuzz-only surface. |
-| Shared scrollback verification helper | `howl-vt` | `src/fuzz/scrollback.zig` | Never installed directly | Not runnable directly; imported by `fuzz` and `test:regression` roots | Shared VT-owned verification helper | Shared helper for `fuzz` and `test:regression` only | Concrete proof: file now states one purpose explicitly: provide seeded scrollback churn helpers that fuzz uses for search and regression uses for deterministic replay with preservation claims. |
+| `simulate` | `howl-vt` | `src/simulation/main.zig` | No install wiring of its own | Runs `howl_vt_simulate` with forwarded `b.args` | Deterministic simulation/replay surface | `simulate` | Proof gap: current run exposes a parser assertion failure. The surface is correctly named but not yet green evidence. |
+| `simulate:build` | `howl-vt` | `src/simulation/main.zig` | No install wiring of its own | Does not run it | Build-only mirror | `simulate:build` | Concrete proof: compiles the deterministic simulation executable without running the workload. |
+| Simulation executable `howl_vt_simulate` | `howl-vt` | `src/simulation/main.zig` | No install wiring | Run by `simulate` | Simulation executable root | `simulate` / `simulate:build` pair | Concrete proof: root exposes CLI-selected `smoke`, `protocol`, and `scrollback` deterministic workload modes. |
+| Shared scrollback simulation helper | `howl-vt` | `src/simulation/scrollback.zig` | Never installed directly | Not runnable directly; imported by `simulate` | VT-owned deterministic workload helper | Shared helper for `simulate` only | Concrete proof: file provides seeded scrollback churn helpers for deterministic simulation. |
 | `benchmark:m7_baseline` | `howl-vt` | `src/terminal_benchmark_main.zig` | No install wiring | Runs the benchmark executable with forwarded `b.args` (`build.zig:145-159`) | Benchmark run surface | `benchmark:<name>` | Concrete proof: public step now uses canonical benchmark naming and runs a measurement-only VT-owned surface. |
 | `benchmark:m7_baseline:build` | `howl-vt` | `src/terminal_benchmark_main.zig` | No install wiring | Does not run it | Benchmark build surface | `benchmark:<name>:build` | Concrete proof: public step now compiles the VT benchmark executable without mixing benchmark work into test/proof language. |
 | Benchmark executable `m7_baseline` | `howl-vt` | `src/terminal_benchmark_main.zig` delegating to `src/test/terminal_benchmark.zig` | No install wiring | Run by `benchmark:m7_baseline` | Benchmark executable root | `benchmark:<name>` with matching `:build` mirror | Concrete proof: root delegates to benchmark main, which measures throughput and allocation behavior over replay and synthetic fixtures (`terminal_benchmark_main.zig:1-6`; `test/terminal_benchmark.zig:1-712`). |
@@ -198,7 +202,7 @@ Purpose:
 ### Repeated Mismatches Against The Canonical Contract
 
 - `howl-render` still exposes non-canonical `test:render` and `test:render:build` public step names.
-- `howl-vt` `test:unit` remains broader than its label because the root imports FFI coverage, but regression-flavored modules have been moved to `test:regression`.
+- `howl-vt` `test:unit` remains broader than its label because the root imports FFI coverage; broad regression-flavored modules were deleted or kept under simulation ownership.
 
 ### Proof Gaps Worth Preserving In Review
 

@@ -41,7 +41,7 @@ Purpose:
 - In `howl-pty`, `howl-vt`, and `howl-render`, plain `zig build` means `install`.
 - In those packages, `install` installs shipped product artifacts only.
 - In those packages, shipped product artifacts means the package's supported C ABI deliverables such as libraries, headers, and other ABI-facing install outputs required for embedding.
-- In those packages, plain `zig build` must not implicitly run test, fuzz, stress, or benchmark surfaces.
+- In those packages, plain `zig build` must not implicitly run test, simulation, stress, or benchmark surfaces.
 
 ### Host Harness Package
 
@@ -72,12 +72,11 @@ Purpose:
 | Root step | Stable package mapping | Explicit proof statement |
 | --- | --- | --- |
 | `check` | `howl-pty:check`, `howl-vt:check`, `howl-render:check`, `howl-linux-host:check` | Proves only that each package's canonical non-running audit/build surface compiles from the workspace root; it is not runtime proof and does not create a root install or run path. |
-| `test` | `howl-pty:test`, `howl-vt:test`, `howl-render:test`, `howl-linux-host:test` | Proves only the routine package-local test aggregate currently exposed by each package. It must not run regression, fuzz, stress, or benchmark surfaces; those remain explicit root steps. |
+| `test` | `howl-pty:test`, `howl-vt:test`, `howl-render:test`, `howl-linux-host:test` | Proves only the routine package-local test aggregate currently exposed by each package. It must not run simulation, stress, or benchmark surfaces; those remain explicit root steps. |
 | `test:unit` | `howl-pty:test:unit`, `howl-vt:test:unit`, `howl-render:test:unit`, `howl-linux-host:test:unit` | Proves owner-local logic surfaces only, by delegating directly to each package's unit step. |
 | `test:abi` | `howl-pty:test:abi`, `howl-vt:test:abi`, `howl-render:test:abi` | Proves the shipped product-package C ABI contracts only. The host package is intentionally absent because it does not own a shipped product ABI. |
 | `test:integration` | `howl-linux-host:test:integration` | Proves currently exposed cross-package behavior through shipped ABI seams only where the host harness owns that integration proof. |
-| `test:regression` | `howl-vt:test:regression` | Proves only the currently exposed regression suite at the workspace root. Absence of other package mappings is an explicit proof gap, not an implied alias or fallback. |
-| `fuzz` | `howl-vt:fuzz` | Runs only the currently exposed fuzz search surface. This is complementary evidence, not correctness proof for packages that do not expose fuzz here. |
+| `simulate` | `howl-vt:simulate` | Runs only the currently exposed deterministic simulation workload. This is replayable evidence, not a substitute for owner-local unit and ABI proof. |
 | `stress` | `howl-linux-host:stress:rain`, `howl-linux-host:stress:rain:ascii`, `howl-linux-host:stress:rain:mixed`, `howl-linux-host:stress:rain:visual` | Runs only the currently exposed named stress harnesses. The root aggregate is a convenience auditor over named stress surfaces, not a new verification category. |
 | `benchmark` | `howl-vt:benchmark:m7_baseline`, `howl-render:benchmark:render` | Runs only the currently exposed named benchmarks. The root aggregate is measurement orchestration only and never proof of correctness. |
 
@@ -90,28 +89,26 @@ Only the following public step families are accepted.
 - `install`: install shipped product artifacts for product packages, or explicit dev-only harness artifacts for a harness package.
 - `check`: compile or audit the default supported owner surfaces without running long-lived or measurement workloads.
 - `run`: manually execute a runnable harness or tool.
-- `test`: aggregate routine test families only; it must not include regression, fuzz, stress, or benchmark workloads.
+- `test`: aggregate routine test families only; it must not include simulation, stress, or benchmark workloads.
 
 ### Test Families
 
 - `test:unit`: run owner-local logic tests.
 - `test:abi`: run tests that prove the shipped C ABI contract.
 - `test:integration`: run cross-package behavior through the shipped ABI seam.
-- `test:regression`: run targeted bug-history or expensive correctness suites.
 
 ### Build-Only Mirrors For Test Families
 
 - `test:unit:build`
 - `test:abi:build`
 - `test:integration:build`
-- `test:regression:build`
 
 These steps compile the surface without running it.
 
-### Fuzz
+### Simulation
 
-- `fuzz`: run fuzz surfaces.
-- `fuzz:build`: compile fuzz surfaces without running them.
+- `simulate`: run deterministic simulation workloads.
+- `simulate:build`: compile deterministic simulation workloads without running them.
 
 ### Stress
 
@@ -163,10 +160,11 @@ Only the following verification categories are accepted.
 - Proves a known correctness risk, bug history, or expensive scenario that should stay outside routine unit coverage.
 - Is still correctness proof, not measurement.
 
-### `fuzz`
+### `simulation`
 
-- Searches for bugs by generating varied inputs.
+- Exercises deterministic workload generation with replayable seeds.
 - Is complementary evidence, not a substitute for assertions or explicit proof statements.
+- Any discovered failure must promote to a named deterministic scenario or exact owner test.
 
 ### `stress`
 
@@ -184,21 +182,21 @@ Only the following verification categories are accepted.
 
 - Owns `unit` verification for PTY variants, child I/O, resize delivery, control signals, and transport state.
 - Owns `abi` verification for the PTY C ABI it ships.
-- May own `regression`, `fuzz`, `stress`, and `benchmark` surfaces only when they test PTY-owned behavior.
+- May own `simulation`, `stress`, and `benchmark` surfaces only when they test PTY-owned behavior.
 - Does not own cross-package host/runtime integration proof.
 
 ### `howl-vt`
 
 - Owns `unit` verification for parser state, terminal state, selection, input encoding, and VT-surface truth.
 - Owns `abi` verification for the VT C ABI it ships.
-- May own `regression`, `fuzz`, `stress`, and `benchmark` surfaces only when they test VT-owned behavior.
+- May own `simulation`, `stress`, and `benchmark` surfaces only when they test VT-owned behavior.
 - Does not own cross-package host/runtime integration proof.
 
 ### `howl-render`
 
 - Owns `unit` verification for render contracts, geometry policy, retained-frame state, prepare/submit scheduling, render-surface contracts, and text shaping.
 - Owns `abi` verification for the render C ABI it ships.
-- May own `regression`, `fuzz`, `stress`, and `benchmark` surfaces only when they test render-owned behavior.
+- May own `simulation`, `stress`, and `benchmark` surfaces only when they test render-owned behavior.
 - Does not own cross-package host/runtime integration proof.
 
 ### `howl-linux-host`
@@ -223,7 +221,7 @@ Only the following verification categories are accepted.
 
 ### Dev-Only Artifacts
 
-- Dev-only artifacts include host harness binaries, test binaries, regression harnesses, fuzzers, stress harnesses, benchmarks, helper tools, and build-only mirrors.
+- Dev-only artifacts include host harness binaries, test binaries, simulation harnesses, stress harnesses, benchmarks, helper tools, and build-only mirrors.
 - Dev-only artifacts must not be installed as product artifacts.
 - A `:build` step exists to compile a dev surface without implying install or proof.
 

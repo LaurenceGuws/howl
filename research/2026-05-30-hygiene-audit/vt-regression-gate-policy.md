@@ -1,5 +1,9 @@
 # VT Regression Gate Policy
 
+Superseded by `research/2026-05-30-hygiene-audit/vt-regression-bucket-removal.md`.
+The accepted current decision deletes the broad regression bucket. This file is
+historical only; its claims that root or VT `test:regression` exists are stale.
+
 Date: 2026-05-30
 
 Owner: `howl-vt` and workspace root.
