@@ -1,12 +1,12 @@
-# Current Slice: Extract Host Cursor Blink Owner
+# Current Slice: Move Render Prepared Buffer Owner
 
-Owner: `howl-linux-host`.
+Owner: `howl-render`.
 
 Purpose:
 
-- Move host cursor blink cadence state and pure deadline/phase policy out of terminal `Context`.
-- Keep VT cursor blink truth VT-owned and render visibility application behind existing context/term calls.
-- Preserve host wake/present cadence, render-turn sequencing, input behavior, and C ABI usage.
+- Move prepared output pixel composition out of the stale `surface/*` bucket.
+- Preserve prepared surface buffer behavior exactly.
+- Do not move prepared handle lifecycle, source adaptation, token contracts, geometry, or FFI behavior.
 
 ## Source Research
 
@@ -14,47 +14,33 @@ Read before editing:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-- `research/2026-05-30-hygiene-audit/host-admission-gate.md`
-- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 5.2
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/vt/surface.zig`
-- `howl-linux-host/src/terminal/vt/retained.zig`
-- `howl-linux-host/src/main.zig` cursor blink wait call sites
+- `research/2026-05-30-hygiene-audit/render-surface-taxonomy.md`
+- `howl-render/src/surface/buffer.zig`
+- `howl-render/src/surface/prepared_owner.zig`
+- `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- `howl-linux-host/src/terminal/context.zig`
-- Add `howl-linux-host/src/terminal/cursor_blink.zig`
-- `libs.yaml` if owner metadata should record the new host owner
-
-Exact movement:
-
-- Move `cursor_blink_interval_ms`, `cursor_blink_interval_ns`, `CursorBlinkPlan`,
-  `nextCursorBlinkDeadline`, `cursorBlinkWaitMs`, and `planCursorBlink` into `cursor_blink.zig`.
-- Replace `Context.cursor_blink_visible` and `Context.cursor_blink_deadline_ns` with one
-  `cursor_blink: cursor_blink.State` field.
-- Keep `Context.syncCursorBlinkCadence`, `resetCursorBlinkActivity`, and
-  `nextCursorBlinkWaitMs` as context methods because they read VT truth and call render.
+- Move `howl-render/src/surface/buffer.zig` to `howl-render/src/prepared/buffer.zig`.
+- Update `howl-render/src/surface/prepared_owner.zig` import.
+- Update `libs.yaml` owner metadata.
 
 ## Non-Goals
 
-- Do not move render turn sequencing.
-- Do not move VT runtime obligation adaptation.
-- Do not move input drains, clipboard policy, link hover, selection, or PTY progress.
-- Do not change cursor blink interval or visible/deadline behavior.
-- Do not change host wake/present cadence.
-- Do not introduce manager, controller, runtime, `types.zig`, `api.zig`, or `abi.zig`.
+- Do not move `prepared_owner.zig` in this slice.
+- Do not move `tokens.zig`, `publication_source.zig`, `input.zig`, `geometry.zig`, `clip_rect.zig`, or `rgba.zig`.
+- Do not change prepared surface composition behavior.
+- Do not alter C ABI or FFI behavior.
+- Do not add compatibility aliases or umbrella replacement buckets.
 
 ## Invariants
 
-- Host owns blink cadence; VT owns cursor visible/blink truth.
-- `State.resetActivity(now_ns)` sets the next deadline to `now_ns + interval` and makes blink visible.
-- Non-animated cursor returns no wait and forces visible state.
-- Animated cursor with no deadline starts a deadline without toggling visibility.
-- Expired deadlines toggle visibility and advance by fixed intervals until after `now_ns`.
-- Context remains responsible for applying render cursor blink visibility through render C ABI.
+- `prepared/buffer.zig` owns prepared RGBA output realization only.
+- Existing `prepared_owner.zig` remains the prepared-handle lifecycle owner until a later slice.
+- `surface/buffer.zig` no longer exists.
+- No imports refer to `surface/buffer.zig`.
 
 ## Verification
 
@@ -66,10 +52,10 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'cursor_blink_deadline_ns|cursor_blink_visible|cursor_blink_interval|planCursorBlink|cursorBlinkWaitMs|nextCursorBlinkDeadline' howl-linux-host/src/terminal/context.zig howl-linux-host/src/terminal/cursor_blink.zig`
-- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-linux-host/src/terminal/context.zig howl-linux-host/src/terminal/cursor_blink.zig` prints nothing relevant to this slice.
+- `rg 'surface/buffer\.zig|@import\("buffer\.zig"\)' howl-render/src libs.yaml` shows no stale surface buffer import/path.
+- `rg 'manager|controller|runtime|types\.zig|api\.zig|abi\.zig' howl-render/src/prepared/buffer.zig howl-render/src/surface/prepared_owner.zig` prints nothing relevant to this slice.
 
 ## Stop Conditions
 
-- Stop if extraction requires moving event-loop, render-turn, PTY, VT runtime obligation, input, clipboard, link, or selection policy.
-- Stop if tests require changing cursor blink semantics instead of preserving owner shape.
+- Stop if moving `buffer.zig` requires moving prepared-owner lifecycle or submit/session behavior.
+- Stop if import rewiring changes behavior or exposes a broader taxonomy decision.
