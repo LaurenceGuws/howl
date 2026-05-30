@@ -1,12 +1,12 @@
-# Current Slice: Move Render Prepared Surface Translator
+# Current Slice: Move Render Submission Translator
 
 Owner: workspace root.
 
 Purpose:
 
-- Continue the accepted `howl-render` C translator lane.
-- Move only `prepared_surface.zig` from the render root into `src/ffi/`.
-- Preserve prepared-surface handle behavior, diagnostics/info/buffer conversion, and prepare-handle token use exactly.
+- Finish the accepted `howl-render` C translator lane for current root ABI translators.
+- Move only `submission.zig` from the render root into `src/ffi/`.
+- Preserve prepared publication, submit-decision, submit-handle, token conversion, and submit-result behavior exactly.
 
 ## Source Research
 
@@ -16,53 +16,52 @@ Use:
 - `howl-render/design.md`
 - `howl-render/include/howl_render.h`
 - `howl-render/src/libhowl_render.zig`
-- `howl-render/src/prepared_surface.zig`
-- `howl-render/src/ffi/prepare_request.zig`
+- `howl-render/src/submission.zig`
 - `howl-render/src/submit_result.zig`
 - `howl-render/src/test/ffi.zig`
 - `howl-render/src/surface/prepared_owner.zig`
+- `howl-render/src/surface/tokens.zig`
 
 ## Source Changes
 
 Edit only:
 
 - `howl-render/src/libhowl_render.zig`
-- `howl-render/src/prepared_surface.zig`
-- `howl-render/src/ffi/prepared_surface.zig`
+- `howl-render/src/submission.zig`
+- `howl-render/src/ffi/submission.zig`
 - `howl-render/src/test/ffi.zig`
 
-Do not edit any other file unless the build exposes a direct `prepared_surface.zig` import missed by this slice.
+Do not edit any other file unless the build exposes a direct `submission.zig` import missed by this slice.
 If that happens, stop and report the exact import before broadening scope.
 
 ## Required Shape
 
-- Move `howl-render/src/prepared_surface.zig` to `howl-render/src/ffi/prepared_surface.zig`.
-- Update `libhowl_render.zig` to import the moved translator from `ffi/prepared_surface.zig`.
+- Move `howl-render/src/submission.zig` to `howl-render/src/ffi/submission.zig`.
+- Update `libhowl_render.zig` to import the moved translator from `ffi/submission.zig`.
 - Update `test/ffi.zig` to import the moved translator.
-- Remove the old root `howl-render/src/prepared_surface.zig`; do not leave a compatibility wrapper.
+- Remove the old root `howl-render/src/submission.zig`; do not leave a compatibility wrapper.
 - Keep `libhowl_render.zig` as an export table only.
 
 ## Non-Goals
 
-- Do not move `submission.zig`.
-- Do not move already-moved translators again.
 - Do not move `submit_result.zig` in this slice.
+- Do not move already-moved translators again.
 - Do not rename any `HowlRender*` C type.
 - Do not rename any `howl_render_*` symbol.
 - Do not change `howl-render/include/howl_render.h`.
-- Do not change prepared-surface lifecycle, liveness, token validation, info, buffer, diagnostics, or metric conversion semantics.
+- Do not change prepared publish, submit decision, submit handle, token validation, same-token comparison, or submit-result semantics.
 - Do not add compatibility aliases.
 
 ## Invariants
 
 - The public root curates exports only.
-- Prepared-surface exported symbols keep the same names.
-- `prepareHandle` still nulls the output handle when provided before owner/token access.
-- Missing handle, missing output, non-live handle, invalid argument, and prepare failed/ready statuses remain identical.
-- `prepare_request.prepareTokenIn` remains the token validator used by `prepareHandle`.
-- `submit_result.metricsOut` remains the metrics converter used by info and diagnostics.
-- `byteSpan`, failure constructors, and prepared output converters move unchanged except import path fixes.
-- The translator calls prepared/session owners; it does not own prepared-surface state.
+- Submission exported symbols keep the same names.
+- `takeSubmitDecision` still zeroes token output before owner access.
+- `takeSubmitHandle` still nulls handle output before owner access.
+- Submit result output still starts as `failedSubmitResult` when output is present.
+- `preparedSurfaceTokenOut`, `preparedSurfaceTokenIn`, `samePreparedSurfaceToken`, and `damageKindIn` move unchanged except import path fixes.
+- `submit_result.submitExecutionIn`, `submit_result.submitResultOut`, and `submit_result.failedSubmitResult` remain the submit-result boundary.
+- The translator calls session/prepared owners; it does not own prepared or submitted state.
 
 ## Verification
 
@@ -74,19 +73,19 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg '@import\("prepared_surface\.zig"\)' howl-render/src`
-- `rg 'howl_render_prepared_surface_prepare|howl_render_prepared_surface_release|howl_render_prepared_surface_describe|howl_render_prepared_surface_buffer|howl_render_prepared_surface_diagnostics|preparedInfoOut|preparedBufferOut|preparedDiagnosticsOut' howl-render/src`
-- `rg 'submission.zig' howl-render/src/libhowl_render.zig`
+- `rg '@import\("submission\.zig"\)' howl-render/src`
+- `rg 'howl_render_text_session_publish_prepared|howl_render_text_session_publish_prepared_handle|howl_render_text_session_take_submit_decision|howl_render_text_session_take_submit_handle|howl_render_text_session_accept_submitted|howl_render_prepared_surface_submit|howl_render_prepared_surface_submit_handle|preparedSurfaceTokenOut|preparedSurfaceTokenIn|samePreparedSurfaceToken' howl-render/src`
+- `rg 'const .* = @import\("(vt_surface|prepared_surface|prepare_request|text_session|surface_geometry|work_state|submission)\.zig"\)' howl-render/src/libhowl_render.zig`
 
 Expected results:
 
 - The first gate prints no stale root import.
-- The second gate supports manual review that prepared-surface C translation moved only.
-- The third gate proves this slice did not move the remaining root `submission.zig` translator.
+- The second gate supports manual review that submission C translation moved only.
+- The third gate prints nothing; all render ABI translators should now import from `ffi/`.
 
 ## Stop Conditions
 
-- Stop if moving `prepared_surface.zig` requires changing behavior.
+- Stop if moving `submission.zig` requires changing behavior.
 - Stop if the new lane needs a compatibility wrapper at the old root path.
-- Stop if an import cycle appears between `ffi/prepared_surface.zig`, `ffi/prepare_request.zig`, and `submit_result.zig`.
-- Stop if prepared output conversion or failure construction cannot move unchanged with the translator.
+- Stop if an import cycle appears between `ffi/submission.zig`, `ffi/prepared_surface.zig`, and `submit_result.zig`.
+- Stop if token conversion or submit-result failure/defaulting cannot move unchanged with the translator.
