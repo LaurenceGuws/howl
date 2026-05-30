@@ -1,12 +1,12 @@
-# Current Slice: Move Render Text Session Translator
+# Current Slice: Move Render VT Surface Translator
 
 Owner: workspace root.
 
 Purpose:
 
 - Continue the accepted `howl-render` C translator lane.
-- Move only `text_session.zig` from the render root into `src/ffi/`.
-- Preserve exported symbols, handle lifecycle, font configuration, and cursor blink behavior exactly.
+- Move only `vt_surface.zig` from the render root into `src/ffi/`.
+- Preserve exported symbols, VT source conversions, publish-result mapping, cursor/color/selection validation, and layout assertions exactly.
 
 ## Source Research
 
@@ -16,54 +16,55 @@ Use:
 - `howl-render/design.md`
 - `howl-render/include/howl_render.h`
 - `howl-render/src/libhowl_render.zig`
-- `howl-render/src/text_session.zig`
-- `howl-render/src/ffi/surface_geometry.zig`
+- `howl-render/src/vt_surface.zig`
 - `howl-render/src/test/ffi.zig`
-- `howl-render/src/session/text.zig`
-- `howl-render/src/text/font/ft_hb/support.zig`
+- `howl-render/src/source/cell.zig`
+- `howl-render/src/source/slot.zig`
+- `howl-render/src/source/vt.zig`
+- `howl-render/src/surface/tokens.zig`
 
 ## Source Changes
 
 Edit only:
 
 - `howl-render/src/libhowl_render.zig`
-- `howl-render/src/text_session.zig`
-- `howl-render/src/ffi/text_session.zig`
+- `howl-render/src/vt_surface.zig`
+- `howl-render/src/ffi/vt_surface.zig`
 - `howl-render/src/test/ffi.zig`
 
-Do not edit any other file unless the build exposes a direct `text_session.zig` import missed by this slice.
+Do not edit any other file unless the build exposes a direct `vt_surface.zig` import missed by this slice.
 If that happens, stop and report the exact import before broadening scope.
 
 ## Required Shape
 
-- Move `howl-render/src/text_session.zig` to `howl-render/src/ffi/text_session.zig`.
-- Update `libhowl_render.zig` to import the moved translator from `ffi/text_session.zig`.
+- Move `howl-render/src/vt_surface.zig` to `howl-render/src/ffi/vt_surface.zig`.
+- Update `libhowl_render.zig` to import the moved translator from `ffi/vt_surface.zig`.
 - Update `test/ffi.zig` to import the moved translator.
-- Remove the old root `howl-render/src/text_session.zig`; do not leave a compatibility wrapper.
+- Remove the old root `howl-render/src/vt_surface.zig`; do not leave a compatibility wrapper.
 - Keep `libhowl_render.zig` as an export table only.
 
 ## Non-Goals
 
-- Do not move `vt_surface.zig`.
 - Do not move `submission.zig`.
 - Do not move `prepared_surface.zig`.
-- Do not move `prepare_request.zig`, `work_state.zig`, or `surface_geometry.zig` again.
+- Do not move already-moved translators again.
 - Do not rename any `HowlRender*` C type.
 - Do not rename any `howl_render_*` symbol.
 - Do not change `howl-render/include/howl_render.h`.
-- Do not change lifecycle, allocator, font, fallback-font, or cursor blink semantics.
+- Do not change source-slot, publish, cursor, color, selection, or layout assertion semantics.
 - Do not add compatibility aliases.
 
 ## Invariants
 
 - The public root curates exports only.
-- Existing `howl_render_text_session_*` exported symbols keep the same names.
-- `init` still rejects zero surface dimensions and zero font size.
-- `init` still creates `TextSessionOwner` with `std.heap.c_allocator` and returns the owner pointer cast as the C handle.
-- `deinit` still tolerates a missing handle.
-- Font path, fallback path count, invalid argument, out-of-memory, and failed statuses remain identical.
-- `setCursorBlinkVisible` still treats nonzero as true and returns OK after owner mutation.
-- The translator calls session/text owners; it does not own session or text state.
+- `howl_render_text_session_reserve_vt_surface_slot` keeps the same exported symbol.
+- `howl_render_text_session_commit_vt_surface` keeps the same exported symbol.
+- `howl_render_text_session_reject_vt_surface` keeps the same exported symbol.
+- `howl_render_text_session_cancel_vt_surface` keeps the same exported symbol.
+- Output zeroing and invalid-argument/missing-handle/failed status behavior remain identical.
+- `cursorIn`, `colorStateIn`, `selectionIn`, `vtSurfaceSlotOut`, `sourceCellsOut`, and publish-result helpers move unchanged except import path fixes.
+- All `assertVtCellLayout`, `assertLayout`, and `assertOffset` checks stay beside this translator and move unchanged except import path fixes.
+- The translator calls source/session owners; it does not own source-slot state.
 
 ## Verification
 
@@ -75,19 +76,19 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg '@import\("text_session\.zig"\)' howl-render/src`
-- `rg 'howl_render_text_session_init|howl_render_text_session_deinit|howl_render_text_session_set_font_size_px|howl_render_text_session_set_font_path|howl_render_text_session_set_fallback_font_paths|howl_render_text_session_set_cursor_blink_visible|howl_render_text_session_is_valid_font' howl-render/src`
-- `rg 'vt_surface.zig|submission.zig|prepared_surface.zig' howl-render/src/libhowl_render.zig`
+- `rg '@import\("vt_surface\.zig"\)' howl-render/src`
+- `rg 'howl_render_text_session_reserve_vt_surface_slot|howl_render_text_session_commit_vt_surface|howl_render_text_session_reject_vt_surface|howl_render_text_session_cancel_vt_surface|assertVtCellLayout|cursorIn|colorStateIn|selectionIn' howl-render/src`
+- `rg 'submission.zig|prepared_surface.zig' howl-render/src/libhowl_render.zig`
 
 Expected results:
 
 - The first gate prints no stale root import.
-- The second gate supports manual review that text-session C exports moved only.
-- The third gate proves this slice did not move other remaining root translators.
+- The second gate supports manual review that VT source C translation and layout assertions moved only.
+- The third gate proves this slice did not move the remaining root translators.
 
 ## Stop Conditions
 
-- Stop if moving `text_session.zig` requires changing behavior.
+- Stop if moving `vt_surface.zig` requires changing behavior.
 - Stop if the new lane needs a compatibility wrapper at the old root path.
-- Stop if an import cycle appears between `ffi/text_session.zig` and another translator.
-- Stop if lifecycle or font configuration behavior cannot move unchanged with the translator.
+- Stop if an import cycle appears between `ffi/vt_surface.zig` and another translator.
+- Stop if layout assertions cannot remain beside the moved VT translator.
