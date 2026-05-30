@@ -1,12 +1,12 @@
-# Current Slice: Delete Stale Render Surface Remainders
+# Current Slice: Fold Render Rgba Contract
 
 Owner: `howl-render`.
 
 Purpose:
 
-- Delete unreferenced stale `surface/*` files after exact owners already exist elsewhere.
-- Preserve render behavior and C ABI exactly.
-- Continue reducing stale render `surface/*` taxonomy without touching source/text adaptation.
+- Delete stale `surface/rgba.zig` by moving `Rgba8` into the text contract owner that already exports it.
+- Preserve all color contract behavior exactly.
+- Leave large `surface/input.zig` for a separate source-to-text adaptation decision.
 
 ## Source Research
 
@@ -15,32 +15,30 @@ Read before editing:
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 - `research/2026-05-30-hygiene-audit/render-surface-taxonomy.md`
-- `howl-render/src/surface/publication_source.zig`
-- `howl-render/src/source/vt.zig`
-- `howl-render/src/surface/clip_rect.zig`
-- grep results for `publication_source`, `SourceRgb`, `ClipRect`, and `clipRect`
+- `howl-render/src/surface/rgba.zig`
+- `howl-render/src/text/contract.zig`
+- grep results for `Rgba8`
 - `libs.yaml`
 
 ## Source Changes
 
 Exact files:
 
-- Delete `howl-render/src/surface/publication_source.zig`.
-- Delete `howl-render/src/surface/clip_rect.zig`.
-- Remove both owner entries from `libs.yaml`.
+- Edit `howl-render/src/text/contract.zig` to define `Rgba8` directly.
+- Delete `howl-render/src/surface/rgba.zig`.
+- Remove the `rgba` owner entry from `libs.yaml`.
 
 ## Non-Goals
 
-- Do not delete or move `surface/input.zig`.
-- Do not delete or move `surface/rgba.zig` in this slice.
-- Do not edit `source/vt.zig`.
-- Do not change C ABI, FFI layout assertions, source publication behavior, or render geometry behavior.
+- Do not move `surface/input.zig`.
+- Do not change any color fields or defaults.
+- Do not change C ABI or FFI layout behavior.
 
 ## Invariants
 
-- `source/vt.zig` remains the source publication contract owner.
-- No source imports `publication_source.zig` or `clip_rect.zig`.
-- `libs.yaml` must not reference deleted files.
+- `contract.Rgba8` remains the public Zig type used by text/prepared code.
+- `surface/rgba.zig` no longer exists.
+- No imports refer to `surface/rgba.zig`.
 
 ## Verification
 
@@ -52,9 +50,8 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg 'publication_source|clip_rect|surface/publication_source\.zig|surface/clip_rect\.zig' howl-render/src libs.yaml` prints nothing.
+- `rg 'surface/rgba\.zig' howl-render/src libs.yaml` prints nothing.
 
 ## Stop Conditions
 
-- Stop if either file is imported by build/test paths not captured by grep.
-- Stop if deletion requires replacing symbols or adding compatibility aliases.
+- Stop if folding `Rgba8` requires changing source, text, prepared, or ABI behavior.
