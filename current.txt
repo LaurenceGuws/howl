@@ -1,64 +1,66 @@
-# Current Slice: Move Render Submit Result Translator
+# Current Slice: Move Render Handle Translator
 
 Owner: workspace root.
 
 Purpose:
 
-- Move the remaining root render C translator helper into the accepted `src/ffi/` lane.
-- Move only `submit_result.zig` from the render root into `src/ffi/`.
-- Preserve submit-result, submit-execution, and metrics C conversion exactly.
+- Move the remaining root render C handle translator into the accepted `src/ffi/` lane.
+- Move only `handle.zig` from the render root into `src/ffi/`.
+- Preserve C handle-to-owner pointer translation exactly.
 
 ## Source Research
 
 Use:
 
-- `research/2026-05-30-hygiene-audit/render-c-lane.md`
 - `howl-render/design.md`
 - `libs.yaml`
-- `howl-render/src/submit_result.zig`
-- `howl-render/src/ffi/submission.zig`
-- `howl-render/src/ffi/prepared_surface.zig`
-- `howl-render/src/prepared/submit_result.zig`
+- `howl-render/src/handle.zig`
+- `howl-render/src/ffi/*.zig`
+- `howl-render/src/surface/prepared_owner.zig`
 - `howl-render/src/session/text.zig`
 
 ## Source Changes
 
 Edit only:
 
-- `howl-render/src/submit_result.zig`
-- `howl-render/src/ffi/submit_result.zig`
-- `howl-render/src/ffi/submission.zig`
+- `howl-render/src/handle.zig`
+- `howl-render/src/ffi/handle.zig`
+- `howl-render/src/ffi/prepare_request.zig`
+- `howl-render/src/ffi/work_state.zig`
+- `howl-render/src/ffi/surface_geometry.zig`
+- `howl-render/src/ffi/text_session.zig`
+- `howl-render/src/ffi/vt_surface.zig`
 - `howl-render/src/ffi/prepared_surface.zig`
+- `howl-render/src/ffi/submission.zig`
 - `howl-render/design.md`
 - `libs.yaml`
 
-Do not edit any other file unless the build exposes a direct `submit_result.zig` import missed by this slice.
+Do not edit any other file unless the build exposes a direct `handle.zig` import missed by this slice.
 If that happens, stop and report the exact import before broadening scope.
 
 ## Required Shape
 
-- Move `howl-render/src/submit_result.zig` to `howl-render/src/ffi/submit_result.zig`.
-- Update `ffi/submission.zig` and `ffi/prepared_surface.zig` to import the moved helper.
-- Remove the old root `howl-render/src/submit_result.zig`; do not leave a compatibility wrapper.
-- Update `howl-render/design.md` and `libs.yaml` to include the submit-result translator in the `ffi/` lane.
+- Move `howl-render/src/handle.zig` to `howl-render/src/ffi/handle.zig`.
+- Update `src/ffi/*.zig` translators to import `handle.zig` from the same `ffi/` lane.
+- Remove the old root `howl-render/src/handle.zig`; do not leave a compatibility wrapper.
+- Update `howl-render/design.md` and `libs.yaml` to include handle translation in the `ffi/` lane.
 
 ## Non-Goals
 
-- Do not move `handle.zig`.
 - Do not rename `src/ffi.zig`.
+- Do not move `src/libhowl_render.zig` or `src/test.zig`.
 - Do not move prepared/session owner files.
 - Do not rename any `HowlRender*` C type.
 - Do not rename any `howl_render_*` symbol.
 - Do not change `howl-render/include/howl_render.h`.
-- Do not change metrics, submit execution, submit result, or failed-result semantics.
+- Do not change pointer cast, null-handle, or prepared-handle semantics.
 - Do not add compatibility aliases.
 
 ## Invariants
 
-- `metricsOut`, `submitResultOut`, `failedSubmitResult`, and `submitExecutionIn` move unchanged except import path fixes.
-- `ffi/submission.zig` still uses this helper for submit execution/result/default failed result.
-- `ffi/prepared_surface.zig` still uses this helper for prepare and resolve metrics conversion.
-- The helper translates C ABI facts only; prepared/session owners keep behavior.
+- `textSessionOwner`, `opaquePreparedHandle`, and `abiPreparedHandle` move unchanged except import path fixes.
+- All FFI translators still use the same handle translator functions.
+- The handle translator casts C handles only; session and prepared owners keep behavior.
 
 ## Verification
 
@@ -70,18 +72,18 @@ From `/home/home/personal/projects/howl`:
 
 ## Grep Gates
 
-- `rg '@import\("(\.\./)?submit_result\.zig"\)' howl-render/src`
-- `rg 'metricsOut|submitResultOut|failedSubmitResult|submitExecutionIn' howl-render/src/ffi howl-render/src/libhowl_render.zig`
-- `rg 'howl-render/src/submit_result\.zig' howl-render/design.md libs.yaml`
+- `rg '@import\("(\.\./)?handle\.zig"\)' howl-render/src`
+- `rg 'textSessionOwner|opaquePreparedHandle|abiPreparedHandle' howl-render/src/ffi`
+- `rg 'howl-render/src/handle\.zig' howl-render/design.md libs.yaml`
 
 Expected results:
 
-- The first gate prints no stale root import.
-- The second gate supports manual review that submit-result C conversion moved only.
+- The first gate prints no stale root import; same-directory `@import("handle.zig")` inside `src/ffi/` is expected.
+- The second gate supports manual review that handle translation moved only.
 - The third gate prints nothing.
 
 ## Stop Conditions
 
-- Stop if moving `submit_result.zig` requires changing behavior.
+- Stop if moving `handle.zig` requires changing behavior.
 - Stop if the new lane needs a compatibility wrapper at the old root path.
-- Stop if an import cycle appears between `ffi/submit_result.zig`, `ffi/submission.zig`, and `ffi/prepared_surface.zig`.
+- Stop if an import cycle appears inside `src/ffi/`.

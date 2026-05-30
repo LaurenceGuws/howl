@@ -232,10 +232,10 @@ howl-render:
         vt_surface: howl-render/src/ffi/vt_surface.zig
         prepared_surface: howl-render/src/ffi/prepared_surface.zig
         prepare_request: howl-render/src/ffi/prepare_request.zig
+        handle: howl-render/src/ffi/handle.zig
         submit_result: howl-render/src/ffi/submit_result.zig
         submission: howl-render/src/ffi/submission.zig
         work_state: howl-render/src/ffi/work_state.zig
-    handle: howl-render/src/handle.zig
     source:
       owners:
         vt: howl-render/src/source/vt.zig
