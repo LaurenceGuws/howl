@@ -76,9 +76,20 @@ Stop conditions:
 
 ## Later Slices
 
-- Move `prepared_owner.zig` under `prepared/` after buffer move lands.
-- Decide token contract owner before moving `tokens.zig` because it crosses source/prepared/session/FFI.
-- Move or fold `publication_source.zig` only after checking overlap with `source/vt.zig` and
-  `source/cell.zig`.
-- Review `input.zig` as a source-to-text adaptation owner before movement.
-- Move geometry/clip helpers only after checking render geometry contract naming.
+- Completed follow-up moves after this scratchpad:
+  - `surface/buffer.zig` moved to `prepared/buffer.zig`.
+  - `surface/prepared_owner.zig` moved to `prepared/owner.zig`.
+  - `surface/tokens.zig` moved to `render/tokens.zig`.
+  - `surface/geometry.zig` moved to `render/grid_geometry.zig`.
+  - unreferenced `surface/publication_source.zig` and `surface/clip_rect.zig` were deleted.
+  - `surface/rgba.zig` was folded into `text/contract.zig`.
+- `surface/input.zig` remains intentionally unmoved. It is a large source-to-text adaptation owner
+  imported only by `session/text.zig`, and it needs a dedicated scratchpad before movement because it
+  mixes VT publication color mapping, source cell style mapping, cursor shape mapping, frame theme
+  defaults, and text frame input construction.
+
+## Remaining Proof Gap
+
+`howl-render/src/surface/input.zig` is the last render `surface/*` file. Before moving it, read the
+full file and decide whether the true owner is `source/input.zig`, `source/text_input.zig`, or a text
+frame adaptation owner. Do not move it merely to empty the folder.
