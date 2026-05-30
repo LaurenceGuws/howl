@@ -1,97 +1,90 @@
-# Current Slice: Split Terminal Selection And Link Owners
+# Current Slice: Define C ABI Header Grammar
 
 Owner: workspace root.
 
 Purpose:
 
-- Move host selection gesture behavior out of broad `terminal/context.zig` into a bounded terminal
-  selection owner.
-- Move visible-link hover/activation behavior out of broad `terminal/context.zig` into a bounded
-  terminal links owner.
-- Preserve event routing and behavior exactly.
+- Define the exact generated-looking grammar for Howl public C ABI headers.
+- Give later header workers concrete ordering, comment, wrapping, and review gates.
+- Do not edit product headers or code in this slice.
 
 ## Source Research
 
-Use `host-owner-next-scratchpad.md` Slice D as the sprint scratchpad.
+Use:
+
+- `research/2026-05-30-hygiene-audit/researcher-a.md`
+- `research/2026-05-30-hygiene-audit/researcher-b.md`
+- `research/2026-05-30-hygiene-audit/researcher-c.md`
+- `research/2026-05-30-hygiene-audit/synthesis.md`
+- `research/2026-05-30-hygiene-audit/roadmap.md` Slice 1.1
 
 Reference pressure:
 
-- Ghostty `Surface` owns terminal widget input behavior while terminal core owns selection truth.
-- Alacritty input processor uses an `ActionContext` trait to mutate terminal/display/window through
-  explicit methods.
-- TigerBeetle rejects broad buckets and fake owner nouns.
-
-## Current Source Facts
-
-- `howl-linux-host/src/terminal/context.zig` currently owns too much:
-  - terminal event routing/orchestration
-  - host selection gesture helper behavior
-  - visible link hover/activation helper behavior
-- Current terminal context fields remain context-owned in this slice.
-- Pointer events remain routed by `Context`; this slice moves helper behavior only.
+- ABIs are product: `AGENTS.md`.
+- Public roots curate exports only and FFI translates contracts only: `AGENTS.md`.
+- TigerBeetle naming, top-down order, comments, assertions, and line-length pressure:
+  - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+- Ghostty shows a separately auditable C lane, but Howl must not copy Ghostty's broad Zig module lane.
 
 ## Source Changes
 
 Edit only:
 
-- `howl-linux-host/src/terminal/context.zig`
-- new `howl-linux-host/src/terminal/selection.zig`
-- new `howl-linux-host/src/terminal/links.zig`
+- new `research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
 
-Required shape:
+## Required Content
 
-- Add `terminal/selection.zig`.
-- Add `terminal/links.zig`.
-- Move host selection gesture helper functions from `terminal/context.zig` to `terminal/selection.zig`
-  as bounded free functions over `context: anytype` where existing storage remains on `Context`.
-- Move visible-link hover/activation helper functions from `terminal/context.zig` to
-  `terminal/links.zig` as bounded free functions over `context: anytype` where existing storage
-  remains on `Context`.
-- `terminal/context.zig` imports these as `terminal_selection` and `terminal_links`.
-- `Context` continues to own event routing and calls into these owners at the existing decision
-  points.
-- Keep existing field layout unless a tiny visibility adjustment is required for moved functions.
+The grammar document must define one exact header order:
+
+1. Include guard.
+2. C includes.
+3. `extern "C"` block.
+4. Opaque handles.
+5. Limits/macros.
+6. Status/result enums.
+7. Product enums.
+8. Structs.
+9. Functions grouped by owner handle and operation order.
+
+The document must also define:
+
+- One handle declaration style.
+- One status/result enum style.
+- One macro/limit style.
+- One function prototype wrapping style under 100 columns.
+- One comment rule: comments explain ABI consequence/lifetime only; ordering does navigation.
+- Header banners are banned unless generated consistently by future tooling.
+- No compatibility aliases or old-name typedefs.
+- No Zig-shaped host shortcut or Ghostty-style broad Zig module lane.
+- How to pair header declarations with Zig ABI layout assertions and FFI translators.
+- Review checklist for later header implementation.
+- Grep gates for later implementation.
 
 ## Non-Goals
 
-- Do not create `terminal/pointer.zig`.
-- Do not move mouse protocol encoding.
-- Do not change event routing.
-- Do not change selection behavior.
-- Do not change link hover/activation behavior.
-- Do not introduce new state wrappers just to move code.
-- Do not introduce `manager`, `controller`, `runtime`, `flow`, `queue`, `utils`, `types`, `api`, or
-  `abi` owner files.
-- Do not edit SDL/OpenGL/build files.
+- Do not edit `howl-pty/include/howl_pty.h`.
+- Do not edit `howl-vt/include/howl_vt.h`.
+- Do not edit `howl-render/include/howl_render.h`.
+- Do not edit Zig source files.
+- Do not change C symbols, numeric values, struct layout, or behavior.
+- Do not add generation tooling.
+- Do not resolve build/test architecture.
 
 ## Invariants
 
-- Selection state mutation remains exact.
-- Pending selection copy behavior remains exact.
-- Link hover detection and cursor changes remain exact.
-- Link activation remains exact.
-- Host input and VT mouse encoding paths remain exact.
-- Context remains the event-routing owner.
+- The document is exact enough that a later worker cannot invent ordering.
+- The grammar supports one small intuitive C lane for Howl.
+- The grammar does not create new buckets such as `manager`, `controller`, `runtime`, `pipeline`,
+  `queue`, `types`, `api`, or `abi` owners.
+- The grammar is compatible with PTY, VT, and render public headers.
 
 ## Verification
 
-From `/home/home/personal/projects/howl/howl-linux-host`:
-
-- `zig build check`
-- `zig build test`
-- `git diff --check`
-
 From `/home/home/personal/projects/howl`:
 
-- `zig build check`
-- `zig build test`
 - `git diff --check`
 
 ## Grep Gates
 
-- No `howl-linux-host/src/terminal/pointer.zig`.
-- No new owner files named `manager`, `controller`, `runtime`, `flow`, `queue`, `utils`, `types`,
-  `api`, or `abi`.
-- `terminal/context.zig` imports `terminal_selection` and `terminal_links`.
-- `terminal/selection.zig` owns moved selection helper functions.
-- `terminal/links.zig` owns moved visible-link helper functions.
+- `rg "include guard|opaque handles|status/result enums|functions grouped by owner" research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
+- `rg "compatibility alias|Zig-shaped host shortcut" research/2026-05-30-hygiene-audit/c-abi-header-grammar.md`
