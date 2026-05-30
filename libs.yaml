@@ -256,8 +256,6 @@ howl-render:
         submit_result: howl-render/src/prepared/submit_result.zig
     surface:
       owners:
-        publication_source: howl-render/src/surface/publication_source.zig
-        clip_rect: howl-render/src/surface/clip_rect.zig
         input: howl-render/src/surface/input.zig
         rgba: howl-render/src/surface/rgba.zig
     render:
