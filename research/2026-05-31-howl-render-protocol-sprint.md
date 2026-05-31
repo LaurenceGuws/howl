@@ -1784,6 +1784,41 @@ Verification performed:
 - `git diff --check`
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
+## Phase 15 Slice: Render Protocol V0 Prepared Oracle Test Target
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Prepared Oracle Test Target`
+
+Accepted implementation facts:
+
+- Added focused render test root `howl-render/src/test_protocol_proof.zig`.
+- The proof root imports `prepared/buffer.zig`, `session/text.zig`, and
+  `protocol_v0/emit.zig` together.
+- The smoke test `protocol v0 prepared proof target imports owner oracle` directly
+  references `prepared_buffer.compose`, `TextSession`, and the V0 emitter type so
+  the target fails if the owner oracle or text backend import path cannot compile.
+- Added `howl-render` build step `test:protocol-proof` and build-only companion
+  `test:protocol-proof:build` with explicit FreeType/Harfbuzz include/library
+  wiring and `test_font_options` module wiring.
+- `howl-render` root `test` and `test:build` aggregates now include the protocol
+  proof target.
+- The existing `test:unit -- "protocol v0"` path remains unchanged and continues
+  to run existing protocol unit tests without adding FreeType/Harfbuzz dependency
+  wiring to the fast unit target.
+- No product code, headers, ABI exports, host code, prepared owner/storage,
+  normal render path, realizer, or prepared emission implementation changed.
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
