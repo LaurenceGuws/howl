@@ -1454,7 +1454,7 @@ Unresolved blockers:
 
 ## Phase 8 Slice: Render Protocol V0 Alpha Glyph Realizer
 
-Status: worker implementation complete; verification passed in this turn.
+Status: accepted and committed in `howl-linux-host`.
 
 Promoted slice:
 
@@ -1933,6 +1933,65 @@ Verification performed:
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
 ## Sprint Phases
+
+## Phase 24 Slice: Linux Host V0 GL Realization Diagnostics
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 GL Realization Diagnostics`
+
+Implementation facts to verify:
+
+- `howl-linux-host/src/window/term_texture.zig` records bounded scalar V0 GL
+  realization diagnostics in `ProtocolV0Textures`: frame token, span counts,
+  upload byte totals, churn/reuse counters, slot counts/maxima, GL side-effect
+  counters, GL state samples, and failure buckets.
+- `howl-linux-host/src/terminal/context.zig` records submit-owner timing for V0
+  realization and full RGBA upload, samples GL state around the full RGBA upload,
+  and emits sampled `howl-debug v0 ...` summaries without retaining V0 frame,
+  span, or upload byte pointers.
+- `howl-linux-host/src/window/present.zig` records SDL main-thread/current-context/
+  current-window readiness and `SDL_GL_SwapWindow` timing in the present owner.
+- `howl-linux-host/src/window/window.zig` exposes the SDL readiness calls only to
+  the present owner adapter.
+- Full RGBA upload, submit, and presentation remain the visible path. V0 command
+  drawing and presentation replacement are not implemented.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+
+Required GUI review after verification:
+
+- Run with `--debug-process-accounting --debug-log-every-ms 1000` and capture the
+  bounded `howl-debug v0 ...`, `howl-debug v0 failures ...`, and
+  `howl-debug present ...` lines for `lll`, `l`, `btop` warning mode, and `btop`
+  normal draw mode.
+
+Reviewer rejection fix applied 2026-05-31:
+
+- Bounded V0 and present diagnostic logs with first-8 new-failure counters plus
+  periodic summaries. Latched nonzero failure counters no longer cause per-submit
+  or per-present logging forever.
+- V0 diagnostics now copy and log the full token: `snapshot_seq`, `frame_seq`,
+  `geometry_epoch`, and `resource_epoch`.
+- Pure create-transition validation now classifies unsupported kind/format,
+  tombstone value reuse, and capacity exhaustion into exact buckets.
+- GL state samples now cover V0 create, upload, and retire phases separately, and
+  full RGBA upload still has before/after samples without `glFinish`.
+- Added pure tests for scalar diagnostic accounting, slot maxima, churn counters,
+  GL side-effect counters where pure, bounded log counters, and exact failure
+  bucket increments.
+
+Accepted commits:
+
+- `howl-linux-host` `6299ad0` - `host: add protocol v0 gl diagnostics`
 
 ## Phase 18 Slice: Render Protocol V0 Prepared ABI View
 
@@ -2439,6 +2498,218 @@ Accepted verification:
 Accepted commits:
 
 - `howl-linux-host` `b191ce5` - `host: realize protocol v0 gl resources`
+
+## Iteration 2: V0 GL Resource Path As Product Work
+
+Status: diagnostic slice promoted, accepted, and committed in `howl-linux-host`.
+
+Current source state before Iteration 2:
+
+- Current source already has V0 ABI/header structs/accessors, emitter, software
+  realizer, host resource-plan/oracle probes, and a live host GL probe.
+- The prepared-sprite emitter uses temporary sprite resource IDs from same-frame
+  sprite index: `value = sprite_index + 1`, `generation = 1`.
+- `HowlRenderV0HostAckSpan` exists as a type, but current flow has no accepted
+  host-to-render ack/removal call. Host retired tombstones therefore reject reuse;
+  `glDeleteTextures()` is not protocol ack.
+
+Iteration 1 proved that live V0 resource realization can be wired into the host, but
+GUI review showed the shape is not yet product-quality. The next work is not a
+panic hotfix. It is a slow diagnostic and redesign loop against reference-derived
+truths.
+
+User GUI findings after Iteration 1:
+
+- `lll` reports command not found, so basic PTY/VT output and simple rendering still
+  work.
+- `l` freezes the terminal.
+- `btop` works while it displays the terminal-too-small warning, but freezes as soon
+  as it draws normally.
+- Increasing font size can unfreeze `btop` by returning it to the warning screen.
+- GUI behavior is a required review gate; command-line tests are not sufficient.
+
+Reference corpus for Iteration 2:
+
+- `utils/dev_references/backends/sdl`
+- `utils/dev_references/rendering`
+- `utils/dev_references/sdlwiki_md`
+- `utils/dev_references/terminals/alacritty`
+- `utils/dev_references/terminals/ghostty`
+- `utils/dev_references/zig_maturity/tigerbeetle`
+- `zig16-release-notes.txt` only when Zig behavior is directly relevant
+
+Reference-derived truths:
+
+- SDL/OpenGL work must prove current-context, current-window, and main-thread
+  ownership in `present.zig`/`window.zig` before raw GL calls are trusted.
+- GL texture binding, pixel-store, and error state are mutable context-global state;
+  V0 probe work must not poison the full RGBA fallback upload or presentation path.
+- Ghostty and Alacritty bias toward persistent atlases/resources, explicit upload
+  phases, and clear frame/present boundaries. They do not make every draw consequence
+  into disposable backend texture churn.
+- Reference frame ownership separates resource synchronization, drawing, submit
+  acknowledgement, and present/swap. V0 resource upload success is not frame
+  correctness.
+- Howl V0 is a consequences protocol: render owns protocol facts, upload bytes, and
+  ordering; the host owns backend resource realization and presentation policy.
+- Full RGBA remains the visible fallback/oracle until V0 presentation is explicitly
+  promoted and accepted.
+- The full RGBA oracle proves visible byte-equivalence. Host resource-plan validity
+  only proves protocol/resource lifetime shape is realizable.
+- The current host V0 GL probe realizes create/upload/retire before the normal full
+  RGBA upload. Live GL realization is gated by resource-plan validity, not full-byte
+  oracle validity; diagnostics must log both statuses.
+
+Iteration 2 working assumptions to prove or kill:
+
+- Draw-heavy content stresses V0 create/upload/retire counts, upload bytes, backend
+  allocation churn, or tombstone reuse far more than simple terminal output.
+- The current emitter reuses temporary sprite resource IDs across frames while the
+  host keeps retired tombstones. Reuse must remain rejected until an accepted
+  host-to-render ack/removal call defines when render may reuse IDs.
+- Silent GL errors, GL driver stalls, or global GL state leakage can make the visible
+  full RGBA path appear frozen even though V0 resources are not presented.
+- If an A/B diagnostic gate disables only live V0 GL realization and the freeze
+  disappears, the bug is in backend realization side effects, not the PTY/VT/basic
+  full-RGBA path.
+
+### Iteration 2 Research Seeds
+
+Research agents must read TigerBeetle first, then the relevant reference corpus, then
+Howl source. They must return exact paths, exact symbols, proof gaps, and ranked
+diagnostic value. They must not implement.
+
+Seed A: SDL/OpenGL context and state facts.
+
+- Read SDL backend and SDL wiki references for context currentness, window/current
+  ownership, swap rules, and thread restrictions.
+- Read rendering/OpenGL references for texture upload, delete, pixel-store state,
+  `glGetError`, sync/stall behavior, and allocation failure facts.
+- Map facts to `howl-linux-host/src/window/term_texture.zig`,
+  `howl-linux-host/src/window/present.zig`, `howl-linux-host/src/window/window.zig`,
+  and `howl-linux-host/src/terminal/context.zig`.
+
+Seed B: terminal renderer precedent.
+
+- Read Ghostty and Alacritty renderer/atlas/upload/present paths.
+- Identify how they avoid per-draw backend texture churn, how uploads are phased, and
+  how frame/present boundaries are owned.
+- Map those facts to Howl V0 resource realization and full RGBA fallback ordering.
+
+Seed C: Howl protocol and emitter invariants.
+
+- Read `docs/render-protocol-v0.md`, `howl-render/include/howl_render.h`,
+  `howl-render/src/protocol_v0/emit.zig`, `howl-render/src/protocol_v0/realize.zig`,
+  `howl-render/src/prepared/buffer.zig`,
+  `howl-linux-host/src/terminal/render/retained.zig`, and
+  `howl-linux-host/src/window/term_texture.zig`.
+- Compare host validation against protocol and render-side realizer semantics.
+- Identify whether valid draw-heavy frames can trigger excessive churn, hidden
+  failures, tombstone pressure, resource exhaustion, or GL upload assumptions.
+
+### Candidate Slice: Linux Host V0 GL Realization Diagnostics
+
+Purpose:
+
+- Make the live V0 GL resource path observable before changing product behavior.
+- Preserve full RGBA as the visible path.
+- Give the user bounded GUI-review evidence for `lll`, `l`, `btop` warning mode, and
+  `btop` normal draw mode.
+
+Allowed files, if promoted:
+
+- `current.txt`
+- this scratchpad
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/window/present.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+- `howl-linux-host/src/window/window.zig`
+- Existing host logging/status owner only if one already exists and is a true owner
+
+No ABI/header changes. No render-side emission changes. No V0 command drawing. No
+replacement of full RGBA upload. No unbounded logs.
+
+Required diagnostic counters for this slice:
+
+- V0 frame token: `snapshot_seq`, `frame_seq`, `geometry_epoch`, `resource_epoch`.
+- Frame spans: creates, uploads, retires, commands, upload byte total.
+- Churn shape: same-frame create/upload/use/retire resource count, persistent-resource
+  reuse count, resources created without surviving the next frame, and creates per
+  visible command.
+- Resource slots: live, retired, empty, max live, max retired.
+- Host GL side effects: `glGenTextures`, `glTexImage2D`, `glTexSubImage2D`,
+  `glDeleteTextures` counts. Keep these separate from render span counts.
+- Failure buckets: invalid spans, invalid command shape, invalid order, unsupported
+  resource/format, upload bounds, tombstone value reuse, capacity, GL error.
+- Timings: V0 realization microseconds, full RGBA upload microseconds, and
+  `SDL_GL_SwapWindow` microseconds. Do not use `glFinish` as a diagnostic timing
+  fence.
+- GL state samples: `GL_TEXTURE_BINDING_2D`, `GL_UNPACK_ALIGNMENT`,
+  `GL_UNPACK_ROW_LENGTH`, plus `glGetError()` around V0 create/upload/retire
+  phases and before/after full RGBA upload.
+- SDL readiness checks for current context, current window, and main-thread access
+  belong to `present.zig`/`window.zig`, not `term_texture.zig`.
+- Diagnostics must expose churn shape; they must not validate per-draw disposable
+  backend texture churn as a product path.
+
+Logging discipline:
+
+- Bounded output only.
+- Log first N failures or first N slow frames.
+- Prefer counters stored on the true owner and sampled summaries over per-operation
+  spam.
+- Copy only scalar diagnostics. Never retain frame/span/upload byte pointers and
+  never log borrowed upload byte contents.
+
+Optional A/B diagnostic gate:
+
+- A temporary gate may disable only live V0 GL realization while keeping V0 frame
+  production, copied scalar diagnostics, software oracle/resource-plan probes, full
+  RGBA upload, and presentation unchanged.
+- This is diagnostic evidence, not final product behavior.
+- Expected proof: if `l` and normal `btop` stop freezing with only this gate off,
+  backend resource realization side effects are implicated.
+- If disabling V0 GL realization helps, that is still not the fix. Follow-up must
+  redesign ownership, lifetime, upload phasing, and context-state handling.
+
+User GUI review matrix:
+
+- `lll`: should still report command not found if no shell alias/binary exists.
+- `l`: must not freeze; record whether V0 counters spike before freeze if it does.
+- `btop` warning mode: should remain responsive; record counters.
+- `btop` normal draw mode: record whether freeze correlates with creates/uploads,
+  upload bytes, tombstones, GL errors, realization time, or swap time.
+- Resize/font increase: record whether unfreeze correlates with reduced V0 counts or
+  a return to warning-screen rendering.
+
+Stop conditions:
+
+- Stop if diagnostics require changing the render ABI/header.
+- Stop if diagnostics require V0 command drawing or replacing full RGBA.
+- Stop if the fix depends on treating `glDeleteTextures()` as protocol ack.
+- Stop if resource ID reuse needs ack/removal policy; draft that contract first.
+- Stop if tombstone retention or removal policy is ambiguous.
+- Stop if logs would be unbounded or per-byte/per-cell spam.
+- Stop if GL current-context ownership is ambiguous; research SDL ownership before
+  adding more GL work.
+- Stop if SDL current-window, current-context, main-thread, or GL global-state
+  ownership remains ambiguous after reading the SDL/OpenGL references.
+- Stop after one diagnostic slice and user GUI review; do not roll directly into a
+  fix without a reviewed follow-up slice.
+
+Follow-up families after diagnostics, not yet promoted:
+
+- Replace disposable per-draw/per-sprite backend texture churn with persistent
+  resource ownership or atlas-backed reuse.
+- Add an explicit host ack/removal contract if resource numeric reuse requires it.
+- Separate upload synchronization, drawing, submit acknowledgement, and present/swap
+  ownership so resource success cannot masquerade as frame correctness.
+- Tighten backend context-state handling across upload, submit, and present boundaries.
+- Remove or collapse diagnostic scaffolding once a better owner and lifetime model is
+  proven.
+
+The older phase outline below is retained as sprint history. Do not promote one of
+those slices without first reconciling it with the current source state above.
 
 ### Phase 0: Stabilize Current Dirty Host Work
 

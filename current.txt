@@ -1,6 +1,7 @@
-# Current Slice: Linux Host V0 GL Resource Realization Probe
+# Current Slice: Linux Host V0 GL Realization Diagnostics
 
-Owner: `howl-linux-host` terminal render protocol backend resource realization.
+Owner: `howl-linux-host` terminal render protocol diagnostics across submit,
+texture realization, and present ownership.
 
 Sprint scratchpad and contract:
 
@@ -9,10 +10,11 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Realize V0 backend create/upload/retire operations into host-owned GL textures
-  during the existing prepared submit turn.
-- Keep full RGBA upload as the visible rendering path.
-- Stop before V0 command drawing or presentation replacement.
+- Make the live V0 GL resource path observable before changing product behavior.
+- Preserve full RGBA as the visible path.
+- Give the user bounded GUI-review evidence for `lll`, `l`, `btop` warning mode,
+  and `btop` normal draw mode.
+- Stop before product fixes, V0 command drawing, or presentation replacement.
 
 ## Source Order (Mandatory)
 
@@ -20,52 +22,73 @@ Read in order before editing:
 
 1. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-3. `docs/render-protocol-v0.md`
-4. `research/2026-05-31-howl-render-protocol-sprint.md`
-5. `howl-linux-host/src/terminal/render/retained.zig`
-6. `howl-linux-host/src/terminal/context.zig`
-7. `howl-linux-host/src/window/term_texture.zig`
-8. `howl-render/include/howl_render.h`
+3. `research/2026-05-31-howl-render-protocol-sprint.md`
+4. `docs/render-protocol-v0.md`
+5. `utils/dev_references/backends/sdl`
+6. `utils/dev_references/rendering`
+7. `utils/dev_references/sdlwiki_md`
+8. `utils/dev_references/terminals/alacritty`
+9. `utils/dev_references/terminals/ghostty`
+10. `howl-linux-host/src/terminal/context.zig`
+11. `howl-linux-host/src/window/present.zig`
+12. `howl-linux-host/src/window/window.zig`
+13. `howl-linux-host/src/window/term_texture.zig`
+14. `howl-linux-host/src/terminal/render/retained.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/terminal/render/retained.zig`
 - `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/window/present.zig`
 - `howl-linux-host/src/window/term_texture.zig`
-- `howl-linux-host/build.zig` only to wire term texture validation tests
+- `howl-linux-host/src/window/window.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No `howl-render` changes.
-No ABI/header changes.
-No V0 command drawing through backend APIs.
-No replacement of full RGBA upload.
-No presentation cadence or event-loop policy changes.
-No `manager`, `engine`, `controller`, or generic resource owner names.
+No ABI/header changes. No render-side emission changes. No V0 command drawing. No
+replacement of full RGBA upload. No unbounded logs. No diagnostic gate as product fix.
 
-## Required Product Shape
+## Required Diagnostic Shape
 
-- Add host-owned GL texture realization for accepted V0 resource operations:
-  create texture, upload texture rect, retire texture.
-- Invoke realization during `submitPreparedLocked()` after acquiring the prepared
-  upload and before the unchanged full RGBA terminal texture upload.
-- Persist bounded success/failure/accounting in retained render state.
-- Invalid V0 resource realization must be accounting-only and must not affect the
-  existing full RGBA upload/submit path.
-- Do not draw V0 commands. Do not bind V0 resources into presentation.
+- Copy only scalar diagnostics; never retain V0 frame/span/upload byte pointers.
+- Record V0 frame token and span counts: creates, uploads, retires, commands,
+  upload byte total.
+- Record churn shape: same-frame create/upload/use/retire count,
+  persistent-resource reuse count, resources created without surviving next frame,
+  creates per visible command.
+- Record resource slots: live, retired, empty, max live, max retired.
+- Record host GL side-effect counts separately from render spans:
+  `glGenTextures`, `glTexImage2D`, `glTexSubImage2D`, `glDeleteTextures`.
+- Record failure buckets: invalid spans, invalid command shape, invalid order,
+  unsupported resource/format, upload bounds, tombstone value reuse, capacity,
+  GL error.
+- Record timings: V0 realization microseconds, full RGBA upload microseconds,
+  `SDL_GL_SwapWindow` microseconds. Do not use `glFinish` as a diagnostic fence.
+- Record GL state samples around V0 phases and full RGBA upload:
+  `GL_TEXTURE_BINDING_2D`, `GL_UNPACK_ALIGNMENT`, `GL_UNPACK_ROW_LENGTH`,
+  and `glGetError()`.
+- SDL current-context/current-window/main-thread readiness checks belong to
+  `present.zig`/`window.zig`, not `term_texture.zig`.
+- Optional A/B gate may skip only live V0 GL realization while preserving V0 frame
+  production, scalar diagnostics, software oracle/resource-plan probes, full RGBA
+  upload, submit, and presentation. This gate is evidence only, not product behavior.
 
 ## Required Tests
 
-Use pure helper tests for non-GL resource accounting and keep existing retained tests
-executed. Live GL correctness is the manual GUI gate after review/commit.
+- Unit tests for scalar diagnostic accounting and failure bucket updates where pure
+  helpers can cover them.
+- Existing host tests must still run.
+- GUI behavior is reviewed by the user after accepted implementation.
 
-## Required Invariants
+## User GUI Review Matrix
 
-- No borrowed V0 frame/span/upload byte pointers are retained.
-- Backend texture IDs are host-owned and never cross the render ABI.
-- Upload byte lengths and rect bounds are validated before GL upload calls.
-- Existing prepared upload result and submit path remain full RGBA.
+- `lll`: should still report command not found if no shell alias/binary exists.
+- `l`: must not freeze; record whether V0 counters spike before freeze if it does.
+- `btop` warning mode: should remain responsive; record counters.
+- `btop` normal draw mode: record whether freeze correlates with creates/uploads,
+  upload bytes, tombstones, GL errors, realization time, or swap time.
+- Resize/font increase: record whether unfreeze correlates with reduced V0 counts or
+  return to warning-screen rendering.
 
 ## Verification
 
@@ -82,7 +105,13 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 ## Stop Conditions
 
-- Stop before V0 command drawing.
-- Stop before replacing normal RGBA upload path.
-- Stop if render ABI/header changes are needed.
-- Stop after accepted commit and ask user to run the GUI validation.
+- Stop if diagnostics require changing the render ABI/header.
+- Stop if diagnostics require V0 command drawing or replacing full RGBA.
+- Stop if the fix depends on treating `glDeleteTextures()` as protocol ack.
+- Stop if resource ID reuse needs ack/removal policy; draft that contract first.
+- Stop if tombstone retention or removal policy is ambiguous.
+- Stop if logs would be unbounded or per-byte/per-cell spam.
+- Stop if SDL current-window, current-context, main-thread, or GL global-state
+  ownership remains ambiguous after reading the SDL/OpenGL references.
+- Stop after one diagnostic slice and user GUI review; do not roll directly into a
+  fix without a reviewed follow-up slice.
