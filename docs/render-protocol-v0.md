@@ -243,14 +243,34 @@ typedef struct HowlRenderV0Frame {
 the eventual submit/ack ABI call. Render must never report host acknowledgement as
 render-produced frame data.
 
-Command `kind` values are limited to:
+## Named Kind Values
 
-- `HOWL_RENDER_V0_COMMAND_CLEAR_RECT`: clear a rect to transparent or terminal clear color.
-- `HOWL_RENDER_V0_COMMAND_FILL_RECT`: fill a rect with `color_rgba`.
-- `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN`: draw `glyphs` in order; glyph runs never cross rows.
-- `HOWL_RENDER_V0_COMMAND_DRAW_SPRITE`: optional/current-renderer-required only because the
-  current renderer has sprite raster consequences in `prepared/buffer.zig:60-62` and
-  `prepared/buffer.zig:147-263`. V0 must reject sprite commands if no matching resource exists.
+These values are the V0 draft constants required before command validation can be
+implemented. Value `0` is invalid for every V0 public kind field unless the row
+below names it explicitly.
+
+| Constant | Value | Field | Meaning |
+| --- | ---: | --- | --- |
+| `HOWL_RENDER_V0_DAMAGE_RECT` | `1` | `HowlRenderV0DamageItem.kind` | `rect` is damaged and must be consumed as render-pixel damage. |
+| `HOWL_RENDER_V0_DAMAGE_FULL` | `2` | `HowlRenderV0DamageItem.kind` | `rect` must equal `{0, 0, render_px.width, render_px.height}`. |
+| `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` | `1` | `HowlRenderV0ResourceId.kind` | Reserved and invalid until the glyph atlas semantics slice. |
+| `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` | `2` | `HowlRenderV0ResourceId.kind` | Reserved and invalid until the glyph atlas semantics slice. |
+| `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA` | `3` | `HowlRenderV0ResourceId.kind` | Alpha sprite resource for glyph/special/decoration sprite draws. |
+| `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR` | `4` | `HowlRenderV0ResourceId.kind` | RGBA sprite resource for color sprite draws. |
+| `HOWL_RENDER_V0_RESOURCE_FALLBACK_RGBA` | `5` | `HowlRenderV0ResourceId.kind` | Full RGBA oracle/debug fallback resource only. |
+| `HOWL_RENDER_V0_UPLOAD_ALPHA8` | `1` | `HowlRenderV0Upload.format` and `HowlRenderV0Create.format` | One alpha byte per pixel. |
+| `HOWL_RENDER_V0_UPLOAD_RGBA8` | `2` | `HowlRenderV0Upload.format` and `HowlRenderV0Create.format` | Four bytes per pixel in `r`, `g`, `b`, `a` order. |
+| `HOWL_RENDER_V0_COMMAND_CLEAR_RECT` | `1` | `HowlRenderV0Command.kind` | Blend-fill `rect` with `color_rgba` as a clear consequence. |
+| `HOWL_RENDER_V0_COMMAND_FILL_RECT` | `2` | `HowlRenderV0Command.kind` | Blend-fill `rect` with `color_rgba` as background/decoration/cursor fill. |
+| `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` | `3` | `HowlRenderV0Command.kind` | Reserved and invalid until the glyph atlas semantics slice. |
+| `HOWL_RENDER_V0_COMMAND_DRAW_SPRITE` | `4` | `HowlRenderV0Command.kind` | Draw one alpha or color sprite resource. |
+
+`color_rgba` packs bytes as `0xRRGGBBAA`. Any unknown command kind, damage kind,
+resource kind, or upload format rejects the frame before lifetime transitions. The
+glyph atlas resource values are named only to reserve their numbers; V0 validation
+must reject creates, uploads, and commands that use them until a later source-backed
+glyph atlas slice defines atlas packing, upload bytes, glyph identity, placement,
+and alpha/color atlas semantics.
 
 ## Resource Lifetime
 
@@ -317,6 +337,23 @@ Upload rectangles are resource-local pixel rectangles. `stride_bytes` is explici
 enough for the declared rect and format. V0 upload formats are terminal-render formats only; they are
 not backend texture formats.
 
+Upload validation rules:
+
+- `HOWL_RENDER_V0_UPLOAD_ALPHA8` is valid only for
+  `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA`.
+- `HOWL_RENDER_V0_UPLOAD_RGBA8` is valid only for
+  `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR` and
+  `HOWL_RENDER_V0_RESOURCE_FALLBACK_RGBA`.
+- Uploads to `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` and
+  `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` are invalid until the glyph atlas
+  semantics slice.
+- For alpha uploads, `stride_bytes >= rect.width_px` and
+  `bytes_count >= stride_bytes * rect.height_px`.
+- For RGBA uploads, `stride_bytes >= rect.width_px * 4` and
+  `bytes_count >= stride_bytes * rect.height_px`.
+- Upload rects are resource-local and must fit within the created resource dimensions.
+- Uploads to unknown, wrong-generation, retired, or wrong-kind resources reject the frame.
+
 Fallback dirty pixel rect uploads may exist only for software oracle/debug fallback. They must not be
 the only normal consequence once the host consumer is accepted.
 
@@ -327,10 +364,71 @@ list order against host-owned realized resources. Commands cannot create resourc
 pipeline state, present, swap, allocate host resources except as required to realize render resource
 IDs, or mutate retained scene state.
 
-Clear/fill rect commands use `rect` and `color_rgba`. Glyph-run commands use `glyphs`; every glyph
-references a live atlas resource and a valid atlas rect. Sprite commands are included only because
+Clear/fill rect commands use `rect` and `color_rgba`. Sprite commands are included only because
 the current renderer has sprite raster consequences; they remain resource draws, not image-widget or
-scene-graph nodes.
+scene-graph nodes. Glyph-run commands are named but invalid until the glyph atlas semantics slice.
+
+Command order is semantic. V0 emission must preserve the current `composePreparedSurface()` pass
+order from `prepared/buffer.zig:69-76`:
+
+1. `HOWL_RENDER_V0_COMMAND_CLEAR_RECT` commands for `scene.clear_draws`.
+2. `HOWL_RENDER_V0_COMMAND_FILL_RECT` commands for `scene.background_draws`.
+3. `HOWL_RENDER_V0_COMMAND_FILL_RECT` commands for `scene.decoration_draws`.
+4. `HOWL_RENDER_V0_COMMAND_DRAW_SPRITE` commands for `scene.sprite_draws`.
+5. `HOWL_RENDER_V0_COMMAND_FILL_RECT` commands for `scene.cursor_draws`.
+
+Within each pass, commands preserve source list order. A later command blends over earlier command
+results. Hosts must not sort, merge, cull, or reorder commands unless tests prove byte-equivalence
+to this order for the exact command set being transformed.
+
+Clear and fill rect semantics are source-backed by `drawSolidRect()` and `blendPixel()` in
+`prepared/buffer.zig:273-315`:
+
+- Rect coordinates are render-pixel coordinates.
+- Pixels outside the render surface are skipped.
+- A rect with zero width or zero height is invalid for command validation.
+- Each covered destination pixel is alpha-blended with the command color.
+- For each color channel: `dst = (src * src_a + dst * (255 - src_a)) / 255`.
+- For alpha: `dst_a = min(255, src_a + dst_a * (255 - src_a) / 255)`.
+- Division is integer truncating division, matching the current Zig implementation.
+- Clear rect is not a backend clear operation; it is the same per-pixel blend as fill rect, but it
+  records that the source consequence came from `scene.clear_draws`.
+
+Sprite command semantics are source-backed by `lookupSprite()` and `drawSpriteInstance()` in
+`prepared/buffer.zig:147-263`:
+
+- `resource.kind` must be `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA` or
+  `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR`.
+- The referenced sprite resource must be live, created, not retired, and matching generation;
+  missing resources reject the frame. The current equivalent is `error.MissingSprite` from
+  `lookupSprite()`.
+- `rect` is the final visual destination bounds after render applies sprite visual bounds. The
+  command rect therefore corresponds to `draw.x_px + bounds.x_px`, `draw.y_px + bounds.y_px`,
+  `min(draw.width_px, bounds.width_px)`, and `min(draw.height_px, bounds.height_px)`.
+- If the source raster has zero visual bounds, render uses the draw rect as the visual bounds,
+  matching `drawSpriteInstance()` fallback bounds.
+- Alpha sprite bytes are one alpha byte per source pixel. Source RGB is `color_rgba.r/g/b` and
+  source alpha is `(color_rgba.a * alpha_byte) / 255` before the `blendPixel()` formula.
+- Color sprite bytes are RGBA bytes. Source RGBA comes from the resource bytes before the
+  `blendPixel()` formula. `color_rgba` is ignored for color sprites and must be zero.
+- Destination pixels outside the render surface are skipped.
+- Sprite source coordinates start at resource-local `(0, 0)` for the visual resource exposed to V0.
+  Render must trim or upload visual-bounds bytes so V0 does not need a backend source-offset field.
+
+Glyph-run command semantics are blocked. Current source has row-local shaping contracts
+(`contract.zig:154-172`, `contract.zig:332-345`) and sprite-backed glyph consequences
+(`scene.zig:695-727`), but V0 does not yet have source-backed atlas packing, upload bytes,
+glyph identity, subpixel placement, or alpha/color atlas semantics sufficient to implement and test
+direct `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN`. Until that separate source-backed slice is accepted:
+
+- `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` is invalid and must be rejected by the software realizer.
+- `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` and
+  `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` are reserved values, not valid resources.
+- `HOWL_RENDER_V0_UPLOAD_ALPHA8` and `HOWL_RENDER_V0_UPLOAD_RGBA8` are valid only for the non-glyph
+  resource pairings listed in the upload model above.
+
+V0 can still use sprite commands for current renderer equivalence because current prepared
+composition draws `scene.sprite_draws`.
 
 ## Invalid Input Behavior
 
@@ -349,6 +447,65 @@ V0 rejects invalid input with a non-success status and no partial lifetime trans
 - Submit before prepare, double submit, ack before retire, retire before last use, or out-of-order
   frame ack: reject.
 - Unknown command kind, upload format, resource kind, or damage kind: reject.
+- `DRAW_GLYPH_RUN` before glyph atlas/resource/upload semantics are accepted by a later slice:
+  reject in the software realizer.
+- `DRAW_SPRITE` with `glyphs.count != 0`: reject.
+- `DRAW_SPRITE` with a nonzero `color_rgba` for a color sprite resource: reject.
+- `CLEAR_RECT` or `FILL_RECT` with a nonempty glyph span or nonzero resource ID: reject.
+- `DRAW_GLYPH_RUN` with a nonzero command rect, nonzero command resource, or nonzero command
+  `color_rgba`: reject.
+
+## Software Equivalence Oracle
+
+The future software realizer must compare V0 realization against the current
+`prepared_buffer.compose()` full RGBA oracle before any V0 emission can replace the normal path.
+Selected oracle cases:
+
+- Full redraw with background fill and cursor/decoration fill. Build a full-damage scene with at
+  least one background fill and one cursor or decoration fill, emit commands in pass order, and
+  compare every RGBA byte with `prepared_buffer.compose()`.
+- Partial row retained-base preservation. Seed a nonzero retained base, emit partial clear/background
+  commands for only the dirty row span, and prove bytes outside the dirty command rects remain equal
+  to the retained base as in `compose preserves retained content outside partial updates`.
+- Partial dirty row clear for transparent backgrounds. Use a partial dirty row with transparent cell
+  backgrounds and prove the V0 clear command matches the explicit clear produced by
+  `scene emits explicit clears for transparent default backgrounds on partial damage`.
+- Sprite alpha blending. Only test this without font/backend dependence by constructing an explicit
+  alpha sprite resource/upload and sprite command, then comparing against `drawSpriteInstance()`
+  semantics through `prepared_buffer.compose()`.
+- Sprite color blending. Only test this without font/backend dependence by constructing an explicit
+  RGBA sprite resource/upload and sprite command, then comparing against `drawSpriteInstance()`
+  semantics through `prepared_buffer.compose()`.
+
+The glyph-run oracle case is blocked. Do not add a glyph-run equivalence test until atlas resource,
+upload, placement, and glyph identity semantics are closed by source-backed contract text.
+
+Exact negative software-realizer oracle cases required before implementation:
+
+| Case | Invalid input | Expected result |
+| --- | --- | --- |
+| Unknown command kind | One command with `kind = 255`. | Reject frame; no resource lifetime transition. |
+| Unknown damage kind | One damage item with `kind = 255`. | Reject frame; no resource lifetime transition. |
+| Unknown resource kind | One create with `resource.kind = 255`. | Reject frame; no resource lifetime transition. |
+| Unknown upload format | One upload with `format = 255`. | Reject frame; no resource lifetime transition. |
+| Zero command width | `CLEAR_RECT` with `rect.width_px = 0` and `rect.height_px = 1`. | Reject frame; no pixels written. |
+| Zero command height | `FILL_RECT` with `rect.width_px = 1` and `rect.height_px = 0`. | Reject frame; no pixels written. |
+| Damage span overflow | `damage.count = HOWL_RENDER_V0_DAMAGE_ITEMS_MAX + 1`. | Reject frame; no span read past max. |
+| Upload span overflow | `uploads.count = HOWL_RENDER_V0_UPLOADS_MAX + 1`. | Reject frame; no span read past max. |
+| Command span overflow | `commands.count = HOWL_RENDER_V0_COMMANDS_MAX + 1`. | Reject frame; no span read past max. |
+| Glyph span overflow | `glyphs.count = HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX + 1`. | Reject frame; no span read past max. |
+| Alpha upload to color sprite | Resource kind `SPRITE_COLOR = 4`, upload `format = UPLOAD_ALPHA8 = 1`. | Reject frame; resource remains not updated. |
+| RGBA upload to alpha sprite | Resource kind `SPRITE_ALPHA = 3`, upload `format = UPLOAD_RGBA8 = 2`. | Reject frame; resource remains not updated. |
+| Upload before create | Upload references `{ value = 77, generation = 1, kind = 3 }` with no create. | Reject frame; resource remains unknown. |
+| Missing sprite command resource | `DRAW_SPRITE` references `{ value = 78, generation = 1, kind = 3 }` with no create. | Reject frame; no pixels written. |
+| Wrong generation sprite use | Create `{ value = 79, generation = 1, kind = 3 }`, command uses generation `2`. | Reject frame; no pixels written. |
+| Retired sprite use | Retire `{ value = 80, generation = 1, kind = 3 }`, then `DRAW_SPRITE` uses it. | Reject frame; no pixels written. |
+| Color sprite command color | `DRAW_SPRITE` uses `SPRITE_COLOR = 4` and `color_rgba = 0x01020304`. | Reject frame; no pixels written. |
+| Sprite command glyph span | `DRAW_SPRITE` has `glyphs.count = 1`. | Reject frame; no pixels written. |
+| Fill command resource | `FILL_RECT` has `resource.value = 1`. | Reject frame; no pixels written. |
+| Glyph atlas create | Create with `resource.kind = GLYPH_ATLAS_ALPHA = 1`. | Reject frame; glyph atlas values are reserved. |
+| Glyph atlas upload | Upload to `resource.kind = GLYPH_ATLAS_COLOR = 2` with `format = UPLOAD_RGBA8 = 2`. | Reject frame; glyph atlas values are reserved. |
+| Blocked glyph run | One command with `kind = DRAW_GLYPH_RUN`, even with `glyphs.count = 0`. | Reject frame; glyph-run semantics are blocked. |
 
 ## Test Gates
 
@@ -356,14 +513,26 @@ Before ABI skeleton:
 
 - ABI layout plan for every V0 struct, including size, alignment, field offsets, and reserved fields.
 - Constant tests planned for every named bound above.
-- Negative ABI cases planned for null spans, malformed counts, invalid dimensions, stale tokens,
-  unknown resources, retired resources, and out-of-order submit/ack.
+- Exact ABI negative cases planned: span `ptr = NULL` with `count = 1`,
+  `damage.count = HOWL_RENDER_V0_DAMAGE_ITEMS_MAX + 1`, `render_px.width = 0`,
+  stale `token.frame_seq`, unknown resource `{ value = 78, generation = 1,
+  kind = SPRITE_ALPHA }`, retired resource `{ value = 80, generation = 1,
+  kind = SPRITE_ALPHA }`, and ack before retire.
 
 Before software reference realizer:
 
 - ABI skeleton accepted with layout and bound tests passing.
-- Software realizer command semantics specified for clear/fill rect, glyph run, and sprite.
+- Software realizer command semantics specified for clear/fill rect and sprite;
+  glyph-run rejection specified until the glyph atlas semantics slice.
 - Equivalence cases selected against current `prepared_buffer.compose()` for full redraw and partial rows.
+- Kind constant tests planned for every numeric V0 command, damage, resource, and upload value.
+- Exact negative software-realizer tests planned for the invalid inputs listed in the
+  `Software Equivalence Oracle` table: `kind = 255` for command/damage/resource/upload,
+  command rect `width_px = 0`, command rect `height_px = 0`, span `count = count_max + 1`,
+  `UPLOAD_ALPHA8` to `SPRITE_COLOR`, `UPLOAD_RGBA8` to `SPRITE_ALPHA`, missing resource
+  `{ value = 78, generation = 1, kind = SPRITE_ALPHA }`, wrong generation `2` after create
+  generation `1`, retired resource use, upload-before-create, glyph atlas create/upload rejection,
+  and blocked `DRAW_GLYPH_RUN` rejection.
 
 Before protocol emission:
 

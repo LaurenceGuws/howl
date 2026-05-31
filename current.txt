@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 ABI Skeleton
+# Current Slice: Render Protocol V0 Pre-Realizer Semantics
 
-Owner: `howl-render` C ABI contract.
+Owner: `howl-render` protocol contract semantics.
 
 Sprint scratchpad and contract:
 
@@ -9,11 +9,10 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Add V0 protocol constants and C ABI struct declarations only.
-- Add compile-time Zig layout/offset tests proving the ABI skeleton matches
-  internal mirror structs.
-- Do not emit protocol frames, do not change render behavior, and do not change
-  host behavior.
+- Specify V0 command/resource/upload kind values and command semantics before
+  any software reference realizer code exists.
+- Select exact equivalence oracle cases against the current full-surface renderer.
+- Keep the slice document-only because product code is not worker-ready.
 
 ## Source Order (Mandatory)
 
@@ -23,78 +22,58 @@ Read in order before editing:
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
-5. `howl-render/include/howl_render.h`
-6. `howl-render/src/ffi.zig`
-7. `howl-render/src/ffi/vt_surface.zig`
+5. `howl-render/src/prepared/buffer.zig`
+6. `howl-render/src/text/contract.zig`
+7. `howl-render/src/text/scene.zig`
+8. `howl-render/src/prepared/owner.zig`
+9. `howl-render/include/howl_render.h`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/include/howl_render.h`
-- new `howl-render/src/ffi/protocol_v0.zig`
-- `howl-render/src/libhowl_render.zig` only if needed to force compile-time
-  layout checks through existing imports
-- `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
+- `docs/render-protocol-v0.md`
+- `research/2026-05-31-howl-render-protocol-sprint.md`
 
+No product code.
+No header changes.
+No Zig changes.
 No host code.
-No behavior changes.
-No functions exported for protocol production yet.
-No prepared-surface deletion.
 No software realizer.
 No protocol emission.
 No performance claims.
 
-## Required Header Shape
+## Required Spec Additions
 
-Add public constants from `docs/render-protocol-v0.md` exactly:
+- Numeric command kind values for clear rect, fill rect, draw glyph run, and draw
+  sprite.
+- Numeric damage kind values, resource kind values, and upload format values
+  required by command validation.
+- Clear/fill rect semantics source-backed by `prepared_buffer.drawSolidRect()`
+  and `blendPixel()`.
+- Command ordering semantics matching `composePreparedSurface()` pass order.
+- Sprite semantics for alpha and color sprite resources, including visual bounds,
+  missing-resource rejection, and alpha/color blending.
+- Explicit glyph-run blocker if atlas/resource/upload semantics remain
+  insufficient for implementation.
+- Selected equivalence oracle cases against `prepared_buffer.compose()`:
+  - full redraw with background fill and cursor/decoration fill;
+  - partial row retained-base preservation;
+  - partial dirty row clear for transparent backgrounds;
+  - sprite alpha/color blending only if source-backed enough to test without
+    font/backend dependence.
 
-- `HOWL_RENDER_PROTOCOL_V0_VERSION = 0`
-- `HOWL_RENDER_V0_FRAMES_IN_FLIGHT_MAX = 2`
-- `HOWL_RENDER_V0_SNAPSHOTS_IN_FLIGHT_MAX = 2`
-- `HOWL_RENDER_V0_DAMAGE_ITEMS_MAX = 1024`
-- `HOWL_RENDER_V0_UPLOADS_MAX = 256`
-- `HOWL_RENDER_V0_COMMANDS_MAX = 8192`
-- `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX = 256`
-- `HOWL_RENDER_V0_UPLOAD_BYTES_MAX = 8388608`
-- `HOWL_RENDER_V0_ATLAS_PAGES_MAX = 64`
-- `HOWL_RENDER_V0_RESOURCES_MAX = 4096`
-- `HOWL_RENDER_V0_CREATES_MAX = 256`
-- `HOWL_RENDER_V0_RETIRES_MAX = 256`
-- `HOWL_RENDER_V0_HOST_ACKS_MAX = 256`
+## Required Invariants
 
-Add C structs exactly matching the draft names and fields:
-
-- `HowlRenderV0Token`
-- `HowlRenderV0Rect`
-- `HowlRenderV0DamageItem`
-- `HowlRenderV0DamageSpan`
-- `HowlRenderV0ResourceId`
-- `HowlRenderV0Upload`
-- `HowlRenderV0UploadSpan`
-- `HowlRenderV0Create`
-- `HowlRenderV0CreateSpan`
-- `HowlRenderV0GlyphRef`
-- `HowlRenderV0GlyphRunSpan`
-- `HowlRenderV0Command`
-- `HowlRenderV0CommandSpan`
-- `HowlRenderV0Retire`
-- `HowlRenderV0RetireSpan`
-- `HowlRenderV0HostAck`
-- `HowlRenderV0HostAckSpan`
-- `HowlRenderV0Frame`
-
-Do not add `HowlRenderV0HostAckSpan` to `HowlRenderV0Frame`.
-
-## Required Zig Layout Proof
-
-- Create internal extern mirror structs in `howl-render/src/ffi/protocol_v0.zig`.
-- Add a `comptime` block that asserts:
-  - every constant equals the contract value;
-  - every mirror struct has the same size and alignment as the C imported struct;
-  - every field offset matches.
-- Reuse the direct assertion style from `ffi/vt_surface.zig`; do not add generic
-  testing infrastructure unless required.
+- Render owns command production, resource IDs, upload bytes, atlas packing,
+  glyph identity, and damage.
+- Host owns backend resource realization, event loop, wake policy, presentation,
+  and swap.
+- V0 is not a scene graph.
+- Every public kind value has a named numeric constant before realizer tests.
+- Every list stays fixed-bound by existing V0 maxima.
+- Full RGBA remains only oracle/fallback until V0 emission and host consumption
+  are tested.
 
 ## Verification
 
@@ -106,9 +85,13 @@ From `/home/home/personal/projects/howl`:
 
 ## Stop Conditions
 
-- Stop if the C header cannot represent the contract without ambiguous padding.
-- Stop if any constant value differs from `docs/render-protocol-v0.md`.
-- Stop if host ack appears inside `HowlRenderV0Frame`.
-- Stop if product behavior must change to make the skeleton compile.
-- Stop if a protocol export function seems necessary; that belongs to a later
-  slice.
+- Stop if command kind numeric values are still unnamed.
+- Stop if resource kind/upload format values needed by sprite/glyph commands are
+  still unnamed.
+- Stop if glyph-run semantics require inventing atlas/resource behavior not in
+  the contract.
+- Stop if sprite semantics do not specify alpha versus color blending.
+- Stop if tests compare only happy paths.
+- Stop if implementation is attempted.
+- Stop if full RGBA is treated as normal V0 output instead of oracle/fallback.
+- Stop if host/backend objects enter the ABI.

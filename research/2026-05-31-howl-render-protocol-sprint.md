@@ -1071,6 +1071,105 @@ Second reviewer rejection fix:
 - Verification was rerun after the header tag fix with the same passing commands
   above.
 
+## Phase 5 Slice: Render Protocol V0 Pre-Realizer Semantics
+
+Status: document-only worker slice implemented. No product code, headers, Zig files,
+host files, build files, tests, or software realizer were changed.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Pre-Realizer Semantics`
+
+Allowed files:
+
+- `docs/render-protocol-v0.md`
+- this scratchpad
+
+Source facts verified for this slice:
+
+- `prepared_buffer.compose()` seeds a complete RGBA surface, then calls
+  `composePreparedSurface()` (`prepared/buffer.zig:7-31`).
+- `composePreparedSurface()` pass order is clear, background, decoration,
+  sprites, then cursor (`prepared/buffer.zig:69-76`).
+- Clear/background/decoration/cursor draws all route through `drawSolidRect()`
+  and `blendPixel()` (`prepared/buffer.zig:107-145`, `prepared/buffer.zig:273-315`).
+- `blendPixel()` uses integer source-over blending with `dst = (src * a + dst *
+  (255 - a)) / 255` for RGB and clamps alpha to `255`
+  (`prepared/buffer.zig:297-315`).
+- Partial surfaces copy the render-owned retained base before command passes,
+  preserving bytes outside later draws (`prepared/buffer.zig:78-87`).
+- Sprite lookup first checks current raster outputs, then cached atlas rasters,
+  and returns `error.MissingSprite` when no raster exists
+  (`prepared/buffer.zig:160-188`).
+- Sprite alpha mode multiplies draw color alpha by source alpha and blends draw
+  color RGB; color mode blends source RGBA bytes directly
+  (`prepared/buffer.zig:232-259`).
+- Sprite visual bounds offset the destination origin and cap draw width/height;
+  zero visual bounds fall back to the draw rect (`prepared/buffer.zig:205-218`).
+- Scene assembly emits transparent-background partial dirty-row clears through
+  `appendClearDraws()` and `clearColorForSpan()` (`text/scene.zig:803-842`).
+- Current V0 header has struct and bound skeletons but lacks numeric V0 kind
+  constants for command, damage, resource, and upload fields
+  (`howl-render/include/howl_render.h:19-31`, `howl-render/include/howl_render.h:157-287`).
+
+Contract additions made:
+
+- Numeric command kind values:
+  `CLEAR_RECT = 1`, `FILL_RECT = 2`, `DRAW_GLYPH_RUN = 3`, `DRAW_SPRITE = 4`.
+- `DRAW_GLYPH_RUN` is reserved and invalid until the source-backed glyph atlas
+  semantics slice.
+- Numeric damage kind values:
+  `DAMAGE_RECT = 1`, `DAMAGE_FULL = 2`.
+- Numeric resource kind values:
+  `GLYPH_ATLAS_ALPHA = 1`, `GLYPH_ATLAS_COLOR = 2`, `SPRITE_ALPHA = 3`,
+  `SPRITE_COLOR = 4`, `FALLBACK_RGBA = 5`.
+- `GLYPH_ATLAS_ALPHA` and `GLYPH_ATLAS_COLOR` are reserved and invalid until
+  the source-backed glyph atlas semantics slice; they are not valid create,
+  upload, or command resources for the pre-realizer semantics slice.
+- Numeric upload format values:
+  `UPLOAD_ALPHA8 = 1`, `UPLOAD_RGBA8 = 2`.
+- `color_rgba` packing fixed as `0xRRGGBBAA`.
+- Upload validation fixed by resource kind, format, stride, byte count, resource
+  bounds, and lifetime state. `UPLOAD_ALPHA8` is valid only for `SPRITE_ALPHA`;
+  `UPLOAD_RGBA8` is valid only for `SPRITE_COLOR` and `FALLBACK_RGBA`.
+- Command ordering fixed to current `composePreparedSurface()` pass order.
+- Clear/fill semantics fixed to current `drawSolidRect()` and `blendPixel()`
+  behavior, including clipping, integer blending, and zero-size rejection.
+- Sprite alpha/color semantics fixed to current `lookupSprite()` and
+  `drawSpriteInstance()` behavior, including missing-resource rejection, visual
+  bounds, alpha blending, and color blending.
+- Software-equivalence oracle cases selected against `prepared_buffer.compose()`:
+  full redraw with background fill and cursor/decoration fill; partial row
+  retained-base preservation; partial dirty row clear for transparent
+  backgrounds; source-backed alpha sprite blending; source-backed color sprite
+  blending.
+- Future software-realizer tests now require exact negative inputs and exact
+  rejection outcomes: command/damage/resource/upload `kind = 255`, command rect
+  `width_px = 0`, command rect `height_px = 0`, span `count = count_max + 1`,
+  `UPLOAD_ALPHA8 = 1` to `SPRITE_COLOR = 4`, `UPLOAD_RGBA8 = 2` to
+  `SPRITE_ALPHA = 3`, upload to `{ value = 77, generation = 1, kind = 3 }`
+  before create, missing sprite command resource `{ value = 78, generation = 1,
+  kind = 3 }`, create `{ value = 79, generation = 1, kind = 3 }` then command
+  generation `2`, retired `{ value = 80, generation = 1, kind = 3 }` use, color
+  sprite command with `color_rgba = 0x01020304`, sprite command with
+  `glyphs.count = 1`, fill command with `resource.value = 1`, glyph atlas create
+  with `resource.kind = 1`, glyph atlas upload with `resource.kind = 2`, and
+  blocked `DRAW_GLYPH_RUN` even with `glyphs.count = 0`.
+
+Unresolved blockers:
+
+- Direct `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` is explicitly blocked. Current
+  source proves row-local shaping and sprite-backed glyph consequences, but it
+  does not yet prove V0 atlas packing, upload bytes, glyph identity, subpixel
+  placement, and alpha/color atlas semantics sufficient for a direct glyph-run
+  software realizer.
+- Glyph atlas resource values remain reserved, not usable. The pre-realizer
+  contract now rejects `GLYPH_ATLAS_ALPHA`, `GLYPH_ATLAS_COLOR`, and uploads to
+  those resource kinds until the glyph atlas semantics slice is accepted.
+- V0 product-code implementation remains not ready. The next safe step is a
+  separate source-backed slice that either closes glyph atlas semantics or keeps
+  V0 equivalence on sprite commands until direct glyph runs are specified.
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
