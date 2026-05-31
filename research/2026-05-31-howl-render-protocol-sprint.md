@@ -1819,6 +1819,56 @@ Verification performed:
 - From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
+## Phase 16 Slice: Render Protocol V0 Prepared Emission Proof
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Prepared Emission Proof`
+
+Accepted implementation facts:
+
+- Added internal `emitPrepared()` in `howl-render/src/protocol_v0/emit.zig`.
+- `emitPrepared()` accepts the real `prepared/surface.zig` `PreparedSurface` and
+  a real `TextSession`; it does not use `anytype` fake prepared surfaces.
+- Prepared emission reads `prepared.text_frame.scene.scene` in current
+  `prepared_buffer.compose()` pass order: clear, background, decoration, sprites,
+  cursor.
+- Prepared sprite lookup checks current `prepared.text_frame.raster_plan.outputs`
+  first and then `TextSession.atlasRaster()` for the session cache fallback.
+- Prepared sprite emission trims visual-resource upload bytes into emitter-owned
+  storage starting at resource-local `(0, 0)` and offsets the destination command
+  rect by visual bounds exactly as `prepared_buffer.compose()` does.
+- Temporary sprite resources are created, uploaded, used, and retired in the
+  documented command-boundary domain.
+- Emission remains fail-closed by building through copied emitter storage and
+  committing only after all appends and sprite byte copies succeed; missing
+  prepared sprites leave the prior accepted frame intact.
+- The proof tests live in `howl-render/src/test_protocol_proof.zig`, construct real
+  `PreparedSurface` values, realize V0 through `protocol_v0.realize()`, and
+  compare byte-for-byte against `prepared_buffer.compose()`.
+- Full RGBA remains oracle/fallback only. No headers, C ABI exports, host code,
+  prepared owner/surface storage, normal render path, build files, realizer, or
+  direct glyph atlas production changed.
+
+Tests added:
+
+- `protocol v0 emitter realizes prepared fill frame equal to full rgba oracle`
+- `protocol v0 emitter realizes prepared alpha sprite frame equal to full rgba oracle`
+- `protocol v0 emitter realizes prepared color sprite frame equal to full rgba oracle`
+- `protocol v0 emitter realizes prepared sprite visual bounds equal to full rgba oracle`
+- `protocol v0 emitter rejects missing prepared sprite without mutating accepted frame`
+- `protocol v0 emitter realizes partial prepared frame over retained base equal to full rgba oracle`
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
