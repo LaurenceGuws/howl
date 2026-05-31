@@ -1,20 +1,21 @@
-# Current Slice: Render Protocol V0 Persistent Sprite Resource Emission Probe
+# Current Slice: Linux Host Submit Backend Outside Terminal Lock
 
-Owner: `howl-render` protocol V0 emission and retained protocol resource state.
+Owner: `howl-linux-host` terminal render-turn lock boundary.
 
-Sprint scratchpad and contract:
+Research inputs:
 
+- `research/2026-05-31-linux-host-alacritty-runtime-boundary.md`
+- `research/2026-05-31-linux-host-lock-wake-graph.md`
+- `research/2026-05-31-linux-host-ghostty-lock-wake-sanity.md`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
-- `docs/render-protocol-v0.md`
 
 Purpose:
 
-- Replace same-frame disposable prepared sprite V0 resources with persistent
-  render-owned sprite resources.
-- Emit create/upload only when a sprite resource is first observed or materially
-  changes.
-- Emit later commands referencing existing live resources without create/upload/retire.
-- Keep full RGBA as visible fallback/oracle.
+- Match the recorded Alacritty runtime boundary: collect/copy terminal-render state
+  under `term.mutex`, release the lock, perform host/backend GL work, then relock only
+  for render submit state transition.
+- Remove V0 realization, GL state sampling, full RGBA host upload, and diagnostic
+  printing from the terminal mutex critical section.
 
 ## Source Order (Mandatory)
 
@@ -22,65 +23,75 @@ Read in order before editing:
 
 1. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-3. `research/2026-05-31-howl-render-protocol-sprint.md`
-4. `docs/render-protocol-v0.md`
-5. `utils/dev_references/terminals/alacritty`
-6. `utils/dev_references/terminals/ghostty`
-7. `howl-render/src/protocol_v0/emit.zig`
-8. `howl-render/src/protocol_v0/realize.zig`
-9. `howl-render/src/prepared/buffer.zig`
-10. Relevant `howl-render/src/**` owner files for prepared/protocol/session state.
+3. `current.txt`
+4. `research/2026-05-31-linux-host-alacritty-runtime-boundary.md`
+5. `research/2026-05-31-linux-host-lock-wake-graph.md`
+6. `research/2026-05-31-linux-host-ghostty-lock-wake-sanity.md`
+7. `howl-linux-host/src/terminal/context.zig`
+8. `howl-linux-host/src/terminal/render/retained.zig`
+9. `howl-linux-host/src/window/term_texture.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/src/protocol_v0/emit.zig`
-- `howl-render/src/protocol_v0/realize.zig` only if retained oracle support is needed
-- Existing `howl-render/src/prepared/**` or session/protocol owner files only if they
-  are the true owner for retained protocol resource state
-- Existing howl-render protocol tests
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/render/retained.zig` only if a minimal prepared-handle
+  identity/assert helper is required
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No C ABI/header changes. No host changes. No ack/removal ABI. No V0 command drawing
-or presentation replacement. No full RGBA deletion.
+No render ABI changes. No V0 protocol changes. No host present-cadence changes. No PTY
+pump/wake policy changes. No V0 resource semantics changes. No full RGBA deletion.
 
-## Required Product Shape
+## Required Shape
 
-- Render owns opaque nonzero V0 sprite resource IDs.
-- Numeric resource values are monotonic and are not reused in this slice.
-- Generation remains `1` for first lifetime only; no retire/reuse path is introduced.
-- Persistent sprite resources emit create/upload once, then later frames emit commands
-  referencing the existing live resource.
-- Normal persistent sprites emit no retire in this slice.
-- Internal sprite lookup may use current render-owned sprite facts, but must not expose
-  `SpriteKey` as public ABI glyph identity.
-- Resource capacity or upload-bound exhaustion fails closed to full RGBA fallback/oracle
-  without mutating accepted V0 payload/resource state.
-- The V0 software oracle/resource store must be retained enough to prove later-frame
-  commands can reference earlier-frame resources byte-equivalent to the full RGBA
-  prepared buffer.
+- Locked phase: source publication, render action selection, prepare if needed,
+  `preparedUpload()` extraction, and scalar submit metadata copy.
+- Unlocked phase: V0 texture realization, GL state sampling, `term_texture.ensureSurface()`,
+  `term_texture.uploadPreparedBuffer()`, and diagnostic printing.
+- Relocked phase: `term.render.submit()`, retained render state transition,
+  `term_texture` submit result update, and render turn result.
+
+## Hard Invariants
+
+- No `term_texture.*` calls while `term.mutex` is held.
+- No `protocol_v0_textures.realizeFrame()` while `term.mutex` is held.
+- No `term_texture.sampleGlState()` while `term.mutex` is held.
+- No `std.debug.print()` diagnostics from the submit path while `term.mutex` is held.
+- `term.render.prepare()`, `term.render.preparedUpload()`, and `term.render.submit()`
+  remain under `term.mutex`.
+- Borrowed prepared frame/span/upload byte pointers are consumed synchronously in the
+  same owner turn and are never retained.
+- The retained prepared handle must not be released, replaced, forgotten, or submitted
+  by another path between unlock and relock.
 
 ## Required Tests
 
-- Frame 1 with a sprite emits create/upload/command and no retire.
-- Frame 2 with the same source-backed sprite identity emits command only for the same
-  resource ID.
-- Different source-backed sprite identity or incompatible bytes/dimensions emits a
-  distinct monotonic resource ID, not numeric reuse.
-- Capacity or upload-bound exhaustion fails closed without mutating accepted V0
-  payload/resource state.
-- Retained software realizer/oracle proves frame 2 byte-equivalent to
-  `prepared_buffer.compose()` while using a prior-frame resource.
-- Existing root `zig build test` and `zig build check` pass.
+- A fake/test path proves backend realization/upload callbacks observe the terminal
+  mutex unlocked.
+- A test proves render submit still happens under lock after backend upload.
+- A test proves host upload failure returns failed submit result without leaking the
+  prepared upload wrapper.
+- Existing present-pending and present-completion tests still pass.
+
+## Verification
+
+From `/home/home/personal/projects/howl/howl-linux-host`:
+
+- `zig build test --summary all`
+- `zig build -Doptimize=ReleaseFast`
+- `git diff --check`
+
+From `/home/home/personal/projects/howl` if root-visible files change:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
 
 ## Stop Conditions
 
-- Stop if stable sprite identity cannot be defined from current render-owned facts
-  without guessing.
-- Stop if eviction/reclamation is required; that needs ack/removal and is later.
-- Stop if this requires C ABI/header changes.
-- Stop if this requires host changes, V0 command drawing, presentation replacement, or
-  deleting full RGBA.
-- Stop if resource ownership cannot live in a true render owner without host/backend
-  policy leaking into render.
+- Stop if `PreparedUpload` cannot be proved valid across the unlock/relock window.
+- Stop if moving backend work out of lock requires render ABI or V0 protocol changes.
+- Stop if present cadence, PTY pump limits, wake semaphore semantics, or V0 resource
+  semantics need to change.
+- Stop if tests cannot prove backend upload runs outside `term.mutex`.

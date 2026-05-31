@@ -2985,3 +2985,116 @@ Verification performed:
 Accepted commits:
 
 - `howl-render` `f8253d1` - `render: persist protocol v0 sprite resources`
+
+## Phase 27 Research: Linux Host Alacritty Runtime Boundary
+
+Status: durable research accepted as implementation input.
+
+Research files:
+
+- `research/2026-05-31-linux-host-alacritty-runtime-boundary.md`
+- `research/2026-05-31-linux-host-lock-wake-graph.md`
+- `research/2026-05-31-linux-host-ghostty-lock-wake-sanity.md`
+
+Decision:
+
+- Howl must follow the recorded Alacritty runtime boundary before more V0 resource
+  work: collect/copy terminal-render state under the terminal lock, release the
+  terminal lock, then perform host/backend GL work and diagnostics.
+- Ghostty independently reinforces the same lock/wake invariant: do not block or run
+  backend work while holding shared terminal/render state locks.
+- The next implementation slice is `Linux Host Submit Backend Outside Terminal Lock`.
+
+Source-backed facts:
+
+- Previous Alacritty research already recorded that `Display::draw()` collects
+  renderable terminal content and damage under the terminal lock, then drops the lock
+  before GL context work, drawing, present notification, swap, and damage advancement.
+- Howl's PTY pump is already directionally Alacritty-like: it reads PTY bytes outside
+  the terminal data lock and feeds VT under bounded lock limits.
+- Howl's violation is render submit: `Context.renderTurn()` holds `term.mutex` across
+  `driveRenderLocked()` and `submitPreparedLocked()`.
+- `submitPreparedLocked()` currently performs V0 texture realization, GL state
+  sampling, `term_texture.ensureSurface()`, full RGBA texture upload, diagnostics
+  printing, and then `term.render.submit()` while `term.mutex` is held.
+- The PTY wait thread is wake-only and waits for owner ACK; it does not mutate VT or
+  render state. Long render critical sections can delay PTY feed and wake ACK.
+- Present/swap itself is already host-owned outside `term.mutex`, but present
+  completion can queue behind a long render/upload lock.
+- Clipboard host calls under `term.mutex` are another ownership smell, but they are
+  not part of the first runtime-boundary implementation slice.
+
+Implementation slice shape:
+
+- Locked phase: publish source if needed, choose render action, prepare if needed,
+  take `PreparedUpload`, and copy scalar submit metadata.
+- Unlocked phase: realize V0 textures, sample GL state, ensure/create host surface,
+  upload full RGBA buffer, and emit backend diagnostics.
+- Relocked phase: call `term.render.submit()`, update retained render state and
+  `term_texture` submit result, then return the render turn result.
+
+Required invariants:
+
+- No `term_texture.*` calls while `term.mutex` is held.
+- No V0 GL realization while `term.mutex` is held.
+- No GL state sampling while `term.mutex` is held.
+- No diagnostic printing while `term.mutex` is held.
+- `term.render.prepare()`, `term.render.preparedUpload()`, and `term.render.submit()`
+  remain serialized by `term.mutex`.
+- Borrowed prepared frame/span/upload byte pointers are consumed synchronously in the
+  same owner turn and are never retained.
+- Stop if prepared upload lifetime cannot be proved across the unlock/relock window.
+
+Required tests/probes for implementation:
+
+- A fake/test path proves backend realization/upload callbacks observe the terminal
+  mutex unlocked.
+- A test proves render submit still happens under lock after backend upload.
+- A test proves host upload failure returns a failed submit result without losing or
+  leaking the prepared upload wrapper.
+- Existing present-pending and present-completion behavior remains unchanged.
+- Existing host/root verification gates pass.
+
+## Phase 28 Slice: Linux Host Submit Backend Outside Terminal Lock
+
+Status: accepted and committed in `howl-linux-host`.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host Submit Backend Outside Terminal Lock`
+
+Implementation facts:
+
+- `Context.renderTurn()` no longer holds `term.mutex` across host backend upload work.
+- The submit path now extracts `PreparedUpload` under `term.mutex`, unlocks for V0
+  texture realization, GL state sampling, `term_texture.ensureSurface()`, full RGBA
+  texture upload, and submit-path diagnostics, then relocks for `term.render.submit()`.
+- `term.render.prepare()`, `term.render.preparedUpload()`, and
+  `term.render.submit()` remain serialized by `term.mutex`.
+- `render_retained.State.preparedSurfaceHandle()` exposes a minimal identity check so
+  the host can assert the retained prepared handle was not replaced across the
+  unlocked backend phase.
+- Borrowed prepared frame/span/upload byte pointers remain same-turn only and are not
+  retained.
+- No render ABI, V0 protocol, present cadence, PTY pump/wake, or V0 resource semantic
+  changes were made.
+
+Tests added:
+
+- Backend upload observes the terminal mutex unlocked.
+- Render submit observes the terminal mutex locked after backend upload.
+- Backend upload failure returns failed without render submit.
+- Prepared handle mutation after unlocked upload does not submit.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+
+Accepted commits:
+
+- `howl-linux-host` `fc9b7fc` - `host: move submit backend outside terminal lock`
