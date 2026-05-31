@@ -1536,6 +1536,27 @@ Prerequisite slice required before retrying emission:
   create/upload/use/retire so temporary sprite resources can be retired after
   their final command in the same frame.
 
+## Phase 10 Slice: Render Protocol V0 Ordered Retire Validation
+
+Status: rejected and reverted before commit.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Ordered Retire Validation`
+
+Rejected implementation facts:
+
+- Worker changed `howl-render/src/protocol_v0/realize.zig` to compare
+  `HowlRenderV0Retire.retire_seq` with both `HowlRenderV0Upload.upload_seq` and
+  zero-based command span indexes.
+- Reviewer rejected this because the ABI contract does not define `retire_seq`,
+  `upload_seq`, and command order as one shared sequence domain. Commands do not
+  have a sequence field, and the docs only say retire happens after final command.
+- The tests used naked `retire_seq = 1`, which encoded the implementation's
+  undocumented assumption instead of proving a documented contract.
+- The implementation was reverted before commit. Correct ordered retire validation
+  requires a document-only contract slice defining the sequence domain first.
+
 Verification performed by rejected worker before review:
 
 - `zig build check`

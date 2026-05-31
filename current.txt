@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Ordered Retire Validation
+# Current Slice: Render Protocol V0 Retire Order Contract
 
-Owner: `howl-render` internal protocol V0 software realization.
+Owner: `howl-render` protocol V0 lifetime contract semantics.
 
 Sprint scratchpad and contract:
 
@@ -9,12 +9,10 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Fix the limited software realizer so a frame can create, upload, use, then
-  retire a temporary resource in command order.
-- Preserve rejection for use after retire, upload after retire, retire before use,
-  duplicate retire, missing resource, and wrong generation.
-- Unblock the internal emission slice without changing headers, host code, or
-  protocol emission.
+- Define the exact ordering domain for `HowlRenderV0Retire.retire_seq` so later
+  realizer code can validate create/upload/use/retire without inventing behavior.
+- Keep the slice document-only because implementation review proved the current
+  contract is ambiguous.
 
 ## Source Order (Mandatory)
 
@@ -27,61 +25,41 @@ Read in order before editing:
 5. `howl-render/include/howl_render.h`
 6. `howl-render/src/ffi/protocol_v0.zig`
 7. `howl-render/src/protocol_v0/realize.zig`
-8. `howl-render/src/test/unit.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/src/protocol_v0/realize.zig`
-- `howl-render/src/test/unit.zig` only if needed to expose tests
-- `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
+- `docs/render-protocol-v0.md`
+- `research/2026-05-31-howl-render-protocol-sprint.md`
 
+No product code.
 No header changes.
-No C ABI export functions.
+No Zig changes.
 No host code.
 No protocol emission.
-No emitter retry in this slice.
-No prepared owner/surface changes.
-No normal render path replacement.
+No normal-path replacement.
 
-## Required Product Shape
+## Required Contract Closure
 
-- Keep the realizer internal-only.
-- Validate lifetime with frame order, not by treating any retire span as making the
-  resource retired for the whole frame.
-- A resource may be created, uploaded, used by commands, then retired later in the
-  same frame.
-- Upload after retire must reject.
-- Command use after retire must reject.
-- Retire before the final command that reads the resource must reject.
-- Duplicate retire must reject.
-- Wrong generation must stay distinguishable from missing resource.
-- Existing clear/fill/sprite/alpha-glyph behavior must remain unchanged.
-- No heap allocation inside realization.
-
-## Required Tests
-
-Add or update unit tests with exact intent equivalent to these names:
-
-- `protocol v0 realizer accepts sprite use before same frame retire`
-- `protocol v0 realizer rejects sprite use after same frame retire`
-- `protocol v0 realizer rejects upload after same frame retire`
-- `protocol v0 realizer accepts glyph atlas use before same frame retire`
-- `protocol v0 realizer rejects glyph atlas use after same frame retire`
-
-Existing duplicate retire, retired sprite use, retired glyph atlas use, wrong
-generation, and upload-before-create tests must keep passing with meaningful
-errors.
+- Define whether `retire_seq` is command-index based, upload-index based,
+  frame-event-index based, or another explicit domain.
+- Define how uploads compare to retire order.
+- Define how commands compare to retire order despite commands having no sequence
+  field.
+- Define valid create/upload/use/retire same-frame ordering.
+- Define invalid upload after retire, command use after retire, retire before final
+  command use, duplicate retire, missing resource, and wrong generation behavior.
+- Define exact negative tests required before implementation retries.
+- Avoid changing ABI structs unless the document proves current fields cannot
+  express the required ordering.
 
 ## Required Invariants
 
-- All lifetime validation completes before caller-visible pixel mutation for a
-  rejected frame.
-- Order checks must be explicit and bounded by V0 span maxima.
+- No hidden sequence domains.
+- No implicit backend/host ordering.
 - Resource lifetime remains create, update, use, retire, ack, reuse.
-- Same-frame retire means retired after all preceding commands and uploads, not
-  retired from the beginning of the frame.
+- A later worker must be able to implement validation without guessing.
 
 ## Verification
 
@@ -91,13 +69,9 @@ From `/home/home/personal/projects/howl`:
 - `zig build test`
 - `git diff --check`
 
-From `/home/home/personal/projects/howl/howl-render`:
-
-- `zig build test:unit -- "protocol v0"`
-
 ## Stop Conditions
 
-- Stop if a header or C ABI export function is needed.
-- Stop if host code or protocol emission is needed.
-- Stop if correct ordering cannot be expressed with current frame fields.
-- Stop if validation would need to mutate pixels before rejecting invalid lifetime.
+- Stop if the current ABI cannot express ordered retire validation without a new
+  field; report the exact header/ABI follow-up instead of inventing semantics.
+- Stop if command order or upload order remains ambiguous.
+- Stop if implementation is attempted.
