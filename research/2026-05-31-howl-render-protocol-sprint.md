@@ -1819,6 +1819,30 @@ Verification performed:
 - From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
+Reviewer rejection fixes applied:
+
+- `Owner.create()` now takes ownership of the prepared surface by pointer only
+  after owner allocation succeeds, replaces the caller slot with an inert
+  deinit-safe surface, and consumes the payload on every later success or failure
+  path. This makes the `TextSessionOwner.prepareHandle()` `errdefer` safe after
+  transfer and preserves cleanup if owner allocation fails before transfer.
+- `Owner.protocolV0Frame()` now asserts the handle is live. Released/consumed V0
+  cleanup proof uses a test-only emptiness helper instead of exposing plausible
+  internal frame storage after release.
+- Added an owned prepared-surface failure test that keeps the prepare-handle
+  caller `errdefer` shape and proves V0 emission failure registers no handle while
+  the owned scene is deinitialized once.
+
+Second reviewer rejection fixes applied:
+
+- Renamed owner V0 frame access to `protocolV0FrameForTest()` and guarded it with
+  `builtin.is_test` plus the live-handle assertion, keeping the internal V0 frame
+  out of normal product methods.
+- Added owner-level partial retained-base proof: retained pixels are seeded on the
+  session owner, a partial prepared surface is created through `Owner.create()`,
+  owner-owned V0 is realized with the retained base, and every byte is compared to
+  `owner.rgba_pixels`.
+
 ## Phase 16 Slice: Render Protocol V0 Prepared Emission Proof
 
 Status: worker implementation complete; verification passed in this turn.
@@ -1860,6 +1884,45 @@ Tests added:
 - `protocol v0 emitter realizes prepared sprite visual bounds equal to full rgba oracle`
 - `protocol v0 emitter rejects missing prepared sprite without mutating accepted frame`
 - `protocol v0 emitter realizes partial prepared frame over retained base equal to full rgba oracle`
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
+## Phase 17 Slice: Render Protocol V0 Prepared Handle Storage
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Prepared Handle Storage`
+
+Accepted implementation facts:
+
+- `prepared_owner.Owner` now owns internal V0 payload storage beside the prepared
+  surface and full RGBA oracle.
+- `Owner.create()` builds the full RGBA oracle first, then emits V0 into
+  owner-owned storage before registering the prepared handle.
+- Owner-owned V0 frames use the existing `emitPrepared()` path, so span pointers
+  and upload byte pointers point into the prepared handle payload and remain stable
+  while the handle is live.
+- `deinitPayload()` resets V0 payload storage with the same lifetime transition as
+  `PreparedSurface` and `rgba_pixels`, preventing released handles from retaining
+  stale V0 spans.
+- If V0 emission fails, `Owner.create()` returns before handle registration and the
+  owner errdefer destroys the prepared surface plus any allocated RGBA/V0 payload.
+- V0 remains internal-only. No header, C ABI export, host code, normal render path,
+  build file, realizer, or direct glyph atlas production changed.
+
+Tests added:
+
+- `protocol v0 prepared owner frame equals owner rgba oracle`
+- `protocol v0 prepared owner releases v0 payload with handle`
+- `protocol v0 prepared owner create fails closed when v0 emission fails`
 
 Verification performed:
 
