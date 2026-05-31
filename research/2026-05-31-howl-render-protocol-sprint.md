@@ -2270,6 +2270,95 @@ Reviewer rejection fixes applied:
   and store create rejects numeric resource-value reuse until a later ack/removal
   slice defines safe reuse.
 
+Accepted commits:
+
+- `howl-linux-host` `9e2be80` - `host: add protocol v0 resource store`
+- root `7b0ae96` - `design: record host resource store`
+
+## Phase 23 Slice: Linux Host V0 Backend Operation Sink
+
+Status: promoted to `current.txt`; implementation pending.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 Backend Operation Sink`
+
+Purpose:
+
+- Define the narrow host-owned operation boundary that will realize V0 resources in
+  a backend without requiring a live GUI/GL context in tests.
+- Prove create/upload/retire store consequences can emit bounded backend texture
+  operations to a recording sink.
+- Keep full RGBA upload as the actual rendering path.
+
+Allowed files:
+
+- `howl-linux-host/src/terminal/render/retained.zig`
+- this scratchpad
+
+Required shape:
+
+- Operation sink for create texture, upload texture rect, and retire texture.
+- Recording test sink with fixed capacity.
+- Resource-store application emits copied operation facts while remaining
+  fail-closed: invalid frame leaves store state and operation log unchanged.
+- No live GL calls, no backend object creation, no V0 drawing, no full-RGBA
+  replacement, and no retained upload byte pointers.
+
+Required tests:
+
+- `host retained render resource store records create upload retire ops`
+- `host retained render resource store emits no ops on invalid frame`
+- `host retained render resource store stops when operation sink is full`
+
+Implementation facts:
+
+- `ProtocolV0BackendOperationRecorder` records copied operation facts for create,
+  upload, and retire consequences with fixed caller-owned capacity.
+- `ProtocolV0ResourceStore.applyFrameWithRecorder()` applies frame consequences to a
+  copied store and copied recorder, then commits both only after all store mutations
+  and operation appends succeed.
+- Recorded upload operations store byte counts and protocol rectangles only; they do
+  not retain upload byte pointers.
+- The slice still contains no live GL calls, backend object creation, V0 command
+  drawing, or full-RGBA path replacement.
+
+Tests added:
+
+- `host retained render resource store records create upload retire ops`
+- `host retained render resource store emits no ops on invalid frame`
+- `host retained render resource store stops when operation sink is full`
+
+Reviewer rejection fixes applied:
+
+- Operation recording is now transactional over the backing operation storage, not
+  only the recorder count. `applyFrameWithRecorder()` stages operations in a fixed
+  local buffer bounded by create/upload/retire maxima and copies into the caller's
+  recorder only at commit.
+- Invalid-frame and sink-full tests now prefill recorder storage with sentinel
+  operations and prove backing storage remains unchanged on failure.
+- Store operation emission now validates the V0 command-boundary lifetime order
+  before mutation or operation staging. The create/upload/retire recorder test uses
+  a valid command boundary and the negative order test proves invalid ordering
+  leaves store and recorder storage unchanged.
+- Store operation emission now also validates command resource references against
+  create, upload visibility, and retire boundaries before mutation or staging.
+  Negative tests cover command use after retire and before upload visibility.
+- Command-resource validation now accepts an earlier-frame live resource with no
+  prior upload when the current frame provides an upload visible to the command.
+  A two-frame regression test covers create-only then upload/use.
+- Store command validation now rejects unknown command kinds and invalid command
+  payload shapes before store mutation or operation staging. A regression test
+  proves valid create/upload spans plus an unknown command leave store and recorder
+  storage unchanged.
+- Store command-shape validation now rejects zero-size clear/fill/sprite payloads,
+  sprite commands without storable resources, glyph payloads on non-glyph commands,
+  and nonzero `color_rgba` on color sprite commands. Sentinel tests cover zero fill
+  and invalid color sprite payloads.
+- Sprite command validation now uses the sprite-only resource allow-list instead of
+  the broader storeable-resource allow-list. A sentinel test covers `DRAW_SPRITE`
+  with a fallback RGBA resource.
+
 ### Phase 0: Stabilize Current Dirty Host Work
 
 Question:

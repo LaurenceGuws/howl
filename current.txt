@@ -1,6 +1,6 @@
-# Current Slice: Linux Host V0 Resource Store Skeleton
+# Current Slice: Linux Host V0 Backend Operation Sink
 
-Owner: `howl-linux-host` terminal render protocol resource ownership.
+Owner: `howl-linux-host` terminal render protocol backend handoff.
 
 Sprint scratchpad and contract:
 
@@ -9,8 +9,10 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Introduce a bounded host-owned V0 resource store for protocol resource IDs.
-- Apply create/upload/retire lifecycle consequences to host-owned state in tests.
+- Define the narrow host-owned operation boundary that will realize V0 resources in
+  a backend without requiring a live GUI/GL context in tests.
+- Prove create/upload/retire store consequences can emit bounded backend texture
+  operations to a recording sink.
 - Keep the actual host rendering path on full RGBA texture upload.
 
 ## Source Order (Mandatory)
@@ -22,7 +24,8 @@ Read in order before editing:
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
 5. `howl-linux-host/src/terminal/render/retained.zig`
-6. `howl-render/include/howl_render.h`
+6. `howl-linux-host/src/window/term_texture.zig`
+7. `howl-render/include/howl_render.h`
 
 ## Exact Change Scope
 
@@ -33,7 +36,7 @@ Allowed files:
 
 No `howl-render` changes.
 No ABI/header changes.
-No GL calls or backend object creation.
+No live GL calls in this slice.
 No V0 command drawing through backend APIs.
 No replacement of full RGBA upload.
 No presentation cadence or event-loop policy changes.
@@ -41,36 +44,32 @@ No `manager`, `engine`, `controller`, or generic resource owner names.
 
 ## Required Product Shape
 
-- Add a bounded host-owned resource store for V0 resource IDs.
-- Store only protocol identity/state facts in this slice: resource ID, dimensions,
-  format, lifecycle state, upload accounting, and retire state.
-- Apply create/upload/retire spans from a borrowed V0 frame only during the turn.
-- Do not retain the frame pointer, span pointers, upload byte pointers, or command
-  pointers.
-- Do not allocate per frame after initialization; use fixed-capacity arrays bounded
-  by `HOWL_RENDER_V0_RESOURCES_MAX`.
-- Reject duplicate creates, missing resources, generation/kind mismatches, upload to
-  retired resources, retire before create, and capacity overflow in store tests.
-- Keep existing software oracle and resource-plan probes intact.
+- Add a narrow backend operation sink shape for V0 resource consequences:
+  create texture, upload texture rect, retire texture.
+- Add a recording sink used by tests only.
+- Connect the resource store to emit operations to the sink while mutating the
+  protocol-fact store fail-closed.
+- Store/backend operation emission must remain bounded by V0 resource/upload/retire
+  maxima and retain no borrowed frame/span/upload pointers.
+- Do not create real GL textures yet; that is the next slice after the operation
+  sink is accepted.
 
 ## Required Tests
 
 Add narrow host tests with exact intent equivalent to:
 
-- `host retained render resource store creates uploads retires resource`
-- `host retained render resource store rejects duplicate create`
-- `host retained render resource store rejects upload after retire`
-- `host retained render resource store rejects missing retire`
-- `host retained render resource store reports capacity overflow`
+- `host retained render resource store records create upload retire ops`
+- `host retained render resource store emits no ops on invalid frame`
+- `host retained render resource store stops when operation sink is full`
 
 Use pure helper tests. Do not introduce GL/resource realization harnesses.
 
 ## Required Invariants
 
-- Store capacity is exactly bounded by `HOWL_RENDER_V0_RESOURCES_MAX`.
-- Slot lookup compares value, generation, and kind.
-- Upload accounting validates format and byte bounds before mutating stored state.
-- Retire marks host-owned state retired but does not create/delete backend objects.
+- Operation recorder capacity is fixed and explicit.
+- Operation payloads copy only protocol facts and byte counts, never upload byte
+  pointers.
+- Invalid frames leave both store state and recorded operations unchanged.
 - Existing prepared upload result and submit path remain full RGBA.
 
 ## Verification
@@ -88,7 +87,7 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 ## Stop Conditions
 
-- Stop if GL/backend object creation is needed.
+- Stop if live GL/backend object creation is needed.
 - Stop if render ABI/header changes are needed.
 - Stop if normal RGBA upload path would change.
 - Stop if any borrowed V0 pointer would need to be retained beyond the turn.
