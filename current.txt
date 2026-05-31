@@ -1,34 +1,41 @@
-# Current Slice: V0 FBO Texture Row Orientation
+# Current Slice: V0 Prepared Sprite Resource Bound
 
-Owner: `howl-linux-host` V0 command materialization into terminal texture.
+Owner: `howl-render` V0 prepared sprite resource emission and lifetime.
 
 Purpose:
 
-- Fix upside-down V0 sprite/fill patch presentation after retained V0 paths become active.
-- Preserve the host convention that terminal texture row zero is the logical top row.
+- Stop prepared V0 sprite cache exhaustion from permanently disabling the V0 sidecar.
+- Bound renderer-owned persistent sprite resources before `HOWL_RENDER_V0_RESOURCES_MAX` pressure.
+- Provide explicit transient sprite resource fallback/diagnostics instead of silent full-RGBA steady-state fallback.
 - Keep full RGBA fallback/oracle unchanged.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/window/term_texture.zig`
+- `howl-render/src/protocol_v0/emit.zig`
+- `howl-render/src/protocol_v0/realize.zig`
+- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/test_protocol_proof.zig`
+- `howl-render/src/test/ffi.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
+- `research/2026-05-31-v0-prepared-sprite-resource-bound.md`
 
-No render ABI changes. No protocol changes. No rendering behavior changes. No full-RGBA deletion.
+No host ABI changes. No full-RGBA deletion. No unbounded resource cache growth.
 
 ## Required Shape
 
-- FBO command replay must write logical row zero into terminal texture row zero.
-- Do not change final window texture presentation coordinates.
-- Do not change protocol command coordinates or upload byte order.
-- Preserve GL state restoration and fallback behavior.
+- Existing persistent sprite resources remain reusable.
+- New sprite resources must not grow the persistent cache past a bounded budget.
+- When a sprite cannot become persistent, emit same-frame create/upload/draw/retire if V0 frame limits allow it.
+- If transient emission exceeds frame limits, preserve full RGBA fallback and report the exact bound.
+- Do not invent host-owned eviction or backend ack in this slice.
 
 ## Required Tests
 
 - Existing host tests pass.
-- Add a host unit test for FBO Y coordinate mapping.
-- Bounded `rain` smoke should keep V0 sprite patch presentation active without fallback regression.
+- Protocol proof tests cover persistent cache reuse, bounded persistent growth, transient create/upload/draw/retire, and exact overflow status.
+- Bounded `btop` smoke should not enter steady-state `v0_emit_status=5` / `no_sidecar_call_failed` fallback after persistent resource pressure.
 
 ## Verification
 
