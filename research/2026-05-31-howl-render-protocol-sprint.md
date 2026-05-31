@@ -1934,6 +1934,47 @@ Verification performed:
 
 ## Sprint Phases
 
+## Phase 18 Slice: Render Protocol V0 Prepared ABI View
+
+Status: under review after worker implementation.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Prepared ABI View`
+
+Implementation facts to verify:
+
+- Added C ABI export `howl_render_prepared_surface_protocol_v0()` returning a
+  borrowed `const HowlRenderV0Frame *` through an output pointer.
+- The borrowed frame remains owned by the live prepared handle; the call does not
+  transfer ownership and does not transition the prepared lifecycle.
+- Missing handles return `HOWL_RENDER_CALL_MISSING_HANDLE` and clear output when
+  an output pointer is supplied.
+- Null output pointers return `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
+- Released or consumed handles return `HOWL_RENDER_CALL_INVALID_ARGUMENT` and
+  clear output.
+- Full RGBA prepared-buffer ABI remains unchanged.
+- Host code, normal render path, backend objects, build files, docs/current, and
+  protocol host consumption were not changed.
+
+Tests to verify:
+
+- `render ffi prepared protocol v0 rejects missing handle`
+- `render ffi prepared protocol v0 rejects null output`
+- `render ffi prepared protocol v0 rejects released handle`
+- `render ffi prepared protocol v0 returns borrowed live frame`
+- `render ffi prepared protocol v0 does not change prepared lifecycle`
+- `protocol v0 prepared ffi borrowed frame realizes owner rgba oracle`
+
+Verification reported by worker before review:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:abi -- "protocol v0"`
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
 ### Phase 0: Stabilize Current Dirty Host Work
 
 Question:
