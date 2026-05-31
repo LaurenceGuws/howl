@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Prepared Emission Proof
+# Current Slice: Render Protocol V0 Prepared Handle Storage
 
-Owner: `howl-render` protocol V0 emission mechanics.
+Owner: `howl-render` prepared handle payload lifetime.
 
 Sprint scratchpad and contract:
 
@@ -9,12 +9,11 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Move from synthetic V0 fixtures to real prepared-surface V0 emission proof.
-- Emit current prepared clear/fill/sprite consequences into internal V0 storage.
-- Prove V0 realization equals `prepared_buffer.compose()` byte-for-byte in the
-  `test:protocol-proof` target.
-- Keep prepared owner storage, host consumption, ABI exports, normal-path
-  replacement, and direct glyph atlas production out of this slice.
+- Attach internal V0 frame storage to real prepared handles.
+- Keep the existing full RGBA buffer as oracle/fallback.
+- Prove owner-owned V0 realization equals owner-owned `rgba_pixels`.
+- Keep host consumption, C ABI exports, normal-path replacement, and direct glyph
+  atlas production out of this slice.
 
 ## Source Order (Mandatory)
 
@@ -24,83 +23,63 @@ Read in order before editing:
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
-5. `howl-render/src/protocol_v0/emit.zig`
-6. `howl-render/src/protocol_v0/realize.zig`
-7. `howl-render/src/test_protocol_proof.zig`
-8. `howl-render/src/prepared/buffer.zig`
-9. `howl-render/src/prepared/surface.zig`
-10. `howl-render/src/prepared/owner.zig`
-11. `howl-render/src/text/contract.zig`
-12. `howl-render/src/text/scene.zig`
-13. `howl-render/src/text/frame_preparer.zig`
-14. `howl-render/src/text/raster/rasterizer.zig`
-15. `howl-render/src/text/raster/cache.zig`
-16. `howl-render/src/session/text.zig`
-17. `howl-render/src/test/unit.zig`
+5. `howl-render/src/prepared/owner.zig`
+6. `howl-render/src/protocol_v0/emit.zig`
+7. `howl-render/src/protocol_v0/realize.zig`
+8. `howl-render/src/test_protocol_proof.zig`
+9. `howl-render/src/prepared/buffer.zig`
+10. `howl-render/src/prepared/surface.zig`
+11. `howl-render/src/session/text.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/src/protocol_v0/emit.zig`
+- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/protocol_v0/emit.zig` only for storage owner support
 - `howl-render/src/test_protocol_proof.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
 
 No header changes.
 No C ABI export functions.
 No host code.
-No prepared owner/surface storage changes.
 No normal render path replacement.
 No direct renderer glyph atlas production.
-No local oracle replacing `prepared_buffer.compose()`.
+No deletion or weakening of full RGBA oracle.
 
 ## Required Product Shape
 
-- Add an internal `emitPrepared`-style API in `protocol_v0/emit.zig`.
-- Input must be the real `prepared/surface.zig` `PreparedSurface` shape, not a
-  local duck-typed fake.
-- Output remains emitter-owned internal V0 storage.
-- Use current prepared scene pass order exactly: clear, background, decoration,
-  sprites, cursor.
-- For sprites, match `prepared_buffer.compose()` lookup order and pixel semantics:
-  current `raster_plan.outputs` first, then session atlas cache if needed.
-- Upload sprite visual-resource bytes starting at resource-local `(0, 0)`.
-- Offset emitted sprite destination rect by visual bounds exactly as the oracle does.
-- Emit sprite create/upload/use/retire in the documented command-boundary domain.
-- Fail closed without mutating a prior accepted emitted frame.
-- Do not attach V0 storage to prepared handles in this slice.
+- Add an internal owner-owned V0 payload field to `prepared_owner.Owner`.
+- Initialize it during `Owner.create()` after `PreparedSurface` is assigned and
+  before handle registration.
+- Use `protocol_v0.emit.emitPrepared()` semantics and owner-owned storage.
+- Keep V0 storage immutable while the prepared handle is live.
+- Deinitialize V0 storage in `deinitPayload()` with the same lifecycle as
+  `PreparedSurface` and `rgba_pixels`.
+- If V0 emission fails, `Owner.create()` must fail before registering a prepared
+  handle and must release any allocated RGBA/V0 payload already created.
+- Do not expose the V0 frame through C ABI or host path in this slice.
 
 ## Required Tests
 
-Add tests in `test_protocol_proof.zig` or imported proof files with exact intent
-equivalent to these names:
+Add protocol proof tests with exact intent equivalent to:
 
-- `protocol v0 emitter realizes prepared fill frame equal to full rgba oracle`
-- `protocol v0 emitter realizes prepared alpha sprite frame equal to full rgba oracle`
-- `protocol v0 emitter realizes prepared color sprite frame equal to full rgba oracle`
-- `protocol v0 emitter realizes prepared sprite visual bounds equal to full rgba oracle`
-- `protocol v0 emitter rejects missing prepared sprite without mutating accepted frame`
+- `protocol v0 prepared owner frame equals owner rgba oracle`
+- `protocol v0 prepared owner releases v0 payload with handle`
+- `protocol v0 prepared owner create fails closed when v0 emission fails`
 
-Tests must realize V0 through `protocol_v0.realize()` and compare every byte to
-`prepared_buffer.compose()` output. Do not use a local duplicate oracle.
-
-If building a partial retained-base real `PreparedSurface` is straightforward from
-current test helpers, also add:
-
-- `protocol v0 emitter realizes partial prepared frame over retained base equal to full rgba oracle`
-
-If it is not straightforward, record the exact blocker in the scratchpad instead of
-inventing test harness code.
+Tests must realize owner-owned V0 through `protocol_v0.realize()` and compare every
+byte to `Owner.rgba_pixels` or the same `prepared_buffer.compose()` oracle. Do not
+use a local duplicate oracle.
 
 ## Required Invariants
 
-- Every emitted prepared frame in tests must compare against `prepared_buffer.compose()`.
-- All V0 span and upload byte limits are checked before writing.
-- All sprite byte copies use checked bounds against raster width, height, stride,
-  color mode, visual bounds, and source byte length.
-- Missing sprite rasters reject instead of producing dangling resources.
-- Published frame spans and upload byte pointers point into emitter-owned storage.
-- Full RGBA remains oracle/fallback only.
+- Owner-owned V0 span pointers and upload byte pointers remain valid for the live
+  prepared handle.
+- Owner cleanup cannot leak V0 upload bytes or stale frame spans.
+- Existing prepared handle state transitions remain unchanged.
+- `Owner.buffer()` and host-facing upload behavior continue to return full RGBA.
+- Full RGBA remains the oracle/fallback.
 
 ## Verification
 
@@ -117,10 +96,8 @@ From `/home/home/personal/projects/howl/howl-render`:
 
 ## Stop Conditions
 
-- Stop if prepared owner/surface storage must change.
 - Stop if a header or C ABI export function is needed.
-- Stop if host code or backend objects are needed.
-- Stop if direct glyph atlas production from shaped text is needed.
-- Stop if real `PreparedSurface` construction is not possible in the proof target;
-  report the exact missing constructor/helper instead of using a fake.
-- Stop if `prepared_buffer.compose()` cannot be used as the oracle.
+- Stop if host code is needed.
+- Stop if normal render path replacement is needed.
+- Stop if owner-owned storage cannot be made stable without broad prepared owner
+  restructuring.
