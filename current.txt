@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Retire Order Contract
+# Current Slice: Render Protocol V0 Ordered Retire Validation
 
-Owner: `howl-render` protocol V0 lifetime contract semantics.
+Owner: `howl-render` internal protocol V0 software realization.
 
 Sprint scratchpad and contract:
 
@@ -9,10 +9,10 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Define the exact ordering domain for `HowlRenderV0Retire.retire_seq` so later
-  realizer code can validate create/upload/use/retire without inventing behavior.
-- Keep the slice document-only because implementation review proved the current
-  contract is ambiguous.
+- Implement the accepted command-boundary lifetime order for `create_seq`,
+  `upload_seq`, command indexes, and `retire_seq`.
+- Allow valid create/upload/use/retire in one frame.
+- Preserve fail-closed validation for invalid order.
 
 ## Source Order (Mandatory)
 
@@ -25,41 +25,70 @@ Read in order before editing:
 5. `howl-render/include/howl_render.h`
 6. `howl-render/src/ffi/protocol_v0.zig`
 7. `howl-render/src/protocol_v0/realize.zig`
+8. `howl-render/src/test/unit.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `docs/render-protocol-v0.md`
-- `research/2026-05-31-howl-render-protocol-sprint.md`
+- `howl-render/src/protocol_v0/realize.zig`
+- `howl-render/src/test/unit.zig` only if needed to expose tests
+- `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
 
-No product code.
 No header changes.
-No Zig changes.
+No C ABI export functions.
 No host code.
 No protocol emission.
-No normal-path replacement.
+No emitter retry in this slice.
+No prepared owner/surface changes.
+No normal render path replacement.
 
-## Required Contract Closure
+## Required Product Shape
 
-- Define whether `retire_seq` is command-index based, upload-index based,
-  frame-event-index based, or another explicit domain.
-- Define how uploads compare to retire order.
-- Define how commands compare to retire order despite commands having no sequence
-  field.
-- Define valid create/upload/use/retire same-frame ordering.
-- Define invalid upload after retire, command use after retire, retire before final
-  command use, duplicate retire, missing resource, and wrong generation behavior.
-- Define exact negative tests required before implementation retries.
-- Avoid changing ABI structs unless the document proves current fields cannot
-  express the required ordering.
+- Implement the documented command-boundary domain exactly.
+- Commands compare by zero-based index in `HowlRenderV0Frame.commands`.
+- `create_seq`, `upload_seq`, and `retire_seq` must be `<= commands.count`.
+- Same-frame create is visible at command indexes `>= create_seq`.
+- Same-frame upload is visible at command indexes `>= upload_seq`.
+- Same-frame retire makes the resource invalid at command indexes `>= retire_seq`.
+- Same-frame temporary resource must satisfy `create_seq <= upload_seq` and
+  `upload_seq < retire_seq` when retired.
+- Command use must satisfy `create_seq <= command_index`, `upload_seq <= command_index`,
+  and `command_index < retire_seq` when same-frame entries exist.
+- Duplicate retire rejects.
+- Missing resource and wrong generation remain distinct.
+- Existing clear/fill/sprite/alpha-glyph behavior must remain unchanged.
+- No heap allocation inside realization.
+
+## Required Tests
+
+Add or update unit tests with exact intent equivalent to these names:
+
+- `protocol v0 realizer accepts sprite use before same frame retire`
+- `protocol v0 realizer accepts late sprite create upload use retire`
+- `protocol v0 realizer rejects upload after same frame retire`
+- `protocol v0 realizer rejects upload before same frame create`
+- `protocol v0 realizer rejects sprite use before same frame create`
+- `protocol v0 realizer rejects sprite use before same frame upload`
+- `protocol v0 realizer rejects sprite use after same frame retire`
+- `protocol v0 realizer rejects retire before final sprite use`
+- `protocol v0 realizer rejects create sequence outside frame`
+- `protocol v0 realizer rejects upload sequence outside frame`
+- `protocol v0 realizer rejects retire sequence outside frame`
+- `protocol v0 realizer accepts glyph atlas use before same frame retire`
+- `protocol v0 realizer rejects glyph atlas use after same frame retire`
+
+Existing duplicate retire, retired sprite use, retired glyph atlas use, wrong
+generation, and upload-before-create tests must keep passing with meaningful
+errors.
 
 ## Required Invariants
 
+- All lifetime validation completes before caller-visible pixel mutation for a
+  rejected frame.
+- Order checks must be explicit and bounded by V0 span maxima.
 - No hidden sequence domains.
-- No implicit backend/host ordering.
 - Resource lifetime remains create, update, use, retire, ack, reuse.
-- A later worker must be able to implement validation without guessing.
 
 ## Verification
 
@@ -69,9 +98,13 @@ From `/home/home/personal/projects/howl`:
 - `zig build test`
 - `git diff --check`
 
+From `/home/home/personal/projects/howl/howl-render`:
+
+- `zig build test:unit -- "protocol v0"`
+
 ## Stop Conditions
 
-- Stop if the current ABI cannot express ordered retire validation without a new
-  field; report the exact header/ABI follow-up instead of inventing semantics.
-- Stop if command order or upload order remains ambiguous.
-- Stop if implementation is attempted.
+- Stop if a header or C ABI export function is needed.
+- Stop if host code or protocol emission is needed.
+- Stop if validation would need to mutate pixels before rejecting invalid lifetime.
+- Stop if implementation would compare values outside the documented command-boundary domain.
