@@ -1,4 +1,4 @@
-# Current Slice: Linux Host V0 Software Oracle Probe
+# Current Slice: Linux Host V0 Resource Plan Probe
 
 Owner: `howl-linux-host` terminal render handoff validation.
 
@@ -9,10 +9,11 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Prove the host can consume V0 frame semantics through a software oracle before
-  any GL/backend resource realization.
-- Compare software-realized V0 bytes against the existing prepared RGBA buffer.
+- Prove the host can derive a bounded backend-resource work plan from a borrowed
+  V0 frame before any GL/backend object realization.
 - Keep the actual host rendering path on full RGBA texture upload.
+- Preserve the existing software oracle probe and add resource-plan accounting
+  beside it.
 
 ## Source Order (Mandatory)
 
@@ -23,8 +24,8 @@ Read in order before editing:
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
 5. `howl-linux-host/src/terminal/render/retained.zig`
-6. `howl-linux-host/src/terminal/context.zig`
-7. `howl-render/include/howl_render.h`
+6. `howl-render/include/howl_render.h`
+7. `howl-render/src/protocol_v0/emit.zig`
 8. `howl-render/src/protocol_v0/realize.zig`
 
 ## Exact Change Scope
@@ -32,47 +33,49 @@ Read in order before editing:
 Allowed files:
 
 - `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/terminal/context.zig` only if needed to trigger/account the probe
-- `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
+- `howl-linux-host/src/test/test_entry.zig` to execute retained tests
+- `howl-linux-host/build.zig` only to wire retained test imports
+- `research/2026-05-31-howl-render-protocol-sprint.md`
 
 No `howl-render` changes.
 No host GL/resource realization.
+No backend object creation, mutation, deletion, or lookup table.
 No V0 command drawing through backend APIs.
 No replacement of full RGBA upload.
 No presentation cadence or event-loop policy changes.
-No backend object lifetime changes.
 
 ## Required Product Shape
 
-- Add a host-side software V0 realization helper for the command/resource subset
-  currently emitted by render prepared frames: clear, fill, and sprite.
-- The helper must consume the borrowed V0 frame during the submit turn only.
-- Compare realized bytes to the prepared RGBA buffer and record bounded accounting:
-  success count, mismatch/failure count, last failure reason, and checked byte count.
-- Do not retain the frame pointer, span pointers, or upload byte pointers.
-- Do not change the existing full RGBA upload path or submit result.
-- Reject unsupported V0 commands/resources in the software probe without affecting
-  the actual RGBA path.
+- Add host-side V0 resource-plan validation/accounting for the borrowed frame:
+  creates, uploads, command resource uses, and retires.
+- Planning is read-only and turn-local. It must not retain the frame pointer, span
+  pointers, upload byte pointers, command pointers, or backend-resource identities.
+- The plan must be bounded by existing V0 ABI maxima and record bounded accounting:
+  success count, failure count, last status, create/upload/use/retire counts, and
+  upload byte count.
+- Unsupported commands/resources must fail the plan probe only; they must not affect
+  the actual RGBA upload/submit path.
+- The existing software oracle probe must remain intact.
 
 ## Required Tests
 
 Add narrow host tests with exact intent equivalent to:
 
-- `host retained render software realizes protocol v0 fill frame`
-- `host retained render software realizes protocol v0 sprite frame`
-- `host retained render software probe detects rgba mismatch`
-- `host retained render software probe rejects unsupported command`
-- `host retained render records software probe accounting`
+- `host retained render plans protocol v0 resource lifecycle`
+- `host retained render plan rejects upload before create`
+- `host retained render plan rejects use after retire`
+- `host retained render records resource plan accounting`
 
-Use pure helper tests if live host prepared-handle setup would require GL/resource
-realization. Record the harness gap if so.
+Use pure helper tests. Do not introduce GL/resource realization harnesses.
 
 ## Required Invariants
 
-- Software probe validates all byte lengths before reading/writing.
-- No caller-visible host pixels or GL state are mutated by the software probe.
+- All loops are bounded by validated V0 span counts and ABI maxima.
+- Resource use is visible only when create_seq <= command index < retire_seq.
+- Upload is visible only after create_seq and before retire_seq.
+- Planning has no caller-visible host pixels or GL state mutation.
 - Existing prepared upload result and submit path remain full RGBA.
-- All counters saturate or are otherwise bounded.
+- Counters saturate or are otherwise bounded.
 
 ## Verification
 
@@ -85,10 +88,11 @@ From `/home/home/personal/projects/howl`:
 From `/home/home/personal/projects/howl/howl-linux-host`:
 
 - `zig build test`
+- `git diff --check`
 
 ## Stop Conditions
 
 - Stop if host GL/resource realization is needed.
 - Stop if render ABI/header changes are needed.
 - Stop if normal RGBA upload path would change.
-- Stop if the borrowed frame pointer would need to be retained beyond the turn.
+- Stop if any borrowed V0 pointer would need to be retained beyond the turn.

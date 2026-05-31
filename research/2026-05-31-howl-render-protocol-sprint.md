@@ -2101,6 +2101,93 @@ Verification performed:
 - From `howl-linux-host`: `zig build test`
 - From `howl-linux-host`: `git diff --check`
 
+Accepted commits:
+
+- `howl-linux-host` `e222002` - `host: add protocol v0 software oracle probe`
+- root `d2eff85` - `design: record host software oracle probe`
+
+## Phase 21 Slice: Linux Host V0 Resource Plan Probe
+
+Status: worker implementation complete; verification pending.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 Resource Plan Probe`
+
+Purpose:
+
+- Prove the host can derive a bounded backend-resource work plan from the borrowed
+  V0 frame before any GL/backend object realization.
+- Keep full RGBA upload as the actual rendering path.
+- Preserve the accepted software oracle probe.
+
+Allowed files:
+
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/test/test_entry.zig` to execute retained tests
+- `howl-linux-host/build.zig` only to wire retained test imports
+- this scratchpad
+
+Required shape:
+
+- Host-side resource-plan validation/accounting for creates, uploads, command
+  resource uses, and retires.
+- Read-only and turn-local planning only. No backend objects, no GL calls, no
+  retained V0 frame/span/upload pointers, and no full-RGBA replacement.
+- Bounded accounting: success count, failure count, last status,
+  create/upload/use/retire counts, and upload byte count.
+- Unsupported commands/resources fail the plan probe only and keep the actual RGBA
+  upload/submit path unchanged.
+
+Required tests:
+
+- `host retained render plans protocol v0 resource lifecycle`
+- `host retained render plan rejects upload before create`
+- `host retained render plan rejects use after retire`
+- `host retained render records resource plan accounting`
+
+Reviewer rejection fixes applied:
+
+- Resource planning now uses plan-specific upload validation instead of software
+  realization validation, so nonzero resource-local upload rect origins are accepted
+  when the rect fits the created resource and byte/stride bounds hold.
+- Failed lifecycle plans now retain bounded frame accounting after valid top-level
+  spans: create count, upload count, resource-use count, retire count, and upload
+  byte count.
+- Resource-use counting now includes both `command.resource` and bounded glyph-run
+  `atlas_resource` references before unsupported glyph-run plans fail.
+
+Additional tests added:
+
+- `host retained render plan accepts nonzero upload rect origin`
+- `host retained render plan counts glyph resource uses before unsupported`
+- Failed upload-before-create plan keeps create/upload/upload-byte accounting.
+- Host unit-test wiring now imports `retained.zig` through `src/test/test_entry.zig`
+  and `build.zig`, so retained tests execute under `zig build test:unit`.
+
+Implementation facts:
+
+- `howl-linux-host/src/terminal/render/retained.zig` now records a separate
+  `PreparedProtocolV0ResourcePlan` beside the existing software oracle probe.
+- Resource planning consumes the borrowed V0 frame only during `preparedUpload()`
+  and retains no frame pointer, span pointer, upload byte pointer, command pointer,
+  or backend object identity.
+- The plan validates top-level V0 resource spans and byte maxima, then checks
+  create, upload, command use, and retire ordering with the same command-boundary
+  rules used by the software oracle.
+- Planning is accounting-only. Unsupported commands/resources and invalid lifetime
+  ordering record plan failure without changing full RGBA upload, submit, GL state,
+  presentation cadence, or software oracle behavior.
+- `State` records the last resource plan plus saturating plan success count,
+  failure count, and upload-byte accounting.
+
+Tests added:
+
+- `host retained render plans protocol v0 resource lifecycle`
+- `host retained render plan rejects upload before create`
+- `host retained render plan rejects use after retire`
+- `host retained render records resource plan accounting`
+
 ### Phase 0: Stabilize Current Dirty Host Work
 
 Question:
