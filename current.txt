@@ -1,13 +1,12 @@
-# Current Slice: V0 Resource Plan Status Diagnostics
+# Current Slice: V0 Persistent Resource Realization Gate
 
-Owner: `howl-linux-host` submit diagnostics.
+Owner: `howl-linux-host` submit V0 realization gate.
 
 Purpose:
 
-- Replace generic `no_sidecar_invalid` with the exact prepared V0 resource-plan status.
-- Make `rain` and interactive shell fallback explain whether host rejected upload, resource, command,
-  span, version, or byte-limit invariants.
-- Keep diagnostics-only behavior; do not alter fallback or presentation policy.
+- Allow V0 frames that reuse persistent sprite resources to reach the host retained resource validator.
+- Stop treating the frame-only prepared resource plan as a presentation gate.
+- Keep the prepared resource plan as diagnostics only.
 
 ## Exact Change Scope
 
@@ -20,14 +19,16 @@ No render ABI changes. No protocol changes. No rendering behavior changes. No fu
 
 ## Required Shape
 
-- Keep existing cumulative and interval counters.
-- Add the latest prepared resource-plan status tag to V0 diagnostic logs.
-- The status must come from `PreparedProtocolV0ResourcePlanStatus`, not a new unbounded string source.
-- Do not use resource-plan diagnostics to change fallback or present policy.
+- Attempt `ProtocolV0Textures.realizeFrame()` whenever a prepared V0 frame exists.
+- Do not require `prepared_upload.protocol_v0_resource_plan.valid` before realization.
+- Record resource-plan status for diagnostics only.
+- If host realization or V0 presentation rejects the frame, preserve existing full RGBA fallback.
 
 ## Required Tests
 
 - Existing host tests pass.
+- Bounded `rain` smoke should reduce/remove `no_sidecar_invalid` for persistent-resource frames and
+  show V0 patch presentation where retained-surface gates allow it.
 
 ## Verification
 

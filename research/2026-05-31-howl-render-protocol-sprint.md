@@ -1217,7 +1217,7 @@ Verification performed:
 
 ## Phase 6 Slice: Render Protocol V0 Limited Software Realizer
 
-Status: implementation in progress.
+Status: implementation complete; verification passed in this turn.
 
 Accepted implementation facts:
 
@@ -2434,13 +2434,67 @@ Smoke result:
 - Next product slice should inspect host resource-plan validation for persistent sprite resources
   reused across frames, not render emit failure.
 
-Rollback note:
+## Phase 42 Slice: V0 Persistent Resource Realization Gate
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- `rain` emits V0 successfully and the host retained GL resource store can validate resources against
+  prior frames, but `Context` gates `ProtocolV0Textures.realizeFrame()` on the prepared
+  resource-plan status.
+- That prepared resource plan is frame-only. It rejects reused persistent sprite resources because
+  they were created/uploaded in an earlier frame, not in the current frame.
+- As a result, valid persistent-resource frames fall back before reaching the owner that actually has
+  the retained resource state.
+
+Promoted slice:
+
+- `current.txt` - `V0 Persistent Resource Realization Gate`
+
+Required shape:
+
+- Attempt `ProtocolV0Textures.realizeFrame()` whenever a prepared V0 frame exists.
+- Do not require `prepared_upload.protocol_v0_resource_plan.valid` before realization.
+- Keep resource-plan status as diagnostics only.
+- Preserve full RGBA fallback when host realization or V0 presentation rejects a frame.
+
+Implementation facts:
+
+- `ContextSubmitBackend.upload()` now calls `ProtocolV0Textures.realizeFrame()` whenever a prepared
+  V0 frame exists.
+- `prepared_upload.protocol_v0_resource_plan.valid` no longer gates host resource realization or V0
+  command presentation.
+- The prepared resource-plan status remains logged as a diagnostic; it is expected to remain
+  `invalid_resource` for frames that reuse persistent resources created in earlier frames.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+- From `howl-linux-host`: bounded `rain` smoke run with
+  `timeout 12s zig build run -Doptimize=ReleaseFast -- --duration-ms 8000
+  --debug-log-every-ms 3000 --command rain`
+
+Smoke result:
+
+- Startup still used RGBA fallback for initial retained-surface setup.
+- After the initial frame, `no_sidecar_invalid` stayed at zero in interval diagnostics.
+- Reused persistent resources reached host V0 presentation: interval samples showed
+  `sprite_patch_present=10` and `rgba_fallback=0`.
+- Cumulative `resource_plan_status=invalid_resource` remains useful proof that the frame-only plan
+  sees reused resources as invalid while the host retained resource owner can realize them safely.
+
+Historical rollback note:
 
 - User visual testing found retained sprite patch presentation corrupted colors in `btop`.
-- Retained sprite patch upload was disabled in a follow-up safety fix; `protocolV0SpritePatch()`
-  remains diagnostic-only and sprite patch frames fall back to full RGBA.
-- Root cause must be handled by a future oracle-comparison slice before retained sprite patches are
-  re-enabled.
+- Retained sprite patch upload was disabled at that point while replay correctness was fixed.
+- Later retained replay fixes re-enabled safe sprite patch presentation; current `rain` smoke for
+  Phase 42 shows `sprite_patch_present=10` and `rgba_fallback=0` after startup.
 
 ## Phase 33 Slice: Linux Host V0 Sprite Present Path
 
