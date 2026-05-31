@@ -2537,7 +2537,7 @@ Accepted commits:
 
 ## Phase 24 Slice: Linux Host V0 GL Resource Realization Probe
 
-Status: promoted to `current.txt`; implementation pending.
+Status: worker implementation complete; verification passed in this turn.
 
 Promoted slice:
 
@@ -3098,3 +3098,109 @@ Verification performed:
 Accepted commits:
 
 - `howl-linux-host` `fc9b7fc` - `host: move submit backend outside terminal lock`
+
+## Phase 29 Research: Normal `btop` Submit Failure
+
+Status: diagnostic slice promoted to `current.txt`; implementation in progress.
+
+Observation after Phase 28:
+
+- `ll` no longer freezes after moving host backend upload out of `term.mutex`.
+- Normal-size interactive `btop` still freezes after drawing its first border frame.
+- Reproduction with process accounting shows the SDL/main loop is not asleep: the owner
+  loop spins with `render_pending_count=1`, repeated `render_step_failed`,
+  `present_submitted=0`, and `present_reason_none` increasing.
+- Therefore the next proof gap is not broad event-loop wake admission. The immediate
+  failure is a render turn failing before present submission.
+- First submit-only diagnostic produced no `howl-debug submit-failed` line during the
+  same reproduction, which proves the repeated failure happens before retained submit.
+  The slice is widened narrowly to prepare-or-submit failure reasons.
+- Host retained diagnostics now report `prepare_handle_failed`, which still collapses
+  the actual renderer error. The slice is widened to allow a bounded render-owned
+  diagnostic in `TextSessionOwner.prepareHandle()`, where the Zig error is available.
+- Render-owned diagnostic reports `CommandBoundOverflow`. This means bounded sidecar V0
+  emission aborts the full RGBA prepared owner. That violates the sprint invariant that
+  full RGBA remains the visible oracle/fallback until V0 host rendering is explicitly
+  promoted. The fix is to keep the prepared RGBA owner live and make the V0 ABI call
+  unavailable for that prepared handle when V0 emission overflows.
+
+Relevant current code facts:
+
+- `howl-linux-host/src/terminal/render/retained.zig:prepare()` can fail while taking a
+  prepare request or preparing a retained handle.
+- `howl-linux-host/src/terminal/context.zig:submitPreparedLockedWith()` can fail before
+  submit if `preparedUpload()` fails, backend upload fails, or the retained prepared
+  handle changes across the unlocked backend phase.
+- `howl-linux-host/src/terminal/render/retained.zig:submit()` can fail from the submit
+  decision boundary or from `submitHandle()` returning a non-rendered status.
+- `howl-render/src/prepared/owner.zig:executionMatchesPrepared()` rejects submit when
+  `execution.uploads_committed` does not match `uploads_required`, or host surface
+  dimensions do not match the prepared surface.
+- The host currently passes `prepared_upload.buffer.uploads_committed` and the full RGBA
+  host surface dimensions into submit after uploading the full RGBA oracle surface.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host Render Failure Reason`
+
+Non-goals:
+
+- Do not change render ABI.
+- Do not change V0 protocol semantics.
+- Do not bypass submit validation.
+- Do not claim full-RGBA upload commits renderer atlas/resource uploads unless the
+  renderer contract says so.
+
+## Phase 30 Slice: Protocol V0 Prepared Fill Command Coalescing
+
+Status: promoted to `current.txt`; implementation pending.
+
+Problem:
+
+- Phase 29 fixed the liveness bug by preserving the full-RGBA oracle when V0 sidecar
+  emission overflows `HOWL_RENDER_V0_COMMANDS_MAX`.
+- The product path still needs V0 to survive fullscreen TUIs without falling back.
+- `btop` overflow comes from too many fill-like commands in a full prepared frame.
+
+Promoted slice:
+
+- `current.txt` - `Protocol V0 Prepared Fill Command Coalescing`
+
+Required shape:
+
+- Coalesce only prepared clear/background/decoration/cursor fill commands.
+- Merge only horizontally adjacent rectangles with identical kind, color, `y_px`, and
+  `height_px`, and only when merged width fits `u16`.
+- Do not reorder consequences or merge across sprite/glyph commands.
+- Keep V0 sidecar unavailable fallback intact when the command bound is still exceeded.
+
+Implementation facts:
+
+- `howl-render/src/protocol_v0/emit.zig` now merges prepared fill-like commands when
+  the immediately preceding command has identical kind/color/row/height and the new
+  rectangle starts exactly at the prior rectangle end.
+- Coalescing is order-preserving and only crosses commands already adjacent in the same
+  prepared pass; it does not reorder or merge through sprites/glyphs.
+- Merged width is checked against `u16`; overflow keeps commands separate and preserves
+  the existing bounded failure behavior.
+- Protocol proof tests cover successful coalescing and non-coalescing for distinct
+  color, row, kind, and non-adjacent rectangles.
+
+Automated reproduction:
+
+- `btop` under host timeout no longer emits render failures.
+- First observed V0 frame command count dropped from `131` before coalescing to `66`
+  after coalescing in the same automated run shape.
+- `present_submitted` advanced and `render_step_failed=0` in accounting output.
+
+Verification performed:
+
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+- From `howl-render`: `git diff --check`
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`

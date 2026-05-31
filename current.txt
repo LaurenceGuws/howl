@@ -1,80 +1,52 @@
-# Current Slice: Linux Host Submit Backend Outside Terminal Lock
+# Current Slice: Protocol V0 Prepared Fill Command Coalescing
 
-Owner: `howl-linux-host` terminal render-turn lock boundary.
+Owner: `howl-render` protocol V0 prepared command emission.
 
 Research inputs:
 
-- `research/2026-05-31-linux-host-alacritty-runtime-boundary.md`
-- `research/2026-05-31-linux-host-lock-wake-graph.md`
-- `research/2026-05-31-linux-host-ghostty-lock-wake-sanity.md`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
+- `docs/render-protocol-v0.md`
 
 Purpose:
 
-- Match the recorded Alacritty runtime boundary: collect/copy terminal-render state
-  under `term.mutex`, release the lock, perform host/backend GL work, then relock only
-  for render submit state transition.
-- Remove V0 realization, GL state sampling, full RGBA host upload, and diagnostic
-  printing from the terminal mutex critical section.
-
-## Source Order (Mandatory)
-
-Read in order before editing:
-
-1. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-3. `current.txt`
-4. `research/2026-05-31-linux-host-alacritty-runtime-boundary.md`
-5. `research/2026-05-31-linux-host-lock-wake-graph.md`
-6. `research/2026-05-31-linux-host-ghostty-lock-wake-sanity.md`
-7. `howl-linux-host/src/terminal/context.zig`
-8. `howl-linux-host/src/terminal/render/retained.zig`
-9. `howl-linux-host/src/window/term_texture.zig`
+- Reduce `CommandBoundOverflow` for fullscreen TUIs such as `btop` without increasing
+  ABI bounds and without deleting the full-RGBA oracle.
+- Coalesce adjacent prepared fill commands when they are provably equivalent.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/render/retained.zig` only if a minimal prepared-handle
-  identity/assert helper is required
+- `howl-render/src/protocol_v0/emit.zig`
+- `howl-render/src/test_protocol_proof.zig` only if an integration-level protocol proof
+  is needed
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No render ABI changes. No V0 protocol changes. No host present-cadence changes. No PTY
-pump/wake policy changes. No V0 resource semantics changes. No full RGBA deletion.
+No render ABI changes. No host changes. No full-RGBA deletion. No V0 drawing path.
 
 ## Required Shape
 
-- Locked phase: source publication, render action selection, prepare if needed,
-  `preparedUpload()` extraction, and scalar submit metadata copy.
-- Unlocked phase: V0 texture realization, GL state sampling, `term_texture.ensureSurface()`,
-  `term_texture.uploadPreparedBuffer()`, and diagnostic printing.
-- Relocked phase: `term.render.submit()`, retained render state transition,
-  `term_texture` submit result update, and render turn result.
-
-## Hard Invariants
-
-- No `term_texture.*` calls while `term.mutex` is held.
-- No `protocol_v0_textures.realizeFrame()` while `term.mutex` is held.
-- No `term_texture.sampleGlState()` while `term.mutex` is held.
-- No `std.debug.print()` diagnostics from the submit path while `term.mutex` is held.
-- `term.render.prepare()`, `term.render.preparedUpload()`, and `term.render.submit()`
-  remain under `term.mutex`.
-- Borrowed prepared frame/span/upload byte pointers are consumed synchronously in the
-  same owner turn and are never retained.
-- The retained prepared handle must not be released, replaced, forgotten, or submitted
-  by another path between unlock and relock.
+- Coalesce only prepared fill-like commands: clear, background, decoration, cursor.
+- Merge only horizontally adjacent rectangles with identical command kind, color,
+  `y_px`, and `height_px`.
+- Preserve command order across passes. Do not reorder or merge through sprites/glyphs.
+- Preserve bounds: merged width must fit `u16`; otherwise append a separate command.
+- Keep the existing fail-closed V0 sidecar behavior when coalescing is insufficient.
 
 ## Required Tests
 
-- A fake/test path proves backend realization/upload callbacks observe the terminal
-  mutex unlocked.
-- A test proves render submit still happens under lock after backend upload.
-- A test proves host upload failure returns failed submit result without leaking the
-  prepared upload wrapper.
-- Existing present-pending and present-completion tests still pass.
+- Prove adjacent same-row same-color prepared fills coalesce into one V0 command.
+- Prove different color, row, height, kind, or non-adjacent rectangles do not coalesce.
+- Existing overflow tests must still pass or be updated only where the intended behavior
+  changed.
 
 ## Verification
+
+From `/home/home/personal/projects/howl/howl-render`:
+
+- `zig build test:protocol-proof -- "protocol v0"`
+- `zig build test:unit -- "protocol v0"`
+- `git diff --check`
 
 From `/home/home/personal/projects/howl/howl-linux-host`:
 
@@ -82,7 +54,7 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 - `zig build -Doptimize=ReleaseFast`
 - `git diff --check`
 
-From `/home/home/personal/projects/howl` if root-visible files change:
+From workspace root:
 
 - `zig build check`
 - `zig build test`
@@ -90,8 +62,6 @@ From `/home/home/personal/projects/howl` if root-visible files change:
 
 ## Stop Conditions
 
-- Stop if `PreparedUpload` cannot be proved valid across the unlock/relock window.
-- Stop if moving backend work out of lock requires render ABI or V0 protocol changes.
-- Stop if present cadence, PTY pump limits, wake semaphore semantics, or V0 resource
-  semantics need to change.
-- Stop if tests cannot prove backend upload runs outside `term.mutex`.
+- Stop if reducing command count requires reordering draw consequences.
+- Stop if the proposed fix hides command overflow instead of preserving a valid V0
+  unavailable fallback.
