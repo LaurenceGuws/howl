@@ -2087,6 +2087,55 @@ Smoke result:
   a first full-surface clear. The next product slice should prove and present fully covered fill-only
   frames without weakening RGBA fallback.
 
+## Phase 36 Slice: V0 Fill Coverage Present Path
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- Phase 35 proved the current `btop` V0 frame has `clear=0`, `fill=53`, `sprite=0`, `glyph=0`,
+  `other=0`, and is rejected only because no first full-surface clear exists.
+- The existing fill-only path requires a first full-surface clear for safety. That is correct for
+  partial fill streams, but overly conservative if fill rectangles themselves cover every pixel.
+
+Promoted slice:
+
+- `current.txt` - `V0 Fill Coverage Present Path`
+
+Required shape:
+
+- Accept clear/fill-only V0 frames with a first full clear exactly as before.
+- Additionally accept fill-only V0 frames without a first clear only when bounded coverage proves
+  every pixel is filled.
+- Reject/fallback for overlapping ambiguity, gaps, out-of-bounds rectangles, resource-bearing
+  commands, or non-fill commands.
+- Keep coverage proof bounded by render dimensions and existing upload row limits.
+- Do not change render ABI, protocol lifetime, or full RGBA fallback.
+
+Implementation facts:
+
+- `protocolV0FillOnly()` still accepts first-full-clear fill streams exactly as before.
+- It also accepts fill-only streams without a first clear only when every fill rect is in bounds,
+  every pair of rects is non-overlapping, and the summed fill area equals render surface area.
+- The coverage proof uses no allocation and is bounded by the V0 command count.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: bounded `btop` smoke run with
+  `timeout 22s zig build run -Doptimize=ReleaseFast -- --duration-ms 18000
+  --debug-process-accounting --debug-log-every-ms 5000 --command btop`
+
+Smoke result:
+
+- `render_step_failed=0` and `present_submitted` advanced.
+- First V0 diagnostic snapshot still rejected the frame: `v0_unsupported_shape=1`,
+  `no_full_clear=1`, `clear=0`, `fill=66`, `sprite=0`, `glyph=0`, `other=0`.
+- Therefore the `btop` V0 stream is a partial fill patch, not a full-coverage fill frame. The next
+  product slice should present no-clear fill patches only when the host terminal texture already
+  contains a matching initialized previous frame.
+
 ## Phase 33 Slice: Linux Host V0 Sprite Present Path
 
 Status: worker implementation complete; verification passed in this turn.

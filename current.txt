@@ -1,11 +1,11 @@
-# Current Slice: V0 Normal Frame Present Proof
+# Current Slice: V0 Fill Coverage Present Path
 
-Owner: `howl-linux-host` submit diagnostics and terminal texture V0 frame classification.
+Owner: `howl-linux-host` terminal texture V0 fill materialization.
 
 Purpose:
 
-- Prove which prepared frames present through V0 and which fall back to full RGBA.
-- Record bounded fallback reasons before any RGBA deletion work is considered.
+- Present fill-only V0 frames that omit a first clear only when fills are proven to cover the full render surface.
+- Keep partial or unproven fill-only frames on RGBA fallback.
 - Keep full RGBA present path as fallback/oracle.
 
 ## Exact Change Scope
@@ -20,16 +20,15 @@ No render ABI changes. No protocol changes. No full-RGBA deletion. No host ack/r
 
 ## Required Shape
 
-- Count prepared submissions with no V0 sidecar.
-- Count V0 frames rejected before upload because their command shape is unsupported.
-- Count V0 upload/materialization fallback separately for fill-only, sprite, and glyph paths.
-- Keep existing present counters for fill-only, sprite, and glyph paths.
-- Log the counters through existing debug diagnostics.
-- Do not turn diagnostic proof into host policy.
+- Accept clear/fill-only V0 frames with a first full clear exactly as before.
+- Additionally accept fill-only V0 frames without a first clear only when bounded coverage proves every pixel is filled.
+- Reject/fallback for overlapping ambiguity, gaps, out-of-bounds rectangles, resource-bearing commands, or non-fill commands.
+- Keep coverage proof bounded by render dimensions and existing upload row limits.
+- Log coverage-present/fallback counts through existing diagnostics if useful.
 
 ## Required Tests
 
-- Add host tests for V0 frame classification when useful.
+- Add host tests for full fill coverage acceptance and gap rejection.
 - Existing host tests pass.
 
 ## Verification
@@ -48,5 +47,5 @@ From workspace root:
 
 ## Stop Conditions
 
-- Stop if proof requires render ABI changes.
-- Stop if fallback reasons require hidden policy in host rendering helpers.
+- Stop if coverage proof needs allocation or unbounded work.
+- Stop if coverage cannot be proved without changing render ABI.
