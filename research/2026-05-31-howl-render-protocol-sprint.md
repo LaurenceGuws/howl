@@ -2260,6 +2260,53 @@ Review/fix note:
 - Acceptance review result: accepted after the above fixes; residual risk is narrower V0 fast-path
   coverage because future-upload frames fall back to full RGBA.
 
+## Phase 39 Slice: V0 Interval Diagnostics
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- A run that executes `btop` and then `rain` in the same terminal process produces cumulative V0
+  counters. The result is visually good but hard to interpret because `btop` patch-present counts
+  and later `rain` no-sidecar/full-RGBA counts are mixed together.
+
+Promoted slice:
+
+- `current.txt` - `V0 Interval Diagnostics`
+
+Required shape:
+
+- Keep existing cumulative diagnostics.
+- Add per-log interval deltas for V0 present/fallback/no-sidecar counters.
+- Add bounded no-sidecar reason buckets for resource-plan statuses.
+- Include a stable label from current title/fallback command when logging.
+- Do not change render ABI, protocol lifetime, rendering behavior, or full RGBA fallback.
+
+Implementation facts:
+
+- `Context` keeps a snapshot of the last logged submit diagnostics and prints an interval delta line
+  alongside cumulative V0 diagnostics.
+- V0 logs include a stable label from terminal title, falling back to configured command/shell.
+- No-sidecar fallbacks are bucketed by prepared resource-plan status: null-frame, call-failed,
+  unsupported, invalid, overflow, and other.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: bounded `btop` smoke run with
+  `timeout 12s zig build run -Doptimize=ReleaseFast -- --duration-ms 8000
+  --debug-process-accounting --debug-log-every-ms 3000 --command btop`
+
+Smoke result:
+
+- Logs now include `label='btop'` and `howl-debug v0 interval ...` lines.
+- The interval line split recent fallbacks from cumulative totals.
+- The observed no-sidecar reason was `call_failed`, not overflow or unsupported command:
+  sample interval `no_sidecar=10 no_sidecar_call_failed=10`.
+- This points the next product slice at render/prepared V0 frame availability rather than another
+  host present path.
+
 Rollback note:
 
 - User visual testing found retained sprite patch presentation corrupted colors in `btop`.

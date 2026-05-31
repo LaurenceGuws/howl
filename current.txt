@@ -1,34 +1,32 @@
-# Current Slice: V0 Retained Sprite Patch Present Path
+# Current Slice: V0 Interval Diagnostics
 
-Owner: `howl-linux-host` terminal texture V0 command materialization.
+Owner: `howl-linux-host` submit diagnostics.
 
 Purpose:
 
-- Present partial no-clear clear/fill/sprite V0 frames as retained texture patches when prior matching texture content exists.
-- Keep first-frame, resized, uninitialized, or unsupported patch frames on RGBA fallback.
-- Keep full RGBA present path as fallback/oracle.
+- Separate cumulative V0 counters from per-log-interval counters.
+- Make mixed runs such as `btop` followed by `rain` diagnosable without resetting the process.
+- Record bounded no-sidecar reason buckets from the prepared V0 resource plan.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/window/term_texture.zig`
 - `howl-linux-host/src/terminal/context.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No render ABI changes. No protocol changes. No full-RGBA deletion. No host ack/removal contract.
+No render ABI changes. No protocol changes. No rendering behavior changes. No full-RGBA deletion.
 
 ## Required Shape
 
-- Accept partial no-clear clear/fill/sprite V0 frames only if the terminal texture existed before upload and matched the frame size.
-- Reject/fallback if the texture was newly created/resized in the current turn.
-- Reject/fallback for glyph commands, unsupported command shapes, missing sprite resources, or out-of-bounds rects.
-- Preserve existing full-clear sprite path.
-- Log retained sprite patch present/fallback counts.
+- Keep existing cumulative diagnostics.
+- Add per-log interval deltas for V0 present/fallback/no-sidecar counters.
+- Add bounded no-sidecar reason buckets for resource-plan statuses.
+- Include a stable label from current title/fallback command when logging.
+- Do not use diagnostics to change rendering policy.
 
 ## Required Tests
 
-- Add host tests for retained sprite patch detection and glyph rejection.
 - Existing host tests pass.
 
 ## Verification
@@ -44,8 +42,3 @@ From workspace root:
 - `zig build check`
 - `zig build test`
 - `git diff --check`
-
-## Stop Conditions
-
-- Stop if retained sprite patch safety needs render ABI changes.
-- Stop if command ordering cannot be preserved with host-owned backend state.
