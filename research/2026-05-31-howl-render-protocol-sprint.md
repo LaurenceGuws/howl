@@ -1967,6 +1967,74 @@ Verification performed:
 - From workspace root: `zig build test`
 - From workspace root: `git diff --check`
 
+## Phase 34 Slice: Linux Host V0 Glyph Run Present Path
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- V0 fill-only and sprite frames can now present without uploading the full RGBA oracle.
+- Normal terminal text frames still require glyph-run command materialization before the host can
+  present typical V0 text frames visibly.
+- Full RGBA must remain fallback/oracle until V0 normal-frame coverage is proven and a later
+  deletion slice is explicitly promoted.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 Glyph Run Present Path`
+
+Required shape:
+
+- Accept frames whose first command is a full-surface clear and whose remaining commands are
+  clear/fill/sprite/glyph-run commands.
+- Draw glyph runs into the terminal texture through the existing host-owned FBO path.
+- Use only realized host-owned atlas textures from `ProtocolV0Textures`.
+- Support `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` only.
+- Reject/fallback for color atlas glyph resources, missing atlas resources, malformed glyph refs,
+  or GL/FBO failure.
+- Do not change render ABI, protocol lifetime, or ack/removal semantics.
+
+Current implementation facts:
+
+- `howl-linux-host/src/window/term_texture.zig` has a shared `uploadProtocolV0Commands()` path
+  for sprite/glyph-capable frames so command order stays inside one terminal-texture FBO pass.
+- `uploadProtocolV0Glyphs()` gates on `protocolV0GlyphFrame()` before using the shared command
+  materializer.
+- `drawGlyphCommand()` draws each `HowlRenderV0GlyphRef` using its atlas resource, destination
+  `x_px/y_px`, glyph atlas rect dimensions, and per-glyph RGBA color.
+- Host `ALPHA8` GL storage/upload now uses compatibility `GL_ALPHA` for the fixed-function path,
+  so alpha atlas values modulate output alpha instead of only red.
+- `commandUsesResource()` now accounts for glyph atlas resource references when recording
+  same-frame resource churn and persistent resource use diagnostics.
+- `howl-linux-host/src/terminal/context.zig` records `glyph_present` and `glyph_fallback`
+  counters in protocol V0 submit diagnostics.
+- Host review tightened glyph validation to mirror render oracle safety checks: glyph spans must
+  use the ABI max, atlas rects must fit the 1024x1024 alpha atlas contract, and glyph destinations
+  must overlap the render surface before the V0 path is considered presentable.
+- The draw path rechecks each glyph atlas rect against the realized host texture dimensions before
+  issuing the textured quad, so a malformed or mismatched resource falls back to full RGBA instead
+  of drawing unchecked texture coordinates.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+- From `howl-linux-host`: bounded `btop` smoke run with
+  `timeout 22s zig build run -Doptimize=ReleaseFast -- --duration-ms 18000
+  --debug-process-accounting --debug-log-every-ms 5000 --command btop`
+
+Smoke result:
+
+- `render_step_failed=0` for the sampled intervals.
+- `present_submitted` advanced: first interval `9`, then `7`, then `9`.
+- First sampled V0 diagnostics still showed `glyph_present=0` and `glyph_fallback=0`; this run
+  preserved liveness but did not prove a live glyph V0 present frame was emitted during the
+  first diagnostic snapshot.
+
 ## Phase 33 Slice: Linux Host V0 Sprite Present Path
 
 Status: worker implementation complete; verification passed in this turn.

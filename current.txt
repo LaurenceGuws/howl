@@ -1,12 +1,12 @@
-# Current Slice: Linux Host V0 Sprite Present Path
+# Current Slice: Linux Host V0 Glyph Run Present Path
 
 Owner: `howl-linux-host` terminal texture V0 command materialization.
 
 Purpose:
 
-- Materialize V0 clear/fill/sprite commands into the terminal texture in protocol order.
-- Keep glyph-run frames and unsupported resource shapes on RGBA fallback.
-- Keep full RGBA present path as fallback/oracle.
+- Materialize V0 glyph-run commands into the terminal texture in protocol order.
+- Reuse render-owned V0 glyph atlas resources realized as host-owned GL textures.
+- Keep full RGBA present path as fallback/oracle for unsupported glyph/resource shapes or GL failure.
 
 ## Exact Change Scope
 
@@ -16,21 +16,20 @@ Allowed files:
 - `howl-linux-host/src/terminal/context.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No render ABI changes. No protocol changes. No full-RGBA deletion. No glyph-run V0
-presentation.
+No render ABI changes. No protocol changes. No full-RGBA deletion. No host ack/removal contract.
 
 ## Required Shape
 
-- Accept V0 present frames containing clear/fill and draw-sprite commands only.
-- Reject/fallback on glyph-run commands.
-- Draw into the terminal texture, not over the already-presented RGBA texture, so command
-  ordering is preserved.
+- Accept V0 present frames containing a full first clear plus clear/fill/sprite/glyph-run commands.
+- Draw into the terminal texture, not over the final framebuffer, so command ordering is preserved.
 - Use host-owned GL resources only; render ABI must not expose backend objects.
-- Fall back to full RGBA upload on any unsupported V0 shape or GL failure.
+- Support `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` glyph references only.
+- Reject/fallback for color glyph atlas resources, malformed glyph refs, missing realized atlas resources, or GL failure.
+- Keep fill-only and sprite paths working.
 
 ## Required Tests
 
-- Add host tests for sprite-capable V0 detection.
+- Add host tests for glyph-capable V0 detection and rejection of unsupported glyph atlas shape.
 - Existing host tests pass.
 
 ## Verification
@@ -49,5 +48,6 @@ From workspace root:
 
 ## Stop Conditions
 
-- Stop if sprite drawing requires render ABI changes.
+- Stop if glyph presentation requires render ABI changes.
 - Stop if command ordering cannot be preserved with host-owned backend state.
+- Stop if glyph atlas ownership requires protocol ack/removal semantics in this slice.
