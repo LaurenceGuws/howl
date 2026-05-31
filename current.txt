@@ -1,12 +1,12 @@
-# Current Slice: V0 Prepared Sprite Resource Bound
+# Current Slice: V0 Atlas Backed Prepared Sprites
 
-Owner: `howl-render` V0 prepared sprite resource emission and lifetime.
+Owner: `howl-render` prepared text atlas truth and V0 glyph/sprite emission.
 
 Purpose:
 
-- Stop prepared V0 sprite cache exhaustion from permanently disabling the V0 sidecar.
-- Bound renderer-owned persistent sprite resources before `HOWL_RENDER_V0_RESOURCES_MAX` pressure.
-- Provide explicit transient sprite resource fallback/diagnostics instead of silent full-RGBA steady-state fallback.
+- Stop emitting one V0 texture resource per prepared sprite draw.
+- Move V0 prepared sprite/glyph consequences toward shared atlas resources, matching Ghostty/Alacritty renderer truth.
+- Preserve full RGBA fallback/oracle unchanged while atlas-backed V0 coverage is proven.
 - Keep full RGBA fallback/oracle unchanged.
 
 ## Exact Change Scope
@@ -16,26 +16,29 @@ Allowed files:
 - `howl-render/src/protocol_v0/emit.zig`
 - `howl-render/src/protocol_v0/realize.zig`
 - `howl-render/src/prepared/owner.zig`
+- `howl-render/src/text/raster/cache.zig`
+- `howl-render/src/text/frame_preparer.zig`
+- `howl-render/src/text/scene.zig`
 - `howl-render/src/test_protocol_proof.zig`
 - `howl-render/src/test/ffi.zig`
-- `research/2026-05-31-howl-render-protocol-sprint.md`
 - `research/2026-05-31-v0-prepared-sprite-resource-bound.md`
+- `research/2026-06-01-v0-atlas-backed-prepared-sprites.md`
 
-No host ABI changes. No full-RGBA deletion. No unbounded resource cache growth.
+No host ABI changes unless the current V0 glyph-run ABI is proven insufficient. No full-RGBA deletion.
 
 ## Required Shape
 
-- Existing persistent sprite resources remain reusable.
-- New sprite resources must not grow the persistent cache past a bounded budget.
-- When a sprite cannot become persistent, emit same-frame create/upload/draw/retire if V0 frame limits allow it.
-- If transient emission exceeds frame limits, preserve full RGBA fallback and report the exact bound.
-- Do not invent host-owned eviction or backend ack in this slice.
+- Use Ghostty/Alacritty as the source shape: glyph/sprite raster payloads live in shared atlas textures, draws reference atlas regions.
+- Do not add another Howl-only transient churn budget as the product fix.
+- Reuse existing V0 glyph-run command/resource model if it can express atlas-backed alpha sprite draws.
+- If the current Howl text cache only tracks slots, add the smallest render-owned atlas placement truth required for V0 emission.
+- Preserve current transient fallback only as a safety path until atlas-backed V0 is accepted.
 
 ## Required Tests
 
 - Existing host tests pass.
-- Protocol proof tests cover persistent cache reuse, bounded persistent growth, transient create/upload/draw/retire, and exact overflow status.
-- Bounded `btop` smoke should not enter steady-state `v0_emit_status=5` / `no_sidecar_call_failed` fallback after persistent resource pressure.
+- Protocol proof tests show repeated prepared sprite/glyph draws share atlas resources instead of creating per-draw resources.
+- Bounded `vttest` smoke should not enter steady-state `v0_emit_status=2` / create-bound fallback from per-draw sprite resources.
 
 ## Verification
 
