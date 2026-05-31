@@ -1,46 +1,43 @@
-# Current Slice: Protocol V0 Prepared Payload Lifetime
+# Current Slice: Linux Host V0 Fill-Only Present Path
 
-Owner: `howl-render` prepared surface owner memory lifetime.
+Owner: `howl-linux-host` terminal submit/present boundary.
 
 Purpose:
 
-- Stop long-running memory growth from stale prepared-handle tombstones retaining the
-  full embedded V0 payload arrays after submit/release.
-- Preserve stale handle safety: consumed/released prepared handles may remain as small
-  tombstones until text-session destroy, but they must not retain large frame storage.
+- Add the first visible V0 present path without deleting full RGBA.
+- Use V0 directly only when a prepared frame contains clear/fill commands only.
+- Keep mixed text/sprite frames on the existing RGBA path until sprite/glyph drawing is
+  promoted.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/test_protocol_proof.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+- `howl-linux-host/src/window/present.zig` only if direct framebuffer drawing is needed
+- `howl-linux-host/src/window/layout.zig` only if present frame metadata is needed
+- `howl-linux-host/src/app/present.zig` only if present frame metadata is needed
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No ABI changes. No host changes. No V0 rendering changes. Do not delete full RGBA.
+No render ABI changes. No V0 protocol changes. No full-RGBA deletion. No mixed
+sprite/glyph V0 presentation.
 
 ## Required Shape
 
-- Move `V0Payload` storage out of the always-retained prepared owner tombstone.
-- Allocate V0 payload only for a live prepared owner that successfully emits V0.
-- Free V0 payload on `release()`, `consume()`, failed creation, and session destroy.
-- `protocolV0Frame()` must return null when the live owner has no V0 payload.
-- `protocolV0FrameStorageEmptyForTest()` must prove released/consumed owners retain no
-  V0 payload storage.
+- Detect fill-only V0 frames: commands may be clear/fill only, with no glyph spans and
+  no sprite resource use.
+- Present fill-only frames through V0 consequences instead of full RGBA upload.
+- Preserve RGBA fallback for every non-fill-only frame or V0-unavailable frame.
+- Keep backend work outside `term.mutex`.
+- Diagnostics must report fill-only present counts and fallback counts.
 
 ## Required Tests
 
-- Existing protocol proof tests pass.
-- Test that release/consume clears V0 payload storage.
-- Existing overflow fallback tests still prove RGBA survives when V0 is unavailable.
+- Add host tests for fill-only detection if helper is introduced.
+- Existing host submit-lock tests must still pass.
 
 ## Verification
-
-From `/home/home/personal/projects/howl/howl-render`:
-
-- `zig build test:protocol-proof -- "protocol v0"`
-- `zig build test:unit -- "protocol v0"`
-- `git diff --check`
 
 From `/home/home/personal/projects/howl/howl-linux-host`:
 
@@ -56,5 +53,5 @@ From workspace root:
 
 ## Stop Conditions
 
-- Stop if stale handle safety requires keeping large per-frame payload storage.
-- Stop if the fix requires host-side lifetime changes.
+- Stop if visible fill-only drawing requires reordering mixed text/sprite commands.
+- Stop if implementing this requires render ABI changes.

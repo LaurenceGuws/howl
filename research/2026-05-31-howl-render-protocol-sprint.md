@@ -1967,6 +1967,50 @@ Verification performed:
 - From workspace root: `zig build test`
 - From workspace root: `git diff --check`
 
+## Phase 32 Slice: Linux Host V0 Fill-Only Present Path
+
+Status: worker implementation complete; verification passed in this turn.
+
+Problem:
+
+- V0 frames are produced, resources are realized, and command overflow/memory growth are
+  fixed.
+- Directly drawing only fills for mixed text/sprite frames would be wrong because fills
+  can be backgrounds behind glyph/sprite commands. Drawing those fills after the RGBA
+  terminal texture would cover text.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 Fill-Only Present Path`
+
+Required shape:
+
+- Detect frames containing only clear/fill commands with no glyph spans and no sprite
+  resource use.
+- Use V0 directly for those fill-only frames.
+- Keep RGBA fallback for all mixed frames until sprite/glyph drawing is promoted.
+
+Implementation facts:
+
+- `term_texture.protocolV0FillOnly()` accepts frames with no resource mutations and only
+  clear/fill commands, requiring the first command to clear the full render surface.
+- `term_texture.uploadProtocolV0FillOnly()` materializes accepted fill-only frames into
+  the host terminal texture through V0 command consequences.
+- `ContextSubmitBackend.upload()` uses the V0 fill-only upload path when eligible and
+  otherwise falls back to the full RGBA upload path.
+- Diagnostics now include `fill_only_present` and `fill_only_fallback` counters.
+- Mixed `btop` frames correctly remain on RGBA fallback for now; smoke run showed
+  `render_step_failed=0` and `fill_only_present=0` for mixed frames.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+
 ## Phase 31 Slice: Protocol V0 Prepared Payload Lifetime
 
 Status: worker implementation complete; verification passed in this turn.
