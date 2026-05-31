@@ -1,33 +1,40 @@
-# Current Slice: V0 Interval Diagnostics
+# Current Slice: V0 Prepared Emit Diagnostics
 
-Owner: `howl-linux-host` submit diagnostics.
+Owner: `howl-render` prepared surface diagnostics, consumed by `howl-linux-host` submit diagnostics.
 
 Purpose:
 
-- Separate cumulative V0 counters from per-log-interval counters.
-- Make mixed runs such as `btop` followed by `rain` diagnosable without resetting the process.
-- Record bounded no-sidecar reason buckets from the prepared V0 resource plan.
+- Replace generic host `no_sidecar_call_failed` with the exact render V0 emit outcome.
+- Explain why a prepared surface has no V0 sidecar while full RGBA fallback remains available.
+- Keep emit failure diagnostic-only; do not make V0 emission failure fail prepare or submit.
 
 ## Exact Change Scope
 
 Allowed files:
 
+- `howl-render/include/howl_render.h`
+- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/ffi/prepared_surface.zig`
+- `howl-render/src/test/ffi.zig`
+- `howl-render/src/test_protocol_proof.zig`
 - `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No render ABI changes. No protocol changes. No rendering behavior changes. No full-RGBA deletion.
+No protocol changes. No rendering behavior changes. No full-RGBA deletion. No backend objects in render ABI.
 
 ## Required Shape
 
-- Keep existing cumulative diagnostics.
-- Add per-log interval deltas for V0 present/fallback/no-sidecar counters.
-- Add bounded no-sidecar reason buckets for resource-plan statuses.
-- Include a stable label from current title/fallback command when logging.
-- Do not use diagnostics to change rendering policy.
+- Add a bounded prepared V0 emit status to `HowlRenderPreparedSurfaceDiagnostics`.
+- Map every `protocol_v0.emit.Error` value to a stable ABI status.
+- Preserve `protocolV0Frame()` returning null when payload emission fails.
+- Host logs must include the prepared V0 emit status when V0 sidecar acquisition fails.
+- Do not use emit diagnostics to change fallback or present policy.
 
 ## Required Tests
 
-- Existing host tests pass.
+- Add render tests for successful and failed prepared V0 emit diagnostics.
+- Existing render and host tests pass.
 
 ## Verification
 

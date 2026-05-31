@@ -2307,6 +2307,75 @@ Smoke result:
 - This points the next product slice at render/prepared V0 frame availability rather than another
   host present path.
 
+## Phase 40 Slice: V0 Prepared Emit Diagnostics
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- Host interval diagnostics now prove the dominant no-sidecar bucket in `btop` is
+  `no_sidecar_call_failed`.
+- Source trace shows `howl-linux-host/src/terminal/render/retained.zig` records `call_failed` when
+  `howl_render_prepared_surface_protocol_v0()` does not return `HOWL_RENDER_CALL_OK`.
+- Render `howl-render/src/ffi/prepared_surface.zig` returns `HOWL_RENDER_CALL_INVALID_ARGUMENT` when
+  `Owner.protocolV0Frame()` returns null.
+- Render `howl-render/src/prepared/owner.zig` currently runs `owner.emitV0Payload() catch {};` during
+  prepared owner creation, so concrete emit errors are swallowed and the host only sees generic
+  no-sidecar call failure.
+
+Promoted slice:
+
+- `current.txt` - `V0 Prepared Emit Diagnostics`
+
+Required shape:
+
+- Add a bounded prepared V0 emit status to `HowlRenderPreparedSurfaceDiagnostics`.
+- Map every `protocol_v0.emit.Error` value to a stable ABI status.
+- Preserve `protocolV0Frame()` returning null when payload emission fails.
+- Host logs must include the prepared V0 emit status when V0 sidecar acquisition fails.
+- Do not use diagnostics to change fallback or present policy.
+
+Non-goals:
+
+- Do not make V0 emit failure fail prepare or submit.
+- Do not remove full RGBA fallback/oracle.
+- Do not add backend objects to the render ABI.
+- Do not change V0 protocol lifetime or resource ownership.
+
+Implementation facts:
+
+- `HowlRenderPreparedSurfaceDiagnostics` now exposes `protocol_v0_emit_status`.
+- The diagnostics ABI names and zeros its trailing reserved field instead of relying on hidden tail
+  padding.
+- `Owner.create()` still preserves RGBA fallback when V0 payload emission fails, but records the exact
+  `protocol_v0.emit.Error` as a stable ABI status.
+- V0 payload allocation failure is also diagnostic-only and maps to
+  `HOWL_RENDER_V0_EMIT_ALLOCATION_FAILED`.
+- Host `PreparedUpload` fetches prepared diagnostics before probing V0 and includes
+  `v0_emit_status` in cumulative V0 logs.
+- Host diagnostics fetch failure does not block prepared upload or full RGBA fallback.
+- The dominant `btop` no-sidecar call failure now resolves to
+  `HOWL_RENDER_V0_EMIT_COMMAND_BOUND_OVERFLOW` (`v0_emit_status=1`).
+
+Verification performed:
+
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From `howl-render`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+
+Smoke result:
+
+- Bounded `btop` smoke showed cumulative V0 logs with `v0_emit_status=1` and interval counters with
+  `no_sidecar_call_failed=4` over the sampled interval.
+- `v0_emit_status=1` maps to `HOWL_RENDER_V0_EMIT_COMMAND_BOUND_OVERFLOW`, so the next product slice
+  should reduce/coalesce command emission pressure or produce a bounded partial V0 payload policy.
+
 Rollback note:
 
 - User visual testing found retained sprite patch presentation corrupted colors in `btop`.
