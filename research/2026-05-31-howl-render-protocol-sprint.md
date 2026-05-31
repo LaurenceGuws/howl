@@ -2035,6 +2035,58 @@ Smoke result:
   preserved liveness but did not prove a live glyph V0 present frame was emitted during the
   first diagnostic snapshot.
 
+## Phase 35 Slice: V0 Normal Frame Present Proof
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- V0 fill, sprite, and glyph materialization paths now exist, but the smoke run still observed
+  `glyph_present=0` and `glyph_fallback=0` in the sampled diagnostic output.
+- Before deleting or reducing full RGBA, the host must prove exactly why normal frames are still
+  using RGBA fallback or whether V0 present is already being exercised outside the first sample.
+
+Promoted slice:
+
+- `current.txt` - `V0 Normal Frame Present Proof`
+
+Required shape:
+
+- Count prepared submissions with no V0 sidecar.
+- Count V0 frames rejected before upload because their command shape is unsupported.
+- Count V0 upload/materialization fallback separately for fill-only, sprite, and glyph paths.
+- Keep existing present counters for fill-only, sprite, and glyph paths.
+- Log the counters through existing debug diagnostics.
+- Do not change render ABI, protocol lifetime, host policy, or full RGBA fallback.
+
+Implementation facts:
+
+- `howl-linux-host/src/terminal/context.zig` now records no-sidecar fallback, unsupported V0
+  shape fallback, full RGBA fallback, and per-path frame/present/fallback counts.
+- Unsupported V0 shapes record bounded command-kind totals and whether the first command was a
+  full-surface clear.
+- `howl-linux-host/src/window/term_texture.zig` exposes `ProtocolV0FrameSummary` and
+  `protocolV0FrameSummary()` for diagnostic-only command-shape accounting.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: bounded `btop` smoke run with
+  `timeout 22s zig build run -Doptimize=ReleaseFast -- --duration-ms 18000
+  --debug-process-accounting --debug-log-every-ms 5000 --command btop`
+
+Smoke result:
+
+- `render_step_failed=0` and `present_submitted` advanced.
+- First V0 diagnostic snapshot: `v0_no_sidecar=0`, `v0_unsupported_shape=1`,
+  `rgba_fallback=1`.
+- Unsupported shape summary: `no_full_clear=1`, `clear=0`, `fill=53`, `sprite=0`,
+  `glyph=0`, `other=0`.
+- Current normal-frame blocker is not missing glyph presentation. It is fill-only V0 frames without
+  a first full-surface clear. The next product slice should prove and present fully covered fill-only
+  frames without weakening RGBA fallback.
+
 ## Phase 33 Slice: Linux Host V0 Sprite Present Path
 
 Status: worker implementation complete; verification passed in this turn.
