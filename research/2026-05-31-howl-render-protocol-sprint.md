@@ -3874,3 +3874,61 @@ Verification performed:
 - From workspace root: `zig build check`
 - From workspace root: `zig build test`
 - From workspace root: `git diff --check`
+
+## Phase 31 Slice: V0 FBO Texture Row Orientation
+
+Status: promoted to `current.txt`; implementation under review.
+
+Problem:
+
+- After persistent V0 resources were realized, `rain` reached retained V0 sprite patch
+  presentation with `no_sidecar_invalid=0` and `rgba_fallback=0` in sampled logs.
+- User visual review then reported that terminal content was upside down.
+- The active V0 path materializes protocol commands into the terminal texture through
+  an FBO, then the existing final texture presentation path displays that texture.
+
+Code facts:
+
+- `howl-linux-host/src/window/term_texture.zig` owns V0 GL command materialization.
+- V0 protocol command coordinates are logical terminal coordinates with row zero at
+  the top of the terminal surface.
+- The terminal texture is consumed by the pre-existing presentation path as a texture
+  whose row zero is the logical top row.
+- OpenGL FBO NDC coordinates address texture row zero at the bottom edge unless the
+  command replay maps the logical top row explicitly to texture row zero.
+- Therefore the V0 FBO replay path must use texture-row coordinates, not final
+  display-space Y coordinates.
+
+Promoted slice:
+
+- `current.txt` - `V0 FBO Texture Row Orientation`
+
+Required shape:
+
+- Change only the V0 FBO coordinate mapping in `term_texture.zig`.
+- Preserve protocol command coordinates and upload byte order.
+- Do not change final window texture presentation.
+- Preserve full RGBA fallback/oracle behavior.
+
+Implementation facts:
+
+- `ndcY(0, height)` now returns `-1.0`, placing logical row zero at texture row zero
+  for the FBO replay target.
+- `ndcY(height, height)` now returns `1.0`.
+- Host unit test `protocol v0 fbo y coordinates target texture row zero first` locks
+  the coordinate convention.
+
+Smoke performed:
+
+- From `howl-linux-host`: `timeout 12s zig build run -Doptimize=ReleaseFast -- --duration-ms 8000 --debug-log-every-ms 3000 --command rain`
+- Sample showed retained V0 sprite patch presentation still active:
+  `sprite_patch_present=8`, `no_sidecar_invalid=0`.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`

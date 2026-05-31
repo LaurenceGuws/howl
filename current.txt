@@ -1,34 +1,34 @@
-# Current Slice: V0 Persistent Resource Realization Gate
+# Current Slice: V0 FBO Texture Row Orientation
 
-Owner: `howl-linux-host` submit V0 realization gate.
+Owner: `howl-linux-host` V0 command materialization into terminal texture.
 
 Purpose:
 
-- Allow V0 frames that reuse persistent sprite resources to reach the host retained resource validator.
-- Stop treating the frame-only prepared resource plan as a presentation gate.
-- Keep the prepared resource plan as diagnostics only.
+- Fix upside-down V0 sprite/fill patch presentation after retained V0 paths become active.
+- Preserve the host convention that terminal texture row zero is the logical top row.
+- Keep full RGBA fallback/oracle unchanged.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/window/term_texture.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
 No render ABI changes. No protocol changes. No rendering behavior changes. No full-RGBA deletion.
 
 ## Required Shape
 
-- Attempt `ProtocolV0Textures.realizeFrame()` whenever a prepared V0 frame exists.
-- Do not require `prepared_upload.protocol_v0_resource_plan.valid` before realization.
-- Record resource-plan status for diagnostics only.
-- If host realization or V0 presentation rejects the frame, preserve existing full RGBA fallback.
+- FBO command replay must write logical row zero into terminal texture row zero.
+- Do not change final window texture presentation coordinates.
+- Do not change protocol command coordinates or upload byte order.
+- Preserve GL state restoration and fallback behavior.
 
 ## Required Tests
 
 - Existing host tests pass.
-- Bounded `rain` smoke should reduce/remove `no_sidecar_invalid` for persistent-resource frames and
-  show V0 patch presentation where retained-surface gates allow it.
+- Add a host unit test for FBO Y coordinate mapping.
+- Bounded `rain` smoke should keep V0 sprite patch presentation active without fallback regression.
 
 ## Verification
 
