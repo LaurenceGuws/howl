@@ -2187,6 +2187,57 @@ Smoke result:
   `sprite=77802`, `glyph=0`, `fill_patch_frame=1`. The next product slice should generalize the
   retained-patch rule to sprite-capable frames with existing matching texture content.
 
+## Phase 38 Slice: V0 Retained Sprite Patch Present Path
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- Phase 37 proved later `btop` frames are retained patch frames with many sprite commands and no
+  glyph commands.
+- Existing sprite presentation requires a first full-surface clear, so retained sprite patches still
+  fall back to RGBA even when the terminal texture already has matching initialized content.
+
+Promoted slice:
+
+- `current.txt` - `V0 Retained Sprite Patch Present Path`
+
+Required shape:
+
+- Accept partial no-clear clear/fill/sprite V0 frames only if the terminal texture existed before
+  upload and matched the frame size.
+- Reject/fallback if the texture was newly created or resized in the current turn.
+- Reject/fallback for glyph commands, unsupported command shapes, missing sprite resources, or
+  out-of-bounds rects.
+- Preserve existing full-clear sprite path.
+- Log retained sprite patch present/fallback counts.
+
+Implementation facts:
+
+- `protocolV0SpritePatch()` accepts no-clear clear/fill/sprite frames with at least one sprite
+  command and rejects glyph commands.
+- Sprite patch presentation is gated by the same `had_matching_surface` proof used for retained
+  fill patches.
+- `uploadProtocolV0SpritePatch()` reuses the existing FBO command materializer, so command order is
+  preserved and drawing still lands in the terminal texture.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: bounded `btop` smoke run with
+  `timeout 22s zig build run -Doptimize=ReleaseFast -- --duration-ms 18000
+  --debug-process-accounting --debug-log-every-ms 5000 --command btop`
+
+Smoke result:
+
+- `render_step_failed=0` and `present_submitted` advanced.
+- `v0_unsupported_shape=0` after retained sprite patch recognition.
+- Retained sprite patch presentation occurred: sampled cumulative diagnostics reached
+  `sprite_patch_frame=24`, `sprite_patch_present=9`, `sprite_patch_fallback=15`.
+- Full RGBA fallback still occurred for no-sidecar, first-frame, and unresolved sprite patch cases;
+  RGBA remains the oracle/fallback.
+
 ## Phase 33 Slice: Linux Host V0 Sprite Present Path
 
 Status: worker implementation complete; verification passed in this turn.

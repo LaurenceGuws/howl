@@ -1,11 +1,11 @@
-# Current Slice: V0 Retained Fill Patch Present Path
+# Current Slice: V0 Retained Sprite Patch Present Path
 
-Owner: `howl-linux-host` submit diagnostics and terminal texture V0 fill materialization.
+Owner: `howl-linux-host` terminal texture V0 command materialization.
 
 Purpose:
 
-- Present partial no-clear fill-only V0 frames as retained texture patches when prior matching texture content exists.
-- Keep first-frame, resized, or uninitialized no-clear fill patches on RGBA fallback.
+- Present partial no-clear clear/fill/sprite V0 frames as retained texture patches when prior matching texture content exists.
+- Keep first-frame, resized, uninitialized, or unsupported patch frames on RGBA fallback.
 - Keep full RGBA present path as fallback/oracle.
 
 ## Exact Change Scope
@@ -20,15 +20,15 @@ No render ABI changes. No protocol changes. No full-RGBA deletion. No host ack/r
 
 ## Required Shape
 
-- Accept partial no-clear fill-only V0 frames only if the terminal texture existed before upload and matched the frame size.
+- Accept partial no-clear clear/fill/sprite V0 frames only if the terminal texture existed before upload and matched the frame size.
 - Reject/fallback if the texture was newly created/resized in the current turn.
-- Reject/fallback for non-fill commands, resource-bearing commands, malformed spans, or out-of-bounds rectangles.
-- Preserve existing first-full-clear and full-coverage fill-only paths.
-- Log retained-patch present/fallback counts.
+- Reject/fallback for glyph commands, unsupported command shapes, missing sprite resources, or out-of-bounds rects.
+- Preserve existing full-clear sprite path.
+- Log retained sprite patch present/fallback counts.
 
 ## Required Tests
 
-- Add host tests for partial fill patch acceptance and resource/mixed command rejection.
+- Add host tests for retained sprite patch detection and glyph rejection.
 - Existing host tests pass.
 
 ## Verification
@@ -47,5 +47,5 @@ From workspace root:
 
 ## Stop Conditions
 
-- Stop if retained patch safety needs render ABI changes.
-- Stop if prior texture initialization cannot be proved at the host boundary.
+- Stop if retained sprite patch safety needs render ABI changes.
+- Stop if command ordering cannot be preserved with host-owned backend state.
