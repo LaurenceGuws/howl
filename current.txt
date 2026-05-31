@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Limited Software Realizer
+# Current Slice: Render Protocol V0 Glyph Atlas Semantics
 
-Owner: `howl-render` internal protocol V0 software realization.
+Owner: `howl-render` protocol glyph atlas contract semantics.
 
 Sprint scratchpad and contract:
 
@@ -9,11 +9,10 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Add a test/internal software realizer for already-formed V0 frames.
-- Support only clear rect, fill rect, and sprite commands.
-- Reject glyph-run commands and glyph-atlas resources until the glyph atlas
-  semantics slice is source-backed.
-- Keep the normal render path unchanged.
+- Unblock direct `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` by specifying glyph
+  atlas resource, upload, glyph identity, placement, alpha/color, and run-split
+  semantics.
+- Keep the slice document-only because research proved product code is not ready.
 
 ## Source Order (Mandatory)
 
@@ -23,93 +22,61 @@ Read in order before editing:
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
-5. `howl-render/include/howl_render.h`
-6. `howl-render/src/ffi/protocol_v0.zig`
-7. `howl-render/src/prepared/buffer.zig`
-8. `howl-render/src/text/contract.zig`
-9. `howl-render/src/text/scene.zig`
-10. `howl-render/src/test/unit.zig`
+5. `howl-render/src/text/contract.zig`
+6. `howl-render/src/text/scene.zig`
+7. `howl-render/src/text/raster/cache.zig`
+8. `howl-render/src/text/raster/atlas.zig`
+9. `howl-render/src/text/raster/rasterizer.zig`
+10. `howl-render/src/text/shape/run.zig`
+11. `utils/dev_references/terminals/ghostty/src/font/Atlas.zig`
+12. `utils/dev_references/terminals/ghostty/src/font/SharedGrid.zig`
+13. `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glyph_cache.rs`
+14. `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/atlas.rs`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/include/howl_render.h`
-- `howl-render/build.zig` for unit-test C ABI include/link wiring only
-- `howl-render/src/ffi/protocol_v0.zig`
-- new `howl-render/src/protocol_v0/realize.zig`
-- `howl-render/src/test/unit.zig`
-- `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
+- `docs/render-protocol-v0.md`
+- `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No C ABI export functions.
+No product code.
+No header changes.
+No Zig changes.
 No host code.
 No protocol emission.
 No prepared-surface deletion.
-No full RGBA normal-path replacement.
+No normal-path replacement.
 No performance claims.
 
-## Required Product Shape
+## Required Contract Closure
 
-- Add public V0 kind macros to `howl-render/include/howl_render.h` matching
-  `docs/render-protocol-v0.md`.
-- Extend `ffi/protocol_v0.zig` compile-time assertions for every new kind macro.
-- Add `protocol_v0/realize.zig` as an internal module only.
-- Realizer input is an already-formed `c.HowlRenderV0Frame`.
-- Realizer output is caller-provided RGBA bytes.
-- No heap allocation inside realization.
-- Optional retained base is caller-provided and copied before commands.
-- No C ABI export or host-visible production path.
+- Define `HowlRenderV0GlyphRef.glyph_id` as a render-owned protocol identity,
+  including what font/config/generation/render options it is bound to.
+- Define glyph atlas resource semantics for alpha and color resources, including
+  page size, page count, generation, create/update/use/retire/ack, and reuse.
+- Define atlas packing: rect allocation, page-full behavior, oversized glyph
+  behavior, dirty-rect versus whole-page uploads.
+- Define upload formats: `ALPHA8`, `RGBA8`, whether RGB/subpixel is unsupported,
+  stride/count rules, and invalid resource/format pairings.
+- Define placement: `x_px/y_px` as final pixel destination or an alternative
+  explicit model; include bearings, offsets, combining marks, ligatures, wide
+  cells, and clipping.
+- Define run splitting: rows, atlas resource changes, style/font/cursor/selection
+  boundaries, and `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX` overflow.
+- Define alpha/color draw semantics and whether color glyphs remain blocked.
+- Define equivalence and negative tests required before product code.
 
-## Required Semantics
+## Required Invariants
 
-- Validate `pixels.len == render_px.width * render_px.height * 4`.
-- If base is present, validate same byte length and copy it.
-- If base is absent, clear to `{0, 0, 0, 255}` like `clearSurfacePixels()`.
-- Apply commands in list order.
-- `CLEAR_RECT` and `FILL_RECT` blend exactly like `drawSolidRect()` and
-  `blendPixel()`.
-- `DRAW_SPRITE` supports only `SPRITE_ALPHA` and `SPRITE_COLOR` resources.
-- Alpha sprite source RGB comes from command `color_rgba`; source alpha is
-  `(color_rgba.a * alpha_byte) / 255` before source-over blend.
-- Color sprite source RGBA comes from upload bytes; command `color_rgba` must be
-  zero.
-- Reject `DRAW_GLYPH_RUN` in all forms.
-- Reject `GLYPH_ATLAS_ALPHA` and `GLYPH_ATLAS_COLOR` create/upload/use.
-
-## Required Tests
-
-Import the new module from `howl-render/src/test/unit.zig` and add tests with
-these exact names:
-
-- `protocol v0 constants match documented kind values`
-- `protocol v0 realizer clears and fills in command order`
-- `protocol v0 realizer preserves retained base outside commands`
-- `protocol v0 realizer draws alpha sprite bytes`
-- `protocol v0 realizer draws color sprite bytes`
-- `protocol v0 realizer rejects glyph run command`
-- `protocol v0 realizer rejects glyph atlas resources`
-- `protocol v0 rejects unknown command kind`
-- `protocol v0 rejects unknown damage kind`
-- `protocol v0 rejects unknown resource kind`
-- `protocol v0 rejects unknown upload format`
-- `protocol v0 rejects zero command width`
-- `protocol v0 rejects zero command height`
-- `protocol v0 rejects damage span overflow`
-- `protocol v0 rejects upload span overflow`
-- `protocol v0 rejects command span overflow`
-- `protocol v0 rejects glyph span overflow`
-- `protocol v0 rejects alpha upload to color sprite`
-- `protocol v0 rejects rgba upload to alpha sprite`
-- `protocol v0 rejects upload before create`
-- `protocol v0 rejects missing sprite command resource`
-- `protocol v0 rejects wrong generation sprite use`
-- `protocol v0 rejects retired sprite use`
-- `protocol v0 rejects color sprite command color`
-- `protocol v0 rejects sprite command glyph span`
-- `protocol v0 rejects fill command resource`
-- `protocol v0 rejects glyph atlas create`
-- `protocol v0 rejects glyph atlas upload`
-- `protocol v0 rejects blocked glyph run`
+- Render owns glyph identity, shaping, atlas packing, upload bytes, command
+  production, damage, and protocol lifetime.
+- Host owns backend resource realization and presentation.
+- No backend objects enter the ABI.
+- No generic scene graph.
+- All counts and resources stay fixed-bound.
+- Direct glyph-run implementation remains blocked until this document-only slice
+  is accepted and a later worker slice promotes exact product files/tests.
 
 ## Verification
 
@@ -119,17 +86,12 @@ From `/home/home/personal/projects/howl`:
 - `zig build test`
 - `git diff --check`
 
-Optional narrow command from `howl-render`:
-
-- `zig build test:unit -- "protocol v0"`
-
 ## Stop Conditions
 
-- Stop if V0 kind values remain docs-only.
-- Stop if any glyph atlas create/upload/use is accepted.
-- Stop if `DRAW_GLYPH_RUN` is accepted in any form.
-- Stop if the realizer allocates heap memory.
-- Stop if a C ABI export function is added.
-- Stop if host/backend objects enter the slice.
-- Stop if sprite tests rely on font/backend behavior instead of explicit bytes.
-- Stop if resource lifetime behavior is accepted without tests.
+- Stop if `glyph_id` remains ambiguous.
+- Stop if atlas resource lifetime lacks create/update/use/retire/ack ordering.
+- Stop if color byte order remains ambiguous.
+- Stop if placement cannot be tested against the current sprite-backed oracle.
+- Stop if page-full or oversized-glyph behavior is unnamed.
+- Stop if RGB/subpixel semantics are introduced without source-backed tests.
+- Stop if implementation is attempted.
