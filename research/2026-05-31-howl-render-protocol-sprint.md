@@ -1014,6 +1014,63 @@ Stop before product code if any remain unresolved:
 - host fallback to full `glTexSubImage2D()` is not explicitly tested against
 - V0 depends on unresolved Ghostty/Alacritty backend proof gaps
 
+## Phase 4 Slice: ABI Skeleton
+
+Status: implementation under review.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 ABI Skeleton`
+
+Scope:
+
+- Header constants and C structs only.
+- Compile-time Zig mirror layout/offset checks only.
+- No exported protocol production functions.
+- No host code.
+- No behavior changes.
+- No prepared-surface deletion.
+
+Implemented files:
+
+- `howl-render/include/howl_render.h`
+- `howl-render/src/ffi/protocol_v0.zig`
+- `howl-render/src/libhowl_render.zig`
+
+Accepted shape facts to verify in review:
+
+- Header constants match `docs/render-protocol-v0.md` exactly.
+- Header declares V0 structs from the contract draft.
+- `HowlRenderV0Frame` contains damage/create/upload/command/retire spans.
+- `HowlRenderV0Frame` does not contain `HowlRenderV0HostAckSpan`.
+- `HowlRenderV0HostAckSpan` remains host-to-render input for a later submit/ack
+  function slice.
+- `ffi/protocol_v0.zig` mirrors the C structs with `extern struct` definitions.
+- Compile-time assertions check constant values, struct size/alignment, and field
+  offsets.
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+
+Reviewer rejection fixes applied:
+
+- C V0 typedefs use named struct tags matching the contract draft.
+- `ffi/protocol_v0.zig` now uses direct per-struct `assertLayout` and
+  `assertOffset` calls instead of a generic field-list helper.
+- `zig fmt` was run on `ffi/protocol_v0.zig`.
+- Verification was rerun after fixes with the same passing commands above.
+
+Second reviewer rejection fix:
+
+- Restored existing pre-V0 ABI structs to their original anonymous typedef form
+  after an over-broad patch accidentally gave them V0 tags.
+- Confirmed only V0 structs use `HowlRenderV0*` struct tags.
+- Verification was rerun after the header tag fix with the same passing commands
+  above.
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work

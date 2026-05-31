@@ -1,18 +1,19 @@
-# Current Slice: Render Protocol V0 Contract Draft
+# Current Slice: Render Protocol V0 ABI Skeleton
 
-Owner: workspace root render protocol design accountability.
+Owner: `howl-render` C ABI contract.
 
-Sprint scratchpad (authoritative):
+Sprint scratchpad and contract:
 
 - `research/2026-05-31-howl-render-protocol-sprint.md`
+- `docs/render-protocol-v0.md`
 
 Purpose:
 
-- Draft the narrow `howl-render-protocol` V0 contract as a C ABI consequence
-  protocol.
-- Name exact owners, lifetimes, bounds, invalid-input behavior, and required
-  tests before any product code changes.
-- Prevent the protocol from becoming a generic scene graph or backend abstraction.
+- Add V0 protocol constants and C ABI struct declarations only.
+- Add compile-time Zig layout/offset tests proving the ABI skeleton matches
+  internal mirror structs.
+- Do not emit protocol frames, do not change render behavior, and do not change
+  host behavior.
 
 ## Source Order (Mandatory)
 
@@ -20,95 +21,94 @@ Read in order before editing:
 
 1. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-3. `research/2026-05-31-howl-render-protocol-sprint.md`
-4. `howl-render/include/howl_render.h`
-5. `howl-render/src/prepared/buffer.zig`
-6. `howl-render/src/prepared/owner.zig`
-7. `howl-linux-host/src/window/term_texture.zig`
+3. `docs/render-protocol-v0.md`
+4. `research/2026-05-31-howl-render-protocol-sprint.md`
+5. `howl-render/include/howl_render.h`
+6. `howl-render/src/ffi.zig`
+7. `howl-render/src/ffi/vt_surface.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `research/2026-05-31-howl-render-protocol-sprint.md`
-- `docs/render-protocol-v0.md`
+- `howl-render/include/howl_render.h`
+- new `howl-render/src/ffi/protocol_v0.zig`
+- `howl-render/src/libhowl_render.zig` only if needed to force compile-time
+  layout checks through existing imports
+- `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
 
-No product code.
-No C header changes.
-No Zig code changes.
-No host code changes.
-No deletion of `HowlRenderPreparedSurfaceBuffer`.
-No replacement of `prepared_buffer.compose()`.
-No GL implementation.
-No benchmarks or performance claims.
+No host code.
+No behavior changes.
+No functions exported for protocol production yet.
+No prepared-surface deletion.
+No software realizer.
+No protocol emission.
+No performance claims.
 
-## Required Contract Shape
+## Required Header Shape
 
-- V0 is a C ABI protocol, not a Zig internal import path.
-- Render owns protocol resources, command/upload/damage production, shaping,
-  glyph identity, atlas packing decisions, and protocol lifetime state.
-- Host owns backend object realization, event loop, wake policy, presentation
-  cadence, platform UX, and swap/present.
-- Every public list has a named fixed maximum.
-- Every resource has explicit create/update/use/retire/ack lifetime rules.
-- No backend object crosses ABI.
-- No generic scene graph.
-- Full RGBA surface is fallback/test oracle only, not normal path.
-- Deletion of current full-surface behavior is forbidden until equivalence and
-  host-consumption tests exist.
+Add public constants from `docs/render-protocol-v0.md` exactly:
 
-## Minimum V0 Content To Draft
+- `HOWL_RENDER_PROTOCOL_V0_VERSION = 0`
+- `HOWL_RENDER_V0_FRAMES_IN_FLIGHT_MAX = 2`
+- `HOWL_RENDER_V0_SNAPSHOTS_IN_FLIGHT_MAX = 2`
+- `HOWL_RENDER_V0_DAMAGE_ITEMS_MAX = 1024`
+- `HOWL_RENDER_V0_UPLOADS_MAX = 256`
+- `HOWL_RENDER_V0_COMMANDS_MAX = 8192`
+- `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX = 256`
+- `HOWL_RENDER_V0_UPLOAD_BYTES_MAX = 8388608`
+- `HOWL_RENDER_V0_ATLAS_PAGES_MAX = 64`
+- `HOWL_RENDER_V0_RESOURCES_MAX = 4096`
+- `HOWL_RENDER_V0_CREATES_MAX = 256`
+- `HOWL_RENDER_V0_RETIRES_MAX = 256`
+- `HOWL_RENDER_V0_HOST_ACKS_MAX = 256`
 
-- One frame object with protocol version, snapshot token, render pixel size,
-  cell size/grid size, bounded damage span, bounded upload span, bounded command
-  span, bounded create span, and bounded retire span if resources are introduced.
-- Host acknowledgement is host-to-render input, not render-produced frame data.
-- Named bounds for max frames/snapshots in flight, max damage items per frame,
-  max uploads per frame, max commands per frame, max glyphs per glyph run, max
-  upload bytes per frame, and max atlas pages/resources.
-- Initial commands limited to clear/fill rect, draw glyph run, and draw sprite
-  only if current renderer already requires sprite raster consequences.
-- Invalid-input behavior for null spans, malformed spans, invalid counts, invalid
-  dimensions, stale tokens, unknown/retired resources, and out-of-order
-  submit/ack.
-- Required test gates before ABI skeleton, software realizer, host consumer, and
-  full-surface deletion.
+Add C structs exactly matching the draft names and fields:
 
-## Current Full-Surface Facts To Cite
+- `HowlRenderV0Token`
+- `HowlRenderV0Rect`
+- `HowlRenderV0DamageItem`
+- `HowlRenderV0DamageSpan`
+- `HowlRenderV0ResourceId`
+- `HowlRenderV0Upload`
+- `HowlRenderV0UploadSpan`
+- `HowlRenderV0Create`
+- `HowlRenderV0CreateSpan`
+- `HowlRenderV0GlyphRef`
+- `HowlRenderV0GlyphRunSpan`
+- `HowlRenderV0Command`
+- `HowlRenderV0CommandSpan`
+- `HowlRenderV0Retire`
+- `HowlRenderV0RetireSpan`
+- `HowlRenderV0HostAck`
+- `HowlRenderV0HostAckSpan`
+- `HowlRenderV0Frame`
 
-- `howl-render/include/howl_render.h` exposes `HowlRenderPreparedSurfaceBuffer`
-  with `rgba_pixels` and `uploads_committed` only.
-- `howl-render/src/prepared/buffer.zig` `compose()` allocates
-  `width * height * 4` and produces a complete CPU RGBA surface.
-- `howl-render/src/prepared/buffer.zig` `seedSurfacePixels()` states hosts only
-  consume one complete prepared surface.
-- `howl-linux-host/src/window/term_texture.zig` `uploadPreparedBuffer()` performs
-  one full `glTexSubImage2D()` for the complete terminal surface.
+Do not add `HowlRenderV0HostAckSpan` to `HowlRenderV0Frame`.
+
+## Required Zig Layout Proof
+
+- Create internal extern mirror structs in `howl-render/src/ffi/protocol_v0.zig`.
+- Add a `comptime` block that asserts:
+  - every constant equals the contract value;
+  - every mirror struct has the same size and alignment as the C imported struct;
+  - every field offset matches.
+- Reuse the direct assertion style from `ffi/vt_surface.zig`; do not add generic
+  testing infrastructure unless required.
 
 ## Verification
 
 From `/home/home/personal/projects/howl`:
 
+- `zig build check`
+- `zig build test`
 - `git diff --check`
-
-Document review must verify:
-
-- no `TBD` bounds
-- no backend objects in ABI
-- no generic scene graph language
-- all lifetimes named
-- invalid-input behavior listed
-- tests listed before product code
 
 ## Stop Conditions
 
-- Stop if max counts are unnamed or vague.
-- Stop if resource lifetime lacks create/update/use/retire/ack ordering.
-- Stop if span pointer lifetime is ambiguous.
-- Stop if protocol includes GL/Metal/Vulkan/backend objects.
-- Stop if command model permits arbitrary scene graph behavior.
-- Stop if full RGBA surface remains the only normal host-visible consequence.
-- Stop if tests are not defined before deletion.
-- Stop if software realizer equivalence is skipped.
-- Stop if host fallback to full `glTexSubImage2D()` is not explicitly tested
-  against.
+- Stop if the C header cannot represent the contract without ambiguous padding.
+- Stop if any constant value differs from `docs/render-protocol-v0.md`.
+- Stop if host ack appears inside `HowlRenderV0Frame`.
+- Stop if product behavior must change to make the skeleton compile.
+- Stop if a protocol export function seems necessary; that belongs to a later
+  slice.
