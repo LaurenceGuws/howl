@@ -2376,6 +2376,64 @@ Smoke result:
 - `v0_emit_status=1` maps to `HOWL_RENDER_V0_EMIT_COMMAND_BOUND_OVERFLOW`, so the next product slice
   should reduce/coalesce command emission pressure or produce a bounded partial V0 payload policy.
 
+Follow-up run:
+
+- User ran normal `zig build run -Doptimize=ReleaseFast` and saw `v0_emit_status=0` with repeated
+  interval `no_sidecar_invalid=10` under `rain` / interactive shell workload.
+- This proves the next blocker is not render V0 emit failure. Render emitted a V0 sidecar, but host
+  resource-plan validation rejected it and the previous diagnostics only exposed the coarse invalid
+  bucket.
+
+## Phase 41 Slice: V0 Resource Plan Status Diagnostics
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- `rain` and ordinary shell frames show `v0_emit_status=0`, `no_sidecar_call_failed=0`, and repeated
+  `no_sidecar_invalid` counts.
+- The invalid bucket currently combines `invalid_command`, `invalid_resource`, `invalid_upload`, span
+  failures, version mismatch, and upload byte limit mismatch.
+- Without the exact `PreparedProtocolV0ResourcePlanStatus`, the next product slice would guess.
+
+Promoted slice:
+
+- `current.txt` - `V0 Resource Plan Status Diagnostics`
+
+Required shape:
+
+- Keep existing cumulative and interval counters.
+- Add the latest prepared resource-plan status tag to V0 diagnostic logs.
+- Use `PreparedProtocolV0ResourcePlanStatus` directly; do not invent a new unbounded source.
+- Do not change render ABI, protocol, rendering behavior, or full RGBA fallback.
+
+Implementation facts:
+
+- `ProtocolV0SubmitDiagnostics` now stores the latest
+  `PreparedProtocolV0ResourcePlanStatus` observed for the prepared upload.
+- Cumulative V0 logs print `resource_plan_status={s}` using `@tagName()` on the bounded enum.
+- The diagnostic does not affect resource realization, V0 presentation, or RGBA fallback.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+- From `howl-linux-host`: bounded `rain` smoke run with
+  `timeout 12s zig build run -Doptimize=ReleaseFast -- --duration-ms 8000
+  --debug-log-every-ms 3000 --command rain`
+
+Smoke result:
+
+- `rain` now reports `v0_emit_status=0 resource_plan_status=invalid_resource`.
+- This proves render V0 emission succeeds and the host resource-plan validator rejects the emitted
+  frame as an invalid resource lifetime/use shape.
+- Next product slice should inspect host resource-plan validation for persistent sprite resources
+  reused across frames, not render emit failure.
+
 Rollback note:
 
 - User visual testing found retained sprite patch presentation corrupted colors in `btop`.

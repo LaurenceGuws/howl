@@ -1,40 +1,33 @@
-# Current Slice: V0 Prepared Emit Diagnostics
+# Current Slice: V0 Resource Plan Status Diagnostics
 
-Owner: `howl-render` prepared surface diagnostics, consumed by `howl-linux-host` submit diagnostics.
+Owner: `howl-linux-host` submit diagnostics.
 
 Purpose:
 
-- Replace generic host `no_sidecar_call_failed` with the exact render V0 emit outcome.
-- Explain why a prepared surface has no V0 sidecar while full RGBA fallback remains available.
-- Keep emit failure diagnostic-only; do not make V0 emission failure fail prepare or submit.
+- Replace generic `no_sidecar_invalid` with the exact prepared V0 resource-plan status.
+- Make `rain` and interactive shell fallback explain whether host rejected upload, resource, command,
+  span, version, or byte-limit invariants.
+- Keep diagnostics-only behavior; do not alter fallback or presentation policy.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/include/howl_render.h`
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/ffi/prepared_surface.zig`
-- `howl-render/src/test/ffi.zig`
-- `howl-render/src/test_protocol_proof.zig`
 - `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/render/retained.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No protocol changes. No rendering behavior changes. No full-RGBA deletion. No backend objects in render ABI.
+No render ABI changes. No protocol changes. No rendering behavior changes. No full-RGBA deletion.
 
 ## Required Shape
 
-- Add a bounded prepared V0 emit status to `HowlRenderPreparedSurfaceDiagnostics`.
-- Map every `protocol_v0.emit.Error` value to a stable ABI status.
-- Preserve `protocolV0Frame()` returning null when payload emission fails.
-- Host logs must include the prepared V0 emit status when V0 sidecar acquisition fails.
-- Do not use emit diagnostics to change fallback or present policy.
+- Keep existing cumulative and interval counters.
+- Add the latest prepared resource-plan status tag to V0 diagnostic logs.
+- The status must come from `PreparedProtocolV0ResourcePlanStatus`, not a new unbounded string source.
+- Do not use resource-plan diagnostics to change fallback or present policy.
 
 ## Required Tests
 
-- Add render tests for successful and failed prepared V0 emit diagnostics.
-- Existing render and host tests pass.
+- Existing host tests pass.
 
 ## Verification
 
