@@ -2238,6 +2238,36 @@ Smoke result:
 - Full RGBA fallback still occurred for no-sidecar, first-frame, and unresolved sprite patch cases;
   RGBA remains the oracle/fallback.
 
+Review/fix note:
+
+- User visual testing found retained sprite patch colors were dark/tinted.
+- Host fixes applied after hostile review:
+  - V0 command replay is gated on `realizeFrame()` success.
+  - Sprite draw validates against committed upload coverage, not allocation size.
+  - Sprite texture coordinates use source-local `(0,0,width,height)` rather than destination rect
+    coordinates.
+  - Sprite and glyph replay reject future same-frame uploads that would make final GL texture state
+    disagree with command-time upload visibility.
+  - FBO command replay uses source-over alpha blending for alpha and restores viewport/blend state;
+    current color and texture binding are reset after replay.
+  - Full RGBA upload now fails on GL error and clears surface dimensions on upload failure.
+- Render oracle fixes applied after hostile review:
+  - Retained resource creates/uploads/retires commit after command replay, so same-frame retire does
+    not hide a resource before its valid command use.
+  - Upload visibility selects the latest visible upload by `upload_seq`.
+  - Decreasing upload sequence order is rejected in render and host validators so retained metadata
+    and replay order stay deterministic.
+- Acceptance review result: accepted after the above fixes; residual risk is narrower V0 fast-path
+  coverage because future-upload frames fall back to full RGBA.
+
+Rollback note:
+
+- User visual testing found retained sprite patch presentation corrupted colors in `btop`.
+- Retained sprite patch upload was disabled in a follow-up safety fix; `protocolV0SpritePatch()`
+  remains diagnostic-only and sprite patch frames fall back to full RGBA.
+- Root cause must be handled by a future oracle-comparison slice before retained sprite patches are
+  re-enabled.
+
 ## Phase 33 Slice: Linux Host V0 Sprite Present Path
 
 Status: worker implementation complete; verification passed in this turn.
