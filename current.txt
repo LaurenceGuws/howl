@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Prepared Handle Storage
+# Current Slice: Render Protocol V0 Prepared ABI View
 
-Owner: `howl-render` prepared handle payload lifetime.
+Owner: `howl-render` prepared-surface FFI contract translation.
 
 Sprint scratchpad and contract:
 
@@ -9,11 +9,11 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Attach internal V0 frame storage to real prepared handles.
-- Keep the existing full RGBA buffer as oracle/fallback.
-- Prove owner-owned V0 realization equals owner-owned `rgba_pixels`.
-- Keep host consumption, C ABI exports, normal-path replacement, and direct glyph
-  atlas production out of this slice.
+- Expose a borrowed V0 frame view from a live prepared surface handle through the
+  render C ABI.
+- Keep ownership and lifetime inside `howl-render`.
+- Keep host consumption, normal-path replacement, and full RGBA deletion out of
+  this slice.
 
 ## Source Order (Mandatory)
 
@@ -23,63 +23,76 @@ Read in order before editing:
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
-5. `howl-render/src/prepared/owner.zig`
-6. `howl-render/src/protocol_v0/emit.zig`
-7. `howl-render/src/protocol_v0/realize.zig`
-8. `howl-render/src/test_protocol_proof.zig`
-9. `howl-render/src/prepared/buffer.zig`
-10. `howl-render/src/prepared/surface.zig`
-11. `howl-render/src/session/text.zig`
+5. `howl-render/include/howl_render.h`
+6. `howl-render/src/prepared/owner.zig`
+7. `howl-render/src/ffi/prepared_surface.zig`
+8. `howl-render/src/ffi/protocol_v0.zig`
+9. `howl-render/src/libhowl_render.zig`
+10. `howl-render/src/test/ffi.zig`
+11. `howl-render/src/test_protocol_proof.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
+- `howl-render/include/howl_render.h`
 - `howl-render/src/prepared/owner.zig`
-- `howl-render/src/protocol_v0/emit.zig` only for storage owner support
-- `howl-render/src/test_protocol_proof.zig`
+- `howl-render/src/ffi/prepared_surface.zig`
+- `howl-render/src/ffi/protocol_v0.zig` for ABI assertions only if needed
+- `howl-render/src/libhowl_render.zig`
+- `howl-render/src/test/ffi.zig`
+- `howl-render/src/test_protocol_proof.zig` only if proof-target tests are needed
 - `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
 
-No header changes.
-No C ABI export functions.
 No host code.
 No normal render path replacement.
-No direct renderer glyph atlas production.
-No deletion or weakening of full RGBA oracle.
+No full RGBA deletion.
+No protocol consumption by host.
+No backend objects.
 
 ## Required Product Shape
 
-- Add an internal owner-owned V0 payload field to `prepared_owner.Owner`.
-- Initialize it during `Owner.create()` after `PreparedSurface` is assigned and
-  before handle registration.
-- Use `protocol_v0.emit.emitPrepared()` semantics and owner-owned storage.
-- Keep V0 storage immutable while the prepared handle is live.
-- Deinitialize V0 storage in `deinitPayload()` with the same lifecycle as
-  `PreparedSurface` and `rgba_pixels`.
-- If V0 emission fails, `Owner.create()` must fail before registering a prepared
-  handle and must release any allocated RGBA/V0 payload already created.
-- Do not expose the V0 frame through C ABI or host path in this slice.
+- Add a C ABI function that returns a borrowed `const HowlRenderV0Frame *` for a
+  live prepared surface handle.
+- The frame pointer is owned by the prepared handle and valid only while that
+  handle remains live and unreleased/unconsumed.
+- Null handle returns `HOWL_RENDER_CALL_MISSING_HANDLE` and writes null output when
+  an output pointer is supplied.
+- Null output pointer returns `HOWL_RENDER_CALL_INVALID_ARGUMENT`.
+- Released or consumed handles return `HOWL_RENDER_CALL_INVALID_ARGUMENT` and null
+  output.
+- Successful calls do not transition lifecycle state.
+- No ownership transfer to caller.
+
+Suggested shape:
+
+```c
+int howl_render_prepared_surface_protocol_v0(
+    HowlRenderPreparedSurfaceHandle prepared_surface_handle,
+    const HowlRenderV0Frame **frame_out
+);
+```
 
 ## Required Tests
 
-Add protocol proof tests with exact intent equivalent to:
+Add FFI/proof tests with exact intent equivalent to:
 
-- `protocol v0 prepared owner frame equals owner rgba oracle`
-- `protocol v0 prepared owner releases v0 payload with handle`
-- `protocol v0 prepared owner create fails closed when v0 emission fails`
+- `render ffi prepared protocol v0 rejects missing handle`
+- `render ffi prepared protocol v0 rejects null output`
+- `render ffi prepared protocol v0 rejects released handle`
+- `render ffi prepared protocol v0 returns borrowed live frame`
+- `render ffi prepared protocol v0 does not change prepared lifecycle`
 
-Tests must realize owner-owned V0 through `protocol_v0.realize()` and compare every
-byte to `Owner.rgba_pixels` or the same `prepared_buffer.compose()` oracle. Do not
-use a local duplicate oracle.
+If practical in the proof target, also realize the returned frame and compare to
+the prepared buffer bytes.
 
 ## Required Invariants
 
-- Owner-owned V0 span pointers and upload byte pointers remain valid for the live
-  prepared handle.
-- Owner cleanup cannot leak V0 upload bytes or stale frame spans.
-- Existing prepared handle state transitions remain unchanged.
-- `Owner.buffer()` and host-facing upload behavior continue to return full RGBA.
-- Full RGBA remains the oracle/fallback.
+- Borrowed pointer must be null on all non-success paths with non-null output.
+- Borrowed V0 spans/upload byte pointers must point into owner-owned storage.
+- ABI layout assertions for any changed public declaration remain in sync.
+- Existing full RGBA buffer ABI remains unchanged.
+- Host code remains untouched.
 
 ## Verification
 
@@ -91,13 +104,13 @@ From `/home/home/personal/projects/howl`:
 
 From `/home/home/personal/projects/howl/howl-render`:
 
+- `zig build test:abi -- "protocol v0"`
 - `zig build test:protocol-proof -- "protocol v0"`
 - `zig build test:unit -- "protocol v0"`
 
 ## Stop Conditions
 
-- Stop if a header or C ABI export function is needed.
 - Stop if host code is needed.
-- Stop if normal render path replacement is needed.
-- Stop if owner-owned storage cannot be made stable without broad prepared owner
-  restructuring.
+- Stop if the C ABI would require ownership transfer.
+- Stop if prepared handle V0 storage lifetime is not sufficient for a borrowed
+  pointer.
