@@ -61,3 +61,37 @@ regression.
 - `btop` smoke should not remain in steady-state `v0_emit_status=5` with
   `no_sidecar_call_failed=10` per interval after resource pressure.
 - Existing root and subrepo gates still pass.
+
+## Implementation
+
+- `howl-render/src/protocol_v0/emit.zig` now caps renderer-owned persistent prepared
+  sprite resources at `persistent_sprite_resources_max = 384`, below the ABI resource max.
+- Existing persistent resources still reuse their prior resource IDs with no create/upload/retire.
+- New sprites beyond the persistent budget receive monotonic transient resource IDs.
+- Transient sprites emit create/upload/draw/retire in the same V0 frame.
+- Transient retire sequence is the command count after the draw command, so the resource remains
+  visible for its draw and is retired immediately after.
+- If transient create/upload/upload-byte/command/retire limits are exceeded, emission fails with
+  the exact existing bound error and full RGBA remains the oracle/fallback.
+- No host-owned eviction, backend ack, or ABI change was added.
+
+## Verification
+
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+- From `howl-render`: `zig build test`
+- From `howl-render`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+
+Smoke:
+
+- From `howl-linux-host`: `timeout 22s zig build run -Doptimize=ReleaseFast -- --duration-ms 18000 --debug-process-accounting --debug-log-every-ms 5000 --command btop`
+- Result did not reproduce the prior steady-state failure:
+  `v0_emit_status=0`, `no_sidecar_call_failed=0`, steady intervals with `rgba_fallback=0`,
+  and `sprite_patch_present=10`.
+- This smoke did not reach the transient cap; protocol proof tests cover the transient path.
