@@ -1975,6 +1975,73 @@ Verification reported by worker before review:
 - From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
+## Phase 19 Slice: Linux Host V0 Prepared Probe
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 Prepared Probe`
+
+Implementation facts:
+
+- `howl-linux-host/src/terminal/render/retained.zig` now calls
+  `howl_render_prepared_surface_protocol_v0()` during `preparedUpload()`, after
+  prepared info and buffer acquisition and before the existing full RGBA texture
+  upload path consumes the handoff.
+- The probe is read-only and stores only bounded accounting facts in
+  `PreparedProtocolV0Probe`: validity, frame sequence, top-level span counts, and
+  upload byte total.
+- The probe validates call status, non-null borrowed frame pointer, protocol
+  version, prepared/frame render dimensions, cell dimensions, grid dimensions,
+  top-level V0 span counts against their public maxima, and upload byte total
+  against `HOWL_RENDER_V0_UPLOAD_BYTES_MAX`.
+- The borrowed `HowlRenderV0Frame` pointer is never retained beyond the immediate
+  validation call.
+- Existing full RGBA upload, GL resource realization, submit execution,
+  presentation cadence, and backend object lifetime are unchanged.
+
+Tests added:
+
+- `host retained render probes prepared protocol v0 frame`
+- `host retained render rejects invalid protocol v0 probe invariants`
+
+Host harness gap:
+
+- No existing host test constructs a live prepared handle through the complete
+  Linux host upload/submit path without involving GL texture realization, which is
+  out of scope for this slice. The accepted coverage is the narrow pure retained
+  validation helper in `retained.zig` plus the existing render ABI tests for the
+  borrowed frame call.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+
+Reviewer rejection fixes applied:
+
+- Probe accounting is now retained by `State` rather than only returned through the
+  transient prepared-upload stack value.
+- `State` records the last bounded `PreparedProtocolV0Probe` and a saturating
+  failure count. Invalid probes keep the RGBA upload path unchanged but are no
+  longer silent.
+- Invalid probe statuses are explicit for call failure, null frame, protocol
+  version mismatch, render/cell/grid mismatch, each top-level span bound or max
+  mismatch, upload byte overflow, and upload byte max mismatch.
+- The borrowed V0 frame pointer still is not retained beyond immediate validation.
+
+Additional tests added:
+
+- OK status with null frame.
+- Cell and grid mismatch.
+- Damage max mismatch.
+- Create, upload, command, and retire span overflow and max mismatch.
+- Upload byte max mismatch.
+- Owner recording of last probe facts and failure count.
+
 ### Phase 0: Stabilize Current Dirty Host Work
 
 Question:
