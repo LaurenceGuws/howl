@@ -1,6 +1,6 @@
-# Current Slice: Linux Host V0 Backend Operation Sink
+# Current Slice: Linux Host V0 GL Resource Realization Probe
 
-Owner: `howl-linux-host` terminal render protocol backend handoff.
+Owner: `howl-linux-host` terminal render protocol backend resource realization.
 
 Sprint scratchpad and contract:
 
@@ -9,11 +9,10 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Define the narrow host-owned operation boundary that will realize V0 resources in
-  a backend without requiring a live GUI/GL context in tests.
-- Prove create/upload/retire store consequences can emit bounded backend texture
-  operations to a recording sink.
-- Keep the actual host rendering path on full RGBA texture upload.
+- Realize V0 backend create/upload/retire operations into host-owned GL textures
+  during the existing prepared submit turn.
+- Keep full RGBA upload as the visible rendering path.
+- Stop before V0 command drawing or presentation replacement.
 
 ## Source Order (Mandatory)
 
@@ -24,19 +23,22 @@ Read in order before editing:
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
 5. `howl-linux-host/src/terminal/render/retained.zig`
-6. `howl-linux-host/src/window/term_texture.zig`
-7. `howl-render/include/howl_render.h`
+6. `howl-linux-host/src/terminal/context.zig`
+7. `howl-linux-host/src/window/term_texture.zig`
+8. `howl-render/include/howl_render.h`
 
 ## Exact Change Scope
 
 Allowed files:
 
 - `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+- `howl-linux-host/build.zig` only to wire term texture validation tests
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
 No `howl-render` changes.
 No ABI/header changes.
-No live GL calls in this slice.
 No V0 command drawing through backend APIs.
 No replacement of full RGBA upload.
 No presentation cadence or event-loop policy changes.
@@ -44,32 +46,25 @@ No `manager`, `engine`, `controller`, or generic resource owner names.
 
 ## Required Product Shape
 
-- Add a narrow backend operation sink shape for V0 resource consequences:
+- Add host-owned GL texture realization for accepted V0 resource operations:
   create texture, upload texture rect, retire texture.
-- Add a recording sink used by tests only.
-- Connect the resource store to emit operations to the sink while mutating the
-  protocol-fact store fail-closed.
-- Store/backend operation emission must remain bounded by V0 resource/upload/retire
-  maxima and retain no borrowed frame/span/upload pointers.
-- Do not create real GL textures yet; that is the next slice after the operation
-  sink is accepted.
+- Invoke realization during `submitPreparedLocked()` after acquiring the prepared
+  upload and before the unchanged full RGBA terminal texture upload.
+- Persist bounded success/failure/accounting in retained render state.
+- Invalid V0 resource realization must be accounting-only and must not affect the
+  existing full RGBA upload/submit path.
+- Do not draw V0 commands. Do not bind V0 resources into presentation.
 
 ## Required Tests
 
-Add narrow host tests with exact intent equivalent to:
-
-- `host retained render resource store records create upload retire ops`
-- `host retained render resource store emits no ops on invalid frame`
-- `host retained render resource store stops when operation sink is full`
-
-Use pure helper tests. Do not introduce GL/resource realization harnesses.
+Use pure helper tests for non-GL resource accounting and keep existing retained tests
+executed. Live GL correctness is the manual GUI gate after review/commit.
 
 ## Required Invariants
 
-- Operation recorder capacity is fixed and explicit.
-- Operation payloads copy only protocol facts and byte counts, never upload byte
-  pointers.
-- Invalid frames leave both store state and recorded operations unchanged.
+- No borrowed V0 frame/span/upload byte pointers are retained.
+- Backend texture IDs are host-owned and never cross the render ABI.
+- Upload byte lengths and rect bounds are validated before GL upload calls.
 - Existing prepared upload result and submit path remain full RGBA.
 
 ## Verification
@@ -87,7 +82,7 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 
 ## Stop Conditions
 
-- Stop if live GL/backend object creation is needed.
+- Stop before V0 command drawing.
+- Stop before replacing normal RGBA upload path.
 - Stop if render ABI/header changes are needed.
-- Stop if normal RGBA upload path would change.
-- Stop if any borrowed V0 pointer would need to be retained beyond the turn.
+- Stop after accepted commit and ask user to run the GUI validation.

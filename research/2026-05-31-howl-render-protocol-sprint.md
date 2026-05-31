@@ -2277,7 +2277,7 @@ Accepted commits:
 
 ## Phase 23 Slice: Linux Host V0 Backend Operation Sink
 
-Status: promoted to `current.txt`; implementation pending.
+Status: accepted and committed in `howl-linux-host`.
 
 Promoted slice:
 
@@ -2358,6 +2358,87 @@ Reviewer rejection fixes applied:
 - Sprite command validation now uses the sprite-only resource allow-list instead of
   the broader storeable-resource allow-list. A sentinel test covers `DRAW_SPRITE`
   with a fallback RGBA resource.
+
+Accepted commits:
+
+- `howl-linux-host` `e414553` - `host: record protocol v0 backend operations`
+- root `80c9f1e` - `design: record host backend operation sink`
+
+## Phase 24 Slice: Linux Host V0 GL Resource Realization Probe
+
+Status: promoted to `current.txt`; implementation pending.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 GL Resource Realization Probe`
+
+Purpose:
+
+- Realize V0 backend create/upload/retire operations into host-owned GL textures
+  during the existing prepared submit turn.
+- Keep full RGBA upload as the visible rendering path.
+- Stop before V0 command drawing or presentation replacement.
+
+Allowed files:
+
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+- `howl-linux-host/build.zig` only to wire term texture validation tests
+- this scratchpad
+
+Required shape:
+
+- Host-owned GL texture realization for accepted V0 resource operations.
+- Realization runs during `submitPreparedLocked()` after prepared upload acquisition
+  and before the unchanged full RGBA terminal texture upload.
+- Invalid V0 resource realization is accounting-only and must not affect the actual
+  full RGBA upload/submit path.
+- No V0 command drawing and no presentation replacement.
+
+Implementation facts:
+
+- `PreparedUpload` now carries a borrowed `protocol_v0_frame` pointer for the submit
+  turn only. `deinit()` clears it with the rest of the stack upload wrapper.
+- `Context.submitPreparedLocked()` realizes V0 resources only when the existing
+  resource-plan probe is valid and a borrowed frame is present; the result is
+  accounting-only and the full RGBA upload path remains unchanged.
+- `term_texture.ProtocolV0Textures` owns GL texture IDs for V0 resources, creates
+  textures for V0 creates, uploads V0 upload rects, retires textures, and deletes
+  all live V0 textures on terminal context deinit.
+- V0 resource textures are not used for drawing or presentation in this slice.
+- Review fix: `ProtocolV0Textures` validates create/upload/retire spans and upload
+  rect/stride/byte coverage locally before GL upload calls.
+- Review fix: submit no longer gates GL realization on the same-frame-only resource
+  plan. Persistent V0 texture state validates earlier-frame resources itself.
+- Review fix: newly-created V0 GL textures are rolled back if a later GL operation
+  in the same frame fails.
+- Review fix: `ProtocolV0Textures` now validates upload byte totals/max, resource
+  kind/format pairs, sequence bounds, and same-frame create/upload/retire ordering
+  locally. Dedicated `test-term-texture` unit tests cover blocked color glyph atlas,
+  wrong alpha format, invalid upload order, and upload byte max mismatch.
+- Review fix: retired V0 GL texture slots now keep a protocol tombstone after the
+  backend texture is deleted, so numeric resource values cannot be reused before a
+  future explicit ack/removal slice. A term texture test covers value reuse after
+  retire rejection.
+- Accepted: live GL resource realization now runs only when the retained V0 resource
+  plan is valid, validates top-level frame spans and command shape locally before GL
+  mutation, preserves retired resource tombstones, and keeps full RGBA as the visible
+  path. Host gates passed with 55/55 tests; root `zig build check`, `zig build test`,
+  and `git diff --check` passed. Manual GUI validation remains the gate before V0
+  drawing/presentation work.
+
+Accepted verification:
+
+- `howl-linux-host`: `zig build test --summary all`
+- `howl-linux-host`: `zig build test:unit --summary all -- "protocol v0 textures"`
+- root: `zig build check`
+- root: `zig build test`
+- root: `git diff --check`
+
+Accepted commits:
+
+- `howl-linux-host` `b191ce5` - `host: realize protocol v0 gl resources`
 
 ### Phase 0: Stabilize Current Dirty Host Work
 
