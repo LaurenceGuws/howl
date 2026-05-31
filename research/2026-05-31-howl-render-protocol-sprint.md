@@ -1249,6 +1249,209 @@ Reviewer rejection fixes applied:
   `ffi.zig` ABI owner. Destination coordinate additions for fill and sprite
   drawing are checked before clipping.
 
+## Phase 7 Research: Direct Glyph-Run Unblock
+
+Status: research complete. Direct glyph-run implementation is rejected as not
+worker-ready. Next slice must be contract-only glyph atlas semantics.
+
+Research agents:
+
+- A: current Howl glyph/shaping/raster truth.
+- B: Ghostty glyph atlas/shaping/backend seam.
+- C: Alacritty glyph cache/atlas/batching constraints.
+
+Current Howl facts:
+
+- `TextFramePreparer` owns `OwnedAtlasCache`, shaper, sprite rasterizer,
+  glyph lookup, glyph raster, and scene scratch.
+- Current glyph consequences are sprite-backed, not direct glyph-run-backed:
+  `scene.zig` converts glyph groups into `TextSpriteDraw` plus
+  `SpriteRasterRequest`, and `prepared/buffer.zig` draws `scene.sprite_draws`.
+- `GlyphInstance` includes `face_id`, `glyph_id`, cluster index, offsets, and
+  advance. This is internal identity, not a V0-stable ABI glyph identity.
+- `OwnedAtlasCache` is a fixed-entry keyed sprite cache. It is not a packed atlas
+  page/resource model and does not expose V0 atlas page IDs, rect packing,
+  dirty uploads, creates, retires, or host acknowledgement.
+- Current sprite key hashes are internal cache keys, not ABI-safe glyph IDs.
+- Current placement is consumed during sprite rasterization. Per-glyph placement
+  is not preserved as V0 glyph refs.
+- Alpha sprite semantics are source-backed. Color glyph/emoji RGBA production is
+  not proved by current Howl source.
+
+Ghostty constraints:
+
+- Ghostty proves render-owned CPU atlas packing and backend-owned texture
+  realization, but its CPU atlas can grow dynamically and its backend sync path
+  uploads whole atlas regions.
+- Ghostty glyph identity is not just `glyph_id`; it is tied to font collection
+  index, glyph index, render options, cell metrics, and atlas state.
+- Ghostty uses grayscale and BGRA atlases. Howl V0 currently names `ALPHA8` and
+  `RGBA8`; color byte order must be explicitly chosen and tested.
+- Ghostty placement combines grid position, glyph bearings, and shaper offsets.
+  A V0 `x_px/y_px` destination is acceptable only if render precomputes final
+  pixel placement and tests equivalence for combining marks, ligatures, wide
+  glyphs, and clipping.
+- Do not copy Ghostty backend objects, comptime backend selection, renderer
+  thread/runtime ownership, dynamic atlas growth, or shared font-grid lifetimes
+  into Howl ABI.
+
+Alacritty constraints:
+
+- Alacritty glyph cache identity is `GlyphKey { font_key, character, size }`,
+  selected from font style and rasterized by the renderer; this is not a Howl ABI
+  type.
+- Alacritty atlas packing is GL-coupled shelf packing with fixed page size but
+  unbounded `Vec<Atlas>` page growth.
+- Alacritty normal glyph atlas semantics are RGB/subpixel-mask based in shaders,
+  not obviously `ALPHA8`. Multicolor glyphs use RGBA shader paths.
+- Alacritty placement is backend/shader-coupled. Howl must define pixel-coordinate
+  placement independently.
+- Alacritty supports batching and atlas-change flushes, but its GL texture IDs,
+  shader state, and direct draw calls must not cross Howl ABI.
+
+Required contract closure before direct glyph-run code:
+
+- Define render-owned glyph identity: what `HowlRenderV0GlyphRef.glyph_id` means
+  and what font/config/generation/render options it is bound to.
+- Define glyph atlas resource semantics: page size, page count, resource kind,
+  generation, create/update/use/retire/ack ordering, reuse rules.
+- Define atlas packing: rect allocation, page-full behavior, oversized glyph
+  behavior, and whether V0 uploads whole pages or dirty rects.
+- Define upload bytes and formats: alpha/coverage, optional RGB/subpixel, color
+  byte order, stride/count rules, and invalid pairings.
+- Define placement: whether `x_px/y_px` is final destination pixel top-left and
+  how bearings, offsets, combining marks, ligatures, and wide cells are encoded.
+- Define run splitting: row-local guarantee, atlas resource changes, style/font
+  changes, cursor/selection boundaries, and `GLYPHS_PER_RUN_MAX` overflow.
+- Define alpha/color draw semantics: color modulation for alpha glyphs, source
+  color for color glyphs, and whether color glyphs remain blocked.
+- Define equivalence tests against current sprite-backed full-surface output.
+
+Implementation readiness:
+
+- Not ready for product code.
+- Ready for a document-only glyph atlas semantics slice.
+- Stop if the slice tries to implement glyph-run before the contract above is
+  named, bounded, and testable.
+
+## Phase 7 Slice: Render Protocol V0 Glyph Atlas Semantics
+
+Status: document-only worker slice implemented. No product code, headers, Zig files,
+host files, build files, tests, or software realizer were changed.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Glyph Atlas Semantics`
+
+Allowed files:
+
+- `docs/render-protocol-v0.md`
+- this scratchpad
+
+Source facts verified for this slice:
+
+- Current Howl `GlyphInstance` has `face_id`, `glyph_id`, cluster index, offsets,
+  and advance, but these are internal shaping facts and not stable V0 ABI glyph
+  identities (`text/contract.zig:165-172`).
+- Current Howl `RunFont` binds style, presentation, scale, subscale, multicell,
+  and alignment (`text/contract.zig:143-152`).
+- Current Howl `GlyphGroup` binds first cell, cell span, glyph slice, placement,
+  sprite key, and group kind (`text/contract.zig:189-197`).
+- Current Howl scene assembly converts glyph groups into sprite draws and raster
+  requests, so current product behavior remains sprite-backed rather than direct
+  glyph-run-backed (`text/scene.zig:695-727`).
+- Current Howl `OwnedAtlasCache` is a fixed-entry sprite cache keyed by
+  `SpriteKey`; it does not provide V0 page resources, rect packing, dirty rect
+  uploads, create/update/use/retire/ack, or host acknowledgement
+  (`text/raster/cache.zig:32-112`).
+- Current Howl raster output exposes alpha/color sprite pixels and visual bounds,
+  but color glyph/emoji RGBA production is not proved as direct V0 glyph atlas
+  semantics (`text/raster/rasterizer.zig:12-30`, `text/raster/rasterizer.zig:149-151`).
+- Ghostty `Atlas` proves render-owned CPU atlas bytes, rect reservation, modified
+  counters, and atlas-full errors, but it also supports dynamic growth that V0
+  must replace with fixed page-count behavior (`font/Atlas.zig:27-51`,
+  `font/Atlas.zig:132-210`, `font/Atlas.zig:313-364`).
+- Ghostty `SharedGrid` binds glyph cache identity to font collection index, glyph
+  index, render options, presentation, and grayscale/color atlas selection; this
+  proves `glyph_id` cannot mean a raw font glyph index alone
+  (`font/SharedGrid.zig:253-340`, `font/SharedGrid.zig:348-391`).
+- Alacritty uses fixed `ATLAS_SIZE = 1024`, explicit full/glyph-too-large errors,
+  and atlas-change batching, but its atlas is GL-coupled and grows with an
+  unbounded `Vec<Atlas>` that must not cross Howl's C ABI
+  (`renderer/text/atlas.rs:11-70`, `renderer/text/atlas.rs:118-140`,
+  `renderer/text/atlas.rs:247-287`).
+- Alacritty `GlyphCache` adjusts bearings and zero-width glyph placement before
+  load, supporting the V0 choice that `x_px/y_px` are final render-computed pixel
+  destinations (`renderer/text/glyph_cache.rs:247-269`).
+
+Contract additions made:
+
+- `HowlRenderV0GlyphRef.glyph_id` is now defined as a render-owned protocol
+  identity, not a Unicode scalar, host font glyph index, sprite key, cache slot,
+  or backend object.
+- `glyph_id` is bound to resolved face/font generation, `RunFont` fields,
+  shaper/rasterizer feature generation, source glyph index, cell metrics, render
+  options that affect pixels, atlas resource generation, and atlas rect.
+- Alpha glyph atlas resources are valid V0 resources with fixed page size
+  `1024 x 1024`, format `UPLOAD_ALPHA8`, page-count bound
+  `HOWL_RENDER_V0_ATLAS_PAGES_MAX = 64`, and global resource bound
+  `HOWL_RENDER_V0_RESOURCES_MAX = 4096`.
+- Color glyph atlas resources remain blocked. Creates, uploads, and glyph refs
+  using `GLYPH_ATLAS_COLOR` must reject until a later color-glyph slice defines
+  and tests color byte order, premultiplication/modulation, and emoji constraints.
+- Glyph atlas lifetime uses explicit create/update/use/retire/ack/reuse ordering.
+  Numeric resource reuse remains forbidden before host ack and greater generation.
+- Atlas rect reuse inside an unretired page is invalid. Render must allocate a new
+  rect or retire/recreate after ack to replace glyph bytes.
+- Atlas packing is render-owned. Rects are resource-local, non-overlapping, within
+  `1024 x 1024`, allocated once per page generation, and include a one-pixel zero
+  alpha border.
+- Page-full behavior is fixed: create a new alpha page only while fewer than 64
+  pages are live; otherwise fail closed to the full RGBA oracle/fallback for that
+  frame. No dynamic page growth, unbounded page lists, or in-place live eviction.
+- Oversized glyph behavior is fixed: if the glyph plus one-pixel border exceeds
+  `1024 x 1024`, do not emit a glyph ref and use full RGBA oracle/fallback for
+  that frame.
+- Newly allocated glyph rect uploads must be dirty-rect uploads. Whole-page
+  uploads are valid only for page creation, full page rebuild, or software-oracle
+  setup and must obey upload count and byte-count bounds.
+- Upload formats are closed: alpha glyph atlas uses `ALPHA8`; RGB, BGR, LCD, and
+  subpixel-mask formats are unsupported; `RGBA8` is not valid for alpha glyph
+  atlas and full RGBA remains oracle/fallback only.
+- `x_px/y_px` are final destination pixel top-left coordinates for the whole
+  `atlas_rect`, after render applies row/cell origin, bearings, shaper offsets,
+  baseline, combining mark anchors, ligature placement, wide-cell span, and
+  visual-bounds trimming.
+- Glyph runs are row-local and split on atlas resource, font/style/presentation/
+  generation, shaper feature generation, foreground color, cursor/selection/style
+  boundaries, ligature boundaries, dirty damage boundaries, and
+  `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX = 256` overflow.
+- Alpha glyph draw semantics use `color_rgba` as `0xRRGGBBAA`, multiply color
+  alpha by the `ALPHA8` coverage byte, and then use the existing integer
+  `blendPixel()` source-over formula. Render must omit zero-alpha glyph refs
+  during emission, and validation must reject them. Color glyph drawing remains
+  blocked.
+- Equivalence tests are now required for alpha glyph atlas draw, final placement,
+  combining mark overlap, ligature/wide-cell placement, and run splitting against
+  the current sprite-backed full-surface oracle.
+- Negative tests are now required for alpha atlas wrong size, color atlas
+  create/upload, wrong upload format, stride/count underflow, upload outside page,
+  missing/wrong-generation/retired glyph atlas use, empty glyph runs, zero-alpha
+  glyph refs, glyph rect outside page, color glyph refs, oversized glyph fallback,
+  and atlas-page exhaustion fallback.
+
+Unresolved blockers:
+
+- Direct `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` product code remains not ready.
+  The exact next worker slice must be source-backed and testable: update the
+  limited software realizer to consume alpha glyph atlas resources and add the
+  equivalence/negative tests listed in `docs/render-protocol-v0.md`, without
+  protocol emission or host code.
+- Color glyphs, RGB/BGR/LCD/subpixel uploads, and `GLYPH_ATLAS_COLOR` remain
+  explicitly blocked.
+- Full RGBA remains oracle/fallback only. It is not product-code readiness and is
+  not a normal V0 glyph atlas path.
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work

@@ -253,8 +253,8 @@ below names it explicitly.
 | --- | ---: | --- | --- |
 | `HOWL_RENDER_V0_DAMAGE_RECT` | `1` | `HowlRenderV0DamageItem.kind` | `rect` is damaged and must be consumed as render-pixel damage. |
 | `HOWL_RENDER_V0_DAMAGE_FULL` | `2` | `HowlRenderV0DamageItem.kind` | `rect` must equal `{0, 0, render_px.width, render_px.height}`. |
-| `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` | `1` | `HowlRenderV0ResourceId.kind` | Reserved and invalid until the glyph atlas semantics slice. |
-| `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` | `2` | `HowlRenderV0ResourceId.kind` | Reserved and invalid until the glyph atlas semantics slice. |
+| `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` | `1` | `HowlRenderV0ResourceId.kind` | Alpha glyph atlas page resource. |
+| `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` | `2` | `HowlRenderV0ResourceId.kind` | Reserved for color glyph atlas pages; invalid until a later color-glyph slice. |
 | `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA` | `3` | `HowlRenderV0ResourceId.kind` | Alpha sprite resource for glyph/special/decoration sprite draws. |
 | `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR` | `4` | `HowlRenderV0ResourceId.kind` | RGBA sprite resource for color sprite draws. |
 | `HOWL_RENDER_V0_RESOURCE_FALLBACK_RGBA` | `5` | `HowlRenderV0ResourceId.kind` | Full RGBA oracle/debug fallback resource only. |
@@ -262,15 +262,14 @@ below names it explicitly.
 | `HOWL_RENDER_V0_UPLOAD_RGBA8` | `2` | `HowlRenderV0Upload.format` and `HowlRenderV0Create.format` | Four bytes per pixel in `r`, `g`, `b`, `a` order. |
 | `HOWL_RENDER_V0_COMMAND_CLEAR_RECT` | `1` | `HowlRenderV0Command.kind` | Blend-fill `rect` with `color_rgba` as a clear consequence. |
 | `HOWL_RENDER_V0_COMMAND_FILL_RECT` | `2` | `HowlRenderV0Command.kind` | Blend-fill `rect` with `color_rgba` as background/decoration/cursor fill. |
-| `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` | `3` | `HowlRenderV0Command.kind` | Reserved and invalid until the glyph atlas semantics slice. |
+| `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` | `3` | `HowlRenderV0Command.kind` | Draw row-local alpha glyph refs from glyph atlas resources. |
 | `HOWL_RENDER_V0_COMMAND_DRAW_SPRITE` | `4` | `HowlRenderV0Command.kind` | Draw one alpha or color sprite resource. |
 
 `color_rgba` packs bytes as `0xRRGGBBAA`. Any unknown command kind, damage kind,
 resource kind, or upload format rejects the frame before lifetime transitions. The
-glyph atlas resource values are named only to reserve their numbers; V0 validation
-must reject creates, uploads, and commands that use them until a later source-backed
-glyph atlas slice defines atlas packing, upload bytes, glyph identity, placement,
-and alpha/color atlas semantics.
+color glyph atlas value is named only to reserve its number; V0 validation must
+reject creates, uploads, and commands that use `GLYPH_ATLAS_COLOR` until a later
+source-backed slice defines and tests color glyph production and draw semantics.
 
 ## Resource Lifetime
 
@@ -340,13 +339,13 @@ not backend texture formats.
 Upload validation rules:
 
 - `HOWL_RENDER_V0_UPLOAD_ALPHA8` is valid only for
+  `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` and
   `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA`.
 - `HOWL_RENDER_V0_UPLOAD_RGBA8` is valid only for
   `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR` and
   `HOWL_RENDER_V0_RESOURCE_FALLBACK_RGBA`.
-- Uploads to `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` and
-  `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` are invalid until the glyph atlas
-  semantics slice.
+- Uploads to `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` are invalid until a later
+  color-glyph semantics slice.
 - For alpha uploads, `stride_bytes >= rect.width_px` and
   `bytes_count >= stride_bytes * rect.height_px`.
 - For RGBA uploads, `stride_bytes >= rect.width_px * 4` and
@@ -366,7 +365,7 @@ IDs, or mutate retained scene state.
 
 Clear/fill rect commands use `rect` and `color_rgba`. Sprite commands are included only because
 the current renderer has sprite raster consequences; they remain resource draws, not image-widget or
-scene-graph nodes. Glyph-run commands are named but invalid until the glyph atlas semantics slice.
+scene-graph nodes. Glyph-run commands are limited to alpha glyph atlas resources in V0.
 
 Command order is semantic. V0 emission must preserve the current `composePreparedSurface()` pass
 order from `prepared/buffer.zig:69-76`:
@@ -415,17 +414,167 @@ Sprite command semantics are source-backed by `lookupSprite()` and `drawSpriteIn
 - Sprite source coordinates start at resource-local `(0, 0)` for the visual resource exposed to V0.
   Render must trim or upload visual-bounds bytes so V0 does not need a backend source-offset field.
 
-Glyph-run command semantics are blocked. Current source has row-local shaping contracts
-(`contract.zig:154-172`, `contract.zig:332-345`) and sprite-backed glyph consequences
-(`scene.zig:695-727`), but V0 does not yet have source-backed atlas packing, upload bytes,
-glyph identity, subpixel placement, or alpha/color atlas semantics sufficient to implement and test
-direct `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN`. Until that separate source-backed slice is accepted:
+Glyph-run command semantics are accepted only for alpha glyph atlas pages. Current source has
+row-local shaping contracts (`contract.zig:154-172`, `contract.zig:332-345`) and sprite-backed
+glyph consequences (`scene.zig:695-727`); therefore direct glyph-run product code remains blocked
+until tests prove byte-equivalence against the current sprite-backed full-surface oracle. The V0
+contract below exists to make that later implementation source-backed and testable.
 
-- `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` is invalid and must be rejected by the software realizer.
-- `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` and
-  `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` are reserved values, not valid resources.
-- `HOWL_RENDER_V0_UPLOAD_ALPHA8` and `HOWL_RENDER_V0_UPLOAD_RGBA8` are valid only for the non-glyph
-  resource pairings listed in the upload model above.
+### Glyph Atlas Identity
+
+`HowlRenderV0GlyphRef.glyph_id` is a render-owned protocol identity, not a host font glyph index,
+Unicode scalar value, codepoint, sprite key, cache slot, or backend object. The identity is unique
+within the current live render session for one rasterized glyph image and its atlas placement.
+
+A `glyph_id` is bound to all of these render-owned inputs:
+
+- Resolved font face identity and font generation for the current render session.
+- `RunFont` style, presentation, scale, subscale, multicell, and alignment fields.
+- The shaper/rasterizer feature generation selected by render for the run.
+- Source glyph index produced by shaping, including fallback-face resolution.
+- Cell metrics: cell width, cell height, baseline, and box thickness.
+- Render options that affect pixels: synthetic bold/thicken, glyph offset, font offset, emoji/text
+  presentation, box/special fallback route, and color mode.
+- Atlas resource `value`, `generation`, `atlas_rect`, and atlas resource generation.
+
+Render must issue a different `glyph_id` when any bound input changes. Hosts must treat `glyph_id`
+as diagnostic identity only; drawing uses `atlas_resource`, `atlas_rect`, `x_px`, `y_px`, and
+`color_rgba`. Hosts must not persist `glyph_id` across resource retirement, resource generation
+changes, geometry changes, font generation changes, or render session teardown.
+
+### Glyph Atlas Resources
+
+Each glyph atlas resource is one atlas page. V0 uses fixed page dimensions:
+
+- `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA`: `width_px = 1024`, `height_px = 1024`,
+  `format = HOWL_RENDER_V0_UPLOAD_ALPHA8`.
+- `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR`: invalid for create, upload, and use in V0.
+
+The live alpha atlas page count is bounded by `HOWL_RENDER_V0_ATLAS_PAGES_MAX = 64`. This bound is
+the sum of alpha and future color glyph atlas pages; because color pages are invalid in V0, all 64
+live pages may be alpha pages. Glyph atlas pages also count against `HOWL_RENDER_V0_RESOURCES_MAX`.
+
+Glyph atlas lifetime uses the global resource lifetime order: create, update, use, retire, ack,
+reuse. A create establishes page dimensions, resource kind, format, generation, and `create_seq`.
+Uploads may update only live, created, unretired pages of matching generation. Commands may use a
+page created earlier in the same frame or any previous unretired frame. Retire must occur after the
+last command that can read the page. Host ack must occur only after host-side work that could read
+the page has completed. Render may reuse a numeric resource `value` only with a greater generation
+after ack.
+
+Render must not mutate a glyph atlas rect while any live frame may still draw from the old bytes. To
+replace a glyph image, render either allocates a new rect and emits new glyph refs, or retires the
+page after its final use and creates/reuses a later generation after ack. Rect reuse within an
+unretired page is invalid.
+
+### Glyph Atlas Packing
+
+Render owns atlas packing. Hosts receive only resource-local rects and upload bytes. V0 uses a
+one-pixel transparent border around every allocated glyph rect to prevent sampling bleed. The border
+is part of `atlas_rect` and upload bytes; alpha border bytes must be zero. The visible glyph image is
+inside that rect. Because `HowlRenderV0GlyphRef` has no source-offset field, render must pre-trim or
+pre-expand the uploaded bytes so drawing the whole `atlas_rect` at `x_px/y_px` is correct.
+
+Valid alpha glyph atlas rects must satisfy all rules:
+
+- `atlas_rect.width_px > 0` and `atlas_rect.height_px > 0`.
+- `atlas_rect.x_px >= 0` and `atlas_rect.y_px >= 0`.
+- `atlas_rect.x_px + atlas_rect.width_px <= 1024`.
+- `atlas_rect.y_px + atlas_rect.height_px <= 1024`.
+- The rect is allocated exactly once on that page generation.
+- The rect does not overlap any earlier live rect on that page generation.
+
+Page-full behavior is bounded. If a glyph plus its border does not fit in any live alpha page, render
+may create one new alpha page when the live atlas page count is below
+`HOWL_RENDER_V0_ATLAS_PAGES_MAX`. If the page count is already 64, direct glyph-run emission for that
+frame must fail closed and the prepared full RGBA oracle/fallback remains the only allowed output for
+that frame. Render must not grow atlas page dimensions, allocate an unbounded page list, evict a live
+rect in place, or silently draw a missing glyph.
+
+Oversized glyph behavior is explicit. If the glyph image plus one-pixel border on each side exceeds
+`1024 x 1024`, render must not create a glyph ref for it. The frame must fail closed to the full RGBA
+oracle/fallback path until a later product slice defines an oversized-glyph fallback command. V0 does
+not scale, crop, or split oversized glyphs inside `DRAW_GLYPH_RUN`.
+
+Newly allocated rect uploads must be dirty-rect uploads. Each newly allocated rect emits one upload
+whose upload rect equals the allocated `atlas_rect`. Whole-page uploads are valid only when the
+upload rect is `{ x_px = 0, y_px = 0, width_px = 1024, height_px = 1024 }` and the upload is caused
+by page creation, full page rebuild, or software-oracle test setup. Whole-page uploads must still
+obey `HOWL_RENDER_V0_UPLOADS_MAX` and `HOWL_RENDER_V0_UPLOAD_BYTES_MAX`.
+
+### Glyph Upload Formats
+
+Alpha glyph atlas uploads use `HOWL_RENDER_V0_UPLOAD_ALPHA8`: one coverage byte per pixel. The source
+RGB for drawing comes from `HowlRenderV0GlyphRef.color_rgba`; the source alpha for each pixel is
+`(color_rgba.a * alpha_byte) / 255` before the existing `blendPixel()` source-over formula.
+
+RGBA glyph atlas uploads and color glyph draw semantics are blocked in V0. Creates, uploads, or
+commands using `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` must reject. `HOWL_RENDER_V0_UPLOAD_RGBA8`
+to `GLYPH_ATLAS_ALPHA` must reject. `HOWL_RENDER_V0_UPLOAD_ALPHA8` to
+`GLYPH_ATLAS_COLOR` must reject. RGB and subpixel-mask glyph uploads are unsupported; there is no V0
+`RGB8`, `BGR8`, LCD, or subpixel format. Full RGBA remains oracle/fallback only, not glyph atlas
+color semantics.
+
+Upload stride and count rules for alpha glyph pages:
+
+- `stride_bytes >= upload.rect.width_px`.
+- `bytes_count >= stride_bytes * upload.rect.height_px`.
+- Bytes are row-major from top-left to bottom-right.
+- Rows may include padding after the visible rect width; padding bytes are ignored.
+- The upload rect must fit inside the created `1024 x 1024` page.
+- The upload resource kind and format must match the create resource kind and format.
+
+### Glyph Placement
+
+`HowlRenderV0GlyphRef.x_px` and `y_px` are the final destination pixel top-left for drawing the
+entire `atlas_rect` into the render surface. They are not cell coordinates, baseline coordinates,
+bearings, advances, or backend transform inputs. Render must precompute them from row/cell origin,
+glyph bearings, shaper `x_offset_px`/`y_offset_px`, baseline, combining-mark anchors, ligature
+cluster placement, wide-cell span, and any raster visual-bounds trimming.
+
+Combining marks are encoded as normal glyph refs with their own final `x_px/y_px` and atlas rect.
+They may overlap earlier glyph refs in the same run. Ligatures are encoded as one or more glyph refs
+covering the shaped ligature output; the refs use final pixels, not per-cell subdivision. Wide cells
+use final pixels over the full shaped span. Zero-width glyphs must have final placement already
+adjusted by render; hosts must not apply Unicode width rules.
+
+Clipping is render-surface clipping. Destination pixels outside `render_px` are skipped, matching the
+current software sprite/rect behavior. Source pixels are clipped by the same amount from the atlas
+rect. A glyph ref whose destination rectangle has no overlap with `render_px` must not be produced.
+If encountered by validation, reject the frame.
+
+### Glyph Run Splitting
+
+`DRAW_GLYPH_RUN` commands are row-local. A run must never cross a terminal row. Render must split
+runs at these boundaries:
+
+- Atlas resource changes.
+- Font face, font generation, style, presentation, scale, subscale, multicell, or alignment changes.
+- Shaper feature generation changes.
+- Foreground `color_rgba` changes for alpha glyphs.
+- Cursor, selection, hyperlink/search/hint, or other style boundaries that alter visible pixels or
+  damage ownership.
+- Ligature boundaries when shaping requires separate placement groups.
+- Dirty-row or damage-span boundaries when partial damage excludes adjacent cells.
+- `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX = 256` overflow.
+
+If a row contains more than 256 glyph refs for the same split class, render emits multiple adjacent
+`DRAW_GLYPH_RUN` commands in source order. Splitting must not change blending order. If the command
+count would exceed `HOWL_RENDER_V0_COMMANDS_MAX`, direct glyph-run emission for that frame must fail
+closed to the full RGBA oracle/fallback path.
+
+### Glyph Draw Semantics
+
+For alpha glyph refs, `atlas_resource.kind` must be `GLYPH_ATLAS_ALPHA`, `atlas_rect` selects
+`ALPHA8` coverage bytes, and `color_rgba` packs source color as `0xRRGGBBAA`. Each covered source
+byte blends over the destination using the same integer source-over formula as `blendPixel()`.
+Render must omit zero-alpha glyph refs during emission. Validation must reject any zero-alpha alpha
+glyph ref.
+
+Color glyph refs are blocked. Any `DRAW_GLYPH_RUN` glyph ref whose `atlas_resource.kind` is
+`GLYPH_ATLAS_COLOR` must reject. Any attempt to use `RGBA8` bytes as direct color glyph source must
+reject until a later source-backed color-glyph slice defines byte order, premultiplication,
+modulation, emoji constraints, and oracle tests.
 
 V0 can still use sprite commands for current renderer equivalence because current prepared
 composition draws `scene.sprite_draws`.
@@ -447,13 +596,16 @@ V0 rejects invalid input with a non-success status and no partial lifetime trans
 - Submit before prepare, double submit, ack before retire, retire before last use, or out-of-order
   frame ack: reject.
 - Unknown command kind, upload format, resource kind, or damage kind: reject.
-- `DRAW_GLYPH_RUN` before glyph atlas/resource/upload semantics are accepted by a later slice:
-  reject in the software realizer.
+- `DRAW_GLYPH_RUN` with any `GLYPH_ATLAS_COLOR`, RGB, subpixel, unknown, retired,
+  wrong-generation, or uncreated atlas resource: reject.
 - `DRAW_SPRITE` with `glyphs.count != 0`: reject.
 - `DRAW_SPRITE` with a nonzero `color_rgba` for a color sprite resource: reject.
 - `CLEAR_RECT` or `FILL_RECT` with a nonempty glyph span or nonzero resource ID: reject.
 - `DRAW_GLYPH_RUN` with a nonzero command rect, nonzero command resource, or nonzero command
   `color_rgba`: reject.
+- `DRAW_GLYPH_RUN` with `glyphs.count == 0`: reject.
+- `DRAW_GLYPH_RUN` with an alpha glyph ref whose `color_rgba.a == 0`: reject.
+- `DRAW_GLYPH_RUN` with an atlas rect outside the created page or with zero width/height: reject.
 
 ## Software Equivalence Oracle
 
@@ -477,8 +629,20 @@ Selected oracle cases:
   RGBA sprite resource/upload and sprite command, then comparing against `drawSpriteInstance()`
   semantics through `prepared_buffer.compose()`.
 
-The glyph-run oracle case is blocked. Do not add a glyph-run equivalence test until atlas resource,
-upload, placement, and glyph identity semantics are closed by source-backed contract text.
+Glyph-run oracle cases are required before product code can emit direct glyph runs:
+
+- Alpha glyph atlas draw equivalence. Create one alpha atlas page, upload one glyph rect with a
+  one-pixel zero border, draw it through `DRAW_GLYPH_RUN`, and compare every RGBA byte with the
+  current sprite-backed `prepared_buffer.compose()` result for the same glyph mask and color.
+- Final placement equivalence. Cover nonzero bearing/offset by using glyph refs whose `x_px/y_px`
+  differ from the cell origin, then compare against the sprite-backed oracle.
+- Combining mark overlap. Draw a base glyph and combining mark in one row-local command and prove
+  overlap/blending order matches the sprite-backed oracle.
+- Ligature and wide-cell placement. Draw a shaped span wider than one cell and prove final pixel
+  placement, clipping, and damage overdraw match the sprite-backed oracle.
+- Run splitting equivalence. Emit adjacent runs split by atlas page, color, style/font generation,
+  and `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX`, then prove the split output equals one source-order
+  sprite-backed composition.
 
 Exact negative software-realizer oracle cases required before implementation:
 
@@ -503,9 +667,23 @@ Exact negative software-realizer oracle cases required before implementation:
 | Color sprite command color | `DRAW_SPRITE` uses `SPRITE_COLOR = 4` and `color_rgba = 0x01020304`. | Reject frame; no pixels written. |
 | Sprite command glyph span | `DRAW_SPRITE` has `glyphs.count = 1`. | Reject frame; no pixels written. |
 | Fill command resource | `FILL_RECT` has `resource.value = 1`. | Reject frame; no pixels written. |
-| Glyph atlas create | Create with `resource.kind = GLYPH_ATLAS_ALPHA = 1`. | Reject frame; glyph atlas values are reserved. |
-| Glyph atlas upload | Upload to `resource.kind = GLYPH_ATLAS_COLOR = 2` with `format = UPLOAD_RGBA8 = 2`. | Reject frame; glyph atlas values are reserved. |
-| Blocked glyph run | One command with `kind = DRAW_GLYPH_RUN`, even with `glyphs.count = 0`. | Reject frame; glyph-run semantics are blocked. |
+| Alpha atlas wrong size | Create `GLYPH_ATLAS_ALPHA = 1` with `width_px = 1023` or `height_px = 1025`. | Reject frame; resource remains unknown. |
+| Color atlas create | Create with `resource.kind = GLYPH_ATLAS_COLOR = 2`. | Reject frame; color glyph atlas is blocked. |
+| Color atlas upload | Upload to `resource.kind = GLYPH_ATLAS_COLOR = 2` with `format = UPLOAD_RGBA8 = 2`. | Reject frame; resource remains not updated. |
+| RGBA upload to alpha atlas | Upload to `GLYPH_ATLAS_ALPHA = 1` with `format = UPLOAD_RGBA8 = 2`. | Reject frame; resource remains not updated. |
+| Alpha upload to color atlas | Upload to `GLYPH_ATLAS_COLOR = 2` with `format = UPLOAD_ALPHA8 = 1`. | Reject frame; resource remains not updated. |
+| Alpha atlas upload stride too small | `stride_bytes = rect.width_px - 1` for `UPLOAD_ALPHA8`. | Reject frame; no upload bytes read past row. |
+| Alpha atlas upload byte count too small | `bytes_count = stride_bytes * rect.height_px - 1`. | Reject frame; no upload bytes read past count. |
+| Alpha atlas upload outside page | Upload rect `{ x_px = 1023, y_px = 0, width_px = 2, height_px = 1 }`. | Reject frame; resource remains not updated. |
+| Missing glyph atlas resource | `DRAW_GLYPH_RUN` references `{ value = 81, generation = 1, kind = 1 }` with no create. | Reject frame; no pixels written. |
+| Wrong generation glyph atlas use | Create `{ value = 82, generation = 1, kind = 1 }`, glyph ref uses generation `2`. | Reject frame; no pixels written. |
+| Retired glyph atlas use | Retire `{ value = 83, generation = 1, kind = 1 }`, then glyph ref uses it. | Reject frame; no pixels written. |
+| Empty glyph run | `DRAW_GLYPH_RUN` has `glyphs.count = 0`. | Reject frame; no pixels written. |
+| Glyph ref zero alpha | Alpha glyph ref has `color_rgba = 0x01020300`. | Reject frame; no pixels written. |
+| Glyph rect outside page | Glyph ref rect `{ x_px = 1023, y_px = 0, width_px = 2, height_px = 1 }`. | Reject frame; no pixels written. |
+| Color glyph run | Glyph ref uses `atlas_resource.kind = GLYPH_ATLAS_COLOR = 2`. | Reject frame; color glyphs are blocked. |
+| Oversized glyph fallback | Glyph allocation request needs `1025 x 1` or `1 x 1025` including border. | Do not emit glyph run; use full RGBA oracle/fallback for that frame. |
+| Atlas pages exhausted | 64 live alpha pages exist and a new glyph does not fit. | Do not emit glyph run; use full RGBA oracle/fallback for that frame. |
 
 ## Test Gates
 
@@ -522,8 +700,8 @@ Before ABI skeleton:
 Before software reference realizer:
 
 - ABI skeleton accepted with layout and bound tests passing.
-- Software realizer command semantics specified for clear/fill rect and sprite;
-  glyph-run rejection specified until the glyph atlas semantics slice.
+- Software realizer command semantics specified for clear/fill rect, sprite, and alpha glyph runs;
+  color glyph rejection specified until a later color-glyph semantics slice.
 - Equivalence cases selected against current `prepared_buffer.compose()` for full redraw and partial rows.
 - Kind constant tests planned for every numeric V0 command, damage, resource, and upload value.
 - Exact negative software-realizer tests planned for the invalid inputs listed in the
@@ -531,14 +709,19 @@ Before software reference realizer:
   command rect `width_px = 0`, command rect `height_px = 0`, span `count = count_max + 1`,
   `UPLOAD_ALPHA8` to `SPRITE_COLOR`, `UPLOAD_RGBA8` to `SPRITE_ALPHA`, missing resource
   `{ value = 78, generation = 1, kind = SPRITE_ALPHA }`, wrong generation `2` after create
-  generation `1`, retired resource use, upload-before-create, glyph atlas create/upload rejection,
-  and blocked `DRAW_GLYPH_RUN` rejection.
+  generation `1`, retired resource use, upload-before-create, alpha atlas wrong size, color atlas
+  create/upload rejection, glyph atlas wrong-format rejection, glyph atlas stride/count rejection,
+  glyph atlas missing/wrong-generation/retired use rejection, empty glyph-run rejection, zero-alpha
+  glyph rejection, and color glyph-run rejection.
 
 Before protocol emission:
 
 - Software realizer equivalence tests pass against current full-surface output.
 - Damage tests pass for full damage, partial row spans, clamping, and wide-glyph overdamage.
 - Resource lifetime tests pass for create/update/use/retire/ack, stale IDs, and reuse after ack.
+- Glyph atlas tests pass for alpha page create/update/use/retire/ack/reuse, rect allocation,
+  non-overlap, dirty-rect upload bytes, whole-page upload allowance, page-full fallback,
+  oversized-glyph fallback, run splitting, and all glyph negative cases above.
 
 Before host consumer:
 
