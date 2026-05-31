@@ -1452,6 +1452,41 @@ Unresolved blockers:
 - Full RGBA remains oracle/fallback only. It is not product-code readiness and is
   not a normal V0 glyph atlas path.
 
+## Phase 8 Slice: Render Protocol V0 Alpha Glyph Realizer
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Alpha Glyph Realizer`
+
+Accepted implementation facts:
+
+- `howl-render/src/protocol_v0/realize.zig` now accepts alpha glyph atlas creates
+  only for `1024 x 1024` pages with `UPLOAD_ALPHA8`.
+- Color glyph atlas creates, uploads, and glyph refs remain blocked.
+- Alpha glyph atlas uploads accept dirty rect origins, require matching live
+  unretired resources, require `UPLOAD_ALPHA8`, validate stride/count with checked
+  arithmetic, and require the upload rect to fit the fixed page.
+- `DRAW_GLYPH_RUN` validates zero command rect/resource/color fields, nonempty
+  bounded glyph spans, alpha atlas resources, nonzero glyph alpha, page-local
+  nonzero atlas rects, destination overlap, and matching upload bytes before any
+  caller-visible pixel mutation.
+- Alpha glyph realization draws glyph refs in source order, uses final `x_px/y_px`,
+  clips destination and source together, computes source alpha as
+  `(color_rgba.a * alpha_byte) / 255`, and reuses the existing integer
+  source-over blend semantics.
+- The realizer remains internal-only, allocates no heap memory during realization,
+  emits no protocol frames, changes no host code, changes no headers, and does not
+  replace the normal prepared-surface path.
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
