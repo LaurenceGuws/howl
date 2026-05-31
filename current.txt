@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Glyph Atlas Semantics
+# Current Slice: Render Protocol V0 Alpha Glyph Realizer
 
-Owner: `howl-render` protocol glyph atlas contract semantics.
+Owner: `howl-render` internal protocol V0 software realization.
 
 Sprint scratchpad and contract:
 
@@ -9,10 +9,11 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Unblock direct `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` by specifying glyph
-  atlas resource, upload, glyph identity, placement, alpha/color, and run-split
-  semantics.
-- Keep the slice document-only because research proved product code is not ready.
+- Make the limited software realizer execute alpha glyph atlas resources and
+  `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` according to the accepted V0 contract.
+- Prove alpha glyph atlas create/upload/use and glyph-run blending with unit tests.
+- Keep protocol emission, host consumption, normal render path, and color glyphs out
+  of this slice.
 
 ## Source Order (Mandatory)
 
@@ -22,61 +23,88 @@ Read in order before editing:
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
-5. `howl-render/src/text/contract.zig`
-6. `howl-render/src/text/scene.zig`
-7. `howl-render/src/text/raster/cache.zig`
-8. `howl-render/src/text/raster/atlas.zig`
-9. `howl-render/src/text/raster/rasterizer.zig`
-10. `howl-render/src/text/shape/run.zig`
-11. `utils/dev_references/terminals/ghostty/src/font/Atlas.zig`
-12. `utils/dev_references/terminals/ghostty/src/font/SharedGrid.zig`
-13. `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glyph_cache.rs`
-14. `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/atlas.rs`
+5. `howl-render/include/howl_render.h`
+6. `howl-render/src/ffi/protocol_v0.zig`
+7. `howl-render/src/protocol_v0/realize.zig`
+8. `howl-render/src/prepared/buffer.zig`
+9. `howl-render/src/test/unit.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `docs/render-protocol-v0.md`
-- `research/2026-05-31-howl-render-protocol-sprint.md`
+- `howl-render/src/protocol_v0/realize.zig`
+- `howl-render/src/test/unit.zig` only if needed to expose tests
+- `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
 
-No product code.
 No header changes.
-No Zig changes.
+No C ABI export functions.
 No host code.
 No protocol emission.
 No prepared-surface deletion.
 No normal-path replacement.
 No performance claims.
 
-## Required Contract Closure
+## Required Product Shape
 
-- Define `HowlRenderV0GlyphRef.glyph_id` as a render-owned protocol identity,
-  including what font/config/generation/render options it is bound to.
-- Define glyph atlas resource semantics for alpha and color resources, including
-  page size, page count, generation, create/update/use/retire/ack, and reuse.
-- Define atlas packing: rect allocation, page-full behavior, oversized glyph
-  behavior, dirty-rect versus whole-page uploads.
-- Define upload formats: `ALPHA8`, `RGBA8`, whether RGB/subpixel is unsupported,
-  stride/count rules, and invalid resource/format pairings.
-- Define placement: `x_px/y_px` as final pixel destination or an alternative
-  explicit model; include bearings, offsets, combining marks, ligatures, wide
-  cells, and clipping.
-- Define run splitting: rows, atlas resource changes, style/font/cursor/selection
-  boundaries, and `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX` overflow.
-- Define alpha/color draw semantics and whether color glyphs remain blocked.
-- Define equivalence and negative tests required before product code.
+- Keep the realizer internal-only.
+- Use shipped C ABI structs and macros through `ffi.zig`; do not duplicate ABI
+  structs or constants.
+- Accept `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` create only with
+  `width_px = 1024`, `height_px = 1024`, and `format = HOWL_RENDER_V0_UPLOAD_ALPHA8`.
+- Reject `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` create, upload, and use.
+- Accept alpha glyph atlas uploads only when the resource is live, unretired, the
+  generation matches, the format is `UPLOAD_ALPHA8`, stride/count bounds are
+  checked with overflow-safe arithmetic, and the upload rect fits the page.
+- Realize `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` by drawing each glyph ref in
+  source order from `atlas_resource`/`atlas_rect` to final `x_px/y_px`.
+- For alpha glyphs, compute source alpha as `(color_rgba.a * alpha_byte) / 255`
+  and blend with the same integer source-over semantics already used by the
+  realizer for fills/sprites.
+- Clip destination pixels to `frame.render_px`; clip source pixels by the same
+  offset.
+- Reject empty glyph runs, glyph span overflow, zero-alpha alpha glyph refs,
+  missing/wrong-generation/retired atlas resources, atlas rects outside the page,
+  zero-size atlas rects, unknown atlas kinds, and color glyph refs.
+- Do not allocate heap memory inside realization.
+
+## Required Tests
+
+Add or update unit tests with exact intent equivalent to these names:
+
+- `protocol v0 realizer draws alpha glyph atlas run`
+- `protocol v0 realizer clips alpha glyph atlas run`
+- `protocol v0 realizer draws split alpha glyph runs in source order`
+- `protocol v0 realizer rejects alpha atlas wrong size`
+- `protocol v0 realizer rejects color atlas create`
+- `protocol v0 realizer rejects color atlas upload`
+- `protocol v0 realizer rejects rgba upload to alpha atlas`
+- `protocol v0 realizer rejects alpha upload stride too small`
+- `protocol v0 realizer rejects alpha upload byte count too small`
+- `protocol v0 realizer rejects alpha atlas upload outside page`
+- `protocol v0 realizer rejects missing glyph atlas resource`
+- `protocol v0 realizer rejects wrong generation glyph atlas use`
+- `protocol v0 realizer rejects retired glyph atlas use`
+- `protocol v0 realizer rejects empty glyph run`
+- `protocol v0 realizer rejects zero alpha glyph ref`
+- `protocol v0 realizer rejects glyph rect outside page`
+- `protocol v0 realizer rejects color glyph run`
+
+Existing clear/fill/sprite and blocked-invalid tests must keep passing unless
+their names are intentionally updated to reflect accepted alpha glyph support.
 
 ## Required Invariants
 
-- Render owns glyph identity, shaping, atlas packing, upload bytes, command
-  production, damage, and protocol lifetime.
-- Host owns backend resource realization and presentation.
-- No backend objects enter the ABI.
-- No generic scene graph.
-- All counts and resources stay fixed-bound.
-- Direct glyph-run implementation remains blocked until this document-only slice
-  is accepted and a later worker slice promotes exact product files/tests.
+- Render protocol lifetime remains explicit: create, update, use, retire, ack,
+  reuse.
+- Resource validation must finish before mutating caller-visible pixels for a
+  rejected frame.
+- All span counts, byte counts, pixel offsets, and `width * height * bytes_per_px`
+  calculations must be checked for overflow before use.
+- The realizer must not read past uploaded byte counts or span counts.
+- The realizer must not silently draw missing glyphs.
+- RGB/BGR/LCD/subpixel uploads remain unsupported.
+- Full RGBA remains oracle/fallback only, not a glyph atlas color path.
 
 ## Verification
 
@@ -86,12 +114,16 @@ From `/home/home/personal/projects/howl`:
 - `zig build test`
 - `git diff --check`
 
+From `/home/home/personal/projects/howl/howl-render`:
+
+- `zig build test:unit -- "protocol v0"`
+
 ## Stop Conditions
 
-- Stop if `glyph_id` remains ambiguous.
-- Stop if atlas resource lifetime lacks create/update/use/retire/ack ordering.
-- Stop if color byte order remains ambiguous.
-- Stop if placement cannot be tested against the current sprite-backed oracle.
-- Stop if page-full or oversized-glyph behavior is unnamed.
-- Stop if RGB/subpixel semantics are introduced without source-backed tests.
-- Stop if implementation is attempted.
+- Stop if a header or ABI export change appears necessary.
+- Stop if implementation requires protocol emission or host code.
+- Stop if color glyphs, RGB/BGR/LCD/subpixel uploads, or backend objects enter the
+  slice.
+- Stop if validation cannot reject without partial pixel writes.
+- Stop if the accepted contract is ambiguous enough that the worker would need to
+  invent behavior.
