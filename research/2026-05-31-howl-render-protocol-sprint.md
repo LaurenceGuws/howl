@@ -2188,6 +2188,88 @@ Tests added:
 - `host retained render plan rejects use after retire`
 - `host retained render records resource plan accounting`
 
+Accepted commits:
+
+- `howl-linux-host` `392a8f2` - `host: plan protocol v0 resources`
+- root `36d45a0` - `design: record host resource plan probe`
+
+## Phase 22 Slice: Linux Host V0 Resource Store Skeleton
+
+Status: worker implementation complete; verification pending.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 Resource Store Skeleton`
+
+Purpose:
+
+- Introduce a bounded host-owned V0 resource store for protocol resource IDs.
+- Apply create/upload/retire lifecycle consequences to host-owned state in pure
+  tests before any GL/backend object realization.
+- Keep full RGBA upload as the actual rendering path.
+
+Allowed files:
+
+- `howl-linux-host/src/terminal/render/retained.zig`
+- this scratchpad
+
+Required shape:
+
+- Fixed-capacity resource store bounded by `HOWL_RENDER_V0_RESOURCES_MAX`.
+- Store protocol identity/state facts only: resource ID, dimensions, format,
+  lifecycle state, upload count/bytes, and retire state.
+- Apply borrowed-frame create/upload/retire spans during the turn only; retain no
+  V0 frame/span/upload pointers.
+- No GL calls, backend objects, backend lookup table, V0 drawing, full-RGBA
+  replacement, or presentation policy changes.
+
+Required tests:
+
+- `host retained render resource store creates uploads retires resource`
+- `host retained render resource store rejects duplicate create`
+- `host retained render resource store rejects upload after retire`
+- `host retained render resource store rejects missing retire`
+- `host retained render resource store reports capacity overflow`
+
+Implementation facts:
+
+- `howl-linux-host/src/terminal/render/retained.zig` now contains
+  `ProtocolV0ResourceStore`, a fixed-capacity host-owned table bounded by
+  `HOWL_RENDER_V0_RESOURCES_MAX`.
+- Store slots retain only protocol resource facts: resource ID, dimensions, format,
+  live/retired state, upload count, and upload byte count.
+- Store mutation is explicit through create/upload/retire methods and `applyFrame()`;
+  it does not retain V0 frame/span/upload pointers and does not create backend
+  objects.
+- Upload mutation validates resource identity, live state, format, rect bounds,
+  byte pointer, byte count, and stride-derived minimum before updating counters.
+- Retire marks protocol resource state retired; it does not delete GL/backend state.
+
+Tests added:
+
+- `host retained render resource store creates uploads retires resource`
+- `host retained render resource store rejects duplicate create`
+- `host retained render resource store rejects upload after retire`
+- `host retained render resource store rejects missing retire`
+- `host retained render resource store reports capacity overflow`
+
+Reviewer rejection fixes applied:
+
+- `ProtocolV0ResourceStore.applyFrame()` is now fail-closed: it applies the frame to
+  a copied store and commits only after all creates, uploads, and retires succeed.
+- Store resource-kind validation now accepts alpha glyph atlases, alpha sprites,
+  color sprites, and fallback RGBA resources while still rejecting blocked color
+  glyph atlas resources.
+- Store tests now cover no partial transition after invalid frame application,
+  accepted alpha atlas and fallback RGBA facts, blocked color atlas, and generation
+  mismatch lookup behavior.
+- Retained render tests are now a dedicated `test-retained-render` unit-test artifact
+  under host `test:unit`; filtered `resource store` runs execute the store tests
+  directly instead of only the aggregate test-entry block.
+- `applyFrame()` now validates create/upload/retire spans before slicing or copying,
+  and store create rejects numeric resource-value reuse until a later ack/removal
+  slice defines safe reuse.
+
 ### Phase 0: Stabilize Current Dirty Host Work
 
 Question:

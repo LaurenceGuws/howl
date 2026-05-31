@@ -1,6 +1,6 @@
-# Current Slice: Linux Host V0 Resource Plan Probe
+# Current Slice: Linux Host V0 Resource Store Skeleton
 
-Owner: `howl-linux-host` terminal render handoff validation.
+Owner: `howl-linux-host` terminal render protocol resource ownership.
 
 Sprint scratchpad and contract:
 
@@ -9,11 +9,9 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Prove the host can derive a bounded backend-resource work plan from a borrowed
-  V0 frame before any GL/backend object realization.
+- Introduce a bounded host-owned V0 resource store for protocol resource IDs.
+- Apply create/upload/retire lifecycle consequences to host-owned state in tests.
 - Keep the actual host rendering path on full RGBA texture upload.
-- Preserve the existing software oracle probe and add resource-plan accounting
-  beside it.
 
 ## Source Order (Mandatory)
 
@@ -25,57 +23,55 @@ Read in order before editing:
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
 5. `howl-linux-host/src/terminal/render/retained.zig`
 6. `howl-render/include/howl_render.h`
-7. `howl-render/src/protocol_v0/emit.zig`
-8. `howl-render/src/protocol_v0/realize.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
 - `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/test/test_entry.zig` to execute retained tests
-- `howl-linux-host/build.zig` only to wire retained test imports
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
 No `howl-render` changes.
-No host GL/resource realization.
-No backend object creation, mutation, deletion, or lookup table.
+No ABI/header changes.
+No GL calls or backend object creation.
 No V0 command drawing through backend APIs.
 No replacement of full RGBA upload.
 No presentation cadence or event-loop policy changes.
+No `manager`, `engine`, `controller`, or generic resource owner names.
 
 ## Required Product Shape
 
-- Add host-side V0 resource-plan validation/accounting for the borrowed frame:
-  creates, uploads, command resource uses, and retires.
-- Planning is read-only and turn-local. It must not retain the frame pointer, span
-  pointers, upload byte pointers, command pointers, or backend-resource identities.
-- The plan must be bounded by existing V0 ABI maxima and record bounded accounting:
-  success count, failure count, last status, create/upload/use/retire counts, and
-  upload byte count.
-- Unsupported commands/resources must fail the plan probe only; they must not affect
-  the actual RGBA upload/submit path.
-- The existing software oracle probe must remain intact.
+- Add a bounded host-owned resource store for V0 resource IDs.
+- Store only protocol identity/state facts in this slice: resource ID, dimensions,
+  format, lifecycle state, upload accounting, and retire state.
+- Apply create/upload/retire spans from a borrowed V0 frame only during the turn.
+- Do not retain the frame pointer, span pointers, upload byte pointers, or command
+  pointers.
+- Do not allocate per frame after initialization; use fixed-capacity arrays bounded
+  by `HOWL_RENDER_V0_RESOURCES_MAX`.
+- Reject duplicate creates, missing resources, generation/kind mismatches, upload to
+  retired resources, retire before create, and capacity overflow in store tests.
+- Keep existing software oracle and resource-plan probes intact.
 
 ## Required Tests
 
 Add narrow host tests with exact intent equivalent to:
 
-- `host retained render plans protocol v0 resource lifecycle`
-- `host retained render plan rejects upload before create`
-- `host retained render plan rejects use after retire`
-- `host retained render records resource plan accounting`
+- `host retained render resource store creates uploads retires resource`
+- `host retained render resource store rejects duplicate create`
+- `host retained render resource store rejects upload after retire`
+- `host retained render resource store rejects missing retire`
+- `host retained render resource store reports capacity overflow`
 
 Use pure helper tests. Do not introduce GL/resource realization harnesses.
 
 ## Required Invariants
 
-- All loops are bounded by validated V0 span counts and ABI maxima.
-- Resource use is visible only when create_seq <= command index < retire_seq.
-- Upload is visible only after create_seq and before retire_seq.
-- Planning has no caller-visible host pixels or GL state mutation.
+- Store capacity is exactly bounded by `HOWL_RENDER_V0_RESOURCES_MAX`.
+- Slot lookup compares value, generation, and kind.
+- Upload accounting validates format and byte bounds before mutating stored state.
+- Retire marks host-owned state retired but does not create/delete backend objects.
 - Existing prepared upload result and submit path remain full RGBA.
-- Counters saturate or are otherwise bounded.
 
 ## Verification
 
@@ -87,12 +83,12 @@ From `/home/home/personal/projects/howl`:
 
 From `/home/home/personal/projects/howl/howl-linux-host`:
 
-- `zig build test`
+- `zig build test --summary all`
 - `git diff --check`
 
 ## Stop Conditions
 
-- Stop if host GL/resource realization is needed.
+- Stop if GL/backend object creation is needed.
 - Stop if render ABI/header changes are needed.
 - Stop if normal RGBA upload path would change.
 - Stop if any borrowed V0 pointer would need to be retained beyond the turn.
