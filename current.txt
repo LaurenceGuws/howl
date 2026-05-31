@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Internal Emission
+# Current Slice: Render Protocol V0 Ordered Retire Validation
 
-Owner: `howl-render` prepared-frame protocol emission storage.
+Owner: `howl-render` internal protocol V0 software realization.
 
 Sprint scratchpad and contract:
 
@@ -9,12 +9,12 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Emit internal V0 frames for current clear/fill/sprite prepared consequences.
-- Prove emitted V0 frames realize byte-for-byte equal to the existing full RGBA
-  oracle for synthetic fill/sprite cases.
-- Keep full RGBA storage as oracle/fallback.
-- Keep host consumption, C ABI exports, normal-path replacement, and direct renderer
-  glyph atlas production out of this slice.
+- Fix the limited software realizer so a frame can create, upload, use, then
+  retire a temporary resource in command order.
+- Preserve rejection for use after retire, upload after retire, retire before use,
+  duplicate retire, missing resource, and wrong generation.
+- Unblock the internal emission slice without changing headers, host code, or
+  protocol emission.
 
 ## Source Order (Mandatory)
 
@@ -27,77 +27,61 @@ Read in order before editing:
 5. `howl-render/include/howl_render.h`
 6. `howl-render/src/ffi/protocol_v0.zig`
 7. `howl-render/src/protocol_v0/realize.zig`
-8. `howl-render/src/prepared/buffer.zig`
-9. `howl-render/src/prepared/owner.zig`
-10. `howl-render/src/prepared/surface.zig`
-11. `howl-render/src/text/contract.zig`
-12. `howl-render/src/text/scene.zig`
-13. `howl-render/src/text/frame_preparer.zig`
-14. `howl-render/src/test/unit.zig`
+8. `howl-render/src/test/unit.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- new `howl-render/src/protocol_v0/emit.zig`
+- `howl-render/src/protocol_v0/realize.zig`
 - `howl-render/src/test/unit.zig` only if needed to expose tests
 - `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
-
-If implementation proves storage must be attached to prepared owner in this slice,
-stop and report the exact owner/file change instead of editing `prepared/owner.zig`.
 
 No header changes.
 No C ABI export functions.
 No host code.
+No protocol emission.
+No emitter retry in this slice.
+No prepared owner/surface changes.
 No normal render path replacement.
-No prepared-surface deletion.
-No direct renderer glyph atlas production.
-No performance claims.
 
 ## Required Product Shape
 
-- Add an internal-only V0 emitter module.
-- Emitter input is explicit prepared consequences or test fixtures; do not reach
-  through host/backend state.
-- Emitter output owns storage for C ABI frame spans: creates, uploads, commands,
-  retires, damage, glyph refs, and upload bytes as needed by tests.
-- Use shipped C ABI structs and macros through `ffi.zig`; do not duplicate ABI
-  structs or constants.
-- Emit command order matching `prepared/buffer.zig` pass order for the consequences
-  this slice supports.
-- Support only clear/fill/sprite consequences in this slice.
-- Sprite resources use explicit create/upload/use order and same-frame lifetime.
-- Emission failure must fail closed without mutating already-accepted output.
-- The existing full RGBA composition remains the oracle and fallback.
+- Keep the realizer internal-only.
+- Validate lifetime with frame order, not by treating any retire span as making the
+  resource retired for the whole frame.
+- A resource may be created, uploaded, used by commands, then retired later in the
+  same frame.
+- Upload after retire must reject.
+- Command use after retire must reject.
+- Retire before the final command that reads the resource must reject.
+- Duplicate retire must reject.
+- Wrong generation must stay distinguishable from missing resource.
+- Existing clear/fill/sprite/alpha-glyph behavior must remain unchanged.
+- No heap allocation inside realization.
 
 ## Required Tests
 
-Add unit tests with exact intent equivalent to these names:
+Add or update unit tests with exact intent equivalent to these names:
 
-- `protocol v0 emitter realizes fill pass order equal to oracle`
-- `protocol v0 emitter realizes alpha sprite equal to oracle`
-- `protocol v0 emitter realizes color sprite equal to oracle`
-- `protocol v0 emitter rejects command bound overflow`
-- `protocol v0 emitter rejects upload bound overflow`
-- `protocol v0 emitter rejects upload byte total overflow`
-- `protocol v0 emitter leaves oracle path independent after emission failure`
+- `protocol v0 realizer accepts sprite use before same frame retire`
+- `protocol v0 realizer rejects sprite use after same frame retire`
+- `protocol v0 realizer rejects upload after same frame retire`
+- `protocol v0 realizer accepts glyph atlas use before same frame retire`
+- `protocol v0 realizer rejects glyph atlas use after same frame retire`
 
-Tests may use explicit synthetic fixtures. Do not claim real renderer glyph atlas
-production, host consumption, or normal-path replacement.
+Existing duplicate retire, retired sprite use, retired glyph atlas use, wrong
+generation, and upload-before-create tests must keep passing with meaningful
+errors.
 
 ## Required Invariants
 
-- All span counts must be checked against the named V0 maxima before use.
-- Upload byte totals must be checked with overflow-safe arithmetic against
-  `HOWL_RENDER_V0_UPLOAD_BYTES_MAX`.
-- Resource IDs are render-owned within emitted storage; creates precede uploads and
-  commands.
-- No command references a missing resource.
-- No backend object, texture ID, GL type, host pointer, or event-loop policy enters
-  the emitter.
-- Emitter storage owns span memory long enough for the returned frame view.
-- Tests must realize emitted frames through `protocol_v0.realize()` and compare
-  bytes against an explicit oracle buffer.
+- All lifetime validation completes before caller-visible pixel mutation for a
+  rejected frame.
+- Order checks must be explicit and bounded by V0 span maxima.
+- Resource lifetime remains create, update, use, retire, ack, reuse.
+- Same-frame retire means retired after all preceding commands and uploads, not
+  retired from the beginning of the frame.
 
 ## Verification
 
@@ -114,9 +98,6 @@ From `/home/home/personal/projects/howl/howl-render`:
 ## Stop Conditions
 
 - Stop if a header or C ABI export function is needed.
-- Stop if host code or backend objects are needed.
-- Stop if prepared owner storage must change; report a follow-up owner/storage
-  slice instead of broadening this one.
-- Stop if direct glyph atlas production from real shaped text is required.
-- Stop if tests cannot compare emitted bytes to an oracle without guessing current
-  renderer semantics.
+- Stop if host code or protocol emission is needed.
+- Stop if correct ordering cannot be expressed with current frame fields.
+- Stop if validation would need to mutate pixels before rejecting invalid lifetime.

@@ -1487,6 +1487,62 @@ Verification performed:
 - `git diff --check`
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
+## Phase 9 Slice: Render Protocol V0 Internal Emission
+
+Status: rejected and reverted before commit.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Internal Emission`
+
+Rejected implementation facts:
+
+- Worker added internal-only `howl-render/src/protocol_v0/emit.zig`, then the
+  reviewer rejected the slice before commit.
+- The emitter consumes explicit synthetic fixtures for clear, fill, and sprite
+  consequences. It does not read host state, backend objects, GL ids, prepared
+  owner storage, or direct renderer glyph atlas production.
+- Emitted frames use the shipped C ABI structs and macros through `ffi.zig`.
+- Emitter-owned storage is fixed-capacity and bounded at comptime against the
+  public V0 maxima for damage, creates, uploads, commands, retires, and upload
+  bytes. Tests use smaller fixed capacities to force overflow paths.
+- Emission is fail-closed by building into a copy of emitter storage and committing
+  only after all bounds and upload-byte checks succeed.
+- Command emission preserves the current prepared-buffer pass order for supported
+  consequences: clear, background fill, decoration fill, sprite, cursor fill.
+- Sprite emission creates render-owned V0 sprite resources, copies upload bytes
+  into emitter-owned storage, emits uploads before sprite commands, and uses
+  resource IDs without backend state.
+- Same-frame retire emission was the rejection. `current.txt` required sprite
+  resources to use explicit create/upload/use order and same-frame lifetime, but
+  the emitter kept retire spans empty. The dead `appendRetire()` path proved the
+  current limited software realizer validates retire spans as frame-global state:
+  a resource both retired and used in the same frame rejects as
+  `RetiredResource`.
+
+Tests added by rejected worker and reverted with the slice:
+
+- `protocol v0 emitter realizes fill pass order equal to oracle`
+- `protocol v0 emitter realizes alpha sprite equal to oracle`
+- `protocol v0 emitter realizes color sprite equal to oracle`
+- `protocol v0 emitter rejects command bound overflow`
+- `protocol v0 emitter rejects upload bound overflow`
+- `protocol v0 emitter rejects upload byte total overflow`
+- `protocol v0 emitter leaves oracle path independent after emission failure`
+
+Prerequisite slice required before retrying emission:
+
+- Define and implement order-sensitive realizer lifetime validation for same-frame
+  create/upload/use/retire so temporary sprite resources can be retired after
+  their final command in the same frame.
+
+Verification performed by rejected worker before review:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
