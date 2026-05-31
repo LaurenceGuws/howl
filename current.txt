@@ -1,6 +1,6 @@
-# Current Slice: Linux Host V0 Prepared Probe
+# Current Slice: Linux Host V0 Software Oracle Probe
 
-Owner: `howl-linux-host` terminal render handoff.
+Owner: `howl-linux-host` terminal render handoff validation.
 
 Sprint scratchpad and contract:
 
@@ -9,10 +9,10 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Prove the Linux host can request and validate the borrowed V0 frame at the
-  prepared-submit lifecycle point.
-- Keep existing full RGBA upload/render behavior unchanged.
-- Do not consume V0 commands, create GL resources, or change presentation cadence.
+- Prove the host can consume V0 frame semantics through a software oracle before
+  any GL/backend resource realization.
+- Compare software-realized V0 bytes against the existing prepared RGBA buffer.
+- Keep the actual host rendering path on full RGBA texture upload.
 
 ## Source Order (Mandatory)
 
@@ -24,57 +24,55 @@ Read in order before editing:
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
 5. `howl-linux-host/src/terminal/render/retained.zig`
 6. `howl-linux-host/src/terminal/context.zig`
-7. `howl-linux-host/src/window/term_texture.zig`
-8. `howl-render/include/howl_render.h`
+7. `howl-render/include/howl_render.h`
+8. `howl-render/src/protocol_v0/realize.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
 - `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/context.zig` only if needed to trigger/account the probe
 - `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
 
 No `howl-render` changes.
 No host GL/resource realization.
-No V0 command drawing.
+No V0 command drawing through backend APIs.
 No replacement of full RGBA upload.
 No presentation cadence or event-loop policy changes.
 No backend object lifetime changes.
 
 ## Required Product Shape
 
-- Add a read-only V0 probe in the prepared upload/submit path.
-- Call `howl_render_prepared_surface_protocol_v0()` while the prepared handle is
-  live.
-- Validate basic invariants:
-  - status is `HOWL_RENDER_CALL_OK`.
-  - frame pointer is non-null.
-  - `protocol_version == HOWL_RENDER_PROTOCOL_V0_VERSION`.
-  - frame render/cell/grid dimensions match prepared info.
-  - every span count is `<= count_max`.
-  - upload total bytes are `<= bytes_count_max`.
-- Record bounded debug/accounting facts proving the host saw a valid V0 frame.
-- Continue the existing full RGBA texture upload path regardless of V0 probe success
-  unless the prepared handle itself is invalid.
+- Add a host-side software V0 realization helper for the command/resource subset
+  currently emitted by render prepared frames: clear, fill, and sprite.
+- The helper must consume the borrowed V0 frame during the submit turn only.
+- Compare realized bytes to the prepared RGBA buffer and record bounded accounting:
+  success count, mismatch/failure count, last failure reason, and checked byte count.
+- Do not retain the frame pointer, span pointers, or upload byte pointers.
+- Do not change the existing full RGBA upload path or submit result.
+- Reject unsupported V0 commands/resources in the software probe without affecting
+  the actual RGBA path.
 
 ## Required Tests
 
-Use existing host test style if available. Add tests with exact intent equivalent to:
+Add narrow host tests with exact intent equivalent to:
 
-- `host retained render probes prepared protocol v0 frame`
-- `host retained render rejects invalid protocol v0 probe invariants`
+- `host retained render software realizes protocol v0 fill frame`
+- `host retained render software realizes protocol v0 sprite frame`
+- `host retained render software probe detects rgba mismatch`
+- `host retained render software probe rejects unsupported command`
+- `host retained render records software probe accounting`
 
-If host test harness cannot construct this without broadening, add narrow pure
-validation helper tests in `retained.zig` and record the harness gap.
+Use pure helper tests if live host prepared-handle setup would require GL/resource
+realization. Record the harness gap if so.
 
 ## Required Invariants
 
-- Probe never stores the borrowed frame pointer past the submit turn.
-- Probe never mutates host GL state.
-- Probe never changes `uploads_committed`, prepared submit status, or present state.
-- Failure accounting is bounded and explicit; no silent fallback if invariants fail.
-- Full RGBA remains the actual host rendering path.
+- Software probe validates all byte lengths before reading/writing.
+- No caller-visible host pixels or GL state are mutated by the software probe.
+- Existing prepared upload result and submit path remain full RGBA.
+- All counters saturate or are otherwise bounded.
 
 ## Verification
 
@@ -86,7 +84,7 @@ From `/home/home/personal/projects/howl`:
 
 From `/home/home/personal/projects/howl/howl-linux-host`:
 
-- `zig build test` or the host's focused test command if one exists
+- `zig build test`
 
 ## Stop Conditions
 
