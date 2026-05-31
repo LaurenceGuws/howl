@@ -1,44 +1,38 @@
-# Current Slice: Protocol V0 Prepared Fill Command Coalescing
+# Current Slice: Protocol V0 Prepared Payload Lifetime
 
-Owner: `howl-render` protocol V0 prepared command emission.
-
-Research inputs:
-
-- `research/2026-05-31-howl-render-protocol-sprint.md`
-- `docs/render-protocol-v0.md`
+Owner: `howl-render` prepared surface owner memory lifetime.
 
 Purpose:
 
-- Reduce `CommandBoundOverflow` for fullscreen TUIs such as `btop` without increasing
-  ABI bounds and without deleting the full-RGBA oracle.
-- Coalesce adjacent prepared fill commands when they are provably equivalent.
+- Stop long-running memory growth from stale prepared-handle tombstones retaining the
+  full embedded V0 payload arrays after submit/release.
+- Preserve stale handle safety: consumed/released prepared handles may remain as small
+  tombstones until text-session destroy, but they must not retain large frame storage.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/src/protocol_v0/emit.zig`
-- `howl-render/src/test_protocol_proof.zig` only if an integration-level protocol proof
-  is needed
+- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/test_protocol_proof.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No render ABI changes. No host changes. No full-RGBA deletion. No V0 drawing path.
+No ABI changes. No host changes. No V0 rendering changes. Do not delete full RGBA.
 
 ## Required Shape
 
-- Coalesce only prepared fill-like commands: clear, background, decoration, cursor.
-- Merge only horizontally adjacent rectangles with identical command kind, color,
-  `y_px`, and `height_px`.
-- Preserve command order across passes. Do not reorder or merge through sprites/glyphs.
-- Preserve bounds: merged width must fit `u16`; otherwise append a separate command.
-- Keep the existing fail-closed V0 sidecar behavior when coalescing is insufficient.
+- Move `V0Payload` storage out of the always-retained prepared owner tombstone.
+- Allocate V0 payload only for a live prepared owner that successfully emits V0.
+- Free V0 payload on `release()`, `consume()`, failed creation, and session destroy.
+- `protocolV0Frame()` must return null when the live owner has no V0 payload.
+- `protocolV0FrameStorageEmptyForTest()` must prove released/consumed owners retain no
+  V0 payload storage.
 
 ## Required Tests
 
-- Prove adjacent same-row same-color prepared fills coalesce into one V0 command.
-- Prove different color, row, height, kind, or non-adjacent rectangles do not coalesce.
-- Existing overflow tests must still pass or be updated only where the intended behavior
-  changed.
+- Existing protocol proof tests pass.
+- Test that release/consume clears V0 payload storage.
+- Existing overflow fallback tests still prove RGBA survives when V0 is unavailable.
 
 ## Verification
 
@@ -62,6 +56,5 @@ From workspace root:
 
 ## Stop Conditions
 
-- Stop if reducing command count requires reordering draw consequences.
-- Stop if the proposed fix hides command overflow instead of preserving a valid V0
-  unavailable fallback.
+- Stop if stale handle safety requires keeping large per-frame payload storage.
+- Stop if the fix requires host-side lifetime changes.

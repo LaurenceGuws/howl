@@ -1967,6 +1967,61 @@ Verification performed:
 - From workspace root: `zig build test`
 - From workspace root: `git diff --check`
 
+## Phase 31 Slice: Protocol V0 Prepared Payload Lifetime
+
+Status: worker implementation complete; verification passed in this turn.
+
+Problem:
+
+- User run reported roughly 6 GiB system memory growth in about one minute.
+- V0 diagnostics showed continued frame submits and growing live sprite resources, but
+  not enough GL texture/resource count to explain the growth.
+- `TextSessionOwner.prepared_handles` intentionally retains prepared owner pointers as
+  stale handle tombstones until session destroy.
+- `prepared_owner.Owner` currently embeds `V0Payload`, whose static arrays include the
+  full V0 command/upload/frame storage. `consume()` and `release()` clear logical
+  payload state but cannot free embedded bytes. Every submitted frame leaves a large
+  tombstone behind.
+
+Promoted slice:
+
+- `current.txt` - `Protocol V0 Prepared Payload Lifetime`
+
+Required shape:
+
+- Keep stale prepared handles safe as small tombstones.
+- Move V0 payload storage behind an owned pointer that exists only while live and V0 is
+  available.
+- Free that payload on release, consume, failed creation, and session destroy.
+
+Implementation facts:
+
+- `prepared_owner.Owner` no longer embeds `V0Payload` directly.
+- Live prepared owners allocate V0 payload storage only after V0 emission succeeds.
+- `deinitPayload()` destroys the V0 payload pointer, so released/consumed tombstones do
+  not retain the large command/upload/frame arrays.
+- `protocolV0Frame()` returns null when a live owner has no V0 payload, preserving the
+  V0-unavailable fallback from Phase 29.
+
+Memory check:
+
+- Bounded `btop` run after the fix peaked at about 36 MiB RSS over 20 seconds using
+  `/proc/<pid>/status` sampling.
+- The same user path previously reported roughly 6 GiB system memory growth in about
+  one minute.
+
+Verification performed:
+
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+- From `howl-render`: `git diff --check`
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+
 Required GUI review after verification:
 
 - Run with `--debug-process-accounting --debug-log-every-ms 1000` and capture the
