@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Resource Lifetime Decision
+# Current Slice: Render Protocol V0 Persistent Sprite Resource Emission Probe
 
-Owner: `howl-render` protocol contract and sprint design memory.
+Owner: `howl-render` protocol V0 emission and retained protocol resource state.
 
 Sprint scratchpad and contract:
 
@@ -9,13 +9,12 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Decide the V0 resource lifetime model before more implementation.
-- Resolve whether prepared sprite resources become persistent render-owned resources
-  first, whether host ack/removal is required first, or whether both must be
-  specified together.
-- Preserve the reference truth that disposable per-draw backend texture churn is not
-  the product path.
-- Preserve the ABI truth that `glDeleteTextures()` is not protocol ack.
+- Replace same-frame disposable prepared sprite V0 resources with persistent
+  render-owned sprite resources.
+- Emit create/upload only when a sprite resource is first observed or materially
+  changes.
+- Emit later commands referencing existing live resources without create/upload/retire.
+- Keep full RGBA as visible fallback/oracle.
 
 ## Source Order (Mandatory)
 
@@ -27,37 +26,61 @@ Read in order before editing:
 4. `docs/render-protocol-v0.md`
 5. `utils/dev_references/terminals/alacritty`
 6. `utils/dev_references/terminals/ghostty`
-7. `howl-render/include/howl_render.h`
-8. `howl-render/src/protocol_v0/emit.zig`
-9. `howl-render/src/protocol_v0/realize.zig`
-10. `howl-render/src/prepared/buffer.zig`
-11. `howl-linux-host/src/window/term_texture.zig`
+7. `howl-render/src/protocol_v0/emit.zig`
+8. `howl-render/src/protocol_v0/realize.zig`
+9. `howl-render/src/prepared/buffer.zig`
+10. Relevant `howl-render/src/**` owner files for prepared/protocol/session state.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `current.txt`
+- `howl-render/src/protocol_v0/emit.zig`
+- `howl-render/src/protocol_v0/realize.zig` only if retained oracle support is needed
+- Existing `howl-render/src/prepared/**` or session/protocol owner files only if they
+  are the true owner for retained protocol resource state
+- Existing howl-render protocol tests
 - `research/2026-05-31-howl-render-protocol-sprint.md`
-- `docs/render-protocol-v0.md` only if contract text must be sharpened
 
-No product code. No ABI/header changes. No render emission changes. No host changes.
+No C ABI/header changes. No host changes. No ack/removal ABI. No V0 command drawing
+or presentation replacement. No full RGBA deletion.
 
-## Required Decision Output
+## Required Product Shape
 
-- One accepted lifetime model.
-- Exact ownership of resource IDs, generations, retire, ack, and reuse.
-- Whether prepared sprite resources can persist across prepared frames.
-- Whether software oracle/realizer must become retained before persistent resources
-  can ship.
-- The first implementation slice after this decision.
-- Tests that will prove the decision.
+- Render owns opaque nonzero V0 sprite resource IDs.
+- Numeric resource values are monotonic and are not reused in this slice.
+- Generation remains `1` for first lifetime only; no retire/reuse path is introduced.
+- Persistent sprite resources emit create/upload once, then later frames emit commands
+  referencing the existing live resource.
+- Normal persistent sprites emit no retire in this slice.
+- Internal sprite lookup may use current render-owned sprite facts, but must not expose
+  `SpriteKey` as public ABI glyph identity.
+- Resource capacity or upload-bound exhaustion fails closed to full RGBA fallback/oracle
+  without mutating accepted V0 payload/resource state.
+- The V0 software oracle/resource store must be retained enough to prove later-frame
+  commands can reference earlier-frame resources byte-equivalent to the full RGBA
+  prepared buffer.
+
+## Required Tests
+
+- Frame 1 with a sprite emits create/upload/command and no retire.
+- Frame 2 with the same source-backed sprite identity emits command only for the same
+  resource ID.
+- Different source-backed sprite identity or incompatible bytes/dimensions emits a
+  distinct monotonic resource ID, not numeric reuse.
+- Capacity or upload-bound exhaustion fails closed without mutating accepted V0
+  payload/resource state.
+- Retained software realizer/oracle proves frame 2 byte-equivalent to
+  `prepared_buffer.compose()` while using a prior-frame resource.
+- Existing root `zig build test` and `zig build check` pass.
 
 ## Stop Conditions
 
-- Stop if the decision would require treating backend deletion as protocol ack.
-- Stop if the decision would bless disposable per-draw backend texture churn as the
-  product path.
-- Stop if the decision requires V0 command drawing or replacing full RGBA.
-- Stop if reference-backed ownership remains split after research; record the split
-  and ask the user rather than coding.
+- Stop if stable sprite identity cannot be defined from current render-owned facts
+  without guessing.
+- Stop if eviction/reclamation is required; that needs ack/removal and is later.
+- Stop if this requires C ABI/header changes.
+- Stop if this requires host changes, V0 command drawing, presentation replacement, or
+  deleting full RGBA.
+- Stop if resource ownership cannot live in a true render owner without host/backend
+  policy leaking into render.

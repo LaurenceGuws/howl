@@ -2925,3 +2925,63 @@ The next orchestrator action should be one of:
 
 1. Resolve/checkpoint dirty host measurement work.
 2. Seed Research Agent A with this scratchpad and exact output contract.
+
+## Phase 26 Slice: Render Protocol V0 Persistent Sprite Resource Emission Probe
+
+Status: accepted and committed in `howl-render`.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Persistent Sprite Resource Emission Probe`
+
+Implementation facts:
+
+- `howl-render/src/protocol_v0/emit.zig` now contains a render-owned
+  `SpriteResourceStore` for prepared sprite V0 resources.
+- Prepared sprite resources use opaque nonzero values allocated monotonically by the
+  render store, generation `1`, and no retire/reuse path.
+- Prepared emission keys internal lookup from current render-owned sprite facts:
+  sprite key, trimmed visual dimensions, resource format, and trimmed upload bytes.
+  `SpriteKey` remains internal and is not exposed as ABI identity.
+- First observation or changed identity/bytes/dimensions emits create/upload plus the
+  draw command. Later frames for the same source-backed sprite emit the draw command
+  only, referencing the existing live resource.
+- Normal prepared sprite emission emits no retire spans in this slice.
+- Prepared emission still builds into copied payload/resource state first and commits
+  only after all bounds and byte copies succeed, preserving fail-closed behavior for
+  upload-bound/resource failures.
+- Persistent sprite identity now stores exact accepted upload bytes up to the private
+  `persistent_sprite_resource_bytes_max` bound and compares bytes byte-for-byte
+  before reuse. The hash remains only a prefilter; it is not proof of identity.
+- `TextSessionOwner` owns the persistent prepared sprite resource store, while each
+  prepared owner still owns only its borrowed-frame V0 payload storage.
+- `protocol_v0/realize.zig` now has an internal retained software `ResourceStore` and
+  `realizeRetained()` path so tests can realize later-frame commands against prior
+  uploaded resource bytes.
+- Retained realization now validates frame spans, resource transitions, commands,
+  pixel length, and base-pixel length before committing creates, uploads, or retires
+  to the retained `ResourceStore`.
+- Full RGBA remains the oracle/fallback. No C ABI/header, host, V0 drawing,
+  presentation, ack/removal, or full-RGBA deletion was changed.
+
+Tests added:
+
+- `protocol v0 emitter persists prepared sprite resource across frames`
+- `protocol v0 emitter allocates distinct monotonic sprite resources`
+- `protocol v0 emitter allocates distinct resource for changed sprite bytes`
+- `protocol v0 emitter allocates distinct resource for changed sprite dimensions`
+- `protocol v0 emitter failure preserves accepted persistent resource state`
+- `protocol v0 emitter resource capacity failure preserves accepted state`
+- `protocol v0 retained realizer rejects invalid frame without store mutation`
+
+Verification performed:
+
+- From `howl-render`: `zig build test:protocol-proof -- "protocol v0"`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+
+Accepted commits:
+
+- `howl-render` `f8253d1` - `render: persist protocol v0 sprite resources`
