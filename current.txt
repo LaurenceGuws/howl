@@ -1,7 +1,6 @@
-# Current Slice: Linux Host V0 GL Realization Diagnostics
+# Current Slice: Render Protocol V0 Resource Lifetime Decision
 
-Owner: `howl-linux-host` terminal render protocol diagnostics across submit,
-texture realization, and present ownership.
+Owner: `howl-render` protocol contract and sprint design memory.
 
 Sprint scratchpad and contract:
 
@@ -10,11 +9,13 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Make the live V0 GL resource path observable before changing product behavior.
-- Preserve full RGBA as the visible path.
-- Give the user bounded GUI-review evidence for `lll`, `l`, `btop` warning mode,
-  and `btop` normal draw mode.
-- Stop before product fixes, V0 command drawing, or presentation replacement.
+- Decide the V0 resource lifetime model before more implementation.
+- Resolve whether prepared sprite resources become persistent render-owned resources
+  first, whether host ack/removal is required first, or whether both must be
+  specified together.
+- Preserve the reference truth that disposable per-draw backend texture churn is not
+  the product path.
+- Preserve the ABI truth that `glDeleteTextures()` is not protocol ack.
 
 ## Source Order (Mandatory)
 
@@ -24,94 +25,39 @@ Read in order before editing:
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 3. `research/2026-05-31-howl-render-protocol-sprint.md`
 4. `docs/render-protocol-v0.md`
-5. `utils/dev_references/backends/sdl`
-6. `utils/dev_references/rendering`
-7. `utils/dev_references/sdlwiki_md`
-8. `utils/dev_references/terminals/alacritty`
-9. `utils/dev_references/terminals/ghostty`
-10. `howl-linux-host/src/terminal/context.zig`
-11. `howl-linux-host/src/window/present.zig`
-12. `howl-linux-host/src/window/window.zig`
-13. `howl-linux-host/src/window/term_texture.zig`
-14. `howl-linux-host/src/terminal/render/retained.zig`
+5. `utils/dev_references/terminals/alacritty`
+6. `utils/dev_references/terminals/ghostty`
+7. `howl-render/include/howl_render.h`
+8. `howl-render/src/protocol_v0/emit.zig`
+9. `howl-render/src/protocol_v0/realize.zig`
+10. `howl-render/src/prepared/buffer.zig`
+11. `howl-linux-host/src/window/term_texture.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/window/present.zig`
-- `howl-linux-host/src/window/term_texture.zig`
-- `howl-linux-host/src/window/window.zig`
+- `current.txt`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
+- `docs/render-protocol-v0.md` only if contract text must be sharpened
 
-No ABI/header changes. No render-side emission changes. No V0 command drawing. No
-replacement of full RGBA upload. No unbounded logs. No diagnostic gate as product fix.
+No product code. No ABI/header changes. No render emission changes. No host changes.
 
-## Required Diagnostic Shape
+## Required Decision Output
 
-- Copy only scalar diagnostics; never retain V0 frame/span/upload byte pointers.
-- Record V0 frame token and span counts: creates, uploads, retires, commands,
-  upload byte total.
-- Record churn shape: same-frame create/upload/use/retire count,
-  persistent-resource reuse count, resources created without surviving next frame,
-  creates per visible command.
-- Record resource slots: live, retired, empty, max live, max retired.
-- Record host GL side-effect counts separately from render spans:
-  `glGenTextures`, `glTexImage2D`, `glTexSubImage2D`, `glDeleteTextures`.
-- Record failure buckets: invalid spans, invalid command shape, invalid order,
-  unsupported resource/format, upload bounds, tombstone value reuse, capacity,
-  GL error.
-- Record timings: V0 realization microseconds, full RGBA upload microseconds,
-  `SDL_GL_SwapWindow` microseconds. Do not use `glFinish` as a diagnostic fence.
-- Record GL state samples around V0 phases and full RGBA upload:
-  `GL_TEXTURE_BINDING_2D`, `GL_UNPACK_ALIGNMENT`, `GL_UNPACK_ROW_LENGTH`,
-  and `glGetError()`.
-- SDL current-context/current-window/main-thread readiness checks belong to
-  `present.zig`/`window.zig`, not `term_texture.zig`.
-- Optional A/B gate may skip only live V0 GL realization while preserving V0 frame
-  production, scalar diagnostics, software oracle/resource-plan probes, full RGBA
-  upload, submit, and presentation. This gate is evidence only, not product behavior.
-
-## Required Tests
-
-- Unit tests for scalar diagnostic accounting and failure bucket updates where pure
-  helpers can cover them.
-- Existing host tests must still run.
-- GUI behavior is reviewed by the user after accepted implementation.
-
-## User GUI Review Matrix
-
-- `lll`: should still report command not found if no shell alias/binary exists.
-- `l`: must not freeze; record whether V0 counters spike before freeze if it does.
-- `btop` warning mode: should remain responsive; record counters.
-- `btop` normal draw mode: record whether freeze correlates with creates/uploads,
-  upload bytes, tombstones, GL errors, realization time, or swap time.
-- Resize/font increase: record whether unfreeze correlates with reduced V0 counts or
-  return to warning-screen rendering.
-
-## Verification
-
-From `/home/home/personal/projects/howl`:
-
-- `zig build check`
-- `zig build test`
-- `git diff --check`
-
-From `/home/home/personal/projects/howl/howl-linux-host`:
-
-- `zig build test --summary all`
-- `git diff --check`
+- One accepted lifetime model.
+- Exact ownership of resource IDs, generations, retire, ack, and reuse.
+- Whether prepared sprite resources can persist across prepared frames.
+- Whether software oracle/realizer must become retained before persistent resources
+  can ship.
+- The first implementation slice after this decision.
+- Tests that will prove the decision.
 
 ## Stop Conditions
 
-- Stop if diagnostics require changing the render ABI/header.
-- Stop if diagnostics require V0 command drawing or replacing full RGBA.
-- Stop if the fix depends on treating `glDeleteTextures()` as protocol ack.
-- Stop if resource ID reuse needs ack/removal policy; draft that contract first.
-- Stop if tombstone retention or removal policy is ambiguous.
-- Stop if logs would be unbounded or per-byte/per-cell spam.
-- Stop if SDL current-window, current-context, main-thread, or GL global-state
-  ownership remains ambiguous after reading the SDL/OpenGL references.
-- Stop after one diagnostic slice and user GUI review; do not roll directly into a
-  fix without a reviewed follow-up slice.
+- Stop if the decision would require treating backend deletion as protocol ack.
+- Stop if the decision would bless disposable per-draw backend texture churn as the
+  product path.
+- Stop if the decision requires V0 command drawing or replacing full RGBA.
+- Stop if reference-backed ownership remains split after research; record the split
+  and ask the user rather than coding.

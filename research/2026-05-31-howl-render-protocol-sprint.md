@@ -1974,6 +1974,36 @@ Required GUI review after verification:
   `howl-debug present ...` lines for `lll`, `l`, `btop` warning mode, and `btop`
   normal draw mode.
 
+GUI evidence captured after diagnostics:
+
+- Startup/simple output frame: `create=0`, `upload=0`, `retire=0`, `command=165`,
+  no GL errors, present readiness OK.
+- Draw-heavy frame sequence realized 35 V0 sprite resources into host GL textures:
+  `glGenTextures=35`, `glTexImage2D=35`, `glTexSubImage2D=35`,
+  `glDeleteTextures=35`.
+- The realized resources were all same-frame disposable resources:
+  `churn_same_frame=35`, `created_not_surviving=35`, `reuse_persistent=0` for the
+  first realized batch; later cumulative counters showed the same pattern.
+- V0 GL realization time stayed small, roughly `19-28us` after the initial max around
+  `297-302us`. Full RGBA upload stayed roughly `824-2122us`. No `glGetError()` was
+  reported in V0 phases or full RGBA upload.
+- SDL present readiness was OK on the sampled present line: main thread, current
+  context, and current window all passed.
+- After the first same-frame retire batch, later frames repeatedly failed with
+  `tombstone_value_reuse`, increasing from 1 through 8 in the captured logs, while
+  retired slots stayed at 35 and live slots stayed at 0.
+
+Interpretation:
+
+- The first diagnostic data does not point at GL error state, SDL context loss, or a
+  long V0 realization stall.
+- It does point at the known protocol/product mismatch: render emits temporary sprite
+  IDs from same-frame sprite indices, the host correctly keeps retired tombstones
+  because no ack/removal contract exists, and subsequent frames reuse numeric values
+  that the host must reject.
+- The current V0 GL path is still disposable per-draw backend texture churn, not the
+  persistent resource/atlas shape used by Ghostty or Alacritty.
+
 Reviewer rejection fix applied 2026-05-31:
 
 - Bounded V0 and present diagnostic logs with first-8 new-failure counters plus
@@ -1992,6 +2022,88 @@ Reviewer rejection fix applied 2026-05-31:
 Accepted commits:
 
 - `howl-linux-host` `6299ad0` - `host: add protocol v0 gl diagnostics`
+
+## Phase 25 Slice: Render Protocol V0 Resource Lifetime Decision
+
+Status: promoted to `current.txt`; decision recorded.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Resource Lifetime Decision`
+
+Decision:
+
+- V0 resources are retained, render-owned protocol identities.
+- Host backend objects realize live protocol resources; backend deletion is not
+  protocol ack.
+- Same-frame create/upload/use/retire remains valid protocol input for bounded
+  temporary consequences, but it is not the product path for normal sprite/glyph
+  rendering.
+- First implementation should move prepared sprite emission to persistent render-owned
+  resources with no retire and no numeric reuse.
+- Host ack/removal must be specified and implemented before resource retirement for
+  reclamation, before numeric value reuse, and before deleting the full RGBA fallback.
+- Persistent no-retire/no-reuse sprite emission may proceed before ack/removal because
+  it removes the observed same-frame churn and tombstone reuse without pretending
+  reclamation exists.
+
+Source-backed facts:
+
+- Diagnostics showed draw-heavy output realizing 35 same-frame disposable sprite
+  resources, then later failing on `tombstone_value_reuse` while GL errors and SDL
+  readiness stayed clean.
+- `howl-render/src/protocol_v0/emit.zig` currently derives prepared sprite resource
+  IDs from same-frame sprite index and generation `1`.
+- `howl-linux-host/src/window/term_texture.zig` correctly preserves retired tombstones
+  and rejects numeric reuse before ack.
+- `docs/render-protocol-v0.md` now states backend deletion is not ack and that
+  persistent no-retire/no-reuse resources may exist before ack/removal.
+
+First implementation slice after this decision:
+
+- `Render Protocol V0 Persistent Sprite Resource Emission Probe`
+
+Implementation shape for that later slice:
+
+- Add a render-owned bounded V0 sprite resource table in the true protocol/prepared
+  owner.
+- Allocate opaque nonzero resource values monotonically; use generation `1` only for
+  the first lifetime and do not reuse numeric values in that slice.
+- Key the table from current render-internal sprite facts only. `SpriteKey` may be an
+  internal lookup ingredient, but it must not become a public glyph identity or ABI
+  promise.
+- Emit create/upload for a sprite resource only on first observation or when the
+  source-backed identity/bytes/dimensions require a distinct resource.
+- Emit later commands referencing existing live resources with no create/upload/retire.
+- Emit no normal retire events for persistent sprites in that slice.
+- Fail closed to full RGBA fallback/oracle if capacity or upload bounds are exhausted.
+- Retain/extend the V0 software oracle/resource store enough to prove later-frame
+  commands can reference earlier-frame resources byte-equivalent to the full RGBA
+  prepared buffer.
+
+Required tests for that later slice:
+
+- Frame 1 with a sprite emits create/upload/command and no retire.
+- Frame 2 with the same source-backed sprite identity emits command only for the same
+  resource ID.
+- Different source-backed sprite identity or incompatible bytes/dimensions emits a
+  distinct monotonic resource ID, not numeric reuse.
+- Resource capacity exhaustion fails closed without mutating accepted V0 payload state.
+- Retained software realizer/oracle proves frame 2 byte-equivalent to
+  `prepared_buffer.compose()` while using a prior-frame resource.
+- Host diagnostics should move toward `reuse_persistent > 0`, reduced same-frame
+  churn, and no `tombstone_value_reuse` for repeated sprites.
+
+Rejected alternatives:
+
+- Treat `glDeleteTextures()` as ack: rejected because backend cleanup is not a
+  host-to-render protocol message.
+- Keep same-frame disposable sprite resources as product path: rejected by diagnostics
+  and by Ghostty/Alacritty persistent resource precedent.
+- Reuse `{ value, generation = 1 }` per frame: rejected as numeric reuse before ack.
+- Implement ack/removal before persistent emission: rejected as unnecessary for the
+  first no-retire/no-reuse persistent slice.
+- Implement ack plus persistent resources in one slice: rejected as too broad.
 
 ## Phase 18 Slice: Render Protocol V0 Prepared ABI View
 

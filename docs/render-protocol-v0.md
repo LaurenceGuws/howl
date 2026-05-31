@@ -276,6 +276,11 @@ source-backed slice defines and tests color glyph production and draw semantics.
 Render owns every `HowlRenderV0ResourceId` lifetime. Host owns the realized backend
 object associated with a live ID.
 
+The product lifetime model is retained and render-owned. Resource IDs are protocol
+identities, not backend object names and not per-draw scratch IDs. Host backend
+objects may be created, resized, uploaded, or deleted while realizing a protocol
+resource, but those backend operations do not change protocol lifetime by themselves.
+
 The only valid ordering is:
 
 1. Create: render emits one create event for a new resource ID with a new `generation`,
@@ -288,6 +293,15 @@ The only valid ordering is:
 5. Ack: host reports one ack only after all host-side work that could read the resource has
    completed.
 6. Reuse: render may reuse the numeric `value` only with a greater `generation` after ack.
+
+`glDeleteTextures()`, backend object destruction, queue completion, frame submission,
+or presentation is not ack. Ack exists only when the host reports it through an
+accepted V0 host-to-render ack/removal ABI.
+
+Until that ack/removal ABI is implemented, render may create persistent resources and
+refer to them across later frames, but it must not retire them for reuse and must not
+reuse numeric `value`s. Resource exhaustion before ack/removal must fail closed to the
+full RGBA fallback/oracle path rather than recycling IDs.
 
 ### Same-Frame Lifetime Order
 
@@ -323,7 +337,7 @@ A command at index `command_index` may reference a resource only when all of the
 - At least one matching upload required by the command is visible at `upload_seq <= command_index`.
 - No same-frame retire exists for that resource, or `command_index < retire_seq`.
 
-The valid same-frame temporary-resource pattern is therefore:
+The protocol-valid same-frame temporary-resource pattern is therefore:
 
 1. Create with `create_seq = 0` or any boundary before the first use.
 2. Upload with `upload_seq >= create_seq` and `upload_seq <= first command use`.
@@ -338,6 +352,12 @@ Examples:
   `upload_seq = 0`, `retire_seq = 2`, and `commands.count >= 2`.
 - Create and upload after command `0`, use by command `1`, retire after command `1`:
   `create_seq = 1`, `upload_seq = 1`, `retire_seq = 2`, and `commands.count >= 2`.
+
+This pattern is valid protocol input for bounded temporary consequences, but it is not
+the product path for normal sprite or glyph rendering. Normal sprite/glyph resources
+should be persistent render-owned resources whose create/upload is emitted when the
+resource first appears or changes, and whose later frames emit commands referencing
+the existing live resource.
 
 Invalid order cases reject the frame with no partial lifetime transition:
 
