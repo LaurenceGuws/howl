@@ -2042,6 +2042,65 @@ Additional tests added:
 - Upload byte max mismatch.
 - Owner recording of last probe facts and failure count.
 
+## Phase 20 Slice: Linux Host V0 Software Oracle Probe
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 Software Oracle Probe`
+
+Implementation facts:
+
+- `howl-linux-host/src/terminal/render/retained.zig` now realizes the borrowed V0
+  frame during `preparedUpload()` only, after prepared info/buffer acquisition and
+  before the unchanged full RGBA upload path.
+- The host-side software helper supports the subset currently emitted by prepared
+  frames for host probing: clear rect, fill rect, alpha sprite, and color sprite.
+- The helper validates span pointers/counts, resource create/upload/use/retire
+  ordering in the documented command-boundary domain, upload formats, upload byte
+  totals, sprite byte coverage, pixel length, and checked arithmetic before
+  mutating its temporary software buffer.
+- The helper allocates a temporary compare buffer, frees it before returning, and
+  never retains the borrowed frame pointer, span pointers, upload byte pointers, or
+  prepared RGBA pointer beyond the probe turn.
+- Probe failure is accounting-only. Unsupported commands/resources, invalid V0
+  bytes, allocation failure, and RGBA mismatch record explicit statuses without
+  affecting the existing texture upload, submit result, presentation cadence, GL
+  resource realization, or backend object lifetime.
+- `State` now records saturating software-probe success count, failure count, last
+  failure/status through `last_protocol_v0_probe`, and checked byte count.
+- Review fix: host software realization now seeds partial frames from a bounded
+  host-owned copy of the previous prepared RGBA oracle. The copy is owned by
+  `State`, freed on deinit or size change, and is not a retained V0 frame/span/
+  upload pointer.
+- Review fix: real software mismatch paths now return and record the full checked
+  byte count instead of losing accounting on failure.
+
+Tests added:
+
+- `host retained render software realizes protocol v0 fill frame`
+- `host retained render software realizes protocol v0 sprite frame`
+- `host retained render software realizes protocol v0 partial frame`
+- `host retained render software probe detects rgba mismatch`
+- `host retained render software probe rejects unsupported command`
+- `host retained render records software probe accounting`
+
+Host harness gap:
+
+- Coverage remains pure retained-helper coverage because constructing a live Linux
+  host prepared upload/submit turn requires GL texture realization, which is out of
+  scope for this slice. The production hook is still exercised structurally by
+  `preparedUpload()` and the pure tests cover the software oracle semantics.
+
+Verification performed:
+
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+- From `howl-linux-host`: `zig build test`
+- From `howl-linux-host`: `git diff --check`
+
 ### Phase 0: Stabilize Current Dirty Host Work
 
 Question:
