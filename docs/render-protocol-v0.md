@@ -289,6 +289,72 @@ The only valid ordering is:
    completed.
 6. Reuse: render may reuse the numeric `value` only with a greater `generation` after ack.
 
+### Same-Frame Lifetime Order
+
+`HowlRenderV0Create.create_seq`, `HowlRenderV0Upload.upload_seq`,
+`HowlRenderV0Retire.retire_seq`, and the command span index share one lifetime order
+domain. The domain is the zero-based command boundary index for the owning frame.
+
+Commands do not carry a sequence field. The sequence of a command is its zero-based index in
+`HowlRenderV0Frame.commands`. The first command has sequence `0`. The command after the last
+command is the boundary `commands.count`.
+
+Creates, uploads, and retires use the same command-boundary domain:
+
+- `create_seq` is the first command boundary where the resource exists in the frame. A create with
+  `create_seq = 0` exists before command `0`. A create with `create_seq = N` exists after command
+  `N - 1` and before command `N`.
+- `upload_seq` is the first command boundary where the uploaded bytes are visible to commands in the
+  frame. An upload with `upload_seq = 0` is visible before command `0`. An upload with
+  `upload_seq = N` is visible after command `N - 1` and before command `N`.
+- `retire_seq` is the first command boundary where the resource is retired in the frame. A retire
+  with `retire_seq = N` retires the resource after command `N - 1` and before command `N`. A retire
+  with `retire_seq = commands.count` retires the resource after the final command.
+
+All three fields must be less than or equal to `commands.count`. Values greater than
+`commands.count` reject the frame because they name a boundary outside the frame. A resource created
+and retired in a frame must satisfy `create_seq < retire_seq`. An upload for a resource retired in
+the same frame must satisfy `create_seq <= upload_seq` and `upload_seq < retire_seq`.
+
+A command at index `command_index` may reference a resource only when all of these are true:
+
+- The resource was created in an earlier frame and is not retired, or a same-frame create exists with
+  `create_seq <= command_index`.
+- At least one matching upload required by the command is visible at `upload_seq <= command_index`.
+- No same-frame retire exists for that resource, or `command_index < retire_seq`.
+
+The valid same-frame temporary-resource pattern is therefore:
+
+1. Create with `create_seq = 0` or any boundary before the first use.
+2. Upload with `upload_seq >= create_seq` and `upload_seq <= first command use`.
+3. Use by commands whose indexes are `>= create_seq`, `>= upload_seq`, and `< retire_seq`.
+4. Retire with `retire_seq > final command use` and `retire_seq <= commands.count`.
+
+Examples:
+
+- Create, upload, command `0`, retire after command `0`: `create_seq = 0`, `upload_seq = 0`,
+  `retire_seq = 1`, and `commands.count >= 1`.
+- Create, upload, commands `0` and `1`, retire after final use: `create_seq = 0`,
+  `upload_seq = 0`, `retire_seq = 2`, and `commands.count >= 2`.
+- Create and upload after command `0`, use by command `1`, retire after command `1`:
+  `create_seq = 1`, `upload_seq = 1`, `retire_seq = 2`, and `commands.count >= 2`.
+
+Invalid order cases reject the frame with no partial lifetime transition:
+
+- Upload after retire: `upload_seq >= retire_seq` for the same resource.
+- Command use after retire: `command_index >= retire_seq` for the same resource.
+- Retire before final command use: any command reference with `command_index >= retire_seq`.
+- Upload not yet visible to command use: command reference at `command_index < upload_seq`.
+- Create not yet visible to upload or command use: `upload_seq < create_seq` or
+  `command_index < create_seq`.
+- Duplicate retire for the same `{ value, generation, kind }` in one frame.
+- Missing resource: no matching live earlier-frame resource and no matching same-frame create.
+- Wrong generation: the numeric `value` exists in a different generation than the referenced
+  resource.
+
+This contract uses existing ABI fields only. No hidden backend, host, upload-list, or retire-list
+ordering is part of resource lifetime validation.
+
 Stale ID behavior is fail-closed. Upload before create, command before create,
 unknown resources, wrong generations, use after retire, double retire, ack before
 retire, double ack, and numeric reuse before ack are invalid input.
@@ -664,6 +730,18 @@ Exact negative software-realizer oracle cases required before implementation:
 | Missing sprite command resource | `DRAW_SPRITE` references `{ value = 78, generation = 1, kind = 3 }` with no create. | Reject frame; no pixels written. |
 | Wrong generation sprite use | Create `{ value = 79, generation = 1, kind = 3 }`, command uses generation `2`. | Reject frame; no pixels written. |
 | Retired sprite use | Retire `{ value = 80, generation = 1, kind = 3 }`, then `DRAW_SPRITE` uses it. | Reject frame; no pixels written. |
+| Same-frame create/upload/use/retire | Create sprite `{ value = 89, generation = 1, kind = 3, create_seq = 0 }`, upload it with `upload_seq = 0`, command `0` uses it, retire it with `retire_seq = 1`. | Accept frame; draw command `0`; mark resource retired only after command `0`. |
+| Same-frame late create/upload/use/retire | Command `0` does not use the resource, create sprite `{ value = 90, generation = 1, kind = 3, create_seq = 1 }`, upload it with `upload_seq = 1`, command `1` uses it, retire it with `retire_seq = 2`. | Accept frame; command `1` can read the upload; resource retires after command `1`. |
+| Upload after retire order | Create sprite `{ value = 91, generation = 1, kind = 3, create_seq = 0 }`, retire it with `retire_seq = 1`, upload it with `upload_seq = 1`. | Reject frame; resource remains not updated. |
+| Upload before create order | Create sprite `{ value = 92, generation = 1, kind = 3, create_seq = 1 }`, upload it with `upload_seq = 0`. | Reject frame; resource remains not updated. |
+| Command use before create order | Create sprite `{ value = 93, generation = 1, kind = 3, create_seq = 1 }`, command `0` uses it. | Reject frame; no pixels written. |
+| Command use before upload order | Create sprite `{ value = 94, generation = 1, kind = 3, create_seq = 0 }`, upload it with `upload_seq = 1`, command `0` uses it. | Reject frame; no pixels written. |
+| Command use after retire order | Create sprite `{ value = 95, generation = 1, kind = 3, create_seq = 0 }`, upload it with `upload_seq = 0`, retire it with `retire_seq = 0`, command `0` uses it. | Reject frame; no pixels written. |
+| Retire before final command use | Create sprite `{ value = 96, generation = 1, kind = 3, create_seq = 0 }`, upload it with `upload_seq = 0`, command `0` and command `1` use it, retire it with `retire_seq = 1`. | Reject frame; no pixels written. |
+| Duplicate ordered retire | Create sprite `{ value = 97, generation = 1, kind = 3 }`, then two retires for the same `{ value, generation, kind }`. | Reject frame; no lifetime transition. |
+| Create sequence outside frame | One command exists, create sprite `{ value = 98, generation = 1, kind = 3, create_seq = 2 }`. | Reject frame; create boundary is outside `commands.count`. |
+| Upload sequence outside frame | Create sprite `{ value = 99, generation = 1, kind = 3 }`, one command exists, upload it with `upload_seq = 2`. | Reject frame; upload boundary is outside `commands.count`. |
+| Retire sequence outside frame | Create sprite `{ value = 100, generation = 1, kind = 3 }`, one command exists, retire it with `retire_seq = 2`. | Reject frame; retire boundary is outside `commands.count`. |
 | Color sprite command color | `DRAW_SPRITE` uses `SPRITE_COLOR = 4` and `color_rgba = 0x01020304`. | Reject frame; no pixels written. |
 | Sprite command glyph span | `DRAW_SPRITE` has `glyphs.count = 1`. | Reject frame; no pixels written. |
 | Fill command resource | `FILL_RECT` has `resource.value = 1`. | Reject frame; no pixels written. |
@@ -719,6 +797,13 @@ Before protocol emission:
 - Software realizer equivalence tests pass against current full-surface output.
 - Damage tests pass for full damage, partial row spans, clamping, and wide-glyph overdamage.
 - Resource lifetime tests pass for create/update/use/retire/ack, stale IDs, and reuse after ack.
+- Ordered same-frame lifetime tests pass for `create_seq`, `upload_seq`, command-index use, and
+  `retire_seq` in the shared command-boundary domain: valid create/upload/use/retire, valid late
+  create/upload/use/retire, upload after retire rejection, upload before create rejection, command
+  use before create rejection, command use before upload rejection, command use after retire
+  rejection, retire before final command use rejection, duplicate retire rejection, missing resource
+  rejection, wrong generation rejection, `create_seq > commands.count` rejection,
+  `upload_seq > commands.count` rejection, and `retire_seq > commands.count` rejection.
 - Glyph atlas tests pass for alpha page create/update/use/retire/ack/reuse, rect allocation,
   non-overlap, dirty-rect upload bytes, whole-page upload allowance, page-full fallback,
   oversized-glyph fallback, run splitting, and all glyph negative cases above.

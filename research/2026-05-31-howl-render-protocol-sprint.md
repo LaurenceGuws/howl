@@ -1564,6 +1564,64 @@ Verification performed by rejected worker before review:
 - `git diff --check`
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
+## Phase 11 Slice: Render Protocol V0 Retire Order Contract
+
+Status: document-only worker slice implemented. No product code, headers, Zig files,
+host files, build files, tests, or protocol emission were changed.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Retire Order Contract`
+
+Allowed files:
+
+- `docs/render-protocol-v0.md`
+- this scratchpad
+
+Contract decision:
+
+- The existing ABI can express ordered retire validation without a new field.
+- `HowlRenderV0Create.create_seq`, `HowlRenderV0Upload.upload_seq`,
+  `HowlRenderV0Retire.retire_seq`, and command span indexes now share one
+  documented order domain: the zero-based command-boundary index for the owning
+  frame.
+- Commands have no sequence field because the command sequence is exactly their
+  zero-based index in `HowlRenderV0Frame.commands`.
+- `create_seq` names the first command boundary where the resource exists.
+- `upload_seq` names the first command boundary where upload bytes are visible to
+  commands.
+- `retire_seq` names the first command boundary where the resource is retired;
+  `retire_seq = commands.count` retires after the final command.
+- Sequence values greater than `commands.count` are invalid. A same-frame
+  temporary resource must satisfy `create_seq <= upload_seq`,
+  `upload_seq <= first_use_command_index`, `final_use_command_index < retire_seq`,
+  and `retire_seq <= commands.count`.
+
+Test requirements added:
+
+- Positive same-frame create/upload/use/retire with command `0` and
+  `retire_seq = 1`.
+- Positive late create/upload/use/retire with `create_seq = 1`, `upload_seq = 1`,
+  command `1`, and `retire_seq = 2`.
+- Negative upload after retire: `upload_seq >= retire_seq`.
+- Negative upload before create: `upload_seq < create_seq`.
+- Negative command use before create: `command_index < create_seq`.
+- Negative command use before upload: `command_index < upload_seq`.
+- Negative command use after retire and retire before final command use:
+  `command_index >= retire_seq`.
+- Negative duplicate retire for the same `{ value, generation, kind }`.
+- Negative create sequence outside the frame: `create_seq > commands.count`.
+- Negative upload sequence outside the frame: `upload_seq > commands.count`.
+- Negative retire sequence outside the frame: `retire_seq > commands.count`.
+- Missing resource and wrong generation remain required ordered-lifetime tests.
+
+Implementation readiness:
+
+- Ready for an ordered lifetime validation retry only if the worker implements the
+  documented command-boundary order exactly and adds the required positive and
+  negative tests first.
+- No ABI/header follow-up is required for this order contract.
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
