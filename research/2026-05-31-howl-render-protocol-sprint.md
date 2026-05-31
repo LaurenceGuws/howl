@@ -1733,6 +1733,57 @@ Verification performed:
 - `git diff --check`
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
+## Phase 14 Slice: Render Protocol V0 Prepared Emission Proof
+
+Status: rejected and reverted before commit.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Prepared Emission Proof`
+
+Rejected implementation facts:
+
+- Worker added internal `emitPrepared()` beside the synthetic fixture emitter, but
+  reviewer rejected the proof before commit.
+- Prepared emission reads `PreparedSurface.text_frame.scene.scene` consequences in
+  the source-backed pass order: clear, background, decoration, sprites, cursor.
+- Prepared sprite lookup checks current `raster_plan.outputs` first and then calls
+  the supplied session-like `atlasRaster()` fallback.
+- Prepared sprite emission trims/copies visual-resource bytes into emitter-owned
+  upload storage starting at resource-local `(0, 0)` and offsets the destination
+  command rect by sprite visual bounds.
+- Temporary sprite resources are created, uploaded, used, and retired in the
+  documented command-boundary domain.
+- The implementation did not use the real `prepared/surface.zig` `PreparedSurface`.
+  It accepted `anytype` and drove tests with a local `TestPreparedSurface`, which
+  can drift from the real owner structs.
+- The implementation did not compare against the owner oracle
+  `prepared_buffer.compose()`. It used a protocol-local `composePreparedOracle()`,
+  duplicating clear/fill/sprite/blend behavior and allowing the emitter and local
+  oracle to agree while both diverge from `prepared/buffer.zig`.
+- The implementation was reverted. No prepared emission product code is accepted.
+
+Blocker requiring prerequisite slice:
+
+- The `howl-render` `test:unit` target currently lacks FreeType/Harfbuzz
+  include/library wiring. Importing `prepared_buffer.compose()` through
+  `prepared/buffer.zig` pulls `session/text.zig` and `ft_hb/c_api.zig`, causing
+  `ft2build.h` translation failure in `zig build test:unit -- "protocol v0"`.
+  The next slice must either move exact `prepared_buffer.compose()` oracle tests
+  to a target with text backend dependencies or explicitly wire those dependencies
+  into the correct test target. Do not weaken the proof with a local oracle.
+- Partial retained-base prepared emission was not added for the same reason: the
+  exact required oracle is `prepared_buffer.compose(base_pixels, ...)`, but that
+  oracle is unavailable in the protocol unit target without broadening build
+  ownership.
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work

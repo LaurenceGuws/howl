@@ -1,6 +1,6 @@
-# Current Slice: Render Protocol V0 Prepared Emission Proof
+# Current Slice: Render Protocol V0 Prepared Oracle Test Target
 
-Owner: `howl-render` protocol V0 emission mechanics.
+Owner: `howl-render` test target wiring for protocol proof.
 
 Sprint scratchpad and contract:
 
@@ -9,11 +9,10 @@ Sprint scratchpad and contract:
 
 Purpose:
 
-- Move from synthetic V0 fixtures to real prepared-surface V0 emission proof.
-- Emit current prepared clear/fill/sprite consequences into internal V0 storage.
-- Prove V0 realization equals `prepared_buffer.compose()` byte-for-byte.
-- Keep prepared owner storage, host consumption, ABI exports, normal-path
-  replacement, and direct glyph atlas production out of this slice.
+- Add the smallest test wiring needed for V0 prepared-emission tests to import
+  `prepared_buffer.compose()` and text backend dependencies.
+- Do not implement prepared emission in this slice.
+- Do not weaken the proof with a protocol-local oracle.
 
 ## Source Order (Mandatory)
 
@@ -23,78 +22,56 @@ Read in order before editing:
 2. `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 3. `docs/render-protocol-v0.md`
 4. `research/2026-05-31-howl-render-protocol-sprint.md`
-5. `howl-render/src/protocol_v0/emit.zig`
-6. `howl-render/src/protocol_v0/realize.zig`
-7. `howl-render/src/prepared/buffer.zig`
-8. `howl-render/src/prepared/surface.zig`
-9. `howl-render/src/prepared/owner.zig`
-10. `howl-render/src/text/contract.zig`
-11. `howl-render/src/text/scene.zig`
-12. `howl-render/src/text/frame_preparer.zig`
-13. `howl-render/src/text/raster/rasterizer.zig`
-14. `howl-render/src/text/raster/cache.zig`
-15. `howl-render/src/session/text.zig`
-16. `howl-render/src/test/unit.zig`
+5. `howl-render/build.zig`
+6. `howl-render/src/test_unit.zig`
+7. `howl-render/src/test_abi.zig`
+8. `howl-render/src/test.zig`
+9. `howl-render/src/test/unit.zig`
+10. `howl-render/src/prepared/buffer.zig`
+11. `howl-render/src/session/text.zig`
+12. `howl-render/src/protocol_v0/emit.zig`
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/src/protocol_v0/emit.zig`
-- `howl-render/src/test/unit.zig` only if needed to expose tests
+- `howl-render/build.zig`
+- new test root under `howl-render/src/` if needed
+- `howl-render/src/test/unit.zig` only if moving/importing protocol proof tests is needed
 - `research/2026-05-31-howl-render-protocol-sprint.md` to record accepted facts
 
+No product code.
 No header changes.
 No C ABI export functions.
 No host code.
 No prepared owner/surface storage changes.
 No normal render path replacement.
-No direct renderer glyph atlas production.
-No performance claims.
+No prepared emission implementation.
 
 ## Required Product Shape
 
-- Add an internal `emitPrepared`-style API in `protocol_v0/emit.zig`.
-- Input is a real `PreparedSurface` and any session/cache access needed to match
-  the current oracle; output remains emitter-owned internal V0 storage.
-- Use the current prepared scene pass order exactly: clear, background,
-  decoration, sprites, cursor.
-- For sprites, match `prepared_buffer.compose()` lookup order and pixel semantics:
-  current `raster_plan.outputs` first, then session atlas cache if needed.
-- Upload sprite visual-resource bytes starting at resource-local `(0, 0)`.
-- Offset emitted sprite destination rect by visual bounds exactly as the oracle does.
-- Emit sprite create/upload/use/retire in the documented command-boundary domain.
-- Fail closed without mutating a prior accepted emitted frame.
-- Do not attach V0 storage to prepared handles in this slice.
+- Keep fast unit tests free of unnecessary FreeType/Harfbuzz dependencies unless
+  review proves wiring them there is the smallest true owner.
+- Prefer a dedicated protocol/prepared-proof test target or root that links the
+  existing FreeType/Harfbuzz dependencies already present in `build.zig`.
+- The target must be able to import `prepared/buffer.zig`, `session/text.zig`, and
+  `protocol_v0/emit.zig` without `ft2build.h` failures.
+- The target must run under root `zig build test` and have a focused command for
+  protocol proof tests.
+- Do not add local or duplicate oracles.
 
 ## Required Tests
 
-Add unit tests with exact intent equivalent to these names:
-
-- `protocol v0 emitter realizes prepared fill frame equal to full rgba oracle`
-- `protocol v0 emitter realizes prepared alpha sprite frame equal to full rgba oracle`
-- `protocol v0 emitter realizes prepared color sprite frame equal to full rgba oracle`
-- `protocol v0 emitter realizes prepared sprite visual bounds equal to full rgba oracle`
-- `protocol v0 emitter rejects missing prepared sprite without mutating accepted frame`
-
-If building a partial retained-base prepared surface is straightforward from current
-test helpers, also add:
-
-- `protocol v0 emitter realizes partial prepared frame over retained base equal to full rgba oracle`
-
-If it is not straightforward, record the exact blocker in the scratchpad instead of
-inventing test harness code.
+- Add the smallest compile/import smoke test proving the new target can import
+  `prepared/buffer.zig` and `protocol_v0/emit.zig` together.
+- If straightforward, add a zero-behavior test named
+  `protocol v0 prepared proof target imports owner oracle`.
 
 ## Required Invariants
 
-- Every emitted frame must realize through `protocol_v0.realize()` and compare to
-  `prepared_buffer.compose()` byte-for-byte in tests.
-- All V0 span and upload byte limits are checked before writing.
-- All sprite byte copies use checked bounds against raster width, height, stride,
-  color mode, visual bounds, and source byte length.
-- Missing sprite rasters reject instead of producing dangling resources.
-- Published frame spans and upload byte pointers point into emitter-owned storage.
-- Full RGBA remains oracle/fallback only.
+- Test target dependency ownership is explicit in `build.zig`.
+- No product module starts depending on test-only wiring.
+- No broad umbrella test manager or runtime layer.
 
 ## Verification
 
@@ -106,12 +83,12 @@ From `/home/home/personal/projects/howl`:
 
 From `/home/home/personal/projects/howl/howl-render`:
 
+- focused protocol proof test command added by this slice
 - `zig build test:unit -- "protocol v0"`
 
 ## Stop Conditions
 
-- Stop if prepared owner/surface storage must change.
-- Stop if a header or C ABI export function is needed.
-- Stop if host code or backend objects are needed.
-- Stop if direct glyph atlas production from shaped text is needed.
-- Stop if sprite lookup semantics cannot be matched without broadening ownership.
+- Stop if the test target requires product-code changes.
+- Stop if dependency wiring leaks into public ABI or host code.
+- Stop if the proof target cannot import `prepared_buffer.compose()` without broad
+  unrelated build changes.
