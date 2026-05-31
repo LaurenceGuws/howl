@@ -2136,6 +2136,57 @@ Smoke result:
   product slice should present no-clear fill patches only when the host terminal texture already
   contains a matching initialized previous frame.
 
+## Phase 37 Slice: V0 Retained Fill Patch Present Path
+
+Status: implementation complete; verification passed in this turn.
+
+Problem:
+
+- Phase 36 proved `btop` emits partial no-clear fill-only V0 frames.
+- Such frames are unsafe for a newly created or resized terminal texture, but safe as retained
+  patches when the previous host texture is already initialized at the same size.
+
+Promoted slice:
+
+- `current.txt` - `V0 Retained Fill Patch Present Path`
+
+Required shape:
+
+- Accept partial no-clear fill-only V0 frames only if the terminal texture existed before upload and
+  matched the frame size.
+- Reject/fallback if the texture was newly created or resized in the current turn.
+- Reject/fallback for non-fill commands, resource-bearing commands, malformed spans, or
+  out-of-bounds rectangles.
+- Preserve existing first-full-clear and full-coverage fill-only paths.
+- Log retained-patch present/fallback counts.
+
+Implementation facts:
+
+- `Context` records whether the terminal texture existed and matched the prepared frame dimensions
+  before `ensureSurface()` could allocate or resize it.
+- `protocolV0FillPatch()` accepts only no-resource in-bounds fill commands with no creates,
+  uploads, or retires.
+- `uploadProtocolV0FillPatch()` updates the existing terminal texture through the same bounded fill
+  upload path as fill-only present.
+- Fill patches are presented only when `had_matching_surface` is true; first-frame/resized cases
+  fall back to RGBA.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: bounded `btop` smoke run with
+  `timeout 22s zig build run -Doptimize=ReleaseFast -- --duration-ms 18000
+  --debug-process-accounting --debug-log-every-ms 5000 --command btop`
+
+Smoke result:
+
+- First frame: `fill_patch_frame=1`, `fill_patch_present=0`, `fill_patch_fallback=1`, proving
+  first-frame safety fallback worked.
+- Later frames were mostly unsupported retained sprite patch shapes: cumulative diagnostics reached
+  `sprite=77802`, `glyph=0`, `fill_patch_frame=1`. The next product slice should generalize the
+  retained-patch rule to sprite-capable frames with existing matching texture content.
+
 ## Phase 33 Slice: Linux Host V0 Sprite Present Path
 
 Status: worker implementation complete; verification passed in this turn.

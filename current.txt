@@ -1,11 +1,11 @@
-# Current Slice: V0 Fill Coverage Present Path
+# Current Slice: V0 Retained Fill Patch Present Path
 
-Owner: `howl-linux-host` terminal texture V0 fill materialization.
+Owner: `howl-linux-host` submit diagnostics and terminal texture V0 fill materialization.
 
 Purpose:
 
-- Present fill-only V0 frames that omit a first clear only when fills are proven to cover the full render surface.
-- Keep partial or unproven fill-only frames on RGBA fallback.
+- Present partial no-clear fill-only V0 frames as retained texture patches when prior matching texture content exists.
+- Keep first-frame, resized, or uninitialized no-clear fill patches on RGBA fallback.
 - Keep full RGBA present path as fallback/oracle.
 
 ## Exact Change Scope
@@ -20,15 +20,15 @@ No render ABI changes. No protocol changes. No full-RGBA deletion. No host ack/r
 
 ## Required Shape
 
-- Accept clear/fill-only V0 frames with a first full clear exactly as before.
-- Additionally accept fill-only V0 frames without a first clear only when bounded coverage proves every pixel is filled.
-- Reject/fallback for overlapping ambiguity, gaps, out-of-bounds rectangles, resource-bearing commands, or non-fill commands.
-- Keep coverage proof bounded by render dimensions and existing upload row limits.
-- Log coverage-present/fallback counts through existing diagnostics if useful.
+- Accept partial no-clear fill-only V0 frames only if the terminal texture existed before upload and matched the frame size.
+- Reject/fallback if the texture was newly created/resized in the current turn.
+- Reject/fallback for non-fill commands, resource-bearing commands, malformed spans, or out-of-bounds rectangles.
+- Preserve existing first-full-clear and full-coverage fill-only paths.
+- Log retained-patch present/fallback counts.
 
 ## Required Tests
 
-- Add host tests for full fill coverage acceptance and gap rejection.
+- Add host tests for partial fill patch acceptance and resource/mixed command rejection.
 - Existing host tests pass.
 
 ## Verification
@@ -47,5 +47,5 @@ From workspace root:
 
 ## Stop Conditions
 
-- Stop if coverage proof needs allocation or unbounded work.
-- Stop if coverage cannot be proved without changing render ABI.
+- Stop if retained patch safety needs render ABI changes.
+- Stop if prior texture initialization cannot be proved at the host boundary.
