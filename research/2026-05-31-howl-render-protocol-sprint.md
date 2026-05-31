@@ -1170,6 +1170,85 @@ Unresolved blockers:
   separate source-backed slice that either closes glyph atlas semantics or keeps
   V0 equivalence on sprite commands until direct glyph runs are specified.
 
+## Phase 6 Slice: Limited Software Realizer
+
+Status: accepted by reviewer after rejection fixes.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Limited Software Realizer`
+
+Accepted scope:
+
+- Added V0 kind macros to `howl-render/include/howl_render.h`.
+- Extended `howl-render/src/ffi/protocol_v0.zig` compile-time macro assertions.
+- Added internal-only `howl-render/src/protocol_v0/realize.zig`.
+- Imported realizer tests from `howl-render/src/test/unit.zig`.
+- Added narrow unit-test C ABI include/link wiring in `howl-render/build.zig` so
+  unit tests consume the shipped C ABI through `ffi.zig`.
+- No C ABI export functions.
+- No host code.
+- No protocol emission.
+- No prepared-surface deletion.
+- No normal-path replacement.
+
+Reviewer rejections fixed:
+
+- Removed duplicated local ABI structs/macros from the realizer.
+- Realizer and tests now use `const c = @import("../ffi.zig").c;` and shipped
+  `c.HowlRenderV0*` structs/macros.
+- Restored the public header to simple `stdint.h`/`stddef.h` includes.
+- Added duplicate create/retire rejection.
+- Added upload-to-retired and wrong-generation upload rejection.
+- Added checked `bytes_count_total` sum validation.
+- Rejected nonzero sprite upload rect origins for the limited visual-resource
+  realizer.
+- Added checked arithmetic for destination coordinate, pixel length, pixel index,
+  upload byte minimum, byte totals, and sprite source index.
+- Wired tests so `zig build test:unit -- "protocol v0"` exercises the protocol V0
+  tests rather than passing with zero discovered tests.
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
+## Phase 6 Slice: Render Protocol V0 Limited Software Realizer
+
+Status: implementation in progress.
+
+Accepted implementation facts:
+
+- Public V0 kind macros are now present in `howl-render/include/howl_render.h`
+  with the values documented in `docs/render-protocol-v0.md`.
+- `howl-render/src/ffi/protocol_v0.zig` asserts every public V0 kind macro at
+  compile time alongside the existing bound and layout assertions.
+- The limited realizer is internal-only in `howl-render/src/protocol_v0/realize.zig`.
+- The limited realizer supports only clear rect, fill rect, alpha sprite, and
+  color sprite commands into caller-provided RGBA bytes.
+- The realizer allocates no heap memory, adds no C ABI export, touches no host
+  code, emits no protocol frames, and does not replace the prepared-surface path.
+- Direct `DRAW_GLYPH_RUN` remains blocked. Glyph atlas alpha/color resources are
+  rejected for create, upload, and use until a later source-backed atlas slice.
+
+Reviewer rejection fixes applied:
+
+- `protocol_v0/realize.zig` now consumes `HowlRenderV0*` C structs and
+  `HOWL_RENDER_V0_*` C macros from the shipped header instead of duplicate local
+  public ABI structs/constants.
+- The limited sprite realizer rejects nonzero upload rect origins because V0
+  visual resources for this slice start at resource-local `(0, 0)`.
+- Resource validation now rejects duplicate creates, duplicate retires, uploads
+  to retired resources, wrong-generation uploads, upload byte-total mismatches,
+  and checked upload byte-total overflow.
+- Pixel length, pixel index, upload row bytes, upload byte totals, and sprite
+  source indexes use checked arithmetic and reject overflow.
+- The realizer now imports C ABI structs and macros through the existing
+  `ffi.zig` ABI owner. Destination coordinate additions for fill and sprite
+  drawing are checked before clipping.
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
