@@ -1679,6 +1679,60 @@ Verification performed:
 - `git diff --check`
 - From `howl-render`: `zig build test:unit -- "protocol v0"`
 
+## Phase 13 Slice: Render Protocol V0 Internal Emission
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Internal Emission`
+
+Accepted implementation facts:
+
+- Added internal-only `howl-render/src/protocol_v0/emit.zig`.
+- The emitter consumes explicit synthetic fixtures for clear, background fill,
+  decoration fill, sprite, and cursor fill consequences. It does not read host
+  state, backend objects, GL ids, prepared owner storage, or direct renderer glyph
+  atlas production.
+- Emitted frames use shipped `HowlRenderV0*` C ABI structs and
+  `HOWL_RENDER_V0_*` macros through `ffi.zig`.
+- Emitter storage is fixed-capacity and emitter-owned/test-owned. Tests instantiate
+  small fixed capacities to force command, upload, retire, and upload-byte
+  overflow paths.
+- Emission builds into a copied storage image and commits only after all appends
+  and byte-total checks succeed. Failed emission leaves the last accepted frame
+  and oracle realization path unchanged.
+- Command emission preserves current prepared-buffer pass order for supported
+  consequences: clear, background fill, decoration fill, sprite, cursor fill.
+- Sprite emission creates render-owned temporary sprite resources, copies upload
+  bytes into emitter-owned storage, emits uploads visible before sprite commands,
+  emits sprite commands, and retires each temporary resource at
+  `final_command_index + 1` in the documented command-boundary domain.
+- The emitter checks damage/create/upload/command/retire fixed capacities and uses
+  checked arithmetic for per-frame upload byte totals before copying bytes.
+- Full RGBA remains oracle/fallback only. These tests use synthetic fixtures and
+  do not claim real renderer glyph atlas production, host consumption, or normal
+  path replacement.
+
+Tests added:
+
+- `protocol v0 emitter realizes fill pass order equal to oracle`
+- `protocol v0 emitter realizes alpha sprite equal to oracle`
+- `protocol v0 emitter realizes color sprite equal to oracle`
+- `protocol v0 emitter emits sprite retires after final use`
+- `protocol v0 emitter rejects command bound overflow`
+- `protocol v0 emitter rejects upload bound overflow`
+- `protocol v0 emitter rejects retire bound overflow`
+- `protocol v0 emitter rejects upload byte total overflow`
+- `protocol v0 emitter leaves oracle path independent after emission failure`
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
