@@ -1622,6 +1622,63 @@ Implementation readiness:
   negative tests first.
 - No ABI/header follow-up is required for this order contract.
 
+## Phase 12 Slice: Render Protocol V0 Ordered Retire Validation
+
+Status: worker implementation complete; verification passed in this turn.
+
+Promoted slice:
+
+- `current.txt` - `Render Protocol V0 Ordered Retire Validation`
+
+Accepted implementation facts:
+
+- `howl-render/src/protocol_v0/realize.zig` now validates `create_seq`,
+  `upload_seq`, command indexes, and `retire_seq` in the documented zero-based
+  command-boundary domain.
+- Creates, uploads, and retires reject sequence values greater than
+  `commands.count`.
+- Same-frame creates are visible at command indexes `>= create_seq`; uploads are
+  visible at command indexes `>= upload_seq`; retires invalidate resources at
+  command indexes `>= retire_seq`.
+- Upload validation enforces `create_seq <= upload_seq` and, when a same-frame
+  retire exists, `upload_seq < retire_seq`.
+- Command validation enforces visible create, visible upload, and not-yet-retired
+  resource state before any caller-visible pixel mutation.
+- Duplicate retire rejection, missing-resource errors, wrong-generation errors,
+  sprite behavior, and alpha glyph atlas behavior remain distinct and covered by
+  tests.
+- Reviewer rejection fix: sprite command validation now uses the same visible
+  upload selection as drawing and proves the selected upload covers every source
+  byte the limited visual-resource sprite draw can read from resource-local
+  origin `(0, 0)`.
+- The realizer remains internal-only, allocates no heap memory, emits no protocol
+  frames, changes no host code, changes no headers, and does not replace the
+  normal prepared-surface path.
+
+Tests added:
+
+- `protocol v0 realizer accepts sprite use before same frame retire`
+- `protocol v0 realizer accepts late sprite create upload use retire`
+- `protocol v0 realizer rejects upload after same frame retire`
+- `protocol v0 realizer rejects upload before same frame create`
+- `protocol v0 realizer rejects sprite use before same frame create`
+- `protocol v0 realizer rejects sprite use before same frame upload`
+- `protocol v0 realizer rejects sprite command outside visible upload before mutation`
+- `protocol v0 realizer rejects sprite use after same frame retire`
+- `protocol v0 realizer rejects retire before final sprite use`
+- `protocol v0 realizer rejects create sequence outside frame`
+- `protocol v0 realizer rejects upload sequence outside frame`
+- `protocol v0 realizer rejects retire sequence outside frame`
+- `protocol v0 realizer accepts glyph atlas use before same frame retire`
+- `protocol v0 realizer rejects glyph atlas use after same frame retire`
+
+Verification performed:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- From `howl-render`: `zig build test:unit -- "protocol v0"`
+
 ## Sprint Phases
 
 ### Phase 0: Stabilize Current Dirty Host Work
