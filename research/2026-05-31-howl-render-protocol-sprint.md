@@ -1967,6 +1967,48 @@ Verification performed:
 - From workspace root: `zig build test`
 - From workspace root: `git diff --check`
 
+## Phase 33 Slice: Linux Host V0 Sprite Present Path
+
+Status: worker implementation complete; verification passed in this turn.
+
+Problem:
+
+- Fill-only V0 presentation is committed, but normal terminal frames still use RGBA
+  fallback because they contain sprite commands for text/glyph imagery.
+- Drawing V0 commands over the RGBA terminal texture would violate protocol order.
+
+Promoted slice:
+
+- `current.txt` - `Linux Host V0 Sprite Present Path`
+
+Required shape:
+
+- Materialize clear/fill/sprite commands into the terminal texture itself in protocol
+  order using host-owned GL state.
+- Keep glyph-run or unsupported frames on RGBA fallback.
+- Keep full RGBA as fallback/oracle.
+
+Implementation facts:
+
+- `term_texture.protocolV0SpriteFrame()` accepts clear/fill plus draw-sprite command
+  streams and rejects glyph-run commands.
+- Accepted sprite frames are materialized into the terminal texture through a host-owned
+  framebuffer bound to the terminal texture, preserving protocol command order.
+- Sprite resources remain host-owned GL textures tracked by `ProtocolV0Textures`; render
+  still exposes only protocol resource IDs.
+- Unsupported frames and GL/FBO failures fall back to full RGBA upload.
+- Diagnostics now include `sprite_present` and `sprite_fallback` counters.
+
+Verification performed:
+
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: `zig build check`
+- From workspace root: `zig build test`
+- From workspace root: `git diff --check`
+- Bounded `btop` smoke run showed `render_step_failed=0` and present continued.
+
 ## Phase 32 Slice: Linux Host V0 Fill-Only Present Path
 
 Status: worker implementation complete; verification passed in this turn.

@@ -1,41 +1,37 @@
-# Current Slice: Linux Host V0 Fill-Only Present Path
+# Current Slice: Linux Host V0 Sprite Present Path
 
-Owner: `howl-linux-host` terminal submit/present boundary.
+Owner: `howl-linux-host` terminal texture V0 command materialization.
 
 Purpose:
 
-- Add the first visible V0 present path without deleting full RGBA.
-- Use V0 directly only when a prepared frame contains clear/fill commands only.
-- Keep mixed text/sprite frames on the existing RGBA path until sprite/glyph drawing is
-  promoted.
+- Materialize V0 clear/fill/sprite commands into the terminal texture in protocol order.
+- Keep glyph-run frames and unsupported resource shapes on RGBA fallback.
+- Keep full RGBA present path as fallback/oracle.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/terminal/context.zig`
 - `howl-linux-host/src/window/term_texture.zig`
-- `howl-linux-host/src/window/present.zig` only if direct framebuffer drawing is needed
-- `howl-linux-host/src/window/layout.zig` only if present frame metadata is needed
-- `howl-linux-host/src/app/present.zig` only if present frame metadata is needed
+- `howl-linux-host/src/terminal/context.zig`
 - `research/2026-05-31-howl-render-protocol-sprint.md`
 
-No render ABI changes. No V0 protocol changes. No full-RGBA deletion. No mixed
-sprite/glyph V0 presentation.
+No render ABI changes. No protocol changes. No full-RGBA deletion. No glyph-run V0
+presentation.
 
 ## Required Shape
 
-- Detect fill-only V0 frames: commands may be clear/fill only, with no glyph spans and
-  no sprite resource use.
-- Present fill-only frames through V0 consequences instead of full RGBA upload.
-- Preserve RGBA fallback for every non-fill-only frame or V0-unavailable frame.
-- Keep backend work outside `term.mutex`.
-- Diagnostics must report fill-only present counts and fallback counts.
+- Accept V0 present frames containing clear/fill and draw-sprite commands only.
+- Reject/fallback on glyph-run commands.
+- Draw into the terminal texture, not over the already-presented RGBA texture, so command
+  ordering is preserved.
+- Use host-owned GL resources only; render ABI must not expose backend objects.
+- Fall back to full RGBA upload on any unsupported V0 shape or GL failure.
 
 ## Required Tests
 
-- Add host tests for fill-only detection if helper is introduced.
-- Existing host submit-lock tests must still pass.
+- Add host tests for sprite-capable V0 detection.
+- Existing host tests pass.
 
 ## Verification
 
@@ -53,5 +49,5 @@ From workspace root:
 
 ## Stop Conditions
 
-- Stop if visible fill-only drawing requires reordering mixed text/sprite commands.
-- Stop if implementing this requires render ABI changes.
+- Stop if sprite drawing requires render ABI changes.
+- Stop if command ordering cannot be preserved with host-owned backend state.
