@@ -1,92 +1,67 @@
-# Current Slice: Render-Surface Submit Diagnostics Owner
+# Current Slice: Display/Renderer/Window Chrome Ownership Integration
 
 Accepted scratchpad:
 
-- `research/2026-06-01-host-sprint.md`
+- `research/2026-06-01-display-renderer-sprint.md`
 
 Accepted research caches:
 
-- `research/cache-2026-06-01-host-owner-boundary-map.md`
-- `research/cache-2026-06-01-terminal-context-owner-map.md`
+- `research/cache-2026-06-01-alacritty-display-render-window-shape.md`
+- `research/cache-2026-06-01-host-texture-window-current-inventory.md`
 
 ## Purpose
 
-Extract pure render-surface submit diagnostic state, logging, and counter mutation from `terminal/context.zig` into an owner-true diagnostics file without moving trusted failure-policy or submit sequencing.
+Finish the user-started Linux host owner move so host-side render-surface consumption and presentation follow Alacritty Display/Renderer ownership, while `window_chrome/` contains only window wrapper/chrome behavior and `terminal/texture.zig` becomes namespace-only.
 
-## Orchestration Rule
+## Implementation Owner
 
-- If ownership, naming, scope, test gates, or ABI consequences are under-specified, stop and report orchestration needed.
-- Do not silently fill design gaps, broaden scope, choose new owner names, or turn an ambiguous path into implementation.
+Orchestrator direct implementation for the first cut because `howl-linux-host` starts from an uncommitted user dirty baseline. Do not hand this cut to a worker until accepted work is committed and pushed.
 
-## Allowed Files
+## Allowed Files And Paths
 
+- `howl-linux-host/build.zig`
+- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/app/present.zig`
+- `howl-linux-host/src/test/host.zig`
+- `howl-linux-host/src/test_root.zig`
+- `howl-linux-host/src/sdl_c.h`
+- `howl-linux-host/src/display.zig`
+- `howl-linux-host/src/display/`
+- `howl-linux-host/src/display/renderer/gl_c.h`
+- `howl-linux-host/src/window_chrome.zig`
+- `howl-linux-host/src/window_chrome/`
+- `howl-linux-host/src/window/` only for removing the old directory after moves.
 - `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/render_surface_submit_diagnostics.zig`
-
-No other files are in scope.
+- `howl-linux-host/src/terminal/scrollbar.zig`
+- `howl-linux-host/src/terminal/links.zig`
+- `howl-linux-host/src/terminal/render/temporary_debugging.zig`
+- `howl-linux-host/src/terminal/texture.zig`
+- `howl-linux-host/src/terminal/texture/` only for moving `gl_c.h` to `src/display/renderer/gl_c.h` and deleting moved fake owners after their contents move.
 
 ## Required Shape
 
-- Create `terminal/render_surface_submit_diagnostics.zig` as the pure diagnostics owner.
-- Move `Context.RenderSurfaceSubmitDiagnostics` from `context.zig` as `render_surface_submit_diagnostics.Diagnostics`.
-- Keep this alias in `Context`: `pub const RenderSurfaceSubmitDiagnostics = render_surface_submit_diagnostics.Diagnostics;`.
-- Move pure logging/counter helpers only. Do not move trusted failure-policy helpers or submit sequencing.
-- The diagnostics owner must not import `terminal/context.zig`, accept `*Context`, accept `anytype self`, or back-reference the god aggregate.
-- `Context.logRenderSurfaceDiagnostics()` remains a thin wrapper that computes `label = self.renderSurfaceLabel()` and passes plain inputs to diagnostics.
-- `renderSurfaceLabel()` stays in `Context`.
+- `src/display.zig` is namespace-only.
+- `src/display/display.zig` owns display/present behavior currently in `terminal/texture/present.zig`.
+- `src/display/frame_timer.zig` owns frame pacing behavior currently in `terminal/texture/pacing.zig`.
+- `src/display/renderer.zig` is namespace-only.
+- `src/display/renderer/rects.zig` owns current rect/tab-bar/scrollbar/simple textured rect drawing.
+- `src/display/renderer/render_surface.zig` owns current render-surface GL resource realization/upload behavior from `terminal/texture.zig`.
+- `src/display/renderer/gl_c.h` is the final translated GL C header path.
+- `src/window/` is renamed to `src/window_chrome/` and contains only chrome/window-wrapper/icon behavior.
+- `src/window_chrome.zig` is namespace-only.
+- `src/terminal/texture.zig` is namespace-only like `howl-render/src/libhowl_render.zig`.
+- `src/terminal/texture/texture.zig` does not survive as a fake draw/swap owner.
+- Temporary render debugging is clearly named/bannered as temporary/removable.
+- `terminal/texture/present.zig` stale relative imports of absent `draw.zig` and `layout.zig` must disappear because the file either moves to display ownership or is deleted after its contents move.
+- `build.zig` dedicated render-surface/texture test root must become `src/display/renderer/render_surface.zig`, not stale `src/window/term_texture.zig`.
 
-## Exact Diagnostics API
+## Non-Goals
 
-- `pub const Diagnostics = struct { ... }` with the current fields from `Context.RenderSurfaceSubmitDiagnostics`.
-- `pub const LogRequest = struct { submit: *Diagnostics, logged: *Diagnostics, texture: term_texture.RenderResourceTextures.Diagnostics, texture_failure_count: u64, label: []const u8 }`.
-- `pub fn recordPrepareFailure(diagnostics: *Diagnostics, reason: render_retained.PrepareFailure) void`.
-- `pub fn recordRenderSurfaceRealization(diagnostics: *Diagnostics, elapsed_us: u64) void`.
-- `pub fn recordHostUpload(diagnostics: *Diagnostics, elapsed_us: u64) void`.
-- `pub fn recordSubmitFailure(diagnostics: *Diagnostics, reason_name: []const u8, info: render_c.HowlRenderPreparedSurfaceInfo, execution: render_c.HowlRenderSubmitExecution) void`.
-- `pub fn recordEmitStatus(diagnostics: *Diagnostics, status: c_int) void`.
-- `pub fn recordResourcePlanStatus(diagnostics: *Diagnostics, status: render_retained.PreparedRenderResourcePlanStatus) void`.
-- `pub fn recordUnavailable(diagnostics: *Diagnostics, status: render_retained.PreparedRenderResourcePlanStatus) void`.
-- `pub fn recordUnsupportedShape(diagnostics: *Diagnostics, summary: term_texture.RenderSurfaceSummary) void`.
-- `pub const ShapeKind = enum { fill_only, fill_patch, sprite, sprite_patch, glyph, glyph_patch }`.
-- `pub const ShapeOutcome = enum { surface, present, failure }`.
-- `pub fn recordShape(diagnostics: *Diagnostics, kind: ShapeKind, outcome: ShapeOutcome) void`.
-- `pub fn logRenderSurfaceDiagnostics(request: LogRequest) void`.
-- `pub fn shouldLogRenderSurfaceFailure(diagnostics: *Diagnostics, texture_failure_count: u64) bool`.
-- `pub fn renderSurfaceFailureTotal(texture: term_texture.RenderResourceTextures.Diagnostics) u64`.
-- `pub fn counterDelta(current: u64, previous: u64) u64`.
-
-## Required Mapping
-
-- Every pure direct mutation of `render_surface_submit_diagnostics` in `ContextSubmitBackend.upload(...)`, `uploadRenderSurfaceCommands(...)`, `recordUnsupportedRenderSurfaceShape(...)`, and the first bucket switch in `recordRenderSurfaceUnavailable(...)` must become a diagnostics owner recording helper call.
-- `recordUnsupportedRenderSurfaceShape(...)` stays in `context.zig` as a policy-adjacent wrapper that computes `term_texture.renderSurfaceSummary(render_surface)` and calls `recordUnsupportedShape(...)`.
-- `recordRenderSurfaceUnavailable(...)` stays in `context.zig` because it enforces trusted failure policy. Its diagnostic bucket mutation must call `recordUnavailable(...)` before the policy switch.
-- Status assignment in `ContextSubmitBackend.upload(...)` must call `recordEmitStatus(...)` and `recordResourcePlanStatus(...)`.
-- Shape attempts/presents/failures in `uploadRenderSurfaceCommands(...)` must call `recordShape(...)`.
-- `ShapeKind.glyph_patch` maps to existing glyph counters: `.surface` increments `render_surface_glyph_count`, `.present` increments `render_surface_glyph_present_count`, and `.failure` increments `render_surface_glyph_failure_count`.
-
-## Must Stay In Context
-
-- `ContextSubmitBackend.upload(...)` and `uploadRenderSurfaceCommands(...)`.
-- `recordUnsupportedRenderSurfaceShape(...)`, `panicUnsupportedTrustedRenderSurfaceShape(...)`, `trustedUnsupportedRenderSurfaceShapeAction(...)`, `trustedRenderSurfaceUnavailableAction(...)`, and `recordRenderSurfaceUnavailable(...)`.
-- `submitPreparedLockedWith(...)`.
-- `SubmitPreparedResult`, `SubmitFailureReason`, and `submitFailureReason(...)`.
-- Existing trusted failure-policy tests.
-
-## Required Tests
-
-- Move/update diagnostics tests currently around `context.zig:1773-1833` to `terminal/render_surface_submit_diagnostics.zig`.
-- `render surface diagnostic failure logging is first N bounded`.
-- `render surface failure total sums exact buckets`.
-- `render surface unavailable diagnostics use render surface vocabulary`.
-- `counter delta preserves reset current`.
-- `record host upload updates count last and max`.
-- `record render surface realization updates last and max`.
-- `record prepare failure increments bounded counter`.
-- `record submit failure increments bounded counter`.
-- `record unavailable classifies every resource plan status bucket`.
-- `record shape tracks surface present and failure buckets`.
-- Keep submit sequencing tests in `context.zig`.
-- Keep trusted policy tests in `context.zig`.
+- No public C ABI changes.
+- No compatibility aliases at old `window/*` paths.
+- No renderer algorithm modernization beyond owner movement required to preserve behavior.
+- No test weakening, filtering, duplicate test roots, or opportunistic side-entry test files.
+- No generic bucket structs or Howl-only owner names while Alacritty shapes exist.
 
 ## Verification
 
@@ -99,14 +74,23 @@ From `howl-linux-host`:
 
 From workspace root:
 
-- tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars.
+- tracked `.zig` line scan reports zero lines over 190 chars.
+- `./status.sh` after accepted host/root commits shows no unpushed accepted work.
+
+## Grep Gates
+
+- No `howl-linux-host/src/window/` directory remains.
+- No imports of `window/` remain in host Zig/build files.
+- No `glBegin`, `glEnd`, `GL_QUADS`, `SDL_GL_SwapWindow`, `glGenTextures`, `glDeleteTextures`, `glTexImage2D`, `glTexSubImage2D`, `glBindFramebuffer`, `HOWL_RENDER_SURFACE`, `PresentState`, `RenderResourceTextures`, `realizeSurface`, `uploadRenderSurface`, or `ensureSurface` under `src/window_chrome/`.
+- `src/terminal/texture.zig` contains no `struct`, `extern`, `fn`, `test`, `gl`, `render_c`, or mutable owner state.
+- No stale build paths to `src/window/sdl_c.h`, `src/window/gl_c.h`, `src/window/term_texture.zig`, `src/window/pacing.zig`, or `src/window/present.zig`.
+- No stale relative imports of `draw.zig` or `layout.zig` remain under `src/terminal/texture/`.
 
 ## Stop Conditions
 
-- Stop if any file outside the allowed files must be touched.
-- Stop if the worker needs to move any trusted failure-policy helper.
-- Stop if diagnostics needs to import `terminal/context.zig`, accept `*Context`, or accept `anytype self`.
-- Stop if the split changes panic/fail-closed behavior for trusted render surfaces.
-- Stop if submit mutex unlock/relock sequencing changes.
-- Stop if private trusted-policy tests are weakened or deleted.
-- Stop if any C ABI changes appear.
+- Stop if Alacritty directly fights the user-owned C ABI/render-surface boundary.
+- Stop if implementation needs a public C ABI change.
+- Stop if `window_chrome` must own display, renderer, GL context, GL texture resources, frame pacing, present tokens, swap, or render-surface upload to make the build pass.
+- Stop if a compatibility alias at an old path becomes necessary.
+- Stop if tests would need to be weakened, filtered, duplicated, or moved to a second module entrypoint.
+- Stop if a worker would need to choose an owner name or test root.
