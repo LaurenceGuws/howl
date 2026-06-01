@@ -1,67 +1,64 @@
-# Current Slice: Host V0 Glyph Patch Presentation
+# Current Slice: V0 Alpha Atlas Entry Bound
 
-Owner: `howl-linux-host` V0 command materialization into the retained terminal texture.
+Owner: `howl-render` V0 prepared alpha atlas emission.
 
 Purpose:
 
-- Present no-full-clear V0 frames containing fill/clear commands plus `DRAW_GLYPH_RUN` commands when the host already has a matching retained terminal texture.
-- Stop classifying valid atlas-backed glyph patch sidecars as unsupported shape.
-- Stop falling back to full RGBA for valid glyph patch frames.
-- Preserve full RGBA fallback/oracle for unsafe patch frames.
+- Stop V0 sidecar emission failing at exactly 384 distinct alpha atlas entries.
+- Move `btop` / `nvim` steady state toward `rgba_fallback=0` by keeping V0 sidecars available.
+- Keep the old full-RGBA path only as temporary fallback/oracle until V0 sidecars are reliable enough to delete it explicitly.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-linux-host/src/window/term_texture.zig`
-- `howl-linux-host/src/terminal/context.zig`
+- `howl-render/src/protocol_v0/emit.zig`
+- `howl-render/src/test_protocol_proof.zig`
+- `research/2026-06-01-v0-alpha-atlas-entry-bound.md`
 
-No render changes. No ABI changes. No batching. No CPU/frame-pacing changes. No log removal. No full-RGBA deletion.
+No host changes. No ABI changes. No command batching unless proven required by tests inside this slice. No full-RGBA deletion in this slice.
 
 ## Source-Backed Problem
 
-- `protocolV0GlyphFrame()` accepts glyph frames only when command 0 is a full clear.
-- `btop` scrolling produces no-full-clear frames containing fill/clear and glyph-run commands.
-- `protocolV0FrameSummary()` counts those glyph commands, but `Context.uploadProtocolV0Commands()` records unsupported shape before any glyph patch presenter exists.
-- User logs therefore show rising `glyph` command counts but `glyph_frame=0`, `glyph_present=0`, and steady `rgba_fallback=10`.
+- User log after host glyph patch presentation shows `v0_unsupported_shape=0`; host shape rejection is no longer the blocker.
+- The same log shows steady `v0_emit_status=5`, `resource_plan_status=call_failed`, `no_sidecar_call_failed=9-10`, and `rgba_fallback=9-10`.
+- `HOWL_RENDER_V0_EMIT_RESOURCE_BOUND_OVERFLOW == 5`.
+- `howl-render/src/protocol_v0/emit.zig` uses `persistent_sprite_resources_max = 384` as the alpha atlas entry cap.
+- The log shows `create=1`, `upload=384`, `delete=0`, and `churn=0`, matching one persistent alpha atlas with exactly 384 uploaded entries.
 
 ## Required Shape
 
-- Add a glyph patch classifier in `term_texture.zig` that accepts only:
-  - `HOWL_RENDER_V0_COMMAND_CLEAR_RECT`
-  - `HOWL_RENDER_V0_COMMAND_FILL_RECT`
-  - `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN`
-- Validate fill/clear with existing fill validation.
-- Validate glyph-runs with existing glyph command validation.
-- Require at least one glyph ref.
-- Add a glyph patch upload wrapper backed by existing `uploadProtocolV0Commands()`.
-- In `context.zig`, check glyph patch after full glyph frame and before fill-only/fill-patch unsupported recording.
-- Present glyph patches only when `had_matching_surface` is true.
-- Fallback remains required when the retained surface is missing/mismatched or upload validation fails.
+- Alpha atlas-backed prepared sprite/glyph emission must not fail at 384 distinct alpha atlas entries while explicit atlas/page/resource bounds still have room.
+- Keep all bounds explicit, fixed, asserted, and tested.
+- Prefer the smallest render-owned shape: either raise/split the entry bound with static storage, or introduce a bounded multi-page alpha atlas if one page is truly exhausted.
+- Preserve exact `ResourceBoundOverflow` behavior for real exhaustion.
+- Preserve exact upload count/byte overflow behavior.
+- Preserve full RGBA fallback/oracle unchanged.
 
 ## Required Tests
 
-- `protocolV0GlyphFrame()` rejects no-full-clear glyph patch frames.
-- `protocolV0GlyphPatch()` accepts no-full-clear fill/clear plus glyph-run frames.
-- `protocolV0GlyphPatch()` rejects sprite commands and unknown commands.
-- Existing host tests pass.
+- Protocol tests prove more than 384 distinct alpha atlas entries can emit V0 successfully when atlas/page/resource bounds permit.
+- Protocol tests prove exhausting the new explicit alpha atlas bound returns `ResourceBoundOverflow` / status 5.
+- Existing protocol oracle/proof tests continue to compare V0 realization against full RGBA for prepared alpha atlas draws.
+- Existing render tests pass.
 
 ## Verification
 
-From `/home/home/personal/projects/howl/howl-linux-host`:
+From `/home/home/personal/projects/howl/howl-render`:
 
-- `zig build test --summary all`
-- `zig build -Doptimize=ReleaseFast`
+- `zig build test:unit -- "protocol v0"`
+- `zig build test:protocol-proof -- "protocol v0"`
+- `zig build test`
 - `git diff --check`
 
-From workspace root if submodule pointer or planning files are staged:
+From workspace root:
 
 - `zig build check`
 - `zig build test`
 - `git diff --check`
 
-Smoke command policy:
+Smoke after acceptance:
 
 - Build separately.
 - Run GUI with Bash `timeout` only.
-- Do not use `--duration-ms`.
+- Expected user-log movement: `v0_emit_status` stops being `5`, `no_sidecar_call_failed` drops, `rgba_fallback=9-10` drops.
