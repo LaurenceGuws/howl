@@ -146,32 +146,76 @@ Stop conditions:
 
 ## Cut 2B: Deterministic Resize Success State-Machine Test Harness
 
-Owner: planning only. Not promotable until Cut 2A is accepted and a fresh reviewer-accepted `current.txt` names exact host files, exact test entrypoint, and exact fakes.
+Owner: worker only after a fresh reviewer-accepted `current.txt` names this exact host test slice.
 
-Purpose: add one deterministic test path proving resize -> geometry sync -> prepare -> render surface token -> host upload decision -> submit -> present -> ack.
+Purpose: add one deterministic host-level success-path test proving resize -> geometry sync -> prepare -> render surface token -> host upload decision -> submit -> present -> ack. This is the next planned resize harness cut; it is not a new research branch and it must not authorize opportunistic presentation/runtime redesign.
 
-Required future proof path:
+Allowed files for the promotable test slice:
 
-- Start from a clean terminal/render state with known geometry.
-- Apply a resize that changes render surface dimensions.
-- Commit geometry exactly once.
-- Observe a non-zero geometry epoch.
-- Verify render surface token and prepared info agree.
-- Verify host surface dimensions equal prepared/render-surface dimensions.
-- Verify upload succeeds only for a full/retained-safe surface after texture-size invalidation.
-- Submit and record a non-zero snapshot.
-- Submit display present for `.terminal_frame`.
-- Verify present pending blocks a second submit.
-- Verify wrong present token does not ack.
-- Verify matching present token acks exactly the submitted snapshot.
-- Verify pending state clears after ack.
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/test/host.zig` only if the existing terminal context test root fails to import the owner-local test.
+- `howl-linux-host/src/test_root.zig` only if the existing terminal context test root fails to import the owner-local test.
 
-Future stop conditions:
+Exact test entrypoint:
+
+- Build wiring root: `howl-linux-host/src/test_root.zig`, through `terminalContextTestModule(...)` in `howl-linux-host/build.zig`.
+- Owner-local test location: `howl-linux-host/src/terminal/context.zig`.
+- Verification command from `howl-linux-host`: `zig build test:unit --summary all` for this cut's narrow gate, then full host gates before acceptance.
+- No new test root, no side-entry test file, no build-step split.
+
+Required fake shape:
+
+- Use a single owner-local test harness in `terminal/context.zig`, near existing submit/present tests.
+- Reuse or extend the existing owner-local fake seams already present in `terminal/context.zig`: `TestSubmitContext`, `TestSubmitTerm`, `TestSubmitRender`, and `submitPreparedLockedWith(...)`.
+- The fake terminal/render object must record ordered transitions as explicit fields or a fixed-size operation array with bounded count. It must not be a generic `Context`, `State`, `Options`, `Diagnostics`, or `Manager` bucket.
+- The fake backend must model the host upload decision at the submit boundary: it receives a prepared upload, records whether the previous host surface matched, records prepared/render-surface dimensions, returns a host surface with matching dimensions on success, and refuses to submit if upload fails.
+- The fake present owner must use `app/present.zig` semantics: submit `.terminal_frame`, store one pending token, reject wrong completion, accept matching completion exactly once.
+- Do not fake SDL events or GL. The test begins after host-owned resize intent has reached `Context.resize(...)`/terminal render orchestration, matching the existing planned state-machine harness scope.
+
+Required success-path proof:
+
+- Start from a clean terminal/render state with known geometry and no present pending.
+- Apply one resize that changes render surface dimensions.
+- Commit geometry once through the same terminal/render owner path that production uses for render turns; do not call `howl-render` internal Zig modules from host tests.
+- Observe a non-zero geometry epoch after geometry sync.
+- Prepare one surface for the new geometry.
+- Assert prepared info has non-zero `snapshot_seq`, non-zero `dirty_epoch`/surface sequence where applicable, and `geometry_epoch` equal to the host retained geometry epoch.
+- Assert the emitted render surface token has `snapshot_seq`, `surface_seq`, and `geometry_epoch` equal to the prepared info.
+- Assert the render surface dimensions and host surface dimensions equal the resized render dimensions.
+- Assert the first uploaded surface after host texture-size invalidation is full/retained-safe, or the host upload decision rejects it before render submit. For this success-path cut, the accepted path must be full/retained-safe and must submit.
+- Submit once and assert the submitted snapshot is non-zero and equals the prepared/render-surface snapshot.
+- Submit display present for `.terminal_frame`, record exactly one host-owned present token, and mark retained present pending.
+- Assert a second submit while present is pending is blocked.
+- Drain a wrong present token and assert no ack, no snapshot completion, and pending state remains.
+- Drain the matching present token and assert exactly the submitted snapshot is acked once and pending state clears.
+
+Required assertions:
+
+- Geometry epoch is a state-machine transition shared by host retained state, prepared info, render surface token, and submit result.
+- Host upload success is the only path that allows render submit to advance retained state.
+- Host surface dimensions are truth after upload; stale dimensions may not be presented as terminal success.
+- Present pending blocks submit until matching host token completion.
+- Wrong host present token cannot ack or clear terminal retained state.
+- Matching host present token acks exactly once.
+
+Non-goals for this cut:
+
+- Do not implement Cut 3 failure cases.
+- Do not change product behavior unless the worker hits a stop condition and returns the exact missing invariant.
+- Do not redesign `app/present.zig`, `display/display.zig`, event loop pacing, SDL handling, GL texture ownership, or render ABI semantics.
+- Do not add public C ABI.
+- Do not add diagnostics-only logging or temporary debugging as proof.
+- Do not import internal `howl-render` Zig modules from the host test; use the shipped C ABI and existing host owner seams.
+
+Stop conditions:
 
 - Stop if the harness needs a new runtime/controller/manager abstraction.
-- Stop if deterministic tests require host imports of internal `howl-render` Zig modules outside existing module ownership.
+- Stop if deterministic tests require host imports of internal `howl-render` Zig modules outside the C ABI boundary.
 - Stop if the test can only prove isolated helpers rather than the resize-to-present state machine.
 - Stop if the test needs a duplicate root or weakened gates.
+- Stop if the existing fake seams in `terminal/context.zig` cannot honestly drive geometry -> prepare -> upload -> submit -> present -> ack without product behavior changes.
+- Stop if the success path exposes that current behavior fails before present ack; return the exact transition, observed state, and smallest owner where the structural fix belongs.
+- Stop if `resource_epoch` must become meaningful before the success path can be honestly asserted; record whether it is intentionally zero/ignored or requires a later ABI/product slice.
 
 ## Cut 3: Resize Stale/Failure State-Machine Tests
 
@@ -238,6 +282,6 @@ Reviewer gates:
 - Research cache accepted: yes.
 - Reviewer cache accepted: yes.
 - Scratchpad reviewer status: accepted.
-- Current active cut: Cut 2A, render-side resize retained-safety proof.
+- Current active cut: Cut 2B, deterministic resize success state-machine test harness planning.
 - Cut 2A implementation status: accepted and pushed in `howl-render` commit `300b4de`.
 - Verification status: passed: `zig build check`, `zig build test --summary all`, `zig build -Doptimize=ReleaseFast`, `git diff --check`, changed-file line scan.

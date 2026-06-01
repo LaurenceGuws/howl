@@ -1,4 +1,4 @@
-# Current Slice: Render-Side Resize Retained-Safety Behavior And Proof
+# Current Slice: Deterministic Resize Success State-Machine Test Harness
 
 Accepted scratchpad:
 
@@ -11,65 +11,94 @@ Accepted research caches:
 
 Accepted reviewer finding:
 
-- The test-only Cut 2A slice is blocked because `PrepareRequests.acceptSource(...)` receives `geometry_epoch`, but `classify(...)` does not, so identical publication source can return `.none` before geometry can affect retained safety.
+- Cut 2B in the sprint scratchpad is worker-ready and remains inside the planned resize state-machine harness. It must not widen into presentation/runtime redesign, new research, Cut 3 failure cases, or behavior fixes before proof.
+
+User enforcement:
+
+- "no widen any scope"
+- "I expect the resize test harness to resolve this by design, by slow, structural fixes, not another opportunistic vision drift"
 
 ## Purpose
 
-Make `PrepareRequests` account for geometry epoch changes before identical VT source content can be dropped as `.none`, and prove the behavior with an owner-local test. This remains render-side only; no host resize/upload/present harness is authorized.
+Add one deterministic host-level success-path test proving resize -> geometry sync -> prepare -> render surface token -> host upload decision -> submit -> present -> ack.
+
+This is a test-harness proof slice only. If current behavior cannot satisfy the success path, stop and return the exact failing transition and smallest true owner for the next structural fix.
 
 ## Allowed Files
 
-- `howl-render/src/source/prepare_request.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/test/host.zig` only if the existing terminal context test root fails to import the owner-local test.
+- `howl-linux-host/src/test_root.zig` only if the existing terminal context test root fails to import the owner-local test.
 
 ## Exact Test Entrypoint
 
-- Curated root: `howl-render/src/test.zig`
-- Verification command from `howl-render`: `zig build test --summary all`
-- Owner-local tests may be added to `howl-render/src/source/prepare_request.zig` only because they are reached through `src/test.zig`.
+- Build wiring root: `howl-linux-host/src/test_root.zig`, through `terminalContextTestModule(...)` in `howl-linux-host/build.zig`.
+- Owner-local test location: `howl-linux-host/src/terminal/context.zig`.
+- Narrow worker gate from `howl-linux-host`: `zig build test:unit --summary all`.
+- Full host gates before acceptance: `zig build check`, `zig build test --summary all`, `zig build -Doptimize=ReleaseFast`, `git diff --check`.
+- No new test root, side-entry test file, or build-step split.
 
-## Required Behavior
+## Required Fake Shape
 
-- `PrepareRequests` must classify geometry epoch changes before `samePublicationSource(...)` can return `.none`.
-- If geometry changes and there is no submitted retained base for the same geometry and required base snapshot, queue a full retained-safe prepare request.
-- The resulting request must have `token.geometry_epoch` equal to the new geometry epoch.
-- The resulting request must have `token.damage_kind == .full` and `token.damage_base_seq == 0`.
-- The resulting request must have `allow_retained_reuse == false` when geometry invalidates retained base.
-- Same-geometry identical source dedupe remains allowed after the geometry-safe active source already represents the same snapshot/content at that geometry.
+- Use a single owner-local test harness in `terminal/context.zig`, near existing submit/present tests.
+- Reuse or extend existing owner-local fake seams already present in `terminal/context.zig`: `TestSubmitContext`, `TestSubmitTerm`, `TestSubmitRender`, and `submitPreparedLockedWith(...)`.
+- The fake terminal/render object must record ordered transitions as explicit fields or a fixed-size operation array with bounded count.
+- Do not add a generic `Context`, `State`, `Options`, `Diagnostics`, or `Manager` bucket.
+- The fake backend must model the host upload decision at the submit boundary: it receives a prepared upload, records whether the previous host surface matched, records prepared/render-surface dimensions, returns a host surface with matching dimensions on success, and refuses to submit if upload fails.
+- The fake present owner must use `app/present.zig` semantics: submit `.terminal_frame`, store one pending token, reject wrong completion, accept matching completion exactly once.
+- Do not fake SDL events or GL. The test begins after host-owned resize intent has reached `Context.resize(...)`/terminal render orchestration.
 
-## Required Test
+## Required Test Proof
 
-- Add an owner-local test in `howl-render/src/source/prepare_request.zig`.
-- Use existing source test helpers or add the smallest owner-local helper needed to build `PublicationSource` values.
-- Drive `PrepareRequests.acceptSource(...)` and `PrepareRequests.takePrepareRequest(...)`; do not test only `classify(...)` directly.
-- Construct a prior published source at geometry epoch `1`.
-- Construct a new source with the same cells/dirty metadata at geometry epoch `2`.
-- Assert the geometry-changed publication is queued even if source content is otherwise equal.
-- Assert `takePrepareRequest(2, submitted_token)` returns a request with `token.geometry_epoch == 2`.
-- Assert the request is retained-safe for geometry change: `token.damage_kind == .full`, `token.damage_base_seq == 0`, and `allow_retained_reuse == false`.
-- Assert a second identical source at geometry epoch `2`, after the full geometry-safe request has been taken and no newer submitted token exists, returns `published == false`, `queued == false`, and `damage_kind == .none` only if the active source already represents the same snapshot/content at geometry epoch `2`.
+- Start from a clean terminal/render state with known geometry and no present pending.
+- Apply one resize that changes render surface dimensions.
+- Commit geometry once through the same terminal/render owner path that production uses for render turns; do not call `howl-render` internal Zig modules from host tests.
+- Observe a non-zero geometry epoch after geometry sync.
+- Prepare one surface for the new geometry.
+- Assert prepared info has non-zero `snapshot_seq`, non-zero `dirty_epoch`/surface sequence where applicable, and `geometry_epoch` equal to the host retained geometry epoch.
+- Assert the emitted render surface token has `snapshot_seq`, `surface_seq`, and `geometry_epoch` equal to the prepared info.
+- Assert the render surface dimensions and host surface dimensions equal the resized render dimensions.
+- Assert the first uploaded surface after host texture-size invalidation is full/retained-safe, or the host upload decision rejects it before render submit. For this success-path cut, the accepted path must be full/retained-safe and must submit.
+- Submit once and assert the submitted snapshot is non-zero and equals the prepared/render-surface snapshot.
+- Submit display present for `.terminal_frame`, record exactly one host-owned present token, and mark retained present pending.
+- Assert a second submit while present is pending is blocked.
+- Drain a wrong present token and assert no ack, no snapshot completion, and pending state remains.
+- Drain the matching present token and assert exactly the submitted snapshot is acked once and pending state clears.
+
+## Required Assertions
+
+- Geometry epoch is a state-machine transition shared by host retained state, prepared info, render surface token, and submit result.
+- Host upload success is the only path that allows render submit to advance retained state.
+- Host surface dimensions are truth after upload; stale dimensions may not be presented as terminal success.
+- Present pending blocks submit until matching host token completion.
+- Wrong host present token cannot ack or clear terminal retained state.
+- Matching host present token acks exactly once.
 
 ## Non-Goals
 
-- Do not touch host files.
-- Do not drive `Context.renderTurn()`, host GL upload, or present ack.
-- Do not add a new test root.
-- Do not introduce runtime/controller/manager abstractions.
-- Do not change public C ABI.
-- Do not define broader `resource_epoch` semantics.
+- Do not implement Cut 3 failure cases.
+- Do not change product behavior in this slice.
+- Do not redesign `app/present.zig`, `display/display.zig`, event loop pacing, SDL handling, GL texture ownership, or render ABI semantics.
+- Do not add public C ABI.
+- Do not add diagnostics-only logging or temporary debugging as proof.
+- Do not import internal `howl-render` Zig modules from the host test; use shipped C ABI and existing host owner seams.
+- Do not create a new research cache.
 
 ## Stop Conditions
 
-- Stop if the fix requires files outside `howl-render/src/source/prepare_request.zig`.
-- Stop if the fix requires storing new cross-owner state outside `PrepareRequests`.
-- Stop if the fix requires public C ABI changes.
-- Stop if the test needs a duplicate test root or build wiring change.
-- Stop if `resource_epoch` must become meaningful to prove this slice.
-- Stop if the test can only be written by importing host internals or bypassing the C ABI boundary.
+- Stop if the harness needs a new runtime/controller/manager abstraction.
+- Stop if deterministic tests require host imports of internal `howl-render` Zig modules outside the C ABI boundary.
+- Stop if the test can only prove isolated helpers rather than the resize-to-present state machine.
+- Stop if the test needs a duplicate root or weakened gates.
+- Stop if existing fake seams in `terminal/context.zig` cannot honestly drive geometry -> prepare -> upload -> submit -> present -> ack without product behavior changes.
+- Stop if the success path exposes that current behavior fails before present ack; return the exact transition, observed state, and smallest owner where the structural fix belongs.
+- Stop if `resource_epoch` must become meaningful before the success path can be honestly asserted; record whether it is intentionally zero/ignored or requires a later ABI/product slice.
 
 ## Verification
 
-From `howl-render`:
+From `howl-linux-host`:
 
+- `zig build test:unit --summary all`
 - `zig build check`
 - `zig build test --summary all`
 - `zig build -Doptimize=ReleaseFast`
