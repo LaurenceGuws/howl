@@ -115,6 +115,13 @@ Required TigerBeetle readings before non-trivial work:
 - No `types.zig` files anywhere in Howl. `types` is not ownership; split symbols
   into their smallest true owner files.
 
+## Zig Formatting
+
+- Function signatures stay on one line. Do not use one-parameter-per-line
+  multiline signatures as a house style.
+- If a signature was manually collapsed and `zig fmt` still splits it, accept the
+  formatter result. Otherwise, collapse multiline signatures before committing.
+
 ## Runtime Rules
 
 - The program runs at its own pace.
