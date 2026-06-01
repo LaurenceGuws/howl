@@ -335,7 +335,8 @@ Reviewer gates:
 - Research cache accepted: yes.
 - Reviewer cache accepted: yes.
 - Scratchpad reviewer status: accepted.
-- Current active cut: Cut 2B, deterministic resize success state-machine test harness.
+- Current active cut: Cut 3A, resize after prepare before submit proof.
 - Cut 2A implementation status: accepted and pushed in `howl-render` commit `300b4de`.
 - Cut 2B implementation status: accepted and pushed in `howl-linux-host` commit `09b1651`.
-- Verification status: passed: `zig build test:unit --summary all`, `zig build check`, `zig build test --summary all`, `zig build -Doptimize=ReleaseFast`, `git diff --check`, changed-file line scan.
+- Cut 3A implementation status: accepted and pushed in `howl-render` commit `3b46198`.
+- Verification status: passed: `zig build check`, `zig build test --summary all`, `zig build -Doptimize=ReleaseFast`, `git diff --check`, changed-file line scan.
