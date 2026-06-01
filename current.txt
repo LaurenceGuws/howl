@@ -1,4 +1,4 @@
-# Current Slice: Render-Side Resize Retained-Safety Proof
+# Current Slice: Render-Side Resize Retained-Safety Behavior And Proof
 
 Accepted scratchpad:
 
@@ -9,9 +9,13 @@ Accepted research caches:
 - `research/cache-2026-06-01-resize-flow-alacritty.md`
 - `research/cache-2026-06-01-resize-test-invariants-review.md`
 
+Accepted reviewer finding:
+
+- The test-only Cut 2A slice is blocked because `PrepareRequests.acceptSource(...)` receives `geometry_epoch`, but `classify(...)` does not, so identical publication source can return `.none` before geometry can affect retained safety.
+
 ## Purpose
 
-Add a deterministic render-side test proving that a geometry epoch change cannot be dropped as `.none` solely because VT publication source content is otherwise identical. This is the first proof slice before any host resize/upload/present harness or behavior fix.
+Make `PrepareRequests` account for geometry epoch changes before identical VT source content can be dropped as `.none`, and prove the behavior with an owner-local test. This remains render-side only; no host resize/upload/present harness is authorized.
 
 ## Allowed Files
 
@@ -23,7 +27,16 @@ Add a deterministic render-side test proving that a geometry epoch change cannot
 - Verification command from `howl-render`: `zig build test --summary all`
 - Owner-local tests may be added to `howl-render/src/source/prepare_request.zig` only because they are reached through `src/test.zig`.
 
-## Required Shape
+## Required Behavior
+
+- `PrepareRequests` must classify geometry epoch changes before `samePublicationSource(...)` can return `.none`.
+- If geometry changes and there is no submitted retained base for the same geometry and required base snapshot, queue a full retained-safe prepare request.
+- The resulting request must have `token.geometry_epoch` equal to the new geometry epoch.
+- The resulting request must have `token.damage_kind == .full` and `token.damage_base_seq == 0`.
+- The resulting request must have `allow_retained_reuse == false` when geometry invalidates retained base.
+- Same-geometry identical source dedupe remains allowed after the geometry-safe active source already represents the same snapshot/content at that geometry.
+
+## Required Test
 
 - Add an owner-local test in `howl-render/src/source/prepare_request.zig`.
 - Use existing source test helpers or add the smallest owner-local helper needed to build `PublicationSource` values.
@@ -32,23 +45,24 @@ Add a deterministic render-side test proving that a geometry epoch change cannot
 - Construct a new source with the same cells/dirty metadata at geometry epoch `2`.
 - Assert the geometry-changed publication is queued even if source content is otherwise equal.
 - Assert `takePrepareRequest(2, submitted_token)` returns a request with `token.geometry_epoch == 2`.
-- Assert the request is retained-safe for geometry change: `token.damage_kind == .full`, `token.damage_base_seq == 0`, and `allow_retained_reuse == false` when geometry invalidates retained base.
+- Assert the request is retained-safe for geometry change: `token.damage_kind == .full`, `token.damage_base_seq == 0`, and `allow_retained_reuse == false`.
 - Assert a second identical source at geometry epoch `2`, after the full geometry-safe request has been taken and no newer submitted token exists, returns `published == false`, `queued == false`, and `damage_kind == .none` only if the active source already represents the same snapshot/content at geometry epoch `2`.
 
 ## Non-Goals
 
-- Do not modify product behavior in this slice unless the existing code cannot express the required invariant; if so, stop and report the exact failing invariant.
 - Do not touch host files.
 - Do not drive `Context.renderTurn()`, host GL upload, or present ack.
 - Do not add a new test root.
 - Do not introduce runtime/controller/manager abstractions.
 - Do not change public C ABI.
+- Do not define broader `resource_epoch` semantics.
 
 ## Stop Conditions
 
-- Stop if the test requires files outside `howl-render/src/source/prepare_request.zig`.
+- Stop if the fix requires files outside `howl-render/src/source/prepare_request.zig`.
+- Stop if the fix requires storing new cross-owner state outside `PrepareRequests`.
+- Stop if the fix requires public C ABI changes.
 - Stop if the test needs a duplicate test root or build wiring change.
-- Stop if the required invariant contradicts current `PrepareRequests` ownership and needs design review.
 - Stop if `resource_epoch` must become meaningful to prove this slice.
 - Stop if the test can only be written by importing host internals or bypassing the C ABI boundary.
 
