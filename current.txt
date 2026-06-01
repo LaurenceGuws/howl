@@ -1,6 +1,6 @@
-# Current Slice: Delete Render Protocol-Proof Build Bucket
+# Current Stage: Research Render V0 Source Owner Paths
 
-Owner: `howl-render` test build ownership only.
+Owner: workspace root research workflow.
 
 Source scratchpad:
 
@@ -10,64 +10,40 @@ Accepted research cache:
 
 - `research/cache-2026-06-01-render-api-language-deletion.md`
 
-Previous slice:
+Completed slices:
 
-- `howl-render` `aa1749d` moved render API V0 oracle/equivalence tests under
-  unfiltered `zig build test:unit`.
+- `howl-render` `aa1749d` moved V0 oracle/equivalence tests under unit.
+- `howl-render` `6bf6388` deleted the separate protocol-proof build/test bucket.
 
 ## Purpose
 
-Delete the separate `test:protocol-proof` build/test bucket now that its proof
-tests are owned and discovered by the unit gate.
+Produce the missing evidence needed to promote Slice 3: deleting
+`howl-render/src/protocol_v0/` as an internal source bucket without guessing
+replacement owner paths.
 
-## Allowed Files
+No product code is authorized by this stage.
 
-- `howl-render/build.zig`
-- `howl-render/src/test_protocol_proof.zig`
+## Research Questions
 
-No other files are in scope.
+- What exact owner path should replace `howl-render/src/protocol_v0/emit.zig`?
+- What exact owner path should replace `howl-render/src/protocol_v0/realize.zig`?
+- Should `howl-render/src/ffi/protocol_v0.zig` move in the same slice or remain
+  as ABI-layout owner while public C ABI names are preserved?
+- Which imports/tests must change for the source-bucket deletion slice?
+- What grep gates prove `src/protocol_v0/` is gone while public ABI vocabulary is
+  preserved?
 
-## Required Shape
+## Required Output
 
-- Delete `howl-render/src/test_protocol_proof.zig`.
-- Remove `protocol_proof_mod`.
-- Remove `protocol_proof_tests` and `run_protocol_proof_tests`.
-- Remove `test:protocol-proof` and `test:protocol-proof:build` steps.
-- Remove dependencies from `test:build` and `test` on the deleted proof bucket.
-- Keep `zig build test` aggregating `test:unit` and `test:abi`.
-- Keep `zig build test:build` aggregating `test:unit:build` and
-  `test:abi:build`.
-- Do not remove font/options/FreeType/HarfBuzz wiring from `unit_mod`; the moved
-  oracle tests require it.
+- A focused research cache with exact source paths, line-backed owner evidence,
+  proposed replacement paths, risks, stop conditions, and readiness judgment.
+- Reviewer acceptance before the scratchpad is updated.
+- No worker seeding until `current.txt` is replaced with one exact
+  implementation slice.
 
-## Non-Goals
+## Hard Stops
 
-- Do not move source owner files.
-- Do not rename public ABI symbols or exported functions.
-- Do not edit host code.
-- Do not edit docs.
-- Do not rename internal `protocol_v0` source files in this slice.
-
-## Stop Conditions
-
-- Stop if any proof/oracle test becomes undiscoverable from unfiltered
-  `zig build test:unit`.
-- Stop if deleting the build bucket requires ABI or host changes.
-- Stop if `test:protocol-proof` or `protocol_proof` remains in active render
-  build/test source after this slice.
-
-## Verification
-
-From `/home/home/personal/projects/howl/howl-render`:
-
-- `zig build test:unit`
-- `zig build test:abi`
-- `zig build test`
-- `zig build test:build`
-- `zig build check`
-- `git diff --check`
-
-Grep gate from `/home/home/personal/projects/howl/howl-render`:
-
-- `rg 'test:protocol-proof|protocol_proof|test_protocol_proof' build.zig src`
-  prints nothing.
+- Stop if owner paths are invented from preference rather than source-backed
+  responsibility.
+- Stop if public ABI names are renamed as part of internal source cleanup.
+- Stop if host behavior changes enter the slice.

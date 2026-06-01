@@ -2,8 +2,8 @@
 
 Owner: workspace root.
 
-Status: Slice 1 accepted and committed. Slice 2 may be promoted to
-`current.txt`.
+Status: Slice 1 and Slice 2 accepted and committed. Slice 3 is blocked on exact
+owner-path research/refinement before promotion.
 
 Research cache:
 
@@ -160,6 +160,8 @@ Stop conditions:
 
 ### Slice 2: Delete Separate Protocol-Proof Build Bucket
 
+Status: accepted and committed in `howl-render` `6bf6388`.
+
 Goal:
 
 - Remove `protocol_proof_mod`, `test:protocol-proof`, and
@@ -189,12 +191,28 @@ Verification:
 - Grep gate: `rg 'test:protocol-proof|protocol_proof|test_protocol_proof' howl-render/build.zig howl-render/src`
   prints nothing, except historical comments are not allowed.
 
+Accepted verification for `6bf6388`:
+
+- From `howl-render`: `zig build test:unit`
+- From `howl-render`: `zig build test:abi`
+- From `howl-render`: `zig build test`
+- From `howl-render`: `zig build test:build`
+- From `howl-render`: `zig build check`
+- From `howl-render`: `git diff --check`
+- From `howl-render`: `rg 'test:protocol-proof|protocol_proof|test_protocol_proof' build.zig src`
+  printed nothing.
+
 Stop conditions:
 
 - Stop if any proof test becomes undiscoverable from `zig build test:unit`.
 - Stop if deleting the build step requires ABI or host changes.
 
 ### Slice 3: Rename Render Internal Source Bucket To True Owners
+
+Status: blocked. The accepted research cache identifies owner roles but does not
+choose final replacement paths/names. Do not promote this slice until a focused
+research cache or scratchpad refinement names exact owner paths and a reviewer
+accepts them.
 
 Goal:
 
