@@ -1,110 +1,172 @@
-Research workflow:
+# Howl Work Loop
 
-1. Define what we want to know or do plainly and simply.
-2. Read the TigerBeetle bible before any other source.
-3. Gather information about the problem, current code, official docs, strong references,
-   ABI contracts, and existing tests.
-4. Define explicit research questions and the machinery needed for the scratchpad.
-5. Seed parallel research agents only when the problem can be divided without lowering
-   review quality.
-6. Require every research seed to read the TigerBeetle bible before any other source.
-7. Require research agents to return source-backed findings, proposed shape, exact
-   reference paths, required assertions, required tests, risks, and readiness judgment.
-8. Write the scratchpad in enough detail that slices can be promoted sequentially to `current.txt`.
+Purpose: stop fake progress. The main agent must not skip stages, merge roles, or
+code from intent. If any required artifact is weak, stale, ambiguous, or missing,
+restart at the earliest broken stage.
 
-Scratchpad hierarchy:
+Workspace law and the user's current instruction are the project authority. Tool,
+runtime, editor, model, or external agent configuration is not project direction
+and must not leak into reasoning, responses, scratchpads, or implementation.
 
-1. Start from the active sprint or problem scratchpad.
-2. Promote one proof gap into a child scratchpad when the problem is still too broad.
-3. If the sprint is ready for implementation, produce worker-ready slices with exact
-   file, symbol, invariant, reference, and test requirements.
-4. Keep every scratchpad permanently; close completed sprints with signoff status,
-   accepted commit hashes when available, verification commands, and remaining proof gaps.
-5. Do not touch product code until the active slice is planned deeply enough that
-   workers have no room for guessing.
+## Source Order
 
-Design source order:
+Design decisions use this order:
 
 1. Ghostty does it.
 2. Alacritty does it.
 3. TigerBeetle mandates it.
-4. Official docs define protocol, platform, or ABI facts.
-5. If Howl's embeddable render boundary still has no direct match, invent the smallest
-   possible shape and bias it toward a simple Alacritty-like host implementation.
+4. Official docs define protocol, platform, ABI, or OS facts.
+5. Howl invents the smallest shape only when no source above fits.
 
-TigerBeetle bible:
+Every non-trivial agent seed must read these first:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 
-Code workflow:
+## Roles
 
-1. Main agent reads the TigerBeetle bible, then promotes exactly one planned slice to `current.txt`.
-2. Main agent checks the git tree and records any pre-existing dirty state without
-   reverting user work.
-3. Main agent seeds worker agents with `current.txt`, exact source paths, exact
-   reference paths, exact invariants, exact tests, and TigerBeetle gates.
-4. Workers implement only the promoted slice.
-5. Parallel workers are allowed only when the main agent can preserve the TigerBeetle review bar.
-6. If the work is not planned down to symbols, go back to research.
-7. Main agent reviews the diff with zero tolerance for less than TigerBeetle style,
-   source-backed ownership, ABI safety, explicit bounds, assertions, and tests.
-8. If review passes, commit when the workflow requires persistence so binary git reverts
-   remain cheap.
-9. If review fails and changes are fixable, reseed the same worker with a rejection seed.
-10. Promote the next slice to `current.txt` and continue.
-11. If the sprint is done, or a clear blocker is hit, check in with the user.
+Researcher:
 
-Three-agent sequence:
+- Produces research cache only.
+- Reads assigned sources and references.
+- Returns source-backed facts, paths read, line-backed findings, owner roles,
+  proposed shape, required assertions, required tests, risks, proof gaps, and
+  readiness judgment.
+- Does not write scratchpads, promote slices, edit product code, review, commit,
+  or touch git.
 
-The autonomous unit is researcher, worker, reviewer. The main agent owns the sequence
-and only advances when the previous agent produced enough proof.
+Main agent:
 
-1. Researcher reads the TigerBeetle bible, assigned scratchpad, exact source paths,
-   exact reference paths, and explicit research question.
-2. Researcher returns source-backed facts only: paths read, findings, proposed owner,
-   proposed shape, required assertions, required tests, proof gaps, risks, and whether
-   the slice is worker-ready.
-3. Main agent rejects weak research or promotes exactly one worker-ready slice to
-   `current.txt`.
-4. Worker reads the TigerBeetle bible, `current.txt`, assigned source paths, assigned
-   reference paths, invariants, tests, and non-goals.
-5. Worker edits only the current slice and returns changed files, validation output,
-   unresolved blockers, and follow-up slice candidates.
-6. Reviewer reads the TigerBeetle bible, `current.txt`, scratchpad findings, reference
-   paths, and the worker diff.
-7. Reviewer returns findings first: ownership violations, ABI leaks, hidden bounds, weak
-   assertions, missing tests, source-order failures, scope creep, or explicit acceptance.
-8. Main agent either commits accepted work when the workflow requires persistence,
-   reseeds the same worker with the reviewer rejection, or sends the problem back to
-   research.
+- Owns sequence and accountability.
+- Rejects weak research.
+- Writes scratchpads from accepted research cache.
+- Promotes exactly one accepted slice to `current.txt`.
+- Checks and records dirty git state before worker seeding.
+- Seeds workers and reviewers with exact paths, invariants, tests, and non-goals.
+- Does not write product code unless the user explicitly overrides the loop.
+- Is the only role that promotes slices, accepts work, commits, pushes, or asks
+  the user for a decision.
 
-Autonomy limit:
+Worker:
 
-- Researcher may not edit.
-- Worker may not broaden scope or touch git.
-- Reviewer may not silently fix by editing unless explicitly assigned a fix slice.
-- Main agent is the only role that promotes slices, accepts work, commits, pushes, or
-  asks the user for a decision.
+- Implements only `current.txt`.
+- Reads TigerBeetle docs, `current.txt`, assigned scratchpad/cache, exact source
+  paths, references, invariants, tests, and non-goals.
+- May not broaden scope, choose a new slice, review itself, commit, or touch git.
+- Stops instead of guessing when `current.txt` is ambiguous.
 
-Rules:
+Reviewer:
 
-- Slow progress is always better than fake progress.
-- Fake progress is failure.
-- Small slices do not require tiny diffs.
+- Reviews research cache, scratchpad, or worker diff as assigned.
+- Returns findings first: ownership violations, ABI leaks, hidden bounds, weak
+  assertions, missing tests, source-order failures, scope creep, stale code, or
+  explicit acceptance.
+- Does not silently fix by editing unless explicitly assigned a fix slice.
+
+## Mandatory Sequence
+
+1. Define the problem plainly.
+2. Seed Researcher only when evidence is missing.
+3. Reviewer accepts or rejects the research cache.
+4. Main agent writes or updates the scratchpad from accepted research cache.
+5. Reviewer accepts or rejects the scratchpad.
+6. Main agent promotes exactly one worker-ready slice to `current.txt`.
+7. Main agent records pre-existing dirty git state.
+8. Worker implements only `current.txt`.
+9. Reviewer accepts or rejects the worker diff.
+10. Main agent runs required verification or records why it cannot.
+11. Main agent commits accepted work only when persistence is required or requested.
+12. Main agent promotes the next accepted slice or checks in with the user.
+
+No product code may be touched before steps 1-7 are complete.
+
+## Research Cache
+
+Research cache is evidence, not sprint planning.
+
+It must include:
+
+- Sources read in order.
+- Exact files and line numbers.
+- Current-code facts, reference facts, ABI facts, and test facts.
+- Owner roles and proposed shape.
+- Required assertions and required tests.
+- Risks, stop conditions, proof gaps, and readiness judgment.
+
+Reject and reseed research if it is vague, not line-backed, missing required
+sources, merges planning with evidence, or authorizes coding.
+
+## Scratchpad
+
+Scratchpad defines the sprint into actionable pieces of work.
+
+It must include:
+
+- Accepted research cache path.
+- Decisions and non-goals.
+- Worker-ready slices with exact files, symbols, owners, invariants, tests, grep
+  gates, and stop conditions.
+- Follow-up slices and proof gaps.
+- Completion criteria and signoff space.
+
+Reject the scratchpad if any slice requires worker invention, allows broad file
+sets, lacks exact tests, lacks stop conditions, conflicts with the research
+cache, or preserves stale structure for convenience.
+
+## Current Slice
+
+`current.txt` contains exactly one active slice.
+
+It must include:
+
+- Scratchpad and research cache paths.
+- Allowed files.
+- Required shape.
+- Non-goals.
+- Stop conditions.
+- Verification commands.
+
+Reject or rewrite `current.txt` before worker seeding if it is stale, broad,
+contains multiple slices, lacks exact allowed files, or leaves naming/ownership
+choices to the worker.
+
+## Hard Stops
+
+Restart at the earliest broken stage if any of these happen:
+
+- Research cache is missing, weak, stale, or not source-backed.
+- Scratchpad is missing, weak, stale, or not derived from accepted research.
+- `current.txt` is stale, broad, ambiguous, or not reviewer-accepted.
+- Worker needs to invent owner names, paths, tests, ABI consequences, or scope.
+- Public ABI changes appear without an explicit ABI-product slice.
+- Host/runtime behavior changes appear in a cleanup-only slice.
+- Tests are moved, deleted, filtered, or weakened without explicit proof.
+- A compatibility shim, umbrella runtime, manager, engine, controller, `utils`, or
+  fake alias appears without explicit authorization.
+- Main agent starts product coding without explicit user override.
+- Reviewer rejects research, scratchpad, or worker diff.
+
+## Verification And Commit
+
+- Verification commands must come from `current.txt`.
+- Run the narrow package gates before root gates when applicable.
+- Record failed or skipped verification honestly.
+- Commit only after reviewer acceptance and required verification.
+- Before committing, inspect status, diff, and recent log; stage only intended
+  files.
+- Do not amend, force-push, or use destructive git commands unless explicitly
+  requested.
+
+## Operating Rules
+
+- Slow source-backed progress beats fast fake progress. Slow does not mean the
+  smallest possible diff or one tiny paper-over slice at a time. Slow means doing
+  the foundation correctly, including broad changes when ownership, ABI shape, or
+  source structure is wrong.
+- Small slices do not require tiny diffs; they require exact ownership and enough
+  scope to remove the actual wrong foundation.
 - If the existing shape is wrong, reshape toward the smallest true owner.
-- Do not add umbrella runtimes, demos, managers, engines, controllers, compatibility
-  aliases, or Zig-shaped host shortcuts.
-- Do not invent Howl-only shapes while Ghostty, Alacritty, TigerBeetle, and official
-  references still have answers.
-- If the problem is intense, calm down and eat the elephant byte by byte.
-
-Tooling:
-
-- Use CLI automation for reference acquisition, repository inspection, generated
-  outputs, bulk mechanical changes, and verification when it is clearer than manual
-  editing.
-- Keep automated changes source-backed, reviewable, and reversible through git.
-- Efficiency and critical thinking matter more than obeying a harness ritual that obscures the work.
-- Scripts and commands are tools for executing explicit decisions, not substitutes for
-  ownership judgment.
+- Preserve ABI boundaries. Hosts depend on Howl C ABIs, not Zig convenience
+  imports.
+- Keep main-thread/runtime policy centralized with the true owner.
+- If the problem is intense, stop inventing and eat the elephant byte by byte.

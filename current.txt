@@ -1,91 +1,75 @@
-# Current Slice: Runtime Full RGBA Fallback Deletion
+# Current Slice: Render API V0 Oracle Unit Test Owner
 
-Owner: `howl-render` prepared owner and `howl-linux-host` submit backend.
+Owner: `howl-render` test ownership only.
 
-Purpose:
+Source scratchpad:
 
-- Delete the runtime full-RGBA presentation fallback.
-- Make normal host presentation V0-only.
-- Keep full RGBA only as explicit test/proof oracle if still required.
-- Remove stale fallback ABI/docs/diagnostics instead of keeping compatibility shims.
+- `research/2026-06-01-render-api-language-deletion-sprint.md`
 
-## Exact Change Scope
+Accepted research cache:
 
-Allowed files:
+- `research/cache-2026-06-01-render-api-language-deletion.md`
 
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/prepared/buffer.zig`
-- `howl-render/src/session/text.zig`
-- `howl-render/src/ffi/prepared_surface.zig`
-- `howl-render/src/libhowl_render.zig`
-- `howl-render/src/ffi/protocol_v0.zig`
-- `howl-render/src/protocol_v0/realize.zig`
+Reviewer status:
+
+- Reviewer Agent accepted Slice 1 for promotion to `current.txt`.
+
+## Purpose
+
+Move the separate render API V0 oracle/equivalence tests under the unit-test
+owner so unfiltered `zig build test:unit` is the render API proof gate.
+
+This slice does not delete the old `test:protocol-proof` build bucket. That is
+Slice 2, after this slice proves unit discovery.
+
+## Allowed Files
+
 - `howl-render/src/test_protocol_proof.zig`
-- `howl-render/src/test/ffi.zig`
-- `howl-render/include/howl_render.h`
-- `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/window/term_texture.zig`
-- `docs/render-protocol-v0.md`
-- `research/2026-06-01-runtime-full-rgba-fallback-deletion.md`
+- `howl-render/src/test/unit.zig`
+- `howl-render/src/test/render_api_v0_oracle.zig`
 
-No PTY/VT/runtime event-loop changes. No atlas packing or glyph-run bound changes. No compatibility aliases. No alternate runtime RGBA upload API.
-
-## Source-Backed Problem
-
-- V0 steady path is now proven for btop scroll: `v0_emit_status=0`, `v0_no_sidecar=0`, `no_sidecar_call_failed=0`, `v0_unsupported_shape=0`, interval `rgba_fallback=0`, and `glyph_present=10`.
-- Runtime still contains full-RGBA production, storage, ABI exposure, host upload fallback, fallback counters, and docs saying fallback remains allowed.
-- User requirement: stale code and compatibility shims are unacceptable; old path must be deleted, not hidden.
+No other files are in scope.
 
 ## Required Shape
 
-- Normal host presentation consumes V0 sidecars only.
-- Missing V0 sidecar is an explicit submit/upload failure diagnostic, never full RGBA upload.
-- Unsupported V0 shape is an explicit failure diagnostic, never full RGBA upload.
-- V0 upload/realization failure is an explicit failure diagnostic, never full RGBA upload.
-- Full RGBA code, if retained, must be named/reachable only as test/proof oracle.
-- Public runtime ABI must not advertise full-RGBA fallback resources or prepared RGBA buffers.
-- Docs must say runtime is V0-only and full RGBA is oracle-only if retained.
+- Create `howl-render/src/test/render_api_v0_oracle.zig` as the single owner for
+  render API V0 oracle/equivalence unit tests.
+- Move all proof/equivalence test logic from
+  `howl-render/src/test_protocol_proof.zig` into
+  `howl-render/src/test/render_api_v0_oracle.zig`.
+- Update `howl-render/src/test/unit.zig` to import
+  `render_api_v0_oracle.zig` so unfiltered `zig build test:unit` discovers the
+  tests.
+- Keep `howl-render/src/test_protocol_proof.zig` only as a temporary old
+  build-root wrapper while `howl-render/build.zig` remains unchanged.
+- `howl-render/src/test_protocol_proof.zig` must contain no independent test
+  logic after this slice.
+- Do not duplicate or split proof/equivalence test ownership.
 
-## Required Deletions
+## Non-Goals
 
-- Delete host runtime `uploadPreparedBuffer()` fallback path.
-- Delete normal host dependency on `HowlRenderPreparedSurfaceBuffer.rgba_pixels`.
-- Delete or test-scope render owner runtime `rgba_pixels` production/storage.
-- Delete stale `HOWL_RENDER_V0_RESOURCE_FALLBACK_RGBA` runtime contract if no oracle-only contract requires it.
-- Delete/rename fallback counters and log labels that imply runtime RGBA fallback remains.
-- Update docs and scratchpad record so fallback references are historical or removed.
+- Do not edit `howl-render/build.zig`.
+- Do not delete `test:protocol-proof` or `test:protocol-proof:build` in this
+  slice.
+- Do not move `howl-render/src/protocol_v0/emit.zig`.
+- Do not move `howl-render/src/protocol_v0/realize.zig`.
+- Do not rename public ABI symbols or exported functions.
+- Do not edit host code.
+- Do not require filtered `zig build test:unit -- "protocol v0"` as proof.
 
-## Required Tests
+## Stop Conditions
 
-- Host test proves missing V0 sidecar cannot present via full RGBA fallback.
-- Host/render tests prove unsupported V0 cannot present via full RGBA fallback.
-- Protocol proof tests continue using explicit oracle path, not runtime owner RGBA fields.
-- ABI constant/tests updated so stale fallback RGBA resource is gone or explicitly oracle-only.
+- Stop if moving the tests requires product-code changes.
+- Stop if unfiltered `zig build test:unit` does not discover the moved tests.
+- Stop if the old root needs independent test logic instead of an import-only
+  wrapper.
+- Stop if any file outside the allowed set must change.
 
 ## Verification
 
 From `/home/home/personal/projects/howl/howl-render`:
 
-- `zig build test:unit -- "protocol v0"`
-- `zig build test:protocol-proof -- "protocol v0"`
+- `zig build test:unit`
+- `zig build test:protocol-proof`
 - `zig build test`
 - `git diff --check`
-
-From `/home/home/personal/projects/howl/howl-linux-host`:
-
-- `zig build test --summary all`
-- `zig build -Doptimize=ReleaseFast`
-- `git diff --check`
-
-From workspace root:
-
-- `zig build check`
-- `zig build test`
-- `git diff --check`
-
-Smoke after acceptance:
-
-- Build separately.
-- Run GUI with Bash `timeout` only.
-- btop steady path remains V0-present with no runtime RGBA fallback path available.
