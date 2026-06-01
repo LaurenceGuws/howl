@@ -1,12 +1,12 @@
-# Current Slice: V0 Alpha Atlas Entry Bound
+# Current Slice: V0 Prepared Alpha Glyph Run Batching
 
-Owner: `howl-render` V0 prepared alpha atlas emission.
+Owner: `howl-render` V0 prepared alpha atlas command emission.
 
 Purpose:
 
-- Stop V0 sidecar emission failing at exactly 384 distinct alpha atlas entries.
-- Move `btop` / `nvim` steady state toward `rgba_fallback=0` by keeping V0 sidecars available.
-- Keep the old full-RGBA path only as temporary fallback/oracle until V0 sidecars are reliable enough to delete it explicitly.
+- Stop V0 sidecar emission failing with `HOWL_RENDER_V0_EMIT_COMMAND_BOUND_OVERFLOW` from one-command-per-alpha-glyph emission.
+- Use the existing `DRAW_GLYPH_RUN` ABI capacity of `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX` glyph refs per command.
+- Keep V0 sidecars available so the old full-RGBA runtime path can be deleted in a later explicit slice.
 
 ## Exact Change Scope
 
@@ -14,33 +14,34 @@ Allowed files:
 
 - `howl-render/src/protocol_v0/emit.zig`
 - `howl-render/src/test_protocol_proof.zig`
-- `research/2026-06-01-v0-alpha-atlas-entry-bound.md`
+- `research/2026-06-01-v0-prepared-alpha-glyph-run-batching.md`
 
-No host changes. No ABI changes. No command batching unless proven required by tests inside this slice. No full-RGBA deletion in this slice.
+No host changes. No ABI changes. No atlas eviction. No resource ack/removal. No full-RGBA deletion in this slice.
 
 ## Source-Backed Problem
 
-- User log after host glyph patch presentation shows `v0_unsupported_shape=0`; host shape rejection is no longer the blocker.
-- The same log shows steady `v0_emit_status=5`, `resource_plan_status=call_failed`, `no_sidecar_call_failed=9-10`, and `rgba_fallback=9-10`.
-- `HOWL_RENDER_V0_EMIT_RESOURCE_BOUND_OVERFLOW == 5`.
-- `howl-render/src/protocol_v0/emit.zig` uses `persistent_sprite_resources_max = 384` as the alpha atlas entry cap.
-- The log shows `create=1`, `upload=384`, `delete=0`, and `churn=0`, matching one persistent alpha atlas with exactly 384 uploaded entries.
+- After alpha atlas entry-bound fix, local smoke moved from status 5 to `v0_emit_status=1`.
+- `HOWL_RENDER_V0_EMIT_COMMAND_BOUND_OVERFLOW == 1`.
+- `HOWL_RENDER_V0_COMMANDS_MAX == 8192`.
+- `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX == 256`.
+- Current alpha prepared sprite path calls `appendGlyphRef()`, which emits one `DRAW_GLYPH_RUN` command with `glyphs.count = 1` per alpha draw.
+- The ABI and host validation already support glyph-run commands with up to 256 glyph refs.
 
 ## Required Shape
 
-- Alpha atlas-backed prepared sprite/glyph emission must not fail at 384 distinct alpha atlas entries while explicit atlas/page/resource bounds still have room.
-- Keep all bounds explicit, fixed, asserted, and tested.
-- Prefer the smallest render-owned shape: either raise/split the entry bound with static storage, or introduce a bounded multi-page alpha atlas if one page is truly exhausted.
-- Preserve exact `ResourceBoundOverflow` behavior for real exhaustion.
-- Preserve exact upload count/byte overflow behavior.
-- Preserve full RGBA fallback/oracle unchanged.
+- Batch consecutive prepared alpha glyph refs into `DRAW_GLYPH_RUN` commands.
+- Each glyph-run command must have `1 <= glyphs.count <= HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX`.
+- Preserve command order: any non-glyph command after sprite emission, especially cursor fills, must break batching.
+- Preserve stable emitter-owned glyph storage; command spans must remain valid after publish.
+- Preserve exact `CommandBoundOverflow` when batched command count still exceeds `HOWL_RENDER_V0_COMMANDS_MAX`.
+- Preserve transactional emission behavior: failed emission must not mutate accepted frame/resource state.
 
 ## Required Tests
 
-- Protocol tests prove more than 384 distinct alpha atlas entries can emit V0 successfully when atlas/page/resource bounds permit.
-- Protocol tests prove exhausting the new explicit alpha atlas bound returns `ResourceBoundOverflow` / status 5.
-- Existing protocol oracle/proof tests continue to compare V0 realization against full RGBA for prepared alpha atlas draws.
-- Existing render tests pass.
+- Protocol/unit test proves multiple alpha glyph refs share one glyph-run command.
+- Boundary test proves exactly `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX` refs fit in one command and the next ref starts a second command.
+- Protocol proof test proves a prepared frame with more than 8192 alpha sprite draws can emit V0 with batched glyph commands when glyph storage/other bounds permit, or stops with a source-backed proof gap if glyph storage remains tied to command max.
+- Existing protocol oracle/proof tests pass.
 
 ## Verification
 
@@ -56,9 +57,3 @@ From workspace root:
 - `zig build check`
 - `zig build test`
 - `git diff --check`
-
-Smoke after acceptance:
-
-- Build separately.
-- Run GUI with Bash `timeout` only.
-- Expected user-log movement: `v0_emit_status` stops being `5`, `no_sidecar_call_failed` drops, `rgba_fallback=9-10` drops.
