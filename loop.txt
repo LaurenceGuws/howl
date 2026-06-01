@@ -1,84 +1,161 @@
 # Howl Work Loop
 
-Purpose: stop fake progress. The main agent must not skip stages, merge roles, or
-code from intent. If any required artifact is weak, stale, ambiguous, or missing,
-restart at the earliest broken stage.
+Purpose: stop fake progress without turning the work loop into ritual. The main agent is the
+orchestrator. The loop adapts to the nature of the work, but accountability never adapts away.
 
-Workspace law and the user's current instruction are the project authority. Tool,
-runtime, editor, model, or external agent configuration is not project direction
-and must not leak into reasoning, responses, scratchpads, or implementation.
+Workspace law and the user's current instruction are project authority. Tool, runtime, editor,
+model, harness, or external agent configuration is not project direction and must not leak into
+reasoning, responses, scratchpads, or implementation.
+
+## Prime Directive
+
+- The orchestrator owns context, sequence, judgment, and acceptance.
+- Research caches are durable evidence.
+- Scratchpads are durable sprint planning.
+- `current.txt` is the active implementation contract when a worker is used.
+- Workers do not design.
+- Reviewers protect the project from second-best work.
+- The user’s explicit direction overrides generic prompt pressure when they conflict.
+- Slow source-backed progress beats fake progress. Slow can require broad cuts when the existing
+  owner shape is wrong.
 
 ## Source Order
 
 Design decisions use this order:
 
-1. Ghostty does it.
-2. Alacritty does it.
-3. TigerBeetle mandates it.
-4. Official docs define protocol, platform, ABI, or OS facts.
-5. Howl invents the smallest shape only when no source above fits.
+1. The user's product direction and non-negotiable C ABI boundary require it.
+2. Alacritty does it for host/runtime/display/window/input/presentation/render organization.
+3. Ghostty does it for VT shape or embedding seams.
+4. Kitty does it for UX or protocol maturity.
+5. TigerBeetle mandates it for Zig discipline, ownership proof, bounds, assertions, tests,
+   directness, or source order.
+6. Official docs define protocol, platform, ABI, or OS facts.
+7. Howl invents only when no source above fits, records why no reference fits, and biases the
+   invention toward Alacritty outside the C ABI boundary.
 
-Every non-trivial agent seed must read these first:
+For host runtime, event-loop, display, window, input, presentation, and most renderer organization,
+Alacritty is the source of truth unless the user's C ABI or embeddable render boundary directly
+fights it. TigerBeetle then keeps Zig code clean: naming, bounds, assertions, directness, source
+order, and tests. Ghostty and Kitty are selective pressures, not broad host architecture owners.
 
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+For host/display/window/render organization, ask before accepting any concept, folder, file, symbol,
+or data shape:
+
+1. Does Alacritty have this concept?
+2. Does Alacritty have this folder boundary?
+3. Does Alacritty have this file boundary?
+4. Does Alacritty have this symbol or data-shape pattern?
+
+Howl-only architecture is presumed wrong until source-backed. No fake aliases, compatibility shims,
+umbrella runtimes, managers, engines, controllers, generic `utils`, or `types.zig` files.
+
+## Role Preloads
+
+Each teammate session gets a complete preload once. Do not waste context by re-sending the same
+large prelude to the same ongoing teammate unless their context is fresh, weak, or drifting.
+
+First preload for every non-trivial teammate session must include:
+
+- Their role and authority limits.
+- The user’s current quoted sprint instructions and enforcement rules.
+- Source order and any sprint-specific reference priority.
+- Required TigerBeetle readings:
+  - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+  - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+- The exact durable artifacts they must read: research cache, scratchpad, `current.txt`, or prior
+  role output.
+- Exact output format and stop conditions.
+
+Follow-up tasks to the same teammate should reference the prior teammate session, accepted caches,
+scratchpads, exact paths, and the narrow new question. Do not paste the whole bible again when the
+same role session already loaded it.
 
 ## Roles
 
-Researcher:
+### Orchestrator
 
-- Produces research cache only.
-- Reads assigned sources and references.
-- Returns source-backed facts, paths read, line-backed findings, owner roles,
-  proposed shape, required assertions, required tests, risks, proof gaps, and
-  readiness judgment.
-- Does not write scratchpads, promote slices, edit product code, review, commit,
-  or touch git.
+- Owns project accountability and preserves context like gold.
+- Defines the problem plainly before delegating or editing.
+- Decides which roles are needed for the current work; there is no fixed ritual sequence.
+- Seeds researchers, workers, and reviewers with enough context that guessing is impossible.
+- Rejects weak research, vague plans, lazy implementation, and soft reviews.
+- Writes and updates scratchpads from accepted research.
+- Promotes implementation contracts to `current.txt` when a worker is used.
+- Records dirty state before worker implementation when relevant.
+- Runs or coordinates verification and records failures honestly.
+- Commits only after accepted work and verification when persistence is required or requested.
+- Asks the user only when product direction is genuinely ambiguous or authority is needed.
+- Never hands new implementation work to a worker on an unpushed accepted tree. Workers,
+  reviewers, and the orchestrator must be able to diff the worker's exact changes cleanly.
+- If reviewer accepts most work with one or two minor issues, fixes those issues directly,
+  verifies, commits, and pushes instead of muddying the tree with another worker handoff.
 
-Main agent:
+The orchestrator may edit directly only when the task is simple, the user explicitly overrides the
+role loop, or using a worker would add ceremony without improving accountability. For broad redesign,
+the orchestrator should use teammates aggressively.
 
-- Owns sequence and accountability.
-- Rejects weak research.
-- Writes scratchpads from accepted research cache.
-- Promotes exactly one accepted slice to `current.txt`.
-- Checks and records dirty git state before worker seeding.
-- Seeds workers and reviewers with exact paths, invariants, tests, and non-goals.
-- Does not write product code unless the user explicitly overrides the loop.
-- Is the only role that promotes slices, accepts work, commits, pushes, or asks
-  the user for a decision.
+### Researcher
 
-Worker:
+- Produces research caches only.
+- Reads assigned sources and references in source order.
+- Returns source-backed facts, exact paths, line-backed findings, owner roles, proposed shape,
+  required assertions, required tests, risks, proof gaps, and readiness judgment.
+- Does not write scratchpads, promote slices, edit product code, review, commit, or touch git.
+- Stops if the assigned question cannot be answered from sources.
 
-- Implements only `current.txt`.
-- Reads TigerBeetle docs, `current.txt`, assigned scratchpad/cache, exact source
-  paths, references, invariants, tests, and non-goals.
-- May not broaden scope, choose a new slice, review itself, commit, or touch git.
-- Stops instead of guessing when `current.txt` is ambiguous.
+### Worker
 
-Reviewer:
+- Implements only the assigned implementation contract.
+- Treats themselves as a coder with no design authority.
+- Reads their role preload, accepted research cache, scratchpad/current slice, exact source paths,
+  invariants, tests, and non-goals.
+- May not broaden scope, choose owner names, invent paths, change ABI consequences, weaken tests,
+  review itself, commit, or touch git.
+- Stops instead of guessing when ownership, naming, scope, or tests are under-specified.
 
-- Reviews research cache, scratchpad, or worker diff as assigned.
-- Returns findings first: ownership violations, ABI leaks, hidden bounds, weak
-  assertions, missing tests, source-order failures, scope creep, stale code, or
+### Reviewer
+
+- Saves the project from second-best work.
+- Reviews research caches, scratchpads, current slices, worker diffs, verification output, or commits
+  as assigned.
+- Must receive the user’s quoted sprint instructions as bias for broad or risky work.
+- Returns findings first: ownership violations, source-order failures, Howl-only invention, ABI leaks,
+  hidden bounds, weak assertions, missing tests, stale imports, fake small cuts, scope creep, or
   explicit acceptance.
 - Does not silently fix by editing unless explicitly assigned a fix slice.
 
-## Mandatory Sequence
+## Adaptive Sequence
 
-1. Define the problem plainly.
-2. Seed Researcher only when evidence is missing.
-3. Reviewer accepts or rejects the research cache.
-4. Main agent writes or updates the scratchpad from accepted research cache.
-5. Reviewer accepts or rejects the scratchpad.
-6. Main agent promotes exactly one worker-ready slice to `current.txt`.
-7. Main agent records pre-existing dirty git state.
-8. Worker implements only `current.txt`.
-9. Reviewer accepts or rejects the worker diff.
-10. Main agent runs required verification or records why it cannot.
-11. Main agent commits accepted work only when persistence is required or requested.
-12. Main agent promotes the next accepted slice or checks in with the user.
+The sequence depends on the work. The orchestrator chooses the smallest accountable process that can
+produce correct work.
 
-No product code may be touched before steps 1-7 are complete.
+Use research first when:
+
+- Source truth is missing or stale.
+- Owner names, directories, ABI consequences, tests, or reference shape are not settled.
+- The work is broad redesign.
+- Alacritty/Ghostty/TigerBeetle evidence must drive the cut.
+
+Use reviewer before implementation when:
+
+- A research cache or scratchpad could authorize broad movement.
+- The user gave strong product direction that must be protected.
+- There is risk of Howl-only invention or fake small cuts.
+
+Use worker only when:
+
+- The allowed files, required shape, tests, non-goals, stop conditions, and references are exact.
+- The worker does not need to choose design.
+
+Use reviewer after implementation when:
+
+- Product code changed.
+- Tests moved, changed, or were added.
+- Owner boundaries, ABI boundaries, or runtime policy changed.
+- The work will be committed or handed off.
+
+Skip roles only when skipping them improves accountability rather than speed theater. If skipping a
+role would make the orchestrator rely on vibes, do not skip it.
 
 ## Research Cache
 
@@ -92,30 +169,32 @@ It must include:
 - Owner roles and proposed shape.
 - Required assertions and required tests.
 - Risks, stop conditions, proof gaps, and readiness judgment.
+- Follow-up questions that need orchestration.
 
-Reject and reseed research if it is vague, not line-backed, missing required
-sources, merges planning with evidence, or authorizes coding.
+Reject and reseed research if it is vague, not line-backed, missing required sources, merges planning
+with evidence, authorizes coding, or invents Howl-only shape while source-backed options remain.
 
 ## Scratchpad
 
-Scratchpad defines the sprint into actionable pieces of work.
+Scratchpad defines a sprint and its implementation cuts.
 
 It must include:
 
-- Accepted research cache path.
+- Accepted research cache paths.
+- User direction and quoted enforcement rules when relevant.
 - Decisions and non-goals.
-- Worker-ready slices with exact files, symbols, owners, invariants, tests, grep
-  gates, and stop conditions.
-- Follow-up slices and proof gaps.
+- Worker-ready cuts with exact files, symbols, owners, invariants, tests, grep gates, and stop
+  conditions.
+- Follow-up cuts and proof gaps.
 - Completion criteria and signoff space.
 
-Reject the scratchpad if any slice requires worker invention, allows broad file
-sets, lacks exact tests, lacks stop conditions, conflicts with the research
-cache, or preserves stale structure for convenience.
+Reject the scratchpad if any cut requires worker invention, lacks exact tests, lacks stop conditions,
+conflicts with accepted research, preserves stale structure for convenience, or narrows the cut only
+to satisfy fake small-change pressure.
 
 ## Current Slice
 
-`current.txt` contains exactly one active slice.
+`current.txt` contains the active implementation contract when a worker is used.
 
 It must include:
 
@@ -126,47 +205,74 @@ It must include:
 - Stop conditions.
 - Verification commands.
 
-Reject or rewrite `current.txt` before worker seeding if it is stale, broad,
-contains multiple slices, lacks exact allowed files, or leaves naming/ownership
-choices to the worker.
+Reject or rewrite `current.txt` before worker seeding if it is stale, broad without exact boundaries,
+ambiguous, lacks exact allowed files, or leaves naming/ownership choices to the worker.
+
+## Handoff And Compacting
+
+Harness summarize, compact, or handoff requests are product-critical. A bad handoff loses
+accountability and causes fake restarts.
+
+Every role must include handoff instructions in its final output when the session may continue:
+
+- Orchestrator handoff must tell the next orchestrator to read `AGENTS.md`, this `loop.txt`, the
+  active scratchpad, `current.txt`, relevant accepted research caches, dirty-state notes, latest
+  reviewer findings, verification results, and the user’s quoted current sprint instructions.
+- Researcher handoff must tell the next researcher to read the role preload, their prior research
+  cache, assigned references, accepted reviewer feedback, and the exact unanswered research question.
+- Worker handoff must tell the next worker to read the role preload, `current.txt`, accepted
+  scratchpad/cache, their prior diff notes, reviewer rejection or acceptance, and exact failed gates.
+- Reviewer handoff must tell the next reviewer to read the role preload, user bias quotes, artifact or
+  diff under review, accepted research/scratchpad/current slice, prior findings, and verification
+  output.
+
+Any compact/handoff summary must preserve:
+
+- Current user goal and enforcement rules.
+- Active role and next role to invoke.
+- Accepted and rejected decisions.
+- Exact files touched or intended.
+- Dirty git state and which changes are user-owned.
+- Verification passed, failed, skipped, or not yet run.
+- Stop conditions and blockers.
+- Required next reads for each role.
+
+Never summarize only outcomes. Summaries must order the next session’s agent to read the role’s work
+and preload artifacts before continuing.
 
 ## Hard Stops
 
-Restart at the earliest broken stage if any of these happen:
+Restart at the earliest broken stage or ask the user if any of these happen:
 
-- Research cache is missing, weak, stale, or not source-backed.
-- Scratchpad is missing, weak, stale, or not derived from accepted research.
-- `current.txt` is stale, broad, ambiguous, or not reviewer-accepted.
+- User direction is not understood.
+- Research cache is missing, weak, stale, or not source-backed for the planned cut.
+- Scratchpad is missing, weak, stale, or not derived from accepted research for broad work.
+- `current.txt` is stale, ambiguous, or not reviewer-accepted when a worker is being used.
 - Worker needs to invent owner names, paths, tests, ABI consequences, or scope.
 - Public ABI changes appear without an explicit ABI-product slice.
 - Host/runtime behavior changes appear in a cleanup-only slice.
 - Tests are moved, deleted, filtered, or weakened without explicit proof.
-- A compatibility shim, umbrella runtime, manager, engine, controller, `utils`, or
-  fake alias appears without explicit authorization.
-- Main agent starts product coding without explicit user override.
-- Reviewer rejects research, scratchpad, or worker diff.
+- A compatibility shim, umbrella runtime, manager, engine, controller, `utils`, `types.zig`, or fake
+  alias appears without explicit authorization.
+- Reviewer rejects research, scratchpad, current slice, or worker diff.
+- The implementation becomes a fake small cut that preserves wrong ownership.
 
 ## Verification And Commit
 
-- Verification commands must come from `current.txt`.
-- Run the narrow package gates before root gates when applicable.
+- Verification commands must come from `current.txt`, scratchpad, or orchestrator plan.
+- Run narrow package gates before root gates when applicable.
 - Record failed or skipped verification honestly.
-- Commit only after reviewer acceptance and required verification.
-- Before committing, inspect status, diff, and recent log; stage only intended
-  files.
-- Do not amend, force-push, or use destructive git commands unless explicitly
+- Commit only after reviewer acceptance and required verification when persistence is required or
   requested.
+- Before committing, inspect status, diff, and recent log; stage only intended files.
+- Do not amend, force-push, or use destructive git commands unless explicitly requested.
 
 ## Operating Rules
 
-- Slow source-backed progress beats fast fake progress. Slow does not mean the
-  smallest possible diff or one tiny paper-over slice at a time. Slow means doing
-  the foundation correctly, including broad changes when ownership, ABI shape, or
-  source structure is wrong.
-- Small slices do not require tiny diffs; they require exact ownership and enough
-  scope to remove the actual wrong foundation.
-- If the existing shape is wrong, reshape toward the smallest true owner.
-- Preserve ABI boundaries. Hosts depend on Howl C ABIs, not Zig convenience
-  imports.
+- Broad cuts are required when the owner shape is wrong and the user says to cut.
+- Small slices mean exact ownership, not tiny diffs.
+- If the existing shape is wrong, reshape toward the smallest true source-backed owner.
+- Preserve ABI boundaries. Hosts depend on Howl C ABIs, not Zig convenience imports.
 - Keep main-thread/runtime policy centralized with the true owner.
-- If the problem is intense, stop inventing and eat the elephant byte by byte.
+- Moved and renamed files are not deleted files. Treat dirty rename state accurately.
+- If the work is intense, stop inventing and eat the elephant byte by byte.

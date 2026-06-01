@@ -8,11 +8,39 @@ Purpose: agent accountability, ABI boundary, source order, and project law.
 
 - The ABIs are the product.
 - Howl is a C ABI embeddable terminal.
+- C ABI only is non-negotiable. Host integration does not get Zig-shaped convenience APIs.
 - Hosts embed `howl-pty`, `howl-vt`, `howl-render`, and `howl-hosts/vendor/*` contracts.
 - Hosts own platform UX, event loops, wake policy, presentation cadence, runtime
   orchestration, and backend resource realization.
 - Howl owns PTY, VT, render, ABI contracts, and the exact consequences those contracts expose.
+- GL is only the first host backend. It is not the renderer architecture.
+- Hosts consume render surfaces host-side. Window chrome does not own render-surface consumption,
+  backend resource realization, GL texture ownership, presentation pacing, or render policy.
 - This is a young, private product, we do not have any downstream. We move fast and hard, not slow, small slices.
+
+## Reference Pressure
+
+- The user owns product direction and all non-negotiables.
+- Alacritty carries the main pressure for host runtime, event loop, display, window,
+  input, presentation, and most renderer organization.
+- TigerBeetle carries the main pressure for Zig discipline: exact names, owner truth,
+  assertions, bounds, source order, directness, and tests.
+- Ghostty is selective pressure for embedding seams and VT shape.
+- Kitty is selective pressure for UX and protocol maturity.
+- Official docs define protocol, platform, ABI, and OS facts.
+- Howl-only architecture is presumed wrong until the references and user boundary prove
+  that no source-backed shape exists.
+
+For host/display/window/render organization, ask these questions before accepting any
+concept, folder, file, symbol, or data shape:
+
+1. Does Alacritty have this concept?
+2. Does Alacritty have this folder boundary?
+3. Does Alacritty have this file boundary?
+4. Does Alacritty have this symbol or data-shape pattern?
+
+If Alacritty directly fights the user's C ABI or embeddable render boundary, stop for
+orchestrator/user review. Otherwise Alacritty wins host-shape disputes.
 
 ## Core Premise
 
@@ -54,6 +82,10 @@ Required TigerBeetle readings before non-trivial work:
 - Ensures accountability is engraved in tests, assertions, and ABI contracts.
 - Commits accepted slices when requested by the workflow so binary git reverts are cheap
   and context-preserving.
+- Never hands new implementation work to a worker on an unpushed accepted tree. Workers,
+  reviewers, and the main agent must be able to diff the worker's exact changes cleanly.
+- If reviewer accepts most work with one or two minor issues, fixes those issues directly,
+  verifies, commits, and pushes instead of muddying the tree with another worker handoff.
 
 ### Research Agent
 
@@ -67,7 +99,8 @@ Required TigerBeetle readings before non-trivial work:
 ### Worker Agent
 
 - Implements only the promoted `current.txt` slice.
-- Reads the TigerBeetle bible before editing.
+- Reads the role preload before editing. Do not re-read large preloads on follow-up tasks
+  in the same worker session unless instructed; use accepted caches and prior task context.
 - Uses assigned scratchpads, reference paths, source paths, invariants, and tests.
 - Does not broaden scope.
 - Does not add convenience runtimes, demos, managers, engines, compatibility aliases, or
@@ -114,6 +147,21 @@ Required TigerBeetle readings before non-trivial work:
 - No `manager`, `engine`, `controller`, or `utils` owners.
 - No `types.zig` files anywhere in Howl. `types` is not ownership; split symbols
   into their smallest true owner files.
+- No bucket structs. Do not add structs merely to group parameters, facts, options,
+  diagnostics, context, or state unless a reference has the same data-shape pressure or
+  the C ABI/product boundary forces it.
+- Structs must be small, intentional data shapes with a true domain noun, owner,
+  lifecycle, invariants, and tests. Generic buckets named `Context`, `State`, `Options`,
+  `Config`, `Info`, `Data`, `Result`, or `Diagnostics` are rejected unless source-backed
+  and owner-true.
+
+## Tests
+
+- Each module has one curated test entrypoint.
+- No duplicate test roots and no opportunistic side-entry test files.
+- Owner-local tests are allowed only when reached through the module's single test entrypoint.
+- Test wiring is ownership. Moving tests, adding test roots, filtering tests, or weakening
+  gates requires explicit source-backed proof.
 
 ## Zig Formatting
 
@@ -138,22 +186,29 @@ Required TigerBeetle readings before non-trivial work:
 
 When deciding whether a shape is acceptable, use this order:
 
-1. Ghostty does it.
-2. Alacritty does it.
-3. TigerBeetle mandates it.
-4. Official docs define protocol, platform, or ABI facts.
-5. If Howl's embeddable render boundary still has no direct match, invent the smallest
-   possible shape and bias it toward a simple Alacritty-like host implementation.
+1. The user's product direction and non-negotiable C ABI boundary require it.
+2. Alacritty does it for host/runtime/display/window/input/presentation/render organization.
+3. Ghostty does it for VT shape or embedding seams.
+4. Kitty does it for UX or protocol maturity.
+5. TigerBeetle mandates it for Zig discipline, ownership proof, bounds, assertions, tests,
+   directness, or source order.
+6. Official docs define protocol, platform, ABI, or OS facts.
+7. If Howl's embeddable render boundary still has no direct match, invent the smallest
+   possible shape, record why no reference fits, and bias it toward Alacritty outside the
+   C ABI boundary.
 
 Anything outside these rules is presumed stale debt until proved otherwise.
 
 - VT-core shape follows Ghostty first.
-- Host runtime shape follows Alacritty first.
-- Bounds, assertions, naming, tests, directness, and proof follow TigerBeetle as a hard gate.
+- Host runtime, display, window, input, presentation, and most renderer organization follow
+  Alacritty first.
+- Bounds, assertions, naming, tests, directness, source order, and proof follow TigerBeetle
+  as a hard gate.
 - Protocol facts follow official docs and upstream protocol implementations.
-- Render-specific novelty is allowed only where the embeddable renderer truly has no
-  direct source model.
-- Howl-only ideas are heavily discouraged until reference-backed options are exhausted.
+- Kitty and Ghostty are selective pressures, not broad host architecture owners.
+- Render-specific novelty is allowed only where the user-owned embeddable renderer boundary
+  truly has no direct source model.
+- Howl-only ideas are rejected until reference-backed options are exhausted.
 - If Howl must invent, make the invention the smallest possible shape and record why no
   reference shape fits.
 
@@ -161,8 +216,9 @@ Anything outside these rules is presumed stale debt until proved otherwise.
 
 Read `loop.txt`.
 
-The main loop is research, scratchpad, promoted slice, worker implementation, hostile
-review, then commit if accepted and requested by the workflow.
+The work loop is adaptive, not ritual. The main agent chooses the role sequence that fits
+the work, while preserving research, scratchpad, worker contract, hostile review, and
+handoff accountability where they matter.
 
 Scratchpads are persistent project memory:
 
@@ -173,13 +229,21 @@ Scratchpads are persistent project memory:
 - No code work starts until the active slice is planned deeply enough to leave workers no
   room for guessing.
 
-Every subagent seed must require TigerBeetle reading before any other source:
+Every fresh non-trivial subagent session must receive a role preload requiring TigerBeetle
+reading before any other source:
 
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 - `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
 
 Any subagent output that does not show TigerBeetle pressure in ownership, bounds,
 assertions, tests, and directness is rejected.
+
+For follow-up tasks in the same subagent session, reference the prior role preload and
+accepted caches instead of re-sending large context unless quality or clarity requires it.
+
+Any summarize, compact, or handoff must order the next agent to read its role preload,
+role work, active scratchpad, `current.txt`, relevant research caches, reviewer findings,
+dirty-state notes, and verification results before continuing.
 
 If the work gets ambiguous, broad, rushed, or difficult, stop. Read the bible again.
 Break the problem into smaller source-backed slices.
