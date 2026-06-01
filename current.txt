@@ -1,47 +1,67 @@
-# Current Slice: V0 Prepared Alpha Glyph Run Batching
+# Current Slice: Runtime Full RGBA Fallback Deletion
 
-Owner: `howl-render` V0 prepared alpha atlas command emission.
+Owner: `howl-render` prepared owner and `howl-linux-host` submit backend.
 
 Purpose:
 
-- Stop V0 sidecar emission failing with `HOWL_RENDER_V0_EMIT_COMMAND_BOUND_OVERFLOW` from one-command-per-alpha-glyph emission.
-- Use the existing `DRAW_GLYPH_RUN` ABI capacity of `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX` glyph refs per command.
-- Keep V0 sidecars available so the old full-RGBA runtime path can be deleted in a later explicit slice.
+- Delete the runtime full-RGBA presentation fallback.
+- Make normal host presentation V0-only.
+- Keep full RGBA only as explicit test/proof oracle if still required.
+- Remove stale fallback ABI/docs/diagnostics instead of keeping compatibility shims.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/src/protocol_v0/emit.zig`
+- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/prepared/buffer.zig`
+- `howl-render/src/session/text.zig`
+- `howl-render/src/ffi/prepared_surface.zig`
+- `howl-render/src/libhowl_render.zig`
+- `howl-render/src/ffi/protocol_v0.zig`
+- `howl-render/src/protocol_v0/realize.zig`
 - `howl-render/src/test_protocol_proof.zig`
-- `research/2026-06-01-v0-prepared-alpha-glyph-run-batching.md`
+- `howl-render/src/test/ffi.zig`
+- `howl-render/include/howl_render.h`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/window/term_texture.zig`
+- `docs/render-protocol-v0.md`
+- `research/2026-06-01-runtime-full-rgba-fallback-deletion.md`
 
-No host changes. No ABI changes. No atlas eviction. No resource ack/removal. No full-RGBA deletion in this slice.
+No PTY/VT/runtime event-loop changes. No atlas packing or glyph-run bound changes. No compatibility aliases. No alternate runtime RGBA upload API.
 
 ## Source-Backed Problem
 
-- After alpha atlas entry-bound fix, local smoke moved from status 5 to `v0_emit_status=1`.
-- `HOWL_RENDER_V0_EMIT_COMMAND_BOUND_OVERFLOW == 1`.
-- `HOWL_RENDER_V0_COMMANDS_MAX == 8192`.
-- `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX == 256`.
-- Current alpha prepared sprite path calls `appendGlyphRef()`, which emits one `DRAW_GLYPH_RUN` command with `glyphs.count = 1` per alpha draw.
-- The ABI and host validation already support glyph-run commands with up to 256 glyph refs.
+- V0 steady path is now proven for btop scroll: `v0_emit_status=0`, `v0_no_sidecar=0`, `no_sidecar_call_failed=0`, `v0_unsupported_shape=0`, interval `rgba_fallback=0`, and `glyph_present=10`.
+- Runtime still contains full-RGBA production, storage, ABI exposure, host upload fallback, fallback counters, and docs saying fallback remains allowed.
+- User requirement: stale code and compatibility shims are unacceptable; old path must be deleted, not hidden.
 
 ## Required Shape
 
-- Batch consecutive prepared alpha glyph refs into `DRAW_GLYPH_RUN` commands.
-- Each glyph-run command must have `1 <= glyphs.count <= HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX`.
-- Preserve command order: any non-glyph command after sprite emission, especially cursor fills, must break batching.
-- Preserve stable emitter-owned glyph storage; command spans must remain valid after publish.
-- Preserve exact `CommandBoundOverflow` when batched command count still exceeds `HOWL_RENDER_V0_COMMANDS_MAX`.
-- Preserve transactional emission behavior: failed emission must not mutate accepted frame/resource state.
+- Normal host presentation consumes V0 sidecars only.
+- Missing V0 sidecar is an explicit submit/upload failure diagnostic, never full RGBA upload.
+- Unsupported V0 shape is an explicit failure diagnostic, never full RGBA upload.
+- V0 upload/realization failure is an explicit failure diagnostic, never full RGBA upload.
+- Full RGBA code, if retained, must be named/reachable only as test/proof oracle.
+- Public runtime ABI must not advertise full-RGBA fallback resources or prepared RGBA buffers.
+- Docs must say runtime is V0-only and full RGBA is oracle-only if retained.
+
+## Required Deletions
+
+- Delete host runtime `uploadPreparedBuffer()` fallback path.
+- Delete normal host dependency on `HowlRenderPreparedSurfaceBuffer.rgba_pixels`.
+- Delete or test-scope render owner runtime `rgba_pixels` production/storage.
+- Delete stale `HOWL_RENDER_V0_RESOURCE_FALLBACK_RGBA` runtime contract if no oracle-only contract requires it.
+- Delete/rename fallback counters and log labels that imply runtime RGBA fallback remains.
+- Update docs and scratchpad record so fallback references are historical or removed.
 
 ## Required Tests
 
-- Protocol/unit test proves multiple alpha glyph refs share one glyph-run command.
-- Boundary test proves exactly `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX` refs fit in one command and the next ref starts a second command.
-- Protocol proof test proves a prepared frame with more than 8192 alpha sprite draws can emit V0 with batched glyph commands when glyph storage/other bounds permit, or stops with a source-backed proof gap if glyph storage remains tied to command max.
-- Existing protocol oracle/proof tests pass.
+- Host test proves missing V0 sidecar cannot present via full RGBA fallback.
+- Host/render tests prove unsupported V0 cannot present via full RGBA fallback.
+- Protocol proof tests continue using explicit oracle path, not runtime owner RGBA fields.
+- ABI constant/tests updated so stale fallback RGBA resource is gone or explicitly oracle-only.
 
 ## Verification
 
@@ -52,8 +72,20 @@ From `/home/home/personal/projects/howl/howl-render`:
 - `zig build test`
 - `git diff --check`
 
+From `/home/home/personal/projects/howl/howl-linux-host`:
+
+- `zig build test --summary all`
+- `zig build -Doptimize=ReleaseFast`
+- `git diff --check`
+
 From workspace root:
 
 - `zig build check`
 - `zig build test`
 - `git diff --check`
+
+Smoke after acceptance:
+
+- Build separately.
+- Run GUI with Bash `timeout` only.
+- btop steady path remains V0-present with no runtime RGBA fallback path available.

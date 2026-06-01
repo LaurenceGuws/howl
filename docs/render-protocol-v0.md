@@ -2,9 +2,7 @@
 
 Owner: `howl-render` ABI contract draft.
 
-Status: draft only. This document authorizes no product-code changes, no C header
-changes, no Zig changes, no host changes, and no deletion of the current full-surface
-path.
+Status: runtime contract. Normal host presentation is V0-only.
 
 ## Purpose
 
@@ -13,9 +11,9 @@ frames. Render produces bounded damage, uploads, commands, and resource lifetime
 events. Hosts realize those consequences with host-owned backend resources and
 host-owned presentation policy.
 
-V0 exists to replace the current normal full RGBA prepared-surface boundary only
-after ABI, software-realizer, protocol-emission, and host-consumer tests prove the
-replacement. Until then, the full RGBA surface remains the fallback and test oracle.
+V0 is the normal prepared-surface presentation boundary. Full RGBA composition is
+allowed only as an explicitly named test/proof oracle; it is not a runtime upload
+path.
 
 ## Non-Goals
 
@@ -25,40 +23,15 @@ replacement. Until then, the full RGBA surface remains the fallback and test ora
 - V0 is not a Zig internal import path.
 - V0 does not give the host ownership of shaping, glyph identity, atlas packing,
   damage production, upload bytes, or command production.
-- V0 does not claim readiness for product-code implementation.
 - V0 does not make the full RGBA surface a normal path.
 
-## Current Full-Surface Facts
+## Runtime Facts
 
-- `howl-render/include/howl_render.h` defines `HowlRenderPreparedSurfaceBuffer` with
-  `status`, `rgba_pixels`, and `uploads_committed`; there is no host-visible damage,
-  upload, command, or retire span in that buffer (`howl_render.h:343-347`).
-- `howl-render/include/howl_render.h` exposes source dirty metadata through
-  `HowlRenderVtSurfaceSlot.dirty_rows`, `dirty_cols_start`, and `dirty_cols_end`,
-  but the prepared buffer ABI still exports only `rgba_pixels` as the render output
-  (`howl_render.h:283-288`, `howl_render.h:343-347`).
-- `howl-render/src/prepared/buffer.zig:compose()` asserts nonzero dimensions,
-  allocates `width * height * 4`, seeds the output, and returns a complete CPU RGBA
-  surface (`prepared/buffer.zig:7-31`).
-- `howl-render/src/prepared/buffer.zig:seedSurfacePixels()` says partial prepared
-  surfaces are realized against a render-owned retained base and that hosts only
-  consume one complete prepared surface (`prepared/buffer.zig:78-87`).
-- `howl-render/src/prepared/buffer.zig` applies clear, background, decoration,
-  sprite, and cursor passes into CPU pixels (`prepared/buffer.zig:33-76`).
-- `howl-render/src/prepared/owner.zig:Owner` owns `rgba_pixels` and
-  `uploads_required` for the prepared handle (`prepared/owner.zig:35-53`).
-- `howl-render/src/prepared/owner.zig:Owner.create()` calls `copySurfaceBuffer()`
-  before registering the prepared handle (`prepared/owner.zig:61-70`).
-- `howl-render/src/prepared/owner.zig:copySurfaceBuffer()` calls
-  `prepared_buffer.compose()` and stores the resulting full RGBA pixels on the
-  owner (`prepared/owner.zig:209-221`).
-- `howl-render/src/prepared/owner.zig:performSubmit()` validates dimensions and
-  upload count, retains the submitted RGBA pixels, and consumes the owner
-  (`prepared/owner.zig:159-177`, `prepared/owner.zig:312-321`).
-- `howl-linux-host/src/window/term_texture.zig:uploadPreparedBuffer()` documents
-  that the host treats the prepared buffer as the complete realized surface and
-  performs one full `glTexSubImage2D()` over the terminal surface
-  (`term_texture.zig:27-39`).
+- Prepared handles expose V0 frames through `howl_render_prepared_surface_protocol_v0()`.
+- Host presentation fails closed when the V0 sidecar is missing, invalid, unsupported,
+  or cannot be uploaded.
+- `prepared_buffer.compose()` remains an explicit proof oracle for protocol tests only.
+- There is no host full-RGBA upload fallback.
 
 ## Ownership
 
@@ -77,7 +50,7 @@ replacement. Until then, the full RGBA surface remains the fallback and test ora
 | Platform UX | Host | Host owns windows, tabs, input UX, and compositor integration. |
 | Backend objects in ABI | Forbidden | No GL, Metal, Vulkan, shader, buffer, texture, command encoder, window, or swapchain handle crosses V0. |
 | Generic retained scene graph | Forbidden | V0 has no nodes, parents, transforms, materials, arbitrary layers, or retained host mutation. |
-| Full RGBA normal output | Forbidden | Full RGBA is allowed only as fallback/debug oracle until deletion gates pass. |
+| Full RGBA normal output | Forbidden | Full RGBA is allowed only as an explicit test/proof oracle. |
 
 ## Fixed Bounds
 
@@ -257,7 +230,6 @@ below names it explicitly.
 | `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` | `2` | `HowlRenderV0ResourceId.kind` | Reserved for color glyph atlas pages; invalid until a later color-glyph slice. |
 | `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA` | `3` | `HowlRenderV0ResourceId.kind` | Alpha sprite resource for glyph/special/decoration sprite draws. |
 | `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR` | `4` | `HowlRenderV0ResourceId.kind` | RGBA sprite resource for color sprite draws. |
-| `HOWL_RENDER_V0_RESOURCE_FALLBACK_RGBA` | `5` | `HowlRenderV0ResourceId.kind` | Full RGBA oracle/debug fallback resource only. |
 | `HOWL_RENDER_V0_UPLOAD_ALPHA8` | `1` | `HowlRenderV0Upload.format` and `HowlRenderV0Create.format` | One alpha byte per pixel. |
 | `HOWL_RENDER_V0_UPLOAD_RGBA8` | `2` | `HowlRenderV0Upload.format` and `HowlRenderV0Create.format` | Four bytes per pixel in `r`, `g`, `b`, `a` order. |
 | `HOWL_RENDER_V0_COMMAND_CLEAR_RECT` | `1` | `HowlRenderV0Command.kind` | Blend-fill `rect` with `color_rgba` as a clear consequence. |
@@ -300,8 +272,8 @@ accepted V0 host-to-render ack/removal ABI.
 
 Until that ack/removal ABI is implemented, render may create persistent resources and
 refer to them across later frames, but it must not retire them for reuse and must not
-reuse numeric `value`s. Resource exhaustion before ack/removal must fail closed to the
-full RGBA fallback/oracle path rather than recycling IDs.
+reuse numeric `value`s. Resource exhaustion before ack/removal must fail closed rather
+than recycling IDs.
 
 ### Same-Frame Lifetime Order
 
@@ -428,8 +400,7 @@ Upload validation rules:
   `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` and
   `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA`.
 - `HOWL_RENDER_V0_UPLOAD_RGBA8` is valid only for
-  `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR` and
-  `HOWL_RENDER_V0_RESOURCE_FALLBACK_RGBA`.
+  `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR`.
 - Uploads to `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` are invalid until a later
   color-glyph semantics slice.
 - For alpha uploads, `stride_bytes >= rect.width_px` and
@@ -439,8 +410,7 @@ Upload validation rules:
 - Upload rects are resource-local and must fit within the created resource dimensions.
 - Uploads to unknown, wrong-generation, retired, or wrong-kind resources reject the frame.
 
-Fallback dirty pixel rect uploads may exist only for software oracle/debug fallback. They must not be
-the only normal consequence once the host consumer is accepted.
+Dirty full-RGBA pixel rect uploads are not a V0 runtime path.
 
 ## Command Model
 
@@ -573,13 +543,11 @@ Valid alpha glyph atlas rects must satisfy all rules:
 Page-full behavior is bounded. If a glyph plus its border does not fit in any live alpha page, render
 may create one new alpha page when the live atlas page count is below
 `HOWL_RENDER_V0_ATLAS_PAGES_MAX`. If the page count is already 64, direct glyph-run emission for that
-frame must fail closed and the prepared full RGBA oracle/fallback remains the only allowed output for
-that frame. Render must not grow atlas page dimensions, allocate an unbounded page list, evict a live
+frame must fail closed without runtime full-RGBA presentation. Render must not grow atlas page dimensions, allocate an unbounded page list, evict a live
 rect in place, or silently draw a missing glyph.
 
 Oversized glyph behavior is explicit. If the glyph image plus one-pixel border on each side exceeds
-`1024 x 1024`, render must not create a glyph ref for it. The frame must fail closed to the full RGBA
-oracle/fallback path until a later product slice defines an oversized-glyph fallback command. V0 does
+`1024 x 1024`, render must not create a glyph ref for it. The frame must fail closed until a later product slice defines an oversized-glyph command. V0 does
 not scale, crop, or split oversized glyphs inside `DRAW_GLYPH_RUN`.
 
 Newly allocated rect uploads must be dirty-rect uploads. Each newly allocated rect emits one upload
@@ -598,7 +566,7 @@ RGBA glyph atlas uploads and color glyph draw semantics are blocked in V0. Creat
 commands using `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` must reject. `HOWL_RENDER_V0_UPLOAD_RGBA8`
 to `GLYPH_ATLAS_ALPHA` must reject. `HOWL_RENDER_V0_UPLOAD_ALPHA8` to
 `GLYPH_ATLAS_COLOR` must reject. RGB and subpixel-mask glyph uploads are unsupported; there is no V0
-`RGB8`, `BGR8`, LCD, or subpixel format. Full RGBA remains oracle/fallback only, not glyph atlas
+`RGB8`, `BGR8`, LCD, or subpixel format. Full RGBA remains proof-oracle only, not glyph atlas
 color semantics.
 
 Upload stride and count rules for alpha glyph pages:
@@ -647,7 +615,7 @@ runs at these boundaries:
 If a row contains more than 256 glyph refs for the same split class, render emits multiple adjacent
 `DRAW_GLYPH_RUN` commands in source order. Splitting must not change blending order. If the command
 count would exceed `HOWL_RENDER_V0_COMMANDS_MAX`, direct glyph-run emission for that frame must fail
-closed to the full RGBA oracle/fallback path.
+closed without runtime full-RGBA presentation.
 
 ### Glyph Draw Semantics
 
@@ -780,8 +748,8 @@ Exact negative software-realizer oracle cases required before implementation:
 | Glyph ref zero alpha | Alpha glyph ref has `color_rgba = 0x01020300`. | Reject frame; no pixels written. |
 | Glyph rect outside page | Glyph ref rect `{ x_px = 1023, y_px = 0, width_px = 2, height_px = 1 }`. | Reject frame; no pixels written. |
 | Color glyph run | Glyph ref uses `atlas_resource.kind = GLYPH_ATLAS_COLOR = 2`. | Reject frame; color glyphs are blocked. |
-| Oversized glyph fallback | Glyph allocation request needs `1025 x 1` or `1 x 1025` including border. | Do not emit glyph run; use full RGBA oracle/fallback for that frame. |
-| Atlas pages exhausted | 64 live alpha pages exist and a new glyph does not fit. | Do not emit glyph run; use full RGBA oracle/fallback for that frame. |
+| Oversized glyph | Glyph allocation request needs `1025 x 1` or `1 x 1025` including border. | Do not emit glyph run; fail closed without runtime full-RGBA presentation. |
+| Atlas pages exhausted | 64 live alpha pages exist and a new glyph does not fit. | Do not emit glyph run; fail closed without runtime full-RGBA presentation. |
 
 ## Test Gates
 
@@ -825,21 +793,16 @@ Before protocol emission:
   rejection, wrong generation rejection, `create_seq > commands.count` rejection,
   `upload_seq > commands.count` rejection, and `retire_seq > commands.count` rejection.
 - Glyph atlas tests pass for alpha page create/update/use/retire/ack/reuse, rect allocation,
-  non-overlap, dirty-rect upload bytes, whole-page upload allowance, page-full fallback,
-  oversized-glyph fallback, run splitting, and all glyph negative cases above.
+  non-overlap, dirty-rect upload bytes, whole-page upload allowance, page-full failure,
+  oversized-glyph failure, run splitting, and all glyph negative cases above.
 
-Before host consumer:
+Runtime gates:
 
-- Protocol emission runs alongside the current full surface.
 - Host-facing tests prove uploads and commands are consumed through V0 spans.
-- Tests fail if the normal path silently uses the full prepared RGBA buffer instead of V0.
-
-Before full-surface deletion:
-
-- Host consumer is accepted.
-- Full-surface path remains available only as explicitly named fallback/test oracle.
+- Tests fail if the normal path silently uses a full prepared RGBA buffer instead of V0.
+- Full-surface composition remains available only as an explicitly named test/proof oracle.
 - Tests prove normal-path absence of full `glTexSubImage2D()` terminal-surface upload.
-- All replacement tests pass for ABI layout, bounds, invalid input, resource lifetime, software
+- Replacement tests pass for ABI layout, bounds, invalid input, resource lifetime, software
   equivalence, protocol emission, and host consumption.
 
 ## Stop Conditions
@@ -850,7 +813,6 @@ Before full-surface deletion:
 - Stop if span pointer lifetime is unclear.
 - Stop if GL, Metal, Vulkan, shader, command encoder, window, or swapchain objects enter the ABI.
 - Stop if command semantics expand into generic scene graph behavior.
-- Stop if full RGBA surface remains the only normal host-visible consequence.
+- Stop if full RGBA surface remains a normal host-visible consequence.
 - Stop if software-realizer equivalence is skipped.
-- Stop if host fallback to full terminal-surface upload is not explicitly tested against.
-- Stop if the draft is used to claim product-code readiness before the test gates pass.
+- Stop if host fallback to full terminal-surface upload exists.
