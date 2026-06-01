@@ -1,6 +1,6 @@
-# Current Slice: Render API V0 Oracle Unit Test Owner
+# Current Slice: Delete Render Protocol-Proof Build Bucket
 
-Owner: `howl-render` test ownership only.
+Owner: `howl-render` test build ownership only.
 
 Source scratchpad:
 
@@ -10,66 +10,64 @@ Accepted research cache:
 
 - `research/cache-2026-06-01-render-api-language-deletion.md`
 
-Reviewer status:
+Previous slice:
 
-- Reviewer Agent accepted Slice 1 for promotion to `current.txt`.
+- `howl-render` `aa1749d` moved render API V0 oracle/equivalence tests under
+  unfiltered `zig build test:unit`.
 
 ## Purpose
 
-Move the separate render API V0 oracle/equivalence tests under the unit-test
-owner so unfiltered `zig build test:unit` is the render API proof gate.
-
-This slice does not delete the old `test:protocol-proof` build bucket. That is
-Slice 2, after this slice proves unit discovery.
+Delete the separate `test:protocol-proof` build/test bucket now that its proof
+tests are owned and discovered by the unit gate.
 
 ## Allowed Files
 
+- `howl-render/build.zig`
 - `howl-render/src/test_protocol_proof.zig`
-- `howl-render/src/test/unit.zig`
-- `howl-render/src/test/render_api_v0_oracle.zig`
 
 No other files are in scope.
 
 ## Required Shape
 
-- Create `howl-render/src/test/render_api_v0_oracle.zig` as the single owner for
-  render API V0 oracle/equivalence unit tests.
-- Move all proof/equivalence test logic from
-  `howl-render/src/test_protocol_proof.zig` into
-  `howl-render/src/test/render_api_v0_oracle.zig`.
-- Update `howl-render/src/test/unit.zig` to import
-  `render_api_v0_oracle.zig` so unfiltered `zig build test:unit` discovers the
-  tests.
-- Keep `howl-render/src/test_protocol_proof.zig` only as a temporary old
-  build-root wrapper while `howl-render/build.zig` remains unchanged.
-- `howl-render/src/test_protocol_proof.zig` must contain no independent test
-  logic after this slice.
-- Do not duplicate or split proof/equivalence test ownership.
+- Delete `howl-render/src/test_protocol_proof.zig`.
+- Remove `protocol_proof_mod`.
+- Remove `protocol_proof_tests` and `run_protocol_proof_tests`.
+- Remove `test:protocol-proof` and `test:protocol-proof:build` steps.
+- Remove dependencies from `test:build` and `test` on the deleted proof bucket.
+- Keep `zig build test` aggregating `test:unit` and `test:abi`.
+- Keep `zig build test:build` aggregating `test:unit:build` and
+  `test:abi:build`.
+- Do not remove font/options/FreeType/HarfBuzz wiring from `unit_mod`; the moved
+  oracle tests require it.
 
 ## Non-Goals
 
-- Do not edit `howl-render/build.zig`.
-- Do not delete `test:protocol-proof` or `test:protocol-proof:build` in this
-  slice.
-- Do not move `howl-render/src/protocol_v0/emit.zig`.
-- Do not move `howl-render/src/protocol_v0/realize.zig`.
+- Do not move source owner files.
 - Do not rename public ABI symbols or exported functions.
 - Do not edit host code.
-- Do not require filtered `zig build test:unit -- "protocol v0"` as proof.
+- Do not edit docs.
+- Do not rename internal `protocol_v0` source files in this slice.
 
 ## Stop Conditions
 
-- Stop if moving the tests requires product-code changes.
-- Stop if unfiltered `zig build test:unit` does not discover the moved tests.
-- Stop if the old root needs independent test logic instead of an import-only
-  wrapper.
-- Stop if any file outside the allowed set must change.
+- Stop if any proof/oracle test becomes undiscoverable from unfiltered
+  `zig build test:unit`.
+- Stop if deleting the build bucket requires ABI or host changes.
+- Stop if `test:protocol-proof` or `protocol_proof` remains in active render
+  build/test source after this slice.
 
 ## Verification
 
 From `/home/home/personal/projects/howl/howl-render`:
 
 - `zig build test:unit`
-- `zig build test:protocol-proof`
+- `zig build test:abi`
 - `zig build test`
+- `zig build test:build`
+- `zig build check`
 - `git diff --check`
+
+Grep gate from `/home/home/personal/projects/howl/howl-render`:
+
+- `rg 'test:protocol-proof|protocol_proof|test_protocol_proof' build.zig src`
+  prints nothing.

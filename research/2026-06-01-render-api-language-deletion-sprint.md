@@ -2,8 +2,8 @@
 
 Owner: workspace root.
 
-Status: scratchpad draft. No product code is authorized by this file until one
-slice is promoted to `current.txt`.
+Status: Slice 1 accepted and committed. Slice 2 may be promoted to
+`current.txt`.
 
 Research cache:
 
@@ -82,6 +82,8 @@ ABI-product slice authorizes an ABI break.
 
 ### Slice 1: Move Separate Proof Tests Under Unit Gate
 
+Status: accepted and committed in `howl-render` `aa1749d`.
+
 Goal:
 
 - Make every current `src/test_protocol_proof.zig` test discoverable through
@@ -91,27 +93,52 @@ Goal:
 Allowed files:
 
 - `howl-render/src/test_protocol_proof.zig`
+- `howl-render/src/test.zig`
+- `howl-render/src/test_unit.zig`
 - `howl-render/src/test/unit.zig`
 - `howl-render/src/test/render_api_v0_oracle.zig`
+- `howl-render/src/test/unit/root.zig`
+- `howl-render/src/test/unit/geometry.zig`
+- `howl-render/src/test/unit/render_api_v0_oracle.zig`
+- `howl-render/build.zig`
 
 Required shape:
 
+- `src/test/unit.zig` is deleted as the mixed unit aggregate.
+- `src/test/unit/root.zig` becomes the unit-test aggregate.
+- Existing geometry tests from `src/test/unit.zig` move into
+  `src/test/unit/geometry.zig`.
+- `src/test_unit.zig` imports `test/unit/root.zig`.
+- `src/test.zig` updates its unit import from `test/unit.zig` to
+  `test/unit/root.zig`.
+- Existing temporary `src/test/render_api_v0_oracle.zig`, if present from a held
+  worker diff, moves to `src/test/unit/render_api_v0_oracle.zig` and is removed
+  from the old path.
 - All proof/equivalence test logic from `src/test_protocol_proof.zig` moves into
-  `src/test/render_api_v0_oracle.zig`.
-- `src/test/render_api_v0_oracle.zig` is the single owner for render API V0
+  `src/test/unit/render_api_v0_oracle.zig`.
+- `src/test/unit/render_api_v0_oracle.zig` is the single owner for render API V0
   oracle/equivalence unit tests in this slice.
-- `src/test/unit.zig` imports `render_api_v0_oracle.zig` so unfiltered
+- `src/test/unit/root.zig` imports `render_api_v0_oracle.zig` so unfiltered
   `zig build test:unit` discovers the tests.
 - `src/test_protocol_proof.zig` remains only as a temporary build-root wrapper
-  for Slice 1 and imports `src/test/render_api_v0_oracle.zig` to satisfy the old
-  `test:protocol-proof` build step until Slice 2 deletes it.
+  for Slice 1 and imports `src/test/unit/render_api_v0_oracle.zig` to satisfy
+  the old `test:protocol-proof` build step until Slice 2 deletes it.
 - `src/test_protocol_proof.zig` contains no independent test logic after this
   slice.
-- No `howl-render/build.zig` changes in this slice.
+- `howl-render/build.zig` updates only `unit_mod` wiring so the moved oracle
+  tests compile under `zig build test:unit`. The wiring must match the existing
+  font/options/library/include requirements already used by `protocol_proof_mod`.
 - No source owner file moves in this slice.
 - No host changes.
 
 Verification:
+
+- From `howl-render`: `zig build test:unit`
+- From `howl-render`: `zig build test:protocol-proof`
+- From `howl-render`: `zig build test`
+- From `howl-render`: `git diff --check`
+
+Accepted verification for `aa1749d`:
 
 - From `howl-render`: `zig build test:unit`
 - From `howl-render`: `zig build test:protocol-proof`
@@ -123,6 +150,10 @@ Stop conditions:
 - Stop if moving the test requires product-code changes.
 - Stop if `zig build test:unit` does not discover the moved proof tests without a
   filter string.
+- Stop if the unit test folder split requires build root behavior outside
+  import rewiring in `src/test_unit.zig` and `src/test.zig`.
+- Stop if `build.zig` changes anything except unit module wiring needed by the
+  moved oracle tests.
 - Stop if proof/equivalence test logic is duplicated or split between the new
   owner file and the temporary old build root.
 - Stop if a compatibility wrapper is needed outside the old build root.
