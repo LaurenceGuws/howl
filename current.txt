@@ -1,4 +1,4 @@
-# Current Slice: Deterministic Resize Success State-Machine Test Harness
+# Current Slice: Resize After Prepare Before Submit Proof
 
 Accepted scratchpad:
 
@@ -11,7 +11,7 @@ Accepted research caches:
 
 Accepted reviewer finding:
 
-- Cut 2B in the sprint scratchpad is worker-ready and remains inside the planned resize state-machine harness. It must not widen into presentation/runtime redesign, new research, Cut 3 failure cases, or behavior fixes before proof.
+- Cut 3A is worker-ready. `TextSessionOwner` is the correct render-side coordinator because the invariant crosses `PrepareRequests` and `Submitted` without involving host upload or present.
 
 User enforcement:
 
@@ -20,85 +20,61 @@ User enforcement:
 
 ## Purpose
 
-Add one deterministic host-level success-path test proving resize -> geometry sync -> prepare -> render surface token -> host upload decision -> submit -> present -> ack.
+Add one render-side negative-space test proving that a prepared surface from the old geometry cannot submit after a resize publishes a newer geometry source, and that recovery produces a full prepare for the new geometry.
 
-This is a test-harness proof slice only. If current behavior cannot satisfy the success path, stop and return the exact failing transition and smallest true owner for the next structural fix.
+This is a test-harness proof slice only. If current behavior cannot satisfy the invariant, stop and return the exact failing transition and smallest true owner for the next structural fix.
 
 ## Allowed Files
 
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/test/host.zig` only if the existing terminal context test root fails to import the owner-local test.
-- `howl-linux-host/src/test_root.zig` only if the existing terminal context test root fails to import the owner-local test.
+- `howl-render/src/session/text.zig`
 
 ## Exact Test Entrypoint
 
-- Build wiring root: `howl-linux-host/src/test_root.zig`, through `terminalContextTestModule(...)` in `howl-linux-host/build.zig`.
-- Owner-local test location: `howl-linux-host/src/terminal/context.zig`.
-- Narrow worker gate from `howl-linux-host`: `zig build test:unit --summary all`.
-- Full host gates before acceptance: `zig build check`, `zig build test --summary all`, `zig build -Doptimize=ReleaseFast`, `git diff --check`.
+- Curated root: `howl-render/src/test.zig`.
+- Owner-local test location: `howl-render/src/session/text.zig`.
+- Worker gate from `howl-render`: `zig build test --summary all`.
 - No new test root, side-entry test file, or build-step split.
-
-## Required Fake Shape
-
-- Use a single owner-local test harness in `terminal/context.zig`, near existing submit/present tests.
-- Reuse or extend existing owner-local fake seams already present in `terminal/context.zig`: `TestSubmitContext`, `TestSubmitTerm`, `TestSubmitRender`, and `submitPreparedLockedWith(...)`.
-- The fake terminal/render object must record ordered transitions as explicit fields or a fixed-size operation array with bounded count.
-- Do not add a generic `Context`, `State`, `Options`, `Diagnostics`, or `Manager` bucket.
-- The fake backend must model the host upload decision at the submit boundary: it receives a prepared upload, records whether the previous host surface matched, records prepared/render-surface dimensions, returns a host surface with matching dimensions on success, and refuses to submit if upload fails.
-- The fake present owner must use `app/present.zig` semantics: submit `.terminal_frame`, store one pending token, reject wrong completion, accept matching completion exactly once.
-- Do not fake SDL events or GL. The test begins after host-owned resize intent has reached `Context.resize(...)`/terminal render orchestration.
 
 ## Required Test Proof
 
-- Start from a clean terminal/render state with known geometry and no present pending.
-- Apply one resize that changes render surface dimensions.
-- Commit geometry once through the same terminal/render owner path that production uses for render turns; do not call `howl-render` internal Zig modules from host tests.
-- Observe a non-zero geometry epoch after geometry sync.
-- Prepare one surface for the new geometry.
-- Assert prepared info has non-zero `snapshot_seq`, non-zero `dirty_epoch`/surface sequence where applicable, and `geometry_epoch` equal to the host retained geometry epoch.
-- Assert the emitted render surface token has `snapshot_seq`, `surface_seq`, and `geometry_epoch` equal to the prepared info.
-- Assert the render surface dimensions and host surface dimensions equal the resized render dimensions.
-- Assert the first uploaded surface after host texture-size invalidation is full/retained-safe, or the host upload decision rejects it before render submit. For this success-path cut, the accepted path must be full/retained-safe and must submit.
-- Submit once and assert the submitted snapshot is non-zero and equals the prepared/render-surface snapshot.
-- Submit display present for `.terminal_frame`, record exactly one host-owned present token, and mark retained present pending.
-- Assert a second submit while present is pending is blocked.
-- Drain a wrong present token and assert no ack, no snapshot completion, and pending state remains.
-- Drain the matching present token and assert exactly the submitted snapshot is acked once and pending state clears.
+- Create a `TextSessionOwner` with initial geometry.
+- Commit a first VT publication at geometry epoch `1` using existing owner methods and `source_vt.ownedTestSource(...)` or an owner-local helper no broader than existing test helpers.
+- Take the first prepare request and publish it to the submitted owner with the old geometry token, without realizing or submitting a prepared handle.
+- Sync a resized geometry through `TextSessionOwner.syncGeometry(...)`, producing a non-zero geometry epoch greater than the first request.
+- Commit a new VT publication at the resized geometry using the same owner path, not direct mutation of `PrepareRequests` internals.
+- Call `TextSessionOwner.submit()` and assert the old prepared token is rejected as `.stale`; no old-geometry submit is allowed to advance.
+- Call `TextSessionOwner.prepare()` and assert the next request has the resized geometry epoch, `damage_kind == .full`, `damage_base_seq == 0`, and retained reuse disabled where exposed by the returned request.
+- Assert the stale old prepared token is retired or no longer submit-pending after the stale decision.
 
 ## Required Assertions
 
-- Geometry epoch is a state-machine transition shared by host retained state, prepared info, render surface token, and submit result.
-- Host upload success is the only path that allows render submit to advance retained state.
-- Host surface dimensions are truth after upload; stale dimensions may not be presented as terminal success.
-- Present pending blocks submit until matching host token completion.
-- Wrong host present token cannot ack or clear terminal retained state.
-- Matching host present token acks exactly once.
+- Prepared-before-resize work cannot win after a newer resize publication exists.
+- Stale detection is tied to snapshot/dirty/geometry token ordering, not host GL or present state.
+- The recovery path is a full prepare for the new geometry, not a patch against the old retained base.
+- `TextSessionOwner` coordinates `PrepareRequests` and `Submitted`; neither owner absorbs the other's state.
 
 ## Non-Goals
 
-- Do not implement Cut 3 failure cases.
+- Do not touch host files.
+- Do not drive host upload, GL texture realization, or present ack.
+- Do not create a prepared handle or render surface unless the existing owner API requires it; this slice is about the submit mailbox rejecting stale prepared work before backend mutation.
+- Do not change public C ABI.
+- Do not implement Cut 3B/C/D failure cases.
 - Do not change product behavior in this slice.
-- Do not redesign `app/present.zig`, `display/display.zig`, event loop pacing, SDL handling, GL texture ownership, or render ABI semantics.
-- Do not add public C ABI.
-- Do not add diagnostics-only logging or temporary debugging as proof.
-- Do not import internal `howl-render` Zig modules from the host test; use shipped C ABI and existing host owner seams.
-- Do not create a new research cache.
 
 ## Stop Conditions
 
-- Stop if the harness needs a new runtime/controller/manager abstraction.
-- Stop if deterministic tests require host imports of internal `howl-render` Zig modules outside the C ABI boundary.
-- Stop if the test can only prove isolated helpers rather than the resize-to-present state machine.
+- Stop if the test needs files outside `howl-render/src/session/text.zig`.
+- Stop if the test requires host imports or host fakes.
+- Stop if the test must mutate `PrepareRequests.active`, `PrepareRequests.pending`, or `Submitted.submit_mailbox` fields directly instead of using owner methods.
+- Stop if current behavior submits the old prepared token after resized source publication; return the exact observed token state and smallest owner for the structural fix.
+- Stop if the next request after stale rejection is not full/new-geometry; return the exact observed request and smallest owner for the structural fix.
 - Stop if the test needs a duplicate root or weakened gates.
-- Stop if existing fake seams in `terminal/context.zig` cannot honestly drive geometry -> prepare -> upload -> submit -> present -> ack without product behavior changes.
-- Stop if the success path exposes that current behavior fails before present ack; return the exact transition, observed state, and smallest owner where the structural fix belongs.
-- Stop if `resource_epoch` must become meaningful before the success path can be honestly asserted; record whether it is intentionally zero/ignored or requires a later ABI/product slice.
 
 ## Verification
 
-From `howl-linux-host`:
+From `howl-render`:
 
-- `zig build test:unit --summary all`
 - `zig build check`
 - `zig build test --summary all`
 - `zig build -Doptimize=ReleaseFast`

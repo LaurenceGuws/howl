@@ -238,6 +238,59 @@ Stop conditions:
 - Stop if a fake bypasses the C ABI consequence being tested.
 - Stop if counters are asserted without proving the path event occurred.
 
+## Cut 3A: Resize After Prepare Before Submit
+
+Owner: worker only after a fresh reviewer-accepted `current.txt` names this exact render-side failure slice.
+
+Purpose: prove the first negative-space resize invariant after the success harness: a prepared surface from the old geometry must not submit after a resize publishes a newer geometry source, and the next prepare request must be full/new-geometry.
+
+Allowed files for the promotable test slice:
+
+- `howl-render/src/session/text.zig`
+
+Exact test entrypoint:
+
+- Curated root: `howl-render/src/test.zig`.
+- Owner-local test location: `howl-render/src/session/text.zig`.
+- Verification command from `howl-render`: `zig build test --summary all`.
+- No new test root, side-entry test file, or build-step split.
+
+Required proof path:
+
+- Create a `TextSessionOwner` with initial geometry.
+- Commit a first VT publication at geometry epoch `1` using existing owner methods and `source_vt.ownedTestSource(...)` or an owner-local helper no broader than existing test helpers.
+- Take the first prepare request and publish it to the submitted owner with the old geometry token, without realizing or submitting a prepared handle.
+- Sync a resized geometry through `TextSessionOwner.syncGeometry(...)`, producing a non-zero geometry epoch greater than the first request.
+- Commit a new VT publication at the resized geometry using the same owner path, not direct mutation of `PrepareRequests` internals.
+- Call `TextSessionOwner.submit()` and assert the old prepared token is rejected as `.stale`; no old-geometry submit is allowed to advance.
+- Call `TextSessionOwner.prepare()` and assert the next request has the resized geometry epoch, `damage_kind == .full`, `damage_base_seq == 0`, and retained reuse disabled where exposed by the returned request.
+- Assert the stale old prepared token is retired or no longer submit-pending after the stale decision.
+
+Required assertions:
+
+- Prepared-before-resize work cannot win after a newer resize publication exists.
+- Stale detection is tied to snapshot/dirty/geometry token ordering, not host GL or present state.
+- The recovery path is a full prepare for the new geometry, not a patch against the old retained base.
+- `TextSessionOwner` coordinates `PrepareRequests` and `Submitted`; neither owner absorbs the other's state.
+
+Non-goals for this cut:
+
+- Do not touch host files.
+- Do not drive host upload, GL texture realization, or present ack.
+- Do not create a prepared handle or render surface unless the existing owner API requires it; this slice is about the submit mailbox rejecting stale prepared work before backend mutation.
+- Do not change public C ABI.
+- Do not implement Cut 3B/C/D failure cases.
+- Do not change product behavior unless the worker hits a stop condition and returns the exact missing invariant.
+
+Stop conditions:
+
+- Stop if the test needs files outside `howl-render/src/session/text.zig`.
+- Stop if the test requires host imports or host fakes.
+- Stop if the test must mutate `PrepareRequests.active`, `PrepareRequests.pending`, or `Submitted.submit_mailbox` fields directly instead of using owner methods.
+- Stop if current behavior submits the old prepared token after resized source publication; return the exact observed token state and smallest owner for the structural fix.
+- Stop if the next request after stale rejection is not full/new-geometry; return the exact observed request and smallest owner for the structural fix.
+- Stop if the test needs a duplicate root or weakened gates.
+
 ## Cut 4: Behavior Fix Only After Tests Prove The Contract
 
 Owner: planning only. Not promotable until tests expose the exact failing invariant and a fresh reviewer-accepted `current.txt` narrows files and behavior.
