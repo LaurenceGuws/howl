@@ -291,6 +291,58 @@ Stop conditions:
 - Stop if the next request after stale rejection is not full/new-geometry; return the exact observed request and smallest owner for the structural fix.
 - Stop if the test needs a duplicate root or weakened gates.
 
+## Cut 3B: Resize While Present Pending
+
+Owner: worker only after a fresh reviewer-accepted `current.txt` names this exact host orchestration failure slice.
+
+Purpose: prove that a resize/new terminal frame cannot submit while the previous terminal present is still pending, that a wrong host present token leaves the terminal blocked, and that only the matching token clears pending state and permits the resized frame to submit.
+
+Allowed files for the promotable test slice:
+
+- `howl-linux-host/src/terminal/context.zig`
+
+Exact test entrypoint:
+
+- Build wiring root: `howl-linux-host/src/test_root.zig`, through `terminalContextTestModule(...)` in `howl-linux-host/build.zig`.
+- Owner-local test location: `howl-linux-host/src/terminal/context.zig`.
+- Verification command from `howl-linux-host`: `zig build test:unit --summary all` for the narrow worker gate, then full host gates before acceptance.
+- No new test root, side-entry test file, or build-step split.
+
+Required proof path:
+
+- Reuse the owner-local Cut 2B fake seams in `terminal/context.zig`; do not add a second harness shape.
+- Start with one submitted terminal frame and one host-owned pending present token.
+- Apply a resize/new geometry while that present is pending.
+- Prepare or stage a new resized frame through the same fake render state used by Cut 2B.
+- Assert `Context.renderAction(...)` reports `.blocked_present` for submit-pending work while present is pending.
+- Attempt a submit through `submitPreparedLockedWith(...)` only if the existing owner seam can honestly model the block; otherwise assert the owner-level action block and do not bypass it with direct submit.
+- Drain a wrong present token and assert no ack, pending state remains, and submit remains blocked.
+- Drain the matching present token and assert the exact prior snapshot is acked once, pending state clears, and the resized frame can then submit once.
+
+Required assertions:
+
+- Present pending is host-owned terminal state and must block submit regardless of resized geometry readiness.
+- Wrong host token cannot ack, clear pending, or allow resized submit.
+- Matching host token acks exactly once and only then permits the resized submit.
+- Resize/new geometry does not bypass present cadence.
+
+Non-goals for this cut:
+
+- Do not touch render module files.
+- Do not drive real SDL or GL.
+- Do not implement host texture failure or patch rejection cases; those are later Cut 3C/3D.
+- Do not change product behavior unless the worker hits a stop condition and returns the exact missing invariant.
+- Do not redesign `app/present.zig`, display present policy, event loop pacing, or C ABI semantics.
+
+Stop conditions:
+
+- Stop if the test needs files outside `howl-linux-host/src/terminal/context.zig`.
+- Stop if the test needs a new runtime/controller/manager abstraction or a second fake harness shape.
+- Stop if the only way to prove the invariant is to call submit directly through a seam that intentionally bypasses present-pending action selection.
+- Stop if wrong-token completion clears pending or allows submit; return exact state and smallest owner for the structural fix.
+- Stop if matching-token completion does not unblock submit; return exact state and smallest owner for the structural fix.
+- Stop if the test needs a duplicate root or weakened gates.
+
 ## Cut 4: Behavior Fix Only After Tests Prove The Contract
 
 Owner: planning only. Not promotable until tests expose the exact failing invariant and a fresh reviewer-accepted `current.txt` narrows files and behavior.
