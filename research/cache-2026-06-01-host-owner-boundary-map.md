@@ -237,48 +237,19 @@ These facts were collected before proposing any implementation split for files n
 
 ### Correct Boundary
 
-- True boundary: app-loop wake/time/shutdown bridge over SDL.
-- Source-backed true name: `app/wake.zig`.
-- Source-backed import alias: `AppWake`.
-- Boundary of `app/wake.zig`: `EventSignal`, `State`, `nowNs()`, quit timer helpers, wake semaphore helpers, and the timer callback. It may import SDL. It must not own `Input` queues, key/mouse conversion, `Window.State`, GL presentation, PTY session semantics, or PTY wait-thread policy.
-- ABI consequence: none. This file is host-only SDL integration and does not touch `howl-pty`, `howl-vt`, or `howl-render` C ABIs.
-- Wake discipline consequence: preserve `terminal/pty/wait_thread.zig` as wait-only. The wait thread may continue to call host wake through `AppWake`, but must not process SDL events or terminal runtime work.
+- True boundary: host event-loop wake/time/shutdown bridge plus concrete window wake polling over SDL.
+- Source-backed policy owner: `event_loop.zig`.
+- Source-backed concrete polling owner: `polling/window_wake.zig`.
+- `event_loop.zig` owns event-loop policy, wake event classification, quit state, bounded SDL pump turn, clock/timer facade, and PTY wake handoff target.
+- `polling/window_wake.zig` owns direct SDL window event-loop wake/wait/poll/time/timer/semaphore calls. It must not own policy, input queues, key/mouse conversion, terminal runtime progress, or app loop control flow.
+- ABI consequence: none. These files are host-only SDL integration and do not touch `howl-pty`, `howl-vt`, or `howl-render` C ABIs.
+- Wake discipline consequence: preserve `terminal/pty/wait_thread.zig` as wait-only. The wait thread must wake the event-loop owner, not input, and must not process SDL events or terminal runtime work.
 
 ## Rejected Corrective Implementation Split
 
 Rejected: moving `input/wake.zig` to `app/wake.zig` is not acceptable as a final or next owner shape. It only moves the false owner from one directory to another while leaving app-loop wait/poll/wake split across input and app-adjacent helpers.
 
 Rejected: a cosmetic first slice that only moves the current wake bridge to `event_loop.zig` is also not acceptable. The first implementation slice must create a real event-loop boundary and a concrete tracked `polling/` owner file, and must remove SDL wait/poll/wake ownership from input in the same slice.
-
-### Superseded App-Wake Proposal
-
-Ready corrective split: move `howl-linux-host/src/input/wake.zig` to `howl-linux-host/src/app/wake.zig`, update host-only imports and references from `InputWake` to `AppWake`, and keep the same functions and tests.
-
-Why this split is source-backed:
-
-- Alacritty places wake/proxy, shutdown, timer/deadline, and cross-thread wake delivery in app/event-loop infrastructure, not input.
-- Current Howl source confirms every product symbol in `input/wake.zig` is wake/time/timer/semaphore-related at `howl-linux-host/src/input/wake.zig:6-98`.
-- The split does not move behavior across C ABI boundaries and does not change PTY, VT, render, or GL semantics.
-- The split preserves the centralized app control spine: `main.zig` still computes admission, calls input pumping, drives runtime progress, and handles present in `howl-linux-host/src/main.zig:230-288`.
-- The split preserves bounded input turns: `input/input.zig` still owns one bounded SDL burst per turn at `howl-linux-host/src/input/input.zig:242-254`.
-- The split preserves owner-thread wake discipline: `terminal/pty/wait_thread.zig` remains wait-only, while wake event delivery remains an app-loop concern.
-
-Exact files for this corrective split:
-
-- `howl-linux-host/src/input/wake.zig` to `howl-linux-host/src/app/wake.zig`.
-- Update imports in all current readers: `howl-linux-host/src/main.zig`, `howl-linux-host/src/terminal/context.zig`, `howl-linux-host/src/input/input.zig`, `howl-linux-host/src/terminal/scrollbar.zig`, `howl-linux-host/src/terminal/render/surface_layout.zig`, and `howl-linux-host/src/terminal/pty/wait_thread.zig`.
-- Update local aliases from `InputWake` to `AppWake` in `main.zig`, `terminal/context.zig`, `terminal/scrollbar.zig`, `terminal/render/surface_layout.zig`, and `terminal/pty/wait_thread.zig`.
-- Update the `input/input.zig` same-directory `wake` alias to an app wake import. The field name `window_state` is stale but renaming it requires a separate promoted slice unless the worker proves the rename is required for compilation.
-- Preserve and run tests already attached to impacted files: `main.zig`, `input/input.zig`, `terminal/context.zig`, and `terminal/pty/wait_thread.zig`.
-- `terminal/scrollbar.zig` and `terminal/render/surface_layout.zig` have no local test blocks in the read source; they are covered by the full host test build and by existing context/layout behavior tests that compile through their imports.
-- No integration or ABI test wiring changes are needed for this move-only split.
-
-Required verification for this corrective split:
-
-- From `howl-linux-host`: `zig build check`.
-- From `howl-linux-host`: `zig build test --summary all`.
-- From `howl-linux-host`: `git diff --check`.
-- From workspace root: tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars.
 
 ## Replacement: Event Loop And Polling Owner Shape
 
@@ -299,7 +270,7 @@ The accepted target is not a move-only rename. The target is a source-backed eve
 ### Correct Target Owner Shape
 
 - `howl-linux-host/src/event_loop.zig` owns host event-loop wake, quit, SDL wake event type, pump wait/poll policy, and app-loop clock/timer facade.
-- `howl-linux-host/src/polling/sdl.zig` owns direct SDL polling/time/timer/semaphore C calls used by the event-loop owner and PTY wait-thread acknowledgement.
+- `howl-linux-host/src/polling/window_wake.zig` owns direct SDL window wake/poll/time/timer/semaphore C calls used by the event-loop owner and PTY wait-thread acknowledgement.
 - No `polling/signal.zig` now. Howl has no current signal behavior to preserve.
 - No `polling/ipc.zig` now. Howl has no current IPC behavior to preserve.
 
@@ -308,7 +279,7 @@ The accepted target is not a move-only rename. The target is a source-backed eve
 Allowed files:
 
 - `howl-linux-host/src/event_loop.zig`
-- `howl-linux-host/src/polling/sdl.zig`
+- `howl-linux-host/src/polling/window_wake.zig`
 - `howl-linux-host/src/input/wake.zig`
 - `howl-linux-host/src/input/input.zig`
 - `howl-linux-host/src/main.zig`
@@ -322,7 +293,7 @@ Allowed files:
 Required shape:
 
 - Create `event_loop.zig` with `Signal`, `State`, `init`, `initWakeEventType`, `quitRequested`, `requestQuit`, `wake`, `pumpInput`, `nowNs`, quit timer wrappers, and wake semaphore wrappers.
-- Create `polling/sdl.zig` with concrete SDL wrappers for event registration, push, wait, wait timeout, poll, ticks, quit timer, and wake semaphore operations.
+- Create `polling/window_wake.zig` with concrete SDL wrappers for event registration, push, wait, wait timeout, poll, ticks, quit timer, and wake semaphore operations.
 - Delete `input/wake.zig` after its behavior is moved.
 - Remove `window_state`, `pumpWindow`, `waitAndDrainEvents`, `drainPendingEvents`, and `wakeWindow` from `input/input.zig`.
 - Keep input classification and bounded queues in `input/input.zig`; expose only the minimal event-classification entry needed by `event_loop.State.pumpInput(...)`.
@@ -376,9 +347,9 @@ Stop conditions:
 
 ## Readiness Judgment
 
-Worker-ready for one narrow implementation split only: rename `input/window.zig` to `input/wake.zig` and update the complete impacted import/alias set listed above.
+Worker-ready next split: create `event_loop.zig` and `polling/window_wake.zig`, delete `input/wake.zig`, remove SDL wait/poll/wake ownership from `input/input.zig`, and retarget PTY wait-thread wake from input to the event-loop owner in the same slice.
 
-Not ready for broader ownership cleanup. The broader maps are source-backed, but implementation would require main-agent orchestration for exact owner names, allowed files, test gates, and Lane A interaction.
+Not ready for broader host ownership cleanup. The remaining maps are source-backed, but implementation requires separate orchestration for exact owner names, allowed files, test gates, and Lane A interaction.
 
 ## Blockers
 

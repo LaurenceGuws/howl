@@ -237,6 +237,77 @@ Stop conditions:
 - Stop if a proposed integration test would require SDL/GL environment assumptions not available in CI/local gates.
 - Stop if the test would weaken existing unit gates or duplicate owner tests.
 
+## Lane B Slice 2: Event Loop And Window Wake Owner
+
+Owner: worker after this scratchpad/current slice is promoted.
+
+Purpose: remove event-loop wait/poll/wake ownership from `input/` and create the source-backed host event-loop owner plus concrete SDL window wake owner.
+
+Accepted cache:
+
+- `research/cache-2026-06-01-host-owner-boundary-map.md`
+
+Required files:
+
+- `howl-linux-host/src/event_loop.zig`
+- `howl-linux-host/src/polling/window_wake.zig`
+- `howl-linux-host/src/input/wake.zig`
+- `howl-linux-host/src/input/input.zig`
+- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/pty/wait_thread.zig`
+- `howl-linux-host/src/terminal/scrollbar.zig`
+- `howl-linux-host/src/terminal/render/surface_layout.zig`
+- `howl-linux-host/src/test/host.zig`
+- `howl-linux-host/src/test_root.zig`
+
+Required shape:
+
+- `event_loop.zig` owns event-loop policy, wake event classification, quit state, bounded SDL pump turn, clock/timer facade, and PTY wake handoff target.
+- `polling/window_wake.zig` owns direct SDL window event-loop wake/wait/poll/time/timer/semaphore calls only.
+- Delete `input/wake.zig` after moving behavior.
+- Remove `window_state`, `pumpWindow`, `waitAndDrainEvents`, `drainPendingEvents`, and `wakeWindow` from `input/input.zig`.
+- Keep input event classification, key/mouse/text conversion, bounded queues, focus/geometry flags, redraw requests, and binding behavior in `input/input.zig`.
+- `terminal/pty/wait_thread.zig` must store and wake `*EventLoop.State`, not `*Input`.
+- `terminal/context.zig` may keep the `Context` owner name for this slice, but it must thread `*EventLoop.State` to the PTY wait-thread init path.
+- `polling/sdl.zig`, `app/wake.zig`, `app_wake`, and `chrome_wake` are rejected names for this slice.
+- No `polling/signal.zig` or `polling/ipc.zig` until there is current Howl product behavior and tests for those paths.
+
+Required tests:
+
+- Event-loop test: wake event is consumed and not classified as input.
+- Event-loop test: quit event sets quit state and returns `.quit`.
+- Event-loop test: bounded drain does not exceed the SDL event-turn limit.
+- Event-loop test: `requestQuit()` sets quit and pushes wake through fake ops.
+- Update PTY wait-thread tests so wake coalescing and acknowledgement target the event-loop wake seam.
+
+Stop conditions:
+
+- Stop if `event_loop.zig` starts owning terminal runtime progress, PTY read/write, VT mutation, render submission, presentation, tabs, or window GL state.
+- Stop if PTY wait-thread still targets input wake after the slice.
+- Stop if input still owns SDL wait/poll/wake or wake event registration after the slice.
+- Stop if signal/IPC polling is added.
+- Stop if any C ABI changes appear.
+
+## Lane B Slice 3: Terminal Context Owner Research
+
+Owner: research, not implementation.
+
+Purpose: replace the vague `terminal/context.zig` owner with source-backed terminal host owners after the event-loop/window-wake slice lands.
+
+Required research:
+
+- Read Ghostty first for VT-core and terminal host shape, then Alacritty for host runtime shape, then current Howl `terminal/context.zig`.
+- Map every major `Context` field and function group to its smallest true owner.
+- Propose exact owner file names, allowed files, tests, ABI consequences, and first implementation split.
+- Preserve ABI boundary: no host shortcut into `howl-pty`, `howl-vt`, or `howl-render` internals.
+
+Stop conditions:
+
+- Stop if proposed names are generic or banned.
+- Stop if a split would weaken the app control spine, PTY wait-thread discipline, or render ABI boundary.
+- Stop if test gates are not exact.
+
 ## Planning Order
 
 1. Lane A failure-policy implementation is blocked until Lane A Slice 1 is accepted.

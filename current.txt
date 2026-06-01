@@ -1,4 +1,4 @@
-# Current Slice: Plan Event Loop And Polling Owner
+# Current Slice: Event Loop And Window Wake Owner
 
 Accepted scratchpad:
 
@@ -10,7 +10,7 @@ Accepted research cache:
 
 ## Purpose
 
-Record the rejected wake-owner moves and plan the source-backed `event_loop.zig` plus concrete `polling/` owner shape before implementation.
+Implement the source-backed `event_loop.zig` plus concrete `polling/window_wake.zig` owner shape, removing SDL wait/poll/wake ownership from input.
 
 ## Orchestration Rule
 
@@ -24,16 +24,32 @@ Record the rejected wake-owner moves and plan the source-backed `event_loop.zig`
 - A cosmetic `event_loop.zig` move-only slice is rejected.
 - The next acceptable plan must create a real event-loop boundary and a concrete tracked `polling/` owner file.
 
-## Required Plan Shape
+## Required Shape
 
 - Create `howl-linux-host/src/event_loop.zig` as the host event-loop owner.
-- Create `howl-linux-host/src/polling/sdl.zig` as the concrete SDL polling/time/timer/semaphore wrapper owner.
+- Create `howl-linux-host/src/polling/window_wake.zig` as the concrete SDL window event-loop wake/poll/time/timer/semaphore owner.
 - Do not create `polling/signal.zig` or `polling/ipc.zig` until Howl has product behavior and tests for those paths.
 - Move SDL wait/poll/wake/quit/time/semaphore responsibilities out of `input/input.zig` and `input/wake.zig` in the first implementation slice.
 - Retarget PTY wait-thread wake acknowledgement to the event-loop owner in the same implementation slice.
 - Keep input event classification, key/mouse/text conversion, bounded queues, focus/geometry flags, and binding behavior in `input/input.zig` unless explicitly planned otherwise.
 - Preserve centralized app control spine, bounded turns, and PTY wait-thread wake-only discipline.
 - No ABI changes.
+
+## Implementation Files
+
+- `howl-linux-host/src/event_loop.zig`
+- `howl-linux-host/src/polling/window_wake.zig`
+- `howl-linux-host/src/input/wake.zig`
+- `howl-linux-host/src/input/input.zig`
+- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/pty/wait_thread.zig`
+- `howl-linux-host/src/terminal/scrollbar.zig`
+- `howl-linux-host/src/terminal/render/surface_layout.zig`
+- `howl-linux-host/src/test/host.zig`
+- `howl-linux-host/src/test_root.zig`
+
+No other files are in scope for the first implementation slice.
 
 ## Required First Implementation Tests
 
@@ -59,6 +75,7 @@ From workspace root:
 
 - Stop if `event_loop.zig` starts owning terminal runtime progress, PTY read/write, VT mutation, render submission, presentation, tabs, or window GL state.
 - Stop if `polling/` gains signal or IPC files without current product behavior and tests.
+- Stop if a file named `polling/sdl.zig`, `app/wake.zig`, or `chrome_wake.zig` is introduced.
 - Stop if PTY wait-thread still targets input wake after the slice.
 - Stop if input still owns SDL wait/poll/wake or wake event registration after the slice.
 - Stop if any C ABI changes appear.
