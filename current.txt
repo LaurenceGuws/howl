@@ -1,159 +1,112 @@
-# Current Slice: Host Retained Glyph Submit Consequence
-
-Accepted research cache:
-
-- `research/cache-2026-06-01-retained-submit-failed.md`
+# Current Slice: Render-Surface Failure Policy Cleanup
 
 Accepted scratchpad:
 
-- `research/2026-06-01-retained-submit-failed-sprint.md`
+- `research/2026-06-01-host-sprint.md`
 
-## Problem
+Accepted research caches:
 
-Runtime reports repeated `retained_submit_failed` while render-surface emission succeeds. Source-backed research proves the immediate owner is host retained render integration:
+- `research/cache-2026-06-01-host-failure-policy.md`
+- `research/cache-2026-06-01-render-surface-host-failure-classes.md`
 
-- host retained pure resource-plan validation rejects glyph-run commands and glyph atlas resources
-- host retained software probe rejects glyph-run commands
-- host retained store-aware command-shape validation rejects glyph-run commands before retained resource proof
-- host submit execution reports `uploads_committed = 0` after successful backend upload
+## Purpose
+
+Encode the accepted render-surface host failure classification in Linux host behavior and tests.
+
+## Orchestration Rule
+
+- If the worker finds ownership, naming, scope, test gates, or ABI consequences left for them to design, stop and report orchestration needed.
+- Do not silently fill design gaps, broaden scope, choose new owner names, or turn an ambiguous path into implementation.
 
 ## Allowed Files
 
-- `howl-linux-host/src/terminal/render/retained.zig`
 - `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/build.zig`
-- `howl-linux-host/src/test/test_entry.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- `howl-linux-host/src/window/term_texture.zig`
 
-No other files are in scope.
-
-## Required Owner Functions
-
-In `retained.zig`, edit only these retained owner functions or new helpers called directly by them:
-
-- `resourceKindSupported(...)`
-- `uploadFormatForResource(...)`
-- `validatePlanUpload(...)`
-- `validatePlanCommand(...)`
-- `findUploadVisible(...)` or a glyph-specific latest-visible helper
-- `validateCommand(...)`
-- `validateResourceStoreCommandShape(...)`
-- `RenderResourceStore.upload(...)`
-- `RenderResourceStore.validateCommandResource(...)`
-- `RenderResourceStored`
-
-In `context.zig`, edit only:
-
-- `ContextSubmitBackend.execution(...)`
-- test scaffolding needed to capture its output
-
-In `build.zig`, edit only `wireTestSteps(...)` wiring needed to expose context tests through the host test root without weakening existing unit coverage.
-
-In `test/test_entry.zig`, edit only the test import list needed to execute the `terminal_context` module tests.
+Tests must live in the same three files. No host test wiring changes are in scope.
 
 ## Required Shape
 
-- Support `HOWL_RENDER_RESOURCE_GLYPH_ATLAS_ALPHA` in pure lifecycle validation with `HOWL_RENDER_UPLOAD_ALPHA8` by updating `resourceKindSupported(...)` and `uploadFormatForResource(...)` without broadening sprite semantics.
-- Sprite resources keep current same-surface create requirements. Do not generalize persistent-resource behavior beyond glyph atlases.
-- Accept `HOWL_RENDER_SURFACE_COMMAND_DRAW_GLYPH_RUN` in `validatePlanCommand(...)` through a glyph-plan helper.
-- Accept glyph runs in `validateCommand(...)` through a glyph-probe helper.
-- Accept glyph runs in `validateResourceStoreCommandShape(...)` without proving liveness there; liveness remains owned by `RenderResourceStore.validateCommandResource(...)`.
-- Extend `RenderResourceStored` with latest upload coverage fields matching render realizer retained state:
-  - `upload_rect: HowlRenderSurfaceRect`
-  - `upload_stride_bytes: u32`
-  - `upload_last_bytes_count: u32`
-  - `uploaded: bool`
-- Each accepted upload replaces latest coverage fields; `upload_count` and `upload_bytes_count` remain cumulative.
-- `RenderResourceStore.upload(...)` must replace latest upload coverage fields after validating rect, stride, bytes, format, resource liveness, and retained dimensions.
-- Pure glyph validation must select the latest visible matching same-surface glyph atlas upload, matching `howl-render/src/render/render_surface_realizer.zig`.
-- `validatePlanUpload(...)` accepts glyph atlas uploads without same-surface create only as deferred-to-store candidates; sprite uploads still require same-surface create.
-- `validatePlanCommand(...)` accepts persistent glyph refs with no same-surface create/upload only as deferred-to-store candidates after validating command/glyph field shape.
-- `validateCommand(...)` accepts persistent glyph refs with no same-surface create/upload as shape-only deferred candidates because the software probe has no retained store.
-- `RenderResourceStore.validateCommandResource(...)` must prove persistent atlas liveness and latest upload coverage before accepting glyph refs.
-- `ContextSubmitBackend.execution(...)` must report `prepared_upload.info.prepare_metrics.uploads` after successful `Backend.upload(...)`, not hardcoded zero.
+- Preserve C ABI defensive behavior in `howl-render`. This host slice changes only how the in-tree Linux host treats trusted render-produced surfaces.
+- In the in-tree Linux host path, convert trusted render-surface invalidity to `std.debug.assert(...)` where the invalidity is local and boolean, or `std.debug.panic(...)` where a status/tag must be printed for diagnosis.
+- Keep GL/backend/resource realization failures handled and fail-closed. `RenderResourceTextures.FailureBucket.gl_error` remains an operating class.
+- Keep reserved `HOWL_RENDER_RESOURCE_GLYPH_ATLAS_COLOR` rejected as unsupported. Do not add color glyph support or feature negotiation.
+- Do not assert on external/dead/null C ABI handles in render library FFI. The Linux host path may assert after its own prepared-handle stability proof.
+- Rename host-only `sidecar` vocabulary exactly:
+  - `render_surface_no_sidecar_count` -> `render_surface_unavailable_count`
+  - `render_surface_no_sidecar_null_count` -> `render_surface_unavailable_null_count`
+  - `render_surface_no_sidecar_call_failed_count` -> `render_surface_unavailable_call_failed_count`
+  - `render_surface_no_sidecar_unsupported_count` -> `render_surface_unavailable_unsupported_count`
+  - `render_surface_no_sidecar_invalid_count` -> `render_surface_unavailable_invalid_count`
+  - `render_surface_no_sidecar_overflow_count` -> `render_surface_unavailable_overflow_count`
+  - `render_surface_no_sidecar_other_count` -> `render_surface_unavailable_other_count`
+  - `recordRenderSurfaceNoSidecar(...)` -> `recordRenderSurfaceUnavailable(...)`
+  - diagnostic text `no_sidecar` -> `unavailable`
+- Do not split boolean returns generally. Only change named functions below.
+- `terminal/context.zig` must stop treating `.ok`, `.idle`, null surface, call failed, unsupported command/resource, invalid spans/order/upload/resource, or overflow as equal “no sidecar” buckets in the trusted path.
+- `terminal/render/retained.zig` must preserve validation helpers where needed for tests/defensive proof, but trusted prepared-upload flow must not continue as if invalid trusted render surfaces were ordinary runtime failures.
+- `window/term_texture.zig` must keep GL errors handled and fail-closed, while invalid spans/order/command shape/upload bounds/tombstone/capacity from trusted surfaces become invariant failures or are impossible before GL realization.
 
-## Glyph Command Invariants
+## Exact Function Changes
 
-- `command.rect.x_px == 0`, `command.rect.y_px == 0`, `command.rect.width_px == 0`, and `command.rect.height_px == 0`.
-- `command.color_rgba == 0`.
-- `command.resource` is the zero resource.
-- `command.glyphs.count > 0` and `command.glyphs` span is valid against `HOWL_RENDER_SURFACE_GLYPHS_PER_RUN_MAX`.
-- Every glyph ref uses `HOWL_RENDER_RESOURCE_GLYPH_ATLAS_ALPHA`.
-- Every glyph atlas rect has nonzero width/height and fits the glyph atlas dimensions.
-- When a same-surface upload is visible, every glyph atlas rect must be contained in the latest visible matching upload.
-- When only retained-store coverage is available, every glyph atlas rect must be contained in retained latest uploaded coverage.
-- Every glyph destination overlaps `surface.render_px`.
-- Every glyph color alpha is nonzero.
-- Source anchors: `howl-linux-host/src/window/term_texture.zig:2316-2337`, `howl-render/src/render/render_surface_realizer.zig:456-489`, and `howl-render/src/render/render_surface_realizer.zig:794-813`.
+`terminal/context.zig`:
+
+- In `ContextSubmitBackend.upload(...)`, after `self.term.render.preparedUpload(&upload)` has succeeded and `prepared_handle` stability has been asserted by `submitPreparedLockedWith(...)`, treat `prepared_upload.render_surface == null` as invariant unless the accepted classification says the status is a renderer emission fail-closed result before a surface exists.
+- Replace the call to `recordRenderSurfaceNoSidecar(...)` with `recordRenderSurfaceUnavailable(...)` and make that function panic for trusted-path statuses classified as invariant by `cache-2026-06-01-render-surface-host-failure-classes.md:84-92`.
+- Keep `backend_upload_failed` as a handled `SubmitPreparedResult` only for GL/backend operating failure.
+- In `uploadRenderSurfaceCommands(...)`, when no shape path matches, call a new `panicUnsupportedTrustedRenderSurfaceShape(...)` instead of only incrementing unsupported-shape counters.
+- Keep shape counters only as pre-panic diagnostic fields for the panic message or tests; do not let the trusted path continue after unsupported shape.
+
+`terminal/render/retained.zig`:
+
+- Add exact helper `trustedResourcePlanStatusAction(status: PreparedRenderResourcePlanStatus) TrustedRenderSurfaceAction`.
+- Add exact helper `trustedProbeStatusAction(status: PreparedRenderSurfaceProbeStatus) TrustedRenderSurfaceAction`.
+- Add exact helper `trustedStoreStatusAction(status: RenderResourceStoreStatus) TrustedRenderSurfaceAction`.
+- Add exact enum `TrustedRenderSurfaceAction = enum { ok, invariant, reserved_unsupported, defensive }`.
+- Helpers must encode the accepted classifications from `cache-2026-06-01-render-surface-host-failure-classes.md:101-134` exactly. `ok` statuses return `.ok`; reserved color glyph atlas cases return `.reserved_unsupported` only where the caller has exact resource-kind proof; initial `.idle` and trusted invalid statuses return `.invariant`; defensive is for helper tests/external validation only and must not be returned by the trusted host submit path.
+- Do not remove existing validation functions in this slice.
+
+`window/term_texture.zig`:
+
+- Add exact helper `trustedTextureFailureAction(bucket: RenderResourceTextures.FailureBucket, resource_kind: ?u32) TrustedTextureFailureAction`.
+- Add exact enum `TrustedTextureFailureAction = enum { invariant, operating, reserved_unsupported, defensive }`.
+- Helper must classify `gl_error` as `.operating`; `unsupported_resource_format` as `.reserved_unsupported` only when `resource_kind == HOWL_RENDER_RESOURCE_GLYPH_ATLAS_COLOR`, otherwise `.invariant`; all other buckets from `cache-2026-06-01-render-surface-host-failure-classes.md:135-145` are `.invariant` in the trusted path.
+- In `realizeSurface(...)`, keep fail-closed return for `.operating`; panic/assert for `.invariant`; preserve reserved color glyph atlas rejection as unsupported/fail-closed without adding support.
+- In `uploadRenderSurfaceFillOnly(...)` and `uploadRenderSurfaceFillPatch(...)`, shape/host-surface preconditions remain assertions in the trusted caller; `uploadFillCommand(...) == false` must be treated as invariant unless caused by `glGetError()`, which remains operating.
+- In `uploadRenderSurfaceSprites(...)`, `uploadRenderSurfaceSpritePatch(...)`, `uploadRenderSurfaceGlyphs(...)`, and `uploadRenderSurfaceGlyphPatch(...)`, a failed shape predicate after the caller selected that shape is invariant.
+- In `uploadRenderSurfaceCommands(...)`, these are operating/fail-closed: framebuffer generation failure, incomplete framebuffer, and final `glGetError() != 0`.
+- In `uploadRenderSurfaceCommands(...)`, these are invariant in the trusted path: host-surface size/id mismatch after `ensureSurface(...)`, missing texture slot for command/glyph resource, future upload after command use, draw command validation failure, and unknown command kind.
+- In `drawSpriteCommand(...)`, `spriteUploadCoversCommand(...) == false` is invariant in the trusted path.
+- In `drawGlyphCommand(...)`, missing glyph texture slot and glyph atlas rect outside slot dimensions are invariant in the trusted path.
+- In shape predicates `renderSurfaceFillOnly(...)`, `renderSurfaceFillPatch(...)`, `renderSurfaceSprite(...)`, `renderSurfaceSpritePatch(...)`, `renderSurfaceGlyphs(...)`, and `renderSurfaceGlyphPatch(...)`, `false` remains a classifier result only while selecting the shape. Once `context.zig` has selected a shape branch, subsequent upload failure from that branch must not be collapsed into generic backend failure unless it is one of the named GL operating failures.
 
 ## Required Tests
 
-Replace current tests that encode wrong glyph rejection:
+`terminal/render/retained.zig` tests:
 
-- `host retained render software probe rejects unsupported command`
-- `host retained render plan counts glyph resource uses before unsupported`
+- `trusted resource plan status actions classify invariant statuses`
+- `trusted probe status actions classify invariant statuses`
+- `trusted store status actions classify invariant statuses`
+- These tests must cover every enum tag in `PreparedRenderResourcePlanStatus`, `PreparedRenderSurfaceProbeStatus`, and `RenderResourceStoreStatus`.
 
-Add positive tests in `retained.zig` for:
+`window/term_texture.zig` tests:
 
-- `validateRenderSurfaceResourcePlan(...)` accepts same-surface glyph atlas create/upload/use
-- `validateRenderSurfaceResourcePlan(...)` accepts persistent glyph ref as deferred-to-store when no same-surface create/upload exists
-- `validatePreparedRenderSurfaceProbe(...)` accepts same-surface glyph run
-- `validatePreparedRenderSurfaceProbe(...)` accepts persistent glyph ref as shape-only deferred proof
-- `RenderResourceStore.applySurface(...)` accepts same-surface glyph atlas create/upload/use
-- `RenderResourceStore.applySurface(...)` accepts persistent glyph atlas reuse from retained store
-- `RenderResourceStore.applySurface(...)` accepts persistent glyph atlas upload without same-surface create into retained live atlas
+- `trusted texture failure actions classify gl error as operating`
+- `trusted texture failure actions classify trusted invalid buckets as invariants`
+- `trusted texture failure action preserves reserved color glyph unsupported`
+- `trusted texture upload command failures distinguish gl operating from invariant validation`
+- These tests must cover every `RenderResourceTextures.FailureBucket` tag.
 
-Add positive tests in `context.zig` or existing context test owner for:
+`terminal/context.zig` tests:
 
-- `ContextSubmitBackend.execution(...)` reports `prepared_upload.info.prepare_metrics.uploads` after successful backend upload
+- `render surface unavailable diagnostics use render surface vocabulary`
+- `trusted render surface unavailable ok and idle are invariant actions`
+- `trusted unsupported render surface shape does not continue as upload failure`
 
-Add negative tests with exact expected consequences:
+Do not add panic-catching tests unless the project already has a local panic test helper. Prefer testing the exact classifier helpers and using asserts/panic only in production trusted-path call sites.
 
-- Pure plan/lifecycle:
-  - glyph atlas upload with wrong format -> `PreparedRenderResourcePlanStatus.invalid_upload`
-  - glyph atlas create/upload with unsupported resource kind -> `PreparedRenderResourcePlanStatus.unsupported_resource`
-  - same-surface glyph atlas upload before create -> `PreparedRenderResourcePlanStatus.invalid_upload`
-  - same-surface glyph atlas use after retire -> `PreparedRenderResourcePlanStatus.invalid_resource`
-  - invalid glyph span -> `PreparedRenderResourcePlanStatus.command_span_invalid`
-  - nonzero direct command resource -> `PreparedRenderResourcePlanStatus.invalid_resource`
-  - nonzero command rect or command color -> `PreparedRenderResourcePlanStatus.invalid_command`
-  - empty glyph span -> `PreparedRenderResourcePlanStatus.invalid_command`
-  - zero atlas rect -> `PreparedRenderResourcePlanStatus.invalid_command`
-  - atlas rect outside selected same-surface upload -> `PreparedRenderResourcePlanStatus.invalid_upload`
-  - transparent glyph color -> `PreparedRenderResourcePlanStatus.invalid_command`
-  - offscreen glyph destination -> `PreparedRenderResourcePlanStatus.invalid_command`
-- Software probe:
-  - nonzero command rect or command color -> `PreparedRenderSurfaceProbeStatus.invalid_command`
-  - nonzero direct command resource -> `PreparedRenderSurfaceProbeStatus.invalid_resource`
-  - empty glyph span -> `PreparedRenderSurfaceProbeStatus.invalid_command`
-  - invalid glyph span -> `PreparedRenderSurfaceProbeStatus.command_span_invalid`
-  - glyph ref with non-glyph or unsupported glyph atlas resource kind -> `PreparedRenderSurfaceProbeStatus.unsupported_resource`
-  - zero atlas rect -> `PreparedRenderSurfaceProbeStatus.invalid_command`
-  - atlas rect outside selected same-surface upload -> `PreparedRenderSurfaceProbeStatus.invalid_upload`
-  - transparent glyph color -> `PreparedRenderSurfaceProbeStatus.invalid_command`
-  - offscreen glyph destination -> `PreparedRenderSurfaceProbeStatus.invalid_command`
-- Store-aware:
-  - missing atlas resource -> `RenderResourceStoreStatus.missing_resource`
-  - retired atlas resource -> `RenderResourceStoreStatus.retired_resource`
-  - use before same-surface create -> `RenderResourceStoreStatus.invalid_resource`
-  - use after retire -> `RenderResourceStoreStatus.invalid_retire`
-  - unuploaded atlas resource -> `RenderResourceStoreStatus.invalid_upload`
-  - glyph ref with non-glyph or unsupported glyph atlas resource kind -> `RenderResourceStoreStatus.invalid_resource`
-  - persistent glyph atlas rect outside retained latest uploaded coverage -> `RenderResourceStoreStatus.invalid_upload`
-
-## Non-Goals
-
-- No render ABI changes.
-- No `howl-render` changes.
-- No generalized sprite persistence.
-- No compatibility shim or fallback.
-- No diagnostic-only masking.
-
-## Stop Conditions
-
-- Stop if `render_surface.uploads.count` and `prepared_upload.info.prepare_metrics.uploads` diverge for a valid glyph/sprite prepared surface.
-- Stop if implementing the host fix proves `uploads_committed` ABI cannot express the required consequence.
-- Stop if persistent glyph atlas reuse requires more than latest upload coverage and needs a bounded multi-rect ownership design.
-- Stop if texture realization and retained validation cannot be made to agree without changing render ABI semantics.
+Existing unit, retained-render, term-texture, terminal-context, and integration test gates must not be weakened or filtered.
 
 ## Verification
 
@@ -166,14 +119,12 @@ From `howl-linux-host`:
 
 From workspace root:
 
-- tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars
+- tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars.
 
-Runtime reproduction after build/test gates:
+## Stop Conditions
 
-- `zig build run -Doptimize=ReleaseFast`
-
-## Result
-
-- Implemented in `howl-linux-host` commit `f059c90 host: accept retained glyph surfaces`.
-- `test-terminal-context` runs under `zig build test --summary all` without colliding with the existing `retained_render` module.
-- Runtime reproduction no longer reports `retained_submit_failed`, `resource_plan_status=unsupported_command`, `uploads_committed=0`, or `submit-failed`.
+- Stop if implementation needs a new render ABI status or changed ABI semantics.
+- Stop if host must support untrusted external render-surface pointers in this path.
+- Stop if tests would need to weaken existing unit or integration gates.
+- Stop if an assertion would fire for a documented GL/backend operating error.
+- Stop if color glyph atlas support becomes necessary to make tests pass.

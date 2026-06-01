@@ -86,26 +86,103 @@ Owner: worker after Slice 1 is accepted.
 
 Purpose: encode the accepted Slice 1 classification in host behavior and tests.
 
-Candidate files only; exact allowed files must be narrowed when promoted to `current.txt`:
+Accepted classification cache:
+
+- `research/cache-2026-06-01-render-surface-host-failure-classes.md`
+
+Allowed files:
 
 - `howl-linux-host/src/terminal/context.zig`
 - `howl-linux-host/src/terminal/render/retained.zig`
 - `howl-linux-host/src/window/term_texture.zig`
-- host test wiring only if needed to expose owner tests without weakening existing tests
 
-Required shape will be derived from Slice 1, but must obey:
+Tests must live in the same three files. No host test wiring changes are in scope for this slice.
 
-- Trusted renderer invariant violations assert/crash with precise local context.
-- Real GL/backend/resource operating errors remain handled and fail closed.
-- Stale `sidecar` vocabulary is removed or replaced only if Slice 1 proves the intended render-surface availability states.
-- Boolean failure returns must not collapse invariant violations and operating errors into the same path.
-- Tests must cover every remaining handled operating class and every converted invariant class.
+Required shape:
+
+- Preserve C ABI defensive behavior in `howl-render`. This host slice changes only how the in-tree Linux host treats trusted render-produced surfaces.
+- In the in-tree Linux host path, convert trusted render-surface invalidity to `std.debug.assert(...)` where the invalidity is local and boolean, or `std.debug.panic(...)` where a status/tag must be printed for diagnosis.
+- Keep GL/backend/resource realization failures handled and fail-closed. `RenderResourceTextures.FailureBucket.gl_error` remains an operating class.
+- Keep reserved `HOWL_RENDER_RESOURCE_GLYPH_ATLAS_COLOR` rejected as unsupported. Do not add color glyph support or feature negotiation.
+- Do not assert on external/dead/null C ABI handles in render library FFI. The Linux host path may assert after its own prepared-handle stability proof.
+- Rename host-only `sidecar` vocabulary exactly:
+  - `render_surface_no_sidecar_count` -> `render_surface_unavailable_count`
+  - `render_surface_no_sidecar_null_count` -> `render_surface_unavailable_null_count`
+  - `render_surface_no_sidecar_call_failed_count` -> `render_surface_unavailable_call_failed_count`
+  - `render_surface_no_sidecar_unsupported_count` -> `render_surface_unavailable_unsupported_count`
+  - `render_surface_no_sidecar_invalid_count` -> `render_surface_unavailable_invalid_count`
+  - `render_surface_no_sidecar_overflow_count` -> `render_surface_unavailable_overflow_count`
+  - `render_surface_no_sidecar_other_count` -> `render_surface_unavailable_other_count`
+  - `recordRenderSurfaceNoSidecar(...)` -> `recordRenderSurfaceUnavailable(...)`
+  - diagnostic text `no_sidecar` -> `unavailable`
+- Do not split boolean returns generally. Only change named functions below.
+- `terminal/context.zig` must stop treating `.ok`, `.idle`, null surface, call failed, unsupported command/resource, invalid spans/order/upload/resource, or overflow as equal “no sidecar” buckets in the trusted path.
+- `terminal/render/retained.zig` must preserve validation helpers where needed for tests/defensive proof, but trusted prepared-upload flow must not continue as if invalid trusted render surfaces were ordinary runtime failures.
+- `window/term_texture.zig` must keep GL errors handled and fail-closed, while invalid spans/order/command shape/upload bounds/tombstone/capacity from trusted surfaces become invariant failures or are impossible before GL realization.
+
+Exact function changes:
+
+- `terminal/context.zig`:
+  - In `ContextSubmitBackend.upload(...)`, after `self.term.render.preparedUpload(&upload)` has succeeded and `prepared_handle` stability has been asserted by `submitPreparedLockedWith(...)`, treat `prepared_upload.render_surface == null` as invariant unless the accepted classification says the status is a renderer emission fail-closed result before a surface exists.
+  - Replace the call to `recordRenderSurfaceNoSidecar(...)` with `recordRenderSurfaceUnavailable(...)` and make that function panic for trusted-path statuses classified as invariant by `cache-2026-06-01-render-surface-host-failure-classes.md:84-92`.
+  - Keep `backend_upload_failed` as a handled `SubmitPreparedResult` only for GL/backend operating failure.
+  - In `uploadRenderSurfaceCommands(...)`, when no shape path matches, call a new `panicUnsupportedTrustedRenderSurfaceShape(...)` instead of only incrementing unsupported-shape counters.
+  - Keep shape counters only as pre-panic diagnostic fields for the panic message or tests; do not let the trusted path continue after unsupported shape.
+- `terminal/render/retained.zig`:
+  - Add exact helper `trustedResourcePlanStatusAction(status: PreparedRenderResourcePlanStatus) TrustedRenderSurfaceAction`.
+  - Add exact helper `trustedProbeStatusAction(status: PreparedRenderSurfaceProbeStatus) TrustedRenderSurfaceAction`.
+  - Add exact helper `trustedStoreStatusAction(status: RenderResourceStoreStatus) TrustedRenderSurfaceAction`.
+  - Add exact enum `TrustedRenderSurfaceAction = enum { ok, invariant, reserved_unsupported, defensive }`.
+  - Helpers must encode the accepted classifications from `cache-2026-06-01-render-surface-host-failure-classes.md:101-134` exactly. `ok` statuses return `.ok`; reserved color glyph atlas cases return `.reserved_unsupported` only where the caller has exact resource-kind proof; initial `.idle` and trusted invalid statuses return `.invariant`; defensive is for helper tests/external validation only and must not be returned by the trusted host submit path.
+  - Do not remove existing validation functions in this slice.
+- `window/term_texture.zig`:
+  - Add exact helper `trustedTextureFailureAction(bucket: RenderResourceTextures.FailureBucket, resource_kind: ?u32) TrustedTextureFailureAction`.
+  - Add exact enum `TrustedTextureFailureAction = enum { invariant, operating, reserved_unsupported, defensive }`.
+  - Helper must classify `gl_error` as `.operating`; `unsupported_resource_format` as `.reserved_unsupported` only when `resource_kind == HOWL_RENDER_RESOURCE_GLYPH_ATLAS_COLOR`, otherwise `.invariant`; all other buckets from `cache-2026-06-01-render-surface-host-failure-classes.md:135-145` are `.invariant` in the trusted path.
+  - In `realizeSurface(...)`, keep fail-closed return for `.operating`; panic/assert for `.invariant`; preserve reserved color glyph atlas rejection as unsupported/fail-closed without adding support.
+  - In `uploadRenderSurfaceFillOnly(...)` and `uploadRenderSurfaceFillPatch(...)`, shape/host-surface preconditions remain assertions in the trusted caller; `uploadFillCommand(...) == false` must be treated as invariant unless caused by `glGetError()`, which remains operating.
+  - In `uploadRenderSurfaceSprites(...)`, `uploadRenderSurfaceSpritePatch(...)`, `uploadRenderSurfaceGlyphs(...)`, and `uploadRenderSurfaceGlyphPatch(...)`, a failed shape predicate after the caller selected that shape is invariant.
+  - In `uploadRenderSurfaceCommands(...)`, these are operating/fail-closed: framebuffer generation failure, incomplete framebuffer, and final `glGetError() != 0`.
+  - In `uploadRenderSurfaceCommands(...)`, these are invariant in the trusted path: host-surface size/id mismatch after `ensureSurface(...)`, missing texture slot for command/glyph resource, future upload after command use, draw command validation failure, and unknown command kind.
+  - In `drawSpriteCommand(...)`, `spriteUploadCoversCommand(...) == false` is invariant in the trusted path.
+  - In `drawGlyphCommand(...)`, missing glyph texture slot and glyph atlas rect outside slot dimensions are invariant in the trusted path.
+  - In shape predicates `renderSurfaceFillOnly(...)`, `renderSurfaceFillPatch(...)`, `renderSurfaceSprite(...)`, `renderSurfaceSpritePatch(...)`, `renderSurfaceGlyphs(...)`, and `renderSurfaceGlyphPatch(...)`, `false` remains a classifier result only while selecting the shape. Once `context.zig` has selected a shape branch, subsequent upload failure from that branch must not be collapsed into generic backend failure unless it is one of the named GL operating failures.
+
+Required tests:
+
+- `terminal/render/retained.zig` tests:
+  - `trusted resource plan status actions classify invariant statuses`
+  - `trusted probe status actions classify invariant statuses`
+  - `trusted store status actions classify invariant statuses`
+  - These tests must cover every enum tag in `PreparedRenderResourcePlanStatus`, `PreparedRenderSurfaceProbeStatus`, and `RenderResourceStoreStatus`.
+- `window/term_texture.zig` tests:
+  - `trusted texture failure actions classify gl error as operating`
+  - `trusted texture failure actions classify trusted invalid buckets as invariants`
+  - `trusted texture failure action preserves reserved color glyph unsupported`
+  - `trusted texture upload command failures distinguish gl operating from invariant validation`
+  - These tests must cover every `RenderResourceTextures.FailureBucket` tag.
+- `terminal/context.zig` tests:
+  - `render surface unavailable diagnostics use render surface vocabulary`
+  - `trusted render surface unavailable ok and idle are invariant actions`
+  - `trusted unsupported render surface shape does not continue as upload failure`
+- Do not add panic-catching tests unless the project already has a local panic test helper. Prefer testing the exact classifier helpers and using asserts/panic only in production trusted-path call sites.
+- Existing unit, retained-render, term-texture, terminal-context, and integration test gates must not be weakened or filtered.
+
+Verification:
+
+- From `howl-linux-host`: `zig build check`
+- From `howl-linux-host`: `zig build test --summary all`
+- From `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- From `howl-linux-host`: `git diff --check`
+- From workspace root: tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars.
 
 Stop conditions:
 
 - Stop if implementation needs a new render ABI status or changed ABI semantics.
 - Stop if host must support untrusted external render-surface pointers in this path.
 - Stop if tests would need to weaken existing unit or integration gates.
+- Stop if an assertion would fire for a documented GL/backend operating error.
+- Stop if color glyph atlas support becomes necessary to make tests pass.
 
 ## Lane B Slice 1: Host Owner Boundary Map
 
