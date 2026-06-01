@@ -239,4 +239,5 @@ Reviewer gates:
 - Reviewer cache accepted: yes.
 - Scratchpad reviewer status: accepted.
 - Current active cut: Cut 2A, render-side resize retained-safety proof.
-- Implementation status: not started.
+- Cut 2A implementation status: accepted and pushed in `howl-render` commit `300b4de`.
+- Verification status: passed: `zig build check`, `zig build test --summary all`, `zig build -Doptimize=ReleaseFast`, `git diff --check`, changed-file line scan.
