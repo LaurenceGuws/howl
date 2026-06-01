@@ -1,6 +1,6 @@
-# Current Stage: Research Render Protocol Language Cleanup
+# Current Slice: Render API V0 Language Cleanup
 
-Owner: workspace root research workflow.
+Owner: `howl-render` test names and root docs.
 
 Source scratchpad:
 
@@ -10,46 +10,92 @@ Accepted research caches:
 
 - `research/cache-2026-06-01-render-api-language-deletion.md`
 - `research/cache-2026-06-01-render-v0-source-owner-paths.md`
-
-Completed slices:
-
-- `howl-render` `aa1749d` moved V0 oracle/equivalence tests under unit.
-- `howl-render` `6bf6388` deleted the separate protocol-proof build/test bucket.
-- `howl-render` `12aafa5` deleted the internal `src/protocol_v0/` source bucket.
+- `research/cache-2026-06-01-render-protocol-language-cleanup.md`
 
 ## Purpose
 
-Produce focused evidence for the remaining render `protocol` language cleanup.
-The next implementation must distinguish stale internal/test/doc category
-language from public ABI vocabulary that remains intentionally preserved.
+Remove stale render-internal unit test names and documentation language that
+teach `protocol` as a separate product, while preserving public ABI vocabulary
+exactly.
 
-No product code is authorized by this stage.
+## Allowed Files
 
-## Research Questions
+- `docs/render-protocol-v0.md`
+- `docs/render-api-v0.md`
+- `howl-render/src/test/unit/render_api_v0_oracle.zig`
+- `howl-render/src/prepared/v0_frame_emitter.zig`
+- `howl-render/src/render/v0_frame_realizer.zig`
+- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/test/ffi.zig`
 
-- Which remaining `protocol`/`protocol_v0` occurrences under `howl-render` are
-  stale internal test names or docs that teach protocol as a separate product?
-- Which remaining occurrences are public ABI vocabulary and must remain in this
-  sprint?
-- Should `docs/render-protocol-v0.md` be renamed, rewritten, or deleted in the
-  next slice?
-- Which test names can be renamed without changing public ABI assertions?
-- Which host occurrences are out of scope and need a separate host research
-  cache?
-- What exact files, symbols, grep gates, and verification commands make one
-  worker-ready slice?
+No other files are in scope.
 
-## Required Output
+## Required Shape
 
-- A focused research cache with exact source paths, line-backed evidence,
-  public-ABI versus stale-language classification, exact proposed slice, risks,
-  stop conditions, grep gates, and readiness judgment.
-- Reviewer acceptance before the scratchpad is updated.
-- No worker seeding until `current.txt` is replaced with one exact
-  implementation slice.
+- Move `docs/render-protocol-v0.md` to `docs/render-api-v0.md`.
+- Rewrite doc title and prose from `render protocol` / `howl-render-protocol` /
+  `protocol` product nouns to `render API V0`, `V0 frame`, `V0 resource`, or
+  equivalent render-owned wording.
+- Preserve all public ABI code tokens in docs, including
+  `HOWL_RENDER_PROTOCOL_V0_VERSION`, `HOWL_RENDER_V0_*`, `HowlRenderV0*`,
+  `protocol_version`, `protocol_v0_emit_status`, and
+  `howl_render_prepared_surface_protocol_v0()`.
+- Rename test strings only in the allowed render files so they describe render
+  API V0, V0 frame emitter, V0 frame realizer, retained V0 frame realizer,
+  prepared V0 frame, or V0 frame diagnostics.
+- Preserve every test body, assertion, import, build root, and discovery path.
+- Preserve public ABI spelling in headers, FFI layout assertions, exports, docs
+  code spans, C snippets, diagnostics fields, and public call names.
 
-## Hard Stops
+## Non-Goals
 
-- Stop if public ABI names are renamed as part of language cleanup.
-- Stop if host behavior changes enter the slice.
-- Stop if documentation changes imply an ABI break without an ABI-product slice.
+- Do not rename public C ABI symbols, fields, exported names, header constants,
+  FFI layout assertions, or public call names.
+- Do not rename `src/ffi/protocol_v0.zig`.
+- Do not rename `howl_render_prepared_surface_protocol_v0()`.
+- Do not rename `protocol_v0_emit_status`.
+- Do not rename local aliases or identifiers such as `protocol_emit`,
+  `protocol_realize`, `protocol_v0_emit`, `protocolV0Frame()`, or
+  `protocol_v0_sprite_resources`.
+- Do not edit host code.
+- Do not edit build files.
+- Do not delete, filter, move, or weaken tests.
+- Do not edit research files to satisfy grep gates.
+
+## Stop Conditions
+
+- Stop if any public ABI symbol, header field, exported name, FFI layout
+  assertion, or host cimport call must change.
+- Stop if the doc rewrite implies an ABI break or semantic contract change.
+- Stop if host code must be edited.
+- Stop if any test body, assertion, import, discovery root, or build step needs
+  more than test-string renaming.
+- Stop if `docs/render-api-v0.md` cannot preserve the contract facts from the
+  old doc while removing separate-product `protocol` language.
+
+## Verification
+
+From `/home/home/personal/projects/howl/howl-render`:
+
+- `zig build test:unit`
+- `zig build test:abi`
+- `zig build test`
+
+From `/home/home/personal/projects/howl`:
+
+- `zig build check`
+- `zig build test`
+- `git diff --check`
+- `rg 'render-protocol|howl-render-protocol' docs howl-render README.md build.zig`
+  prints nothing.
+- `test ! -e docs/render-protocol-v0.md`
+- `test -f docs/render-api-v0.md`
+- `rg 'test "[^"]*protocol v0|protocol tests only|Before protocol emission|protocol emission|Protocol frame tokens|Prepared protocol frames|Live protocol resources|protocol identities|protocol resource|protocol-valid|protocol input|protocol identity' howl-render/src docs/render-api-v0.md`
+  prints nothing.
+- `rg 'protocol_proof|test:protocol-proof|test_protocol_proof|src/protocol_v0|\.\./protocol_v0|protocol_v0/' howl-render/build.zig howl-render/src`
+  prints nothing.
+
+Informational public ABI grep, not a failure gate:
+
+- `rg 'HOWL_RENDER_PROTOCOL_V0_VERSION|HowlRenderV0|howl_render_prepared_surface_protocol_v0|protocol_v0_emit_status|protocol_version' howl-render/include howl-render/src docs/render-api-v0.md`
+  may print public ABI matches.

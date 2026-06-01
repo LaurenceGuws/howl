@@ -2,13 +2,14 @@
 
 Owner: workspace root.
 
-Status: Slices 1, 2, and 3 accepted and committed. Slice 4 is blocked on
-focused docs/test-name research before promotion.
+Status: Slices 1, 2, and 3 accepted and committed. Slice 4 language cleanup
+research accepted and promoted.
 
 Research cache:
 
 - Accepted by Reviewer Agent: `research/cache-2026-06-01-render-api-language-deletion.md`.
 - Accepted by Reviewer Agent: `research/cache-2026-06-01-render-v0-source-owner-paths.md`.
+- Accepted by Reviewer Agent: `research/cache-2026-06-01-render-protocol-language-cleanup.md`.
 
 ## Purpose
 
@@ -287,9 +288,7 @@ Stop conditions:
 
 ### Slice 4: Rename Internal Test Names And Docs That Teach Protocol As Product
 
-Status: blocked. Requires focused research cache before promotion because the
-remaining language spans public ABI vocabulary, internal test names, docs, and
-host consumption names. Do not promote from this broad draft.
+Status: promoted to `current.txt` from accepted language-cleanup research cache.
 
 Goal:
 
@@ -327,6 +326,22 @@ Stop conditions:
 
 - Stop if doc changes imply public ABI renames.
 - Stop if host internals need broad renaming; make a child scratchpad instead.
+
+Promoted Slice 4 constraints:
+
+- Move `docs/render-protocol-v0.md` to `docs/render-api-v0.md` and rewrite stale
+  product-boundary prose.
+- Rename test strings only in:
+  - `howl-render/src/test/unit/render_api_v0_oracle.zig`
+  - `howl-render/src/prepared/v0_frame_emitter.zig`
+  - `howl-render/src/render/v0_frame_realizer.zig`
+  - `howl-render/src/prepared/owner.zig`
+  - `howl-render/src/test/ffi.zig`
+- Do not rename local aliases or identifiers such as `protocol_emit`,
+  `protocol_realize`, `protocol_v0_emit`, `protocolV0Frame()`, or
+  `protocol_v0_emit_status`.
+- Preserve public ABI tokens in headers, FFI layout assertions, exports, docs
+  code spans, and C snippets.
 
 ## Follow-Up Proof Gap
 
