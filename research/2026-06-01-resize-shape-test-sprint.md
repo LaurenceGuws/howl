@@ -44,6 +44,15 @@ Howl shape, respecting the C ABI/render-surface boundary:
 Howl-specific invariant forced by the embeddable render-surface boundary:
 
 - After any resize that invalidates the host terminal texture dimensions, the next accepted render surface must either be full/retained-safe or patch upload must be rejected until a matching retained host surface exists.
+- Howl's equivalent of Alacritty's renderer/GL resize immediately before draw is: host texture validity is checked or recreated after geometry/prepare and before present, inside the host submit/upload boundary. It must never happen directly in event handling or terminal geometry commit.
+
+## Cut 1 Decisions
+
+- Geometry commit belongs in `howl-linux-host/src/terminal/render/surface_layout.zig` for this sprint.
+- Host texture validity and lifecycle belong in `howl-linux-host/src/display/renderer/render_surface.zig`.
+- Geometry epoch and full/partial retained-safety classification belong in `howl-render`, with Cut 2 proof anchored first in `howl-render/src/source/prepare_request.zig`.
+- Present token routing and ack proof belong in `howl-linux-host/src/app/present.zig` and `howl-linux-host/src/terminal/context.zig` tests.
+- Host orchestration glue may be asserted in `howl-linux-host/src/terminal/context.zig`, but it must not absorb display renderer, C ABI render, PTY, or VT ownership.
 
 ## Non-Goals
 
@@ -78,46 +87,47 @@ Reviewer gates:
 - Howl-only differences are explained by C ABI/render-surface boundary.
 - No worker is asked to invent owner names, paths, or policy.
 
-## Cut 2: Deterministic Resize Success State-Machine Test Harness
+## Cut 2A: Render-Side Resize Retained-Safety Proof
 
 Owner: worker only after Cut 1 is reviewed and `current.txt` contains an exact contract.
 
-Purpose: add one deterministic test path proving resize -> geometry sync -> prepare -> render surface token -> host upload decision -> submit -> present -> ack.
+Purpose: prove the first retained-safety invariant before any host resize/upload harness exists: a geometry epoch change cannot be dropped as `.none` solely because VT source content is otherwise identical.
 
-Likely allowed files, to be narrowed in `current.txt` after reviewer acceptance:
+Allowed files for the first promotable test slice:
 
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/render/surface_layout.zig`
-- `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/app/present.zig`
-- `howl-linux-host/src/display/renderer/render_surface.zig`
-- `howl-render/src/source/prepare_request.zig` only if the proof must assert source classification directly through existing module tests.
+- `howl-render/src/source/prepare_request.zig`
 
-Required proof path:
+Exact test entrypoint:
 
-- Start from a clean terminal/render state with known geometry.
-- Apply a resize that changes render surface dimensions.
-- Commit geometry exactly once.
-- Observe a non-zero geometry epoch.
-- Produce or model one prepared surface for the new geometry.
-- Verify render surface token and prepared info agree.
-- Verify host surface dimensions equal prepared/render-surface dimensions.
-- Verify upload succeeds only for a full/retained-safe surface after texture-size invalidation.
-- Submit and record a non-zero snapshot.
-- Submit display present for `.terminal_frame`.
-- Verify present pending blocks a second submit.
-- Verify wrong present token does not ack.
-- Verify matching present token acks exactly the submitted snapshot.
-- Verify pending state clears after ack.
+- Curated root: `howl-render/src/test.zig`.
+- Verification command from `howl-render`: `zig build test --summary all`.
+- Owner-local tests may be added to `howl-render/src/source/prepare_request.zig` only if they are reached through `src/test.zig`; no new test root.
+
+Exact first proof:
+
+- Prove that a geometry epoch change with otherwise identical VT publication source does not classify as `.none` and cannot leave the next prepared surface relying on a stale retained host base.
+- Use a small owner-local fake `PublicationSource` built through existing source test helpers in `howl-render/src/source/prepare_request.zig`; do not create a new test root or host fake runtime.
+- The test must drive `PrepareRequests.acceptSource(...)` and `PrepareRequests.takePrepareRequest(...)`, not just call a helper classifier directly.
+
+Non-goal for this first promotable slice:
+
+- Do not drive `Context.renderTurn()`, host GL upload, or present ack yet. Those are later slices after the render-side retained-safety classification is proved.
+
+Required first-slice proof path:
+
+- Construct a prior published source and accept it at geometry epoch `1`.
+- Construct a new source with the same cells/dirty metadata but pass geometry epoch `2`.
+- Assert the new publication is queued when geometry changed, even if source content is otherwise equal.
+- Assert `takePrepareRequest(2, submitted_token)` returns a request with `geometry_epoch == 2`.
+- Assert the request is full/retained-safe: `damage_kind == .full`, `damage_base_seq == 0`, and `allow_retained_reuse == false` if geometry invalidates retained base.
+- Assert a second identical source at geometry epoch `2`, after the full geometry-safe request has been taken and no newer submitted token exists, returns `published == false`, `queued == false`, and `damage_kind == .none` only if the active source already represents the same snapshot/content at geometry epoch `2`.
 
 Required assertions:
 
-- Geometry epoch increments exactly once for the resize.
-- PTY/VT resize delivery is called once when grid changes.
-- Prepared token, render surface token, host submit decision, and ack snapshot use the same geometry/snapshot lineage.
-- No patch surface is accepted on a newly allocated or size-invalidated host terminal texture.
-- Debug counters match actual path events: prepare/probe/resource/upload/present/ack success and zero failure counters.
-- Bounds are explicit for all dimension conversions into `u16` render ABI dimensions.
+- Geometry epoch is part of publication/prepare safety, not decorative metadata.
+- Geometry-changed publication cannot be dropped as `.none` solely because VT cells match.
+- Retained-base reuse is disabled across geometry changes unless the submitted retained base has the same geometry epoch and snapshot base.
+- Damage kind is full when geometry changes without a safe retained base.
 
 Test shape constraints:
 
@@ -130,13 +140,42 @@ Stop conditions:
 
 - Stop if the harness needs a new runtime/controller/manager abstraction.
 - Stop if deterministic tests require host imports of internal `howl-render` Zig modules outside existing module ownership.
-- Stop if the first test can only prove isolated helpers rather than the resize-to-present state machine.
+- Stop if the test calls only helper classification instead of driving `PrepareRequests.acceptSource(...)` and `PrepareRequests.takePrepareRequest(...)`.
 - Stop if `resource_epoch` must become meaningful before the success path can be honestly asserted.
+- Stop if the test needs a duplicate root or weakened gates.
+
+## Cut 2B: Deterministic Resize Success State-Machine Test Harness
+
+Owner: planning only. Not promotable until Cut 2A is accepted and a fresh reviewer-accepted `current.txt` names exact host files, exact test entrypoint, and exact fakes.
+
+Purpose: add one deterministic test path proving resize -> geometry sync -> prepare -> render surface token -> host upload decision -> submit -> present -> ack.
+
+Required future proof path:
+
+- Start from a clean terminal/render state with known geometry.
+- Apply a resize that changes render surface dimensions.
+- Commit geometry exactly once.
+- Observe a non-zero geometry epoch.
+- Verify render surface token and prepared info agree.
+- Verify host surface dimensions equal prepared/render-surface dimensions.
+- Verify upload succeeds only for a full/retained-safe surface after texture-size invalidation.
+- Submit and record a non-zero snapshot.
+- Submit display present for `.terminal_frame`.
+- Verify present pending blocks a second submit.
+- Verify wrong present token does not ack.
+- Verify matching present token acks exactly the submitted snapshot.
+- Verify pending state clears after ack.
+
+Future stop conditions:
+
+- Stop if the harness needs a new runtime/controller/manager abstraction.
+- Stop if deterministic tests require host imports of internal `howl-render` Zig modules outside existing module ownership.
+- Stop if the test can only prove isolated helpers rather than the resize-to-present state machine.
 - Stop if the test needs a duplicate root or weakened gates.
 
 ## Cut 3: Resize Stale/Failure State-Machine Tests
 
-Owner: worker only after Cut 2 is accepted and committed.
+Owner: planning only. Not promotable until each failure case has a fresh reviewer-accepted `current.txt` with exact files, exact test entrypoint, and exact invariants.
 
 Purpose: prove negative space after the success path exists.
 
@@ -157,7 +196,7 @@ Stop conditions:
 
 ## Cut 4: Behavior Fix Only After Tests Prove The Contract
 
-Owner: worker only after tests expose the exact failing invariant.
+Owner: planning only. Not promotable until tests expose the exact failing invariant and a fresh reviewer-accepted `current.txt` narrows files and behavior.
 
 Possible fix areas, not authorized yet:
 
@@ -198,6 +237,6 @@ Reviewer gates:
 
 - Research cache accepted: yes.
 - Reviewer cache accepted: yes.
-- Scratchpad reviewer status: pending.
-- Current active cut: Cut 1, Alacritty shape contract review.
+- Scratchpad reviewer status: accepted.
+- Current active cut: Cut 2A, render-side resize retained-safety proof.
 - Implementation status: not started.
