@@ -108,6 +108,6 @@ Stop conditions:
 ## Signoff
 
 - Research cache accepted: yes.
-- Scratchpad reviewer status: pending.
-- Cut 1 implementation status: pending.
-- Verification status: pending.
+- Scratchpad reviewer status: accepted.
+- Cut 1 implementation status: accepted and pushed in `howl-linux-host` commit `4eb628b`.
+- Verification status: passed: `zig build check`, `zig build test --summary all`, `zig build -Doptimize=ReleaseFast`, `git diff --check`, changed-file line scan; workspace clean after root commit `49105db`.
