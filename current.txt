@@ -1,6 +1,6 @@
-# Current Slice: Render Surface Owner Rename
+# Current Slice: Dissolve Render Surface Oracle Test Bucket
 
-Owner: `howl-render` ABI/FFI/render owners and `howl-linux-host` render consumers.
+Owner: `howl-render` render-surface emitter, realizer, prepared owner, and FFI test owners.
 
 Source scratchpad:
 
@@ -10,229 +10,60 @@ Accepted research cache:
 
 - `research/cache-2026-06-01-render-real-owner-names.md`
 
-User review status:
+## Problem
 
-- User reviewed and accepted the scratchpad. Promote and delegate implementation.
-
-## Purpose
-
-Replace the made-up `protocol_v0` / product-phase `V0` / render-side `frame`
-layer with real owner vocabulary.
-
-This is one broad no-alias product rename across public C ABI, FFI, render
-owners, docs, render tests, and host consumers.
-
-## Project Law
-
-- `protocol` is banned from Howl render symbols.
-- Product-phase `V0` vocabulary is banned.
-- Render-side `frame` vocabulary is banned.
-- VT owns `vt-surface`.
-- Render owns `render-surface`.
-- `render-surface` is the object crossing into backend presentation.
-- Host wake and backend presentation are different owners and different cadences.
-- Host wake/scheduling may use `frame` only where it means SDL/event-loop frame
-  scheduling.
-- Presentation/backend/GL paths must not use `frame` for render-surface,
-  texture upload, backend realization, or present paths.
-- No compatibility aliases, typedefs, wrapper exports, macro aliases, or old-name
-  shims.
-- Render tests have one entrypoint: `howl-render/src/test.zig`.
-- Duplicate test roots such as `src/test_abi.zig`, `src/test_unit.zig`, or
-  equivalent wrapper roots are banned.
+`howl-render/src/test/unit/render_surface_oracle.zig` is stale proof-bucket structure from the old protocol proof lane. It centralizes tests for multiple owners under an `oracle` name instead of placing tests with the smallest true owner.
 
 ## Allowed Files
 
-- `howl-render/include/howl_render.h`
-- `howl-render/src/ffi/protocol_v0.zig`
-- `howl-render/src/ffi/render_surface.zig`
-- `howl-render/src/libhowl_render.zig`
-- `howl-render/src/ffi/prepared_surface.zig`
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/session/text.zig`
-- `howl-render/src/prepared/v0_frame_emitter.zig`
-- `howl-render/src/prepared/render_surface_emitter.zig`
-- `howl-render/src/render/v0_frame_realizer.zig`
-- `howl-render/src/render/render_surface_realizer.zig`
 - `howl-render/src/test/unit/root.zig`
-- `howl-render/src/test/unit/render_api_v0_oracle.zig`
 - `howl-render/src/test/unit/render_surface_oracle.zig`
-- `howl-render/src/test/unit/geometry.zig`
+- `howl-render/src/prepared/render_surface_emitter.zig`
+- `howl-render/src/render/render_surface_realizer.zig`
+- `howl-render/src/prepared/owner.zig`
 - `howl-render/src/test/ffi.zig`
-- `howl-render/src/test.zig`
-- `howl-render/build.zig`
-- `howl-render/src/prepared/surface.zig`
-- `howl-render/src/text/frame_preparer.zig`
-- `docs/render-api-v0.md`
-- `docs/render-surface.md`
-- `howl-linux-host/src/terminal/render/retained.zig`
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/window/term_texture.zig`
+- `current.txt`
 
 No other files are in scope.
 
-## Required Names
-
-- `HOWL_RENDER_PROTOCOL_V0_VERSION` -> `HOWL_RENDER_SURFACE_VERSION`
-- `HOWL_RENDER_V0_*_MAX` -> `HOWL_RENDER_SURFACE_*_MAX`
-- `HOWL_RENDER_V0_DAMAGE_*` -> `HOWL_RENDER_SURFACE_DAMAGE_*`
-- `HOWL_RENDER_V0_RESOURCE_*` -> `HOWL_RENDER_RESOURCE_*`
-- `HOWL_RENDER_V0_UPLOAD_*` -> `HOWL_RENDER_UPLOAD_*`
-- `HOWL_RENDER_V0_COMMAND_*` -> `HOWL_RENDER_SURFACE_COMMAND_*`
-- `HowlRenderV0Token` -> `HowlRenderSurfaceToken`
-- `frame_seq` -> `surface_seq`
-- `HowlRenderV0Rect` -> `HowlRenderSurfaceRect`
-- `HowlRenderV0DamageItem` -> `HowlRenderSurfaceDamageItem`
-- `HowlRenderV0DamageSpan` -> `HowlRenderSurfaceDamageSpan`
-- `HowlRenderV0ResourceId` -> `HowlRenderResourceId`
-- `HowlRenderV0Upload` -> `HowlRenderResourceUpload`
-- `HowlRenderV0UploadSpan` -> `HowlRenderResourceUploadSpan`
-- `HowlRenderV0Create` -> `HowlRenderResourceCreate`
-- `HowlRenderV0CreateSpan` -> `HowlRenderResourceCreateSpan`
-- `HowlRenderV0GlyphRef` -> `HowlRenderGlyphRef`
-- `HowlRenderV0GlyphRunSpan` -> `HowlRenderGlyphRunSpan`
-- `HowlRenderV0Command` -> `HowlRenderSurfaceCommand`
-- `HowlRenderV0CommandSpan` -> `HowlRenderSurfaceCommandSpan`
-- `HowlRenderV0Retire` -> `HowlRenderResourceRetire`
-- `HowlRenderV0RetireSpan` -> `HowlRenderResourceRetireSpan`
-- `HowlRenderV0HostAck` -> `HowlRenderResourceAck`
-- `HowlRenderV0HostAckSpan` -> `HowlRenderResourceAckSpan`
-- `HowlRenderV0Frame` -> `HowlRenderSurface`
-- `protocol_version` -> `surface_version`
-- `howl_render_prepared_surface_protocol_v0` ->
-  `howl_render_prepared_surface_render_surface`
-- `protocol_v0_emit_status` -> `render_surface_emit_status`
-- `src/ffi/protocol_v0.zig` -> `src/ffi/render_surface.zig`
-- `src/prepared/v0_frame_emitter.zig` ->
-  `src/prepared/render_surface_emitter.zig`
-- `src/render/v0_frame_realizer.zig` ->
-  `src/render/render_surface_realizer.zig`
-- `src/test/unit/render_api_v0_oracle.zig` ->
-  `src/test/unit/render_surface_oracle.zig`
-- `V0Payload` -> `RenderSurfacePayload`
-- `v0_payload` -> `render_surface_payload`
-- `protocolV0Frame()` -> `renderSurface()`
-- `protocolV0FrameForTest()` -> `renderSurfaceForTest()`
-- `protocolV0FrameStorageEmptyForTest()` ->
-  `renderSurfaceStorageEmptyForTest()`
-- `protocolV0EmitStatus()` -> `renderSurfaceEmitStatus()`
-- `protocol_v0_emit` / `protocol_emit` -> `render_surface_emitter`
-- `protocol_realize` -> `render_surface_realizer`
-- `protocol_v0_sprite_resources` -> `render_surface_sprite_resources`
-- `PreparedProtocolV0ResourcePlan` -> `PreparedRenderResourcePlan`
-- `ProtocolV0ResourceStore` -> `RenderResourceStore`
-- `ProtocolV0BackendOperation` -> `TextureResourceOperation`
-- `ProtocolV0Textures` -> `RenderResourceTextures`
-- `realizeFrame(frame)` -> `realizeSurface(surface)`
-- `protocol_v0_frame` -> `render_surface`
-- `protocol_v0_probe` -> `render_surface_probe`
-- `protocol_v0_resource_plan` -> `render_surface_resource_plan`
-- `protocolV0SpriteFrame` -> `renderSurfaceSprite`
-- `protocolV0GlyphFrame` -> `renderSurfaceGlyphs`
-- `protocolV0FillOnly` -> `renderSurfaceFillOnly`
-- render-object shape counters `v0_*_frame_count` ->
-  `render_surface_*_count`
-
 ## Required Shape
 
-- Delete old fake names; do not leave compatibility names.
-- Rename public C ABI symbols and all render FFI/layout assertions together.
-- Preserve ABI layout, sizes, alignments, offsets, constant values, and numeric
-  kind/status values.
-- Rename docs from product-phase vocabulary to render-surface vocabulary.
-- Route all render test build steps through single root `src/test.zig`.
-- Do not restore `src/test_abi.zig` or `src/test_unit.zig`.
-- Do not create equivalent duplicate test roots under other names.
-- Preserve all ABI/layout/unit/oracle tests through the single entrypoint.
-- Keep host wake/scheduling `frame` vocabulary only where it means SDL/event-loop
-  frame scheduling.
-- Remove `frame` from render-surface, presentation/backend, texture upload,
-  resource realization, docs, and render tests.
-- Rename render-side `frame` vocabulary in `test/unit/geometry.zig`,
-  `prepared/surface.zig`, and `text/frame_preparer.zig` to owner-true
-  render-surface/text-preparation names without changing behavior.
+- Delete `howl-render/src/test/unit/render_surface_oracle.zig`.
+- Remove its import from `howl-render/src/test/unit/root.zig`.
+- Move emitter-owned tests into `howl-render/src/prepared/render_surface_emitter.zig`.
+- Move realizer-owned comparison tests into `howl-render/src/render/render_surface_realizer.zig` only if they test realizer behavior directly.
+- Move prepared-owner lifetime/diagnostic/render-surface ownership tests into `howl-render/src/prepared/owner.zig`.
+- Move FFI borrowed render-surface behavior into `howl-render/src/test/ffi.zig`.
+- Do not preserve an `oracle`, `proof`, `bucket`, or aggregate test file under a new name.
+- Do not weaken or delete coverage to make the move easy.
+- Keep helper functions private to the owner file that uses them. Duplicate a tiny fixture helper only when sharing would create a new fake test bucket.
 
 ## Non-Goals
 
-- No runtime behavior changes.
-- No host wake policy changes.
-- No backend presentation cadence changes.
-- No compatibility layer.
-- No unrelated VT/PTTY/input changes.
-- No broad formatting-only churn.
+- No ABI changes.
+- No product behavior changes.
+- No host changes.
+- No broad formatting-only churn outside moved tests.
+- No new test root or duplicate test entrypoint.
 
 ## Stop Conditions
 
-- Stop if any old public ABI symbol must be kept as an alias.
-- Stop if any worker wants to restore duplicate test entrypoints.
-- Stop if any render test build step needs a root source file other than
-  `src/test.zig`.
-- Stop if layout assertions are removed or weakened instead of renamed.
-- Stop if a host behavior change is needed beyond symbol/name updates.
-- Stop if backend presentation and host wake are collapsed into one owner or
-  cadence.
-- Stop if presentation/backend code uses `frame` for render-surface, texture
-  upload, backend realization, or present paths.
-- Stop if final grep gates require editing historical `research/` files.
+- Stop if a test cannot be assigned to a true owner without changing behavior.
+- Stop if preserving coverage requires a new shared test bucket.
+- Stop if root test wiring needs anything except owner imports already reachable through `src/test.zig`.
 
 ## Verification
 
 From `howl-render`:
 
-- `zig build test`
 - `zig build test:unit`
-- `zig build test:abi`
-- `zig build test:build`
-- `zig build check`
-- `git diff --check`
-
-From `howl-linux-host`:
-
-- `zig build test --summary all`
-- `zig build -Doptimize=ReleaseFast`
-- `git diff --check`
-
-From workspace root:
-
-- `zig build check`
 - `zig build test`
+- `zig build check`
 - `git diff --check`
 
-Required grep gates from workspace root:
+Required grep gates from `howl-render`:
 
-- `rg -n "protocol_v0|ProtocolV0|PROTOCOL_V0" howl-render howl-linux-host docs build.zig howl-render/build.zig.zon howl-linux-host/build.zig.zon howl-pty/build.zig.zon howl-vt/build.zig.zon`
+- `rg -n "render_surface_oracle|proof target|owner oracle|oracle\.zig" src`
   prints nothing.
-- `rg -n "protocol" howl-render/include howl-render/src howl-linux-host/src docs --glob '!docs/**/official*'`
+- `rg -n "@import\(\"render_surface_oracle\.zig\"\)" src/test/unit/root.zig`
   prints nothing.
-- `rg -n "RenderV0|RENDER_V0|render-api-v0|Render API V0|\bV0\b" howl-render howl-linux-host docs build.zig howl-render/build.zig.zon howl-linux-host/build.zig.zon howl-pty/build.zig.zon howl-vt/build.zig.zon`
-  prints nothing.
-- `rg -n "HowlRenderV0|HOWL_RENDER_V0|HOWL_RENDER_PROTOCOL" howl-render/include howl-render/src howl-linux-host/src docs`
-  prints nothing.
-- `rg -n "\bframe\b|\bFrame\b|FRAME" howl-render/include howl-render/src docs howl-linux-host/src/terminal/render howl-linux-host/src/window/term_texture.zig | rg -v "howl-linux-host/src/window/term_texture\.zig:.*gl_c\.GL_FRAMEBUFFER(_BINDING|_COMPLETE)?"`
-  prints nothing.
-- `rg -n "frame|Frame|FRAME" howl-linux-host/src/terminal/context.zig`
-  prints only true SDL/event-loop wake scheduling occurrences. It must not print
-  render-surface diagnostics, presentation, backend realization, texture upload,
-  or resource occurrences.
-- `rg -n "prepared_surface_protocol|protocolV0|protocol_v0_emit_status|v0_payload|V0Payload|v0_frame" howl-render howl-linux-host docs`
-  prints nothing.
-- `rg -n "test_abi|test_unit|src/test_abi\.zig|src/test_unit\.zig" howl-render`
-  prints nothing.
-- `rg -n "root_source_file = b\.path\(\"src/test\.zig\"\)" howl-render/build.zig`
-  prints the render test and benchmark root usages, both using `src/test.zig`.
-- `rg -n "HowlRenderSurface|HOWL_RENDER_SURFACE|render_surface|RenderSurface|surface_seq|howl_render_prepared_surface_render_surface" howl-render howl-linux-host docs`
-  prints expected new render-surface names.
-- `rg -n "HowlRenderResource|HOWL_RENDER_RESOURCE|RenderResource|TextureResource|uploadTextureRect|retireTexture" howl-render howl-linux-host docs`
-  prints expected resource/texture names.
-
-Allowed grep exception:
-
-- `frame` may remain only in host wake/scheduling paths that are not included in
-  the render/presentation/backend frame-ban gate. If implementation touches a
-  `frame` occurrence in `howl-linux-host/src/terminal/context.zig`, it must prove
-  the occurrence is SDL/event-loop wake scheduling and not render-surface,
-  presentation, backend realization, texture upload, or resources.
-- Official OpenGL constants `gl_c.GL_FRAMEBUFFER`,
-  `gl_c.GL_FRAMEBUFFER_BINDING`, and `gl_c.GL_FRAMEBUFFER_COMPLETE` may remain
-  in `howl-linux-host/src/window/term_texture.zig` because they are external GL
-  API names, not Howl render-surface owner vocabulary.
