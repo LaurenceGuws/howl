@@ -343,6 +343,60 @@ Stop conditions:
 - Stop if matching-token completion does not unblock submit; return exact state and smallest owner for the structural fix.
 - Stop if the test needs a duplicate root or weakened gates.
 
+## Cut 3C: Host Surface Upload Failure After Resize
+
+Owner: worker only after a fresh reviewer-accepted `current.txt` names this exact host submit-boundary failure slice.
+
+Purpose: prove the `Context.submitPreparedLockedWith(...)` submit-boundary transaction after resize: failed backend upload does not submit, does not advance retained render state, and leaves host surface dimensions invalid in the deterministic fake failure model so stale dimensions cannot be presented as terminal success.
+
+Allowed files for the promotable test slice:
+
+- `howl-linux-host/src/terminal/context.zig`
+
+Exact test entrypoint:
+
+- Build wiring root: `howl-linux-host/src/test_root.zig`, through `terminalContextTestModule(...)` in `howl-linux-host/build.zig`.
+- Owner-local test location: `howl-linux-host/src/terminal/context.zig`.
+- Verification command from `howl-linux-host`: `zig build test:unit --summary all` for the narrow worker gate, then full host gates before acceptance.
+- No new test root, side-entry test file, or build-step split.
+
+Required proof path:
+
+- Reuse the owner-local Cut 2B fake seams in `terminal/context.zig`; do not add a second harness shape.
+- Start with a known old host surface size.
+- Apply resize/new geometry and prepare a full new-geometry frame through the existing fake render state.
+- Use a failing submit backend that models an already-failed host surface upload at the `submitPreparedLockedWith(...)` boundary by recording the attempted render dimensions, invalidating host surface dimensions to zero, and returning upload failure.
+- Call `submitPreparedLockedWith(...)` through that failing backend.
+- Assert result is `.failed`, returned snapshot is the prepared snapshot, render submit count does not advance, upload attempt count advances exactly once, and host surface width/height are zero after failure.
+- Assert retry with the successful Cut 2B backend can upload the same full/new-geometry frame and submit once, proving retained state did not silently advance on failure.
+
+Required assertions:
+
+- Host upload failure is fail-closed before render submit.
+- Host surface dimensions are truth: failed resize upload leaves width/height zero, not stale old dimensions.
+- Retained submit state does not advance on failed upload.
+- A later valid full frame can recover through the same submit boundary.
+
+Non-goals for this cut:
+
+- Do not touch render module files.
+- Do not drive real SDL or GL.
+- Do not touch `display/renderer/render_surface.zig` or claim to prove real `term_texture.ensureSurface(...)` GL behavior.
+- Do not test render resource realization rollback; that is a separate resource-store boundary and must not be mixed into this host surface failure slice.
+- Do not implement Cut 3D partial/patch rejection.
+- Do not change product behavior in this slice.
+- Do not redesign `display/renderer/render_surface.zig`, `app/present.zig`, event loop pacing, or C ABI semantics.
+
+Stop conditions:
+
+- Stop if the test needs files outside `howl-linux-host/src/terminal/context.zig`.
+- Stop if the test needs real GL, SDL, or a new runtime/controller/manager abstraction.
+- Stop if the fake backend cannot honestly model the submit-boundary host surface failure without bypassing `submitPreparedLockedWith(...)`.
+- Stop if failed upload advances render submit state; return exact state and smallest owner for the structural fix.
+- Stop if failed upload leaves stale non-zero host surface dimensions; return exact state and smallest owner for the structural fix.
+- Stop if retry after failed upload cannot submit a valid full frame; return exact state and smallest owner for the structural fix.
+- Stop if the test needs a duplicate root or weakened gates.
+
 ## Cut 4: Behavior Fix Only After Tests Prove The Contract
 
 Owner: planning only. Not promotable until tests expose the exact failing invariant and a fresh reviewer-accepted `current.txt` narrows files and behavior.

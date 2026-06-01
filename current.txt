@@ -1,4 +1,4 @@
-# Current Slice: Resize While Present Pending Proof
+# Current Slice: Host Surface Upload Failure After Resize Proof
 
 Accepted scratchpad:
 
@@ -11,7 +11,7 @@ Accepted research caches:
 
 Accepted reviewer finding:
 
-- Cut 3B is worker-ready. `terminal/context.zig` is the correct host orchestration owner for proving resize/new terminal work remains blocked while host-owned terminal present is pending.
+- Cut 3C is worker-ready after tightening. The proof owner is `Context.submitPreparedLockedWith(...)` in `howl-linux-host/src/terminal/context.zig`; this is a deterministic submit-boundary failure proof, not real GL or resource-realization proof.
 
 User enforcement:
 
@@ -20,7 +20,7 @@ User enforcement:
 
 ## Purpose
 
-Add one host orchestration negative-space test proving that a resize/new terminal frame cannot submit while the previous terminal present is still pending, that a wrong host present token leaves the terminal blocked, and that only the matching token clears pending state and permits the resized frame to submit.
+Add one host submit-boundary negative-space test proving that after resize invalidates host terminal texture dimensions, failed backend upload does not submit, does not advance retained render state, and leaves host surface dimensions invalid in the deterministic fake failure model.
 
 This is a test-harness proof slice only. If current behavior cannot satisfy the invariant, stop and return the exact failing transition and smallest true owner for the next structural fix.
 
@@ -38,36 +38,38 @@ This is a test-harness proof slice only. If current behavior cannot satisfy the 
 ## Required Test Proof
 
 - Reuse the owner-local Cut 2B fake seams in `terminal/context.zig`; do not add a second harness shape.
-- Start with one submitted terminal frame and one host-owned pending present token.
-- Apply a resize/new geometry while that present is pending.
-- Prepare or stage a new resized frame through the same fake render state used by Cut 2B.
-- Assert `Context.renderAction(...)` reports `.blocked_present` for submit-pending work while present is pending.
-- Attempt a submit through `submitPreparedLockedWith(...)` only if the existing owner seam can honestly model the block; otherwise assert the owner-level action block and do not bypass it with direct submit.
-- Drain a wrong present token and assert no ack, pending state remains, and submit remains blocked.
-- Drain the matching present token and assert the exact prior snapshot is acked once, pending state clears, and the resized frame can then submit once.
+- Start with a known old host surface size.
+- Apply resize/new geometry and prepare a full new-geometry frame through the existing fake render state.
+- Use a failing submit backend that models an already-failed host surface upload at the `submitPreparedLockedWith(...)` boundary by recording the attempted render dimensions, invalidating host surface dimensions to zero, and returning upload failure.
+- Call `submitPreparedLockedWith(...)` through that failing backend.
+- Assert result is `.failed`, returned snapshot is the prepared snapshot, render submit count does not advance, upload attempt count advances exactly once, and host surface width/height are zero after failure.
+- Assert retry with the successful Cut 2B backend can upload the same full/new-geometry frame and submit once, proving retained state did not silently advance on failure.
 
 ## Required Assertions
 
-- Present pending is host-owned terminal state and must block submit regardless of resized geometry readiness.
-- Wrong host token cannot ack, clear pending, or allow resized submit.
-- Matching host token acks exactly once and only then permits the resized submit.
-- Resize/new geometry does not bypass present cadence.
+- Host upload failure is fail-closed before render submit.
+- Host surface dimensions are truth: failed resize upload leaves width/height zero, not stale old dimensions.
+- Retained submit state does not advance on failed upload.
+- A later valid full frame can recover through the same submit boundary.
 
 ## Non-Goals
 
 - Do not touch render module files.
 - Do not drive real SDL or GL.
-- Do not implement host texture failure or patch rejection cases; those are later Cut 3C/3D.
+- Do not touch `display/renderer/render_surface.zig` or claim to prove real `term_texture.ensureSurface(...)` GL behavior.
+- Do not test render resource realization rollback.
+- Do not implement Cut 3D partial/patch rejection.
 - Do not change product behavior in this slice.
-- Do not redesign `app/present.zig`, display present policy, event loop pacing, or C ABI semantics.
+- Do not redesign `display/renderer/render_surface.zig`, `app/present.zig`, event loop pacing, or C ABI semantics.
 
 ## Stop Conditions
 
 - Stop if the test needs files outside `howl-linux-host/src/terminal/context.zig`.
-- Stop if the test needs a new runtime/controller/manager abstraction or a second fake harness shape.
-- Stop if the only way to prove the invariant is to call submit directly through a seam that intentionally bypasses present-pending action selection.
-- Stop if wrong-token completion clears pending or allows submit; return exact state and smallest owner for the structural fix.
-- Stop if matching-token completion does not unblock submit; return exact state and smallest owner for the structural fix.
+- Stop if the test needs real GL, SDL, or a new runtime/controller/manager abstraction.
+- Stop if the fake backend cannot honestly model the submit-boundary host surface failure without bypassing `submitPreparedLockedWith(...)`.
+- Stop if failed upload advances render submit state; return exact state and smallest owner for the structural fix.
+- Stop if failed upload leaves stale non-zero host surface dimensions; return exact state and smallest owner for the structural fix.
+- Stop if retry after failed upload cannot submit a valid full frame; return exact state and smallest owner for the structural fix.
 - Stop if the test needs a duplicate root or weakened gates.
 
 ## Verification
