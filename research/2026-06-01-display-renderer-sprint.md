@@ -74,7 +74,7 @@ Allowed host files and paths:
 - `howl-linux-host/src/terminal/context.zig`
 - `howl-linux-host/src/terminal/scrollbar.zig`
 - `howl-linux-host/src/terminal/links.zig`
-- `howl-linux-host/src/terminal/render/temporary_debugging.zig`
+- `howl-linux-host/src/terminal/render/temporary_render_surface_debugging.zig`
 - `howl-linux-host/src/terminal/texture.zig`
 - `howl-linux-host/src/terminal/texture/` only for moving `gl_c.h` to `src/display/renderer/gl_c.h` and deleting moved fake owners after their contents move.
 
