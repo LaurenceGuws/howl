@@ -205,52 +205,166 @@ These facts were collected before proposing any implementation split for files n
 - `updateTabCacheIfNeeded(...)`, `drawCachedTabBar(...)`, `ensureTabTexture(...)`, `releaseTabCache(...)`, `setTextureParams(...)`, and `hashTabBarState(...)` at `howl-linux-host/src/window/present.zig:283-343` and `536-547` belong to tab-bar GL texture caching under the window present owner.
 - `emptyPresentProofStats(...)`, `emptyPresentProofSnapshot(...)`, `emptyPresentProofDelta(...)`, `emptyFramebufferObservation(...)`, `FakeC`, `testState(...)`, and `testFrame(...)` at `howl-linux-host/src/window/present.zig:345-603` are proof/test helpers and should move only with present-proof tests.
 
-## Misnamed Owner Map: `input/window.zig`
+## Misplaced Owner Map: App Wake Bridge
 
-- Current name: `input/window.zig`.
-- Current facts: it owns `EventSignal`, `State.quit_requested`, `State.wake_event_type`, SDL wake event registration, wake event pushing, quit requests, SDL ticks, quit timer, and wake semaphore wrappers at `howl-linux-host/src/input/window.zig:6-98`.
-- Current direct users discovered by source search:
-- `howl-linux-host/src/main.zig:6` imports it as `InputWindow` and uses `startQuitTimer(...)`, `stopQuitTimer(...)`, and `nowNs()` at `howl-linux-host/src/main.zig:149-168`, `236`, `260`, and `617`.
-- `howl-linux-host/src/terminal/context.zig:3` imports it as `InputWindow` and uses `nowNs()` for paste/cursor blink, render-surface timing, submit timing, render elapsed time, and input activity at `howl-linux-host/src/terminal/context.zig:234`, `405`, `620`, `624`, `823`, `936`, `1559`, `1565`, `1598`, and `1620`.
-- `howl-linux-host/src/input/input.zig:4` imports same-directory `window.zig` as `window` and uses `window.EventSignal` and `window.State` at `howl-linux-host/src/input/input.zig:64` and `105`.
-- `howl-linux-host/src/terminal/scrollbar.zig:2` imports it as `InputWindow` and uses `nowNs()` for scrollbar layout hover/fade timing at `howl-linux-host/src/terminal/scrollbar.zig:53-61`.
-- `howl-linux-host/src/terminal/render/surface_layout.zig:2` imports it as `InputWindow` and uses `nowNs()` for resize timing at `howl-linux-host/src/terminal/render/surface_layout.zig:56-78`.
-- `howl-linux-host/src/terminal/pty/wait_thread.zig:4` imports it as `InputWindow` and uses `WakeSemaphore`, `createWakeSemaphore(...)`, `destroyWakeSemaphore(...)`, `signalWakeSemaphore(...)`, and `waitWakeSemaphore(...)` at `howl-linux-host/src/terminal/pty/wait_thread.zig:9-29`, `97-110`, and in test fake state at `howl-linux-host/src/terminal/pty/wait_thread.zig:197-204`.
-- True boundary: SDL event-loop wake and time bridge for the input/app loop. It does not own window geometry, window lifecycle, input event classification, or terminal input semantics.
-- Source-backed true name: `input/wake.zig`.
-- Boundary of `input/wake.zig`: `EventSignal`, `State`, `nowNs()`, quit timer helpers, wake semaphore helpers, and the timer callback. It may import SDL. It must not own `Input` queues, key/mouse conversion, `Window.State`, GL presentation, or PTY wait-thread policy.
+- Previous current name: `input/window.zig`.
+- Intermediate name after the first rename: `input/wake.zig`.
+- Corrected judgment: `input/wake.zig` is a rejected intermediate placement. It fixed the false `window` noun, but kept app-loop wake, quit, time, and semaphore ownership under the input namespace.
+- Current facts: `howl-linux-host/src/input/wake.zig` owns `EventSignal`, `State.quit_requested`, `State.wake_event_type`, SDL wake event registration, wake event pushing, quit requests, SDL monotonic ticks, quit timer, wake semaphore wrappers, and the quit timer callback at `howl-linux-host/src/input/wake.zig:6-98`.
+- `input/` owns SDL event intake, key/mouse conversion, bounded input queues, input policy, and publication of input events. It does not own the app event loop's wake primitive, quit lifecycle, clock source, or cross-thread wake semaphore wrappers.
+
+### Alacritty Reference Evidence
+
+- Alacritty creates the host event loop and proxy in app bootstrap at `alacritty/alacritty/src/main.rs:137-142` with `EventLoop::<Event>::with_user_event()` and `window_event_loop.create_proxy()`.
+- Alacritty `Processor` owns event-loop infrastructure, scheduler, windows, and the event-loop proxy at `alacritty/alacritty/src/event.rs:87-101`, and wires `Scheduler::new(proxy.clone())` at `alacritty/alacritty/src/event.rs:103-144`.
+- Alacritty wraps `EventLoopProxy<Event>` in `EventProxy` at `alacritty/alacritty/src/event.rs:2072-2093`, where it implements terminal event delivery back to the app event loop.
+- Alacritty handles terminal wake delivery through app event processing at `alacritty/alacritty/src/event.rs:409-415`, where `TerminalEvent::Wakeup` marks the window dirty and requests redraw.
+- Alacritty's PTY event loop sends `Event::Wakeup` and `Event::ChildExit` from `alacritty/alacritty_terminal/src/event_loop.rs:166-168`, `244-248`, and `263-269`.
+- Alacritty's PTY loop cross-thread sender owns message wake through `EventLoopSender::send(...)` at `alacritty/alacritty_terminal/src/event_loop.rs:383-393`, sending `Msg` and calling `poller.notify()`.
+- Alacritty shutdown requests are app/event-loop facts: `Msg::Shutdown` is defined at `alacritty/alacritty_terminal/src/event_loop.rs:29-40`, `drain_recv_channel(...)` stops on shutdown at `alacritty/alacritty_terminal/src/event_loop.rs:91-97`, and `EventType::Shutdown` calls `event_loop.exit()` at `alacritty/alacritty/src/event.rs:392-394`.
+- Alacritty signal polling converts SIGINT/SIGTERM into app shutdown at `alacritty/alacritty/src/polling/signal.rs:26-30`.
+- Alacritty timers and deadlines live in app scheduling, not input: `Topic`, `Timer`, and `Scheduler` are defined at `alacritty/alacritty/src/scheduler.rs:24-47`; `Scheduler::update()` emits due events and returns the next deadline at `alacritty/alacritty/src/scheduler.rs:54-73`; `Processor::about_to_wait(...)` sets `ControlFlow::WaitUntil(instant)` or `ControlFlow::Wait` at `alacritty/alacritty/src/event.rs:466-490`.
+- Alacritty uses `std::time::Instant` directly for monotonic time in scheduler and PTY timeout paths at `alacritty/alacritty/src/scheduler.rs:59`, `alacritty/alacritty/src/scheduler.rs:77`, and `alacritty/alacritty_terminal/src/event_loop.rs:231`. Input uses `Instant::now()` only locally for click timing at `alacritty/alacritty/src/input/mod.rs:633-635`; input does not own a global clock provider.
+
+### Howl User Evidence
+
+- `howl-linux-host/src/main.zig:6` imports the file as `InputWake`, and uses `startQuitTimer(...)`, `stopQuitTimer(...)`, and `nowNs()` for duration shutdown, app-loop accounting, frame pacing, and present timing at `howl-linux-host/src/main.zig:149-168`, `236`, `260`, and `617`.
+- `howl-linux-host/src/input/input.zig:4`, `64`, `105`, and `201-218` embeds the wake state only because SDL event pumping is the mechanism used to wake the app loop. The input owner should not define the wake owner.
+- `howl-linux-host/src/terminal/pty/wait_thread.zig:4`, `12`, `19`, `24`, `99`, and `109` uses wake semaphore wrappers for owner-thread wake acknowledgement. The PTY wait thread remains wait-only and does not own the app loop wake primitive.
+- `howl-linux-host/src/terminal/context.zig:3`, `234`, `405`, `620`, `624`, `823`, `936`, `1559`, `1565`, `1598`, and `1620` uses `nowNs()` for terminal activity, cursor blink, render-surface, submit, and input timing.
+- `howl-linux-host/src/terminal/scrollbar.zig:2` and `60` uses `nowNs()` for scrollbar hover/fade timing.
+- `howl-linux-host/src/terminal/render/surface_layout.zig:2` and `76` uses `nowNs()` for resize timing.
+
+### Correct Boundary
+
+- True boundary: app-loop wake/time/shutdown bridge over SDL.
+- Source-backed true name: `app/wake.zig`.
+- Source-backed import alias: `AppWake`.
+- Boundary of `app/wake.zig`: `EventSignal`, `State`, `nowNs()`, quit timer helpers, wake semaphore helpers, and the timer callback. It may import SDL. It must not own `Input` queues, key/mouse conversion, `Window.State`, GL presentation, PTY session semantics, or PTY wait-thread policy.
 - ABI consequence: none. This file is host-only SDL integration and does not touch `howl-pty`, `howl-vt`, or `howl-render` C ABIs.
-- Wake discipline consequence: preserve `pty_wait_thread` as wait-only. The wait thread may continue to call host wake through `InputWindow`/renamed `InputWake`, but must not process SDL events or terminal runtime work.
+- Wake discipline consequence: preserve `terminal/pty/wait_thread.zig` as wait-only. The wait thread may continue to call host wake through `AppWake`, but must not process SDL events or terminal runtime work.
 
-## First Implementation Split
+## Rejected Corrective Implementation Split
 
-Ready first split: rename `howl-linux-host/src/input/window.zig` to `howl-linux-host/src/input/wake.zig`, update host-only imports and references from `InputWindow` to `InputWake`, and keep the same functions and tests.
+Rejected: moving `input/wake.zig` to `app/wake.zig` is not acceptable as a final or next owner shape. It only moves the false owner from one directory to another while leaving app-loop wait/poll/wake split across input and app-adjacent helpers.
+
+Rejected: a cosmetic first slice that only moves the current wake bridge to `event_loop.zig` is also not acceptable. The first implementation slice must create a real event-loop boundary and a concrete tracked `polling/` owner file, and must remove SDL wait/poll/wake ownership from input in the same slice.
+
+### Superseded App-Wake Proposal
+
+Ready corrective split: move `howl-linux-host/src/input/wake.zig` to `howl-linux-host/src/app/wake.zig`, update host-only imports and references from `InputWake` to `AppWake`, and keep the same functions and tests.
 
 Why this split is source-backed:
 
-- The owner-inventory cache already classified `input/window.zig` as misnamed because it owns SDL wake event state, timers, semaphores, and time, not window input semantics in `research/cache-2026-06-01-host-owner-inventory.md:216`.
-- Current source confirms every product symbol in `input/window.zig` is wake/time/timer/semaphore-related at `howl-linux-host/src/input/window.zig:6-98`.
+- Alacritty places wake/proxy, shutdown, timer/deadline, and cross-thread wake delivery in app/event-loop infrastructure, not input.
+- Current Howl source confirms every product symbol in `input/wake.zig` is wake/time/timer/semaphore-related at `howl-linux-host/src/input/wake.zig:6-98`.
 - The split does not move behavior across C ABI boundaries and does not change PTY, VT, render, or GL semantics.
 - The split preserves the centralized app control spine: `main.zig` still computes admission, calls input pumping, drives runtime progress, and handles present in `howl-linux-host/src/main.zig:230-288`.
-- The split preserves bounded turns: `input/input.zig` still owns one bounded SDL burst per turn at `howl-linux-host/src/input/input.zig:242-254`.
-- The split preserves owner-thread wake discipline: `terminal/pty/wait_thread.zig` remains the wait-only background owner described in the accepted caches, while wake event delivery remains a host input/app loop concern.
+- The split preserves bounded input turns: `input/input.zig` still owns one bounded SDL burst per turn at `howl-linux-host/src/input/input.zig:242-254`.
+- The split preserves owner-thread wake discipline: `terminal/pty/wait_thread.zig` remains wait-only, while wake event delivery remains an app-loop concern.
 
-Exact files for this first split:
+Exact files for this corrective split:
 
-- `howl-linux-host/src/input/window.zig` to `howl-linux-host/src/input/wake.zig`.
-- Update imports in all current readers: `howl-linux-host/src/main.zig:6`, `howl-linux-host/src/terminal/context.zig:3`, `howl-linux-host/src/input/input.zig:4`, `howl-linux-host/src/terminal/scrollbar.zig:2`, `howl-linux-host/src/terminal/render/surface_layout.zig:2`, and `howl-linux-host/src/terminal/pty/wait_thread.zig:4`.
-- Update same-directory alias in `howl-linux-host/src/input/input.zig` from `window` to `wake` or another exact wake-name alias, because after the rename `@import("window.zig")` would be stale.
-- Update local aliases from `InputWindow` to `InputWake` in `main.zig`, `terminal/context.zig`, `terminal/scrollbar.zig`, `terminal/render/surface_layout.zig`, and `terminal/pty/wait_thread.zig`.
+- `howl-linux-host/src/input/wake.zig` to `howl-linux-host/src/app/wake.zig`.
+- Update imports in all current readers: `howl-linux-host/src/main.zig`, `howl-linux-host/src/terminal/context.zig`, `howl-linux-host/src/input/input.zig`, `howl-linux-host/src/terminal/scrollbar.zig`, `howl-linux-host/src/terminal/render/surface_layout.zig`, and `howl-linux-host/src/terminal/pty/wait_thread.zig`.
+- Update local aliases from `InputWake` to `AppWake` in `main.zig`, `terminal/context.zig`, `terminal/scrollbar.zig`, `terminal/render/surface_layout.zig`, and `terminal/pty/wait_thread.zig`.
+- Update the `input/input.zig` same-directory `wake` alias to an app wake import. The field name `window_state` is stale but renaming it requires a separate promoted slice unless the worker proves the rename is required for compilation.
 - Preserve and run tests already attached to impacted files: `main.zig`, `input/input.zig`, `terminal/context.zig`, and `terminal/pty/wait_thread.zig`.
 - `terminal/scrollbar.zig` and `terminal/render/surface_layout.zig` have no local test blocks in the read source; they are covered by the full host test build and by existing context/layout behavior tests that compile through their imports.
-- No integration or ABI test wiring changes are needed for this rename-only split.
+- No integration or ABI test wiring changes are needed for this move-only split.
 
-Required verification for this first split:
+Required verification for this corrective split:
 
 - From `howl-linux-host`: `zig build check`.
 - From `howl-linux-host`: `zig build test --summary all`.
 - From `howl-linux-host`: `git diff --check`.
 - From workspace root: tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars.
+
+## Replacement: Event Loop And Polling Owner Shape
+
+The accepted target is not a move-only rename. The target is a source-backed event-loop owner plus concrete polling owner shape.
+
+### Source Evidence
+
+- Alacritty's PTY event loop owns PTY polling and cross-thread sender wake through `Poller`, `EventLoopSender`, and `poller.notify()` at `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:46-55`, `84-86`, `205-324`, and `383-393`.
+- Alacritty's app event owner owns the app event-loop proxy, scheduler, windows, and wait deadline policy at `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:87-101`, `103-144`, and `466-490`.
+- Alacritty's `polling/` directory is concrete behavior, not a placeholder: `IoListener` owns signal and IPC listeners, `Events`, and `Poller` at `utils/dev_references/terminals/alacritty/alacritty/src/polling/mod.rs:19-34`, `36-92`.
+- Alacritty signal polling turns SIGINT/SIGTERM into app shutdown at `utils/dev_references/terminals/alacritty/alacritty/src/polling/signal.rs:12-30`.
+- Alacritty IPC polling turns accepted socket messages into app events at `utils/dev_references/terminals/alacritty/alacritty/src/polling/ipc.rs:23-91`.
+- Current Howl `howl-linux-host/src/input/wake.zig:6-98` owns `EventSignal`, quit state, SDL wake event registration, SDL event push, SDL ticks, quit timer, and wake semaphore wrappers.
+- Current Howl `howl-linux-host/src/input/input.zig:105`, `201-218`, and `228-254` embeds wake state and owns SDL wait/poll/wake through `window_state`, `pumpWindow`, `waitAndDrainEvents`, `drainPendingEvents`, and `wakeWindow`.
+- Current Howl `howl-linux-host/src/terminal/pty/wait_thread.zig:3-19` and `116-119` targets input for cross-thread wake through `wake_input: ?*HostInput` and `input.wakeWindow()`.
+- Current Howl app loop already owns loop admission and centralized control flow at `howl-linux-host/src/main.zig:230-288`.
+
+### Correct Target Owner Shape
+
+- `howl-linux-host/src/event_loop.zig` owns host event-loop wake, quit, SDL wake event type, pump wait/poll policy, and app-loop clock/timer facade.
+- `howl-linux-host/src/polling/sdl.zig` owns direct SDL polling/time/timer/semaphore C calls used by the event-loop owner and PTY wait-thread acknowledgement.
+- No `polling/signal.zig` now. Howl has no current signal behavior to preserve.
+- No `polling/ipc.zig` now. Howl has no current IPC behavior to preserve.
+
+### First Worker-Ready Slice
+
+Allowed files:
+
+- `howl-linux-host/src/event_loop.zig`
+- `howl-linux-host/src/polling/sdl.zig`
+- `howl-linux-host/src/input/wake.zig`
+- `howl-linux-host/src/input/input.zig`
+- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/pty/wait_thread.zig`
+- `howl-linux-host/src/terminal/scrollbar.zig`
+- `howl-linux-host/src/terminal/render/surface_layout.zig`
+- `howl-linux-host/src/test/host.zig`
+- `howl-linux-host/src/test_root.zig`
+
+Required shape:
+
+- Create `event_loop.zig` with `Signal`, `State`, `init`, `initWakeEventType`, `quitRequested`, `requestQuit`, `wake`, `pumpInput`, `nowNs`, quit timer wrappers, and wake semaphore wrappers.
+- Create `polling/sdl.zig` with concrete SDL wrappers for event registration, push, wait, wait timeout, poll, ticks, quit timer, and wake semaphore operations.
+- Delete `input/wake.zig` after its behavior is moved.
+- Remove `window_state`, `pumpWindow`, `waitAndDrainEvents`, `drainPendingEvents`, and `wakeWindow` from `input/input.zig`.
+- Keep input classification and bounded queues in `input/input.zig`; expose only the minimal event-classification entry needed by `event_loop.State.pumpInput(...)`.
+- Add `event_loop: EventLoop.State` to `main.App`.
+- Initialize event-loop wake type in app startup instead of through `input.window_state`.
+- Change `pumpWindowEvents(...)` to call `app.event_loop.pumpInput(app.input, admission.wait_for_window, admission.wait_ms)`.
+- Change `quitRequested(...)` to query `app.event_loop.quitRequested()`.
+- Change all timing imports from `InputWake.nowNs()` to `EventLoop.nowNs()`.
+- Change PTY wait thread state from `wake_input: ?*HostInput` to `wake_event_loop: ?*EventLoop.State`.
+- Change wait-thread real wake op to call `event_loop.wake()`, not `input.wakeWindow()`.
+- Pass `*EventLoop.State` through terminal context initialization because PTY wait-thread wake must target the event-loop owner in this same slice.
+
+Required behavior:
+
+- Wake SDL events are consumed by the event-loop owner and are not delivered to input classification.
+- Quit SDL events set event-loop quit state and return `.quit`.
+- SDL polling remains bounded to `max_sdl_events_per_turn`.
+- Input queue behavior, key/mouse/text conversion, focus/geometry flags, and binding behavior remain unchanged.
+- PTY wait-thread remains wait-only and still coalesces wake requests until owner-thread acknowledgement clears `wake_pending`.
+
+Required tests:
+
+- Event-loop test: wake event is consumed and not classified as input.
+- Event-loop test: quit event sets quit state and returns `.quit`.
+- Event-loop test: bounded drain does not exceed `max_sdl_events_per_turn`.
+- Event-loop test: `requestQuit()` sets quit and pushes wake through fake ops.
+- Update existing `terminal/pty/wait_thread.zig` tests to prove wake coalescing and acknowledgement target the event-loop wake seam.
+
+Verification:
+
+- From `howl-linux-host`: `zig build check`.
+- From `howl-linux-host`: `zig build test --summary all`.
+- From `howl-linux-host`: `git diff --check`.
+- From workspace root: tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars.
+
+Stop conditions:
+
+- Stop if `event_loop.zig` starts owning terminal runtime progress, PTY read/write, VT mutation, render submission, presentation, tabs, or window GL state.
+- Stop if `polling/` gains signal or IPC files without current product behavior and tests.
+- Stop if PTY wait-thread still targets input wake after the slice.
+- Stop if input still owns SDL wait/poll/wake or wake event registration.
+- Stop if any C ABI changes appear.
 
 ## Not Ready For Worker Split Without Orchestration
 

@@ -1,4 +1,4 @@
-# Current Slice: Rename Input Wake Owner
+# Current Slice: Plan Event Loop And Polling Owner
 
 Accepted scratchpad:
 
@@ -10,55 +10,38 @@ Accepted research cache:
 
 ## Purpose
 
-Rename the misnamed SDL wake/time bridge from `input/window.zig` to `input/wake.zig` without behavior changes.
+Record the rejected wake-owner moves and plan the source-backed `event_loop.zig` plus concrete `polling/` owner shape before implementation.
 
 ## Orchestration Rule
 
 - If ownership, naming, scope, test gates, or ABI consequences are under-specified, stop and report orchestration needed.
 - Do not silently fill design gaps, broaden scope, choose new owner names, or turn an ambiguous path into implementation.
 
-## Allowed Files
+## Status
 
-- `howl-linux-host/src/input/window.zig`
-- `howl-linux-host/src/input/wake.zig`
-- `howl-linux-host/src/main.zig`
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/input/input.zig`
-- `howl-linux-host/src/terminal/scrollbar.zig`
-- `howl-linux-host/src/terminal/render/surface_layout.zig`
-- `howl-linux-host/src/terminal/pty/wait_thread.zig`
+- `input/window.zig` to `input/wake.zig` landed, but the owner remains wrong.
+- `input/wake.zig` to `app/wake.zig` is rejected.
+- A cosmetic `event_loop.zig` move-only slice is rejected.
+- The next acceptable plan must create a real event-loop boundary and a concrete tracked `polling/` owner file.
 
-No other files are in scope.
+## Required Plan Shape
 
-## Required Shape
+- Create `howl-linux-host/src/event_loop.zig` as the host event-loop owner.
+- Create `howl-linux-host/src/polling/sdl.zig` as the concrete SDL polling/time/timer/semaphore wrapper owner.
+- Do not create `polling/signal.zig` or `polling/ipc.zig` until Howl has product behavior and tests for those paths.
+- Move SDL wait/poll/wake/quit/time/semaphore responsibilities out of `input/input.zig` and `input/wake.zig` in the first implementation slice.
+- Retarget PTY wait-thread wake acknowledgement to the event-loop owner in the same implementation slice.
+- Keep input event classification, key/mouse/text conversion, bounded queues, focus/geometry flags, and binding behavior in `input/input.zig` unless explicitly planned otherwise.
+- Preserve centralized app control spine, bounded turns, and PTY wait-thread wake-only discipline.
+- No ABI changes.
 
-- Rename `howl-linux-host/src/input/window.zig` to `howl-linux-host/src/input/wake.zig`.
-- Preserve all functions, types, tests, and behavior in the renamed file.
-- Update imports in all current readers:
-  - `howl-linux-host/src/main.zig`
-  - `howl-linux-host/src/terminal/context.zig`
-  - `howl-linux-host/src/input/input.zig`
-  - `howl-linux-host/src/terminal/scrollbar.zig`
-  - `howl-linux-host/src/terminal/render/surface_layout.zig`
-  - `howl-linux-host/src/terminal/pty/wait_thread.zig`
-- Update same-directory alias in `input/input.zig` from `window` to `wake`.
-- Update local aliases from `InputWindow` to `InputWake` in:
-  - `main.zig`
-  - `terminal/context.zig`
-  - `terminal/scrollbar.zig`
-  - `terminal/render/surface_layout.zig`
-  - `terminal/pty/wait_thread.zig`
-- Preserve centralized app control spine, bounded input turns, and PTY wait-thread wake-only discipline.
-- No behavior changes, no ABI changes, no test wiring changes.
+## Required First Implementation Tests
 
-## Required Tests
-
-- Preserve and run tests attached to impacted files:
-  - `main.zig`
-  - `input/input.zig`
-  - `terminal/context.zig`
-  - `terminal/pty/wait_thread.zig`
-- `terminal/scrollbar.zig` and `terminal/render/surface_layout.zig` have no local test blocks in the accepted research, but must compile through the full host test build.
+- Event-loop test: wake event is consumed and not classified as input.
+- Event-loop test: quit event sets quit state and returns `.quit`.
+- Event-loop test: bounded drain does not exceed `max_sdl_events_per_turn`.
+- Event-loop test: `requestQuit()` sets quit and pushes wake through fake ops.
+- Update existing PTY wait-thread tests so wake coalescing and acknowledgement target the event-loop wake seam, not input.
 
 ## Verification
 
@@ -72,9 +55,10 @@ From workspace root:
 
 - tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars.
 
-## Stop Conditions
+## Stop Conditions For Implementation
 
-- Stop if any additional file must be touched.
-- Stop if any behavior change is required to make the rename compile.
-- Stop if test wiring changes are needed.
-- Stop if the rename affects PTY, VT, or render ABI semantics.
+- Stop if `event_loop.zig` starts owning terminal runtime progress, PTY read/write, VT mutation, render submission, presentation, tabs, or window GL state.
+- Stop if `polling/` gains signal or IPC files without current product behavior and tests.
+- Stop if PTY wait-thread still targets input wake after the slice.
+- Stop if input still owns SDL wait/poll/wake or wake event registration after the slice.
+- Stop if any C ABI changes appear.
