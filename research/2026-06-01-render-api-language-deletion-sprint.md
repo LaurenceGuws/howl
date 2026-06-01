@@ -2,12 +2,13 @@
 
 Owner: workspace root.
 
-Status: Slice 1 and Slice 2 accepted and committed. Slice 3 is blocked on exact
-owner-path research/refinement before promotion.
+Status: Slice 1 and Slice 2 accepted and committed. Slice 3 owner-path research
+accepted and promoted.
 
 Research cache:
 
 - Accepted by Reviewer Agent: `research/cache-2026-06-01-render-api-language-deletion.md`.
+- Accepted by Reviewer Agent: `research/cache-2026-06-01-render-v0-source-owner-paths.md`.
 
 ## Purpose
 
@@ -209,10 +210,7 @@ Stop conditions:
 
 ### Slice 3: Rename Render Internal Source Bucket To True Owners
 
-Status: blocked. The accepted research cache identifies owner roles but does not
-choose final replacement paths/names. Do not promote this slice until a focused
-research cache or scratchpad refinement names exact owner paths and a reviewer
-accepts them.
+Status: promoted to `current.txt` from accepted source-owner research cache.
 
 Goal:
 
@@ -231,10 +229,15 @@ Allowed files:
 
 Required shape:
 
-- Move `emit.zig` to a noun-owner path for prepared V0 frame emission.
-- Move `realize.zig` to a noun-owner path for software V0 realization/oracle.
+- Move `howl-render/src/protocol_v0/emit.zig` to
+  `howl-render/src/prepared/v0_frame_emitter.zig`.
+- Move `howl-render/src/protocol_v0/realize.zig` to
+  `howl-render/src/render/v0_frame_realizer.zig`.
+- Delete `howl-render/src/protocol_v0/` after it is empty.
 - Update imports only.
 - Keep public ABI names unchanged.
+- Keep `howl-render/src/ffi/protocol_v0.zig` in place; update only its test
+  import to the moved realizer.
 - Keep tests under `zig build test:unit`.
 
 Verification:
@@ -246,12 +249,23 @@ Verification:
 - From `howl-render`: `git diff --check`
 - Grep gate: `rg 'src/protocol_v0|\.\./protocol_v0|protocol_v0/' howl-render/src`
   prints nothing.
+- Grep gate: `rg 'protocol_v0/(emit|realize)\.zig' howl-render/src`
+  prints nothing.
+- Grep gate: `rg '@import\("\.\./protocol_v0/|@import\("\.\./\.\./protocol_v0/' howl-render/src`
+  prints nothing.
+- Grep gate: `rg 'test:protocol-proof|protocol_proof|test_protocol_proof' howl-render/build.zig howl-render/src`
+  prints nothing.
+- Existence gate: `test ! -d howl-render/src/protocol_v0`.
+- Existence gate: `test -f howl-render/src/prepared/v0_frame_emitter.zig`.
+- Existence gate: `test -f howl-render/src/render/v0_frame_realizer.zig`.
 
 Stop conditions:
 
 - Stop if owner names cannot be justified by the roles above.
 - Stop if this requires host code changes.
 - Stop if public ABI names change.
+- Stop if `howl-render/src/ffi/protocol_v0.zig` must move or be renamed.
+- Stop if `howl-render/build.zig` needs modification.
 
 ### Slice 4: Rename Internal Test Names And Docs That Teach Protocol As Product
 
