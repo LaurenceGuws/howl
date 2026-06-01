@@ -2,8 +2,8 @@
 
 Owner: workspace root.
 
-Status: Slice 1 and Slice 2 accepted and committed. Slice 3 owner-path research
-accepted and promoted.
+Status: Slices 1, 2, and 3 accepted and committed. Slice 4 is blocked on
+focused docs/test-name research before promotion.
 
 Research cache:
 
@@ -210,7 +210,7 @@ Stop conditions:
 
 ### Slice 3: Rename Render Internal Source Bucket To True Owners
 
-Status: promoted to `current.txt` from accepted source-owner research cache.
+Status: accepted and committed in `howl-render` `12aafa5`.
 
 Goal:
 
@@ -259,6 +259,24 @@ Verification:
 - Existence gate: `test -f howl-render/src/prepared/v0_frame_emitter.zig`.
 - Existence gate: `test -f howl-render/src/render/v0_frame_realizer.zig`.
 
+Accepted verification for `12aafa5`:
+
+- From `howl-render`: `zig build test:unit`
+- From `howl-render`: `zig build test:abi`
+- From `howl-render`: `zig build test`
+- From `howl-render`: `zig build check`
+- From `howl-render`: `git diff --check`
+- From root: `rg 'src/protocol_v0|\.\./protocol_v0|protocol_v0/' howl-render/src`
+  printed nothing.
+- From root: `rg 'protocol_v0/(emit|realize)\.zig' howl-render/src` printed nothing.
+- From root: `rg '@import\("\.\./protocol_v0/|@import\("\.\./\.\./protocol_v0/' howl-render/src`
+  printed nothing.
+- From root: `rg 'test:protocol-proof|protocol_proof|test_protocol_proof' howl-render/build.zig howl-render/src`
+  printed nothing.
+- From root: `test ! -d howl-render/src/protocol_v0`.
+- From root: `test -f howl-render/src/prepared/v0_frame_emitter.zig`.
+- From root: `test -f howl-render/src/render/v0_frame_realizer.zig`.
+
 Stop conditions:
 
 - Stop if owner names cannot be justified by the roles above.
@@ -268,6 +286,10 @@ Stop conditions:
 - Stop if `howl-render/build.zig` needs modification.
 
 ### Slice 4: Rename Internal Test Names And Docs That Teach Protocol As Product
+
+Status: blocked. Requires focused research cache before promotion because the
+remaining language spans public ABI vocabulary, internal test names, docs, and
+host consumption names. Do not promote from this broad draft.
 
 Goal:
 

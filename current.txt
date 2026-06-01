@@ -1,6 +1,6 @@
-# Current Slice: Delete Render V0 Source Bucket
+# Current Stage: Research Render Protocol Language Cleanup
 
-Owner: `howl-render` prepared frame emission and render frame realization.
+Owner: workspace root research workflow.
 
 Source scratchpad:
 
@@ -11,92 +11,45 @@ Accepted research caches:
 - `research/cache-2026-06-01-render-api-language-deletion.md`
 - `research/cache-2026-06-01-render-v0-source-owner-paths.md`
 
+Completed slices:
+
+- `howl-render` `aa1749d` moved V0 oracle/equivalence tests under unit.
+- `howl-render` `6bf6388` deleted the separate protocol-proof build/test bucket.
+- `howl-render` `12aafa5` deleted the internal `src/protocol_v0/` source bucket.
+
 ## Purpose
 
-Delete `howl-render/src/protocol_v0/` as an internal source bucket by moving the
-emitter and realizer to exact owner paths.
+Produce focused evidence for the remaining render `protocol` language cleanup.
+The next implementation must distinguish stale internal/test/doc category
+language from public ABI vocabulary that remains intentionally preserved.
 
-Public ABI `protocol_v0` vocabulary is preserved in this slice.
+No product code is authorized by this stage.
 
-## Allowed Files
+## Research Questions
 
-- `howl-render/src/protocol_v0/emit.zig`
-- `howl-render/src/protocol_v0/realize.zig`
-- `howl-render/src/prepared/v0_frame_emitter.zig`
-- `howl-render/src/render/v0_frame_realizer.zig`
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/session/text.zig`
-- `howl-render/src/test/unit/root.zig`
-- `howl-render/src/test/unit/render_api_v0_oracle.zig`
-- `howl-render/src/ffi/protocol_v0.zig`
+- Which remaining `protocol`/`protocol_v0` occurrences under `howl-render` are
+  stale internal test names or docs that teach protocol as a separate product?
+- Which remaining occurrences are public ABI vocabulary and must remain in this
+  sprint?
+- Should `docs/render-protocol-v0.md` be renamed, rewritten, or deleted in the
+  next slice?
+- Which test names can be renamed without changing public ABI assertions?
+- Which host occurrences are out of scope and need a separate host research
+  cache?
+- What exact files, symbols, grep gates, and verification commands make one
+  worker-ready slice?
 
-No other files are in scope.
+## Required Output
 
-## Required Shape
+- A focused research cache with exact source paths, line-backed evidence,
+  public-ABI versus stale-language classification, exact proposed slice, risks,
+  stop conditions, grep gates, and readiness judgment.
+- Reviewer acceptance before the scratchpad is updated.
+- No worker seeding until `current.txt` is replaced with one exact
+  implementation slice.
 
-- Move `howl-render/src/protocol_v0/emit.zig` to
-  `howl-render/src/prepared/v0_frame_emitter.zig`.
-- Move `howl-render/src/protocol_v0/realize.zig` to
-  `howl-render/src/render/v0_frame_realizer.zig`.
-- Delete `howl-render/src/protocol_v0/` after it is empty.
-- Update `howl-render/src/prepared/owner.zig` to import
-  `v0_frame_emitter.zig`.
-- Update `howl-render/src/session/text.zig` to import
-  `../prepared/v0_frame_emitter.zig`.
-- Update `howl-render/src/test/unit/root.zig` to import
-  `../../render/v0_frame_realizer.zig` and
-  `../../prepared/v0_frame_emitter.zig`.
-- Update `howl-render/src/test/unit/render_api_v0_oracle.zig` to import
-  `../../prepared/v0_frame_emitter.zig` and
-  `../../render/v0_frame_realizer.zig`.
-- Update `howl-render/src/ffi/protocol_v0.zig` test import only, from the old
-  realizer path to `../render/v0_frame_realizer.zig`.
-- Inside moved `prepared/v0_frame_emitter.zig`, update its local realizer import
-  to `../render/v0_frame_realizer.zig` and adjust relative imports only as
-  required by the move.
-- Preserve file-local emitter tests, file-local realizer tests,
-  oracle/equivalence tests, and ABI layout/diagnostic tests.
+## Hard Stops
 
-## Non-Goals
-
-- Do not rename public C ABI names, exported symbols, header names, diagnostics
-  fields, or public ABI test assertions.
-- Do not move or rename `howl-render/src/ffi/protocol_v0.zig`.
-- Do not edit `howl-render/build.zig`.
-- Do not edit host code.
-- Do not add a compatibility shim or re-export under `src/protocol_v0/`.
-- Do not rename internal prepared owner APIs such as `protocolV0Frame()` in this
-  slice.
-
-## Stop Conditions
-
-- Stop if any owner path other than `prepared/v0_frame_emitter.zig` and
-  `render/v0_frame_realizer.zig` is needed.
-- Stop if public ABI symbols or host behavior must change.
-- Stop if `ffi/protocol_v0.zig` must move or be renamed.
-- Stop if `build.zig` needs modification.
-- Stop if unit or ABI tests lose emitter, realizer, oracle, or ABI coverage.
-- Stop if `src/protocol_v0/` would remain as a shim or re-export.
-
-## Verification
-
-From `/home/home/personal/projects/howl/howl-render`:
-
-- `zig build test:unit`
-- `zig build test:abi`
-- `zig build test`
-- `zig build check`
-- `git diff --check`
-
-From `/home/home/personal/projects/howl`:
-
-- `rg 'src/protocol_v0|\.\./protocol_v0|protocol_v0/' howl-render/src`
-  prints nothing.
-- `rg 'protocol_v0/(emit|realize)\.zig' howl-render/src` prints nothing.
-- `rg '@import\("\.\./protocol_v0/|@import\("\.\./\.\./protocol_v0/' howl-render/src`
-  prints nothing.
-- `rg 'test:protocol-proof|protocol_proof|test_protocol_proof' howl-render/build.zig howl-render/src`
-  prints nothing.
-- `test ! -d howl-render/src/protocol_v0`
-- `test -f howl-render/src/prepared/v0_frame_emitter.zig`
-- `test -f howl-render/src/render/v0_frame_realizer.zig`
+- Stop if public ABI names are renamed as part of language cleanup.
+- Stop if host behavior changes enter the slice.
+- Stop if documentation changes imply an ABI break without an ABI-product slice.
