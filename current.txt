@@ -1,44 +1,50 @@
-# Current Slice: V0 Atlas Backed Prepared Sprites
+# Current Slice: Host V0 Glyph Patch Presentation
 
-Owner: `howl-render` prepared text atlas truth and V0 glyph/sprite emission.
+Owner: `howl-linux-host` V0 command materialization into the retained terminal texture.
 
 Purpose:
 
-- Stop emitting one V0 texture resource per prepared sprite draw.
-- Move V0 prepared sprite/glyph consequences toward shared atlas resources, matching Ghostty/Alacritty renderer truth.
-- Preserve full RGBA fallback/oracle unchanged while atlas-backed V0 coverage is proven.
-- Keep full RGBA fallback/oracle unchanged.
+- Present no-full-clear V0 frames containing fill/clear commands plus `DRAW_GLYPH_RUN` commands when the host already has a matching retained terminal texture.
+- Stop classifying valid atlas-backed glyph patch sidecars as unsupported shape.
+- Stop falling back to full RGBA for valid glyph patch frames.
+- Preserve full RGBA fallback/oracle for unsafe patch frames.
 
 ## Exact Change Scope
 
 Allowed files:
 
-- `howl-render/src/protocol_v0/emit.zig`
-- `howl-render/src/protocol_v0/realize.zig`
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/text/raster/cache.zig`
-- `howl-render/src/text/frame_preparer.zig`
-- `howl-render/src/text/scene.zig`
-- `howl-render/src/test_protocol_proof.zig`
-- `howl-render/src/test/ffi.zig`
-- `research/2026-05-31-v0-prepared-sprite-resource-bound.md`
-- `research/2026-06-01-v0-atlas-backed-prepared-sprites.md`
+- `howl-linux-host/src/window/term_texture.zig`
+- `howl-linux-host/src/terminal/context.zig`
 
-No host ABI changes unless the current V0 glyph-run ABI is proven insufficient. No full-RGBA deletion.
+No render changes. No ABI changes. No batching. No CPU/frame-pacing changes. No log removal. No full-RGBA deletion.
+
+## Source-Backed Problem
+
+- `protocolV0GlyphFrame()` accepts glyph frames only when command 0 is a full clear.
+- `btop` scrolling produces no-full-clear frames containing fill/clear and glyph-run commands.
+- `protocolV0FrameSummary()` counts those glyph commands, but `Context.uploadProtocolV0Commands()` records unsupported shape before any glyph patch presenter exists.
+- User logs therefore show rising `glyph` command counts but `glyph_frame=0`, `glyph_present=0`, and steady `rgba_fallback=10`.
 
 ## Required Shape
 
-- Use Ghostty/Alacritty as the source shape: glyph/sprite raster payloads live in shared atlas textures, draws reference atlas regions.
-- Do not add another Howl-only transient churn budget as the product fix.
-- Reuse existing V0 glyph-run command/resource model if it can express atlas-backed alpha sprite draws.
-- If the current Howl text cache only tracks slots, add the smallest render-owned atlas placement truth required for V0 emission.
-- Preserve current transient fallback only as a safety path until atlas-backed V0 is accepted.
+- Add a glyph patch classifier in `term_texture.zig` that accepts only:
+  - `HOWL_RENDER_V0_COMMAND_CLEAR_RECT`
+  - `HOWL_RENDER_V0_COMMAND_FILL_RECT`
+  - `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN`
+- Validate fill/clear with existing fill validation.
+- Validate glyph-runs with existing glyph command validation.
+- Require at least one glyph ref.
+- Add a glyph patch upload wrapper backed by existing `uploadProtocolV0Commands()`.
+- In `context.zig`, check glyph patch after full glyph frame and before fill-only/fill-patch unsupported recording.
+- Present glyph patches only when `had_matching_surface` is true.
+- Fallback remains required when the retained surface is missing/mismatched or upload validation fails.
 
 ## Required Tests
 
+- `protocolV0GlyphFrame()` rejects no-full-clear glyph patch frames.
+- `protocolV0GlyphPatch()` accepts no-full-clear fill/clear plus glyph-run frames.
+- `protocolV0GlyphPatch()` rejects sprite commands and unknown commands.
 - Existing host tests pass.
-- Protocol proof tests show repeated prepared sprite/glyph draws share atlas resources instead of creating per-draw resources.
-- Bounded `vttest` smoke should not enter steady-state `v0_emit_status=2` / create-bound fallback from per-draw sprite resources.
 
 ## Verification
 
@@ -48,8 +54,14 @@ From `/home/home/personal/projects/howl/howl-linux-host`:
 - `zig build -Doptimize=ReleaseFast`
 - `git diff --check`
 
-From workspace root:
+From workspace root if submodule pointer or planning files are staged:
 
 - `zig build check`
 - `zig build test`
 - `git diff --check`
+
+Smoke command policy:
+
+- Build separately.
+- Run GUI with Bash `timeout` only.
+- Do not use `--duration-ms`.
