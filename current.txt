@@ -1,4 +1,4 @@
-# Current Slice: Patch On Changed Host Surface Proof
+# Current Slice: Patch Upload Matching-Surface Policy Fix
 
 Accepted scratchpad:
 
@@ -9,9 +9,15 @@ Accepted research caches:
 - `research/cache-2026-06-01-resize-flow-alacritty.md`
 - `research/cache-2026-06-01-resize-test-invariants-review.md`
 
+Accepted Cut 3D blocker:
+
+- `ContextSubmitBackend.uploadRenderSurfaceCommands(...)` gates sprite and glyph patch upload with `had_matching_surface`.
+- Fill patch upload calls `term_texture.uploadRenderSurfaceFillPatch(...)` without checking `had_matching_surface`.
+- No existing owner-local deterministic pure seam exists to test patch upload policy without calling real GL.
+
 Accepted reviewer finding:
 
-- Cut 3D is suitable for promotion. The proof target is the host upload-boundary patch policy after changed host surface dimensions. If no existing pure policy seam exists, the worker must stop and return the missing helper/owner for Cut 4.
+- Cut 4 is worker-ready with exact helper signature and test shape. The behavior target is narrow: pre-upload policy gate only, full surfaces still allowed.
 
 User enforcement:
 
@@ -20,13 +26,7 @@ User enforcement:
 
 ## Purpose
 
-Prove the embeddable render-surface invariant at the host upload boundary: after resize invalidates the host terminal texture dimensions, a partial/patch render surface must be rejected before upload unless the host surface dimensions already match the prepared render dimensions.
-
-This is a proof/stop slice only. Behavior fixes are not authorized here; Cut 4 owns any fix after this slice exposes the exact invariant.
-
-## Accepted Source Fact To Verify
-
-- `ContextSubmitBackend.uploadRenderSurfaceCommands(...)` guards sprite and glyph patch upload with `had_matching_surface`, but the fill patch branch currently calls `term_texture.uploadRenderSurfaceFillPatch(...)` without the same matching-surface gate.
+Add the smallest host upload-boundary policy helper and behavior fix so all patch classes require a matching host surface before upload, while full surfaces remain allowed after resize.
 
 ## Allowed Files
 
@@ -39,42 +39,50 @@ This is a proof/stop slice only. Behavior fixes are not authorized here; Cut 4 o
 - Worker gate from `howl-linux-host`: `zig build test:unit --summary all`.
 - No new test root, side-entry test file, or build-step split.
 
-## Required Proof Or Stop
+## Required Shape
 
-- Use an existing owner-local deterministic policy seam in `terminal/context.zig` if one exists; if no such seam exists, stop and return the exact missing helper shape and owner for Cut 4.
-- Build a prepared resized patch surface whose render dimensions do not match the existing host surface dimensions.
-- Drive the host upload-boundary policy, not render-side classification and not real `uploadRenderSurfaceFillPatch(...)` GL work.
-- Assert sprite patch, glyph patch, and fill patch all require `had_matching_surface == true` before upload is allowed.
-- Assert a full surface remains allowed without a matching prior host surface.
-- If current code cannot expose this policy without calling real GL, stop and return the exact missing seam and owner instead of adding a broad fake runtime.
+- Add a pure helper inside `Context.ContextSubmitBackend` with this exact signature: `fn renderSurfaceUploadAllowed(render_surface: *const render_c.HowlRenderSurface, had_matching_surface: bool) bool`.
+- The helper must allow full surfaces without a matching prior host surface.
+- The helper must reject all patch surfaces when `had_matching_surface == false`: sprite patch, glyph patch, and fill patch.
+- Wire `uploadRenderSurfaceCommands(...)` so fill patch uses the same policy gate as sprite and glyph patch before calling `term_texture.uploadRenderSurfaceFillPatch(...)`.
+- Keep real upload functions and GL paths unchanged except for the pre-upload policy gate.
 
-## Required Assertions
+## Required Test
 
-- Patch upload policy is uniform across sprite, glyph, and fill patch surfaces.
-- Changed host surface dimensions reject patch upload before backend mutation.
-- Full surfaces are still allowed to create/replace the host surface after resize.
+- Add one owner-local test named `render surface upload policy rejects patches without matching host surface` in `terminal/context.zig`.
+- Build test surfaces with owner-local helpers in `terminal/context.zig` using existing `testRenderSurface(...)` and fixed command spans; do not import new modules.
+- Full surface shape: one `HOWL_RENDER_SURFACE_COMMAND_CLEAR_RECT` covering the full `render_px`.
+- Fill patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_FILL_RECT` smaller than full `render_px`.
+- Sprite patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_DRAW_SPRITE` with a non-zero test resource and no full clear.
+- Glyph patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_DRAW_GLYPH_RUN` with one glyph and no full clear.
+- Assert `Context.ContextSubmitBackend.renderSurfaceUploadAllowed(&full_surface, false) == true`.
+- Assert each patch surface returns `false` when `had_matching_surface == false`.
+- Assert each patch surface returns `true` when `had_matching_surface == true`.
+- Keep tests deterministic; do not call real GL upload functions.
 
 ## Non-Goals
 
 - Do not touch render module files.
-- Do not drive real SDL or GL.
+- Do not redesign render-surface command shapes, display renderer, event loop pacing, present policy, or C ABI semantics.
 - Do not implement resource realization rollback.
-- Do not redesign render-surface commands, display renderer, event loop pacing, present policy, or C ABI semantics.
-- Do not change product behavior in this slice.
+- Do not change public ABI.
+- Do not add diagnostics-only logging or temporary debugging.
 
 ## Stop Conditions
 
-- Stop if the test needs files outside `howl-linux-host/src/terminal/context.zig`.
-- Stop if proving fill patch policy requires real GL execution.
-- Stop if the only honest path is to extract a pure upload-policy helper from `ContextSubmitBackend.uploadRenderSurfaceCommands(...)`; return the exact helper shape and owner for Cut 4 instead of implementing it in Cut 3D.
-- Stop if current behavior allows fill patch on a changed host surface while sprite/glyph patches are rejected; return the exact observed policy gap and smallest owner for Cut 4.
-- Stop if the test needs a duplicate root or weakened gates.
+- Stop if fixing requires files outside `howl-linux-host/src/terminal/context.zig`.
+- Stop if the helper cannot distinguish patch/full shapes using existing trusted shape predicates.
+- Stop if the fix requires real GL/SDL in tests.
+- Stop if fixing requires public ABI change, broad presentation/runtime redesign, or render command redesign.
 
 ## Verification
 
 From `howl-linux-host`:
 
+- `zig build check`
 - `zig build test:unit --summary all`
+- `zig build test --summary all`
+- `zig build -Doptimize=ReleaseFast`
 - `git diff --check`
 
 From workspace root after accepted submodule/root updates:

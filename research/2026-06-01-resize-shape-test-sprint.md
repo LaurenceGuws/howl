@@ -451,19 +451,62 @@ Stop conditions:
 
 ## Cut 4: Behavior Fix Only After Tests Prove The Contract
 
-Owner: planning only. Not promotable until tests expose the exact failing invariant and a fresh reviewer-accepted `current.txt` narrows files and behavior.
+Owner: worker only after a fresh reviewer-accepted `current.txt` names this exact behavior fix.
 
-Possible fix areas, not authorized yet:
+Cut 3D blocker exposed the exact failing invariant:
 
-- Force full prepare/source publication on geometry epoch changes that invalidate retained host texture state.
-- Tighten patch upload gate so all patch classes require a matching retained host surface.
-- Clarify or implement `resource_epoch` semantics if tests prove it is required.
+- `ContextSubmitBackend.uploadRenderSurfaceCommands(...)` gates sprite and glyph patch upload with `had_matching_surface`.
+- Fill patch upload calls `term_texture.uploadRenderSurfaceFillPatch(...)` without checking `had_matching_surface`.
+- No existing owner-local deterministic pure seam exists to test patch upload policy without calling real GL.
+
+Purpose: add the smallest host upload-boundary policy helper and behavior fix so all patch classes require a matching host surface before upload, while full surfaces remain allowed after resize.
+
+Allowed files:
+
+- `howl-linux-host/src/terminal/context.zig`
+
+Exact test entrypoint:
+
+- Build wiring root: `howl-linux-host/src/test_root.zig`, through `terminalContextTestModule(...)` in `howl-linux-host/build.zig`.
+- Owner-local test location: `howl-linux-host/src/terminal/context.zig`.
+- Verification command from `howl-linux-host`: `zig build test:unit --summary all` for the narrow worker gate, then full host gates before acceptance.
+- No new test root, side-entry test file, or build-step split.
+
+Required shape:
+
+- Add a pure helper inside `Context.ContextSubmitBackend` with this exact signature: `fn renderSurfaceUploadAllowed(render_surface: *const render_c.HowlRenderSurface, had_matching_surface: bool) bool`.
+- The helper must allow full surfaces without a matching prior host surface.
+- The helper must reject all patch surfaces when `had_matching_surface == false`: sprite patch, glyph patch, and fill patch.
+- Wire `uploadRenderSurfaceCommands(...)` so fill patch uses the same policy gate as sprite and glyph patch before calling `term_texture.uploadRenderSurfaceFillPatch(...)`.
+- Keep real upload functions and GL paths unchanged except for the pre-upload policy gate.
+
+Required tests:
+
+- Add one owner-local test named `render surface upload policy rejects patches without matching host surface` in `terminal/context.zig`.
+- Build test surfaces with owner-local helpers in `terminal/context.zig` using existing `testRenderSurface(...)` and fixed command spans; do not import new modules.
+- Full surface shape: one `HOWL_RENDER_SURFACE_COMMAND_CLEAR_RECT` covering the full `render_px`.
+- Fill patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_FILL_RECT` smaller than full `render_px`.
+- Sprite patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_DRAW_SPRITE` with a non-zero test resource and no full clear.
+- Glyph patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_DRAW_GLYPH_RUN` with one glyph and no full clear.
+- Assert `Context.ContextSubmitBackend.renderSurfaceUploadAllowed(&full_surface, false) == true`.
+- Assert each patch surface returns `false` when `had_matching_surface == false`.
+- Assert each patch surface returns `true` when `had_matching_surface == true`.
+- Keep tests deterministic; do not call real GL upload functions.
+
+Non-goals:
+
+- Do not touch render module files.
+- Do not redesign render-surface command shapes, display renderer, event loop pacing, present policy, or C ABI semantics.
+- Do not implement resource realization rollback.
+- Do not change public ABI.
+- Do not add diagnostics-only logging or temporary debugging.
 
 Stop conditions:
 
-- Stop if fixing requires public ABI change without an explicit ABI slice.
-- Stop if fixing requires broad presentation/runtime redesign.
-- Stop if the failure bucket is actually GL/context readiness rather than retained geometry/patch invalidation.
+- Stop if fixing requires files outside `howl-linux-host/src/terminal/context.zig`.
+- Stop if the helper cannot distinguish patch/full shapes using existing trusted shape predicates.
+- Stop if the fix requires real GL/SDL in tests.
+- Stop if fixing requires public ABI change, broad presentation/runtime redesign, or render command redesign.
 
 ## Verification Gates For Worker Slices
 
