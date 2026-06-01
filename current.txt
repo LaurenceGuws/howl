@@ -1,63 +1,92 @@
-# Current Slice: Event Loop And Window Wake Owner
+# Current Slice: Render-Surface Submit Diagnostics Owner
 
 Accepted scratchpad:
 
 - `research/2026-06-01-host-sprint.md`
 
-Accepted research cache:
+Accepted research caches:
 
 - `research/cache-2026-06-01-host-owner-boundary-map.md`
+- `research/cache-2026-06-01-terminal-context-owner-map.md`
 
 ## Purpose
 
-Implement the source-backed `event_loop.zig` plus concrete `polling/window_wake.zig` owner shape, removing SDL wait/poll/wake ownership from input.
+Extract pure render-surface submit diagnostic state, logging, and counter mutation from `terminal/context.zig` into an owner-true diagnostics file without moving trusted failure-policy or submit sequencing.
 
 ## Orchestration Rule
 
 - If ownership, naming, scope, test gates, or ABI consequences are under-specified, stop and report orchestration needed.
 - Do not silently fill design gaps, broaden scope, choose new owner names, or turn an ambiguous path into implementation.
 
-## Status
+## Allowed Files
 
-- `input/window.zig` to `input/wake.zig` landed, but the owner remains wrong.
-- `input/wake.zig` to `app/wake.zig` is rejected.
-- A cosmetic `event_loop.zig` move-only slice is rejected.
-- The next acceptable plan must create a real event-loop boundary and a concrete tracked `polling/` owner file.
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/terminal/render_surface_submit_diagnostics.zig`
+
+No other files are in scope.
 
 ## Required Shape
 
-- Create `howl-linux-host/src/event_loop.zig` as the host event-loop owner.
-- Create `howl-linux-host/src/polling/window_wake.zig` as the concrete SDL window event-loop wake/poll/time/timer/semaphore owner.
-- Do not create `polling/signal.zig` or `polling/ipc.zig` until Howl has product behavior and tests for those paths.
-- Move SDL wait/poll/wake/quit/time/semaphore responsibilities out of `input/input.zig` and `input/wake.zig` in the first implementation slice.
-- Retarget PTY wait-thread wake acknowledgement to the event-loop owner in the same implementation slice.
-- Keep input event classification, key/mouse/text conversion, bounded queues, focus/geometry flags, and binding behavior in `input/input.zig` unless explicitly planned otherwise.
-- Preserve centralized app control spine, bounded turns, and PTY wait-thread wake-only discipline.
-- No ABI changes.
+- Create `terminal/render_surface_submit_diagnostics.zig` as the pure diagnostics owner.
+- Move `Context.RenderSurfaceSubmitDiagnostics` from `context.zig` as `render_surface_submit_diagnostics.Diagnostics`.
+- Keep this alias in `Context`: `pub const RenderSurfaceSubmitDiagnostics = render_surface_submit_diagnostics.Diagnostics;`.
+- Move pure logging/counter helpers only. Do not move trusted failure-policy helpers or submit sequencing.
+- The diagnostics owner must not import `terminal/context.zig`, accept `*Context`, accept `anytype self`, or back-reference the god aggregate.
+- `Context.logRenderSurfaceDiagnostics()` remains a thin wrapper that computes `label = self.renderSurfaceLabel()` and passes plain inputs to diagnostics.
+- `renderSurfaceLabel()` stays in `Context`.
 
-## Implementation Files
+## Exact Diagnostics API
 
-- `howl-linux-host/src/event_loop.zig`
-- `howl-linux-host/src/polling/window_wake.zig`
-- `howl-linux-host/src/input/wake.zig`
-- `howl-linux-host/src/input/input.zig`
-- `howl-linux-host/src/main.zig`
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/pty/wait_thread.zig`
-- `howl-linux-host/src/terminal/scrollbar.zig`
-- `howl-linux-host/src/terminal/render/surface_layout.zig`
-- `howl-linux-host/src/test/host.zig`
-- `howl-linux-host/src/test_root.zig`
+- `pub const Diagnostics = struct { ... }` with the current fields from `Context.RenderSurfaceSubmitDiagnostics`.
+- `pub const LogRequest = struct { submit: *Diagnostics, logged: *Diagnostics, texture: term_texture.RenderResourceTextures.Diagnostics, texture_failure_count: u64, label: []const u8 }`.
+- `pub fn recordPrepareFailure(diagnostics: *Diagnostics, reason: render_retained.PrepareFailure) void`.
+- `pub fn recordRenderSurfaceRealization(diagnostics: *Diagnostics, elapsed_us: u64) void`.
+- `pub fn recordHostUpload(diagnostics: *Diagnostics, elapsed_us: u64) void`.
+- `pub fn recordSubmitFailure(diagnostics: *Diagnostics, reason_name: []const u8, info: render_c.HowlRenderPreparedSurfaceInfo, execution: render_c.HowlRenderSubmitExecution) void`.
+- `pub fn recordEmitStatus(diagnostics: *Diagnostics, status: c_int) void`.
+- `pub fn recordResourcePlanStatus(diagnostics: *Diagnostics, status: render_retained.PreparedRenderResourcePlanStatus) void`.
+- `pub fn recordUnavailable(diagnostics: *Diagnostics, status: render_retained.PreparedRenderResourcePlanStatus) void`.
+- `pub fn recordUnsupportedShape(diagnostics: *Diagnostics, summary: term_texture.RenderSurfaceSummary) void`.
+- `pub const ShapeKind = enum { fill_only, fill_patch, sprite, sprite_patch, glyph, glyph_patch }`.
+- `pub const ShapeOutcome = enum { surface, present, failure }`.
+- `pub fn recordShape(diagnostics: *Diagnostics, kind: ShapeKind, outcome: ShapeOutcome) void`.
+- `pub fn logRenderSurfaceDiagnostics(request: LogRequest) void`.
+- `pub fn shouldLogRenderSurfaceFailure(diagnostics: *Diagnostics, texture_failure_count: u64) bool`.
+- `pub fn renderSurfaceFailureTotal(texture: term_texture.RenderResourceTextures.Diagnostics) u64`.
+- `pub fn counterDelta(current: u64, previous: u64) u64`.
 
-No other files are in scope for the first implementation slice.
+## Required Mapping
 
-## Required First Implementation Tests
+- Every pure direct mutation of `render_surface_submit_diagnostics` in `ContextSubmitBackend.upload(...)`, `uploadRenderSurfaceCommands(...)`, `recordUnsupportedRenderSurfaceShape(...)`, and the first bucket switch in `recordRenderSurfaceUnavailable(...)` must become a diagnostics owner recording helper call.
+- `recordUnsupportedRenderSurfaceShape(...)` stays in `context.zig` as a policy-adjacent wrapper that computes `term_texture.renderSurfaceSummary(render_surface)` and calls `recordUnsupportedShape(...)`.
+- `recordRenderSurfaceUnavailable(...)` stays in `context.zig` because it enforces trusted failure policy. Its diagnostic bucket mutation must call `recordUnavailable(...)` before the policy switch.
+- Status assignment in `ContextSubmitBackend.upload(...)` must call `recordEmitStatus(...)` and `recordResourcePlanStatus(...)`.
+- Shape attempts/presents/failures in `uploadRenderSurfaceCommands(...)` must call `recordShape(...)`.
+- `ShapeKind.glyph_patch` maps to existing glyph counters: `.surface` increments `render_surface_glyph_count`, `.present` increments `render_surface_glyph_present_count`, and `.failure` increments `render_surface_glyph_failure_count`.
 
-- Event-loop test: wake event is consumed and not classified as input.
-- Event-loop test: quit event sets quit state and returns `.quit`.
-- Event-loop test: bounded drain does not exceed `max_sdl_events_per_turn`.
-- Event-loop test: `requestQuit()` sets quit and pushes wake through fake ops.
-- Update existing PTY wait-thread tests so wake coalescing and acknowledgement target the event-loop wake seam, not input.
+## Must Stay In Context
+
+- `ContextSubmitBackend.upload(...)` and `uploadRenderSurfaceCommands(...)`.
+- `recordUnsupportedRenderSurfaceShape(...)`, `panicUnsupportedTrustedRenderSurfaceShape(...)`, `trustedUnsupportedRenderSurfaceShapeAction(...)`, `trustedRenderSurfaceUnavailableAction(...)`, and `recordRenderSurfaceUnavailable(...)`.
+- `submitPreparedLockedWith(...)`.
+- `SubmitPreparedResult`, `SubmitFailureReason`, and `submitFailureReason(...)`.
+- Existing trusted failure-policy tests.
+
+## Required Tests
+
+- Move/update diagnostics tests currently around `context.zig:1773-1833` to `terminal/render_surface_submit_diagnostics.zig`.
+- `render surface diagnostic failure logging is first N bounded`.
+- `render surface failure total sums exact buckets`.
+- `render surface unavailable diagnostics use render surface vocabulary`.
+- `counter delta preserves reset current`.
+- `record host upload updates count last and max`.
+- `record render surface realization updates last and max`.
+- `record prepare failure increments bounded counter`.
+- `record submit failure increments bounded counter`.
+- `record unavailable classifies every resource plan status bucket`.
+- `record shape tracks surface present and failure buckets`.
+- Keep submit sequencing tests in `context.zig`.
+- Keep trusted policy tests in `context.zig`.
 
 ## Verification
 
@@ -65,17 +94,19 @@ From `howl-linux-host`:
 
 - `zig build check`
 - `zig build test --summary all`
+- `zig build -Doptimize=ReleaseFast`
 - `git diff --check`
 
 From workspace root:
 
 - tracked `.zig` line scan must print `TOTAL 0` for lines over 190 chars.
 
-## Stop Conditions For Implementation
+## Stop Conditions
 
-- Stop if `event_loop.zig` starts owning terminal runtime progress, PTY read/write, VT mutation, render submission, presentation, tabs, or window GL state.
-- Stop if `polling/` gains signal or IPC files without current product behavior and tests.
-- Stop if a file named `polling/sdl.zig`, `app/wake.zig`, or `chrome_wake.zig` is introduced.
-- Stop if PTY wait-thread still targets input wake after the slice.
-- Stop if input still owns SDL wait/poll/wake or wake event registration after the slice.
+- Stop if any file outside the allowed files must be touched.
+- Stop if the worker needs to move any trusted failure-policy helper.
+- Stop if diagnostics needs to import `terminal/context.zig`, accept `*Context`, or accept `anytype self`.
+- Stop if the split changes panic/fail-closed behavior for trusted render surfaces.
+- Stop if submit mutex unlock/relock sequencing changes.
+- Stop if private trusted-policy tests are weakened or deleted.
 - Stop if any C ABI changes appear.
