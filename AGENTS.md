@@ -119,6 +119,8 @@ Required TigerBeetle readings before non-trivial work:
 
 - Function signatures stay on one line. Do not use one-parameter-per-line
   multiline signatures as a house style.
+- The hard line limit is 190 characters. A signature longer than 190 characters
+  must be split by owner-true structure, not preserved as a long line.
 - If a signature was manually collapsed and `zig fmt` still splits it, accept the
   formatter result. Otherwise, collapse multiline signatures before committing.
 

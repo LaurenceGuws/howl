@@ -1,69 +1,40 @@
-# Current Slice: Dissolve Render Surface Oracle Test Bucket
+# Current Slice: Enforce Zig 190-Column Limit
 
-Owner: `howl-render` render-surface emitter, realizer, prepared owner, and FFI test owners.
-
-Source scratchpad:
-
-- `research/2026-06-01-render-surface-owner-rename-sprint.md`
-
-Accepted research cache:
-
-- `research/cache-2026-06-01-render-real-owner-names.md`
+Owner: all Zig source owners in `howl-render`, `howl-vt`, `howl-pty`, and `howl-linux-host`.
 
 ## Problem
 
-`howl-render/src/test/unit/render_surface_oracle.zig` is stale proof-bucket structure from the old protocol proof lane. It centralizes tests for multiple owners under an `oracle` name instead of placing tests with the smallest true owner.
+Tracked Zig files contain lines longer than the hard 190-character limit. The recent signature collapse exposed the missing exception: signatures should stay one-line only while they fit within 190 characters. Lines over 190 must be restructured.
 
 ## Allowed Files
 
-- `howl-render/src/test/unit/root.zig`
-- `howl-render/src/test/unit/render_surface_oracle.zig`
-- `howl-render/src/prepared/render_surface_emitter.zig`
-- `howl-render/src/render/render_surface_realizer.zig`
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/test/ffi.zig`
+- Zig files reported by the current overlong-line scan in `howl-render`.
+- Zig files reported by the current overlong-line scan in `howl-vt`.
+- Zig files reported by the current overlong-line scan in `howl-pty`.
+- Zig files reported by the current overlong-line scan in `howl-linux-host`.
+- `AGENTS.md`
 - `current.txt`
 
-No other files are in scope.
+No docs or non-Zig product files are in scope except this slice record and `AGENTS.md`.
 
 ## Required Shape
 
-- Delete `howl-render/src/test/unit/render_surface_oracle.zig`.
-- Remove its import from `howl-render/src/test/unit/root.zig`.
-- Move emitter-owned tests into `howl-render/src/prepared/render_surface_emitter.zig`.
-- Move realizer-owned comparison tests into `howl-render/src/render/render_surface_realizer.zig` only if they test realizer behavior directly.
-- Move prepared-owner lifetime/diagnostic/render-surface ownership tests into `howl-render/src/prepared/owner.zig`.
-- Move FFI borrowed render-surface behavior into `howl-render/src/test/ffi.zig`.
-- Do not preserve an `oracle`, `proof`, `bucket`, or aggregate test file under a new name.
-- Do not weaken or delete coverage to make the move easy.
-- Keep helper functions private to the owner file that uses them. Duplicate a tiny fixture helper only when sharing would create a new fake test bucket.
-
-## Non-Goals
-
-- No ABI changes.
-- No product behavior changes.
-- No host changes.
-- No broad formatting-only churn outside moved tests.
-- No new test root or duplicate test entrypoint.
-
-## Stop Conditions
-
-- Stop if a test cannot be assigned to a true owner without changing behavior.
-- Stop if preserving coverage requires a new shared test bucket.
-- Stop if root test wiring needs anything except owner imports already reachable through `src/test.zig`.
+- Eliminate every tracked `.zig` line longer than 190 characters unless it is an unavoidable payload string literal.
+- Function signatures longer than 190 characters must split. This is the hard exception to the one-line signature rule.
+- Do not split signatures as one-parameter-per-line by house style when an owner-true shorter signature or wrapper shape is better.
+- Long struct literals, test expectations, switch arms, and calls must be reshaped rather than preserved as long lines.
+- Generated-looking tables such as box drawing masks still must obey the 190-character limit; split table rows or data shape without changing values.
+- Long format/payload strings may remain only when splitting would change payload semantics or materially obscure the payload. Prefer adjacent string literal concatenation where safe.
+- No behavior changes.
 
 ## Verification
 
-From `howl-render`:
+From each changed subrepo:
 
-- `zig build test:unit`
-- `zig build test`
-- `zig build check`
-- `git diff --check`
+- `zig fmt --check` over tracked `.zig` files.
+- `zig build check`.
 
-Required grep gates from `howl-render`:
+From workspace root:
 
-- `rg -n "render_surface_oracle|proof target|owner oracle|oracle\.zig" src`
-  prints nothing.
-- `rg -n "@import\(\"render_surface_oracle\.zig\"\)" src/test/unit/root.zig`
-  prints nothing.
+- A tracked `.zig` overlong scan prints no lines longer than 190 characters, except documented payload-string exceptions if any remain.
+- `git diff --check` in root and changed subrepos.
