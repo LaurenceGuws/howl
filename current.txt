@@ -1,67 +1,42 @@
-# Current Slice: Display/Renderer/Window Chrome Ownership Integration
+# Current Slice: Terminal Host Input Adaptation Owner
 
 Accepted scratchpad:
 
-- `research/2026-06-01-display-renderer-sprint.md`
+- `research/2026-06-01-terminal-input-sprint.md`
 
 Accepted research caches:
 
-- `research/cache-2026-06-01-alacritty-display-render-window-shape.md`
-- `research/cache-2026-06-01-host-texture-window-current-inventory.md`
+- `research/cache-2026-06-01-terminal-chrome-owner.md`
+- `research/cache-2026-06-01-terminal-non-pty-non-surface-inventory.md`
 
 ## Purpose
 
-Finish the user-started Linux host owner move so host-side render-surface consumption and presentation follow Alacritty Display/Renderer ownership, while `window_chrome/` contains only window wrapper/chrome behavior and `terminal/texture.zig` becomes namespace-only.
+Extract terminal host input adaptation from `terminal/context.zig` into source-backed `terminal/input.zig`. Do not create a broad terminal chrome/UI/overlay bucket.
 
-## Implementation Owner
+## Allowed Files
 
-Orchestrator direct implementation for the first cut because `howl-linux-host` starts from an uncommitted user dirty baseline. Do not hand this cut to a worker until accepted work is committed and pushed.
-
-## Allowed Files And Paths
-
-- `howl-linux-host/build.zig`
-- `howl-linux-host/src/main.zig`
-- `howl-linux-host/src/app/present.zig`
-- `howl-linux-host/src/test/host.zig`
-- `howl-linux-host/src/test_root.zig`
-- `howl-linux-host/src/sdl_c.h`
-- `howl-linux-host/src/display.zig`
-- `howl-linux-host/src/display/`
-- `howl-linux-host/src/display/renderer/gl_c.h`
-- `howl-linux-host/src/window_chrome.zig`
-- `howl-linux-host/src/window_chrome/`
-- `howl-linux-host/src/window/` only for removing the old directory after moves.
 - `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/terminal/scrollbar.zig`
-- `howl-linux-host/src/terminal/links.zig`
-- `howl-linux-host/src/terminal/render/temporary_render_surface_debugging.zig`
-- `howl-linux-host/src/terminal/texture.zig`
-- `howl-linux-host/src/terminal/texture/` only for moving `gl_c.h` to `src/display/renderer/gl_c.h` and deleting moved fake owners after their contents move.
+- `howl-linux-host/src/terminal/input.zig`
 
 ## Required Shape
 
-- `src/display.zig` is namespace-only.
-- `src/display/display.zig` owns display/present behavior currently in `terminal/texture/present.zig`.
-- `src/display/frame_timer.zig` owns frame pacing behavior currently in `terminal/texture/pacing.zig`.
-- `src/display/renderer.zig` is namespace-only.
-- `src/display/renderer/rects.zig` owns current rect/tab-bar/scrollbar/simple textured rect drawing.
-- `src/display/renderer/render_surface.zig` owns current render-surface GL resource realization/upload behavior from `terminal/texture.zig`.
-- `src/display/renderer/gl_c.h` is the final translated GL C header path.
-- `src/window/` is renamed to `src/window_chrome/` and contains only chrome/window-wrapper/icon behavior.
-- `src/window_chrome.zig` is namespace-only.
-- `src/terminal/texture.zig` is namespace-only like `howl-render/src/libhowl_render.zig`.
-- `src/terminal/texture/texture.zig` does not survive as a fake draw/swap owner.
-- Temporary render debugging is clearly named/bannered as temporary/removable.
-- `terminal/texture/present.zig` stale relative imports of absent `draw.zig` and `layout.zig` must disappear because the file either moves to display ownership or is deleted after its contents move.
-- `build.zig` dedicated render-surface/texture test root must become `src/display/renderer/render_surface.zig`, not stale `src/window/term_texture.zig`.
+- Create `terminal/input.zig` as the terminal host input adaptation owner.
+- Move `Context.DrainInputOutcome` to `terminal/input.zig` as `DrainInputOutcome`.
+- Keep `pub const DrainInputOutcome = terminal_input.DrainInputOutcome;` in `Context` if callers still use `TerminalContext.DrainInputOutcome`.
+- Move `drainTextInputFastPathWith(...)`, `drainPointerAndUiInputWith(...)`, `handleTextInputFastPathEvent(...)`, and `handlePointerAndUiInputEvent(...)` logic into `terminal/input.zig`.
+- Move or expose only input-adapter-local helper result shapes needed by the moved code.
+- Keep existing public `Context` input methods as thin wrappers if needed by current callers/tests.
+- Preserve text-before-pointer ordering and bounded event compaction.
+- Preserve pointer/UI routing order exactly: scrollbar, content-relative clipping, wheel VT-or-scroll fallback, selection, links, host-only hover clear, VT mouse publication.
+- Add assertions around bounded input queue compaction indexes and final length.
 
 ## Non-Goals
 
+- No `terminal/chrome.zig`, `terminal/ui.zig`, or `terminal/overlay.zig`.
 - No public C ABI changes.
-- No compatibility aliases at old `window/*` paths.
-- No renderer algorithm modernization beyond owner movement required to preserve behavior.
-- No test weakening, filtering, duplicate test roots, or opportunistic side-entry test files.
-- No generic bucket structs or Howl-only owner names while Alacritty shapes exist.
+- No PTY lifecycle, render-surface submit/upload, display presentation, title/focus/cursor-blink extraction.
+- Do not absorb `terminal/vt/input.zig`, `terminal/links.zig`, `terminal/selection.zig`, `terminal/scrollbar.zig`, or `terminal/cursor_blink.zig`.
+- No duplicate test root or weakened tests.
 
 ## Verification
 
@@ -75,22 +50,20 @@ From `howl-linux-host`:
 From workspace root:
 
 - tracked `.zig` line scan reports zero lines over 190 chars.
-- `./status.sh` after accepted host/root commits shows no unpushed accepted work.
 
 ## Grep Gates
 
-- No `howl-linux-host/src/window/` directory remains.
-- No imports of `window/` remain in host Zig/build files.
-- No `glBegin`, `glEnd`, `GL_QUADS`, `SDL_GL_SwapWindow`, `glGenTextures`, `glDeleteTextures`, `glTexImage2D`, `glTexSubImage2D`, `glBindFramebuffer`, `HOWL_RENDER_SURFACE`, `PresentState`, `RenderResourceTextures`, `realizeSurface`, `uploadRenderSurface`, or `ensureSurface` under `src/window_chrome/`.
-- `src/terminal/texture.zig` contains no `struct`, `extern`, `fn`, `test`, `gl`, `render_c`, or mutable owner state.
-- No stale build paths to `src/window/sdl_c.h`, `src/window/gl_c.h`, `src/window/term_texture.zig`, `src/window/pacing.zig`, or `src/window/present.zig`.
-- No stale relative imports of `draw.zig` or `layout.zig` remain under `src/terminal/texture/`.
+- No `howl-linux-host/src/terminal/chrome.zig`.
+- No `howl-linux-host/src/terminal/ui.zig`.
+- No `howl-linux-host/src/terminal/overlay.zig`.
+- No new `manager`, `engine`, `controller`, `utils`, or `types.zig` owner.
+- `terminal/input.zig` must not import `howl_pty_c`, `howl_render_c`, `../display/renderer/render_surface.zig`, or `../app/present.zig`.
+- `terminal/input.zig` must not contain `ensureSurface`, `uploadRenderSurface`, `submitPrepared`, `renderTurn`, `driveProgress`, `pty_session`, or `Display`.
 
 ## Stop Conditions
 
-- Stop if Alacritty directly fights the user-owned C ABI/render-surface boundary.
-- Stop if implementation needs a public C ABI change.
-- Stop if `window_chrome` must own display, renderer, GL context, GL texture resources, frame pacing, present tokens, swap, or render-surface upload to make the build pass.
-- Stop if a compatibility alias at an old path becomes necessary.
-- Stop if tests would need to be weakened, filtered, duplicated, or moved to a second module entrypoint.
-- Stop if a worker would need to choose an owner name or test root.
+- Stop if implementation needs a broader owner name than `terminal/input.zig`.
+- Stop if extraction requires a public C ABI change.
+- Stop if tests need weakening, filtering, duplication, or a second module entrypoint.
+- Stop if PTY/render/display/title/focus/cursor-blink behavior must move to make this compile.
+- Stop if an ops struct becomes a bucket for unrelated terminal state.
