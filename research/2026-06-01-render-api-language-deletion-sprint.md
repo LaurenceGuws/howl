@@ -2,8 +2,24 @@
 
 Owner: workspace root.
 
-Status: Slices 1, 2, and 3 accepted and committed. Slice 4 language cleanup
-research accepted and promoted.
+Status: superseded and wrong-scoped. Slices 1, 2, 3, and 4 were accepted and
+committed as partial bucket/doc/test cleanup, but this record's premise that
+public render ABI `protocol` vocabulary was outside the deletion scope is
+rejected. ABIs are the product. Public render ABI symbols that contain
+`protocol` are in scope for the user's ban and require fresh research before any
+new implementation slice.
+
+Supersession note:
+
+- This record remains useful history for commits `aa1749d`, `6bf6388`,
+  `12aafa5`, and `66bf363`.
+- Treat those commits as completed partial cleanup only: unit-test discovery,
+  deletion of the separate proof bucket, deletion of the internal source bucket,
+  and doc/test wording cleanup.
+- Do not use this sprint as authority to keep public ABI/FFI/docs/tests/host
+  consumer symbols containing `protocol`.
+- A fresh research cache is required for complete `protocol` symbol deletion
+  across render ABI, FFI, docs, tests, and host consumers.
 
 Research cache:
 
@@ -17,9 +33,9 @@ Delete stale render internal/build/test/doc `protocol` bucket language and shape
 The render API is the product. A separate render protocol proof bucket is not a
 product boundary.
 
-This sprint does not authorize public ABI renames. Public exported C ABI names
-that contain `protocol` or `V0` remain product vocabulary unless a later explicit
-ABI-product slice authorizes an ABI break.
+Rejected premise: this sprint treated public exported C ABI names containing
+`protocol` as outside the cleanup scope. That was wrong because ABIs are the
+product and the user's render symbol ban includes public ABI symbols.
 
 ## Governing Evidence
 
@@ -37,13 +53,14 @@ ABI-product slice authorizes an ABI break.
 
 - Do not edit product code from this scratchpad directly.
 - Promote exactly one slice to `current.txt` before worker code starts.
-- Preserve public ABI/export names in this sprint unless a child scratchpad and
-  explicit ABI-product slice authorizes a break:
+- Historical wrong-scope constraint, now rejected for future planning: this
+  sprint kept these public ABI/export names unchanged:
   - `HOWL_RENDER_PROTOCOL_V0_VERSION`
   - `HOWL_RENDER_V0_*`
   - `HowlRenderV0*`
   - `HowlRenderPreparedSurfaceDiagnostics.protocol_v0_emit_status`
   - `howl_render_prepared_surface_protocol_v0()`
+  These names now require fresh ABI-product research for full deletion.
 - Delete the separate `test:protocol-proof` bucket only after every current
   `src/test_protocol_proof.zig` test is discoverable through unfiltered
   `zig build test:unit`.
@@ -71,8 +88,8 @@ ABI-product slice authorizes an ABI break.
   - Current file: `howl-render/src/ffi/protocol_v0.zig`.
   - Evidence: mirrors public C ABI constants and layout; translates contract facts
     only.
-  - True owner direction: FFI ABI V0 layout/assertion owner. Public ABI names are
-    preserved in this sprint.
+  - True owner direction at the time: FFI ABI V0 layout/assertion owner. The
+    old decision to keep public ABI names is superseded.
 - Render API unit proof:
   - Current file: `howl-render/src/test_protocol_proof.zig`.
   - Evidence: separate proof root contains oracle/equivalence tests not currently
@@ -216,7 +233,8 @@ Status: accepted and committed in `howl-render` `12aafa5`.
 Goal:
 
 - Delete `howl-render/src/protocol_v0/` as an internal source bucket.
-- Preserve public ABI symbols and behavior.
+- Historical wrong-scope goal: keep public ABI symbols and behavior unchanged.
+  Fresh research must now cover public ABI symbol deletion.
 
 Allowed files:
 
@@ -288,7 +306,8 @@ Stop conditions:
 
 ### Slice 4: Rename Internal Test Names And Docs That Teach Protocol As Product
 
-Status: promoted to `current.txt` from accepted language-cleanup research cache.
+Status: accepted and committed in `howl-render` `66bf363` and root commit that
+records the doc rename.
 
 Goal:
 
@@ -340,8 +359,23 @@ Promoted Slice 4 constraints:
 - Do not rename local aliases or identifiers such as `protocol_emit`,
   `protocol_realize`, `protocol_v0_emit`, `protocolV0Frame()`, or
   `protocol_v0_emit_status`.
-- Preserve public ABI tokens in headers, FFI layout assertions, exports, docs
-  code spans, and C snippets.
+- Historical wrong-scope constraint: public ABI tokens in headers, FFI layout
+  assertions, exports, docs code spans, and C snippets were not renamed.
+
+Accepted verification for `66bf363` and root doc rename:
+
+- From `howl-render`: `zig build test:unit`
+- From `howl-render`: `zig build test:abi`
+- From `howl-render`: `zig build test`
+- From root: `zig build check`
+- From root: `zig build test`
+- From root: `git diff --check`
+- From root: `rg 'render-protocol|howl-render-protocol' docs howl-render README.md build.zig`
+  printed nothing.
+- From root: `test ! -e docs/render-protocol-v0.md`.
+- From root: `test -f docs/render-api-v0.md`.
+- From root: stale protocol prose/test-name grep printed nothing.
+- From root: protocol-proof/source-path grep printed nothing.
 
 ## Follow-Up Proof Gap
 
@@ -353,10 +387,13 @@ from targeted host research, including a full read of
 
 ## Completion Criteria
 
-- `current.txt` no longer references the completed RGBA deletion slice.
-- `howl-render` has no separate protocol-proof build/test bucket.
-- `howl-render/src/protocol_v0/` is gone.
-- Render API proof runs through unfiltered `zig build test:unit`.
-- Public ABI/export names are unchanged unless explicitly authorized by a later
-  ABI slice.
-- Scratchpad is closed with accepted commit hashes and verification commands.
+- `current.txt` no longer references the completed RGBA deletion slice: complete.
+- `howl-render` has no separate protocol-proof build/test bucket: complete in
+  `6bf6388`.
+- `howl-render/src/protocol_v0/` is gone: complete in `12aafa5`.
+- Render API proof runs through unfiltered `zig build test:unit`: complete in
+  `aa1749d`.
+- Public ABI/export names still contain banned `protocol` language: incomplete
+  and wrong-scoped for full render language deletion.
+- Scratchpad is closed with accepted commit hashes and verification commands:
+  complete as historical partial cleanup only.

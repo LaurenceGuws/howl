@@ -1,4 +1,4 @@
-# Howl Render Protocol V0 Contract Draft
+# Howl Render API V0 Contract
 
 Owner: `howl-render` ABI contract draft.
 
@@ -6,10 +6,10 @@ Status: runtime contract. Normal host presentation is V0-only.
 
 ## Purpose
 
-`howl-render-protocol` V0 is a C ABI consequence protocol for prepared terminal
-frames. Render produces bounded damage, uploads, commands, and resource lifetime
-events. Hosts realize those consequences with host-owned backend resources and
-host-owned presentation policy.
+Render API V0 is the C ABI consequence surface for prepared terminal frames.
+Render produces bounded damage, uploads, commands, and resource lifetime events.
+Hosts realize those consequences with host-owned backend resources and host-owned
+presentation policy.
 
 V0 is the normal prepared-surface presentation boundary. Full RGBA composition is
 allowed only as an explicitly named test/proof oracle; it is not a runtime upload
@@ -30,37 +30,48 @@ path.
 - Prepared handles expose V0 frames through `howl_render_prepared_surface_protocol_v0()`.
 - Host presentation fails closed when the V0 sidecar is missing, invalid, unsupported,
   or cannot be uploaded.
-- `prepared_buffer.compose()` remains an explicit proof oracle for protocol tests only.
+- `prepared_buffer.compose()` remains an explicit proof oracle for render API V0 tests only.
 - There is no host full-RGBA upload fallback.
 
 ## Ownership
 
-| Area | Owner | Contract |
-| --- | --- | --- |
-| Protocol frame tokens | Render | Render creates, validates, retires, and rejects stale tokens. |
-| Resource IDs | Render | Render allocates IDs, versions them, orders lifetime events, and forbids reuse before ack. |
-| Glyph identity and shaping | Render | Render decides glyph IDs, row-local glyph runs, style splits, and fallback consequences. |
-| Atlas packing | Render | Render assigns atlas pages, upload rectangles, and resource references. |
-| Damage | Render | Render computes pixel damage and overdamage needed for correctness. |
-| Upload bytes | Render | Render owns pointer contents until the frame lifetime ends. |
-| Command stream | Render | Render emits bounded clear/fill, glyph-run, and sprite commands. |
-| Backend resources | Host | Host maps render resource IDs to host-owned backend objects. |
-| Event loop and wake policy | Host | Host schedules when to request and consume frames. |
-| Presentation and swap | Host | Host decides present cadence and platform swap behavior. |
-| Platform UX | Host | Host owns windows, tabs, input UX, and compositor integration. |
-| Backend objects in ABI | Forbidden | No GL, Metal, Vulkan, shader, buffer, texture, command encoder, window, or swapchain handle crosses V0. |
-| Generic retained scene graph | Forbidden | V0 has no nodes, parents, transforms, materials, arbitrary layers, or retained host mutation. |
-| Full RGBA normal output | Forbidden | Full RGBA is allowed only as an explicit test/proof oracle. |
+- V0 frame tokens are render-owned. Render creates, validates, retires, and rejects stale
+  tokens.
+- Resource IDs are render-owned. Render allocates IDs, versions them, orders lifetime
+  events, and forbids reuse before ack.
+- Glyph identity and shaping are render-owned. Render decides glyph IDs, row-local glyph
+  runs, style splits, and fallback consequences.
+- Atlas packing is render-owned. Render assigns atlas pages, upload rectangles, and
+  resource references.
+- Damage is render-owned. Render computes pixel damage and overdamage needed for
+  correctness.
+- Upload bytes are render-owned. Render owns pointer contents until the frame lifetime
+  ends.
+- The command stream is render-owned. Render emits bounded clear/fill, glyph-run, and
+  sprite commands.
+- Backend resources are host-owned. Host maps render resource IDs to host-owned backend
+  objects.
+- Event loop and wake policy are host-owned. Host schedules when to request and consume
+  frames.
+- Presentation and swap are host-owned. Host decides present cadence and platform swap
+  behavior.
+- Platform UX is host-owned. Host owns windows, tabs, input UX, and compositor
+  integration.
+- Backend objects in the ABI are forbidden. No GL, Metal, Vulkan, shader, buffer,
+  texture, command encoder, window, or swapchain handle crosses V0.
+- A generic retained scene graph is forbidden. V0 has no nodes, parents, transforms,
+  materials, arbitrary layers, or retained host mutation.
+- Full RGBA normal output is forbidden. Full RGBA is allowed only as an explicit
+  test/proof oracle.
 
 ## Fixed Bounds
 
-These names are part of the V0 draft contract and must become public constants before
-ABI skeleton work:
+These names are part of the public V0 ABI contract:
 
 | Bound | Value | Applies To |
 | --- | ---: | --- |
-| `HOWL_RENDER_PROTOCOL_V0_VERSION` | `0` | Frame protocol version. |
-| `HOWL_RENDER_V0_FRAMES_IN_FLIGHT_MAX` | `2` | Prepared protocol frames retained by render. |
+| `HOWL_RENDER_PROTOCOL_V0_VERSION` | `0` | V0 frame version. |
+| `HOWL_RENDER_V0_FRAMES_IN_FLIGHT_MAX` | `2` | Prepared V0 frames retained by render. |
 | `HOWL_RENDER_V0_SNAPSHOTS_IN_FLIGHT_MAX` | `2` | Snapshot tokens live across host consumption. |
 | `HOWL_RENDER_V0_DAMAGE_ITEMS_MAX` | `1024` | `HowlRenderV0DamageSpan.count`. |
 | `HOWL_RENDER_V0_UPLOADS_MAX` | `256` | `HowlRenderV0UploadSpan.count`. |
@@ -68,7 +79,7 @@ ABI skeleton work:
 | `HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX` | `256` | `HowlRenderV0GlyphRunSpan.count`. |
 | `HOWL_RENDER_V0_UPLOAD_BYTES_MAX` | `8388608` | Sum of upload byte spans per frame. |
 | `HOWL_RENDER_V0_ATLAS_PAGES_MAX` | `64` | Live atlas page resources per session. |
-| `HOWL_RENDER_V0_RESOURCES_MAX` | `4096` | Live protocol resources per session. |
+| `HOWL_RENDER_V0_RESOURCES_MAX` | `4096` | Live V0 resources per session. |
 | `HOWL_RENDER_V0_CREATES_MAX` | `256` | `HowlRenderV0CreateSpan.count`. |
 | `HOWL_RENDER_V0_RETIRES_MAX` | `256` | `HowlRenderV0RetireSpan.count`. |
 | `HOWL_RENDER_V0_HOST_ACKS_MAX` | `256` | Host-to-render ack input count. |
@@ -222,20 +233,30 @@ These values are the V0 draft constants required before command validation can b
 implemented. Value `0` is invalid for every V0 public kind field unless the row
 below names it explicitly.
 
-| Constant | Value | Field | Meaning |
-| --- | ---: | --- | --- |
-| `HOWL_RENDER_V0_DAMAGE_RECT` | `1` | `HowlRenderV0DamageItem.kind` | `rect` is damaged and must be consumed as render-pixel damage. |
-| `HOWL_RENDER_V0_DAMAGE_FULL` | `2` | `HowlRenderV0DamageItem.kind` | `rect` must equal `{0, 0, render_px.width, render_px.height}`. |
-| `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA` | `1` | `HowlRenderV0ResourceId.kind` | Alpha glyph atlas page resource. |
-| `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` | `2` | `HowlRenderV0ResourceId.kind` | Reserved for color glyph atlas pages; invalid until a later color-glyph slice. |
-| `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA` | `3` | `HowlRenderV0ResourceId.kind` | Alpha sprite resource for glyph/special/decoration sprite draws. |
-| `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR` | `4` | `HowlRenderV0ResourceId.kind` | RGBA sprite resource for color sprite draws. |
-| `HOWL_RENDER_V0_UPLOAD_ALPHA8` | `1` | `HowlRenderV0Upload.format` and `HowlRenderV0Create.format` | One alpha byte per pixel. |
-| `HOWL_RENDER_V0_UPLOAD_RGBA8` | `2` | `HowlRenderV0Upload.format` and `HowlRenderV0Create.format` | Four bytes per pixel in `r`, `g`, `b`, `a` order. |
-| `HOWL_RENDER_V0_COMMAND_CLEAR_RECT` | `1` | `HowlRenderV0Command.kind` | Blend-fill `rect` with `color_rgba` as a clear consequence. |
-| `HOWL_RENDER_V0_COMMAND_FILL_RECT` | `2` | `HowlRenderV0Command.kind` | Blend-fill `rect` with `color_rgba` as background/decoration/cursor fill. |
-| `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN` | `3` | `HowlRenderV0Command.kind` | Draw row-local alpha glyph refs from glyph atlas resources. |
-| `HOWL_RENDER_V0_COMMAND_DRAW_SPRITE` | `4` | `HowlRenderV0Command.kind` | Draw one alpha or color sprite resource. |
+- `HOWL_RENDER_V0_DAMAGE_RECT = 1` for `HowlRenderV0DamageItem.kind`: `rect` is
+  damaged and must be consumed as render-pixel damage.
+- `HOWL_RENDER_V0_DAMAGE_FULL = 2` for `HowlRenderV0DamageItem.kind`: `rect` must
+  equal `{0, 0, render_px.width, render_px.height}`.
+- `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_ALPHA = 1` for `HowlRenderV0ResourceId.kind`:
+  alpha glyph atlas page resource.
+- `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR = 2` for `HowlRenderV0ResourceId.kind`:
+  reserved for color glyph atlas pages; invalid until a later color-glyph slice.
+- `HOWL_RENDER_V0_RESOURCE_SPRITE_ALPHA = 3` for `HowlRenderV0ResourceId.kind`:
+  alpha sprite resource for glyph/special/decoration sprite draws.
+- `HOWL_RENDER_V0_RESOURCE_SPRITE_COLOR = 4` for `HowlRenderV0ResourceId.kind`:
+  RGBA sprite resource for color sprite draws.
+- `HOWL_RENDER_V0_UPLOAD_ALPHA8 = 1` for `HowlRenderV0Upload.format` and
+  `HowlRenderV0Create.format`: one alpha byte per pixel.
+- `HOWL_RENDER_V0_UPLOAD_RGBA8 = 2` for `HowlRenderV0Upload.format` and
+  `HowlRenderV0Create.format`: four bytes per pixel in `r`, `g`, `b`, `a` order.
+- `HOWL_RENDER_V0_COMMAND_CLEAR_RECT = 1` for `HowlRenderV0Command.kind`:
+  blend-fill `rect` with `color_rgba` as a clear consequence.
+- `HOWL_RENDER_V0_COMMAND_FILL_RECT = 2` for `HowlRenderV0Command.kind`:
+  blend-fill `rect` with `color_rgba` as background/decoration/cursor fill.
+- `HOWL_RENDER_V0_COMMAND_DRAW_GLYPH_RUN = 3` for `HowlRenderV0Command.kind`:
+  draw row-local alpha glyph refs from glyph atlas resources.
+- `HOWL_RENDER_V0_COMMAND_DRAW_SPRITE = 4` for `HowlRenderV0Command.kind`:
+  draw one alpha or color sprite resource.
 
 `color_rgba` packs bytes as `0xRRGGBBAA`. Any unknown command kind, damage kind,
 resource kind, or upload format rejects the frame before lifetime transitions. The
@@ -248,10 +269,10 @@ source-backed slice defines and tests color glyph production and draw semantics.
 Render owns every `HowlRenderV0ResourceId` lifetime. Host owns the realized backend
 object associated with a live ID.
 
-The product lifetime model is retained and render-owned. Resource IDs are protocol
+The product lifetime model is retained and render-owned. Resource IDs are V0 resource
 identities, not backend object names and not per-draw scratch IDs. Host backend
-objects may be created, resized, uploaded, or deleted while realizing a protocol
-resource, but those backend operations do not change protocol lifetime by themselves.
+objects may be created, resized, uploaded, or deleted while realizing a V0 resource,
+but those backend operations do not change render-owned lifetime by themselves.
 
 The only valid ordering is:
 
@@ -304,12 +325,12 @@ the same frame must satisfy `create_seq <= upload_seq` and `upload_seq < retire_
 
 A command at index `command_index` may reference a resource only when all of these are true:
 
-- The resource was created in an earlier frame and is not retired, or a same-frame create exists with
-  `create_seq <= command_index`.
+- The resource was created in an earlier frame and is not retired, or a same-frame
+  create exists with `create_seq <= command_index`.
 - At least one matching upload required by the command is visible at `upload_seq <= command_index`.
 - No same-frame retire exists for that resource, or `command_index < retire_seq`.
 
-The protocol-valid same-frame temporary-resource pattern is therefore:
+The valid V0 same-frame temporary-resource pattern is therefore:
 
 1. Create with `create_seq = 0` or any boundary before the first use.
 2. Upload with `upload_seq >= create_seq` and `upload_seq <= first command use`.
@@ -325,7 +346,7 @@ Examples:
 - Create and upload after command `0`, use by command `1`, retire after command `1`:
   `create_seq = 1`, `upload_seq = 1`, `retire_seq = 2`, and `commands.count >= 2`.
 
-This pattern is valid protocol input for bounded temporary consequences, but it is not
+This pattern is valid V0 frame input for bounded temporary consequences, but it is not
 the product path for normal sprite or glyph rendering. Normal sprite/glyph resources
 should be persistent render-owned resources whose create/upload is emitted when the
 resource first appears or changes, and whose later frames emit commands referencing
@@ -382,17 +403,18 @@ Damage is render-owned pixel damage for the terminal render surface. V0 damage i
 render pixel coordinates, clamped to `render_px`. Full damage is represented by one rect covering
 the full render surface. Partial damage uses up to `HOWL_RENDER_V0_DAMAGE_ITEMS_MAX` rects.
 
-Damage is a correctness boundary, not a host policy request. Hosts may over-present, but host tests
-must prove they consume V0 damage and do not silently fall back to full prepared-buffer upload as the
-normal path. Wide glyph overdamage and row-span-to-pixel clamping must be tested before emission.
+Damage is a correctness boundary, not a host policy request. Hosts may over-present,
+but host tests must prove they consume V0 damage and do not silently fall back to full
+prepared-buffer upload as the normal path. Wide glyph overdamage and row-span-to-pixel
+clamping must be tested before emission.
 
 ## Upload Model
 
 Uploads copy render-owned bytes into host-realized resources identified by render-owned IDs. Uploads
 are bounded by both `HOWL_RENDER_V0_UPLOADS_MAX` and `HOWL_RENDER_V0_UPLOAD_BYTES_MAX` per frame.
-Upload rectangles are resource-local pixel rectangles. `stride_bytes` is explicit and must be large
-enough for the declared rect and format. V0 upload formats are terminal-render formats only; they are
-not backend texture formats.
+Upload rectangles are resource-local pixel rectangles. `stride_bytes` is explicit and
+must be large enough for the declared rect and format. V0 upload formats are
+terminal-render formats only; they are not backend texture formats.
 
 Upload validation rules:
 
@@ -478,7 +500,7 @@ contract below exists to make that later implementation source-backed and testab
 
 ### Glyph Atlas Identity
 
-`HowlRenderV0GlyphRef.glyph_id` is a render-owned protocol identity, not a host font glyph index,
+`HowlRenderV0GlyphRef.glyph_id` is a render-owned V0 identity, not a host font glyph index,
 Unicode scalar value, codepoint, sprite key, cache slot, or backend object. The identity is unique
 within the current live render session for one rasterized glyph image and its atlas placement.
 
@@ -525,11 +547,12 @@ unretired page is invalid.
 
 ### Glyph Atlas Packing
 
-Render owns atlas packing. Hosts receive only resource-local rects and upload bytes. V0 uses a
-one-pixel transparent border around every allocated glyph rect to prevent sampling bleed. The border
-is part of `atlas_rect` and upload bytes; alpha border bytes must be zero. The visible glyph image is
-inside that rect. Because `HowlRenderV0GlyphRef` has no source-offset field, render must pre-trim or
-pre-expand the uploaded bytes so drawing the whole `atlas_rect` at `x_px/y_px` is correct.
+Render owns atlas packing. Hosts receive only resource-local rects and upload bytes. V0
+uses a one-pixel transparent border around every allocated glyph rect to prevent
+sampling bleed. The border is part of `atlas_rect` and upload bytes; alpha border
+bytes must be zero. The visible glyph image is inside that rect. Because
+`HowlRenderV0GlyphRef` has no source-offset field, render must pre-trim or pre-expand
+the uploaded bytes so drawing the whole `atlas_rect` at `x_px/y_px` is correct.
 
 Valid alpha glyph atlas rects must satisfy all rules:
 
@@ -540,14 +563,16 @@ Valid alpha glyph atlas rects must satisfy all rules:
 - The rect is allocated exactly once on that page generation.
 - The rect does not overlap any earlier live rect on that page generation.
 
-Page-full behavior is bounded. If a glyph plus its border does not fit in any live alpha page, render
-may create one new alpha page when the live atlas page count is below
-`HOWL_RENDER_V0_ATLAS_PAGES_MAX`. If the page count is already 64, direct glyph-run emission for that
-frame must fail closed without runtime full-RGBA presentation. Render must not grow atlas page dimensions, allocate an unbounded page list, evict a live
-rect in place, or silently draw a missing glyph.
+Page-full behavior is bounded. If a glyph plus its border does not fit in any live
+alpha page, render may create one new alpha page when the live atlas page count is
+below `HOWL_RENDER_V0_ATLAS_PAGES_MAX`. If the page count is already 64, direct
+glyph-run emission for that frame must fail closed without runtime full-RGBA
+presentation. Render must not grow atlas page dimensions, allocate an unbounded page
+list, evict a live rect in place, or silently draw a missing glyph.
 
-Oversized glyph behavior is explicit. If the glyph image plus one-pixel border on each side exceeds
-`1024 x 1024`, render must not create a glyph ref for it. The frame must fail closed until a later product slice defines an oversized-glyph command. V0 does
+Oversized glyph behavior is explicit. If the glyph image plus one-pixel border on each
+side exceeds `1024 x 1024`, render must not create a glyph ref for it. The frame must
+fail closed until a later product slice defines an oversized-glyph command. V0 does
 not scale, crop, or split oversized glyphs inside `DRAW_GLYPH_RUN`.
 
 Newly allocated rect uploads must be dirty-rect uploads. Each newly allocated rect emits one upload
@@ -558,12 +583,14 @@ obey `HOWL_RENDER_V0_UPLOADS_MAX` and `HOWL_RENDER_V0_UPLOAD_BYTES_MAX`.
 
 ### Glyph Upload Formats
 
-Alpha glyph atlas uploads use `HOWL_RENDER_V0_UPLOAD_ALPHA8`: one coverage byte per pixel. The source
-RGB for drawing comes from `HowlRenderV0GlyphRef.color_rgba`; the source alpha for each pixel is
-`(color_rgba.a * alpha_byte) / 255` before the existing `blendPixel()` source-over formula.
+Alpha glyph atlas uploads use `HOWL_RENDER_V0_UPLOAD_ALPHA8`: one coverage byte per
+pixel. The source RGB for drawing comes from `HowlRenderV0GlyphRef.color_rgba`; the
+source alpha for each pixel is `(color_rgba.a * alpha_byte) / 255` before the existing
+`blendPixel()` source-over formula.
 
-RGBA glyph atlas uploads and color glyph draw semantics are blocked in V0. Creates, uploads, or
-commands using `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` must reject. `HOWL_RENDER_V0_UPLOAD_RGBA8`
+RGBA glyph atlas uploads and color glyph draw semantics are blocked in V0. Creates,
+uploads, or commands using `HOWL_RENDER_V0_RESOURCE_GLYPH_ATLAS_COLOR` must reject.
+`HOWL_RENDER_V0_UPLOAD_RGBA8`
 to `GLYPH_ATLAS_ALPHA` must reject. `HOWL_RENDER_V0_UPLOAD_ALPHA8` to
 `GLYPH_ATLAS_COLOR` must reject. RGB and subpixel-mask glyph uploads are unsupported; there is no V0
 `RGB8`, `BGR8`, LCD, or subpixel format. Full RGBA remains proof-oracle only, not glyph atlas
@@ -592,10 +619,11 @@ covering the shaped ligature output; the refs use final pixels, not per-cell sub
 use final pixels over the full shaped span. Zero-width glyphs must have final placement already
 adjusted by render; hosts must not apply Unicode width rules.
 
-Clipping is render-surface clipping. Destination pixels outside `render_px` are skipped, matching the
-current software sprite/rect behavior. Source pixels are clipped by the same amount from the atlas
-rect. A glyph ref whose destination rectangle has no overlap with `render_px` must not be produced.
-If encountered by validation, reject the frame.
+Clipping is render-surface clipping. Destination pixels outside `render_px` are
+skipped, matching the current software sprite/rect behavior. Source pixels are clipped
+by the same amount from the atlas rect. A glyph ref whose destination rectangle has no
+overlap with `render_px` must not be produced. If encountered by validation, reject
+the frame.
 
 ### Glyph Run Splitting
 
@@ -670,9 +698,10 @@ Selected oracle cases:
 - Full redraw with background fill and cursor/decoration fill. Build a full-damage scene with at
   least one background fill and one cursor or decoration fill, emit commands in pass order, and
   compare every RGBA byte with `prepared_buffer.compose()`.
-- Partial row retained-base preservation. Seed a nonzero retained base, emit partial clear/background
-  commands for only the dirty row span, and prove bytes outside the dirty command rects remain equal
-  to the retained base as in `compose preserves retained content outside partial updates`.
+- Partial row retained-base preservation. Seed a nonzero retained base, emit partial
+  clear/background commands for only the dirty row span, and prove bytes outside the
+  dirty command rects remain equal to the retained base as in
+  `compose preserves retained content outside partial updates`.
 - Partial dirty row clear for transparent backgrounds. Use a partial dirty row with transparent cell
   backgrounds and prove the V0 clear command matches the explicit clear produced by
   `scene emits explicit clears for transparent default backgrounds on partial damage`.
@@ -700,62 +729,131 @@ Glyph-run oracle cases are required before product code can emit direct glyph ru
 
 Exact negative software-realizer oracle cases required before implementation:
 
-| Case | Invalid input | Expected result |
-| --- | --- | --- |
-| Unknown command kind | One command with `kind = 255`. | Reject frame; no resource lifetime transition. |
-| Unknown damage kind | One damage item with `kind = 255`. | Reject frame; no resource lifetime transition. |
-| Unknown resource kind | One create with `resource.kind = 255`. | Reject frame; no resource lifetime transition. |
-| Unknown upload format | One upload with `format = 255`. | Reject frame; no resource lifetime transition. |
-| Zero command width | `CLEAR_RECT` with `rect.width_px = 0` and `rect.height_px = 1`. | Reject frame; no pixels written. |
-| Zero command height | `FILL_RECT` with `rect.width_px = 1` and `rect.height_px = 0`. | Reject frame; no pixels written. |
-| Damage span overflow | `damage.count = HOWL_RENDER_V0_DAMAGE_ITEMS_MAX + 1`. | Reject frame; no span read past max. |
-| Upload span overflow | `uploads.count = HOWL_RENDER_V0_UPLOADS_MAX + 1`. | Reject frame; no span read past max. |
-| Command span overflow | `commands.count = HOWL_RENDER_V0_COMMANDS_MAX + 1`. | Reject frame; no span read past max. |
-| Glyph span overflow | `glyphs.count = HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX + 1`. | Reject frame; no span read past max. |
-| Alpha upload to color sprite | Resource kind `SPRITE_COLOR = 4`, upload `format = UPLOAD_ALPHA8 = 1`. | Reject frame; resource remains not updated. |
-| RGBA upload to alpha sprite | Resource kind `SPRITE_ALPHA = 3`, upload `format = UPLOAD_RGBA8 = 2`. | Reject frame; resource remains not updated. |
-| Upload before create | Upload references `{ value = 77, generation = 1, kind = 3 }` with no create. | Reject frame; resource remains unknown. |
-| Missing sprite command resource | `DRAW_SPRITE` references `{ value = 78, generation = 1, kind = 3 }` with no create. | Reject frame; no pixels written. |
-| Wrong generation sprite use | Create `{ value = 79, generation = 1, kind = 3 }`, command uses generation `2`. | Reject frame; no pixels written. |
-| Retired sprite use | Retire `{ value = 80, generation = 1, kind = 3 }`, then `DRAW_SPRITE` uses it. | Reject frame; no pixels written. |
-| Same-frame create/upload/use/retire | Create sprite `{ value = 89, generation = 1, kind = 3, create_seq = 0 }`, upload it with `upload_seq = 0`, command `0` uses it, retire it with `retire_seq = 1`. | Accept frame; draw command `0`; mark resource retired only after command `0`. |
-| Same-frame late create/upload/use/retire | Command `0` does not use the resource, create sprite `{ value = 90, generation = 1, kind = 3, create_seq = 1 }`, upload it with `upload_seq = 1`, command `1` uses it, retire it with `retire_seq = 2`. | Accept frame; command `1` can read the upload; resource retires after command `1`. |
-| Upload after retire order | Create sprite `{ value = 91, generation = 1, kind = 3, create_seq = 0 }`, retire it with `retire_seq = 1`, upload it with `upload_seq = 1`. | Reject frame; resource remains not updated. |
-| Upload before create order | Create sprite `{ value = 92, generation = 1, kind = 3, create_seq = 1 }`, upload it with `upload_seq = 0`. | Reject frame; resource remains not updated. |
-| Command use before create order | Create sprite `{ value = 93, generation = 1, kind = 3, create_seq = 1 }`, command `0` uses it. | Reject frame; no pixels written. |
-| Command use before upload order | Create sprite `{ value = 94, generation = 1, kind = 3, create_seq = 0 }`, upload it with `upload_seq = 1`, command `0` uses it. | Reject frame; no pixels written. |
-| Command use after retire order | Create sprite `{ value = 95, generation = 1, kind = 3, create_seq = 0 }`, upload it with `upload_seq = 0`, retire it with `retire_seq = 0`, command `0` uses it. | Reject frame; no pixels written. |
-| Retire before final command use | Create sprite `{ value = 96, generation = 1, kind = 3, create_seq = 0 }`, upload it with `upload_seq = 0`, command `0` and command `1` use it, retire it with `retire_seq = 1`. | Reject frame; no pixels written. |
-| Duplicate ordered retire | Create sprite `{ value = 97, generation = 1, kind = 3 }`, then two retires for the same `{ value, generation, kind }`. | Reject frame; no lifetime transition. |
-| Create sequence outside frame | One command exists, create sprite `{ value = 98, generation = 1, kind = 3, create_seq = 2 }`. | Reject frame; create boundary is outside `commands.count`. |
-| Upload sequence outside frame | Create sprite `{ value = 99, generation = 1, kind = 3 }`, one command exists, upload it with `upload_seq = 2`. | Reject frame; upload boundary is outside `commands.count`. |
-| Retire sequence outside frame | Create sprite `{ value = 100, generation = 1, kind = 3 }`, one command exists, retire it with `retire_seq = 2`. | Reject frame; retire boundary is outside `commands.count`. |
-| Color sprite command color | `DRAW_SPRITE` uses `SPRITE_COLOR = 4` and `color_rgba = 0x01020304`. | Reject frame; no pixels written. |
-| Sprite command glyph span | `DRAW_SPRITE` has `glyphs.count = 1`. | Reject frame; no pixels written. |
-| Fill command resource | `FILL_RECT` has `resource.value = 1`. | Reject frame; no pixels written. |
-| Alpha atlas wrong size | Create `GLYPH_ATLAS_ALPHA = 1` with `width_px = 1023` or `height_px = 1025`. | Reject frame; resource remains unknown. |
-| Color atlas create | Create with `resource.kind = GLYPH_ATLAS_COLOR = 2`. | Reject frame; color glyph atlas is blocked. |
-| Color atlas upload | Upload to `resource.kind = GLYPH_ATLAS_COLOR = 2` with `format = UPLOAD_RGBA8 = 2`. | Reject frame; resource remains not updated. |
-| RGBA upload to alpha atlas | Upload to `GLYPH_ATLAS_ALPHA = 1` with `format = UPLOAD_RGBA8 = 2`. | Reject frame; resource remains not updated. |
-| Alpha upload to color atlas | Upload to `GLYPH_ATLAS_COLOR = 2` with `format = UPLOAD_ALPHA8 = 1`. | Reject frame; resource remains not updated. |
-| Alpha atlas upload stride too small | `stride_bytes = rect.width_px - 1` for `UPLOAD_ALPHA8`. | Reject frame; no upload bytes read past row. |
-| Alpha atlas upload byte count too small | `bytes_count = stride_bytes * rect.height_px - 1`. | Reject frame; no upload bytes read past count. |
-| Alpha atlas upload outside page | Upload rect `{ x_px = 1023, y_px = 0, width_px = 2, height_px = 1 }`. | Reject frame; resource remains not updated. |
-| Missing glyph atlas resource | `DRAW_GLYPH_RUN` references `{ value = 81, generation = 1, kind = 1 }` with no create. | Reject frame; no pixels written. |
-| Wrong generation glyph atlas use | Create `{ value = 82, generation = 1, kind = 1 }`, glyph ref uses generation `2`. | Reject frame; no pixels written. |
-| Retired glyph atlas use | Retire `{ value = 83, generation = 1, kind = 1 }`, then glyph ref uses it. | Reject frame; no pixels written. |
-| Empty glyph run | `DRAW_GLYPH_RUN` has `glyphs.count = 0`. | Reject frame; no pixels written. |
-| Glyph ref zero alpha | Alpha glyph ref has `color_rgba = 0x01020300`. | Reject frame; no pixels written. |
-| Glyph rect outside page | Glyph ref rect `{ x_px = 1023, y_px = 0, width_px = 2, height_px = 1 }`. | Reject frame; no pixels written. |
-| Color glyph run | Glyph ref uses `atlas_resource.kind = GLYPH_ATLAS_COLOR = 2`. | Reject frame; color glyphs are blocked. |
-| Oversized glyph | Glyph allocation request needs `1025 x 1` or `1 x 1025` including border. | Do not emit glyph run; fail closed without runtime full-RGBA presentation. |
-| Atlas pages exhausted | 64 live alpha pages exist and a new glyph does not fit. | Do not emit glyph run; fail closed without runtime full-RGBA presentation. |
+- Unknown command kind: one command with `kind = 255`. Reject frame; no resource
+  lifetime transition.
+- Unknown damage kind: one damage item with `kind = 255`. Reject frame; no resource
+  lifetime transition.
+- Unknown resource kind: one create with `resource.kind = 255`. Reject frame; no
+  resource lifetime transition.
+- Unknown upload format: one upload with `format = 255`. Reject frame; no resource
+  lifetime transition.
+- Zero command width: `CLEAR_RECT` with `rect.width_px = 0` and `rect.height_px = 1`.
+  Reject frame; no pixels written.
+- Zero command height: `FILL_RECT` with `rect.width_px = 1` and `rect.height_px = 0`.
+  Reject frame; no pixels written.
+- Damage span overflow: `damage.count = HOWL_RENDER_V0_DAMAGE_ITEMS_MAX + 1`.
+  Reject frame; no span read past max.
+- Upload span overflow: `uploads.count = HOWL_RENDER_V0_UPLOADS_MAX + 1`. Reject
+  frame; no span read past max.
+- Command span overflow: `commands.count = HOWL_RENDER_V0_COMMANDS_MAX + 1`.
+  Reject frame; no span read past max.
+- Glyph span overflow: `glyphs.count = HOWL_RENDER_V0_GLYPHS_PER_RUN_MAX + 1`.
+  Reject frame; no span read past max.
+- Alpha upload to color sprite: resource kind `SPRITE_COLOR = 4`, upload format
+  `UPLOAD_ALPHA8 = 1`. Reject frame; resource remains not updated.
+- RGBA upload to alpha sprite: resource kind `SPRITE_ALPHA = 3`, upload format
+  `UPLOAD_RGBA8 = 2`. Reject frame; resource remains not updated.
+- Upload before create: upload references `{ value = 77, generation = 1, kind = 3 }`
+  with no create. Reject frame; resource remains unknown.
+- Missing sprite command resource: `DRAW_SPRITE` references
+  `{ value = 78, generation = 1, kind = 3 }` with no create. Reject frame; no pixels
+  written.
+- Wrong generation sprite use: create `{ value = 79, generation = 1, kind = 3 }`,
+  command uses generation `2`. Reject frame; no pixels written.
+- Retired sprite use: retire `{ value = 80, generation = 1, kind = 3 }`, then
+  `DRAW_SPRITE` uses it. Reject frame; no pixels written.
+- Same-frame create/upload/use/retire: create sprite
+  `{ value = 89, generation = 1, kind = 3, create_seq = 0 }`, upload it with
+  `upload_seq = 0`, command `0` uses it, and retire it with `retire_seq = 1`.
+  Accept frame; draw command `0`; mark resource retired only after command `0`.
+- Same-frame late create/upload/use/retire: command `0` does not use the resource,
+  create sprite `{ value = 90, generation = 1, kind = 3, create_seq = 1 }`, upload it
+  with `upload_seq = 1`, command `1` uses it, and retire it with `retire_seq = 2`.
+  Accept frame; command `1` can read the upload; resource retires after command `1`.
+- Upload after retire order: create sprite
+  `{ value = 91, generation = 1, kind = 3, create_seq = 0 }`, retire it with
+  `retire_seq = 1`, then upload it with `upload_seq = 1`. Reject frame; resource
+  remains not updated.
+- Upload before create order: create sprite
+  `{ value = 92, generation = 1, kind = 3, create_seq = 1 }`, then upload it with
+  `upload_seq = 0`. Reject frame; resource remains not updated.
+- Command use before create order: create sprite
+  `{ value = 93, generation = 1, kind = 3, create_seq = 1 }`, and command `0` uses it.
+  Reject frame; no pixels written.
+- Command use before upload order: create sprite
+  `{ value = 94, generation = 1, kind = 3, create_seq = 0 }`, upload it with
+  `upload_seq = 1`, and command `0` uses it. Reject frame; no pixels written.
+- Command use after retire order: create sprite
+  `{ value = 95, generation = 1, kind = 3, create_seq = 0 }`, upload it with
+  `upload_seq = 0`, retire it with `retire_seq = 0`, and command `0` uses it. Reject
+  frame; no pixels written.
+- Retire before final command use: create sprite
+  `{ value = 96, generation = 1, kind = 3, create_seq = 0 }`, upload it with
+  `upload_seq = 0`, command `0` and command `1` use it, and retire it with
+  `retire_seq = 1`. Reject frame; no pixels written.
+- Duplicate ordered retire: create sprite `{ value = 97, generation = 1, kind = 3 }`,
+  then two retires for the same `{ value, generation, kind }`. Reject frame; no
+  lifetime transition.
+- Create sequence outside frame: one command exists, and create sprite
+  `{ value = 98, generation = 1, kind = 3, create_seq = 2 }`. Reject frame; create
+  boundary is outside `commands.count`.
+- Upload sequence outside frame: create sprite `{ value = 99, generation = 1, kind = 3 }`,
+  one command exists, and upload it with `upload_seq = 2`. Reject frame; upload
+  boundary is outside `commands.count`.
+- Retire sequence outside frame: create sprite
+  `{ value = 100, generation = 1, kind = 3 }`, one command exists, and retire it with
+  `retire_seq = 2`. Reject frame; retire boundary is outside `commands.count`.
+- Color sprite command color: `DRAW_SPRITE` uses `SPRITE_COLOR = 4` and
+  `color_rgba = 0x01020304`. Reject frame; no pixels written.
+- Sprite command glyph span: `DRAW_SPRITE` has `glyphs.count = 1`. Reject frame; no
+  pixels written.
+- Fill command resource: `FILL_RECT` has `resource.value = 1`. Reject frame; no pixels
+  written.
+- Alpha atlas wrong size: create `GLYPH_ATLAS_ALPHA = 1` with `width_px = 1023` or
+  `height_px = 1025`. Reject frame; resource remains unknown.
+- Color atlas create: create with `resource.kind = GLYPH_ATLAS_COLOR = 2`. Reject frame;
+  color glyph atlas is blocked.
+- Color atlas upload: upload to `resource.kind = GLYPH_ATLAS_COLOR = 2` with
+  `format = UPLOAD_RGBA8 = 2`. Reject frame; resource remains not updated.
+- RGBA upload to alpha atlas: upload to `GLYPH_ATLAS_ALPHA = 1` with
+  `format = UPLOAD_RGBA8 = 2`. Reject frame; resource remains not updated.
+- Alpha upload to color atlas: upload to `GLYPH_ATLAS_COLOR = 2` with
+  `format = UPLOAD_ALPHA8 = 1`. Reject frame; resource remains not updated.
+- Alpha atlas upload stride too small: `stride_bytes = rect.width_px - 1` for
+  `UPLOAD_ALPHA8`. Reject frame; no upload bytes read past row.
+- Alpha atlas upload byte count too small:
+  `bytes_count = stride_bytes * rect.height_px - 1`. Reject frame; no upload bytes read
+  past count.
+- Alpha atlas upload outside page: upload rect
+  `{ x_px = 1023, y_px = 0, width_px = 2, height_px = 1 }`. Reject frame; resource
+  remains not updated.
+- Missing glyph atlas resource: `DRAW_GLYPH_RUN` references
+  `{ value = 81, generation = 1, kind = 1 }` with no create. Reject frame; no pixels
+  written.
+- Wrong generation glyph atlas use: create `{ value = 82, generation = 1, kind = 1 }`,
+  glyph ref uses generation `2`. Reject frame; no pixels written.
+- Retired glyph atlas use: retire `{ value = 83, generation = 1, kind = 1 }`, then glyph
+  ref uses it. Reject frame; no pixels written.
+- Empty glyph run: `DRAW_GLYPH_RUN` has `glyphs.count = 0`. Reject frame; no pixels
+  written.
+- Glyph ref zero alpha: alpha glyph ref has `color_rgba = 0x01020300`. Reject frame; no
+  pixels written.
+- Glyph rect outside page: glyph ref rect
+  `{ x_px = 1023, y_px = 0, width_px = 2, height_px = 1 }`. Reject frame; no pixels
+  written.
+- Color glyph run: glyph ref uses `atlas_resource.kind = GLYPH_ATLAS_COLOR = 2`. Reject
+  frame; color glyphs are blocked.
+- Oversized glyph: glyph allocation request needs `1025 x 1` or `1 x 1025` including
+  border. Do not emit glyph run; fail closed without runtime full-RGBA presentation.
+- Atlas pages exhausted: 64 live alpha pages exist and a new glyph does not fit. Do not
+  emit glyph run; fail closed without runtime full-RGBA presentation.
 
 ## Test Gates
 
 Before ABI skeleton:
 
-- ABI layout plan for every V0 struct, including size, alignment, field offsets, and reserved fields.
+- ABI layout plan for every V0 struct, including size, alignment, field offsets, and
+  reserved fields.
 - Constant tests planned for every named bound above.
 - Exact ABI negative cases planned: span `ptr = NULL` with `count = 1`,
   `damage.count = HOWL_RENDER_V0_DAMAGE_ITEMS_MAX + 1`, `render_px.width = 0`,
@@ -766,9 +864,11 @@ Before ABI skeleton:
 Before software reference realizer:
 
 - ABI skeleton accepted with layout and bound tests passing.
-- Software realizer command semantics specified for clear/fill rect, sprite, and alpha glyph runs;
-  color glyph rejection specified until a later color-glyph semantics slice.
-- Equivalence cases selected against current `prepared_buffer.compose()` for full redraw and partial rows.
+- Software realizer command semantics specified for clear/fill rect, sprite, and alpha
+  glyph runs; color glyph rejection specified until a later color-glyph semantics
+  slice.
+- Equivalence cases selected against current `prepared_buffer.compose()` for full redraw
+  and partial rows.
 - Kind constant tests planned for every numeric V0 command, damage, resource, and upload value.
 - Exact negative software-realizer tests planned for the invalid inputs listed in the
   `Software Equivalence Oracle` table: `kind = 255` for command/damage/resource/upload,
@@ -780,7 +880,7 @@ Before software reference realizer:
   glyph atlas missing/wrong-generation/retired use rejection, empty glyph-run rejection, zero-alpha
   glyph rejection, and color glyph-run rejection.
 
-Before protocol emission:
+Before V0 frame emission:
 
 - Software realizer equivalence tests pass against current full-surface output.
 - Damage tests pass for full damage, partial row spans, clamping, and wide-glyph overdamage.
@@ -803,7 +903,7 @@ Runtime gates:
 - Full-surface composition remains available only as an explicitly named test/proof oracle.
 - Tests prove normal-path absence of full `glTexSubImage2D()` terminal-surface upload.
 - Replacement tests pass for ABI layout, bounds, invalid input, resource lifetime, software
-  equivalence, protocol emission, and host consumption.
+  equivalence, V0 frame emission, and host consumption.
 
 ## Stop Conditions
 

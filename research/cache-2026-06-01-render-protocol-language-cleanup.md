@@ -5,6 +5,12 @@ Date: 2026-06-01
 Owner: research cache only. This is not a scratchpad, not `current.txt`, and not an
 implementation.
 
+Supersession note: this cache is accepted only as history for partial doc/test
+wording cleanup completed in `66bf363` and the root doc rename. Its premise that
+public render ABI `protocol` vocabulary could remain out of scope is rejected.
+ABIs are the product, and public ABI/FFI/docs/tests/host-consumer symbols
+containing `protocol` require fresh research before any complete deletion slice.
+
 ## Sources Read In Order
 
 1. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
@@ -34,15 +40,15 @@ implementation.
   emission, realization, owner lifetime, diagnostics, and ABI layout.
 - `TIGER_STYLE.md:315-335` says order and naming affect review. Stale test names that still say
   `protocol v0` obscure the true owner paths introduced by Slice 3.
-- `AGENTS.md:9-15` says the ABIs are the product. Public C ABI vocabulary is product vocabulary,
-  not stale language in this cleanup sprint.
+- `AGENTS.md:9-15` says the ABIs are the product. The prior conclusion that public C ABI
+  vocabulary could remain outside this cleanup was wrong and is superseded.
 - `AGENTS.md:95-103` assigns `howl-render` ownership of render contracts, retained-frame state,
   prepare/submit scheduling, render-surface contracts, and text shaping.
 - `AGENTS.md:105-116` says FFI translates contracts only. `src/ffi/protocol_v0.zig` remains an FFI
   ABI assertion owner while the public ABI still contains `protocol` spelling.
-- `research/2026-06-01-render-api-language-deletion-sprint.md:19-21` explicitly preserves public
-  exported C ABI names containing `protocol` or `V0` unless a later ABI-product slice authorizes a
-  break.
+- `research/2026-06-01-render-api-language-deletion-sprint.md:19-21` previously kept public
+  exported C ABI names containing `protocol` or `V0` out of scope. That premise is rejected for
+  future planning.
 - Completed slices in `current.txt:14-18` and
   `research/2026-06-01-render-api-language-deletion-sprint.md:84-287` already moved proof tests
   under unit, deleted `test:protocol-proof`, and deleted `src/protocol_v0/`.
@@ -128,10 +134,10 @@ implementation slice explicitly allows identifier-only internal cleanup and reru
 - `docs/render-protocol-v0.md:806` says `protocol emission` in test gates; this should become
   `V0 frame emission`.
 
-### Public ABI Vocabulary Allowed In This Sprint
+### Rejected Public ABI Scope From This Sprint
 
-These occurrences are intentionally preserved public ABI vocabulary. Do not rename them in the next
-cleanup slice.
+These occurrences were previously kept out of scope. That premise is now rejected: public render ABI
+symbols are product symbols and require fresh research for complete `protocol` deletion.
 
 - `howl-render/include/howl_render.h:19` defines public `HOWL_RENDER_PROTOCOL_V0_VERSION`.
 - `howl-render/include/howl_render.h:19-31` defines public V0 bounds.
@@ -231,16 +237,17 @@ Proposed path/action:
   `howl-render/src/prepared/v0_frame_emitter.zig`,
   `howl-render/src/render/v0_frame_realizer.zig`, and `howl-render/src/prepared/owner.zig`.
 - FFI test names in `howl-render/src/test/ffi.zig:63`, `338`, `354`, `366`, `381`, and `403` can also
-  be renamed if and only if the body remains unchanged and public ABI spelling remains intact.
-- Do not rename public ABI symbols, fields, exported symbols, header constants, `src/ffi/protocol_v0.zig`,
-  or host names in this slice.
+  be renamed if and only if the body remains unchanged.
+- Historical wrong-scope limit: this cache did not rename public ABI symbols, fields, exported
+  symbols, header constants, `src/ffi/protocol_v0.zig`, or host names. Fresh research must cover
+  those symbols before complete deletion work.
 
 ## Proposed Worker-Ready Slice
 
 Goal:
 
 - Remove stale render-internal unit test names and documentation language that teach `protocol` as a
-  separate product, while preserving public ABI vocabulary exactly.
+  separate product. This goal was partial and did not complete the user's public-symbol ban.
 
 Allowed files:
 
@@ -259,13 +266,14 @@ Required shape:
 - Test strings should use `render API V0`, `V0 frame emitter`, `V0 frame realizer`, `retained V0
   frame realizer`, `prepared V0 frame`, `V0 frame diagnostics`, or equivalent owner-true nouns.
 - Preserve all test bodies and assertions.
-- Preserve public ABI tokens in code, docs code spans, C snippets, FFI assertions, header, exports,
-  prepared diagnostics, and public call names.
+- Historical wrong-scope limit: public ABI tokens in code, docs code spans, C snippets, FFI
+  assertions, header, exports, prepared diagnostics, and public call names were not renamed.
 - Make no host edits.
 - Make no build edits.
 
 Non-goals:
 
+- Historical wrong-scope non-goals, superseded for future planning:
 - No public C ABI rename.
 - No `src/ffi/protocol_v0.zig` rename.
 - No `howl_render_prepared_surface_protocol_v0()` rename.
@@ -329,6 +337,6 @@ Required grep gates after the slice:
 
 Worker-ready: yes.
 
-The exact next slice is source-backed enough if it is constrained to doc rename/rewrite plus
-test-string cleanup in the listed render files, with public ABI vocabulary preserved and host names
-left out of scope. Public ABI renames and host cleanup require separate research/scratchpad slices.
+The exact next slice described here was source-backed only as partial doc/test cleanup. It is not
+authority for complete render `protocol` symbol deletion. Fresh research is required across render
+ABI, FFI, docs, tests, and host consumers.

@@ -4,6 +4,12 @@ Date: 2026-06-01
 
 Owner: research cache only. This is not a scratchpad, not `current.txt`, and not an implementation.
 
+Supersession note: this cache is accepted only as history for the partial source
+bucket deletion completed in `12aafa5`. Its premise that public render ABI
+`protocol` vocabulary could remain out of scope is rejected. ABIs are the
+product, and public ABI/FFI/docs/tests/host-consumer symbols containing
+`protocol` require fresh research before any complete deletion slice.
+
 ## Sources Read In Order
 
 1. `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
@@ -30,8 +36,13 @@ Owner: research cache only. This is not a scratchpad, not `current.txt`, and not
 - `loop.txt:133-145` hard-stops if workers need to invent owner names or if public ABI changes appear without an ABI-product slice.
 - `current.txt:20-24` says this stage exists only to produce evidence for deleting `howl-render/src/protocol_v0/` as an internal source bucket, and authorizes no product code.
 - `current.txt:28-34` asks exactly for replacement owner paths, FFI move decision, import/test changes, and grep gates.
-- `research/2026-06-01-render-api-language-deletion-sprint.md:18-20` says this sprint does not authorize public ABI renames.
-- `research/2026-06-01-render-api-language-deletion-sprint.md:210-239` defines Slice 3 as deleting `src/protocol_v0/`, preserving public ABI symbols and behavior, moving `emit.zig` and `realize.zig` to noun-owner paths, and updating imports only.
+- `research/2026-06-01-render-api-language-deletion-sprint.md:18-20` previously
+  said public ABI renames were not authorized. That scope premise is now
+  superseded because public ABI symbols are part of the banned render vocabulary.
+- `research/2026-06-01-render-api-language-deletion-sprint.md:210-239` defined Slice 3 as deleting
+  `src/protocol_v0/`, keeping public ABI symbols and behavior unchanged, moving `emit.zig` and
+  `realize.zig` to noun-owner paths, and updating imports only. That public-ABI limit is superseded
+  for complete deletion research.
 - `research/2026-06-01-render-api-language-deletion-sprint.md:240-248` requires `zig build test:unit`, `zig build test:abi`, `zig build test`, `zig build check`, `git diff --check`, and a grep gate proving no `src/protocol_v0` imports remain.
 
 ## Current Post-Commit Facts
@@ -85,7 +96,9 @@ Reasoning:
 - `v0_frame` is source-backed by `emit.zig:12-16`, `340-359`, and `385-404`, which build and publish `c.HowlRenderV0Frame` storage.
 - `emitter` is source-backed by the public internal type name `Emitter` at `emit.zig:340` and by `emitPrepared()` at `emit.zig:385-404`.
 - This path does not invent a vague bucket such as `api`, `protocol`, `common`, `utils`, `manager`, `engine`, or `controller`.
-- This path preserves public ABI spelling. Internal aliases may keep local public ABI names such as `Frame = c.HowlRenderV0Frame` because those are ABI vocabulary, not source-bucket ownership.
+- Historical wrong-scope reasoning: this path changed only the internal source bucket and did not
+  rename public ABI spelling such as `Frame = c.HowlRenderV0Frame`. That limit is superseded for
+  complete `protocol` deletion research.
 
 Rejected alternatives:
 
@@ -148,8 +161,12 @@ Evidence:
 Reasoning:
 
 - FFI files translate contracts only per `AGENTS.md:105-116`; this file is exactly the ABI-layout assertion owner.
-- Moving or renaming `ffi/protocol_v0.zig` in Slice 3 would conflate internal source-bucket deletion with an FFI owner/file rename. The public ABI still contains `protocol_v0` vocabulary, and this sprint explicitly preserves public ABI symbols.
-- Keeping the FFI file avoids implying that public `HOWL_RENDER_PROTOCOL_V0_VERSION`, `HowlRenderV0*`, diagnostics fields, or exported symbol names are renamed.
+- Historical wrong-scope reasoning: moving or renaming `ffi/protocol_v0.zig` in Slice 3 would have
+  conflated internal source-bucket deletion with an FFI owner/file rename. Fresh research must now
+  cover that FFI/public ABI vocabulary for complete deletion.
+- Historical wrong-scope reasoning: keeping the FFI file avoided implying that public
+  `HOWL_RENDER_PROTOCOL_V0_VERSION`, `HowlRenderV0*`, diagnostics fields, or exported symbol names
+  were renamed. That does not authorize keeping those symbols in future planning.
 - The source-bucket deletion does not require moving this file because it is not under `src/protocol_v0/`.
 
 Stop condition:
@@ -214,10 +231,12 @@ Source-bucket deletion grep gates:
 - From workspace root: `rg '@import\("\.\./protocol_v0/|@import\("\.\./\.\./protocol_v0/' howl-render/src` prints nothing.
 - From workspace root: `rg 'test:protocol-proof|protocol_proof|test_protocol_proof' howl-render/build.zig howl-render/src` prints nothing.
 
-Allowed public ABI vocabulary grep gates:
+Rejected public ABI scope grep gates:
 
-- From workspace root: `rg 'HOWL_RENDER_PROTOCOL_V0_VERSION|HOWL_RENDER_V0_|HowlRenderV0|howl_render_prepared_surface_protocol_v0|protocol_v0_emit_status' howl-render/include howl-render/src/ffi howl-render/src/libhowl_render.zig howl-render/src/test/ffi.zig howl-render/src/prepared/owner.zig howl-render/src/ffi/prepared_surface.zig` may print matches because public ABI names are preserved.
-- `@import("ffi/protocol_v0.zig")` and `src/ffi/protocol_v0.zig` remain allowed ABI-owner vocabulary in this slice.
+- Historical wrong-scope gate: `rg 'HOWL_RENDER_PROTOCOL_V0_VERSION|HOWL_RENDER_V0_|HowlRenderV0|howl_render_prepared_surface_protocol_v0|protocol_v0_emit_status' howl-render/include howl-render/src/ffi howl-render/src/libhowl_render.zig howl-render/src/test/ffi.zig howl-render/src/prepared/owner.zig howl-render/src/ffi/prepared_surface.zig` was allowed to print matches. That is superseded for complete deletion research.
+- Rejected/superseded for future planning: this slice allowed
+  `@import("ffi/protocol_v0.zig")` and `src/ffi/protocol_v0.zig` to remain. Fresh
+  research must decide complete deletion across ABI/FFI/docs/tests/host consumers.
 - From workspace root: `rg 'protocol_v0' howl-render/src` may still print public ABI field/function/file vocabulary in `src/ffi/protocol_v0.zig`, `src/libhowl_render.zig`, `src/ffi/prepared_surface.zig`, `src/prepared/owner.zig`, `src/session/text.zig`, and tests that assert public ABI fields. It must not print source path imports or `protocol_v0/` directory references.
 
 Directory/file existence gates:
@@ -230,8 +249,11 @@ Directory/file existence gates:
 
 - Import-cycle risk: moving the emitter under `prepared/` preserves the existing conceptual cycle between session/prepared/emitter. The current code already has `session/text.zig:5` importing `prepared/owner.zig`, `session/text.zig:16` importing the emitter, and `prepared/owner.zig:8-9` importing the emitter and session owner. The move should update paths only and must not add new behavior or state ownership.
 - Test-discovery risk: if `test/unit/root.zig` does not import both moved owner files, file-local emitter and realizer tests may silently fall out of `zig build test:unit`.
-- ABI drift risk: public V0 names must remain unchanged. `ffi/protocol_v0.zig` must remain the layout assertion owner in this slice.
-- Over-cleanup risk: internal variable names such as `protocol_v0_emit_status`, `protocolV0Frame()`, and public ABI test names may look stale, but renaming them is not part of Slice 3 because they touch public ABI vocabulary or behavior-facing prepared owner API.
+- Historical wrong-scope ABI risk: public V0 names and `ffi/protocol_v0.zig` were kept unchanged in
+  this slice. That risk framing is superseded for complete deletion research.
+- Historical wrong-scope over-cleanup risk: internal variable names such as
+  `protocol_v0_emit_status`, `protocolV0Frame()`, and public ABI test names were not part of Slice 3.
+  Fresh research must cover them for complete deletion.
 - Product/test boundary risk: moving the realizer under `test/unit/` would force product owner files or ABI test imports to depend on test paths. Use `render/v0_frame_realizer.zig` instead.
 
 ## Stop Conditions
