@@ -1,80 +1,102 @@
-# Current Slice: Host Render-Surface Contract Validation
+# Current Slice: Display-Owned Render-Surface Upload Policy
 
 Active research:
 
-- `research/cache-2026-06-02-render-surface-validation-owner.md`
-- `research/cache-2026-06-02-hygiene-readiness-map.md`
+- `research/cache-2026-06-02-context-submit-boundary.md`
 
 Reviewer acceptance:
 
-- Add `howl-linux-host/src/display/renderer/render_surface_contract.zig`.
-- Owner: host-side pure validation of borrowed C ABI `HowlRenderSurface`, plus optional prepared-info-to-surface consistency.
-- Public status name: `RenderSurfaceContractStatus`.
-- Public fact name: `RenderSurfaceContract`.
-- Single validation entrypoint: `validate`.
-- `RenderSurfaceContract` may carry only validation facts needed by current retained/context/display call sites: status plus bounded counts/byte totals already computed by validation.
-- It must not become diagnostics/options/result bucket shape.
+- Move render-surface upload dispatch and patch/full upload policy out of `ContextSubmitBackend` into `display/renderer/render_surface.zig`.
+- Add exact display entrypoint: `pub fn uploadRenderSurface(textures: *RenderResourceTextures, host_surface: *render_c.HowlRenderHostSurface, surface: *const render_c.HowlRenderSurface) bool`.
+- Keep context host-turn sequencing, submit transaction, lock/unlock/relock policy, prepared-handle stability checks, and retrieval-status panic mapping in `context.zig`.
+- Preserve tests, grep gates, stop conditions, and owner boundary below.
 
 ## Problem
 
-`howl-linux-host/src/terminal/render/retained.zig` and `howl-linux-host/src/display/renderer/render_surface.zig` duplicate pure validation of the same borrowed C ABI `HowlRenderSurface` with multiple status families and a retained software resource mirror. Retained should own prepare/submit/present sequencing, not C surface contract validation. Display renderer should own GL texture realization, rollback, upload/draw execution, host texture, and GL failures, not a separate pure C surface taxonomy.
-
-This slice creates one host-side render-surface contract owner and collapses retained/display pure-validation status duplication into it.
+After render-surface contract validation moved into `display/renderer/render_surface_contract.zig`, `ContextSubmitBackend` still owns display-renderer policy: render-surface shape dispatch, patch/full upload policy, unsupported-shape panic, and upload failure cleanup. Context should own the host turn and submit transaction. Display renderer should own render-surface upload classification, host surface realization, GL upload/draw execution, and patch/full policy.
 
 ## Allowed Files
 
-- Add: `howl-linux-host/src/display/renderer/render_surface_contract.zig`
-- Edit: `howl-linux-host/src/terminal/render/retained.zig`
-- Edit: `howl-linux-host/src/display/renderer/render_surface.zig`
-- Edit only for narrow status/import/call-site fallout: `howl-linux-host/src/terminal/context.zig`
-- Edit only if existing build import wiring requires it without adding a duplicate root: `howl-linux-host/build.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/display/renderer/render_surface.zig`
 
-Do not edit public C ABI headers, `howl-render`, `howl-vt`, `howl-pty`, parser/action code, render emitter code, or unrelated host runtime/display/window/input code.
+Do not edit:
+
+- `howl-linux-host/src/display/renderer/render_surface_contract.zig`
+- `howl-linux-host/src/terminal/render/retained.zig`
+- build files or test roots
+- public C ABI headers
+- other repositories or unrelated host files
 
 ## Required Shape
 
-- `render_surface_contract.zig` owns pure borrowed C ABI `HowlRenderSurface` validation.
-- It exposes `pub const RenderSurfaceContractStatus = enum { ... }` with exact status cases needed to replace retained pure-validation statuses and display pure command/order/span validation status.
-- It exposes `pub const RenderSurfaceContract = struct { status: RenderSurfaceContractStatus, ... }` with only validation facts current callers need.
-- It exposes `pub fn validate(info: ?c.HowlRenderPreparedSurfaceInfo, surface: ?*const c.HowlRenderSurface) RenderSurfaceContract` or an equally direct signature if the implementation proves fewer arguments are needed. The worker must not invent alternate owner names or broader shapes.
-- It owns validation for: surface version, prepared-info geometry/token consistency when info is provided, span count/max, upload byte total/max, create/upload/retire lifecycle order, command shape, glyph refs, resource visibility, rect bounds, resource kind/format, and bytes-per-pixel minimum.
-- `retained.zig` keeps retained text-session handle, prepared-surface handle, prepare/submit/present sequencing, surface layout sync, work state, `PrepareResult`, `PrepareFailure`, `SubmitResult`, and `SubmitFailure`.
-- `PreparedUpload` may carry prepared info, retrieval status, borrowed render surface, and at most one `RenderSurfaceContract` fact/status.
-- Remove or collapse retained `PreparedRenderResourcePlanStatus`, `PreparedRenderSurfaceProbeStatus`, and `RenderResourceStoreStatus` from product retained state.
-- Delete retained `RenderResourceStore` product mirror unless preserving exact behavior requires moving equivalent software lifecycle validation into contract-owner tests. It must not remain retained product state.
-- `render_surface.zig` keeps `RenderResourceTextures`, GL texture mutation/lifecycle, rollback, `FailureBucket`, `TrustedTextureFailureAction`, host surface texture, upload/draw execution, and upload shape classifiers.
-- `render_surface.zig` may call `render_surface_contract.validate` before GL mutation, then keep backend-specific realization locally.
-- Display pure command/order/span validation taxonomy such as `CommandShapeError` collapses into `RenderSurfaceContractStatus` where it is pure C surface validity.
-- `context.zig` changes are limited to imports/status/call-site fallout. No broad context split or upload policy reshaping.
+In `display/renderer/render_surface.zig`:
+
+- Add `pub fn uploadRenderSurface(textures: *RenderResourceTextures, host_surface: *render_c.HowlRenderHostSurface, surface: *const render_c.HowlRenderSurface) bool`.
+- Move shape dispatch currently in `ContextSubmitBackend.uploadRenderSurfaceCommands`.
+- Move patch/full upload policy currently in `ContextSubmitBackend.renderSurfaceUploadPolicy`.
+- Move `RenderSurfaceUploadPolicyError`.
+- Move `crashOnRenderSurfaceUploadPolicyError`.
+- Move `panicUnsupportedTrustedRenderSurfaceShape`.
+- `uploadRenderSurface` computes matching-host-surface policy from `host_surface` and `surface.render_px`.
+- `uploadRenderSurface` calls `textures.realizeSurface(surface)`.
+- `uploadRenderSurface` calls `ensureSurface(host_surface, surface.render_px.width, surface.render_px.height)`.
+- `uploadRenderSurface` dispatches to existing upload functions.
+- On upload failure, `uploadRenderSurface` must zero `host_surface.width` and `host_surface.height` to preserve current context behavior.
+- Keep GL texture ownership, `RenderResourceTextures`, rollback, host surface texture, GL failures, upload/draw execution, and shape classifiers in `render_surface.zig`.
+
+In `terminal/context.zig`:
+
+- `ContextSubmitBackend.upload` handles null `prepared_upload.render_surface` only through retrieval-status panic mapping.
+- Non-null render surface delegates to `term_texture.uploadRenderSurface(&self.render_surface_textures, &self.term_texture, surface)`.
+- Delete `ContextSubmitBackend.uploadRenderSurfaceCommands`.
+- Delete `ContextSubmitBackend.renderSurfaceUploadPolicy`.
+- Delete `ContextSubmitBackend.RenderSurfaceUploadPolicyError`.
+- Delete `ContextSubmitBackend.crashOnRenderSurfaceUploadPolicyError`.
+- Delete `ContextSubmitBackend.panicUnsupportedTrustedRenderSurfaceShape`.
+- Delete `ContextSubmitBackend.shouldRealizeRenderSurface` if it no longer has a true context-owned role.
+- Keep retrieval-status panic mapping in context: `RenderSurfaceRetrievalError`, `renderSurfaceRetrievalError`, `unavailableRenderSurfaceRetrievalError`, `crashOnRenderSurfaceRetrievalStatus`.
+- Keep `ContextSubmitBackend.execution`.
+- Keep context-owned host surface field assignment after successful submit.
+- Do not change submit transaction lock/unlock/relock behavior.
 
 ## Required Tests
 
-- Contract owner tests must cover the moved retained/display pure validation behavior through the existing host unit gate.
-- Keep retained tests for layout, present pending, matching present completion, submit blocked while present pending, submit allowed after present completion, prepare/submit handle sequencing.
-- Move or rewrite retained tests for probe/resource-plan/store action classification, render-surface dimension/span/upload-byte validation, software probe validation, resource plan validation, and resource store lifecycle into contract-owner tests.
-- Keep display tests that assert GL texture mutation, rollback, upload metadata, GL/failure action behavior, host texture, upload/draw execution, and upload shape classifiers in `render_surface.zig`.
-- Move or rewrite display tests for pure top-level/span/order/command shape validation into contract-owner tests.
-- Do not add a duplicate test root or side-entry test file unless implementation stops and reviewer re-accepts test wiring.
+- Move `render surface upload policy rejects patches without matching host surface` from `context.zig` to `render_surface.zig`, retargeting calls to the display renderer policy.
+- Keep context retrieval-status tests in `context.zig`.
+- Keep submit transaction tests in `context.zig` for backend upload observes mutex unlocked, render submit relocks, upload failure does not submit, and handle mutation after upload does not submit.
+- Keep resize submit/failure tests in `context.zig`.
+- Add or preserve display renderer tests proving full surfaces do not require a matching host surface and patch surfaces do require one.
+- Do not add test roots.
+
+## Grep Gates
+
+- `ContextSubmitBackend.uploadRenderSurfaceCommands` has zero matches.
+- `ContextSubmitBackend.renderSurfaceUploadPolicy` has zero matches.
+- `TrustedPatchRequiresMatchingHostSurface` exists only in `display/renderer/render_surface.zig`.
+- `renderSurfaceUploadPolicy` exists only in `display/renderer/render_surface.zig`.
+- `panicUnsupportedTrustedRenderSurfaceShape` exists only in `display/renderer/render_surface.zig`.
+- `ContextSubmitBackend.shouldRealizeRenderSurface` has zero matches if removed.
 
 ## Non-Goals
 
-- No public ABI/header changes.
-- No Zig-shaped host shortcut imports from internal `howl-render` modules.
-- No GL mutation, rollback, upload/draw, host texture, GL failure, or backend resource realization movement out of `display/renderer/render_surface.zig`.
-- No retained prepare/submit/present sequencing movement out of `terminal/render/retained.zig`.
-- No broad `terminal/context.zig` cleanup.
-- No VT/parser/action cleanup.
-- No render emitter, render realizer, prepared owner, or text session cleanup.
-- No generic owner names: no `utils.zig`, `types.zig`, `manager`, `engine`, `controller`, `validation.zig`, or `helpers.zig`.
+- No ABI changes.
+- No build/test root changes.
+- No `render_surface_contract.zig` changes.
+- No retained-render redesign.
+- No moving context turn/submit transaction out of `context.zig`.
+- No changing lock/unlock behavior around backend upload.
+- No changing GL texture ownership or `RenderResourceTextures` lifecycle.
+- No new manager/controller/options/types bucket.
 
 ## Stop Conditions
 
-- Stop if a new duplicate test root is required.
-- Stop if GL-specific failure or texture-slot mutation starts moving into the contract owner.
-- Stop if retained still needs separate probe and plan facts for behavior found outside tests/context/display call sites.
-- Stop if the contract owner becomes a bag of helpers without one validation owner and owner-local tests.
-- Stop if public ABI/header changes appear necessary.
-- Stop if the worker needs to invent owner names, paths, status shapes, or scope.
+- Stop if any public ABI change appears.
+- Stop if any build/test root change is needed.
+- Stop if context submit transaction tests fail because lock timing changed.
+- Stop if worker needs to choose new owner names beyond `uploadRenderSurface` and moved existing names.
+- Stop if the move requires changing `render_surface_contract.zig` semantics.
+- Stop if policy tests require GL execution; keep tests pure around policy/classification.
 
 ## Verification
 
@@ -87,7 +109,7 @@ From `howl-linux-host`:
 - `zig build -Doptimize=ReleaseFast`
 - `git diff --check`
 
-Runtime smoke from `howl-linux-host` if context/display submit paths changed:
+Runtime smoke from `howl-linux-host`:
 
 - `zig build run -Doptimize=ReleaseFast -- --command exit`
 
