@@ -1,100 +1,58 @@
-# Current Slice: Prepared Owner FFI Status Boundary
+# Current Slice: VT Live Stream Direct Dispatch
 
 Active research:
 
-- `research/cache-2026-06-02-render-prepared-ffi-status.md`
-
-Parallel accepted follow-up caches:
-
-- `research/cache-2026-06-02-render-emitter-resource-store.md`
-- `research/cache-2026-06-02-vt-ffi-split-readiness.md`
-- `research/cache-2026-06-02-pty-guardrail-readiness.md`
+- `research/cache-2026-06-02-vt-direct-stream-readiness.md`
 
 Reviewer acceptance:
 
-- This slice ranks ahead of render emitter/store extraction because it is smaller, ABI-preserving, removes a C ABI leak from `prepared/owner.zig`, and clarifies the FFI seam before broader emitter/store ownership work.
-- FFI translates contracts only. `prepared/owner.zig` must not import C ABI just to store/map prepared render-surface retrieval statuses.
+- This slice is ready and narrow: remove the live `ParsedEvents` queue from `stream_terminal.zig` and keep `parser/events.zig` as parser/materialization vocabulary only.
+- Preserve observable VT behavior and avoid ABI changes.
 
 ## Problem
 
-`howl-render/src/prepared/owner.zig` is a prepared handle owner, but it currently imports `../ffi.zig` and stores C ABI retrieval status values directly. The owner should store owner-local render-surface emission truth. `howl-render/src/ffi/prepared_surface.zig` should translate that owner truth to `HowlRenderPreparedSurfaceRenderSurfaceStatus` at the C ABI boundary.
+`stream_terminal.State` still owns queued `ParsedEvents` and drains them through `route.apply`. Replace that live queue with direct parser-action dispatch, while preserving DCS payload reconstruction, charset state handling, and APC/PM overflow behavior.
 
 ## Allowed Files
 
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/ffi/prepared_surface.zig`
-- `howl-render/src/test/ffi.zig`
-
-Owner-local tests in `prepared/owner.zig` may be updated as needed. Do not edit `howl-render/include/howl_render.h`, build files, test roots, host code, VT, PTY, or unrelated render files.
+- Edit: `howl-vt/src/stream_terminal.zig`
+- Edit: `howl-vt/src/test/terminal_end_to_end.zig`
+- Edit: `howl-vt/src/test/terminal_modes_reports.zig`
+- Edit: `howl-vt/src/test/terminal_surface.zig`
 
 ## Required Shape
 
-- Remove `const c = @import("../ffi.zig").c;` from `prepared/owner.zig`.
-- Add exact owner-local enum in `prepared/owner.zig`:
-
-```zig
-pub const RenderSurfaceEmissionFailure = enum {
-    none,
-    allocation_failed,
-    command_bound_overflow,
-    create_bound_overflow,
-    damage_bound_overflow,
-    retire_bound_overflow,
-    resource_bound_overflow,
-    upload_bound_overflow,
-    upload_bytes_overflow,
-    invalid_prepared_sprite,
-    missing_prepared_sprite,
-};
-```
-
-- Replace `render_surface_status` with `render_surface_failure: RenderSurfaceEmissionFailure = .none`.
-- Add `pub fn renderSurfaceFailure(self: *const Owner) RenderSurfaceEmissionFailure`.
-- Keep `Owner.renderSurface()` returning `?*const render_surface_emitter.Surface`.
-- Move C status mapping into `ffi/prepared_surface.zig` as a private function, for example `fn renderSurfaceStatus(failure: prepared_owner.RenderSurfaceEmissionFailure) c.HowlRenderPreparedSurfaceRenderSurfaceStatus`.
-- `prepared_surface.renderSurface()` must return `renderSurfaceStatus(owner.renderSurfaceFailure())` when `owner.renderSurface()` is null.
-- Preserve all current C-visible behavior and status values.
-- Do not change `howl-render/include/howl_render.h`.
+- `stream_terminal.State` owns `parser` plus direct-live control state, not a queued `ParsedEvents` store.
+- Live byte handling maps parser actions directly to `route.apply`.
+- `SO`/`SI` update terminal GL state directly.
+- ESC charset designation updates terminal G0/G1 directly.
+- DCS hooks/puts/unhook rebuild the same body/payload view that queued events used to expose.
+- APC/PM overlong feeds are still bounded and fail with the existing stream error surface.
 
 ## Required Tests
 
-- Owner-local tests in `prepared/owner.zig` must assert `RenderSurfaceEmissionFailure` values, not C constants.
-- FFI tests in `howl-render/src/test/ffi.zig` must keep asserting shipped C status values and retrieval behavior.
-- Mapping coverage for every `RenderSurfaceEmissionFailure` case must live at the FFI seam, not in the prepared owner.
-
-## Grep Gates
-
-- `prepared/owner.zig` has zero `../ffi.zig` imports.
-- `prepared/owner.zig` has zero `HOWL_RENDER_PREPARED_SURFACE_RENDER_SURFACE_` matches.
-- `render_surface_status` has zero matches.
-- C retrieval status mapping exists only in `ffi/prepared_surface.zig`.
-
-## Non-Goals
-
-- Do not split `TextSessionOwner`.
-- Do not move `SpriteResourceStore`.
-- Do not change `howl_render.h`.
-- Do not change source text translation or scene building.
-- Do not change render-surface ABI status values or public names.
-
-## Stop Conditions
-
-- Stop if public ABI/header changes appear necessary.
-- Stop if owner-local failure truth cannot preserve every current C status mapping.
-- Stop if this requires changing render-surface emitter/resource-store ownership.
-- Stop if tests require a new test root.
+- Keep existing VT unit and ABI tests green.
+- Add or keep coverage for:
+  - charset designation and GL shift across feed slices
+  - DCS retained payload kind/body/payload across slices
+  - overlong APC recovery
+  - overlong PM recovery
 
 ## Verification
-
-From `howl-render`:
 
 - `zig fmt src`
 - `zig build check`
 - `zig build test --summary all`
-- `zig build -Doptimize=ReleaseFast`
 - `git diff --check`
 
-Workspace hygiene:
+## Grep Gates
 
-- Changed Zig lines must not exceed 190 chars.
-- Root `git diff --check` must pass before commit.
+- `stream_terminal.zig` has no `ParsedEvents` queue in live feed state.
+- Live stream does not call `beginBatch`, `appendPhases`, `front`, `popFront`, or `dropPrefix`.
+- Direct stream preserves charset mapping and DCS body/payload split.
+
+## Stop Conditions
+
+- Stop if live stream needs a new ABI or parser shape.
+- Stop if DCS body/payload equivalence cannot be preserved.
+- Stop if test coverage requires a new test root.
