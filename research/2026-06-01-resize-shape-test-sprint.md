@@ -536,11 +536,15 @@ Reviewer gates:
 - Research cache accepted: yes.
 - Reviewer cache accepted: yes.
 - Scratchpad reviewer status: accepted.
-- Current active cut: Cut 4, patch upload matching-surface policy fix.
+- Active cut status: none. Sprint complete through Cut 4.
 - Cut 2A implementation status: accepted and pushed in `howl-render` commit `300b4de`.
 - Cut 2B implementation status: accepted and pushed in `howl-linux-host` commit `09b1651`.
 - Cut 3A implementation status: accepted and pushed in `howl-render` commit `3b46198`.
 - Cut 3B implementation status: accepted and pushed in `howl-linux-host` commit `77e80c5`.
 - Cut 3C implementation status: accepted and pushed in `howl-linux-host` commit `ec0e004`.
 - Cut 4 implementation status: accepted and pushed in `howl-linux-host` commit `c73d02d`.
-- Verification status: passed: `zig build check`, `zig build test --summary all`, `zig build -Doptimize=ReleaseFast`, `git diff --check`, changed-file line scan.
+- Post-sprint hardening status: accepted and pushed in `howl-linux-host` commit `e1fdbd4`,
+  `howl-render` commit `a0a4e9e`, `howl-linux-host` commit `58acf28`, and root commit `df3fb6d`.
+- Runtime follow-up status: `invalid_command_shape` fix accepted in `howl-render` commit `47f643c`.
+- Verification status: passed: `zig build check`, `zig build test --summary all`,
+  `zig build -Doptimize=ReleaseFast`, `git diff --check`, changed-file line scan.

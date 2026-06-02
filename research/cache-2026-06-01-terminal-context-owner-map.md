@@ -232,6 +232,14 @@ Allowed files:
 - `howl-linux-host/src/terminal/context.zig`
 - `howl-linux-host/src/terminal/render_surface_submit_diagnostics.zig`
 
+Superseded note:
+
+- The diagnostics-owner extraction shape below was superseded by the later render-surface
+  metrics/diagnostics cleanup. `RenderResourceTextures.Diagnostics`,
+  `terminal/render_surface_submit_diagnostics.zig`, and temporary render-surface diagnostics paths are
+  no longer live product shapes. Use this section only as historical evidence of prior owner pressure,
+  not as an implementation target.
+
 Move:
 
 - `Context.RenderSurfaceSubmitDiagnostics` from `context.zig:82-122` as `render_surface_submit_diagnostics.Diagnostics`.

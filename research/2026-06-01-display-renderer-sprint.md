@@ -74,7 +74,8 @@ Allowed host files and paths:
 - `howl-linux-host/src/terminal/context.zig`
 - `howl-linux-host/src/terminal/scrollbar.zig`
 - `howl-linux-host/src/terminal/links.zig`
-- `howl-linux-host/src/terminal/render/temporary_render_surface_debugging.zig`
+- `howl-linux-host/src/terminal/render/temporary_render_surface_debugging.zig` for deletion;
+  removed later in `howl-linux-host` commit `58acf28`.
 - `howl-linux-host/src/terminal/texture.zig`
 - `howl-linux-host/src/terminal/texture/` only for moving `gl_c.h` to `src/display/renderer/gl_c.h` and deleting moved fake owners after their contents move.
 
@@ -138,6 +139,8 @@ Stop conditions:
 ## Signoff
 
 - Research cache accepted: yes, with reviewer caveats.
-- Scratchpad reviewer status: pending.
-- Cut 1 implementation status: pending.
-- Verification status: pending.
+- Scratchpad reviewer status: accepted.
+- Cut 1 implementation status: accepted and pushed in `howl-linux-host` commit `c43f1d5`.
+- Follow-up owner cuts accepted and pushed in `howl-linux-host` commits `4eb628b`, `2b314db`, and `4b8a4e8`.
+- Temporary render-surface debugging owner removed in `howl-linux-host` commit `58acf28`.
+- Verification status: passed during accepted host/root commits.

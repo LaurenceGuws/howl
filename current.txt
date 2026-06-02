@@ -1,94 +1,49 @@
-# Current Slice: Patch Upload Matching-Surface Policy Fix
+# Current Slice: None
 
-Accepted scratchpad:
+No implementation slice is currently promoted.
 
-- `research/2026-06-01-resize-shape-test-sprint.md`
+## Completed Sprint
 
-Accepted research caches:
+The resize/render-surface sprint in `research/2026-06-01-resize-shape-test-sprint.md` is complete
+through Cut 4 and pushed:
 
-- `research/cache-2026-06-01-resize-flow-alacritty.md`
-- `research/cache-2026-06-01-resize-test-invariants-review.md`
+- Cut 2A: `howl-render` `300b4de render: force full prepare on geometry change`
+- Cut 2B: `howl-linux-host` `09b1651 host: prove resize success state machine`
+- Cut 3A: `howl-render` `3b46198 render: reject stale prepared resize work`
+- Cut 3B: `howl-linux-host` `77e80c5 host: block resized submit while present pending`
+- Cut 3C: `howl-linux-host` `ec0e004 host: fail closed resized upload`
+- Cut 4: `howl-linux-host` `c73d02d host: gate patch uploads on matching surface`
 
-Accepted Cut 3D blocker:
+Follow-up hardening after that sprint is also pushed:
 
-- `ContextSubmitBackend.uploadRenderSurfaceCommands(...)` gates sprite and glyph patch upload with `had_matching_surface`.
-- Fill patch upload calls `term_texture.uploadRenderSurfaceFillPatch(...)` without checking `had_matching_surface`.
-- No existing owner-local deterministic pure seam exists to test patch upload policy without calling real GL.
+- `howl-linux-host` `e1fdbd4 host: crash on broken gl backend`
+- `howl-render` `a0a4e9e render: remove metrics diagnostics abi`
+- `howl-linux-host` `58acf28 host: remove render surface diagnostics`
+- root `df3fb6d design: record metrics diagnostics cleanup`
 
-Accepted reviewer finding:
+## Completed Follow-Up
 
-- Cut 4 is worker-ready with exact helper signature and test shape. The behavior target is narrow: pre-upload policy gate only, full surfaces still allowed.
+The runtime-panic fix in `howl-render/src/prepared/render_surface_emitter.zig` is complete:
 
-User enforcement:
+- Runtime failure observed from `zig build run -Doptimize=ReleaseFast` in `howl-linux-host`: host GL
+  owner panicked with `trusted render texture failure: bucket=invalid_command_shape`.
+- Root cause: render-surface emitter produced fully offscreen prepared alpha sprite glyph commands.
+- Fix: prepared sprite emission skips sprite/glyph draws whose destination does not overlap the render
+  surface, matching the existing prepared fill skip/clip policy and the render realizer/host validator
+  invariant.
+- Regression: `render surface surface emitter skips fully offscreen prepared alpha sprites`.
 
-- "no widen any scope"
-- "I expect the resize test harness to resolve this by design, by slow, structural fixes, not another opportunistic vision drift"
+Verification already passed for the dirty follow-up:
 
-## Purpose
+- `howl-render`: `zig build test --summary all`
+- `howl-render`: `zig build check`
+- `howl-render`: `zig build -Doptimize=ReleaseFast`
+- `howl-linux-host`: `zig build check`
+- `howl-linux-host`: `zig build test:unit --summary all`
+- `howl-linux-host`: `zig build test --summary all`
+- `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
+- `howl-linux-host`: `zig build run -Doptimize=ReleaseFast`
+- root: `git diff --check`
+- changed-file line-length gate
 
-Add the smallest host upload-boundary policy helper and behavior fix so all patch classes require a matching host surface before upload, while full surfaces remain allowed after resize.
-
-## Allowed Files
-
-- `howl-linux-host/src/terminal/context.zig`
-
-## Exact Test Entrypoint
-
-- Build wiring root: `howl-linux-host/src/test_root.zig`, through `terminalContextTestModule(...)` in `howl-linux-host/build.zig`.
-- Owner-local test location: `howl-linux-host/src/terminal/context.zig`.
-- Worker gate from `howl-linux-host`: `zig build test:unit --summary all`.
-- No new test root, side-entry test file, or build-step split.
-
-## Required Shape
-
-- Add a pure helper inside `Context.ContextSubmitBackend` with this exact signature: `fn renderSurfaceUploadAllowed(render_surface: *const render_c.HowlRenderSurface, had_matching_surface: bool) bool`.
-- The helper must allow full surfaces without a matching prior host surface.
-- The helper must reject all patch surfaces when `had_matching_surface == false`: sprite patch, glyph patch, and fill patch.
-- Wire `uploadRenderSurfaceCommands(...)` so fill patch uses the same policy gate as sprite and glyph patch before calling `term_texture.uploadRenderSurfaceFillPatch(...)`.
-- Keep real upload functions and GL paths unchanged except for the pre-upload policy gate.
-
-## Required Test
-
-- Add one owner-local test named `render surface upload policy rejects patches without matching host surface` in `terminal/context.zig`.
-- Build test surfaces with owner-local helpers in `terminal/context.zig` using existing `testRenderSurface(...)` and fixed command spans; do not import new modules.
-- Full surface shape: one `HOWL_RENDER_SURFACE_COMMAND_CLEAR_RECT` covering the full `render_px`.
-- Fill patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_FILL_RECT` smaller than full `render_px`.
-- Sprite patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_DRAW_SPRITE` with a non-zero test resource and no full clear.
-- Glyph patch shape: one bounded `HOWL_RENDER_SURFACE_COMMAND_DRAW_GLYPH_RUN` with one glyph and no full clear.
-- Assert `Context.ContextSubmitBackend.renderSurfaceUploadAllowed(&full_surface, false) == true`.
-- Assert each patch surface returns `false` when `had_matching_surface == false`.
-- Assert each patch surface returns `true` when `had_matching_surface == true`.
-- Keep tests deterministic; do not call real GL upload functions.
-
-## Non-Goals
-
-- Do not touch render module files.
-- Do not redesign render-surface command shapes, display renderer, event loop pacing, present policy, or C ABI semantics.
-- Do not implement resource realization rollback.
-- Do not change public ABI.
-- Do not add diagnostics-only logging or temporary debugging.
-
-## Stop Conditions
-
-- Stop if fixing requires files outside `howl-linux-host/src/terminal/context.zig`.
-- Stop if the helper cannot distinguish patch/full shapes using existing trusted shape predicates.
-- Stop if the fix requires real GL/SDL in tests.
-- Stop if fixing requires public ABI change, broad presentation/runtime redesign, or render command redesign.
-
-## Verification
-
-From `howl-linux-host`:
-
-- `zig build check`
-- `zig build test:unit --summary all`
-- `zig build test --summary all`
-- `zig build -Doptimize=ReleaseFast`
-- `git diff --check`
-
-From workspace root after accepted submodule/root updates:
-
-- `./status.sh`
-
-Line gate:
-
-- Changed Zig files must have zero lines over 190 chars.
+Root is ready for the next sprint once the follow-up commit and this documentation cleanup are pushed.

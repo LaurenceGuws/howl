@@ -130,7 +130,9 @@ Alacritty source:
 
 ## Proof Gaps
 
-- No runtime log was inspected showing the exact repeated failure bucket after resize. Need current failure lines or diagnostics values from `temporary_render_surface_debugging` and `RenderResourceTextures.Diagnostics`.
+- No runtime log was inspected showing the exact repeated failure bucket after resize. This proof gap was
+  closed by later resize/render-surface cuts; the temporary diagnostics owner and
+  `RenderResourceTextures.Diagnostics` were removed in the metrics/diagnostics cleanup.
 - Need a concrete resize case proving cols/rows unchanged while render px changes, followed by suppressed publication. Source permits this, but runtime confirmation needs logs or a test.
 - Need to inspect whether SDL emits both `WINDOW_RESIZED` and `WINDOW_PIXEL_SIZE_CHANGED` in the failing environment and whether `refreshGeometry` sees logical-only, pixel-only, or both changes.
 - Need to inspect `vt_surface.publishSourceLocked` and source snapshot equality to prove whether resize-only publication is suppressed in the failing path.

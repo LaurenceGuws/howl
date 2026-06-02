@@ -97,7 +97,11 @@ the orchestrator should use teammates aggressively.
 ### Researcher
 
 - Produces research caches only.
+- Greps existing research caches before reading current source or external references, using old caches only
+  as an index for likely source paths, symbols, references, and prior proof gaps.
 - Reads assigned sources and references in source order.
+- Never treats old research as authority; every reused fact must be re-verified against current source,
+  accepted scratchpads, official references, or the assigned reference tree.
 - Returns source-backed facts, exact paths, line-backed findings, owner roles, proposed shape,
   required assertions, required tests, risks, proof gaps, and readiness judgment.
 - Does not write scratchpads, promote slices, edit product code, review, commit, or touch git.
@@ -160,6 +164,10 @@ role would make the orchestrator rely on vibes, do not skip it.
 ## Research Cache
 
 Research cache is evidence, not sprint planning.
+
+Before reading current source or external references, a researcher must grep existing research caches for
+likely source paths, symbols, references, and prior proof gaps. This is a navigation step only. Old cache
+claims are stale until re-proved from current source or accepted references.
 
 It must include:
 
