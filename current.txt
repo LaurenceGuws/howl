@@ -1,117 +1,98 @@
-# Current Slice: Display-Owned Render-Surface Upload Policy
+# Current Slice: Prepared Owner FFI Status Boundary
 
 Active research:
 
-- `research/cache-2026-06-02-context-submit-boundary.md`
+- `research/cache-2026-06-02-render-prepared-ffi-status.md`
+
+Parallel accepted follow-up caches:
+
+- `research/cache-2026-06-02-render-emitter-resource-store.md`
+- `research/cache-2026-06-02-vt-ffi-split-readiness.md`
+- `research/cache-2026-06-02-pty-guardrail-readiness.md`
 
 Reviewer acceptance:
 
-- Move render-surface upload dispatch and patch/full upload policy out of `ContextSubmitBackend` into `display/renderer/render_surface.zig`.
-- Add exact display entrypoint: `pub fn uploadRenderSurface(textures: *RenderResourceTextures, host_surface: *render_c.HowlRenderHostSurface, surface: *const render_c.HowlRenderSurface) bool`.
-- Keep context host-turn sequencing, submit transaction, lock/unlock/relock policy, prepared-handle stability checks, and retrieval-status panic mapping in `context.zig`.
-- Preserve tests, grep gates, stop conditions, and owner boundary below.
+- This slice ranks ahead of render emitter/store extraction because it is smaller, ABI-preserving, removes a C ABI leak from `prepared/owner.zig`, and clarifies the FFI seam before broader emitter/store ownership work.
+- FFI translates contracts only. `prepared/owner.zig` must not import C ABI just to store/map prepared render-surface retrieval statuses.
 
 ## Problem
 
-After render-surface contract validation moved into `display/renderer/render_surface_contract.zig`, `ContextSubmitBackend` still owns display-renderer policy: render-surface shape dispatch, patch/full upload policy, unsupported-shape panic, and upload failure cleanup. Context should own the host turn and submit transaction. Display renderer should own render-surface upload classification, host surface realization, GL upload/draw execution, and patch/full policy.
+`howl-render/src/prepared/owner.zig` is a prepared handle owner, but it currently imports `../ffi.zig` and stores C ABI retrieval status values directly. The owner should store owner-local render-surface emission truth. `howl-render/src/ffi/prepared_surface.zig` should translate that owner truth to `HowlRenderPreparedSurfaceRenderSurfaceStatus` at the C ABI boundary.
 
 ## Allowed Files
 
-- `howl-linux-host/src/terminal/context.zig`
-- `howl-linux-host/src/display/renderer/render_surface.zig`
+- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/ffi/prepared_surface.zig`
+- `howl-render/src/test/ffi.zig`
 
-Do not edit:
-
-- `howl-linux-host/src/display/renderer/render_surface_contract.zig`
-- `howl-linux-host/src/terminal/render/retained.zig`
-- build files or test roots
-- public C ABI headers
-- other repositories or unrelated host files
+Owner-local tests in `prepared/owner.zig` may be updated as needed. Do not edit `howl-render/include/howl_render.h`, build files, test roots, host code, VT, PTY, or unrelated render files.
 
 ## Required Shape
 
-In `display/renderer/render_surface.zig`:
+- Remove `const c = @import("../ffi.zig").c;` from `prepared/owner.zig`.
+- Add exact owner-local enum in `prepared/owner.zig`:
 
-- Add `pub fn uploadRenderSurface(textures: *RenderResourceTextures, host_surface: *render_c.HowlRenderHostSurface, surface: *const render_c.HowlRenderSurface) bool`.
-- Move shape dispatch currently in `ContextSubmitBackend.uploadRenderSurfaceCommands`.
-- Move patch/full upload policy currently in `ContextSubmitBackend.renderSurfaceUploadPolicy`.
-- Move `RenderSurfaceUploadPolicyError`.
-- Move `crashOnRenderSurfaceUploadPolicyError`.
-- Move `panicUnsupportedTrustedRenderSurfaceShape`.
-- `uploadRenderSurface` computes matching-host-surface policy from `host_surface` and `surface.render_px`.
-- `uploadRenderSurface` calls `textures.realizeSurface(surface)`.
-- `uploadRenderSurface` calls `ensureSurface(host_surface, surface.render_px.width, surface.render_px.height)`.
-- `uploadRenderSurface` dispatches to existing upload functions.
-- On upload failure, `uploadRenderSurface` must zero `host_surface.width` and `host_surface.height` to preserve current context behavior.
-- Keep GL texture ownership, `RenderResourceTextures`, rollback, host surface texture, GL failures, upload/draw execution, and shape classifiers in `render_surface.zig`.
+```zig
+pub const RenderSurfaceEmissionFailure = enum {
+    none,
+    allocation_failed,
+    command_bound_overflow,
+    create_bound_overflow,
+    damage_bound_overflow,
+    retire_bound_overflow,
+    resource_bound_overflow,
+    upload_bound_overflow,
+    upload_bytes_overflow,
+    invalid_prepared_sprite,
+    missing_prepared_sprite,
+};
+```
 
-In `terminal/context.zig`:
-
-- `ContextSubmitBackend.upload` handles null `prepared_upload.render_surface` only through retrieval-status panic mapping.
-- Non-null render surface delegates to `term_texture.uploadRenderSurface(&self.render_surface_textures, &self.term_texture, surface)`.
-- Delete `ContextSubmitBackend.uploadRenderSurfaceCommands`.
-- Delete `ContextSubmitBackend.renderSurfaceUploadPolicy`.
-- Delete `ContextSubmitBackend.RenderSurfaceUploadPolicyError`.
-- Delete `ContextSubmitBackend.crashOnRenderSurfaceUploadPolicyError`.
-- Delete `ContextSubmitBackend.panicUnsupportedTrustedRenderSurfaceShape`.
-- Delete `ContextSubmitBackend.shouldRealizeRenderSurface` if it no longer has a true context-owned role.
-- Keep retrieval-status panic mapping in context: `RenderSurfaceRetrievalError`, `renderSurfaceRetrievalError`, `unavailableRenderSurfaceRetrievalError`, `crashOnRenderSurfaceRetrievalStatus`.
-- Keep `ContextSubmitBackend.execution`.
-- Keep context-owned host surface field assignment after successful submit.
-- Do not change submit transaction lock/unlock/relock behavior.
+- Replace `render_surface_status` with `render_surface_failure: RenderSurfaceEmissionFailure = .none`.
+- Add `pub fn renderSurfaceFailure(self: *const Owner) RenderSurfaceEmissionFailure`.
+- Keep `Owner.renderSurface()` returning `?*const render_surface_emitter.Surface`.
+- Move C status mapping into `ffi/prepared_surface.zig` as a private function, for example `fn renderSurfaceStatus(failure: prepared_owner.RenderSurfaceEmissionFailure) c.HowlRenderPreparedSurfaceRenderSurfaceStatus`.
+- `prepared_surface.renderSurface()` must return `renderSurfaceStatus(owner.renderSurfaceFailure())` when `owner.renderSurface()` is null.
+- Preserve all current C-visible behavior and status values.
+- Do not change `howl-render/include/howl_render.h`.
 
 ## Required Tests
 
-- Move `render surface upload policy rejects patches without matching host surface` from `context.zig` to `render_surface.zig`, retargeting calls to the display renderer policy.
-- Keep context retrieval-status tests in `context.zig`.
-- Keep submit transaction tests in `context.zig` for backend upload observes mutex unlocked, render submit relocks, upload failure does not submit, and handle mutation after upload does not submit.
-- Keep resize submit/failure tests in `context.zig`.
-- Add or preserve display renderer tests proving full surfaces do not require a matching host surface and patch surfaces do require one.
-- Do not add test roots.
+- Owner-local tests in `prepared/owner.zig` must assert `RenderSurfaceEmissionFailure` values, not C constants.
+- FFI tests in `howl-render/src/test/ffi.zig` must keep asserting shipped C status values and retrieval behavior.
+- Mapping coverage for every `RenderSurfaceEmissionFailure` case must live at the FFI seam, not in the prepared owner.
 
 ## Grep Gates
 
-- `ContextSubmitBackend.uploadRenderSurfaceCommands` has zero matches.
-- `ContextSubmitBackend.renderSurfaceUploadPolicy` has zero matches.
-- `TrustedPatchRequiresMatchingHostSurface` exists only in `display/renderer/render_surface.zig`.
-- `renderSurfaceUploadPolicy` exists only in `display/renderer/render_surface.zig`.
-- `panicUnsupportedTrustedRenderSurfaceShape` exists only in `display/renderer/render_surface.zig`.
-- `ContextSubmitBackend.shouldRealizeRenderSurface` has zero matches if removed.
+- `prepared/owner.zig` has zero `../ffi.zig` imports.
+- `prepared/owner.zig` has zero `HOWL_RENDER_PREPARED_SURFACE_RENDER_SURFACE_` matches.
+- `render_surface_status` has zero matches.
+- C retrieval status mapping exists only in `ffi/prepared_surface.zig`.
 
 ## Non-Goals
 
-- No ABI changes.
-- No build/test root changes.
-- No `render_surface_contract.zig` changes.
-- No retained-render redesign.
-- No moving context turn/submit transaction out of `context.zig`.
-- No changing lock/unlock behavior around backend upload.
-- No changing GL texture ownership or `RenderResourceTextures` lifecycle.
-- No new manager/controller/options/types bucket.
+- Do not split `TextSessionOwner`.
+- Do not move `SpriteResourceStore`.
+- Do not change `howl_render.h`.
+- Do not change source text translation or scene building.
+- Do not change render-surface ABI status values or public names.
 
 ## Stop Conditions
 
-- Stop if any public ABI change appears.
-- Stop if any build/test root change is needed.
-- Stop if context submit transaction tests fail because lock timing changed.
-- Stop if worker needs to choose new owner names beyond `uploadRenderSurface` and moved existing names.
-- Stop if the move requires changing `render_surface_contract.zig` semantics.
-- Stop if policy tests require GL execution; keep tests pure around policy/classification.
+- Stop if public ABI/header changes appear necessary.
+- Stop if owner-local failure truth cannot preserve every current C status mapping.
+- Stop if this requires changing render-surface emitter/resource-store ownership.
+- Stop if tests require a new test root.
 
 ## Verification
 
-From `howl-linux-host`:
+From `howl-render`:
 
 - `zig fmt src`
 - `zig build check`
-- `zig build test:unit --summary all`
 - `zig build test --summary all`
 - `zig build -Doptimize=ReleaseFast`
 - `git diff --check`
-
-Runtime smoke from `howl-linux-host`:
-
-- `zig build run -Doptimize=ReleaseFast -- --command exit`
 
 Workspace hygiene:
 
