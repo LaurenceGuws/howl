@@ -1,49 +1,19 @@
-# Current Slice: None
+# Current Slice: Prepared Render-Surface Retrieval Status ABI
 
-No implementation slice is currently promoted.
+Active scratchpad:
 
-## Completed Sprint
+- `research/2026-06-02-render-surface-abi-status-sprint.md`
 
-The resize/render-surface sprint in `research/2026-06-01-resize-shape-test-sprint.md` is complete
-through Cut 4 and pushed:
+Accepted research:
 
-- Cut 2A: `howl-render` `300b4de render: force full prepare on geometry change`
-- Cut 2B: `howl-linux-host` `09b1651 host: prove resize success state machine`
-- Cut 3A: `howl-render` `3b46198 render: reject stale prepared resize work`
-- Cut 3B: `howl-linux-host` `77e80c5 host: block resized submit while present pending`
-- Cut 3C: `howl-linux-host` `ec0e004 host: fail closed resized upload`
-- Cut 4: `howl-linux-host` `c73d02d host: gate patch uploads on matching surface`
+- `research/cache-2026-06-02-render-surface-abi-status-readiness.md`
 
-Follow-up hardening after that sprint is also pushed:
+Accepted reviewer decision:
 
-- `howl-linux-host` `e1fdbd4 host: crash on broken gl backend`
-- `howl-render` `a0a4e9e render: remove metrics diagnostics abi`
-- `howl-linux-host` `58acf28 host: remove render surface diagnostics`
-- root `df3fb6d design: record metrics diagnostics cleanup`
+- ABI cleanup is the first hygiene implementation slice.
+- `render_surface_emit_status` is a real render-owned consequence but is in the wrong ABI shape.
+- `howl_render_prepared_surface_render_surface(...)` must return one C-visible retrieval status directly.
+- `HowlRenderPreparedSurfaceInfo.render_surface_emit_status` must be removed.
+- No old enum names, old constants, aliases, wrappers, compatibility shims, or Zig-shaped host shortcuts.
 
-## Completed Follow-Up
-
-The runtime-panic fix in `howl-render/src/prepared/render_surface_emitter.zig` is complete:
-
-- Runtime failure observed from `zig build run -Doptimize=ReleaseFast` in `howl-linux-host`: host GL
-  owner panicked with `trusted render texture failure: bucket=invalid_command_shape`.
-- Root cause: render-surface emitter produced fully offscreen prepared alpha sprite glyph commands.
-- Fix: prepared sprite emission skips sprite/glyph draws whose destination does not overlap the render
-  surface, matching the existing prepared fill skip/clip policy and the render realizer/host validator
-  invariant.
-- Regression: `render surface surface emitter skips fully offscreen prepared alpha sprites`.
-
-Verification already passed for the dirty follow-up:
-
-- `howl-render`: `zig build test --summary all`
-- `howl-render`: `zig build check`
-- `howl-render`: `zig build -Doptimize=ReleaseFast`
-- `howl-linux-host`: `zig build check`
-- `howl-linux-host`: `zig build test:unit --summary all`
-- `howl-linux-host`: `zig build test --summary all`
-- `howl-linux-host`: `zig build -Doptimize=ReleaseFast`
-- `howl-linux-host`: `zig build run -Doptimize=ReleaseFast`
-- root: `git diff --check`
-- changed-file line-length gate
-
-Root is ready for the next sprint once the follow-up commit and this documentation cleanup are pushed.
+Worker must implement exactly the promoted scratchpad and stop on its stop conditions.
