@@ -1,19 +1,97 @@
-# Current Slice: Prepared Render-Surface Retrieval Status ABI
+# Current Slice: Host Render-Surface Contract Validation
 
-Active scratchpad:
+Active research:
 
-- `research/2026-06-02-render-surface-abi-status-sprint.md`
+- `research/cache-2026-06-02-render-surface-validation-owner.md`
+- `research/cache-2026-06-02-hygiene-readiness-map.md`
 
-Accepted research:
+Reviewer acceptance:
 
-- `research/cache-2026-06-02-render-surface-abi-status-readiness.md`
+- Add `howl-linux-host/src/display/renderer/render_surface_contract.zig`.
+- Owner: host-side pure validation of borrowed C ABI `HowlRenderSurface`, plus optional prepared-info-to-surface consistency.
+- Public status name: `RenderSurfaceContractStatus`.
+- Public fact name: `RenderSurfaceContract`.
+- Single validation entrypoint: `validate`.
+- `RenderSurfaceContract` may carry only validation facts needed by current retained/context/display call sites: status plus bounded counts/byte totals already computed by validation.
+- It must not become diagnostics/options/result bucket shape.
 
-Accepted reviewer decision:
+## Problem
 
-- ABI cleanup is the first hygiene implementation slice.
-- `render_surface_emit_status` is a real render-owned consequence but is in the wrong ABI shape.
-- `howl_render_prepared_surface_render_surface(...)` must return one C-visible retrieval status directly.
-- `HowlRenderPreparedSurfaceInfo.render_surface_emit_status` must be removed.
-- No old enum names, old constants, aliases, wrappers, compatibility shims, or Zig-shaped host shortcuts.
+`howl-linux-host/src/terminal/render/retained.zig` and `howl-linux-host/src/display/renderer/render_surface.zig` duplicate pure validation of the same borrowed C ABI `HowlRenderSurface` with multiple status families and a retained software resource mirror. Retained should own prepare/submit/present sequencing, not C surface contract validation. Display renderer should own GL texture realization, rollback, upload/draw execution, host texture, and GL failures, not a separate pure C surface taxonomy.
 
-Worker must implement exactly the promoted scratchpad and stop on its stop conditions.
+This slice creates one host-side render-surface contract owner and collapses retained/display pure-validation status duplication into it.
+
+## Allowed Files
+
+- Add: `howl-linux-host/src/display/renderer/render_surface_contract.zig`
+- Edit: `howl-linux-host/src/terminal/render/retained.zig`
+- Edit: `howl-linux-host/src/display/renderer/render_surface.zig`
+- Edit only for narrow status/import/call-site fallout: `howl-linux-host/src/terminal/context.zig`
+- Edit only if existing build import wiring requires it without adding a duplicate root: `howl-linux-host/build.zig`
+
+Do not edit public C ABI headers, `howl-render`, `howl-vt`, `howl-pty`, parser/action code, render emitter code, or unrelated host runtime/display/window/input code.
+
+## Required Shape
+
+- `render_surface_contract.zig` owns pure borrowed C ABI `HowlRenderSurface` validation.
+- It exposes `pub const RenderSurfaceContractStatus = enum { ... }` with exact status cases needed to replace retained pure-validation statuses and display pure command/order/span validation status.
+- It exposes `pub const RenderSurfaceContract = struct { status: RenderSurfaceContractStatus, ... }` with only validation facts current callers need.
+- It exposes `pub fn validate(info: ?c.HowlRenderPreparedSurfaceInfo, surface: ?*const c.HowlRenderSurface) RenderSurfaceContract` or an equally direct signature if the implementation proves fewer arguments are needed. The worker must not invent alternate owner names or broader shapes.
+- It owns validation for: surface version, prepared-info geometry/token consistency when info is provided, span count/max, upload byte total/max, create/upload/retire lifecycle order, command shape, glyph refs, resource visibility, rect bounds, resource kind/format, and bytes-per-pixel minimum.
+- `retained.zig` keeps retained text-session handle, prepared-surface handle, prepare/submit/present sequencing, surface layout sync, work state, `PrepareResult`, `PrepareFailure`, `SubmitResult`, and `SubmitFailure`.
+- `PreparedUpload` may carry prepared info, retrieval status, borrowed render surface, and at most one `RenderSurfaceContract` fact/status.
+- Remove or collapse retained `PreparedRenderResourcePlanStatus`, `PreparedRenderSurfaceProbeStatus`, and `RenderResourceStoreStatus` from product retained state.
+- Delete retained `RenderResourceStore` product mirror unless preserving exact behavior requires moving equivalent software lifecycle validation into contract-owner tests. It must not remain retained product state.
+- `render_surface.zig` keeps `RenderResourceTextures`, GL texture mutation/lifecycle, rollback, `FailureBucket`, `TrustedTextureFailureAction`, host surface texture, upload/draw execution, and upload shape classifiers.
+- `render_surface.zig` may call `render_surface_contract.validate` before GL mutation, then keep backend-specific realization locally.
+- Display pure command/order/span validation taxonomy such as `CommandShapeError` collapses into `RenderSurfaceContractStatus` where it is pure C surface validity.
+- `context.zig` changes are limited to imports/status/call-site fallout. No broad context split or upload policy reshaping.
+
+## Required Tests
+
+- Contract owner tests must cover the moved retained/display pure validation behavior through the existing host unit gate.
+- Keep retained tests for layout, present pending, matching present completion, submit blocked while present pending, submit allowed after present completion, prepare/submit handle sequencing.
+- Move or rewrite retained tests for probe/resource-plan/store action classification, render-surface dimension/span/upload-byte validation, software probe validation, resource plan validation, and resource store lifecycle into contract-owner tests.
+- Keep display tests that assert GL texture mutation, rollback, upload metadata, GL/failure action behavior, host texture, upload/draw execution, and upload shape classifiers in `render_surface.zig`.
+- Move or rewrite display tests for pure top-level/span/order/command shape validation into contract-owner tests.
+- Do not add a duplicate test root or side-entry test file unless implementation stops and reviewer re-accepts test wiring.
+
+## Non-Goals
+
+- No public ABI/header changes.
+- No Zig-shaped host shortcut imports from internal `howl-render` modules.
+- No GL mutation, rollback, upload/draw, host texture, GL failure, or backend resource realization movement out of `display/renderer/render_surface.zig`.
+- No retained prepare/submit/present sequencing movement out of `terminal/render/retained.zig`.
+- No broad `terminal/context.zig` cleanup.
+- No VT/parser/action cleanup.
+- No render emitter, render realizer, prepared owner, or text session cleanup.
+- No generic owner names: no `utils.zig`, `types.zig`, `manager`, `engine`, `controller`, `validation.zig`, or `helpers.zig`.
+
+## Stop Conditions
+
+- Stop if a new duplicate test root is required.
+- Stop if GL-specific failure or texture-slot mutation starts moving into the contract owner.
+- Stop if retained still needs separate probe and plan facts for behavior found outside tests/context/display call sites.
+- Stop if the contract owner becomes a bag of helpers without one validation owner and owner-local tests.
+- Stop if public ABI/header changes appear necessary.
+- Stop if the worker needs to invent owner names, paths, status shapes, or scope.
+
+## Verification
+
+From `howl-linux-host`:
+
+- `zig fmt src`
+- `zig build check`
+- `zig build test:unit --summary all`
+- `zig build test --summary all`
+- `zig build -Doptimize=ReleaseFast`
+- `git diff --check`
+
+Runtime smoke from `howl-linux-host` if context/display submit paths changed:
+
+- `zig build run -Doptimize=ReleaseFast -- --command exit`
+
+Workspace hygiene:
+
+- Changed Zig lines must not exceed 190 chars.
+- Root `git diff --check` must pass before commit.
