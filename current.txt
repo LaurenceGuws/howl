@@ -1,58 +1,55 @@
-# Current Slice: VT Live Stream Direct Dispatch
+# Current Slice: Render Prepared FFI Status Boundary
 
 Active research:
 
-- `research/cache-2026-06-02-vt-direct-stream-readiness.md`
+- `research/cache-2026-06-02-render-prepared-ffi-status.md`
 
 Reviewer acceptance:
 
-- This slice is ready and narrow: remove the live `ParsedEvents` queue from `stream_terminal.zig` and keep `parser/events.zig` as parser/materialization vocabulary only.
-- Preserve observable VT behavior and avoid ABI changes.
+- This slice is ready and narrow: move prepared render-surface retrieval status mapping out of `prepared/owner.zig` and into `ffi/prepared_surface.zig`.
+- Preserve `HowlRenderPreparedSurface` behavior and avoid public ABI changes.
 
 ## Problem
 
-`stream_terminal.State` still owns queued `ParsedEvents` and drains them through `route.apply`. Replace that live queue with direct parser-action dispatch, while preserving DCS payload reconstruction, charset state handling, and APC/PM overflow behavior.
+`prepared/owner.zig` still imports C ABI and stores render-surface retrieval status directly. Replace that with owner-local failure truth and keep FFI as the only status translator.
 
 ## Allowed Files
 
-- Edit: `howl-vt/src/stream_terminal.zig`
-- Edit: `howl-vt/src/test/terminal_end_to_end.zig`
-- Edit: `howl-vt/src/test/terminal_modes_reports.zig`
-- Edit: `howl-vt/src/test/terminal_surface.zig`
+- Edit: `howl-render/src/prepared/owner.zig`
+- Edit: `howl-render/src/ffi/prepared_surface.zig`
+- Edit: `howl-render/src/test/ffi.zig`
+- Edit: owner-local tests in `howl-render/src/prepared/owner.zig` only if needed by compile/test fallout
 
 ## Required Shape
 
-- `stream_terminal.State` owns `parser` plus direct-live control state, not a queued `ParsedEvents` store.
-- Live byte handling maps parser actions directly to `route.apply`.
-- `SO`/`SI` update terminal GL state directly.
-- ESC charset designation updates terminal G0/G1 directly.
-- DCS hooks/puts/unhook rebuild the same body/payload view that queued events used to expose.
-- APC/PM overlong feeds are still bounded and fail with the existing stream error surface.
+- Remove `const c = @import("../ffi.zig").c;` from `prepared/owner.zig`.
+- Replace render-surface status storage with owner-local failure truth, not C ABI status.
+- Keep `Owner.renderSurface()` returning `?*const render_surface_emitter.Surface`.
+- Add or keep a narrow owner method exposing owner-local failure truth.
+- Move C status mapping to `ffi/prepared_surface.zig`.
+- Preserve `howl_render_prepared_surface_render_surface` behavior.
 
 ## Required Tests
 
-- Keep existing VT unit and ABI tests green.
-- Add or keep coverage for:
-  - charset designation and GL shift across feed slices
-  - DCS retained payload kind/body/payload across slices
-  - overlong APC recovery
-  - overlong PM recovery
+- Keep existing FFI status stability and retrieval failure tests green.
+- Convert owner-local assertions to owner-local failure truth, not C constants.
+- Keep FFI retrieval mapping assertions at the FFI seam.
 
 ## Verification
 
-- `zig fmt src`
-- `zig build check`
 - `zig build test --summary all`
+- `zig build check`
 - `git diff --check`
 
 ## Grep Gates
 
-- `stream_terminal.zig` has no `ParsedEvents` queue in live feed state.
-- Live stream does not call `beginBatch`, `appendPhases`, `front`, `popFront`, or `dropPrefix`.
-- Direct stream preserves charset mapping and DCS body/payload split.
+- `prepared/owner.zig` has zero `../ffi.zig` imports.
+- `prepared/owner.zig` has zero `HOWL_RENDER_PREPARED_SURFACE_RENDER_SURFACE_` matches.
+- `render_surface_status` has zero matches.
+- C retrieval status mapping exists only in `ffi/prepared_surface.zig`.
 
 ## Stop Conditions
 
-- Stop if live stream needs a new ABI or parser shape.
-- Stop if DCS body/payload equivalence cannot be preserved.
-- Stop if test coverage requires a new test root.
+- Stop if public ABI/header changes appear necessary.
+- Stop if owner-local failure truth cannot preserve current C status mapping.
+- Stop if tests require a new test root.
