@@ -54,10 +54,10 @@ const simulate_mappings = [_]Mapping{
 };
 
 const stress_mappings = [_]Mapping{
-    .{ .package_dir = "howl-linux-host", .step_name = "stress:rain" },
-    .{ .package_dir = "howl-linux-host", .step_name = "stress:rain:ascii" },
-    .{ .package_dir = "howl-linux-host", .step_name = "stress:rain:mixed" },
-    .{ .package_dir = "howl-linux-host", .step_name = "stress:rain:visual" },
+    .{ .package_dir = "utils/tools", .step_name = "stress:rain" },
+    .{ .package_dir = "utils/tools", .step_name = "stress:rain:ascii" },
+    .{ .package_dir = "utils/tools", .step_name = "stress:rain:mixed" },
+    .{ .package_dir = "utils/tools", .step_name = "stress:rain:visual" },
 };
 
 const benchmark_mappings = [_]Mapping{

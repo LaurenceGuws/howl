@@ -62,8 +62,8 @@ Canonical source scratchpads archived into this section:
   geometry/focus pending bits, and tests.
 - Production SDL/OpenGL translation is build-owned through `sdl_c` and `gl_c`.
 - `window.c_win` has been deleted. Remaining direct `@cImport` sites are explicit
-  non-goals from that slice: `window/icon.zig`, `stress/ascii_rain_stress.zig`,
-  and `stress/visual_rain_stress.zig`.
+  non-goals from that slice: `window/icon.zig`, `utils/tools/ascii_rain_stress.zig`,
+  and `utils/tools/visual_rain_stress.zig`.
 - Historical host reshapes are already reflected in current code: old
   `terminal/runtime`, old `terminal/host`, and `terminal_panel.zig` vocabulary
   were superseded by `terminal/context.zig` and owner subfolders.

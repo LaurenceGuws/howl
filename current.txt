@@ -1,18 +1,20 @@
-# Sprint Closed
+# No Active Slice
 
-Accepted work:
+Sprint:
 
-- `howl-render`: prepared FFI status boundary
-- `howl-vt`: direct stream dispatch
-- `howl-pty`: ABI guardrails review-only; no code changes
+- Resource performance sprint
 
-Current state:
+Accepted research:
 
-- No active slice.
-- No worker-ready slice promoted.
-- Next bug-fix sprint must start from fresh research and a new `current.txt`.
+- `alacritty-research-cache.md`
+- `kitty-research-cache.md`
 
-Notes:
+Completed slices:
 
-- Keep the tree clean before opening the next slice.
-- Re-seed reviewer/researcher if the next bug fix touches shared ownership or ABI boundaries.
+- `display owner: explicit invalidation for tab cache and present-coupled UI`
+- `host loop: coarse phase accounting for wake, present, and render cost`
+- `render resources: sprite and prepared-state reuse under quota`
+
+State:
+
+- No active slice selected.
