@@ -92,10 +92,7 @@ Sprint cuts:
       - package gates rerun
       - durable memory updated
       - no stale doc law remains active
-    - Remaining closeout:
-      - rerun benchmark build for render
-      - rerun workspace `check`
-      - update durable memory with the completed source shape
+      - remaining generic bucket paths were replaced by owner-true sibling files or curated src roots
 
 Stop conditions:
 
@@ -124,9 +121,13 @@ Verification results:
 - `howl-render`: `zig build test` passed.
 - `howl-render`: `zig build benchmark:render:build` passed.
 - `howl-vt`: `zig build test` passed.
+- `howl-pty`: `zig build test` passed.
+- `howl-linux-host`: `zig build test` passed.
 - workspace: `zig build test:integration` passed.
 - workspace: `zig build check` passed.
 - workspace: `zig build test` passed on rerun.
+- workspace: `zig build test` passed after VT, PTY, render, and host cleanup reruns.
+- workspace: `zig build check` passed after VT, PTY, render, and host cleanup reruns.
 - note: the first workspace `zig build test` hit a PTY integration timeout in
   `howl-pty/src/test/session_integration.zig`; package reruns and the final
   workspace rerun passed, so this remains a flaky-gate risk rather than a
@@ -137,5 +138,7 @@ Signoff:
 - Governing law corrected in `AGENTS.md` and `project-memory.md`.
 - Current source inventory corrected in `build-test-verification-ledger.md`.
 - Render unit, ABI, and benchmark roots are now explicit and separate.
-- VT unit root no longer imports `ffi.zig`.
+- VT generic `src/test/` buckets were moved to owner-true sibling test files rooted under `src/`.
+- PTY public roots no longer carry unit or integration test imports; dedicated `src/test_unit.zig` and `src/test_integration.zig` own those classes.
+- Host generic `src/test/` aggregate roots were replaced by curated `src/host_test_root.zig` and `src/integration_test_root.zig`, with small smoke owners wired directly in `build.zig`.
 - Workspace integration wording now matches current package ownership.

@@ -12,8 +12,13 @@ Completed slices:
 
 - `governing test law and sprint contract alignment`
 - `render test root split and vt unit root cleanup`
+- `vt owner-true sibling test file cleanup`
+- `pty dedicated test root and owner-path cleanup`
+- `render remaining owner-path cleanup`
+- `host curated src-root cleanup`
 - `durable inventory and verification closeout`
 
 State:
 
 - No active slice selected.
+- Sprint implementation is complete on the current tree.

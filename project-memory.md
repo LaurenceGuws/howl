@@ -269,6 +269,15 @@ Accepted no-header-change shape from `cleanupscratchpad2.md`:
 
 ## 2026-05-30 Feature Gap Backlog
 
+## 2026-06-04 Test Architecture Accountability Completion
+
+- The test architecture accountability sprint is complete on the current tree.
+- `howl-vt` generic bucket files under `src/test/` were reduced to explicit ABI, benchmark, helper, and small special-purpose surfaces; broad parser/action/screen/terminal buckets were moved to owner-true sibling test files under `src/`.
+- `howl-pty` public roots no longer import unit or integration tests; dedicated curated roots now live at `src/test_unit.zig` and `src/test_integration.zig`, with owner-true sibling files `src/session_test.zig`, `src/session_integration_test.zig`, `src/pty_test.zig`, and `src/pty_integration_test.zig`.
+- `howl-render` remaining generic test side-entry files were reduced to curated roots and sibling owner paths: `src/ffi_test.zig` and `src/render/geometry_test.zig`.
+- `howl-linux-host` old `src/test/` aggregate roots were removed and replaced by curated `src/host_test_root.zig` and `src/integration_test_root.zig`; build wiring now points small smoke proofs directly at owner files such as `src/cli/args.zig`, `src/config/env.zig`, and `src/tab_bar/tab_bar.zig`.
+- Verification after the cleanup passed at package and workspace scope: `howl-vt`, `howl-pty`, `howl-render`, `howl-linux-host`, workspace `zig build test`, and workspace `zig build check`.
+
 Canonical source scratchpad archived into this section:
 
 - `feature-gap-scratchpad.md`
