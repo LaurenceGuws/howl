@@ -2,23 +2,97 @@
 
 Sprint:
 
-- Test architecture accountability sprint
+- Useless LOC sprint
 
-Accepted research:
+Scope source:
 
-- `research/cache-2026-06-04-test-architecture-accountability.md`
+- `loc-debt-sprint-scope.md`
 
 Completed slices:
 
-- `governing test law and sprint contract alignment`
-- `render test root split and vt unit root cleanup`
-- `vt owner-true sibling test file cleanup`
-- `pty dedicated test root and owner-path cleanup`
-- `render remaining owner-path cleanup`
-- `host curated src-root cleanup`
-- `durable inventory and verification closeout`
+- Slice 1: deleted confirmed dead host wrappers and dead re-export layers.
+  - deleted `howl-linux-host/src/terminal/texture.zig`
+  - deleted `howl-linux-host/src/window_chrome.zig`
+  - deleted `howl-linux-host/src/display.zig`
+  - deleted `howl-linux-host/src/display/renderer.zig`
+- Slice 2: removed dead host test build-support indirection.
+  - deleted `howl-linux-host/build_support/host_tests.zig`
+  - kept `howl-linux-host/src/host_test_root.zig` because rooting `terminal/context.zig` directly breaks `../...` imports outside module path
+  - kept `howl-linux-host/src/integration_test_root.zig` because rooting `main.zig` directly changes imported-test compilation behavior and broke current host proofs
+  - folded host test-root module creation directly into `howl-linux-host/build.zig`
+- Slice 3: removed render benchmark `src/test` ownership.
+  - moved `howl-render/src/test/benchmark.zig` to `howl-render/src/benchmark_main.zig`
+  - deleted the old trampoline-only `howl-render/src/benchmark_main.zig`
+- Slice 4: removed duplicated VT unit-test aggregation from the top VT unit root.
+  - deleted overlapping `_test.zig` imports from `howl-vt/src/howl_vt.zig`
+  - kept the curated terminal-owner test imports in `howl-vt/src/terminal.zig`
+- Slice 5a: removed inline POSIX PTY transport tests from the production owner.
+  - deleted inline tests from `howl-pty/src/pty/posix.zig`
+  - added `howl-pty/src/pty/posix_test.zig`
+  - added only one narrow production test hook: `posix.testing.waitReadablePollResult`
+  - wired the sibling test through `howl-pty/src/test_unit.zig`
+- Slice 5b: removed inline render text-session tests from the production owner.
+  - deleted inline tests from `howl-render/src/session/text.zig`
+  - added `howl-render/src/session/text_test.zig`
+  - added only two narrow production test hooks in `session/text.zig`:
+    - `testing.ftHbCapacity`
+    - `testing.ensureCellInputScratchCapacity`
+  - wired the sibling test through `howl-render/src/test/unit/root.zig`
+- Slice 5c: removed inline prepared-owner tests and local test-only builders from the production owner.
+  - deleted inline tests from `howl-render/src/prepared/owner.zig`
+  - moved local test-only prepared-surface builders out of production owner
+  - added `howl-render/src/prepared/owner_test.zig`
+  - added only two narrow production test hooks in `prepared/owner.zig`:
+    - `testing.executionMatchesPrepared`
+    - `testing.renderSurfaceEmissionFailureFromError`
+  - wired the sibling test through `howl-render/src/test/unit/root.zig`
+- Slice 5d: removed inline emitter tests and test-only fixture scaffolding from the production owner.
+  - deleted inline tests from `howl-render/src/prepared/render_surface_emitter.zig`
+  - moved test-only fixture/build helper code to `howl-render/src/prepared/render_surface_emitter_test.zig`
+  - added a minimal production `testing` hook surface in `render_surface_emitter.zig` so sibling tests can drive private owner behavior without re-exposing the old top-level fixture path
+  - wired the sibling test through `howl-render/src/test/unit/root.zig`
+- Slice 5e: removed inline host render-surface tests and local test helper scaffolding from the production owner.
+  - deleted inline tests from `howl-linux-host/src/display/renderer/render_surface.zig`
+  - moved local test helpers and proofs to `howl-linux-host/src/display/renderer/render_surface_test.zig`
+  - added a narrow production `testing` namespace in `render_surface.zig` for sibling access to private owner behavior and nested test-relevant types
+  - wired the sibling test through `howl-linux-host/src/host_test_root.zig`
+- Slice 5f: removed inline terminal-context tests and local test helper scaffolding from the production owner.
+  - deleted inline tests from `howl-linux-host/src/terminal/context.zig`
+  - moved local test helpers and proofs to `howl-linux-host/src/terminal/context_test.zig`
+  - added a narrow production `testing` namespace in `context.zig` for sibling access to private owner behavior and result types needed by the moved proofs
+  - wired the sibling test through `howl-linux-host/src/host_test_root.zig`
+- Slice 5g: extracted a concrete top-level processor owner from `main.zig`.
+  - added `howl-linux-host/src/app/processor.zig`
+  - moved loop/present/input/tab coordination out of `howl-linux-host/src/main.zig`
+  - reduced `main.zig` to bootstrap/entry plus one bootstrap-owned `TERM` policy test
+- Slice 5h: removed the remaining top-level host `anytype` seams from the concrete processor owner.
+  - deleted `anytype` seams from `howl-linux-host/src/app/processor.zig`
+  - replaced them with concrete owner methods and explicit data helpers
+  - deleted fake-seam processor tests instead of preserving a non-Alacritty test seam
 
-State:
+Verification receipts:
 
-- No active slice selected.
-- Sprint implementation is complete on the current tree.
+- wrapper import-path grep returned no matches after deletion
+- `howl-linux-host`: `zig build test && zig build check`
+- workspace root: `zig build test && zig build check`
+- host test indirection grep for `build_support/host_tests` returned no matches after deletion
+- render benchmark path grep for `src/test/benchmark.zig` and `test/benchmark.zig` returned no matches after the move
+- VT overlap grep confirmed the duplicate root imports were removed from `howl-vt/src/howl_vt.zig`
+- `howl-render`: `zig build test && zig build check`
+- `howl-vt`: `zig build test && zig build check`
+- `howl-pty`: `zig build test && zig build check`
+- workspace root re-verified: `zig build test && zig build check`
+- note: one transient `howl-pty` integration test failure appeared during a workspace `zig build test` run, then passed on immediate rerun; subsequent workspace gates were clean
+- `howl-render` re-verified after `session/text.zig` and `prepared/owner.zig` separation: `zig build test && zig build check`
+- `howl-render` re-verified after `prepared/render_surface_emitter.zig` separation: `zig build test && zig build check`
+- `howl-linux-host` re-verified after `display/renderer/render_surface.zig` separation: `zig build test && zig build check`
+- `howl-linux-host` re-verified after `terminal/context.zig` separation: `zig build test && zig build check`
+- `howl-linux-host` re-verified after processor extraction and `anytype` removal: `zig build test && zig build check`
+
+Dirty-state note:
+
+- `howl-linux-host/src/display/frame_timer.zig` still carries the earlier local pacing cleanup and was not changed by this slice
+
+Next slice to promote:
+
+- Move to the next sequential sprint item after the major production/test mixing owners; remaining `main.zig` inline proof is a bootstrap-owned keeper candidate, not a large polluted owner block
