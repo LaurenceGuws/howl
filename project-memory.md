@@ -225,6 +225,17 @@ Accepted production/test separation cuts completed so far:
     - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
   - grep receipt: no remaining `vt_retained.copyVisibleHyperlinkAt`, `startSelection`, `updateSelection`, or `finishSelection` references under `howl-linux-host/src/terminal`
 
+- VT layout ownership follow-up cut:
+  - moved VT resize and cell-pixel-size mutation into `howl-linux-host/src/terminal/render/surface_layout.zig`
+  - rewrote direct users in:
+    - `howl-linux-host/src/terminal/context.zig`
+    - `howl-linux-host/src/terminal/render/surface_layout.zig`
+  - removed `vt_retained.resize`, `resizeLocked`, `setCellPixelSize`, and `setCellPixelSizeLocked`
+  - verification after the cut:
+    - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+    - workspace root: `zig build test && zig build check`
+  - grep receipt: no remaining `vt_retained.resize*` or `setCellPixelSize*` references under `howl-linux-host/src/terminal`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
