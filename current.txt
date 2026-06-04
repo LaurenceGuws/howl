@@ -101,6 +101,10 @@ Completed slices:
   - moved `inputScratch`, `followLiveBottomLocked`, and `setFocused` from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/term.zig`
   - rewired `howl-linux-host/src/terminal/vt/input.zig` and `howl-linux-host/src/terminal/scrollbar.zig` to use `terminal_term` directly
   - left `vt/retained.zig` as the keeper helper owner for VT runtime/feed/output/clipboard/selection behavior
+- Slice 7h: moved the remaining concrete terminal input-adapter leaf surface into `terminal/input.zig`.
+  - moved `publishTerminalBytes`, `publishTerminalKey`, `publishTerminalMouse`, `ScrollVisualState`, `ContextOps`, `pixelToCol`, and `pixelToRow` from `howl-linux-host/src/terminal/context.zig` into `howl-linux-host/src/terminal/input.zig`
+  - kept `context.zig` thin wrappers for input drain, mouse ownership, and terminal pixel conversion
+  - left `vt/retained.zig` unchanged as a keeper helper owner
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -140,6 +144,10 @@ Verification receipts:
 - grep receipt after slice 7g: no `retained.inputScratch`, `retained.followLiveBottomLocked`, or `retained.setFocused` references remain under `howl-linux-host/src/terminal`
 - `howl-linux-host` re-verified after moving the final pure VT-state field helpers into `term.zig`: `zig build test && zig build check`
 - workspace root re-verified after slice 7g: `zig build test && zig build check`
+- grep receipt after slice 7h: `context.zig` no longer defines `ContextOps`, `ScrollVisualState`, `publishTerminalBytes`, `publishTerminalKey`, `publishTerminalMouse`, `pixelToCol`, or `pixelToRow`
+- grep receipt after slice 7h: `context.zig` still defines `drainTextInputFastPath`, `drainPointerAndUiInput`, `terminalOwnsMouse`, `pixelToTerminalCol`, and `pixelToTerminalRow`
+- `howl-linux-host` re-verified after moving the concrete terminal input-adapter leaf surface into `terminal/input.zig`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+- workspace root re-verified after slice 7h: `zig build test && zig build check`
 
 Dirty-state note:
 
@@ -147,4 +155,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Research whether the remaining `vt/retained.zig` runtime/feed/output/clipboard helper surface is now a keeper and promote the next `context.zig` owner-false cut if so
+- Research the next `context.zig` owner-false cut after the input-adapter peel, or mark item 7 complete if no isolated cut remains

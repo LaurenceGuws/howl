@@ -272,6 +272,24 @@ Accepted production/test separation cuts completed so far:
     - `howl-linux-host`: `zig build test && zig build check`
     - workspace root: `zig build test && zig build check`
 
+- Terminal input-owner follow-up cut:
+  - moved the remaining concrete input-adapter leaf surface from `howl-linux-host/src/terminal/context.zig` into `howl-linux-host/src/terminal/input.zig`
+  - moved:
+    - `publishTerminalBytes`
+    - `publishTerminalKey`
+    - `publishTerminalMouse`
+    - `ScrollVisualState`
+    - `ContextOps`
+    - `pixelToCol`
+    - `pixelToRow`
+  - kept `context.zig` thin wrappers for input drain, mouse ownership, and terminal pixel conversion
+  - kept `vt/retained.zig` unchanged as a keeper helper owner
+  - verification after the cut:
+    - grep receipt: `context.zig` no longer defines `ContextOps`, `ScrollVisualState`, `publishTerminalBytes`, `publishTerminalKey`, `publishTerminalMouse`, `pixelToCol`, or `pixelToRow`
+    - grep receipt: `context.zig` still defines `drainTextInputFastPath`, `drainPointerAndUiInput`, `terminalOwnsMouse`, `pixelToTerminalCol`, and `pixelToTerminalRow`
+    - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+    - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
