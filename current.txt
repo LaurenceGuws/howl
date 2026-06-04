@@ -81,6 +81,10 @@ Completed slices:
   - moved VT title/scratch/scrollback/cursor retained state from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/term.zig`
   - rewrote remaining VT helper code to use `term` as the state owner
   - deleted the stale `vt_retained.State` bucket
+- Slice 7c: moved VT title ownership into the `term` owner.
+  - moved launch-title fallback, cached title copy, title generation, and VT title refresh from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/term.zig`
+  - rewired host title consumers and PTY pump title refresh to use `term` directly
+  - kept `vt/retained.zig` focused on remaining VT runtime, selection, scrollback, and output helper behavior
 
 Verification receipts:
 
@@ -104,6 +108,8 @@ Verification receipts:
 - `howl-linux-host` re-verified after collapsing `pty/retained.zig`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 - `howl-linux-host` re-verified after collapsing `vt_retained.State`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 - workspace root re-verified after slice 7b: `zig build test && zig build check`
+- `howl-linux-host` re-verified after moving VT title ownership into `term`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+- workspace root re-verified after slice 7c: `zig build test && zig build check`
 
 Dirty-state note:
 
@@ -111,4 +117,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue slice 7 with the next terminal boundary keeper-vs-debt cut; `render/retained.zig` currently reads as a likely keeper owner, while remaining VT helper seams still need review
+- Continue slice 7 with the next VT helper subgroup or `context.zig` owner-false cut; `render/retained.zig` still reads as a likely keeper owner
