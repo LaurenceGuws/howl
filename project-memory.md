@@ -383,6 +383,16 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Second accepted top prod-LOC reduction cut landed in `howl-render/src/text/scene.zig`.
+- Deduplicated the repeated scene-assembly population block with one file-local helper while preserving:
+  - owned-vs-borrowed setup/teardown separation
+  - public builder APIs
+  - append order
+  - atlas-cache and damage behavior
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
