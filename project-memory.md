@@ -371,6 +371,18 @@ Accepted production/test separation cuts completed so far:
 - The small local repetition cuts in `howl-pty/build.zig`, `howl-vt/build.zig`, `howl-render/build.zig`, and the remaining run-artifact-only cut in `howl-linux-host/build.zig` are now done.
 - Further host-build dedup would require broader abstraction over module creation, linking differences, or test graph policy and is no longer a small local plumbing slice.
 
+### Item 10 Started
+
+- First accepted top prod-LOC reduction cut landed in `howl-render/src/prepared/render_surface_emitter.zig`.
+- Deduplicated the repeated prepared fill-pass helpers with one file-local helper while preserving:
+  - `emitPrepared()` pass ordering
+  - `appendPreparedFullRedrawClear()` separation
+  - `appendPreparedFillCommand()` behavior
+  - `tryMergePreparedFillCommand()` behavior
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof

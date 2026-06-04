@@ -124,6 +124,10 @@ Completed slices:
 - Item 9d: deduplicated repeated test run-artifact plumbing locally in `howl-linux-host/build.zig`.
   - added one file-local helper for repeated `b.addRunArtifact(...)` plus conditional `has_side_effects`
   - kept all `b.addTest(...)`, module-root creation, linking/configuration, and step-graph wiring explicit
+- Item 10a: deduplicated the repeated prepared fill-pass helpers in `howl-render/src/prepared/render_surface_emitter.zig`.
+  - added one file-local helper for the repeated prepared fill-pass loops
+  - kept `emitPrepared()` ordering unchanged
+  - kept `appendPreparedFullRedrawClear()`, `appendPreparedFillCommand()`, and `tryMergePreparedFillCommand()` behavior unchanged
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -177,6 +181,8 @@ Verification receipts:
 - workspace root re-verified after item 9c: `zig build test && zig build check`
 - `howl-linux-host` re-verified after local build-plumbing dedup: `zig build test && zig build check`
 - workspace root re-verified after item 9d: `zig build test && zig build check`
+- `howl-render` re-verified after local prepared fill-pass dedup: `zig build test && zig build check`
+- workspace root re-verified after item 10a: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -190,4 +196,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Close item 9 and move to the top prod-LOC keeper-vs-debt audit
+- Continue item 10 keeper-vs-debt audit with the next top prod-LOC file after `render_surface_emitter.zig`
