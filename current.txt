@@ -92,6 +92,7 @@ Completed slices:
 - Slice 7e: moved VT layout mutation into the layout owner.
   - moved VT resize and cell-pixel-size mutation from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/render/surface_layout.zig`
   - rewired `context.zig` and layout sync paths to use the layout owner directly
+  - follow-up fix: removed a lock re-entry in `surface_layout.resizeTermVtLocked()` by using VT visible-meta directly instead of calling a locking scroll-state helper
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid

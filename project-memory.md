@@ -231,6 +231,9 @@ Accepted production/test separation cuts completed so far:
     - `howl-linux-host/src/terminal/context.zig`
     - `howl-linux-host/src/terminal/render/surface_layout.zig`
   - removed `vt_retained.resize`, `resizeLocked`, `setCellPixelSize`, and `setCellPixelSizeLocked`
+  - follow-up fix:
+    - `surface_layout.resizeTermVtLocked()` now clamps scrollback using `vt_surface.vtVisibleInfo(...)` directly
+    - avoids recursive term mutex acquisition through `vt_retained.scrollState(...)`
   - verification after the cut:
     - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
     - workspace root: `zig build test && zig build check`
