@@ -229,6 +229,25 @@ Accepted production/test separation cuts completed so far:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
 
+### Gate Fix 1 Completed
+
+- Replaced the flaky owned-PTY interrupt proof with a deterministic integration proof in `howl-pty/src/pty_integration_test.zig`.
+- New proof shape:
+  - runs a foreground child shell that installs its own `INT` trap and prints `child`
+  - asserts the trap output arrives after `transport.control(.interrupt)`
+  - then asserts the transport reaches `NotStarted`
+- This proof failed consistently before the implementation fix.
+
+- Fixed PTY control routing in `howl-pty/src/pty/posix.zig`.
+  - `controlPty()` now sends the signal to the child process group instead of only the shell pid
+
+- Verification after the fix:
+  - deterministic proof passed twice:
+    - `zig build test:integration -- "owned unix pty interrupt reaches the child group"`
+    - `zig build test:integration -- "owned unix pty interrupt reaches the child group"`
+  - `howl-pty`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 Rejected non-accepted attempt during slice 5:
 
 - A host `main.zig` test extraction attempt was explored and then reverted before acceptance.
