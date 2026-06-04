@@ -85,6 +85,10 @@ Completed slices:
   - moved launch-title fallback, cached title copy, title generation, and VT title refresh from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/term.zig`
   - rewired host title consumers and PTY pump title refresh to use `term` directly
   - kept `vt/retained.zig` focused on remaining VT runtime, selection, scrollback, and output helper behavior
+- Slice 7d: moved VT selection and hyperlink lookup into host owners.
+  - moved VT selection mutation into `howl-linux-host/src/terminal/selection.zig`
+  - moved VT visible hyperlink lookup into `howl-linux-host/src/terminal/links.zig`
+  - removed those owner-false helpers from `howl-linux-host/src/terminal/vt/retained.zig`
 
 Verification receipts:
 
@@ -110,6 +114,7 @@ Verification receipts:
 - workspace root re-verified after slice 7b: `zig build test && zig build check`
 - `howl-linux-host` re-verified after moving VT title ownership into `term`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 - workspace root re-verified after slice 7c: `zig build test && zig build check`
+- `howl-linux-host` re-verified after moving VT selection and hyperlink lookup into host owners: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 
 Dirty-state note:
 

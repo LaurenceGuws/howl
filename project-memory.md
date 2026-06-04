@@ -217,6 +217,14 @@ Accepted production/test separation cuts completed so far:
     - workspace root: `zig build test && zig build check`
   - grep receipt: no remaining `vt_retained.resetTitleFromLaunch`, `copyCurrentTitle`, `titleGeneration`, or `copyTitleLocked` references under `howl-linux-host/src/terminal`
 
+- VT selection/link ownership follow-up cut:
+  - moved VT selection mutation into `howl-linux-host/src/terminal/selection.zig`
+  - moved VT visible hyperlink lookup into `howl-linux-host/src/terminal/links.zig`
+  - removed `vt_retained.startSelection`, `updateSelection`, `finishSelection`, and `copyVisibleHyperlinkAt`
+  - verification after the cut:
+    - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+  - grep receipt: no remaining `vt_retained.copyVisibleHyperlinkAt`, `startSelection`, `updateSelection`, or `finishSelection` references under `howl-linux-host/src/terminal`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
