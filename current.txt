@@ -135,6 +135,10 @@ Completed slices:
 - Item 10c: pruned the redundant classic generated-special fallback arms from `howl-render/src/text/font/ft_hb/special_sprite.zig`.
   - removed only the classic box/block switch arms already covered by `howl-render/src/text/raster/special.zig`
   - kept all residual fallback families intact
+- Item 10d: reduced `howl-vt/src/parser/events.zig` to the live event vocabulary only.
+  - moved `ParsedEvents`, queue/materializer machinery, compaction helpers, and parser-feed collection helpers out of production ownership
+  - moved the stale materializer surface and its proofs to `howl-vt/src/parser/events_test.zig`
+  - kept `parser/events.zig` as the production owner for `StyleChange`, `DcsEvent`, and `Event`
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -194,6 +198,9 @@ Verification receipts:
 - workspace root re-verified after item 10b: `zig build test && zig build check`
 - `howl-render` re-verified after pruning redundant classic generated-special fallback arms: `zig build test && zig build check`
 - workspace root re-verified after item 10c: `zig build test && zig build check`
+- grep receipt after item 10d: `ParsedEvents` references remain only in `howl-vt/src/parser/events_test.zig`
+- `howl-vt` re-verified after reducing `parser/events.zig` to the live vocabulary: `zig build test && zig build check`
+- workspace root re-verified after item 10d: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -207,4 +214,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining top prod-LOC file after `special_sprite.zig`
+- Continue item 10 keeper-vs-debt audit with the next remaining top prod-LOC file after `parser/events.zig`

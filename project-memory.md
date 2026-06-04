@@ -400,6 +400,14 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Fourth accepted top prod-LOC reduction cut landed in `howl-vt/src/parser/events.zig`.
+- Reduced `parser/events.zig` to the live event vocabulary only.
+- Moved the stale `ParsedEvents` queue/materializer surface and its proofs to `howl-vt/src/parser/events_test.zig`.
+- Verification after the cut:
+  - grep receipt: `ParsedEvents` references remain only in `howl-vt/src/parser/events_test.zig`
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
