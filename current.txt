@@ -73,6 +73,10 @@ Completed slices:
   - deleted `howl-render/src/text/text.zig`
   - rewrote all `howl-render` call sites to direct owner imports
   - no replacement umbrella was introduced
+- Slice 7a: collapsed stale PTY retained state into the `term` owner.
+  - moved PTY launch/lifecycle/feed-record state from `howl-linux-host/src/terminal/pty/retained.zig` into `howl-linux-host/src/terminal/term.zig`
+  - rewrote direct users to depend on `term` instead of the stale retained bucket
+  - deleted `howl-linux-host/src/terminal/pty/retained.zig`
 
 Verification receipts:
 
@@ -93,6 +97,7 @@ Verification receipts:
 - `howl-linux-host` re-verified after `terminal/context.zig` separation: `zig build test && zig build check`
 - `howl-linux-host` re-verified after processor extraction and `anytype` removal: `zig build test && zig build check`
 - `howl-render` re-verified after deleting `src/text/text.zig`: `zig build test && zig build check`
+- `howl-linux-host` re-verified after collapsing `pty/retained.zig`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 
 Dirty-state note:
 

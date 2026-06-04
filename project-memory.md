@@ -181,6 +181,22 @@ Accepted production/test separation cuts completed so far:
   - workspace root: `zig build test && zig build check`
 - Grep receipt: no remaining `text/text.zig` imports in `howl-render/src`.
 
+### Slice 7 Started
+
+- Accepted first direct-ABI collapse cut on the host terminal owner boundary.
+
+- `howl-linux-host/src/terminal/pty/retained.zig`
+  - treated as stale bucket/alias debt
+  - moved PTY launch/lifecycle/feed-record state into `howl-linux-host/src/terminal/term.zig`
+  - rewrote direct users in:
+    - `howl-linux-host/src/terminal/context.zig`
+    - `howl-linux-host/src/terminal/pty/session.zig`
+  - deleted `howl-linux-host/src/terminal/pty/retained.zig`
+  - verification after the cut:
+    - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+    - workspace root: `zig build test && zig build check`
+  - grep receipt: no remaining `pty/retained.zig` or `pty_retained` references under `howl-linux-host/src`
+
 Rejected non-accepted attempt during slice 5:
 
 - A host `main.zig` test extraction attempt was explored and then reverted before acceptance.
