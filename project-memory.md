@@ -162,6 +162,25 @@ Accepted production/test separation cuts completed so far:
     - `howl-linux-host/src/app/processor.zig`: no `anytype`
     - `howl-linux-host/src/main.zig`: only one remaining inline test, the bootstrap-owned `TERM` policy proof
 
+### Slice 6 Completed
+
+- Deleted `howl-render/src/text/text.zig`.
+- Rewrote `howl-render` call sites to import direct text owners instead of the umbrella.
+- Direct imports now point at smallest owner-true files such as:
+  - `text/frame_preparer.zig`
+  - `text/font/session.zig`
+  - `text/font/provider.zig`
+  - `text/font/ft_hb/provider.zig`
+  - `text/shape/cluster.zig`
+  - `text/shape/run.zig`
+  - `text/raster/cache.zig`
+  - `text/raster/rasterizer.zig`
+  - `text/raster/fallback.zig`
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+- Grep receipt: no remaining `text/text.zig` imports in `howl-render/src`.
+
 Rejected non-accepted attempt during slice 5:
 
 - A host `main.zig` test extraction attempt was explored and then reverted before acceptance.

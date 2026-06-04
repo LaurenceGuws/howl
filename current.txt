@@ -69,6 +69,10 @@ Completed slices:
   - deleted `anytype` seams from `howl-linux-host/src/app/processor.zig`
   - replaced them with concrete owner methods and explicit data helpers
   - deleted fake-seam processor tests instead of preserving a non-Alacritty test seam
+- Slice 6: deleted the render text umbrella layer with no owner truth.
+  - deleted `howl-render/src/text/text.zig`
+  - rewrote all `howl-render` call sites to direct owner imports
+  - no replacement umbrella was introduced
 
 Verification receipts:
 
@@ -88,6 +92,7 @@ Verification receipts:
 - `howl-linux-host` re-verified after `display/renderer/render_surface.zig` separation: `zig build test && zig build check`
 - `howl-linux-host` re-verified after `terminal/context.zig` separation: `zig build test && zig build check`
 - `howl-linux-host` re-verified after processor extraction and `anytype` removal: `zig build test && zig build check`
+- `howl-render` re-verified after deleting `src/text/text.zig`: `zig build test && zig build check`
 
 Dirty-state note:
 
