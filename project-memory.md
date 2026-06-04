@@ -393,6 +393,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Third accepted top prod-LOC reduction cut landed in `howl-render/src/text/font/ft_hb/special_sprite.zig`.
+- Pruned only the redundant classic generated-special fallback arms already covered by `howl-render/src/text/raster/special.zig`.
+- Kept all residual fallback families intact.
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof

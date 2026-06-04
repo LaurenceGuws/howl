@@ -132,6 +132,9 @@ Completed slices:
   - added one file-local helper for the shared scene population sequence
   - kept owned-vs-borrowed setup/teardown separate
   - kept public APIs and append order unchanged
+- Item 10c: pruned the redundant classic generated-special fallback arms from `howl-render/src/text/font/ft_hb/special_sprite.zig`.
+  - removed only the classic box/block switch arms already covered by `howl-render/src/text/raster/special.zig`
+  - kept all residual fallback families intact
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -189,6 +192,8 @@ Verification receipts:
 - workspace root re-verified after item 10a: `zig build test && zig build check`
 - `howl-render` re-verified after local scene population dedup: `zig build test && zig build check`
 - workspace root re-verified after item 10b: `zig build test && zig build check`
+- `howl-render` re-verified after pruning redundant classic generated-special fallback arms: `zig build test && zig build check`
+- workspace root re-verified after item 10c: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -202,4 +207,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next top prod-LOC file after `scene.zig`
+- Continue item 10 keeper-vs-debt audit with the next remaining top prod-LOC file after `special_sprite.zig`
