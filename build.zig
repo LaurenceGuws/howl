@@ -70,7 +70,7 @@ const root_aggregates = [_]RootAggregate{
     .{ .name = "test", .description = "Run canonical package test aggregates across the workspace", .mappings = &test_mappings },
     .{ .name = "test:unit", .description = "Run package unit proofs across the workspace", .mappings = &test_unit_mappings },
     .{ .name = "test:abi", .description = "Run product-package ABI proofs across the workspace", .mappings = &test_abi_mappings },
-    .{ .name = "test:integration", .description = "Run host-owned ABI seam integration proofs across the workspace", .mappings = &test_integration_mappings },
+    .{ .name = "test:integration", .description = "Run explicit package integration proofs across the workspace", .mappings = &test_integration_mappings },
     .{ .name = "simulate", .description = "Run deterministic package simulation workloads across the workspace", .mappings = &simulate_mappings },
     .{ .name = "stress", .description = "Run currently exposed named package stress surfaces across the workspace", .mappings = &stress_mappings },
     .{ .name = "benchmark", .description = "Run currently exposed named package benchmarks across the workspace", .mappings = &benchmark_mappings },

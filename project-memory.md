@@ -374,17 +374,50 @@ Accepted plan:
 - Root build orchestration aggregates package-owned steps only and must not
   import package internals.
 - Normal deterministic package steps are `check`, `test`, `test:unit`,
-  `test:unit:build`, `test:abi`, and `test:abi:build` where applicable.
+  `test:unit:build`, `test:abi`, and `test:abi:build`, plus
+  `test:integration` and `test:integration:build` when a package owns that
+  class.
+- Package tests are organized by curated roots per test class rather than one
+  universal module-wide test entrypoint.
 - `test:unit` owns owner-local invariant and behavior tests.
 - `test:abi` owns shipped C header, exported symbol, layout, value, handle,
   status, and FFI translation proofs.
-- `test:integration` owns cross-package embedding behavior through shipped ABIs,
-  primarily in hosts.
-- `simulate`, `stress`, and `benchmark` are explicit named surfaces, not
-  substitutes for deterministic `check` or `test`.
+- `test:integration` owns explicit cross-package embedding behavior through
+  shipped ABIs.
+- Owner-local tests may be inline in owner files or in sibling owner-true test
+  files, but must be reached through exactly one curated root for their class.
+- `simulate`, `stress`, `benchmark`, and similar named non-proof surfaces stay
+  explicit and are not substitutes for deterministic `check` or `test`.
 - First accepted implementation slice normalized render `test:unit` and
   `test:abi` categories without product-code or test assertion changes.
 - Accepted execution queue after render category normalization:
+
+## 2026-06-04 Test Architecture Accountability Sprint
+
+- Governing test law no longer claims one universal module-wide test entrypoint.
+  Active law is curated package roots by test class, owner-local tests reached
+  through exactly one curated root for their class, and explicit non-proof
+  surfaces.
+- `howl-render` no longer multiplexes unit, ABI, and benchmark wiring through
+  one root. Current dedicated roots are:
+  - `src/test_unit.zig`
+  - `src/test_abi.zig`
+  - `src/benchmark_main.zig`
+- `howl-vt/src/howl_vt.zig` no longer imports `ffi.zig` in the unit-class root.
+- Workspace `test:integration` wording now reflects explicit package-owned
+  integration surfaces instead of claiming host-only ownership.
+- `build-test-verification-ledger.md` has been corrected to match the current
+  host, render, VT, and PTY root map.
+- Verification receipts:
+  - `howl-render`: `zig build test`
+  - `howl-render`: `zig build benchmark:render:build`
+  - `howl-vt`: `zig build test`
+  - workspace: `zig build test:integration`
+  - workspace: `zig build check`
+  - workspace: `zig build test`
+- Residual risk: PTY integration has a timeout-flake surface in
+  `howl-pty/src/test/session_integration.zig`; one workspace `zig build test`
+  run timed out before succeeding on package rerun and final workspace rerun.
   1. Decide VT regression gate policy from current regression roots and bounds.
   2. Normalize render `test:build`/`check` compile-only category coverage.
   3. Inventory host `main.zig` app-owner tests before moving any helper/test pair.

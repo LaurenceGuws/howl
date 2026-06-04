@@ -2,18 +2,17 @@
 
 Sprint:
 
-- Resource performance sprint
+- Test architecture accountability sprint
 
 Accepted research:
 
-- `alacritty-research-cache.md`
-- `kitty-research-cache.md`
+- `research/cache-2026-06-04-test-architecture-accountability.md`
 
 Completed slices:
 
-- `display owner: explicit invalidation for tab cache and present-coupled UI`
-- `host loop: coarse phase accounting for wake, present, and render cost`
-- `render resources: sprite and prepared-state reuse under quota`
+- `governing test law and sprint contract alignment`
+- `render test root split and vt unit root cleanup`
+- `durable inventory and verification closeout`
 
 State:
 

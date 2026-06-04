@@ -157,9 +157,10 @@ Required TigerBeetle readings before non-trivial work:
 
 ## Tests
 
-- Each module has one curated test entrypoint.
-- No duplicate test roots and no opportunistic side-entry test files.
-- Owner-local tests are allowed only when reached through the module's single test entrypoint.
+- Tests are organized by curated package roots per test class.
+- No duplicate roots proving the same owner/class combination and no opportunistic side-entry test files.
+- Owner-local tests are allowed inline in owner files or in sibling owner-true test files only when reached through exactly one curated root for that class.
+- Benchmarks, simulations, stress surfaces, fuzzers, and similar non-proof surfaces must stay explicit and must not hide inside unit or ABI roots.
 - Test wiring is ownership. Moving tests, adding test roots, filtering tests, or weakening
   gates requires explicit source-backed proof.
 
