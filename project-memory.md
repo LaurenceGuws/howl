@@ -257,6 +257,21 @@ Accepted production/test separation cuts completed so far:
     - workspace root: `zig build test && zig build check`
   - grep receipt: no remaining `vt_retained.scrollState`, `setScrollbackOffset`, or `followLiveBottom` references under `howl-linux-host/src/terminal`
 
+- Final pure VT-state helper peel:
+  - moved pure field helpers from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/term.zig`
+  - moved:
+    - `inputScratch`
+    - `followLiveBottomLocked`
+    - `setFocused`
+  - rewrote direct users in:
+    - `howl-linux-host/src/terminal/vt/input.zig`
+    - `howl-linux-host/src/terminal/scrollbar.zig`
+  - left `vt/retained.zig` as the keeper helper owner for VT runtime/feed/output/clipboard/selection behavior
+  - verification after the cut:
+    - grep receipt: no `retained.inputScratch`, `retained.followLiveBottomLocked`, or `retained.setFocused` references remain under `howl-linux-host/src/terminal`
+    - `howl-linux-host`: `zig build test && zig build check`
+    - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof

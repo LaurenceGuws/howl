@@ -97,6 +97,10 @@ Completed slices:
   - moved `ScrollState`, `scrollState`, `scrollStateLocked`, `setScrollbackOffset`, `setScrollbackOffsetLocked`, and `followLiveBottom` from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/scrollbar.zig`
   - rewired `howl-linux-host/src/terminal/context.zig` to use `terminal_scrollbar` directly for follow-live-bottom and scrollback offset observations
   - kept `vt_retained.followLiveBottomLocked` in place for `vt/input.zig` locked input paths
+- Slice 7g: moved the final pure VT-state field helpers into `term.zig`.
+  - moved `inputScratch`, `followLiveBottomLocked`, and `setFocused` from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/term.zig`
+  - rewired `howl-linux-host/src/terminal/vt/input.zig` and `howl-linux-host/src/terminal/scrollbar.zig` to use `terminal_term` directly
+  - left `vt/retained.zig` as the keeper helper owner for VT runtime/feed/output/clipboard/selection behavior
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -133,6 +137,9 @@ Verification receipts:
 - `howl-pty` re-verified after gate fix 1: `zig build test && zig build check`
 - workspace root re-verified after gate fix 1: `zig build test && zig build check`
 - workspace root re-verified after slice 7f: `zig build test && zig build check`
+- grep receipt after slice 7g: no `retained.inputScratch`, `retained.followLiveBottomLocked`, or `retained.setFocused` references remain under `howl-linux-host/src/terminal`
+- `howl-linux-host` re-verified after moving the final pure VT-state field helpers into `term.zig`: `zig build test && zig build check`
+- workspace root re-verified after slice 7g: `zig build test && zig build check`
 
 Dirty-state note:
 
@@ -140,4 +147,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Research and review the remaining `vt/retained.zig` runtime/feed/output/clipboard surface or switch to a `context.zig` owner-false cut if that surface no longer has an isolated peel
+- Research whether the remaining `vt/retained.zig` runtime/feed/output/clipboard helper surface is now a keeper and promote the next `context.zig` owner-false cut if so
