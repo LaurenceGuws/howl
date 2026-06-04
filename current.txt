@@ -109,6 +109,10 @@ Completed slices:
   - added one file-local helper in `howl-vt/src/screen.zig` for repeated base `Screen` field assembly
   - added one file-local helper in `howl-vt/src/terminal.zig` for repeated `Terminal` assembly after screen creation
   - preserved all constructor asymmetries, public APIs, and explicit `errdefer` cleanup
+- Item 9a: deduplicated repeated test-artifact plumbing locally inside `howl-pty/build.zig`.
+  - added one file-local helper for repeated `b.addTest(...)` setup while preserving `filters = b.args orelse &.{}` and `use_llvm = true`
+  - added one file-local helper for repeated `b.addRunArtifact(...)` setup while preserving conditional `has_side_effects`
+  - kept ABI-specific include/import setup explicit and unchanged
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -154,6 +158,8 @@ Verification receipts:
 - workspace root re-verified after slice 7h: `zig build test && zig build check`
 - `howl-vt` re-verified after local constructor-family dedup: `zig build test && zig build check`
 - workspace root re-verified after item 8: `zig build test && zig build check`
+- `howl-pty` re-verified after local build-plumbing dedup: `zig build test && zig build check`
+- workspace root re-verified after item 9a: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -167,4 +173,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Research the next item-9 build-plumbing slice now that item 8 is accepted
+- Research whether another local item-9 slice is ready in `howl-vt/build.zig` or `howl-render/build.zig`, without inventing a shared build helper
