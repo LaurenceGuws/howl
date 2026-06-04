@@ -105,6 +105,10 @@ Completed slices:
   - moved `publishTerminalBytes`, `publishTerminalKey`, `publishTerminalMouse`, `ScrollVisualState`, `ContextOps`, `pixelToCol`, and `pixelToRow` from `howl-linux-host/src/terminal/context.zig` into `howl-linux-host/src/terminal/input.zig`
   - kept `context.zig` thin wrappers for input drain, mouse ownership, and terminal pixel conversion
   - left `vt/retained.zig` unchanged as a keeper helper owner
+- Item 8: deduplicated repeated constructor families locally in `howl-vt`.
+  - added one file-local helper in `howl-vt/src/screen.zig` for repeated base `Screen` field assembly
+  - added one file-local helper in `howl-vt/src/terminal.zig` for repeated `Terminal` assembly after screen creation
+  - preserved all constructor asymmetries, public APIs, and explicit `errdefer` cleanup
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -148,6 +152,8 @@ Verification receipts:
 - grep receipt after slice 7h: `context.zig` still defines `drainTextInputFastPath`, `drainPointerAndUiInput`, `terminalOwnsMouse`, `pixelToTerminalCol`, and `pixelToTerminalRow`
 - `howl-linux-host` re-verified after moving the concrete terminal input-adapter leaf surface into `terminal/input.zig`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 - workspace root re-verified after slice 7h: `zig build test && zig build check`
+- `howl-vt` re-verified after local constructor-family dedup: `zig build test && zig build check`
+- workspace root re-verified after item 8: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -161,4 +167,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Promote sprint item 8 or 9 next, based on research: repeated constructor families or repeated build plumbing
+- Research the next item-9 build-plumbing slice now that item 8 is accepted

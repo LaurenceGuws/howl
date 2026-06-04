@@ -296,6 +296,23 @@ Accepted production/test separation cuts completed so far:
   - conclusion: item 7 is complete enough on the current boundary path
   - any further host input ownership work is a new broader researched slice, not item 7 cleanup
 
+### Item 8 Completed
+
+- Deduplicated repeated constructor-family assembly locally in `howl-vt`.
+- `howl-vt/src/screen.zig`
+  - added one file-local helper for repeated base `Screen` field assembly
+  - preserved:
+    - allocation-free cursor-only init
+    - owned cells/wrap/dirty/tab-stop allocation path
+    - zero-length history allocation behavior
+    - `history_capacity = if (cells != null) history_capacity else 0`
+- `howl-vt/src/terminal.zig`
+  - added one file-local helper for repeated final `Terminal` assembly after screen creation
+  - preserved the primary-only history asymmetry in `initWithCellsHistoryAndOptions()`
+- Verification after the cut:
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
