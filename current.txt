@@ -77,6 +77,10 @@ Completed slices:
   - moved PTY launch/lifecycle/feed-record state from `howl-linux-host/src/terminal/pty/retained.zig` into `howl-linux-host/src/terminal/term.zig`
   - rewrote direct users to depend on `term` instead of the stale retained bucket
   - deleted `howl-linux-host/src/terminal/pty/retained.zig`
+- Slice 7b: collapsed stale VT retained state into the `term` owner.
+  - moved VT title/scratch/scrollback/cursor retained state from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/term.zig`
+  - rewrote remaining VT helper code to use `term` as the state owner
+  - deleted the stale `vt_retained.State` bucket
 
 Verification receipts:
 
@@ -98,6 +102,8 @@ Verification receipts:
 - `howl-linux-host` re-verified after processor extraction and `anytype` removal: `zig build test && zig build check`
 - `howl-render` re-verified after deleting `src/text/text.zig`: `zig build test && zig build check`
 - `howl-linux-host` re-verified after collapsing `pty/retained.zig`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+- `howl-linux-host` re-verified after collapsing `vt_retained.State`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+- workspace root re-verified after slice 7b: `zig build test && zig build check`
 
 Dirty-state note:
 
@@ -105,4 +111,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Move to the next sequential sprint item after the major production/test mixing owners; remaining `main.zig` inline proof is a bootstrap-owned keeper candidate, not a large polluted owner block
+- Continue slice 7 with the next terminal boundary keeper-vs-debt cut; `render/retained.zig` currently reads as a likely keeper owner, while remaining VT helper seams still need review

@@ -197,6 +197,19 @@ Accepted production/test separation cuts completed so far:
     - workspace root: `zig build test && zig build check`
   - grep receipt: no remaining `pty/retained.zig` or `pty_retained` references under `howl-linux-host/src`
 
+- `howl-linux-host/src/terminal/vt/retained.zig`
+  - kept the VT ABI helper owner for now, but deleted its stale retained-state bucket
+  - moved VT title/scratch/scrollback/cursor retained state into `howl-linux-host/src/terminal/term.zig`
+  - rewrote `vt/retained.zig` to use `term` as the state owner instead of exporting `State`
+  - verification after the cut:
+    - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+    - workspace root: `zig build test && zig build check`
+  - grep receipt: no remaining `vt_retained.State` references under `howl-linux-host/src/terminal`
+
+- Keeper pressure noted during slice 7b audit:
+  - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
+  - do not collapse that file mechanically without stronger source-backed proof
+
 Rejected non-accepted attempt during slice 5:
 
 - A host `main.zig` test extraction attempt was explored and then reverted before acceptance.
