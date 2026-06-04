@@ -325,6 +325,22 @@ Accepted production/test separation cuts completed so far:
   - `howl-pty`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+### Item 9b Completed
+
+- Deduplicated unit/ABI test-artifact plumbing locally in `howl-vt/build.zig`.
+- Added one file-local helper for repeated `b.addTest(...)` setup while preserving:
+  - `filters = b.args orelse &.{}`
+  - `use_llvm = true`
+- Added one file-local helper for repeated `b.addRunArtifact(...)` setup while preserving conditional `has_side_effects`.
+- Kept VT-specific module setup explicit and unchanged:
+  - internal module and `vt_options` wiring
+  - ABI module, include path, `ffi` import, and `ffi_options` wiring
+  - simulation wiring
+  - benchmark wiring
+- Verification after the cut:
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
