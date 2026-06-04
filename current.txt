@@ -117,6 +117,10 @@ Completed slices:
   - added one file-local helper for repeated `b.addTest(...)` setup while preserving `filters = b.args orelse &.{}` and `use_llvm = true`
   - added one file-local helper for repeated `b.addRunArtifact(...)` setup while preserving conditional `has_side_effects`
   - kept VT-specific module setup explicit and unchanged, including internal/ABI option wiring, simulation wiring, and benchmark wiring
+- Item 9c: deduplicated unit/ABI test-artifact plumbing locally in `howl-render/build.zig`.
+  - added one file-local helper for repeated `b.addTest(...)` setup while preserving `filters = b.args orelse &.{}` and `use_llvm = true`
+  - added one file-local helper for repeated `b.addRunArtifact(...)` setup while preserving conditional `has_side_effects`
+  - kept render-specific module setup explicit and unchanged, including unit/ABI roots, benchmark wiring, and FFI/install wiring
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -166,6 +170,8 @@ Verification receipts:
 - workspace root re-verified after item 9a: `zig build test && zig build check`
 - `howl-vt` re-verified after local build-plumbing dedup: `zig build test && zig build check`
 - workspace root re-verified after item 9b: `zig build test && zig build check`
+- `howl-render` re-verified after local build-plumbing dedup: `zig build test && zig build check`
+- workspace root re-verified after item 9c: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -179,4 +185,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Research whether another local item-9 slice is ready in `howl-render/build.zig` or `howl-linux-host/build.zig`, without inventing a shared build helper
+- Research whether item 9 should stop before `howl-linux-host/build.zig`, or whether one final local host-build slice is source-settled enough to promote
