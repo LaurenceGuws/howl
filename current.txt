@@ -93,6 +93,10 @@ Completed slices:
   - moved VT resize and cell-pixel-size mutation from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/render/surface_layout.zig`
   - rewired `context.zig` and layout sync paths to use the layout owner directly
   - follow-up fix: removed a lock re-entry in `surface_layout.resizeTermVtLocked()` by using VT visible-meta directly instead of calling a locking scroll-state helper
+- Slice 7f: moved the remaining public host scrollback subgroup into the scrollbar owner.
+  - moved `ScrollState`, `scrollState`, `scrollStateLocked`, `setScrollbackOffset`, `setScrollbackOffsetLocked`, and `followLiveBottom` from `howl-linux-host/src/terminal/vt/retained.zig` into `howl-linux-host/src/terminal/scrollbar.zig`
+  - rewired `howl-linux-host/src/terminal/context.zig` to use `terminal_scrollbar` directly for follow-live-bottom and scrollback offset observations
+  - kept `vt_retained.followLiveBottomLocked` in place for `vt/input.zig` locked input paths
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -124,9 +128,11 @@ Verification receipts:
 - `howl-linux-host` re-verified after moving VT selection and hyperlink lookup into host owners: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 - `howl-linux-host` re-verified after moving VT layout mutation into the layout owner: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 - workspace root re-verified after slice 7e: `zig build test && zig build check`
+- `howl-linux-host` re-verified after moving the public host scrollback subgroup into `terminal/scrollbar.zig`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 - `howl-pty` deterministic interrupt proof re-verified twice: `zig build test:integration -- "owned unix pty interrupt reaches the child group"`
 - `howl-pty` re-verified after gate fix 1: `zig build test && zig build check`
 - workspace root re-verified after gate fix 1: `zig build test && zig build check`
+- workspace root re-verified after slice 7f: `zig build test && zig build check`
 
 Dirty-state note:
 
@@ -134,4 +140,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue slice 7 with the next VT helper subgroup or `context.zig` owner-false cut; `render/retained.zig` still reads as a likely keeper owner
+- Research and review the remaining `vt/retained.zig` runtime/feed/output/clipboard surface or switch to a `context.zig` owner-false cut if that surface no longer has an isolated peel

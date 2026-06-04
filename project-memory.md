@@ -239,6 +239,24 @@ Accepted production/test separation cuts completed so far:
     - workspace root: `zig build test && zig build check`
   - grep receipt: no remaining `vt_retained.resize*` or `setCellPixelSize*` references under `howl-linux-host/src/terminal`
 
+- VT scrollback ownership follow-up cut:
+  - moved the public host scrollback subgroup into `howl-linux-host/src/terminal/scrollbar.zig`
+  - moved:
+    - `ScrollState`
+    - `scrollState`
+    - `scrollStateLocked`
+    - `setScrollbackOffset`
+    - `setScrollbackOffsetLocked`
+    - `followLiveBottom`
+  - rewrote direct users in:
+    - `howl-linux-host/src/terminal/scrollbar.zig`
+    - `howl-linux-host/src/terminal/context.zig`
+  - kept `vt_retained.followLiveBottomLocked` in place because `howl-linux-host/src/terminal/vt/input.zig` still uses the locked helper directly
+  - verification after the cut:
+    - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+    - workspace root: `zig build test && zig build check`
+  - grep receipt: no remaining `vt_retained.scrollState`, `setScrollbackOffset`, or `followLiveBottom` references under `howl-linux-host/src/terminal`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
