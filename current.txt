@@ -149,10 +149,16 @@ Verification receipts:
 - `howl-linux-host` re-verified after moving the concrete terminal input-adapter leaf surface into `terminal/input.zig`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
 - workspace root re-verified after slice 7h: `zig build test && zig build check`
 
+Slice 7 close verdict:
+
+- Item 7 is complete enough on the current boundary path.
+- Reviewer rejected one further tiny cut: deleting `Context.terminalOwnsMouse`, `pixelToTerminalCol`, and `pixelToTerminalRow` would create an import cycle between `terminal/input.zig` and `selection.zig` / `links.zig`, so that remaining seam is not isolated debt.
+- Any further host input ownership work is a new broader researched slice, not a final tiny item-7 cleanup.
+
 Dirty-state note:
 
 - `howl-linux-host/src/display/frame_timer.zig` still carries the earlier local pacing cleanup and was not changed by this slice
 
 Next slice to promote:
 
-- Research the next `context.zig` owner-false cut after the input-adapter peel, or mark item 7 complete if no isolated cut remains
+- Promote sprint item 8 or 9 next, based on research: repeated constructor families or repeated build plumbing

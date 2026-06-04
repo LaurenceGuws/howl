@@ -290,6 +290,12 @@ Accepted production/test separation cuts completed so far:
     - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
     - workspace root: `zig build test && zig build check`
 
+- Item 7 closure verdict:
+  - reviewed one further tiny-cut idea: deleting `Context.terminalOwnsMouse`, `pixelToTerminalCol`, and `pixelToTerminalRow`
+  - reviewer rejected that cut because it would create an import cycle between `terminal/input.zig` and `selection.zig` / `links.zig`
+  - conclusion: item 7 is complete enough on the current boundary path
+  - any further host input ownership work is a new broader researched slice, not item 7 cleanup
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
