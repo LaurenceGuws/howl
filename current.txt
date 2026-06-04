@@ -121,6 +121,9 @@ Completed slices:
   - added one file-local helper for repeated `b.addTest(...)` setup while preserving `filters = b.args orelse &.{}` and `use_llvm = true`
   - added one file-local helper for repeated `b.addRunArtifact(...)` setup while preserving conditional `has_side_effects`
   - kept render-specific module setup explicit and unchanged, including unit/ABI roots, benchmark wiring, and FFI/install wiring
+- Item 9d: deduplicated repeated test run-artifact plumbing locally in `howl-linux-host/build.zig`.
+  - added one file-local helper for repeated `b.addRunArtifact(...)` plus conditional `has_side_effects`
+  - kept all `b.addTest(...)`, module-root creation, linking/configuration, and step-graph wiring explicit
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -172,6 +175,8 @@ Verification receipts:
 - workspace root re-verified after item 9b: `zig build test && zig build check`
 - `howl-render` re-verified after local build-plumbing dedup: `zig build test && zig build check`
 - workspace root re-verified after item 9c: `zig build test && zig build check`
+- `howl-linux-host` re-verified after local build-plumbing dedup: `zig build test && zig build check`
+- workspace root re-verified after item 9d: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -185,4 +190,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Research whether item 9 should stop before `howl-linux-host/build.zig`, or whether one final local host-build slice is source-settled enough to promote
+- Close item 9 and move to the top prod-LOC keeper-vs-debt audit
