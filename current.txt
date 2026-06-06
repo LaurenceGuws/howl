@@ -193,6 +193,10 @@ Completed slices:
   - rehomed the testing-only emission pipeline, fixture/types, and `testing.emit` into `render_surface_emitter_test.zig`
   - kept only `testing.appendGlyphRef` and `testing.publishSurface` in production
   - kept production emitter behavior and ABI-visible surface contents unchanged
+- Item 10r: removed the dead glyph-atlas branch from `howl-render/src/render/render_surface_realizer.zig`.
+  - simplified the non-sprite fallback in `validateSpriteCommand()` to direct invalid-resource return after resource-kind validation
+  - deleted the now-unused `isGlyphAtlas()` helper
+  - kept validation behavior otherwise unchanged
 
 Accepted keeper verdicts:
 
@@ -302,6 +306,8 @@ Verification receipts:
 - grep receipt after item 10q: `render_surface_emitter.zig` no longer contains `ColorMode`, `emitTesting`, `resetTesting`, `appendTestingFillPass`, `appendTestingSprites`, `appendTestingCreate`, `appendTestingUpload`, `spriteResource`, `uploadFormat`, `Fixture`, `Fill`, `Sprite`, or `testing.emit`
 - `howl-render` re-verified after testing-path extraction from `render_surface_emitter.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10q: `zig build test && zig build check`
+- `howl-render` re-verified after dead glyph-atlas branch removal in `render_surface_realizer.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10r: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -315,4 +321,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `render_surface_emitter.zig` testing-path extraction
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `render_surface_realizer.zig` dead-branch cleanup
