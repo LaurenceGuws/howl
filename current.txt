@@ -250,6 +250,22 @@ Completed slices:
   - updated the sibling proof in `howl-linux-host/src/display/renderer/render_surface_test.zig` for the `validateSurface(...)` signature change
   - research authority: `ses_1619d8350ffeMaAuBKhwEcP7zS`
   - reviewer acceptance after rejection recovery: `ses_161724c6dffedjVpU1T4zU2q51`
+- Item 10ab: removed the identity route layer from `howl-render/src/text/scene.zig`.
+  - deleted:
+    - `UnderlineRoute`
+    - `underline_routes`
+    - `CursorRoute`
+    - `cursorRoute()`
+    - `underlineRoute()`
+  - switched local dispatch directly on:
+    - `contract.UnderlineStyle`
+    - `CursorShape`
+  - kept cursor and underline geometry policy unchanged
+  - added focused inline proof `scene double underline count and geometry stay aligned`
+    - proves `.double` count path yields `2`
+    - proves built scene output emits exactly two `.underline` draws in top-then-bottom geometry order
+  - research authority: `ses_16169d6b3ffeS2zcfZObPZPY92`
+  - reviewer acceptance: `ses_161610c44ffeV6TzWIVqLi2yK4`
 
 Accepted keeper verdicts:
 
@@ -399,4 +415,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `render_surface.zig` dead-result seam collapse
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `scene.zig` identity-route deletion

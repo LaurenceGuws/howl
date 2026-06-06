@@ -629,6 +629,30 @@ Accepted production/test separation cuts completed so far:
   - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
   - workspace root: `zig build test && zig build check`
 
+- Twenty-eighth accepted prod-reduction cut landed in `howl-render/src/text/scene.zig`.
+- Removed the identity route layer by deleting:
+  - `UnderlineRoute`
+  - `underline_routes`
+  - `CursorRoute`
+  - `cursorRoute()`
+  - `underlineRoute()`
+- Switched the local scene owner dispatch directly on the real owner enums already in use:
+  - `contract.UnderlineStyle`
+  - `CursorShape`
+- Kept cursor and underline geometry policy unchanged.
+- Added focused inline proof `scene double underline count and geometry stay aligned` proving:
+  - `.double` underline count stays `2`
+  - built scene output emits exactly two `.underline` draws in top-then-bottom geometry order
+- Research authority:
+  - `ses_16169d6b3ffeS2zcfZObPZPY92`
+- Review path:
+  - initial reviewer session `ses_16166769bffe8r679vNuuXaw7Q` rejected worker-readiness until the `.double` underline proof was explicitly required
+  - adjusted contract then accepted in reviewer session `ses_16166769bffe8r679vNuuXaw7Q`
+  - final diff acceptance in reviewer session `ses_161610c44ffeV6TzWIVqLi2yK4`: `No findings.`
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:
