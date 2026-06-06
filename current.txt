@@ -214,6 +214,10 @@ Completed slices:
 - Item 10w: deduplicated shared `RenderableCell` literal assembly in `howl-render/src/text/shape/cluster.zig`.
   - added one private file-local helper for the shared `contract.RenderableCell` literal assembly
   - kept `renderableFromCellInput(...)` and `renderableFromInput(...)` as thin adapters with local policy asymmetries unchanged
+- Item 10x: deduplicated asset sampling in `howl-vt/src/simulation/protocol.zig`.
+  - kept `appendAssetText()` and `appendAssetPayload()` as distinct wrappers
+  - extracted one shared asset-sampling loop and added an explicit payload sanitizer alongside `sanitizeTextByte()`
+  - kept protocol roles and asset-end short-write behavior unchanged
 
 Accepted keeper verdicts:
 
@@ -335,6 +339,8 @@ Verification receipts:
 - workspace root re-verified after item 10v: `zig build test && zig build check`
 - `howl-render` re-verified after `RenderableCell` literal dedup in `cluster.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10w: `zig build test && zig build check`
+- `howl-vt` re-verified after asset-sampling dedup in `simulation/protocol.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10x: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -348,4 +354,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `cluster.zig` literal dedup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `simulation/protocol.zig` asset-sampling dedup

@@ -569,6 +569,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Twenty-fourth accepted prod-reduction cut landed in `howl-vt/src/simulation/protocol.zig`.
+- Kept `appendAssetText()` and `appendAssetPayload()` as distinct wrappers while deduplicating their shared asset-sampling loop and adding an explicit payload sanitizer alongside `sanitizeTextByte()`.
+- Kept protocol roles and asset-end short-write behavior unchanged.
+- Verification after the cut:
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
