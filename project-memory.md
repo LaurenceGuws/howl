@@ -415,6 +415,16 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build benchmark:render:build`
   - `howl-render`: `zig build test && zig build check`
 
+- Sixth accepted prod-reduction cut landed in `howl-render/src/render/render_surface_realizer.zig`.
+- Moved the inline proof lane and test-only scaffolding out of the production owner into `howl-render/src/render/render_surface_realizer_test.zig`.
+- Rewired `howl-render/src/test/unit/root.zig` to import the sibling test file instead of the production owner directly.
+- Kept production logic unchanged and added no production hooks.
+- Verification after the cut:
+  - grep receipt: `^test ` no longer matches `howl-render/src/render/render_surface_realizer.zig`
+  - grep receipt: `src/test/unit/root.zig` imports `../../render/render_surface_realizer_test.zig`
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
