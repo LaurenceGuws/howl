@@ -500,6 +500,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Fifteenth accepted prod-reduction cut landed in `howl-render/src/text/raster/special.zig`.
+- Deduplicated the repeated 8-way range partition algorithm shared by `eightRange()` and `eighthRange()` with one file-local helper.
+- Kept `fourthRange()` separate and preserved the exact oversize clamp path, redistribution order, and accumulated-position behavior.
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof

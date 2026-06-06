@@ -181,6 +181,10 @@ Completed slices:
   - deleted unreachable `0x1fb9a` / `0x1fb9b` arms only from `drawAlphaHalfTriangleCodepoint()`
   - removed the identical no-op branch in `drawAlphaBranchNode()`
   - removed dead local `steps` from `drawAlphaSpinner()`
+- Item 10o: deduplicated the repeated 8-way range partition algorithm in `howl-render/src/text/raster/special.zig`.
+  - added one file-local helper for the shared 8-way partition logic
+  - rewired `eightRange()` and `eighthRange()` to use it
+  - kept `fourthRange()` separate and behavior unchanged
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -276,6 +280,8 @@ Verification receipts:
 - grep receipt after item 10n: no `AlphaSegment`, `drawAlphaH`, `drawAlphaV`, `fillAlphaChecker`, or `drawAlphaRoundedCorner` references remain in `special_sprite.zig`
 - `howl-render` re-verified after local dead-helper cleanup in `special_sprite.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10n: `zig build test && zig build check`
+- `howl-render` re-verified after local 8-way partition dedup in `special.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10o: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -289,4 +295,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special_sprite.zig` dead-helper cleanup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special.zig` 8-way partition dedup
