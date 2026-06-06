@@ -308,6 +308,17 @@ Completed slices:
     - no code hits for `KEYCODE_`
   - research authority: `ses_1610ded9effeEP0ncqQ5cMEcgI`
   - reviewer acceptance after metadata fix: `ses_160ca5586ffeNb14NL5LLre9BS`
+- Item 10af: removed the redundant tab-stop re-default from `howl-vt/src/screen/tabs.zig`.
+  - deleted `setDefaultTabStops(d)` from `copyTabStops(...)`
+  - kept `copyTabStops(...)` as a copy-only helper
+  - preserved the resize caller invariant that destination tab stops are allocated through `tabs.allocTabStops(...)` immediately before copying
+  - added focused proof `screen tabs: resize wider preserves custom and default stops`
+    - start width `20`, grow to `25`
+    - custom stop at `5` survives
+    - cleared default stop at `8` stays cleared
+    - default stops at `16` and newly added `24` remain present
+  - research authority: `ses_160c3d27cffeQveW8CeVUuNKdQ`
+  - reviewer acceptance: `ses_160bcc1f5ffefjHwk46U5ugUUa`
 
 Reopened previously skipped low-yield avenues:
 

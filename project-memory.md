@@ -738,6 +738,26 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Thirty-second accepted prod-reduction cut landed across:
+  - `howl-vt/src/screen/tabs.zig`
+  - `howl-vt/src/screen/tabs_test.zig`
+- Removed the redundant destination re-default from `copyTabStops(...)`.
+- Kept `copyTabStops(...)` as a copy-only helper.
+- Preserved the live resize caller invariant that destination tab stops are allocated through `tabs.allocTabStops(...)` immediately before copying.
+- Added focused proof `screen tabs: resize wider preserves custom and default stops` proving:
+  - custom stop at `5` survives growth from width `20` to `25`
+  - cleared default stop at `8` stays cleared in the copied prefix
+  - old default stop at `16` survives
+  - newly added default stop at `24` is still present
+- Research authority:
+  - `ses_160c3d27cffeQveW8CeVUuNKdQ`
+- Review path:
+  - worker-ready acceptance in reviewer session `ses_160c0ce3affe1AEIdbR8GtNnGf`
+  - final diff acceptance in reviewer session `ses_160bcc1f5ffefjHwk46U5ugUUa`: `No findings.`
+- Verification after the cut:
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:
