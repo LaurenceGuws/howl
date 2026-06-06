@@ -161,6 +161,10 @@ Completed slices:
   - added `howl-render/src/text/font/ft_hb/support_test.zig`
   - rewired `howl-render/src/test/unit/root.zig` to import the sibling test file
   - kept production behavior unchanged and used only one narrow testing hook for the bounded-buffer proof
+- Item 10j: purged dead private wrappers from `howl-linux-host/src/terminal/context.zig`.
+  - deleted dead private wrappers `driveRender`, `prepare`, `takePreparedUpload`, and `submit`
+  - deleted the dead private alias `ScrollMouseOutcome`
+  - kept the live render/submit/testing owner surface unchanged
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -242,6 +246,8 @@ Verification receipts:
 - grep receipt after item 10i: `src/test/unit/root.zig` imports `../../text/font/ft_hb/support_test.zig`
 - `howl-render` re-verified after FT/HB support proof extraction: `zig build test && zig build check`
 - workspace root re-verified after item 10i: `zig build test && zig build check`
+- `howl-linux-host` re-verified after dead-wrapper purge in `context.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10j: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -255,4 +261,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining prod-reduction candidate after `ft_hb/support.zig`
+- Continue item 10 keeper-vs-debt audit with the next remaining prod-reduction candidate after the `context.zig` dead-wrapper purge

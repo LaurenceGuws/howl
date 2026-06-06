@@ -460,6 +460,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Tenth accepted prod-reduction cut landed in `howl-linux-host/src/terminal/context.zig`.
+- Purged dead private wrappers `driveRender`, `prepare`, `takePreparedUpload`, `submit`, and the dead private alias `ScrollMouseOutcome`.
+- Kept the live render/submit/testing owner surface unchanged.
+- Verification after the cut:
+  - `howl-linux-host`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
