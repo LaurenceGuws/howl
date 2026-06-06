@@ -211,6 +211,9 @@ Completed slices:
   - made dotted/dashed cadence arithmetic a single private source of truth for both count and emission
   - shared the stepped underline append path locally
   - added narrow inline tests proving counted capacity stays aligned with emitted dotted/dashed geometry
+- Item 10w: deduplicated shared `RenderableCell` literal assembly in `howl-render/src/text/shape/cluster.zig`.
+  - added one private file-local helper for the shared `contract.RenderableCell` literal assembly
+  - kept `renderableFromCellInput(...)` and `renderableFromInput(...)` as thin adapters with local policy asymmetries unchanged
 
 Accepted keeper verdicts:
 
@@ -330,6 +333,8 @@ Verification receipts:
 - workspace root re-verified after item 10u: `zig build test && zig build check`
 - `howl-render` re-verified after dotted/dashed underline cadence dedup in `scene.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10v: `zig build test && zig build check`
+- `howl-render` re-verified after `RenderableCell` literal dedup in `cluster.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10w: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -343,4 +348,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `scene.zig` underline cadence dedup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `cluster.zig` literal dedup
