@@ -197,6 +197,9 @@ Completed slices:
   - simplified the non-sprite fallback in `validateSpriteCommand()` to direct invalid-resource return after resource-kind validation
   - deleted the now-unused `isGlyphAtlas()` helper
   - kept validation behavior otherwise unchanged
+- Item 10s: deduplicated the braille 4x4 supersample loop in `howl-render/src/text/raster/special.zig`.
+  - routed braille dot coverage through the existing supersample helper with file-local braille coverage helpers
+  - kept braille layout, fast paths, clipped `w`/`h`, and alpha accumulation semantics unchanged
 
 Accepted keeper verdicts:
 
@@ -308,6 +311,8 @@ Verification receipts:
 - workspace root re-verified after item 10q: `zig build test && zig build check`
 - `howl-render` re-verified after dead glyph-atlas branch removal in `render_surface_realizer.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10r: `zig build test && zig build check`
+- `howl-render` re-verified after braille supersample dedup in `special.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10s: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -321,4 +326,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `render_surface_realizer.zig` dead-branch cleanup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special.zig` braille supersample dedup
