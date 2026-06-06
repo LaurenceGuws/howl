@@ -319,6 +319,14 @@ Completed slices:
     - default stops at `16` and newly added `24` remain present
   - research authority: `ses_160c3d27cffeQveW8CeVUuNKdQ`
   - reviewer acceptance: `ses_160bcc1f5ffefjHwk46U5ugUUa`
+- Item 10ag: removed the local cursor-style datatype mirror in `howl-vt` screen owners.
+  - deleted local `CursorShape` and `CursorStyle` definitions from `howl-vt/src/screen/cursor.zig`
+  - aliased them to the action-owner cursor types from `howl-vt/src/action/vocabulary.zig`
+  - replaced the manual cursor-style remap in `howl-vt/src/screen/apply.zig` with direct assignment
+  - kept `Screen.CursorShape`, `Screen.CursorStyle`, and `Screen.default_cursor_style` as the curated screen exports
+  - kept FFI cursor-style translation behavior unchanged
+  - research authority: `ses_160b9c4b0ffelzR1kQPdPFgqz7`
+  - reviewer acceptance: `ses_160b3a4beffeFWiWa5l9MRGPuJ`
 
 Reopened previously skipped low-yield avenues:
 

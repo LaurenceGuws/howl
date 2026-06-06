@@ -758,6 +758,23 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Thirty-third accepted prod-reduction cut landed across:
+  - `howl-vt/src/screen/cursor.zig`
+  - `howl-vt/src/screen/apply.zig`
+- Removed the local cursor-style datatype mirror by aliasing screen cursor types directly to the action-owner cursor types.
+- Replaced the manual cursor-style remap in `screen/apply.zig` with direct assignment.
+- Kept `Screen.CursorShape`, `Screen.CursorStyle`, and `Screen.default_cursor_style` as the curated screen exports.
+- Kept FFI cursor-style translation behavior unchanged.
+- Research authority:
+  - `ses_160b9c4b0ffelzR1kQPdPFgqz7`
+- Review path:
+  - worker-ready acceptance in reviewer session `ses_160b7e467ffeLXLP20ObWk40Ty`
+  - final diff acceptance in reviewer session `ses_160b3a4beffeFWiWa5l9MRGPuJ`: `No findings.`
+- Verification after the cut:
+  - `git diff --check -- src/screen/cursor.zig src/screen/apply.zig src/screen.zig` in `howl-vt`
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:
