@@ -204,6 +204,9 @@ Completed slices:
   - deleted private single-use wrappers `validateCreates`, `validateUploads`, and `validateRetires`
   - inlined their loops into `validateSurfaceTransition()` in create -> upload -> retire order
   - kept validation behavior and testing hook signatures unchanged
+- Item 10u: deleted dead private helpers from `howl-render/src/text/font/ft_hb/special_sprite.zig`.
+  - deleted `drawAlphaQuadraticStroke()`, `count32()`, and `pixelCount()`
+  - kept nearby live pixel-index helpers unchanged
 
 Accepted keeper verdicts:
 
@@ -319,6 +322,8 @@ Verification receipts:
 - workspace root re-verified after item 10s: `zig build test && zig build check`
 - `howl-linux-host` re-verified after validation-wrapper collapse in `render_surface.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10t: `zig build test && zig build check`
+- `howl-render` re-verified after dead-helper cleanup in `special_sprite.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10u: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -332,4 +337,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the host `render_surface.zig` validation-wrapper collapse
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special_sprite.zig` dead-helper cleanup

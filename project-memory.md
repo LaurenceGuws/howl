@@ -548,6 +548,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-linux-host`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Twenty-first accepted prod-reduction cut landed in `howl-render/src/text/font/ft_hb/special_sprite.zig`.
+- Deleted the dead private helpers `drawAlphaQuadraticStroke()`, `count32()`, and `pixelCount()`.
+- Kept nearby live pixel-index helpers unchanged.
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
