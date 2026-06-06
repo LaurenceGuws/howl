@@ -408,6 +408,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Fifth accepted prod-reduction cut landed in `howl-render/src/benchmark_main.zig`.
+- Deduplicated repeated benchmark workload assembly and repeated damage-literal construction with file-local helpers.
+- Kept workload contents, full-vs-sparse distinctions, and benchmark output/build behavior unchanged.
+- Verification after the cut:
+  - `howl-render`: `zig build benchmark:render:build`
+  - `howl-render`: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof

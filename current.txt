@@ -139,6 +139,9 @@ Completed slices:
   - moved `ParsedEvents`, queue/materializer machinery, compaction helpers, and parser-feed collection helpers out of production ownership
   - moved the stale materializer surface and its proofs to `howl-vt/src/parser/events_test.zig`
   - kept `parser/events.zig` as the production owner for `StyleChange`, `DcsEvent`, and `Event`
+- Item 10e: deduplicated repeated benchmark workload assembly in `howl-render/src/benchmark_main.zig`.
+  - added file-local helpers for repeated `Workload` assembly and repeated damage-literal construction
+  - kept workload contents, full-vs-sparse distinctions, and benchmark output/build behavior unchanged
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -201,6 +204,8 @@ Verification receipts:
 - grep receipt after item 10d: `ParsedEvents` references remain only in `howl-vt/src/parser/events_test.zig`
 - `howl-vt` re-verified after reducing `parser/events.zig` to the live vocabulary: `zig build test && zig build check`
 - workspace root re-verified after item 10d: `zig build test && zig build check`
+- `howl-render` benchmark build re-verified after workload assembly dedup: `zig build benchmark:render:build`
+- `howl-render` re-verified after local benchmark workload dedup: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -214,4 +219,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining top prod-LOC file after `parser/events.zig`
+- Continue item 10 keeper-vs-debt audit with the next remaining prod-reduction candidate after `benchmark_main.zig`
