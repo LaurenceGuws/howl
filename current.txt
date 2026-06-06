@@ -8,6 +8,14 @@ Scope source:
 
 - `loc-debt-sprint-scope.md`
 
+Refocused sprint bar:
+
+- Primary metric is materially smaller `prod`.
+- Prefer meaningful reductions in top-prod owners or explicit keeper verdicts; reject low-yield churn.
+- Bias toward shallower files/folders/owners while preserving TigerBeetle gates and idiomatic Zig naming.
+- Cast at source, then keep datatypes stable through the pipeline.
+- Prefer direct owner datatypes over local mirrors when ABI/product boundaries do not force duplication.
+
 Completed slices:
 
 - Slice 1: deleted confirmed dead host wrappers and dead re-export layers.
@@ -276,6 +284,15 @@ Completed slices:
   - the proof forces the deterministic fallback gate and asserts produced pixels match the placeholder raster path
   - research authority: `ses_16158e639ffeiD7Th7LpdjXN0U`
   - reviewer acceptance: `ses_1614ed064ffeXv3iS24h7xBh5T`
+- Item 10ad: deleted the dead exported buffered string-control owner from `howl-vt/src/parser/string_control.zig`.
+  - deleted dead `pub const StringControl`
+  - deleted dead private helper `isDigit`
+  - kept all live `OscControl` and `PassthroughControl` behavior unchanged
+  - grep gate result after edit:
+    - no code hits for `\bStringControl\b`; remaining root hit was only the active contract text before receipt
+    - no code hits for `isDigit\(`
+  - research authority: `ses_161403342ffeRzUg5LCMjPAp2E`
+  - reviewer acceptance: `ses_16123878cffeTsibrhVRzkoYg5`
 
 Accepted keeper verdicts:
 
@@ -425,4 +442,9 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special_sprite` fallback-trampoline removal
+- Re-select the next item 10 slice under the refocused bar:
+  - material `prod` reduction first
+  - shallower owners/files/folders
+  - cast-at-source and stable pipeline datatypes
+  - direct owner datatypes over local mirrors when ABI does not force duplication
+  - explicit keeper verdict instead of low-yield churn when a top file has no meaningful narrow cut

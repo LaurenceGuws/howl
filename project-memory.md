@@ -17,6 +17,25 @@ Rules:
 - Scope doc: `loc-debt-sprint-scope.md`.
 - User direction for this sprint is binding: full sweep, sequential, planned, auditable work; no opportunistic isolated cleanups; accountability first.
 
+### 2026-06-06 Sprint Refocus
+
+- The primary sprint metric is now materially smaller `prod`, not generic hygiene progress.
+- Production code must become smaller, more pragmatic, and more intentional.
+- Files, folders, and owners should be as shallow as possible while still surviving TigerBeetle law and idiomatic Zig naming.
+- Casts should happen at the true source boundary, then datatypes should stay stable through the pipeline; repeated downstream casts are presumed waste and should be targeted as debt.
+- Local mirrors of dependent-repo datatypes are presumed debt when owner-direct types can flow without violating the ABI/product boundary.
+- Zig module shaping is presumed debt when only the C ABI product boundary is actually needed.
+- New item-10 rule:
+  - reject low-yield micro-cuts unless they unlock a broader accepted cut immediately
+  - for each remaining top-prod file, prefer either a meaningful reduction or an explicit keeper verdict recorded quickly
+- Immediate remaining top unresolved pressure after latest accepted cuts:
+  - `howl-render/src/text/raster/special.zig`
+  - `howl-linux-host/src/display/renderer/render_surface.zig`
+  - `howl-render/src/benchmark_main.zig`
+  - `howl-render/src/text/font/ft_hb/special_sprite.zig`
+  - `howl-render/src/render/render_surface_realizer.zig`
+  - `howl-vt/src/parser/string_control.zig`
+
 ### Slice 1 Completed
 
 - Dead host wrappers and dead re-export layers were deleted from `howl-linux-host`:
@@ -672,6 +691,24 @@ Accepted production/test separation cuts completed so far:
 - Verification after the cut:
   - scoped diff receipt: `git diff -- src/text/font/ft_hb/special_sprite.zig src/text/font/ft_hb/glyph_raster.zig` in `howl-render`
   - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
+- Thirtieth accepted prod-reduction cut landed in `howl-vt/src/parser/string_control.zig`.
+- Deleted the dead exported buffered string-control owner:
+  - `pub const StringControl`
+- Deleted dead private helper:
+  - `isDigit`
+- Kept all live `OscControl` and `PassthroughControl` behavior unchanged.
+- Research authority:
+  - `ses_161403342ffeRzUg5LCMjPAp2E`
+- Review path:
+  - worker-ready acceptance in reviewer session `ses_1613d54adffeZowxGp87dkTZPj`
+  - final diff acceptance in reviewer session `ses_16123878cffeTsibrhVRzkoYg5`: `No findings.`
+- Verification after the cut:
+  - scoped diff receipt: `git diff -- src/parser/string_control.zig` in `howl-vt`
+  - grep gate: no code hits for `\bStringControl\b`; remaining root hit during verification was only the active contract text before receipt
+  - grep gate: no code hits for `isDigit\(`
+  - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
 ### Host Render-Surface Runtime Fix Accepted
