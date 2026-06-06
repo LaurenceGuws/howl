@@ -583,6 +583,23 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Twenty-sixth accepted prod-reduction cut landed in `howl-render/src/text/raster/special.zig`.
+- Deduplicated the contiguous block-element ladders in `rasterizeBlockElementAlpha()` for:
+  - `0x2581...0x2587` bottom-eighth block fills
+  - `0x2589...0x258f` left-eighth block fills
+- Kept explicit singleton, shade, quadrant, box-line, octant, and braille owner behavior unchanged.
+- Added focused proofs in `howl-render/src/text/raster/special_test.zig` for:
+  - `0x2580` top-half geometry
+  - `0x2589` left-seven-eighths geometry
+- Delegated reviewer acceptance:
+  - reviewer session `ses_161a5ff2cffewXTHzxtWmLumNr`
+  - verdict: `No findings.` Accept.
+- Verification after the cut:
+  - focused proof: `howl-render`: `zig build test -- "generated special raster draws top half block"`
+  - focused proof: `howl-render`: `zig build test -- "generated special raster draws left seven eighths block"`
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:

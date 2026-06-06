@@ -222,6 +222,14 @@ Completed slices:
   - added one private file-local helper for the shared owned visible-grid allocation/setup lane
   - kept history-specific zero-length allocations and `history_capacity` asymmetry local to the history constructor
   - preserved cleanup behavior and public constructor semantics
+- Item 10z: deduplicated contiguous block-element ladders in `howl-render/src/text/raster/special.zig`.
+  - collapsed the repeated `0x2581...0x2587` bottom-eighth block ladder into one contiguous range arm
+  - collapsed the repeated `0x2589...0x258f` left-eighth block ladder into one contiguous range arm
+  - kept explicit singleton, shade, quadrant, octant, and braille behavior unchanged
+  - added focused proofs in `howl-render/src/text/raster/special_test.zig` for:
+    - `0x2580` top-half geometry
+    - `0x2589` left-seven-eighths geometry
+  - delegated reviewer session `ses_161a5ff2cffewXTHzxtWmLumNr` returned `No findings.` and accepted the diff
 
 Accepted keeper verdicts:
 
@@ -371,4 +379,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `screen.zig` owned visible-grid setup dedup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special.zig` block-element ladder dedup
