@@ -165,6 +165,13 @@ Completed slices:
   - deleted dead private wrappers `driveRender`, `prepare`, `takePreparedUpload`, and `submit`
   - deleted the dead private alias `ScrollMouseOutcome`
   - kept the live render/submit/testing owner surface unchanged
+- Item 10k: purged dead private helpers from `howl-linux-host/src/display/renderer/render_surface.zig`.
+  - deleted dead private helpers `findCreate` and `retireForResource`
+  - kept live render-surface classification, upload, and draw behavior unchanged
+- Item 10l: purged a dead untextured draw seam from `howl-linux-host/src/display/renderer/render_surface.zig`.
+  - deleted the dead optional texture-rect parameter from `drawQuad`
+  - removed the dead textured-branch locals inside `drawQuad`
+  - kept fill and textured draw behavior unchanged
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -248,6 +255,12 @@ Verification receipts:
 - workspace root re-verified after item 10i: `zig build test && zig build check`
 - `howl-linux-host` re-verified after dead-wrapper purge in `context.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10j: `zig build test && zig build check`
+- grep receipt after item 10k: no `findCreate` or `retireForResource` references remain under `howl-linux-host/src/display/renderer`
+- `howl-linux-host` re-verified after dead-helper purge in `render_surface.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10k: `zig build test && zig build check`
+- grep receipt after item 10l: `drawQuad(` has one call site and one definition, both in `render_surface.zig`
+- `howl-linux-host` re-verified after dead untextured draw-seam purge in `render_surface.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10l: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -261,4 +274,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining prod-reduction candidate after the `context.zig` dead-wrapper purge
+- Continue item 10 keeper-vs-debt audit with the next remaining `render_surface.zig` candidate that is still source-backed and narrow enough to avoid fake progress

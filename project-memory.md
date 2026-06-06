@@ -467,6 +467,22 @@ Accepted production/test separation cuts completed so far:
   - `howl-linux-host`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Eleventh accepted prod-reduction cut landed in `howl-linux-host/src/display/renderer/render_surface.zig`.
+- Purged dead private helpers `findCreate` and `retireForResource`.
+- Kept live render-surface classification, upload, and draw behavior unchanged.
+- Verification after the cut:
+  - grep receipt: no `findCreate` or `retireForResource` references remain under `howl-linux-host/src/display/renderer`
+  - `howl-linux-host`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
+- Twelfth accepted prod-reduction cut landed in `howl-linux-host/src/display/renderer/render_surface.zig`.
+- Purged the dead untextured draw seam by deleting the dead optional texture-rect parameter from `drawQuad` and removing the dead textured-branch locals.
+- Kept fill and textured draw behavior unchanged.
+- Verification after the cut:
+  - grep receipt: `drawQuad(` has one call site and one definition, both in `howl-linux-host/src/display/renderer/render_surface.zig`
+  - `howl-linux-host`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
