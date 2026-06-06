@@ -230,6 +230,26 @@ Completed slices:
     - `0x2580` top-half geometry
     - `0x2589` left-seven-eighths geometry
   - delegated reviewer session `ses_161a5ff2cffewXTHzxtWmLumNr` returned `No findings.` and accepted the diff
+- Item 10aa: collapsed dead always-true result seams in `howl-linux-host/src/display/renderer/render_surface.zig`.
+  - converted internal panic-or-success helpers from `bool` to `void`:
+    - `realizeSurface`
+    - `realizeSurfaceLocked`
+    - `validateSurface`
+    - `createTexture`
+    - `uploadTexture`
+    - `retireTexture`
+    - `ensureSurface`
+    - `uploadRenderSurfaceCommands`
+  - deleted dead rollback/result machinery:
+    - `CreatedResources`
+    - `rollbackCreates(...)`
+    - `invalidateUploads(...)`
+    - dead false-branch control flow in `realizeSurfaceLocked(...)`
+  - preserved `uploadRenderSurface(...) -> bool` as the recoverable host-upload boundary
+  - preserved `uploadFillCommands(...)` / `uploadFillCommand(...)` as the only live recoverable `bool` leaves in this owner
+  - updated the sibling proof in `howl-linux-host/src/display/renderer/render_surface_test.zig` for the `validateSurface(...)` signature change
+  - research authority: `ses_1619d8350ffeMaAuBKhwEcP7zS`
+  - reviewer acceptance after rejection recovery: `ses_161724c6dffedjVpU1T4zU2q51`
 
 Accepted keeper verdicts:
 
@@ -379,4 +399,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special.zig` block-element ladder dedup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `render_surface.zig` dead-result seam collapse

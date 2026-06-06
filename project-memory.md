@@ -600,6 +600,35 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Twenty-seventh accepted prod-reduction cut landed in `howl-linux-host/src/display/renderer/render_surface.zig`.
+- Collapsed dead always-true result seams in the host render-surface owner by converting these panic-or-success helpers from `bool` to `void`:
+  - `realizeSurface`
+  - `realizeSurfaceLocked`
+  - `validateSurface`
+  - `createTexture`
+  - `uploadTexture`
+  - `retireTexture`
+  - `ensureSurface`
+  - `uploadRenderSurfaceCommands`
+- Deleted the dead rollback/result machinery made unreachable by those signature collapses:
+  - `CreatedResources`
+  - `rollbackCreates(...)`
+  - `invalidateUploads(...)`
+  - the false-branch control flow in `realizeSurfaceLocked(...)`
+- Preserved the real recoverable host-upload boundary at `uploadRenderSurface(...) -> bool`.
+- Preserved `uploadFillCommands(...)` / `uploadFillCommand(...)` as the only live recoverable `bool` leaves in this owner.
+- Updated the sibling proof in `howl-linux-host/src/display/renderer/render_surface_test.zig` for the `validateSurface(...)` signature change.
+- Research authority:
+  - `ses_1619d8350ffeMaAuBKhwEcP7zS`
+- Review path:
+  - initial review rejection in session `ses_161724c6dffedjVpU1T4zU2q51` correctly caught the remaining `ensureSurface(...) -> bool` seam
+  - worker follow-up fixed that rejection in session `ses_161751f17ffevXtSOzQDDafkPK`
+  - final acceptance in session `ses_161724c6dffedjVpU1T4zU2q51`: `No findings.`
+- Verification after the cut:
+  - scoped diff receipt: `git diff -- src/display/renderer/render_surface.zig src/display/renderer/render_surface_test.zig` in `howl-linux-host`
+  - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:
