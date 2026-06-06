@@ -555,6 +555,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Twenty-second accepted prod-reduction cut landed in `howl-render/src/text/scene.zig`.
+- Made dotted/dashed underline cadence arithmetic a single private source of truth for both count and emission and shared the stepped underline append path locally.
+- Added narrow inline tests proving counted capacity stays aligned with emitted dotted/dashed geometry.
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
