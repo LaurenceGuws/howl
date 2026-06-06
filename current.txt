@@ -152,6 +152,10 @@ Completed slices:
   - added `howl-render/src/text/raster/special_test.zig`
   - rewired `howl-render/src/test/unit/root.zig` to import the sibling test file
   - kept raster production logic unchanged and added no production hooks
+- Item 10h: moved the remaining inline parser proof lanes into existing sibling VT test files.
+  - removed inline tests from `howl-vt/src/parser/string_control.zig` and `howl-vt/src/parser/main.zig`
+  - rehomed those proofs into `howl-vt/src/parser/string_control_test.zig` and `howl-vt/src/parser/main_test.zig`
+  - kept parser production logic unchanged and added no production hooks
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -224,6 +228,10 @@ Verification receipts:
 - grep receipt after item 10g: `src/test/unit/root.zig` imports `../../text/raster/special_test.zig`
 - `howl-render` re-verified after proof-lane extraction from `text/raster/special.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10g: `zig build test && zig build check`
+- grep receipt after item 10h: `^test ` no longer matches `howl-vt/src/parser/string_control.zig`
+- grep receipt after item 10h: `^test ` no longer matches `howl-vt/src/parser/main.zig`
+- `howl-vt` re-verified after parser proof-lane extraction: `zig build test && zig build check`
+- workspace root re-verified after item 10h: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -237,4 +245,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining prod-reduction candidate after `text/raster/special.zig`
+- Continue item 10 keeper-vs-debt audit with the next remaining prod-reduction candidate after the VT parser proof-lane cleanup

@@ -435,6 +435,20 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Eighth accepted prod-reduction cut landed in the VT parser owners.
+- Moved the remaining inline parser proof lanes out of:
+  - `howl-vt/src/parser/string_control.zig`
+  - `howl-vt/src/parser/main.zig`
+- Rehomed those proofs into the existing sibling test files:
+  - `howl-vt/src/parser/string_control_test.zig`
+  - `howl-vt/src/parser/main_test.zig`
+- Kept parser production logic unchanged and added no production hooks.
+- Verification after the cut:
+  - grep receipt: `^test ` no longer matches `howl-vt/src/parser/string_control.zig`
+  - grep receipt: `^test ` no longer matches `howl-vt/src/parser/main.zig`
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
