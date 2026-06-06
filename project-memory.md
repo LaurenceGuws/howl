@@ -483,6 +483,14 @@ Accepted production/test separation cuts completed so far:
   - `howl-linux-host`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Thirteenth accepted prod-reduction cut landed in `howl-linux-host/src/display/renderer/render_surface.zig`.
+- Deleted the dead `GlStateSample` carrier and `sampleGlState()` helper.
+- Replaced the three phase-end sample checks with a direct GL error helper while keeping exact failure messages and render behavior unchanged.
+- Verification after the cut:
+  - grep receipt: no `GlStateSample` or `sampleGlState` references remain in `howl-linux-host/src/display/renderer/render_surface.zig`
+  - `howl-linux-host`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
