@@ -185,6 +185,10 @@ Completed slices:
   - added one file-local helper for the shared 8-way partition logic
   - rewired `eightRange()` and `eighthRange()` to use it
   - kept `fourthRange()` separate and behavior unchanged
+- Item 10p: deduplicated the repeated cursor rectangle emission logic in `howl-render/src/text/scene.zig`.
+  - added one private file-local helper for shared cursor rectangle emission
+  - reused it from `SceneAssembly.appendCursorDraws(...)` and `cursorDraws(...)`
+  - kept public API, allocation behavior, output order, and counts unchanged
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -282,6 +286,8 @@ Verification receipts:
 - workspace root re-verified after item 10n: `zig build test && zig build check`
 - `howl-render` re-verified after local 8-way partition dedup in `special.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10o: `zig build test && zig build check`
+- `howl-render` re-verified after local cursor rectangle emission dedup in `scene.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10p: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -295,4 +301,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special.zig` 8-way partition dedup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `scene.zig` cursor rectangle dedup
