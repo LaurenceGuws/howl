@@ -775,6 +775,29 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Thirty-fourth accepted prod-reduction cut landed across:
+  - `howl-vt/src/xterm/csi/params.zig`
+  - `howl-vt/src/xterm/csi/leader.zig`
+  - `howl-vt/src/xterm/csi/private.zig`
+  - `howl-vt/src/action/route_test.zig`
+- Centralized the repeated key-format `u8` saturation parse into one narrow CSI parameter helper.
+- Rerouted only the repeated key-format parse sites:
+  - `leader.zig` key-format resource parse
+  - `private.zig` key-format query parse
+- Left unrelated leader/private parameter domains unchanged.
+- Added focused route proofs for:
+  - `CSI > f` resource saturation above `255`
+  - `CSI ? g` query saturation above `255`
+  - non-positive normalization to `0`
+- Research authority:
+  - `ses_160b0cbe5ffeU1TC2M3yYs9i7D`
+- Review path:
+  - worker-ready acceptance in reviewer session `ses_160ae8e33ffebtMsfrVszjc7PP`
+  - final diff acceptance in reviewer session `ses_160a9d8f7ffeEUo1W1IPmsolQr`: `No findings.`
+- Verification after the cut:
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:

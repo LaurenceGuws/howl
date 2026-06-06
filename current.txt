@@ -327,6 +327,18 @@ Completed slices:
   - kept FFI cursor-style translation behavior unchanged
   - research authority: `ses_160b9c4b0ffelzR1kQPdPFgqz7`
   - reviewer acceptance: `ses_160b3a4beffeFWiWa5l9MRGPuJ`
+- Item 10ah: centralized the repeated key-format `u8` saturation parse in `howl-vt` CSI owners.
+  - added one narrow default-0, saturating-to-`u8` helper in `howl-vt/src/xterm/csi/params.zig`
+  - rerouted only the repeated key-format parse sites:
+    - `howl-vt/src/xterm/csi/leader.zig` key-format resource parse
+    - `howl-vt/src/xterm/csi/private.zig` key-format query parse
+  - left unrelated `leader.zig` parameter domains unchanged
+  - added focused route proofs for:
+    - `CSI > f` resource saturation above `255`
+    - `CSI ? g` query saturation above `255`
+    - non-positive normalization to `0`
+  - research authority: `ses_160b0cbe5ffeU1TC2M3yYs9i7D`
+  - reviewer acceptance: `ses_160a9d8f7ffeEUo1W1IPmsolQr`
 
 Reopened previously skipped low-yield avenues:
 
