@@ -11,10 +11,13 @@ Scope source:
 Refocused sprint bar:
 
 - Primary metric is materially smaller `prod`.
-- Prefer meaningful reductions in top-prod owners or explicit keeper verdicts; reject low-yield churn.
+- Prefer meaningful reductions in top-prod owners, but do not skip real debt only because the cut is small.
 - Bias toward shallower files/folders/owners while preserving TigerBeetle gates and idiomatic Zig naming.
 - Cast at source, then keep datatypes stable through the pipeline.
 - Prefer direct owner datatypes over local mirrors when ABI/product boundaries do not force duplication.
+- Reopened rule:
+  - small cuts are valid when they remove real dead code, aliasing, owner-false shaping, repeated casts, or local datatype mirrors
+  - keeper verdicts now mean no real debt or redesign-only remaining work, not merely low yield
 
 Completed slices:
 
@@ -293,13 +296,25 @@ Completed slices:
     - no code hits for `isDigit\(`
   - research authority: `ses_161403342ffeRzUg5LCMjPAp2E`
   - reviewer acceptance: `ses_16123878cffeTsibrhVRzkoYg5`
+- Item 10ae: deleted the dead input-token owner file from `howl-vt`.
+  - deleted `howl-vt/src/input/tokens.zig`
+  - removed the dead unit-root import and test touchpoint from `howl-vt/src/howl_vt.zig`
+  - removed the stale owner-map entry from `libs.yaml`
+  - added no replacement owner, alias, shim, or input redesign
+  - grep gate result after edit:
+    - no code hits for `input/tokens\.zig`
+    - no code hits for `\bparseKeyToken\b`
+    - no code hits for `\bparseModifierBits\b`
+    - no code hits for `KEYCODE_`
+  - research authority: `ses_1610ded9effeEP0ncqQ5cMEcgI`
+  - reviewer acceptance after metadata fix: `ses_160ca5586ffeNb14NL5LLre9BS`
 
-Closed keeper avenues:
+Reopened previously skipped low-yield avenues:
 
 - `howl-render/src/text/raster/special.zig`
-  - reviewer `ses_1615b3364ffe1mT12ADBGAXVSs` rejected further wrapper deletion as below the refocused bar; treat current file-local micro-cuts as closed unless bundled into a broader accepted reduction
+  - prior reviewer rejection based only on low-yield threshold is no longer binding; re-audit remaining real micro-cuts under the new rule
 - `howl-linux-host/src/display/renderer/render_surface.zig`
-  - reviewer `ses_1611dc2b5ffeoV63Fykuea4frc` rejected the residual `drawSpriteCommand(...)` / `drawGlyphCommand(...)` dead-bool cleanup as below the refocused bar; treat that seam as closed unless it rides inside a broader accepted reduction
+  - prior reviewer rejection of the residual dead-bool seam based only on low-yield threshold is no longer binding; re-audit under the new rule
 
 Accepted keeper verdicts:
 
@@ -449,9 +464,7 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Re-select the next item 10 slice under the refocused bar:
-  - material `prod` reduction first
-  - shallower owners/files/folders
-  - cast-at-source and stable pipeline datatypes
-  - direct owner datatypes over local mirrors when ABI does not force duplication
-  - explicit keeper verdict instead of low-yield churn when a top file has no meaningful narrow cut
+- Restart the remaining item 10 audit under the updated rule:
+  - take real cuts even when small
+  - still prefer the largest wins first when available
+  - only keeper a file when the remaining work is not real debt or broadens into redesign

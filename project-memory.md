@@ -25,9 +25,10 @@ Rules:
 - Casts should happen at the true source boundary, then datatypes should stay stable through the pipeline; repeated downstream casts are presumed waste and should be targeted as debt.
 - Local mirrors of dependent-repo datatypes are presumed debt when owner-direct types can flow without violating the ABI/product boundary.
 - Zig module shaping is presumed debt when only the C ABI product boundary is actually needed.
-- New item-10 rule:
-  - reject low-yield micro-cuts unless they unlock a broader accepted cut immediately
-  - for each remaining top-prod file, prefer either a meaningful reduction or an explicit keeper verdict recorded quickly
+- Updated sprint rule:
+  - do not skip a cut only because it is small
+  - take any real dead-code, aliasing, owner-false, cast-churn, or local-datatype-mirror reduction that survives TigerBeetle gates
+  - keep preferring larger reductions first, but do not close real low-hanging fruit just for being low-yield
 - Immediate remaining top unresolved pressure after latest accepted cuts:
   - `howl-render/src/text/raster/special.zig`
   - `howl-linux-host/src/display/renderer/render_surface.zig`
@@ -36,16 +37,13 @@ Rules:
   - `howl-render/src/render/render_surface_realizer.zig`
   - `howl-vt/src/parser/string_control.zig`
 
-Keeper-boundary closures under the refocused bar:
+Reopened previously skipped low-yield avenues:
 
-- `howl-render/src/text/raster/special.zig`
-  - reviewer session `ses_1615b3364ffe1mT12ADBGAXVSs` rejected the remaining wrapper-deletion micro-cut as below keeper threshold unless paired with broader proof work
-  - treat file-local micro-cuts there as closed unless a broader accepted reduction appears
-- `howl-linux-host/src/display/renderer/render_surface.zig`
-  - reviewer session `ses_1611dc2b5ffeoV63Fykuea4frc` rejected the residual `drawSpriteCommand(...)` / `drawGlyphCommand(...)` dead-bool cleanup as below the refocused bar
-  - treat that seam as closed unless it rides inside a broader accepted reduction
-- `howl-render/src/render/render_surface_realizer.zig`
-  - research session `ses_16143e3dfffe41Q6T07fK5LU2i` found no meaningful narrow cut left under the refocused bar; treat current file-local cleanup ideas as keeper-boundary
+- Any prior rejection based only on "below the refocused bar" is no longer binding.
+- Re-audit small real cuts again if they remove actual dead code, wrappers, aliasing, repeated casts, or local datatype mirrors.
+- Keeper verdicts should now mean either:
+  - no real debt was found, or
+  - the remaining work broadens into redesign rather than a narrow cleanup.
 
 ### Slice 1 Completed
 
@@ -719,6 +717,24 @@ Accepted production/test separation cuts completed so far:
   - scoped diff receipt: `git diff -- src/parser/string_control.zig` in `howl-vt`
   - grep gate: no code hits for `\bStringControl\b`; remaining root hit during verification was only the active contract text before receipt
   - grep gate: no code hits for `isDigit\(`
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
+- Thirty-first accepted prod-reduction cut landed across:
+  - `howl-vt/src/howl_vt.zig`
+  - `howl-vt/src/input/tokens.zig` (deleted)
+  - `libs.yaml`
+- Deleted the dead input-token owner file `howl-vt/src/input/tokens.zig`.
+- Removed its dead unit-root import/test touchpoint from `howl-vt/src/howl_vt.zig`.
+- Removed the stale owner-map entry from `libs.yaml` so repository metadata no longer advertises the deleted owner.
+- Research authority:
+  - `ses_1610ded9effeEP0ncqQ5cMEcgI`
+- Review path:
+  - worker-ready acceptance in reviewer session `ses_1610c16b8ffenvxSNcjyzbyp2D`
+  - initial diff rejection in reviewer session `ses_160ca5586ffeNb14NL5LLre9BS` caught the stale `libs.yaml` owner-map path
+  - final acceptance in reviewer session `ses_160ca5586ffeNb14NL5LLre9BS`: `No findings.`
+- Verification after the cut:
+  - grep gate: no code hits for `input/tokens\.zig`, `\bparseKeyToken\b`, `\bparseModifierBits\b`, or `KEYCODE_`
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 

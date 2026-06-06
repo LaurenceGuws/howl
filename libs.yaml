@@ -190,7 +190,6 @@ howl-vt:
         encode: howl-vt/src/input/encode.zig
         mouse: howl-vt/src/input/mouse.zig
         keyboard: howl-vt/src/input/keyboard.zig
-        tokens: howl-vt/src/input/tokens.zig
         encoded: howl-vt/src/input/encoded.zig
     xterm:
       owners:
