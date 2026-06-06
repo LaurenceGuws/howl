@@ -176,6 +176,11 @@ Completed slices:
   - deleted `GlStateSample` and `sampleGlState()`
   - replaced the three phase-end sample checks with a direct GL error helper
   - kept exact failure messages and render behavior unchanged
+- Item 10n: purged dead and unreachable local raster helpers from `howl-render/src/text/font/ft_hb/special_sprite.zig`.
+  - deleted dead private declarations `AlphaSegment`, `drawAlphaH()`, `drawAlphaV()`, `fillAlphaChecker()`, and `drawAlphaRoundedCorner()`
+  - deleted unreachable `0x1fb9a` / `0x1fb9b` arms only from `drawAlphaHalfTriangleCodepoint()`
+  - removed the identical no-op branch in `drawAlphaBranchNode()`
+  - removed dead local `steps` from `drawAlphaSpinner()`
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -268,6 +273,9 @@ Verification receipts:
 - grep receipt after item 10m: no `GlStateSample` or `sampleGlState` references remain in `howl-linux-host/src/display/renderer/render_surface.zig`
 - `howl-linux-host` re-verified after dead GL state sample removal in `render_surface.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10m: `zig build test && zig build check`
+- grep receipt after item 10n: no `AlphaSegment`, `drawAlphaH`, `drawAlphaV`, `fillAlphaChecker`, or `drawAlphaRoundedCorner` references remain in `special_sprite.zig`
+- `howl-render` re-verified after local dead-helper cleanup in `special_sprite.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10n: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -281,4 +289,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `render_surface.zig` local GL-sample cleanup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special_sprite.zig` dead-helper cleanup

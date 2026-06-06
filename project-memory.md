@@ -491,6 +491,15 @@ Accepted production/test separation cuts completed so far:
   - `howl-linux-host`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Fourteenth accepted prod-reduction cut landed in `howl-render/src/text/font/ft_hb/special_sprite.zig`.
+- Deleted dead private declarations `AlphaSegment`, `drawAlphaH()`, `drawAlphaV()`, `fillAlphaChecker()`, and `drawAlphaRoundedCorner()`.
+- Deleted unreachable `0x1fb9a` / `0x1fb9b` arms only from `drawAlphaHalfTriangleCodepoint()` while preserving the live top-level dispatch for those codepoints.
+- Removed the identical no-op branch in `drawAlphaBranchNode()` and the dead `steps` local in `drawAlphaSpinner()`.
+- Verification after the cut:
+  - grep receipt: no `AlphaSegment`, `drawAlphaH`, `drawAlphaV`, `fillAlphaChecker`, or `drawAlphaRoundedCorner` references remain in `special_sprite.zig`
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
