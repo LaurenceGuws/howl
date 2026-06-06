@@ -576,6 +576,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Twenty-fifth accepted prod-reduction cut landed in `howl-vt/src/screen.zig`.
+- Added one private file-local helper for the shared owned visible-grid allocation/setup lane used by `initWithCellsAndDefaultCursorStyle(...)` and `initWithCellsHistoryAndDefaultCursorStyle(...)`.
+- Kept history-specific zero-length allocations and the `history_capacity` asymmetry local to the history constructor and preserved cleanup behavior and public constructor semantics.
+- Verification after the cut:
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof

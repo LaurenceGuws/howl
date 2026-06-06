@@ -218,6 +218,10 @@ Completed slices:
   - kept `appendAssetText()` and `appendAssetPayload()` as distinct wrappers
   - extracted one shared asset-sampling loop and added an explicit payload sanitizer alongside `sanitizeTextByte()`
   - kept protocol roles and asset-end short-write behavior unchanged
+- Item 10y: deduplicated owned visible-grid allocation/setup in `howl-vt/src/screen.zig`.
+  - added one private file-local helper for the shared owned visible-grid allocation/setup lane
+  - kept history-specific zero-length allocations and `history_capacity` asymmetry local to the history constructor
+  - preserved cleanup behavior and public constructor semantics
 
 Accepted keeper verdicts:
 
@@ -341,6 +345,8 @@ Verification receipts:
 - workspace root re-verified after item 10w: `zig build test && zig build check`
 - `howl-vt` re-verified after asset-sampling dedup in `simulation/protocol.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10x: `zig build test && zig build check`
+- `howl-vt` re-verified after owned visible-grid setup dedup in `screen.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10y: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -354,4 +360,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `simulation/protocol.zig` asset-sampling dedup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `screen.zig` owned visible-grid setup dedup
