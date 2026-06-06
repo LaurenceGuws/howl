@@ -425,6 +425,16 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Seventh accepted prod-reduction cut landed in `howl-render/src/text/raster/special.zig`.
+- Moved the inline proof lane and test-only helpers out of the production owner into `howl-render/src/text/raster/special_test.zig`.
+- Rewired `howl-render/src/test/unit/root.zig` to import the sibling test file.
+- Kept raster production logic unchanged and added no production hooks.
+- Verification after the cut:
+  - grep receipt: `^test ` no longer matches `howl-render/src/text/raster/special.zig`
+  - grep receipt: `src/test/unit/root.zig` imports `../../text/raster/special_test.zig`
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof

@@ -147,6 +147,11 @@ Completed slices:
   - added `howl-render/src/render/render_surface_realizer_test.zig`
   - rewired `howl-render/src/test/unit/root.zig` to import the sibling test file instead of the production owner directly
   - kept production logic unchanged and added no production hooks
+- Item 10g: moved the inline proof lane out of `howl-render/src/text/raster/special.zig` into a sibling test file.
+  - removed inline tests and test-only helpers from the production owner
+  - added `howl-render/src/text/raster/special_test.zig`
+  - rewired `howl-render/src/test/unit/root.zig` to import the sibling test file
+  - kept raster production logic unchanged and added no production hooks
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -215,6 +220,10 @@ Verification receipts:
 - grep receipt after item 10f: `src/test/unit/root.zig` imports `../../render/render_surface_realizer_test.zig`
 - `howl-render` re-verified after proof-lane extraction from `render_surface_realizer.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10f: `zig build test && zig build check`
+- grep receipt after item 10g: `^test ` no longer matches `howl-render/src/text/raster/special.zig`
+- grep receipt after item 10g: `src/test/unit/root.zig` imports `../../text/raster/special_test.zig`
+- `howl-render` re-verified after proof-lane extraction from `text/raster/special.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10g: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -228,4 +237,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining prod-reduction candidate after `render_surface_realizer.zig`
+- Continue item 10 keeper-vs-debt audit with the next remaining prod-reduction candidate after `text/raster/special.zig`
