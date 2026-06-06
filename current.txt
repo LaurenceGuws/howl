@@ -266,6 +266,16 @@ Completed slices:
     - proves built scene output emits exactly two `.underline` draws in top-then-bottom geometry order
   - research authority: `ses_16169d6b3ffeS2zcfZObPZPY92`
   - reviewer acceptance: `ses_161610c44ffeV6TzWIVqLi2yK4`
+- Item 10ac: removed the owner-false deterministic fallback trampoline from `howl-render/src/text/font/ft_hb/special_sprite.zig`.
+  - deleted `special_sprite.rasterizeFallbackGlyph(...)`
+  - deleted the dead `fallback` import from `special_sprite.zig`
+  - rerouted both deterministic fallback callsites in `howl-render/src/text/font/ft_hb/glyph_raster.zig` directly to `fallback.rasterAsciiOrPlaceholder(...)`
+  - added focused inline proof in `glyph_raster.zig` covering both provider-owned deterministic fallback entry points:
+    - `rasterizeProviderGlyph(...)`
+    - `providerRasterizeSprite(...)` through `tryRasterizeProviderSpecialCase(...)`
+  - the proof forces the deterministic fallback gate and asserts produced pixels match the placeholder raster path
+  - research authority: `ses_16158e639ffeiD7Th7LpdjXN0U`
+  - reviewer acceptance: `ses_1614ed064ffeXv3iS24h7xBh5T`
 
 Accepted keeper verdicts:
 
@@ -415,4 +425,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `scene.zig` identity-route deletion
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special_sprite` fallback-trampoline removal

@@ -653,6 +653,27 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Twenty-ninth accepted prod-reduction cut landed across:
+  - `howl-render/src/text/font/ft_hb/special_sprite.zig`
+  - `howl-render/src/text/font/ft_hb/glyph_raster.zig`
+- Removed the owner-false deterministic fallback trampoline by deleting:
+  - `special_sprite.rasterizeFallbackGlyph(...)`
+  - the dead `fallback` import from `special_sprite.zig`
+- Rerouted both closed deterministic fallback callsites in `glyph_raster.zig` directly to `fallback.rasterAsciiOrPlaceholder(...)`.
+- Added focused inline proof in `glyph_raster.zig` covering both provider-owned deterministic fallback entry points:
+  - `rasterizeProviderGlyph(...)`
+  - `providerRasterizeSprite(...)` through `tryRasterizeProviderSpecialCase(...)`
+- The proof forces the deterministic fallback gate and asserts produced pixels match the placeholder raster path.
+- Research authority:
+  - `ses_16158e639ffeiD7Th7LpdjXN0U`
+- Review path:
+  - worker-ready acceptance in reviewer session `ses_161555d16ffeauznZS20tqxQkO`
+  - final diff acceptance in reviewer session `ses_1614ed064ffeXv3iS24h7xBh5T`: `No findings.`
+- Verification after the cut:
+  - scoped diff receipt: `git diff -- src/text/font/ft_hb/special_sprite.zig src/text/font/ft_hb/glyph_raster.zig` in `howl-render`
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:
