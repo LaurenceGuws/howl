@@ -294,6 +294,13 @@ Completed slices:
   - research authority: `ses_161403342ffeRzUg5LCMjPAp2E`
   - reviewer acceptance: `ses_16123878cffeTsibrhVRzkoYg5`
 
+Closed keeper avenues:
+
+- `howl-render/src/text/raster/special.zig`
+  - reviewer `ses_1615b3364ffe1mT12ADBGAXVSs` rejected further wrapper deletion as below the refocused bar; treat current file-local micro-cuts as closed unless bundled into a broader accepted reduction
+- `howl-linux-host/src/display/renderer/render_surface.zig`
+  - reviewer `ses_1611dc2b5ffeoV63Fykuea4frc` rejected the residual `drawSpriteCommand(...)` / `drawGlyphCommand(...)` dead-bool cleanup as below the refocused bar; treat that seam as closed unless it rides inside a broader accepted reduction
+
 Accepted keeper verdicts:
 
 - `howl-render/src/benchmark_main.zig`

@@ -24,6 +24,11 @@ User direction:
 - Howl is much younger than Alacritty but already has roughly double the LOC.
 - The gap is presumed to be mostly dead code, duplication, and unnecessary deep abstractions.
 - We want small, concise, pragmatic code.
+- The sole sprint focus is making production code smaller, more pragmatic, more intentional.
+- Files, folders, and owners should be as shallow as possible while still surviving TigerBeetle gates and idiomatic Zig naming.
+- Cast at the source, then keep datatypes consistent through the pipeline; repeated downstream casts are presumed waste and should be removed when owner-truth permits.
+- Prefer direct owner datatypes over redefining dependent-repo shapes locally when the product boundary does not require a local copy.
+- Zig module shaping is debt when only the C ABI product surface is needed.
 - Production code should be clearly separated from everything around it.
 - Test-heavy is acceptable, but if code exists only for tests it should move away from real production owners or be deleted.
 - The sprint is not a maybe-here-maybe-there cleanup. Everything is in scope.
@@ -68,6 +73,11 @@ In-scope debt classes:
    - Files that coordinate too many unrelated responsibilities.
    - Files whose imports already reveal smaller real owners that should exist separately.
    - Files whose names are ownership-neutral buckets rather than real owners.
+
+6. Type and cast churn.
+   - Repeated casts through a pipeline instead of casting once at the true boundary.
+   - Local datatype mirrors where the real owner datatype can flow directly.
+   - Zig-shaped module surfaces where the ABI boundary already owns the contract.
 
 Repository-wide findings to preserve:
 
@@ -236,6 +246,12 @@ Audit rules during implementation:
 - No test-only helpers left in production owners.
 - No benchmark or simulation code hidden behind proof paths.
 - Every kept abstraction must answer: what exact owner truth does this file preserve that direct imports would not?
+- Material-yield bar:
+  - reject micro-cuts that only remove a handful of lines unless they unlock a broader accepted cut immediately
+  - for top prod files, prefer either a meaningful reduction or an explicit keeper verdict recorded quickly
+- Cast discipline:
+  - cast once at the narrowest true source boundary, then keep the datatype stable through the rest of the pipeline
+  - repeated cast ladders and owner-false local type mirrors are presumed debt until proved necessary by ABI or product boundaries
 
 Completion criteria:
 

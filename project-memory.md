@@ -36,6 +36,17 @@ Rules:
   - `howl-render/src/render/render_surface_realizer.zig`
   - `howl-vt/src/parser/string_control.zig`
 
+Keeper-boundary closures under the refocused bar:
+
+- `howl-render/src/text/raster/special.zig`
+  - reviewer session `ses_1615b3364ffe1mT12ADBGAXVSs` rejected the remaining wrapper-deletion micro-cut as below keeper threshold unless paired with broader proof work
+  - treat file-local micro-cuts there as closed unless a broader accepted reduction appears
+- `howl-linux-host/src/display/renderer/render_surface.zig`
+  - reviewer session `ses_1611dc2b5ffeoV63Fykuea4frc` rejected the residual `drawSpriteCommand(...)` / `drawGlyphCommand(...)` dead-bool cleanup as below the refocused bar
+  - treat that seam as closed unless it rides inside a broader accepted reduction
+- `howl-render/src/render/render_surface_realizer.zig`
+  - research session `ses_16143e3dfffe41Q6T07fK5LU2i` found no meaningful narrow cut left under the refocused bar; treat current file-local cleanup ideas as keeper-boundary
+
 ### Slice 1 Completed
 
 - Dead host wrappers and dead re-export layers were deleted from `howl-linux-host`:
