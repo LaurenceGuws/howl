@@ -357,6 +357,17 @@ Slice 7 close verdict:
 Dirty-state note:
 
 - `howl-linux-host/src/display/frame_timer.zig` still carries the earlier local pacing cleanup and was not changed by this slice
+- Accepted uncommitted host runtime fix pending commit:
+  - `howl-linux-host/src/display/renderer/render_surface.zig`
+  - `howl-linux-host/src/display/renderer/render_surface_test.zig`
+  - delegated reviewer session `ses_161d2316dffe8ECpz3EvKuMzKl` returned `No findings.` and accepted the diff
+  - fix widens render-surface classification so:
+    - `renderSurfaceGlyphPatch()` accepts bounded `HOWL_RENDER_SURFACE_COMMAND_DRAW_SPRITE`
+    - `renderSurfaceFillPatch()` accepts bounded resource-free `CLEAR_RECT` + `FILL_RECT` patch surfaces
+    - `uploadFillCommands()` asserts the accepted fill-only or fill-patch shapes it can upload
+  - verification receipts preserved for this fix:
+    - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+    - workspace root: `zig build test && zig build check`
 
 Next slice to promote:
 

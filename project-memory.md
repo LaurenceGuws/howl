@@ -583,6 +583,31 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+### Host Render-Surface Runtime Fix Accepted
+
+- Accepted a narrow host correctness fix in:
+  - `howl-linux-host/src/display/renderer/render_surface.zig`
+  - `howl-linux-host/src/display/renderer/render_surface_test.zig`
+- Runtime symptom:
+  - `zig build run -Doptimize=ReleaseFast` could panic with `trusted render surface has unsupported shape` from `uploadRenderSurface(...)`
+- Accepted root cause:
+  - classifier gaps allowed prepared patch surfaces to reach no recognized host upload shape even though the upload paths could handle them
+  - `renderSurfaceGlyphPatch()` rejected bounded `DRAW_SPRITE` commands mixed with glyph patch commands
+  - `renderSurfaceFillPatch()` rejected bounded resource-free patch surfaces containing `CLEAR_RECT` plus `FILL_RECT`
+- Accepted fix shape:
+  - `renderSurfaceGlyphPatch()` now accepts bounded `HOWL_RENDER_SURFACE_COMMAND_DRAW_SPRITE` with sprite-command validation and patch-bounds checks
+  - `renderSurfaceFillPatch()` now accepts bounded resource-free `CLEAR_RECT` and `FILL_RECT` patch commands by validating the existing fill command shape plus positive area and patch bounds
+  - `uploadFillCommands()` now asserts the exact accepted upload shapes: fill-only or fill-patch
+- Added focused regression proofs:
+  - `render surface fill patch accepts bounded clear and fill commands`
+  - `render surface glyph patch accepts bounded sprite and glyph commands`
+- Delegated reviewer acceptance:
+  - reviewer session `ses_161d2316dffe8ECpz3EvKuMzKl`
+  - verdict: `No findings.` Accept.
+- Verification after the fix:
+  - `howl-linux-host`: `zig build test && zig build check && zig build run -Doptimize=ReleaseFast`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
