@@ -519,6 +519,14 @@ Accepted production/test separation cuts completed so far:
 - Remaining workload builders are live benchmark payload truth, not duplicate scaffolding.
 - Remaining execution plumbing and the two output formats are live owner behavior for this benchmark surface.
 
+- Seventeenth accepted prod-reduction cut landed in `howl-render/src/prepared/render_surface_emitter.zig`.
+- Removed the remaining testing-only emission pipeline, exported fixture/types, and `testing.emit` from the production owner and rehomed them into `howl-render/src/prepared/render_surface_emitter_test.zig`.
+- Kept only `testing.appendGlyphRef` and `testing.publishSurface` in production.
+- Verification after the cut:
+  - grep receipt: `render_surface_emitter.zig` no longer contains `ColorMode`, `emitTesting`, `resetTesting`, `appendTestingFillPass`, `appendTestingSprites`, `appendTestingCreate`, `appendTestingUpload`, `spriteResource`, `uploadFormat`, `Fixture`, `Fill`, `Sprite`, or `testing.emit`
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof

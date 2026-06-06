@@ -189,6 +189,10 @@ Completed slices:
   - added one private file-local helper for shared cursor rectangle emission
   - reused it from `SceneAssembly.appendCursorDraws(...)` and `cursorDraws(...)`
   - kept public API, allocation behavior, output order, and counts unchanged
+- Item 10q: removed the remaining testing-only emission path from `howl-render/src/prepared/render_surface_emitter.zig`.
+  - rehomed the testing-only emission pipeline, fixture/types, and `testing.emit` into `render_surface_emitter_test.zig`
+  - kept only `testing.appendGlyphRef` and `testing.publishSurface` in production
+  - kept production emitter behavior and ABI-visible surface contents unchanged
 
 Accepted keeper verdicts:
 
@@ -295,6 +299,9 @@ Verification receipts:
 - workspace root re-verified after item 10o: `zig build test && zig build check`
 - `howl-render` re-verified after local cursor rectangle emission dedup in `scene.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10p: `zig build test && zig build check`
+- grep receipt after item 10q: `render_surface_emitter.zig` no longer contains `ColorMode`, `emitTesting`, `resetTesting`, `appendTestingFillPass`, `appendTestingSprites`, `appendTestingCreate`, `appendTestingUpload`, `spriteResource`, `uploadFormat`, `Fixture`, `Fill`, `Sprite`, or `testing.emit`
+- `howl-render` re-verified after testing-path extraction from `render_surface_emitter.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10q: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -308,4 +315,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the accepted `benchmark_main.zig` keeper verdict
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `render_surface_emitter.zig` testing-path extraction
