@@ -449,6 +449,17 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Ninth accepted prod-reduction cut landed in `howl-render/src/text/font/ft_hb/support.zig`.
+- Moved the remaining FT/HB support proofs out of the production owner into `howl-render/src/text/font/ft_hb/support_test.zig`.
+- Removed the test-only import and test-only font-path helper from production.
+- Kept production behavior unchanged and used only one narrow testing hook for the bounded-buffer proof.
+- Verification after the cut:
+  - grep receipt: `support.zig` has no `^test ` matches
+  - grep receipt: `support.zig` no longer references `test_font_options`, `InjectedTestFontPaths`, or `injectedTestFontPaths`
+  - grep receipt: `src/test/unit/root.zig` imports `../../text/font/ft_hb/support_test.zig`
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
