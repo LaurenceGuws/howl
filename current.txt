@@ -189,6 +189,13 @@ Completed slices:
   - added one private file-local helper for shared cursor rectangle emission
   - reused it from `SceneAssembly.appendCursorDraws(...)` and `cursorDraws(...)`
   - kept public API, allocation behavior, output order, and counts unchanged
+
+Accepted keeper verdicts:
+
+- `howl-render/src/benchmark_main.zig`
+  - item 10e already removed the narrow repeated workload-assembly seam through `workloadDamage(...)` and `buildWorkload(...)`
+  - remaining workload builders are live benchmark payload truth, not duplicate scaffolding
+  - remaining execution plumbing and the two output formats are live owner behavior for this benchmark surface
 - Gate fix 1: replaced the flaky PTY interrupt proof with a deterministic child-group proof and fixed control signal routing.
   - rewrote `howl-pty/src/pty_integration_test.zig` to prove interrupt delivery with a foreground child shell trap instead of a timing-based exit wait
   - fixed `howl-pty/src/pty/posix.zig` so `control()` signals the child process group instead of only the shell pid
@@ -301,4 +308,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `scene.zig` cursor rectangle dedup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the accepted `benchmark_main.zig` keeper verdict

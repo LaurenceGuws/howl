@@ -514,6 +514,11 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Accepted keeper verdict for `howl-render/src/benchmark_main.zig`.
+- Item 10e already removed the narrow repeated workload-assembly seam through `workloadDamage(...)` and `buildWorkload(...)`.
+- Remaining workload builders are live benchmark payload truth, not duplicate scaffolding.
+- Remaining execution plumbing and the two output formats are live owner behavior for this benchmark surface.
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
