@@ -200,6 +200,10 @@ Completed slices:
 - Item 10s: deduplicated the braille 4x4 supersample loop in `howl-render/src/text/raster/special.zig`.
   - routed braille dot coverage through the existing supersample helper with file-local braille coverage helpers
   - kept braille layout, fast paths, clipped `w`/`h`, and alpha accumulation semantics unchanged
+- Item 10t: collapsed the dead validation wrapper layer in `howl-linux-host/src/display/renderer/render_surface.zig`.
+  - deleted private single-use wrappers `validateCreates`, `validateUploads`, and `validateRetires`
+  - inlined their loops into `validateSurfaceTransition()` in create -> upload -> retire order
+  - kept validation behavior and testing hook signatures unchanged
 
 Accepted keeper verdicts:
 
@@ -313,6 +317,8 @@ Verification receipts:
 - workspace root re-verified after item 10r: `zig build test && zig build check`
 - `howl-render` re-verified after braille supersample dedup in `special.zig`: `zig build test && zig build check`
 - workspace root re-verified after item 10s: `zig build test && zig build check`
+- `howl-linux-host` re-verified after validation-wrapper collapse in `render_surface.zig`: `zig build test && zig build check`
+- workspace root re-verified after item 10t: `zig build test && zig build check`
 
 Slice 7 close verdict:
 
@@ -326,4 +332,4 @@ Dirty-state note:
 
 Next slice to promote:
 
-- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the `special.zig` braille supersample dedup
+- Continue item 10 keeper-vs-debt audit with the next remaining source-backed candidate after the host `render_surface.zig` validation-wrapper collapse

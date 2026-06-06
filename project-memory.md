@@ -541,6 +541,13 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Twentieth accepted prod-reduction cut landed in `howl-linux-host/src/display/renderer/render_surface.zig`.
+- Deleted the private single-use validation wrappers `validateCreates`, `validateUploads`, and `validateRetires` and inlined their loops into `validateSurfaceTransition()`.
+- Kept validation behavior and the testing hook surface unchanged.
+- Verification after the cut:
+  - `howl-linux-host`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 - Keeper pressure noted during slice 7b audit:
   - `howl-linux-host/src/terminal/render/retained.zig` currently reads as a real owner of render-session retained state and ABI mutation, not an alias bucket like the old PTY/VT retained-state structs
   - do not collapse that file mechanically without stronger source-backed proof
