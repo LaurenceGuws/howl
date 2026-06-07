@@ -364,6 +364,13 @@ Completed slices:
   - left `fourthRange(...)` unchanged
   - research authority: `ses_1609913d5ffeIvpUiNYfaOzL1Z`
   - reviewer acceptance: `ses_160904847ffenO0IOhvrifR6TN`
+- Item 10al: removed the dead `inverted` parameter from `howl-render/src/text/font/ft_hb/special_sprite.zig` `drawAlphaTriangle(...)`.
+  - changed `drawAlphaTriangle(dst, w, h, left, inverted)` to `drawAlphaTriangle(dst, w, h, left)`
+  - deleted the dead `_ = inverted;` line
+  - rewrote only the two `rasterizeSpecialSpriteAlpha(...)` callsites
+  - preserved triangle raster logic and output
+  - research authority: `ses_1609913c0ffeHcwX6wg27onR4t`
+  - reviewer acceptance: `ses_1608d0f71ffeyvWSZJczG42r5U`
 
 Reopened previously skipped low-yield avenues:
 

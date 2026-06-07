@@ -849,6 +849,20 @@ Accepted production/test separation cuts completed so far:
   - `howl-render`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Thirty-eighth accepted prod-reduction cut landed in `howl-render/src/text/font/ft_hb/special_sprite.zig`.
+- Removed the dead `inverted` parameter from `drawAlphaTriangle(...)`.
+- Changed the function signature from `drawAlphaTriangle(dst, w, h, left, inverted)` to `drawAlphaTriangle(dst, w, h, left)`.
+- Deleted the dead `_ = inverted;` line.
+- Rewrote only the two `rasterizeSpecialSpriteAlpha(...)` callsites to pass just `left`.
+- Preserved triangle raster logic and output.
+- Research authority:
+  - `ses_1609913c0ffeHcwX6wg27onR4t`
+- Review path:
+  - final diff acceptance in reviewer session `ses_1608d0f71ffeyvWSZJczG42r5U`: `No findings.`
+- Verification after the cut:
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:
