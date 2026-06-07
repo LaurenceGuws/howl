@@ -3,7 +3,8 @@
 Purpose:
 
 - Bucket-struct lane narrow queue complete.
-- Durable history, classifications, receipts, and redesign-only residue live in `project-memory.md`.
+- Remaining residue is still in scope as reference-driven redesign planning work.
+- Durable history, classifications, receipts, and redesign plans live in `project-memory.md`.
 - No active worker slice is open.
 
 Sprint:
@@ -31,9 +32,13 @@ Lane status:
 Bucket-struct lane close state:
 
 - Planned narrow queue is complete.
-- Remaining bucket hits are redesign-only, tolerated boundary shapes, proof/benchmark-only, or accepted false positives under current source-backed classifications.
-- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the final receipts and residue classification.
+- Remaining bucket hits are not out of scope.
+- Remaining work is split between:
+  - reference-driven redesign planning
+  - tolerated boundary shapes that only change if the user authorizes broader redesign
+  - proof / benchmark accountability work
+- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the redesign backlog and residue classification.
 
 Queue source:
 
-- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the completed execution queue, receipts, and the remaining redesign-only / tolerated residue.
+- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the completed narrow queue, receipts, and the remaining redesign backlog.

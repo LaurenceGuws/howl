@@ -526,7 +526,59 @@ PY`
     - proof-only
     - benchmark-only
     - already resolved
-  - do not continue this lane without new researcher-backed evidence reopening a remaining hit
+  - remaining redesign items are still in scope for reference-driven planning and execution when authorized by the user
+
+- Corrected scope wording for remaining residue:
+  - `redesign-only` does not mean out of scope
+  - it means not a safe narrow hygiene slice
+  - those items require explicit reference-driven redesign planning rather than opportunistic rename work
+
+- Remaining redesign and accountability backlog, explicitly in scope:
+  - `howl-linux-host/src/terminal/context.zig`
+    - requested direction: Alacritty-derived execution plan
+    - prior classification: tolerated aggregate root for narrow lane purposes only
+    - redesign meaning: derive a planned replacement shape from Alacritty host runtime / window-context pressure, then execute as a broader host-runtime slice
+  - `howl-linux-host/src/terminal/render/retained.zig`
+    - requested direction: let Alacritty decide whether it stays or what it becomes
+    - prior classification: keeper for the narrow bucket lane only
+    - redesign meaning: re-audit this owner against Alacritty display/content/render organization before deciding keep vs rewrite
+  - `howl-linux-host/src/terminal/render/surface_layout.zig`
+    - requested direction: Alacritty will be copied for the rewrite
+    - prior classification: redesign-only because it mixes geometry/resize/runtime concerns
+    - redesign meaning: derive the replacement owner/file shape from Alacritty host display/window/layout organization, not from local rename pressure
+  - `howl-linux-host/src/config/terminal.zig`
+    - requested direction: Ghostty config shape for the redesign
+    - prior narrow-lane classification: acceptable config boundary
+    - redesign meaning: re-plan the config surface from Ghostty-style config shaping while preserving the user’s Lua product direction
+  - `howl-linux-host/src/config/tab_bar.zig`
+    - requested direction: Ghostty-derived config shape, but Lua-aware
+    - prior narrow-lane classification: acceptable config boundary
+    - redesign meaning: derive the config owner/data shape from Ghostty pressure adapted to the Lua product boundary
+  - `howl-vt/src/host/state.zig`
+    - requested direction: Alacritty-driven rewrite plan
+    - prior narrow-lane classification: acceptable boundary-forced aggregate
+    - redesign meaning: audit the host-facing retained consequence owner against Alacritty terminal/runtime organization and decide whether the aggregate stays or splits
+  - `howl-vt/src/simulation/protocol.zig`
+    - requested direction: Ghostty-shaped rewrite plan
+    - corrected wording: in scope for redesign planning; only out of the narrow bucket-rename lane
+  - proof / benchmark accountability surfaces:
+    - `howl-render/src/benchmark_main.zig`
+    - `howl-render/src/text/font/ft_hb/support_test.zig`
+    - requested direction: TigerBeetle-derived accountability assurance rather than narrow bucket cleanup
+
+- Planned next planning pass after the narrow bucket lane:
+  1. Alacritty-derived redesign plan for:
+     - `howl-linux-host/src/terminal/context.zig`
+     - `howl-linux-host/src/terminal/render/retained.zig`
+     - `howl-linux-host/src/terminal/render/surface_layout.zig`
+     - `howl-vt/src/host/state.zig`
+  2. Ghostty-derived redesign plan for:
+     - `howl-linux-host/src/config/terminal.zig`
+     - `howl-linux-host/src/config/tab_bar.zig`
+     - `howl-vt/src/simulation/protocol.zig`
+  3. TigerBeetle-derived accountability plan for:
+     - `howl-render/src/benchmark_main.zig`
+     - `howl-render/src/text/font/ft_hb/support_test.zig`
 
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection

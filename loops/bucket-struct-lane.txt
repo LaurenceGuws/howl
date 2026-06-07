@@ -32,10 +32,9 @@ Loop rules:
 
 Next queued slice:
 
-- Final narrow bucket slice active:
-  - `loops/bucket-render-sprite-resource-results.txt`
-- Next queued slice after this:
-  - none; remaining bucket hits are redesign-only, tolerated boundary shapes, or already accepted false positives unless new research reopens them
+- Narrow bucket queue complete.
+- Remaining work from this lane is redesign planning and accountability planning, not further narrow rename slices.
+- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the reference-driven redesign backlog.
 
 Queue source:
 
