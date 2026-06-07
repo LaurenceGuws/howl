@@ -37,6 +37,7 @@ Lane rules:
 - Orchestrator accepts, verifies, commits, and pushes slice-by-slice.
 - Fall back to sequential implementation only when the work is coupled, slow, high-risk, or would create dirty-tree ambiguity.
 - Every accepted slice needs a receipt with orchestrator, reviewer, and coder/worker session ids.
+- If pre-implementation review rejects a slice, the corrected contract must carry a researcher session id before coder seeding resumes.
 
 Queue source:
 

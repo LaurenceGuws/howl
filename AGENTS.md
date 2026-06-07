@@ -221,12 +221,30 @@ The work loop is adaptive, not ritual. The main agent chooses the role sequence 
 the work, while preserving research, scratchpad, worker contract, hostile review, and
 handoff accountability where they matter.
 
+For a planned sprint lane with multiple candidate slices, the default posture is a parallel
+worker-loop pipeline when the work allows it.
+
+Default broad-sprint sequence:
+
+1. Parallel research across the lane to produce the candidate slice list and source-backed classifications.
+2. Pre-implementation review of each ready candidate slice for correctness and scope.
+   - If pre-implementation review rejects a slice, the correction must be backed by a researcher session id before worker seeding resumes.
+3. Parallel worker implementation across independent accepted slices when they do not share files, ownership moves, or verification risk.
+4. Post-implementation reviewer pass on each actual diff.
+5. Orchestrator decides slice-by-slice when work is pristine enough to accept, verify, commit, and push.
+
+Use sequential implementation only when the work is coupled, slow, high-risk, or would create dirty-tree ambiguity between slices.
+
 Scratchpads are persistent project memory:
 
 - Scratchpads record current code facts, reference findings, exact files, exact symbols,
   invariants, test gates, accepted decisions, proof gaps, and follow-up slices.
 - Scratchpads are not deleted when work completes.
-- `current.txt` contains exactly one active slice.
+- `current.txt` is the global loop index.
+- Each active independent loop gets its own current-contract file under `loops/`.
+- A loop file contains exactly one active slice for that loop.
+- Every accepted slice needs a receipt.
+- Every receipt must record the orchestrator session id, reviewer session id, and coder/worker session id.
 - No code work starts until the active slice is planned deeply enough to leave workers no
   room for guessing.
 
@@ -243,8 +261,9 @@ For follow-up tasks in the same subagent session, reference the prior role prelo
 accepted caches instead of re-sending large context unless quality or clarity requires it.
 
 Any summarize, compact, or handoff must order the next agent to read its role preload,
-role work, active scratchpad, `current.txt`, relevant research caches, reviewer findings,
-dirty-state notes, and verification results before continuing.
+role work, active scratchpad, `current.txt`, the relevant active `loops/*.txt` file,
+relevant research caches, reviewer findings, dirty-state notes, and verification results
+before continuing.
 
 If the work gets ambiguous, broad, rushed, or difficult, stop. Read the bible again.
 Break the problem into smaller source-backed slices.

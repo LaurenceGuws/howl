@@ -1,0 +1,45 @@
+# No Active Slice
+
+Loop:
+
+- Bucket-struct cleanup lane
+
+Sprint:
+
+- Useless LOC sprint
+
+Scope source:
+
+- `loc-debt-sprint-scope.md`
+
+Execution state:
+
+- This file is the current-contract file for the bucket-struct lane.
+- Durable history, classifications, and the full queue live in `project-memory.md`.
+- No worker slice is currently active in this loop.
+
+Loop rules:
+
+- Stay in the bucket-struct lane until the planned queue is exhausted or remaining hits broaden into redesign-only residue.
+- Research already completed and produced the candidate slice queue.
+- Default to a parallel worker-loop pipeline inside this lane when slices are independent.
+- Parallelize independent slice review and implementation when they do not overlap in files, owners, or verification risk.
+- Give each concurrently active slice its own `loops/*.txt` contract file.
+- Orchestrator accepts, verifies, commits, and pushes slice-by-slice.
+- Fall back to sequential implementation only when a slice broadens into redesign, shares files or owners with another active slice, or would create dirty-tree ambiguity.
+- Every accepted slice in this lane needs a receipt with orchestrator, reviewer, and coder/worker session ids.
+- If pre-implementation review rejects a loop slice, the corrected loop contract must record a researcher session id before worker seeding resumes.
+
+Next queued slice:
+
+- Wave 1 active:
+  - `loops/bucket-host-cli-args.txt`
+  - `loops/bucket-vt-mode-state.txt`
+- Next queued host slice after wave 1:
+  - `howl-linux-host/src/terminal/cursor_blink.zig::State`
+- Next queued VT slice after wave 1:
+  - `howl-vt/src/control/osc_color.zig::State`
+
+Queue source:
+
+- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the full planned bucket-struct execution queue and the do-not-touch classifications.

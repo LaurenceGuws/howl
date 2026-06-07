@@ -268,12 +268,14 @@ PY`
     - redesign-vs-narrow-fix classification
     - producing the candidate slice list for the lane
     - pre-implementation review of ready slices
+    - researcher-backed correction when pre-implementation review rejects a slice
     - independent worker implementation loops when files/owners/verification risk do not overlap
     - one hostile review loop per active slice
     - orchestrator acceptance when each slice is pristine
     - verification
     - commit/push
   - sequential implementation is reserved for coupled, slow, risky, or dirty-tree-ambiguous work
+  - if pre-implementation review rejects a slice, the corrected contract must carry a researcher session id before coder seeding resumes
 
 - Accepted repo-wide bucket-struct classifications from the lane audit:
   - Host hits not to touch in this lane:

@@ -133,6 +133,19 @@ the orchestrator should use teammates aggressively.
 The sequence depends on the work. The orchestrator chooses the smallest accountable process that can
 produce correct work.
 
+For a planned sprint lane where research already produced the candidate slices, use a parallel
+worker-loop pipeline by default unless the orchestrator has a stronger source-backed reason to
+serialize the work:
+
+1. Parallel research across the lane to produce the candidate slice list and classifications.
+2. Review each ready candidate slice for correctness before coding.
+   - If that review rejects the slice, reseed it through researcher-backed correction and record the researcher session id before worker seeding resumes.
+3. Worker/coder implements independent accepted slices in parallel when they do not overlap in files, owners, or verification risk.
+4. Reviewer reviews each actual diff.
+5. Orchestrator decides slice-by-slice when work is pristine and accepted for commit/push.
+
+Serialize implementation only when the work is coupled, slow, risky, or would make dirty-tree accountability worse.
+
 Use research first when:
 
 - Source truth is missing or stale.
@@ -195,6 +208,10 @@ It must include:
   conditions.
 - Follow-up cuts and proof gaps.
 - Completion criteria and signoff space.
+- Receipt fields for every accepted slice:
+  - orchestrator session id
+  - reviewer session id
+  - coder/worker session id
 
 Reject the scratchpad if any cut requires worker invention, lacks exact tests, lacks stop conditions,
 conflicts with accepted research, preserves stale structure for convenience, or narrows the cut only
@@ -202,7 +219,12 @@ to satisfy fake small-change pressure.
 
 ## Current Slice
 
-`current.txt` contains the active implementation contract when a worker is used.
+`current.txt` is the global loop index.
+
+Each active independent loop gets its own current-contract file under `loops/`.
+
+When a worker is used, the active implementation contract lives in that loop file, not in the
+global index.
 
 It must include:
 
@@ -213,8 +235,9 @@ It must include:
 - Stop conditions.
 - Verification commands.
 
-Reject or rewrite `current.txt` before worker seeding if it is stale, broad without exact boundaries,
-ambiguous, lacks exact allowed files, or leaves naming/ownership choices to the worker.
+Reject or rewrite the relevant `loops/*.txt` file before worker seeding if it is stale, broad
+without exact boundaries, ambiguous, lacks exact allowed files, or leaves naming/ownership
+choices to the worker.
 
 ## Handoff And Compacting
 
@@ -224,15 +247,17 @@ accountability and causes fake restarts.
 Every role must include handoff instructions in its final output when the session may continue:
 
 - Orchestrator handoff must tell the next orchestrator to read `AGENTS.md`, this `loop.txt`, the
-  active scratchpad, `current.txt`, relevant accepted research caches, dirty-state notes, latest
-  reviewer findings, verification results, and the user’s quoted current sprint instructions.
+  active scratchpad, `current.txt`, the relevant active `loops/*.txt` file, relevant accepted
+  research caches, dirty-state notes, latest reviewer findings, verification results, and the
+  user’s quoted current sprint instructions.
 - Researcher handoff must tell the next researcher to read the role preload, their prior research
   cache, assigned references, accepted reviewer feedback, and the exact unanswered research question.
-- Worker handoff must tell the next worker to read the role preload, `current.txt`, accepted
-  scratchpad/cache, their prior diff notes, reviewer rejection or acceptance, and exact failed gates.
+- Worker handoff must tell the next worker to read the role preload, `current.txt`, the relevant
+  active `loops/*.txt` file, accepted scratchpad/cache, their prior diff notes, reviewer rejection
+  or acceptance, and exact failed gates.
 - Reviewer handoff must tell the next reviewer to read the role preload, user bias quotes, artifact or
-  diff under review, accepted research/scratchpad/current slice, prior findings, and verification
-  output.
+  diff under review, accepted research/scratchpad/current slice, the relevant active `loops/*.txt`
+  file, prior findings, and verification output.
 
 Any compact/handoff summary must preserve:
 
@@ -242,6 +267,7 @@ Any compact/handoff summary must preserve:
 - Exact files touched or intended.
 - Dirty git state and which changes are user-owned.
 - Verification passed, failed, skipped, or not yet run.
+- Receipt ids already assigned or still missing.
 - Stop conditions and blockers.
 - Required next reads for each role.
 
@@ -255,7 +281,8 @@ Restart at the earliest broken stage or ask the user if any of these happen:
 - User direction is not understood.
 - Research cache is missing, weak, stale, or not source-backed for the planned cut.
 - Scratchpad is missing, weak, stale, or not derived from accepted research for broad work.
-- `current.txt` is stale, ambiguous, or not reviewer-accepted when a worker is being used.
+- `current.txt` is stale as a loop index, or the relevant active `loops/*.txt` file is stale,
+  ambiguous, or not reviewer-accepted when a worker is being used.
 - Worker needs to invent owner names, paths, tests, ABI consequences, or scope.
 - Public ABI changes appear without an explicit ABI-product slice.
 - Host/runtime behavior changes appear in a cleanup-only slice.
