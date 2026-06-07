@@ -195,6 +195,24 @@ PY`
   - grep gate: no `pub const State = struct` in `howl-vt/src/surface/publication.zig`
   - grep gate: no `surface_publication.State` in `howl-vt/src/terminal.zig`
 
+- Accepted second bucket-lane hygiene slice in `howl-linux-host`.
+- Inventory pressure showed `frame_timer.zig` as the best next narrow bucket-owner cleanup after `surface/publication.zig` because Alacritty provides an exact host pacing owner name: `FrameTimer`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const FrameTimer = struct` in `howl-linux-host/src/display/frame_timer.zig`
+  - updated method receivers and return types from `State` to `FrameTimer`
+  - updated `howl-linux-host/src/app/processor.zig` references from `FramePacing.State` to `FramePacing.FrameTimer`
+  - updated `processor.zig` `FramePacingState` alias to `FramePacing.FrameTimer`
+  - kept `Pending`, `PresentReason`, `Submission`, pacing behavior, assertions, inline tests, and public function names unchanged
+- Research authority:
+  - `ses_15e5004ffffeJNjC4TZVnsP0TT`
+- Review path:
+  - final diff acceptance in reviewer session `ses_15e4b1d3bffeq6moR2PP5DTXe7`: `No findings.`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/display/frame_timer.zig" "howl-linux-host/src/app/processor.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gate: no `pub const State = struct` in `howl-linux-host/src/display/frame_timer.zig`
+  - grep gate: no `FramePacing.State` in `howl-linux-host/src/app/processor.zig`
+
 ### 2026-06-06 Sprint Refocus
 
 - The primary sprint metric is now materially smaller `prod`, not generic hygiene progress.

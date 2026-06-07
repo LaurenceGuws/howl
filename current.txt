@@ -419,6 +419,14 @@ Completed slices:
   - kept fields, methods, owner location, and behavior unchanged
   - research authority: `ses_15e64137dffeUiObUhwAgX6QDH`
   - reviewer acceptance: `ses_15e5f92cfffe4XVn4u5e74MC63`
+- Zig hygiene frame-timer 1: removed the generic `State` bucket name from `howl-linux-host/src/display/frame_timer.zig`.
+  - changed `pub const State = struct` to `pub const FrameTimer = struct`
+  - updated method receivers and return types from `State` to `FrameTimer`
+  - updated `howl-linux-host/src/app/processor.zig` from `FramePacing.State` to `FramePacing.FrameTimer`
+  - updated `processor.zig` `FramePacingState` alias to `FramePacing.FrameTimer`
+  - kept `Pending`, `PresentReason`, `Submission`, pacing behavior, assertions, inline tests, and public function names unchanged
+  - research authority: `ses_15e5004ffffeJNjC4TZVnsP0TT`
+  - reviewer acceptance: `ses_15e4b1d3bffeq6moR2PP5DTXe7`
 
 Reopened previously skipped low-yield avenues:
 
