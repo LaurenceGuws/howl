@@ -331,6 +331,39 @@ PY`
   - grep gate: no `dirty.State` in `howl-vt/src/screen.zig`
   - grep gate: no `dirty.State` in `howl-vt/src/screen/resize.zig`
 
+- Accepted ninth bucket-lane hygiene slice in `howl-linux-host`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const EventLoop = struct` in `howl-linux-host/src/event_loop.zig`
+  - updated receivers and owner-local test locals in `event_loop.zig` from `State` to `EventLoop`
+  - updated direct typed consumers in `main.zig`, `app/processor.zig`, `terminal/context.zig`, and `terminal/pty/wait_thread.zig` from `EventLoop.State` to `EventLoop.EventLoop`
+  - kept free functions, behavior, timers, wake semantics, and file path unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave4`
+  - reviewer session id: `ses_15dfbaa18ffehO9Mo5lLgLlSaz`
+  - coder/worker session id: `ses_15dfd6db3ffe155JUnXUAybZcA`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/event_loop.zig" "howl-linux-host/src/main.zig" "howl-linux-host/src/app/processor.zig" "howl-linux-host/src/terminal/context.zig" "howl-linux-host/src/terminal/pty/wait_thread.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gates: no remaining `EventLoop.State` in the five allowed files
+  - grep gate: `pub const EventLoop = struct` appears in `howl-linux-host/src/event_loop.zig`
+
+- Accepted tenth bucket-lane hygiene slice in `howl-vt`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const Locator = struct` in `howl-vt/src/control/locator.zig`
+  - renamed all receiver and helper type uses in `locator.zig` from `State` to `Locator`
+  - updated `howl-vt/src/host/state.zig` field type from `LocatorNs.State` to `LocatorNs.Locator`
+  - kept host field name `locator`, free-function names, fields, and behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave4`
+  - reviewer session id: `ses_15dfba908ffevhntRDpxQvcEHJ`
+  - coder/worker session id: `ses_15dfd6d05ffeBhiI2ry1Wlry9m`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-vt/src/control/locator.zig" "howl-vt/src/host/state.zig"`
+  - `zig build test && zig build check` in `howl-vt`
+  - grep gate: no `pub const State = struct` in `howl-vt/src/control/locator.zig`
+  - grep gate: no `LocatorNs.State` in `howl-vt/src/host/state.zig`
+  - grep gate: `pub const Locator = struct` appears in `howl-vt/src/control/locator.zig`
+
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection
   - parallel teammate work is allowed for:
