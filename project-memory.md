@@ -17,6 +17,47 @@ Rules:
 - Scope doc: `loc-debt-sprint-scope.md`.
 - User direction for this sprint is binding: full sweep, sequential, planned, auditable work; no opportunistic isolated cleanups; accountability first.
 
+## 2026-06-07 Style Tool Rewrite
+
+- Accepted first rewrite slice for `style.nu` and `utils/hygene/style_scan.py`.
+- Purpose of the slice:
+  - stop the tool from reporting misleading `prod` numbers
+  - make sibling proof files, top-level testing seams, and benchmark owners visible again
+- Replaced the old scanner ownership model of effectively `tests` vs `prod` with explicit lanes:
+  - `prod`
+  - `proof`
+  - `test_hooks`
+  - `benchmark`
+- Exact accepted behavior in the first slice:
+  - any `*_test.zig` file counts fully as `proof`
+  - top-level `test` blocks in non-test Zig owners count as `proof`
+  - top-level `pub const testing = struct { ... }` in non-test Zig owners counts as `test_hooks`
+  - `benchmark_main.zig` counts fully as `benchmark`
+  - non-Zig files keep existing line accounting and now report the new non-prod lanes as zero
+- Default `style.nu` mode now runs the full inventory file report sorted by `prod` instead of the touched-file checkpoint summary.
+- Preserved CLI surfaces in the slice:
+  - positional `roots...`
+  - `--by-file`
+  - `--by-repo`
+  - `--json`
+  - `--touched-files`
+  - `--touched-repos`
+  - `--failures`
+- Concrete proof receipts after the rewrite:
+  - `howl-render/src/text/raster/special_test.zig`: `prod=0`, `proof=544`
+  - `howl-linux-host/src/display/renderer/render_surface.zig`: `test_hooks=21`
+  - `howl-render/src/benchmark_main.zig`: `prod=0`, `benchmark=941`
+- Research authority:
+  - `ses_15ea81d8bfferd89FsbPXSfNRB`
+  - `ses_15ea81cd8ffe0nyVT821p6uPlX`
+- Review path:
+  - final diff acceptance in reviewer session `ses_15ea2c292ffeePF9yel3yTHiEt`: `No findings.`
+- Verification after the slice:
+  - `python utils/hygene/style_scan.py "howl-render/src/text/raster/special_test.zig" "howl-linux-host/src/display/renderer/render_surface.zig" "howl-render/src/benchmark_main.zig"`
+  - `nu ./style.nu howl-render --by-file`
+  - `nu ./style.nu howl-linux-host --by-file`
+  - `nu ./style.nu howl-render --by-repo --json`
+
 ### 2026-06-06 Sprint Refocus
 
 - The primary sprint metric is now materially smaller `prod`, not generic hygiene progress.

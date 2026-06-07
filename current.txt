@@ -371,6 +371,15 @@ Completed slices:
   - preserved triangle raster logic and output
   - research authority: `ses_1609913c0ffeHcwX6wg27onR4t`
   - reviewer acceptance: `ses_1608d0f71ffeyvWSZJczG42r5U`
+- Style-tool rewrite 1a: replaced the misleading `tests/prod` ownership model with explicit `prod` / `proof` / `test_hooks` / `benchmark` lanes.
+  - `_test.zig` files now count fully as `proof`
+  - top-level `test` blocks in non-test Zig owners count as `proof`
+  - top-level `pub const testing = struct { ... }` in non-test Zig owners counts as `test_hooks`
+  - `benchmark_main.zig` now counts fully as `benchmark`
+  - default `style.nu` mode is now the full inventory file report sorted by `prod`
+  - kept positional roots plus `--by-file`, `--by-repo`, `--json`, `--touched-files`, `--touched-repos`, and `--failures` usable
+  - research authority: `ses_15ea81d8bfferd89FsbPXSfNRB`, `ses_15ea81cd8ffe0nyVT821p6uPlX`
+  - reviewer acceptance: `ses_15ea2c292ffeePF9yel3yTHiEt`
 
 Reopened previously skipped low-yield avenues:
 
