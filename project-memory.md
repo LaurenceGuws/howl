@@ -11,6 +11,11 @@ Rules:
 - Read `AGENTS.md`, `loop.txt`, and the TigerBeetle references before non-trivial work.
 - Preserve source-backed facts, accepted decisions, proof gaps, and follow-up slices.
 - Treat stale slice specs as historical unless this file marks them active.
+- Every accepted slice needs a receipt.
+- Every receipt must record:
+  - orchestrator session id
+  - reviewer session id
+  - coder/worker session id
 
 ## 2026-06-04 Useless LOC Sprint
 
@@ -174,6 +179,13 @@ PY`
 
 ## 2026-06-07 Zig Hygiene Refocus
 
+- Orchestrator process correction:
+  - `current.txt` no longer carries historical slice logs or the active worker contract directly.
+  - `current.txt` is now the global loop index.
+  - each active independent loop gets its own current-contract file under `loops/`.
+  - first active loop file created: `loops/bucket-struct-lane.txt`.
+  - parallel teammate work may use separate loop files for independent lanes, but implementation remains one promoted slice per loop file.
+
 - Accepted first post-tooling hygiene slice in `howl-vt` based on the repaired inventory and reference-backed bucket scrutiny.
 - Inventory pressure showed `howl-linux-host/src/terminal/context.zig` as the largest bucket-name hit, but research concluded it is now a tolerated per-terminal aggregate root and any remaining issue broadens into redesign rather than a narrow cut.
 - Research instead promoted `howl-vt/src/surface/publication.zig` as the best narrow bucket-owner fix because:
@@ -212,6 +224,109 @@ PY`
   - `zig build test && zig build check` in `howl-linux-host`
   - grep gate: no `pub const State = struct` in `howl-linux-host/src/display/frame_timer.zig`
   - grep gate: no `FramePacing.State` in `howl-linux-host/src/app/processor.zig`
+
+- Wave 1 parallel bucket-lane receipts are being recorded under orchestrator session id `orch-2026-06-07-bucket-wave1`.
+
+- Accepted third bucket-lane hygiene slice in `howl-vt`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const ModeState = struct` in `howl-vt/src/control/mode.zig`
+  - updated `howl-vt/src/terminal.zig` `modes` field type from `TerminalModeNs.State` to `TerminalModeNs.ModeState`
+  - kept fields, defaults, helpers, tests, and behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave1`
+  - reviewer session id: `ses_15e2d5158ffeXevj3asCer4QJ9`
+  - coder/worker session id: `ses_15e2ea9f1ffehGs05X0VWAjna2`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-vt/src/control/mode.zig" "howl-vt/src/terminal.zig"`
+  - `zig build test && zig build check` in `howl-vt`
+  - grep gate: no `pub const State = struct` in `howl-vt/src/control/mode.zig`
+  - grep gate: no `TerminalModeNs.State` in `howl-vt/src/terminal.zig`
+
+- Accepted fourth bucket-lane hygiene slice in `howl-linux-host`.
+- Accepted cut:
+  - changed `pub const Options = struct` to `pub const Args = struct` in `howl-linux-host/src/cli/args.zig`
+  - updated `parse` to return and initialize `Args`
+  - changed `pub const Options = cli_args.Options` to `pub const Args = cli_args.Args` in `howl-linux-host/src/main.zig`
+  - updated `start`, `loadConfig`, and `createWindow` signatures from `Options` to `Args`
+  - kept fields, parse behavior, exported function names, and call flow unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave1`
+  - reviewer session id: `ses_15e2b71aaffekUJ59DtW37LHcF`
+  - coder/worker session id: `ses_15e2c888fffejUiRroqv2HBOaG`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/cli/args.zig" "howl-linux-host/src/main.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gate: no `pub const Options = struct` in `howl-linux-host/src/cli/args.zig`
+  - grep gate: no `cli_args.Options` in `howl-linux-host/src/main.zig`
+  - grep gate: no `pub const Options = cli_args.` in `howl-linux-host/src/main.zig`
+
+- Bucket-struct lane execution law after the initial two accepted cuts:
+  - the lane is planned now; no opportunistic per-commit target selection
+  - parallel teammate work is allowed for:
+    - repo-wide inventory refresh
+    - reference-backed offender audits
+    - redesign-vs-narrow-fix classification
+    - producing the candidate slice list for the lane
+    - pre-implementation review of ready slices
+    - independent worker implementation loops when files/owners/verification risk do not overlap
+    - one hostile review loop per active slice
+    - orchestrator acceptance when each slice is pristine
+    - verification
+    - commit/push
+  - sequential implementation is reserved for coupled, slow, risky, or dirty-tree-ambiguous work
+
+- Accepted repo-wide bucket-struct classifications from the lane audit:
+  - Host hits not to touch in this lane:
+    - `howl-linux-host/src/terminal/context.zig`
+      - tolerated aggregate root; remaining issue broadens into redesign
+    - `howl-linux-host/src/terminal/render/retained.zig`
+      - keeper; real retained render owner
+    - `howl-linux-host/src/terminal/render/surface_layout.zig`
+      - redesign-only
+    - `howl-linux-host/src/config/terminal.zig`
+      - acceptable config boundary
+    - `howl-linux-host/src/config/tab_bar.zig`
+      - acceptable config boundary
+  - VT hits not to touch in this lane:
+    - `howl-vt/src/host/state.zig`
+      - acceptable boundary-forced aggregate
+    - `howl-vt/src/control/report.zig`
+      - real debt, but redesign-only rather than rename-sized
+    - `howl-vt/src/simulation/protocol.zig`
+      - simulation-only, not this lane
+    - `howl-vt/src/surface/publication.zig`
+      - resolved
+  - Render hits not to touch in this lane:
+    - `howl-render/src/benchmark_main.zig`
+      - benchmark-only
+    - `howl-render/src/text/font/ft_hb/support_test.zig`
+      - proof-only
+
+- Accepted planned execution queue for the remaining narrow bucket-struct lane:
+  1. `howl-linux-host/src/cli/args.zig::Options`
+  2. `howl-linux-host/src/terminal/cursor_blink.zig::State`
+  3. `howl-linux-host/src/terminal/pty/wait_thread.zig::State`
+  4. `howl-linux-host/src/event_loop.zig::State`
+  5. `howl-linux-host/src/window_chrome/window.zig::State`
+  6. `howl-linux-host/src/terminal/links.zig::State`
+  7. `howl-linux-host/src/terminal/selection.zig::State`
+  8. `howl-linux-host/src/terminal/scrollbar.zig::State`
+  9. `howl-linux-host/src/config/config.zig::State`
+  10. `howl-vt/src/control/mode.zig::State`
+  11. `howl-vt/src/control/osc_color.zig::State`
+  12. `howl-vt/src/screen/dirty.zig::State`
+  13. `howl-vt/src/control/locator.zig::State`
+  14. `howl-vt/src/screen_set.zig::Options`
+  15. `howl-vt/src/stream_terminal.zig::State`
+  16. `howl-vt/src/kitty/state.zig::State`
+  17. `howl-render/src/text/font/ft_hb/support.zig::State`
+  18. `howl-render/src/prepared/sprite_resource_store.zig::{Result, AtlasResult}`
+
+- Queue discipline:
+  - use this queue in order
+  - local confirmation research is allowed only for the next queued item before promotion
+  - if a queued item broadens into redesign or proves false-positive under references, record that verdict and move to the next queued item
+  - do not switch to the cast/`anytype` lane until this queue is exhausted or only redesign-only residue remains
 
 ### 2026-06-06 Sprint Refocus
 
