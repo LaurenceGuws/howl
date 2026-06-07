@@ -1,0 +1,75 @@
+# Active Slice
+
+Loop:
+
+- Bucket-struct cleanup lane
+
+Slice:
+
+- vt osc color 1
+
+Status:
+
+- Accepted after hostile review; pending receipt/commit
+
+Reviewer acceptance:
+
+- reviewer session `ses_15e1660eaffewtbAiI6xHmw8r0`
+- post-implementation reviewer session `ses_15e11cb51ffeToOtejVr6NTd6Y`
+
+Research authority:
+
+- orchestrator lane plan in `project-memory.md` under `2026-06-07 Zig Hygiene Refocus`
+- VT lane audit classified this as the second recommended narrow VT fix
+- correction researcher session `ses_15e1bc10effeEq13n3zFGIwp7W`
+
+Scratchpad and research cache paths:
+
+- scratchpad authority: `/home/home/personal/projects/howl/project-memory.md` section `2026-06-07 Zig Hygiene Refocus`
+- research cache: `/home/home/personal/projects/howl/research/cache-2026-06-07-vt-osc-color-contract.md`
+
+Allowed files:
+
+- `howl-vt/src/control/osc_color.zig`
+- `howl-vt/src/host/state.zig`
+- `howl-vt/src/kitty/color.zig`
+
+Required shape:
+
+- rename `pub const State = struct` in `howl-vt/src/control/osc_color.zig` to `pub const TerminalColorState = struct`
+- update all local signatures and helpers in `osc_color.zig` from `State` to `TerminalColorState`
+- update `howl-vt/src/host/state.zig` field and accessor types from `OscColorNs.State` to `OscColorNs.TerminalColorState`
+- update `howl-vt/src/kitty/color.zig` alias from `pub const State = OscColor.State` to `pub const State = OscColor.TerminalColorState`
+- keep every field, default, function name, control-sequence behavior, storage layout, and call flow unchanged
+- do not rename `terminalColorState()`
+
+Non-goals:
+
+- no OSC color behavior changes
+- no field reshaping of `TerminalColorState`
+- no split into Ghostty-style `DynamicPalette`, `DynamicRGB`, or nested `Colors`
+- no edits to `howl-vt/src/host/state.zig::State` beyond changing the `colors` field type from `OscColorNs.State` to `OscColorNs.TerminalColorState` and the `terminalColorState()` return type accordingly
+- no Kitty protocol behavior changes, stack-depth changes, FFI/render ABI changes, or test rewrites unless compile errors require them
+- no broader control/report redesign
+- no unrelated VT cleanup
+
+Stop conditions:
+
+- stop if any typed consumer beyond those three files appears
+- stop if review insists on `Colors` instead of `TerminalColorState`
+- stop if the rename forces FFI, render, or protocol-matrix/API wording changes
+- stop if the change broadens into splitting palette/dynamic/special owners
+
+Verification:
+
+- `python utils/hygene/style_scan.py "howl-vt/src/control/osc_color.zig" "howl-vt/src/host/state.zig" "howl-vt/src/kitty/color.zig"`
+- `zig build test && zig build check` in `howl-vt`
+- grep gate: no `pub const State = struct` in `howl-vt/src/control/osc_color.zig`
+- grep gate: no `OscColorNs.State` in `howl-vt/src/host/state.zig`
+- grep gate: no `OscColor.State` in `howl-vt/src/kitty/color.zig`
+
+Receipt requirement:
+
+- record orchestrator session id
+- record reviewer session id
+- record coder/worker session id

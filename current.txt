@@ -18,16 +18,17 @@ Active loops:
 
 - `loops/bucket-struct-lane.txt`
   - lane: bucket-struct cleanup
-  - status: wave 1 active
-  - next queued slice after wave 1: `howl-linux-host/src/terminal/cursor_blink.zig::State`
-- `loops/bucket-host-cli-args.txt`
+  - status: wave 2 active
+  - next queued host slice after wave 2: `howl-linux-host/src/terminal/pty/wait_thread.zig::State`
+  - next queued VT slice after wave 2: `howl-vt/src/screen/dirty.zig::State`
+- `loops/bucket-host-cursor-blink.txt`
   - lane: bucket-struct cleanup
   - status: accepted; pending receipt/commit
-  - target: `howl-linux-host/src/cli/args.zig::Options`
-- `loops/bucket-vt-mode-state.txt`
+  - target: `howl-linux-host/src/terminal/cursor_blink.zig::State`
+- `loops/bucket-vt-osc-color.txt`
   - lane: bucket-struct cleanup
   - status: accepted; pending receipt/commit
-  - target: `howl-vt/src/control/mode.zig::State`
+  - target: `howl-vt/src/control/osc_color.zig::State`
 
 Lane rules:
 

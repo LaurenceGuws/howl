@@ -260,6 +260,43 @@ PY`
   - grep gate: no `cli_args.Options` in `howl-linux-host/src/main.zig`
   - grep gate: no `pub const Options = cli_args.` in `howl-linux-host/src/main.zig`
 
+- Accepted fifth bucket-lane hygiene slice in `howl-linux-host`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const CursorBlink = struct` in `howl-linux-host/src/terminal/cursor_blink.zig`
+  - updated method receivers/signatures in `cursor_blink.zig` from `State` to `CursorBlink`
+  - updated the owner-local test local from `State{}` to `CursorBlink{}`
+  - updated `Context.cursor_blink` in `howl-linux-host/src/terminal/context.zig` from `cursor_blink.State` to `cursor_blink.CursorBlink`
+  - kept blink behavior unchanged and added no aliases
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave2`
+  - reviewer session id: `ses_15e11cc03ffeyFLXqdXLapHnXB`
+  - coder/worker session id: `ses_15e13dd3effeBf6FVYmy5Iy3Ht`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/terminal/cursor_blink.zig" "howl-linux-host/src/terminal/context.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gate: no `pub const State = struct` in `howl-linux-host/src/terminal/cursor_blink.zig`
+  - grep gate: no `cursor_blink.State` in `howl-linux-host/src/terminal/context.zig`
+  - grep gate: `\bCursorBlink\b` appears exactly 6 times in `howl-linux-host/src/terminal/cursor_blink.zig`
+  - grep gate: `cursor_blink.CursorBlink` appears exactly once in `howl-linux-host/src/terminal/context.zig`
+
+- Accepted sixth bucket-lane hygiene slice in `howl-vt`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const TerminalColorState = struct` in `howl-vt/src/control/osc_color.zig`
+  - updated all local signatures and helpers in `osc_color.zig` from `State` to `TerminalColorState`
+  - updated `howl-vt/src/host/state.zig` field and accessor types from `OscColorNs.State` to `OscColorNs.TerminalColorState`
+  - updated `howl-vt/src/kitty/color.zig` alias from `pub const State = OscColor.State` to `pub const State = OscColor.TerminalColorState`
+  - kept fields, defaults, function names, control-sequence behavior, storage layout, and call flow unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave2`
+  - reviewer session id: `ses_15e11cb51ffeToOtejVr6NTd6Y`
+  - coder/worker session id: `ses_15e13dbe4ffegelyJp2yo6Re3D`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-vt/src/control/osc_color.zig" "howl-vt/src/host/state.zig" "howl-vt/src/kitty/color.zig"`
+  - `zig build test && zig build check` in `howl-vt`
+  - grep gate: no `pub const State = struct` in `howl-vt/src/control/osc_color.zig`
+  - grep gate: no `OscColorNs.State` in `howl-vt/src/host/state.zig`
+  - grep gate: no `OscColor.State` in `howl-vt/src/kitty/color.zig`
+
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection
   - parallel teammate work is allowed for:
