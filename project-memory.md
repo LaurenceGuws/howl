@@ -364,6 +364,40 @@ PY`
   - grep gate: no `LocatorNs.State` in `howl-vt/src/host/state.zig`
   - grep gate: `pub const Locator = struct` appears in `howl-vt/src/control/locator.zig`
 
+- Accepted eleventh bucket-lane hygiene slice in `howl-linux-host`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const Window = struct` in `howl-linux-host/src/window_chrome/window.zig`
+  - updated all method signatures/receivers and constructor return types in `window.zig` from `State` to `Window`
+  - updated the owner-local inline test local in `window.zig` from `State` to `Window`
+  - changed `main.zig` and `app/processor.zig` to lowercase `window` module imports and updated typed/value references accordingly
+  - kept file path, free functions, and behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave5`
+  - reviewer session id: `ses_15ded6d8bffeZlZ58o8ZqdPA0k`
+  - coder/worker session id: `ses_15df0395effeOHdSt3H0nKTm4s`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/window_chrome/window.zig" "howl-linux-host/src/main.zig" "howl-linux-host/src/app/processor.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gates proving no remaining `State` name and no uppercase `Window` module references in `main.zig` / `processor.zig`
+
+- Accepted twelfth bucket-lane hygiene slice in `howl-vt`.
+- Accepted cut:
+  - deleted `pub const Options = struct { scrollback_offset: u32 = 0 }` from `howl-vt/src/screen_set.zig`
+  - changed `visibleView` to take direct `scrollback_offset: u32`
+  - kept `surfaceSnapshot(..., scrollback_offset: u64)` unchanged and preserved its `u32` clamp before calling `visibleView`
+  - updated direct `visibleView` callers in `terminal.zig`, `simulation/protocol.zig`, `simulation/scrollback.zig`, `terminal_snapshot_test.zig`, `terminal_surface_test.zig`, and `terminal_modes_test.zig`
+  - kept `View.scrollback_offset`, clamping behavior, and all other behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave5`
+  - reviewer session id: `ses_15ded6c98ffeoBk42kbDktSGBw`
+  - coder/worker session id: `ses_15df038f6ffeivf73ofqAnAj9F`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-vt/src/screen_set.zig" "howl-vt/src/terminal.zig" "howl-vt/src/terminal_snapshot_test.zig" "howl-vt/src/terminal_surface_test.zig" "howl-vt/src/terminal_modes_test.zig" "howl-vt/src/simulation/protocol.zig" "howl-vt/src/simulation/scrollback.zig"`
+  - `zig build test && zig build check` in `howl-vt`
+  - grep gate: no `pub const Options = struct` in `howl-vt/src/screen_set.zig`
+  - grep gate: no `screen_set.Options|ScreenSet.Options` in the allowed files
+  - grep gate: no `screen_set.visibleView(..., .{` bag-literal callsites remain in the allowed VT files
+
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection
   - parallel teammate work is allowed for:
