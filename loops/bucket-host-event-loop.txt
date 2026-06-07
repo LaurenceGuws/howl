@@ -1,0 +1,51 @@
+# Active Slice
+
+Loop:
+
+- Bucket-struct cleanup lane
+
+Slice:
+
+- host event loop 1
+
+Status:
+
+- Pre-implementation review pending
+
+Research authority:
+
+- orchestrator lane plan in `project-memory.md` under `2026-06-07 Zig Hygiene Refocus`
+- host lane audit classified this as the fourth recommended narrow host fix
+
+Allowed files:
+
+- `howl-linux-host/src/event_loop.zig`
+- likely direct consumer files only if review confirms they are required for the rename
+
+Intended shape:
+
+- replace the generic `State` owner name in `howl-linux-host/src/event_loop.zig` with a concrete event-loop noun
+- keep behavior unchanged
+- keep this a rename-sized bucket cleanup only
+
+Non-goals:
+
+- no event-loop behavior changes
+- no scheduler/runtime redesign
+- no unrelated host cleanup
+
+Stop conditions:
+
+- stop if the rename broadens beyond a narrow owner-name correction
+- stop if the true noun is ambiguous after review
+- stop if consumer scope is wider than a small local rename slice
+
+Verification:
+
+- to be finalized by pre-implementation review
+
+Receipt requirement:
+
+- record orchestrator session id
+- record reviewer session id
+- record coder/worker session id

@@ -32,13 +32,13 @@ Loop rules:
 
 Next queued slice:
 
-- Wave 1 active:
-  - `loops/bucket-host-cli-args.txt`
-  - `loops/bucket-vt-mode-state.txt`
-- Next queued host slice after wave 1:
-  - `howl-linux-host/src/terminal/cursor_blink.zig::State`
-- Next queued VT slice after wave 1:
-  - `howl-vt/src/control/osc_color.zig::State`
+- Wave 4 active:
+  - `loops/bucket-host-event-loop.txt`
+  - `loops/bucket-vt-locator.txt`
+- Next queued host slice after wave 4:
+  - `howl-linux-host/src/window_chrome/window.zig::State`
+- Next queued VT slice after wave 4:
+  - `howl-vt/src/screen_set.zig::Options`
 
 Queue source:
 

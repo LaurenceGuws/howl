@@ -1,0 +1,51 @@
+# Active Slice
+
+Loop:
+
+- Bucket-struct cleanup lane
+
+Slice:
+
+- vt locator 1
+
+Status:
+
+- Pre-implementation review pending
+
+Research authority:
+
+- orchestrator lane plan in `project-memory.md` under `2026-06-07 Zig Hygiene Refocus`
+- VT lane audit classified this as the fifth recommended narrow VT fix
+
+Allowed files:
+
+- `howl-vt/src/control/locator.zig`
+- likely direct consumer files only if review confirms they are required for the rename
+
+Intended shape:
+
+- replace the generic `State` owner name in `howl-vt/src/control/locator.zig` with an exact locator noun
+- keep behavior unchanged
+- keep this a rename-sized bucket cleanup only
+
+Non-goals:
+
+- no locator-report behavior changes
+- no broader control/report redesign
+- no unrelated VT cleanup
+
+Stop conditions:
+
+- stop if the rename broadens beyond a narrow owner-name correction
+- stop if the true noun is ambiguous after review
+- stop if consumer scope is wider than a small local rename slice
+
+Verification:
+
+- to be finalized by pre-implementation review
+
+Receipt requirement:
+
+- record orchestrator session id
+- record reviewer session id
+- record coder/worker session id
