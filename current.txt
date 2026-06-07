@@ -1,23 +1,22 @@
-# No Active Slice
+# Active Loop Index
 
 Purpose:
 
-- Bucket-struct lane narrow queue complete.
-- Remaining residue is still in scope as reference-driven redesign planning work.
-- Durable history, classifications, receipts, and redesign plans live in `project-memory.md`.
-- No active worker slice is open.
+- Track the active implementation loops that are ready for reviewer and worker handoff.
+- Use loop contracts and research caches instead of ad hoc delegation.
+- Keep worker/coder implementation behind accepted research and hostile review.
 
 Sprint:
 
-- Useless LOC sprint
+- Host pacing lane
 
 Scope source:
 
-- `loc-debt-sprint-scope.md`
+- `research/cache-2026-06-07-pacing-worker-ready-scratchpad.md`
 
 Active loops:
 
-- none
+- `loops/pacing-lane.txt`
 
 Lane status:
 
@@ -29,16 +28,12 @@ Lane status:
 - Every accepted slice needs a receipt with orchestrator, reviewer, and coder/worker session ids.
 - If pre-implementation review rejects a slice, the corrected contract must carry a researcher session id before coder seeding resumes.
 
-Bucket-struct lane close state:
+Pacing lane state:
 
-- Planned narrow queue is complete.
-- Remaining bucket hits are not out of scope.
-- Remaining work is split between:
-  - reference-driven redesign planning
-  - tolerated boundary shapes that only change if the user authorizes broader redesign
-  - proof / benchmark accountability work
-- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the redesign backlog and residue classification.
+- Research and reviewer loop completed for the pacing lane scratchpad.
+- Worker-ready pacing slices are recorded in `research/cache-2026-06-07-pacing-worker-ready-scratchpad.md`.
+- Delegate only from the accepted pacing loop contract, not from conversational summaries.
 
 Queue source:
 
-- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the completed narrow queue, receipts, and the remaining redesign backlog.
+- See `loops/pacing-lane.txt` for the active implementation contract.
