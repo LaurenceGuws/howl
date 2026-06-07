@@ -412,6 +412,13 @@ Completed slices:
     - ignored Zig multiline string literal lines in all relevant scanner walks
   - research authority: `ses_15e7abaa3ffe49orSXhmurR68D`, `ses_15e7aba6effeefz49fYfaVU3eO`, `ses_15e7aba5cffefknFoS4FN6WckG`
   - reviewer acceptance: `ses_15e6c2d97ffepdrj65VfBI5S89`
+- Zig hygiene publication-state 1: removed the generic `State` bucket name from `howl-vt/src/surface/publication.zig`.
+  - changed `pub const State = struct { ... }` to `pub const Publication = struct { ... }`
+  - updated method receivers from `State` to `Publication`
+  - updated `howl-vt/src/terminal.zig` to use `surface_publication.Publication`
+  - kept fields, methods, owner location, and behavior unchanged
+  - research authority: `ses_15e64137dffeUiObUhwAgX6QDH`
+  - reviewer acceptance: `ses_15e5f92cfffe4XVn4u5e74MC63`
 
 Reopened previously skipped low-yield avenues:
 

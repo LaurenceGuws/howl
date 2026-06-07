@@ -172,6 +172,29 @@ for name, source in samples.items():
     print(name, counts.structs_top_level, counts.bucket_named_structs, counts.bucket_struct_lines)
 PY`
 
+## 2026-06-07 Zig Hygiene Refocus
+
+- Accepted first post-tooling hygiene slice in `howl-vt` based on the repaired inventory and reference-backed bucket scrutiny.
+- Inventory pressure showed `howl-linux-host/src/terminal/context.zig` as the largest bucket-name hit, but research concluded it is now a tolerated per-terminal aggregate root and any remaining issue broadens into redesign rather than a narrow cut.
+- Research instead promoted `howl-vt/src/surface/publication.zig` as the best narrow bucket-owner fix because:
+  - the file path already supplies the true owner noun
+  - the generic exported `State` bucket had one concrete consumer in `howl-vt/src/terminal.zig`
+  - Ghostty/TigerBeetle/Howl pressure supported replacing the generic type name without redesigning ownership flow
+- Accepted cut:
+  - changed `pub const State = struct { ... }` to `pub const Publication = struct { ... }` in `howl-vt/src/surface/publication.zig`
+  - updated method receivers from `State` to `Publication`
+  - updated `howl-vt/src/terminal.zig` to use `surface_publication.Publication`
+  - kept fields, methods, owner location, and behavior unchanged
+- Research authority:
+  - `ses_15e64137dffeUiObUhwAgX6QDH`
+- Review path:
+  - final diff acceptance in reviewer session `ses_15e5f92cfffe4XVn4u5e74MC63`: `No findings.`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-vt/src/surface/publication.zig" "howl-vt/src/terminal.zig"`
+  - `zig build test && zig build check` in `howl-vt`
+  - grep gate: no `pub const State = struct` in `howl-vt/src/surface/publication.zig`
+  - grep gate: no `surface_publication.State` in `howl-vt/src/terminal.zig`
+
 ### 2026-06-06 Sprint Refocus
 
 - The primary sprint metric is now materially smaller `prod`, not generic hygiene progress.
