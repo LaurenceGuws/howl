@@ -297,6 +297,40 @@ PY`
   - grep gate: no `OscColorNs.State` in `howl-vt/src/host/state.zig`
   - grep gate: no `OscColor.State` in `howl-vt/src/kitty/color.zig`
 
+- Accepted seventh bucket-lane hygiene slice in `howl-linux-host`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const WaitThread = struct` in `howl-linux-host/src/terminal/pty/wait_thread.zig`
+  - updated `init` and `deinit` receivers from `State` to `WaitThread`
+  - updated `Context.progress` in `howl-linux-host/src/terminal/context.zig` from `pty_wait_thread.State` to `pty_wait_thread.WaitThread`
+  - kept `progress` field name, free-function names, file path, fields, tests, and behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave3`
+  - reviewer session id: `ses_15e088005ffepwDy01vNfVbV0D`
+  - coder/worker session id: `ses_15e098dd5ffeocg3NjeSq3gxfi`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/terminal/pty/wait_thread.zig" "howl-linux-host/src/terminal/context.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gate: no `pub const State = struct` in `howl-linux-host/src/terminal/pty/wait_thread.zig`
+  - grep gate: no `pty_wait_thread.State` in `howl-linux-host/src/terminal/context.zig`
+  - grep gate: `pub const WaitThread = struct` appears in `howl-linux-host/src/terminal/pty/wait_thread.zig`
+
+- Accepted eighth bucket-lane hygiene slice in `howl-vt`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const DirtyState = struct` in `howl-vt/src/screen/dirty.zig`
+  - updated `dirty.zig` method signatures from `State` to `DirtyState`
+  - updated direct consumers in `howl-vt/src/screen.zig` and `howl-vt/src/screen/resize.zig` from `dirty.State` to `dirty.DirtyState`
+  - kept `DirtyRows`, `allocDirtyCols`, `rowsForFull`, field names, assertions, and behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave3`
+  - reviewer session id: `ses_15e088085ffezTEYSfEuZ9s25f`
+  - coder/worker session id: `ses_15e0b3ec4ffeUVxQc5h6xWevHQ`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-vt/src/screen/dirty.zig" "howl-vt/src/screen.zig" "howl-vt/src/screen/resize.zig"`
+  - `zig build test && zig build check` in `howl-vt`
+  - grep gate: no `pub const State = struct` in `howl-vt/src/screen/dirty.zig`
+  - grep gate: no `dirty.State` in `howl-vt/src/screen.zig`
+  - grep gate: no `dirty.State` in `howl-vt/src/screen/resize.zig`
+
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection
   - parallel teammate work is allowed for:
