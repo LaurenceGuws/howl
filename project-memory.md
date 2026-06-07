@@ -832,6 +832,23 @@ Accepted production/test separation cuts completed so far:
   - `howl-linux-host`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Thirty-seventh accepted prod-reduction cut landed in `howl-render/src/text/raster/special.zig`.
+- Removed the remaining alias-only 8-way range wrappers from the raster owner.
+- Kept `eighthPartitionRange(...)` as the single 8-way partition owner.
+- Deleted `eightRange(...)` and `eighthRange(...)`.
+- Rewired `rasterizeEightBarAlpha(...)`, `fillRows(...)`, and `fillCols(...)` to call `eighthPartitionRange(...)` directly.
+- Left `fourthRange(...)` unchanged.
+- Research authority:
+  - `ses_1609913d5ffeIvpUiNYfaOzL1Z`
+- Review path:
+  - final diff acceptance in reviewer session `ses_160904847ffenO0IOhvrifR6TN`: `No findings.`
+- Verification after the cut:
+  - `howl-render`: `zig build test -- "generated special support table matches rasterizer dispatch"`
+  - `howl-render`: `zig build test -- "generated special raster draws top half block"`
+  - `howl-render`: `zig build test -- "generated special raster draws left seven eighths block"`
+  - `howl-render`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:

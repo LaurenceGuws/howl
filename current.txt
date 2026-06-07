@@ -356,6 +356,14 @@ Completed slices:
   - kept `uploadRenderSurface(...) -> bool`, fill upload recovery, classifier behavior, and the `testing` namespace unchanged
   - research authority: `ses_1609913f2ffedSaTIQzCwf7uPy`
   - reviewer acceptance: `ses_16095178bffe2bN1PJal2DgQ7r`
+- Item 10ak: removed the remaining alias-only 8-way range wrappers from `howl-render/src/text/raster/special.zig`.
+  - kept `eighthPartitionRange(...)` as the single 8-way partition owner
+  - deleted `eightRange(...)`
+  - deleted `eighthRange(...)`
+  - rerouted `rasterizeEightBarAlpha(...)`, `fillRows(...)`, and `fillCols(...)` to call `eighthPartitionRange(...)` directly
+  - left `fourthRange(...)` unchanged
+  - research authority: `ses_1609913d5ffeIvpUiNYfaOzL1Z`
+  - reviewer acceptance: `ses_160904847ffenO0IOhvrifR6TN`
 
 Reopened previously skipped low-yield avenues:
 
