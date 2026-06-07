@@ -398,6 +398,38 @@ PY`
   - grep gate: no `screen_set.Options|ScreenSet.Options` in the allowed files
   - grep gate: no `screen_set.visibleView(..., .{` bag-literal callsites remain in the allowed VT files
 
+- Accepted thirteenth bucket-lane hygiene slice in `howl-linux-host`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const Links = struct` in `howl-linux-host/src/terminal/links.zig`
+  - updated `Context.links` type from `terminal_links.State` to `terminal_links.Links`
+  - kept behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave6`
+  - reviewer session id: `ses_15dd97385ffeT2VBLi4koGRo9P`
+  - coder/worker session id: `ses_15ddafe1bffedqj4gcEKExo1Gm`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/terminal/links.zig" "howl-linux-host/src/terminal/context.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gate: no `pub const State = struct` in `howl-linux-host/src/terminal/links.zig`
+  - grep gate: no `terminal_links.State` in `howl-linux-host/src/terminal/context.zig`
+
+- Accepted fourteenth bucket-lane hygiene slice in `howl-vt`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const TerminalStreamState = struct` in `howl-vt/src/stream_terminal.zig`
+  - updated `initAlloc` return type and `deinit` receiver in `stream_terminal.zig`
+  - updated all five `stream_terminal.State` spellings in `howl-vt/src/terminal.zig` to `stream_terminal.TerminalStreamState`
+  - kept `stream_state` field name, `Stream`, and behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave6`
+  - reviewer session id: `ses_15dd9731bffemZfefXhg7WIUQ5`
+  - coder/worker session id: `ses_15ddafd98ffebITuhwgIs9EhSH`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-vt/src/stream_terminal.zig" "howl-vt/src/terminal.zig"`
+  - `zig build test && zig build check` in `howl-vt`
+  - grep gate: no `pub const State = struct` in `howl-vt/src/stream_terminal.zig`
+  - grep gate: no `stream_terminal.State` in `howl-vt/src/terminal.zig`
+  - grep gate: `pub const TerminalStreamState = struct` appears in `howl-vt/src/stream_terminal.zig`
+
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection
   - parallel teammate work is allowed for:
