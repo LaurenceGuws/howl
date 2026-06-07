@@ -32,13 +32,10 @@ Loop rules:
 
 Next queued slice:
 
-- Wave 4 active:
-  - `loops/bucket-host-event-loop.txt`
-  - `loops/bucket-vt-locator.txt`
-- Next queued host slice after wave 4:
-  - `howl-linux-host/src/window_chrome/window.zig::State`
-- Next queued VT slice after wave 4:
-  - `howl-vt/src/screen_set.zig::Options`
+- Final narrow bucket slice active:
+  - `loops/bucket-render-sprite-resource-results.txt`
+- Next queued slice after this:
+  - none; remaining bucket hits are redesign-only, tolerated boundary shapes, or already accepted false positives unless new research reopens them
 
 Queue source:
 
