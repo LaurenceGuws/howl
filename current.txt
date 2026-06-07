@@ -18,17 +18,16 @@ Active loops:
 
 - `loops/bucket-struct-lane.txt`
   - lane: bucket-struct cleanup
-  - status: wave 7 active
-  - next queued host slice after wave 7: `howl-linux-host/src/config/config.zig::State`
-  - next queued VT slice after wave 7: `howl-render/src/text/font/ft_hb/support.zig::State`
-- `loops/bucket-host-selection.txt`
+  - status: wave 8 active
+  - next queued render slice after wave 8: `howl-render/src/prepared/sprite_resource_store.zig::{Result, AtlasResult}`
+- `loops/bucket-host-config-state.txt`
   - lane: bucket-struct cleanup
   - status: accepted; pending receipt/commit
-  - target: `howl-linux-host/src/terminal/selection.zig::State`
-- `loops/bucket-vt-kitty-state.txt`
+  - target: `howl-linux-host/src/config/config.zig::State`
+- `loops/bucket-render-support-state.txt`
   - lane: bucket-struct cleanup
   - status: accepted; pending receipt/commit
-  - target: `howl-vt/src/kitty/state.zig::State`
+  - target: `howl-render/src/text/font/ft_hb/support.zig::State`
 
 Lane rules:
 

@@ -462,6 +462,42 @@ PY`
   - grep gate: no `kitty_state.State` in `howl-vt/src/terminal.zig`
   - grep gate: `pub const KittyState = struct` appears in `howl-vt/src/kitty/state.zig`
 
+- Accepted seventeenth bucket-lane hygiene slice in `howl-linux-host`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const UiConfig = struct` in `howl-linux-host/src/config/config.zig`
+  - updated `load`, `deinit`, and `applyProcessOverrides` signatures/receivers to `UiConfig`
+  - updated typed consumers in `howl-linux-host/src/main.zig` and `howl-linux-host/src/app/processor.zig` from `Config.State` to `Config.UiConfig`
+  - kept file path, module alias `Config`, field layout, loader behavior, override behavior, and child owner nouns unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave8`
+  - reviewer session id: `ses_15dc3d055ffetgk1BmZ61y2WI1`
+  - coder/worker session id: `ses_15dc5b25fffeVK5yTZu2tNzcft`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/config/config.zig" "howl-linux-host/src/main.zig" "howl-linux-host/src/app/processor.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gate: no `pub const State = struct` in `howl-linux-host/src/config/config.zig`
+  - grep gate: `pub const UiConfig = struct` appears in `howl-linux-host/src/config/config.zig`
+  - grep gate: no `Config.State` in `howl-linux-host/src/main.zig`
+  - grep gate: no `Config.State` in `howl-linux-host/src/app/processor.zig`
+
+- Accepted eighteenth bucket-lane hygiene slice in `howl-render`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const FtHbSupport = struct` in `howl-render/src/text/font/ft_hb/support.zig`
+  - updated owner-local type mentions in `support.zig`
+  - updated typed consumers in `howl-render/src/session/text.zig`, `howl-render/src/text/font/ft_hb/glyph_raster.zig`, and `howl-render/src/text/font/ft_hb/support_test.zig`
+  - kept file path, `text_state` field name, free-function names, fallback-path borrowing behavior, caches, FT/HB behavior, and public ABI unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave8`
+  - reviewer session id: `ses_15dc3cf2bfferjc06JFbhyoAHG`
+  - coder/worker session id: `ses_15dc5b1d0ffe8d0h3a56RLoO4a`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-render/src/text/font/ft_hb/support.zig" "howl-render/src/session/text.zig" "howl-render/src/text/font/ft_hb/glyph_raster.zig" "howl-render/src/text/font/ft_hb/support_test.zig"`
+  - `zig build test && zig build check` in `howl-render`
+  - grep gate: no `pub const State = struct` in `howl-render/src/text/font/ft_hb/support.zig`
+  - grep gate: no `text_support.State` in `howl-render/src/session/text.zig`
+  - grep gate: no `provider_mod.State` in `howl-render/src/text/font/ft_hb/glyph_raster.zig`
+  - grep gate: no `support.State` in `howl-render/src/text/font/ft_hb/support_test.zig`
+
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection
   - parallel teammate work is allowed for:
