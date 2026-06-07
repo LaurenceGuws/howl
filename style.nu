@@ -97,6 +97,9 @@ def summarize [rows: list<any>] {
     funcs: (sum-field $rows funcs)
     long_funcs: (sum-field $rows long_funcs)
     test_blocks: (sum-field $rows test_blocks)
+    structs_top_level: (sum-field $rows structs_top_level)
+    bucket_named_structs: (sum-field $rows bucket_named_structs)
+    bucket_struct_lines: (sum-field $rows bucket_struct_lines)
   }
 }
 

@@ -390,6 +390,28 @@ Completed slices:
   - fixed `workspace-repos` to return the repo list so rootless `style.nu` modes do not crash
   - research authority: `ses_15e86d0f1ffe3C13fMUFZO1kL2`, `ses_15e86d0c8ffeMnWe86avo21kGW`
   - reviewer acceptance: `ses_15e7f9a21ffeSJeEOsj9MLHElp`
+- Style-tool rewrite 1c: added a narrow, reference-backed top-level bucket-struct inventory slice.
+  - added `structs_top_level`
+  - added `bucket_named_structs`
+  - added `bucket_struct_lines`
+  - restricted findings to top-level named structs in production-owner Zig files
+  - excluded `_test.zig`, `benchmark_main.zig`, top-level `test` blocks, and top-level `pub const testing = struct { ... }`
+  - excluded `extern struct` from bucket findings
+  - limited bucket-name findings to exact names:
+    - `Context`
+    - `State`
+    - `Options`
+    - `Config`
+    - `Info`
+    - `Data`
+    - `Result`
+    - `Diagnostics`
+  - kept touched-file, touched-repo, and failure views unchanged
+  - repaired scanner brace walking twice during review:
+    - ignored comment/string braces in shared body scanning
+    - ignored Zig multiline string literal lines in all relevant scanner walks
+  - research authority: `ses_15e7abaa3ffe49orSXhmurR68D`, `ses_15e7aba6effeefz49fYfaVU3eO`, `ses_15e7aba5cffefknFoS4FN6WckG`
+  - reviewer acceptance: `ses_15e6c2d97ffepdrj65VfBI5S89`
 
 Reopened previously skipped low-yield avenues:
 

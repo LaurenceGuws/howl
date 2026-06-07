@@ -111,6 +111,67 @@ Rules:
   - `nu ./style.nu --touched-files`
   - `nu ./style.nu --failures`
 
+- Accepted third rewrite slice for `style.nu` and `utils/hygene/style_scan.py`.
+- Purpose of the slice:
+  - add only reference-backed struct concerns
+  - avoid fake size heuristics
+  - keep the tool inventory-only for struct reporting
+- Reference-backed rules accepted for the slice:
+  - exact generic bucket names from `AGENTS.md` survive as real concerns
+  - raw struct counts, field-count thresholds, averages, maxima, and visibility alone do not survive scrutiny as findings
+  - large structs are not condemned by size alone because Ghostty and Alacritty both use large aggregate owners as legitimate owner truth
+- Exact accepted behavior in the third slice:
+  - added `structs_top_level`
+  - added `bucket_named_structs`
+  - added `bucket_struct_lines`
+  - restricted struct scanning to top-level named Zig structs in production-owner files
+  - excluded findings from:
+    - `*_test.zig`
+    - `benchmark_main.zig`
+    - top-level `test` blocks
+    - top-level `pub const testing = struct { ... }`
+  - excluded `extern struct` from bucket findings
+  - limited bucket-name findings to exact top-level names:
+    - `Context`
+    - `State`
+    - `Options`
+    - `Config`
+    - `Info`
+    - `Data`
+    - `Result`
+    - `Diagnostics`
+  - kept touched-file, touched-repo, and failure views unchanged
+- Review path:
+  - first review rejected raw brace walking through comments/strings for struct extent
+  - second review rejected the remaining Zig multiline string literal hole
+  - both were fixed in the shared scanner walks before final acceptance
+  - final diff acceptance in reviewer session `ses_15e6c2d97ffepdrj65VfBI5S89`: `No findings.`
+- Concrete proof receipts after the rewrite:
+  - `howl-linux-host/src/terminal/context.zig`: `structs_top_level=5`, `bucket_named_structs=1`, `bucket_struct_lines=534`
+  - `howl-linux-host/src/display/renderer/render_surface.zig`: `structs_top_level=1`, `bucket_named_structs=0`, `bucket_struct_lines=0`
+  - `howl-render/src/text/raster/special_test.zig`: `structs_top_level=0`, `bucket_named_structs=0`, `bucket_struct_lines=0`
+  - `howl-render/src/benchmark_main.zig`: `structs_top_level=0`, `bucket_named_structs=0`, `bucket_struct_lines=0`
+- Extra scanner receipts after the review fixes:
+  - multiline-string brace sample now reports both top-level structs and the full bucket block extent
+  - comment/string brace samples no longer truncate the bucket block or hide following top-level structs
+- Verification after the slice:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/terminal/context.zig" "howl-linux-host/src/display/renderer/render_surface.zig" "howl-render/src/text/raster/special_test.zig" "howl-render/src/benchmark_main.zig"`
+  - `nu ./style.nu howl-linux-host --by-file`
+  - `nu ./style.nu howl-render --by-file`
+  - `nu ./style.nu --touched-files`
+  - `nu ./style.nu --failures`
+  - `python - <<'PY'
+from utils.hygene.style_scan import count_source
+samples = {
+    "top_level_comment": 'const Context = struct {\n    const s = "{";\n    // }\n    \\\\ }\n};\n',
+    "testing_excluded": 'pub const testing = struct {\n    pub fn x() void {}\n};\nconst Context = struct {\n    field: u8,\n};\n',
+    "extern_excluded": 'const Context = extern struct {\n    field: u8,\n};\n',
+}
+for name, source in samples.items():
+    counts = count_source(f"{name}.zig", source)
+    print(name, counts.structs_top_level, counts.bucket_named_structs, counts.bucket_struct_lines)
+PY`
+
 ### 2026-06-06 Sprint Refocus
 
 - The primary sprint metric is now materially smaller `prod`, not generic hygiene progress.

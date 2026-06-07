@@ -32,6 +32,17 @@ CAST_BUILTINS = (
 
 CAST_RE = re.compile("|".join(re.escape(builtin) + r"\b" for builtin in CAST_BUILTINS))
 
+BUCKET_STRUCT_NAMES = {
+    "Context",
+    "State",
+    "Options",
+    "Config",
+    "Info",
+    "Data",
+    "Result",
+    "Diagnostics",
+}
+
 
 RELEVANT_BASELINE_FIELDS = (
     "asserts",
@@ -63,6 +74,18 @@ class Counts:
     funcs: int = 0
     long_funcs: int = 0
     test_blocks: int = 0
+    structs_top_level: int = 0
+    bucket_named_structs: int = 0
+    bucket_struct_lines: int = 0
+
+
+@dataclass(frozen=True)
+class TopLevelStruct:
+    name: str
+    start_line: int
+    end_line: int
+    is_pub: bool
+    is_extern: bool
 
 
 def main() -> int:
@@ -125,6 +148,7 @@ def count_source(path: str, source: str) -> Counts:
     proof_lines: set[int] = set()
     test_hook_lines: set[int] = set()
     benchmark_lines: set[int] = set()
+    bucket_struct_lines: set[int] = set()
 
     if path.endswith(".zig"):
         if os.path.basename(path) == "benchmark_main.zig":
@@ -136,6 +160,20 @@ def count_source(path: str, source: str) -> Counts:
             test_lines = top_level_test_lines(source)
             proof_lines = test_lines
             test_hook_lines = top_level_testing_struct_lines(source)
+            top_level_structs = [
+                struct
+                for struct in scan_top_level_named_structs(source)
+                if not (struct.is_pub and struct.name == "testing")
+            ]
+            counts.structs_top_level = len(top_level_structs)
+            for struct in top_level_structs:
+                if struct.name not in BUCKET_STRUCT_NAMES:
+                    continue
+                if struct.is_extern:
+                    continue
+                counts.bucket_named_structs += 1
+                for current in range(struct.start_line, struct.end_line + 1):
+                    bucket_struct_lines.add(current)
 
     counts.asserts = len(ASSERT_RE.findall(stripped)) if path.endswith(".zig") else 0
     counts.usizes = len(USIZE_RE.findall(stripped)) if path.endswith(".zig") else 0
@@ -161,6 +199,8 @@ def count_source(path: str, source: str) -> Counts:
         counts.code += 1
         if path_is_test or index in test_lines:
             counts.tests += 1
+        if index in bucket_struct_lines:
+            counts.bucket_struct_lines += 1
 
         if index in benchmark_lines:
             counts.benchmark += 1
@@ -291,6 +331,10 @@ def strip_comments_and_strings(source: str) -> str:
             in_comment = True
             i += 2
             continue
+        if c == "\\" and i + 1 < len(source) and source[i + 1] == "\\":
+            while i < len(source) and source[i] != "\n":
+                i += 1
+            continue
         if c == '"':
             in_string = True
             i += 1
@@ -314,6 +358,86 @@ def top_level_test_lines(source: str) -> set[int]:
 
 def top_level_testing_struct_lines(source: str) -> set[int]:
     return top_level_block_lines(source, match_top_level_testing_struct)
+
+
+def scan_top_level_named_structs(source: str) -> list[TopLevelStruct]:
+    structs: list[TopLevelStruct] = []
+    i = 0
+    line = 1
+    brace_depth = 0
+    in_string = False
+    in_char = False
+    in_comment = False
+    while i < len(source):
+        c = source[i]
+        if c == "\n":
+            in_comment = False
+            line += 1
+            i += 1
+            continue
+        if in_comment:
+            i += 1
+            continue
+        if in_string:
+            if c == "\\" and i + 1 < len(source):
+                i += 2
+                continue
+            if c == '"':
+                in_string = False
+            i += 1
+            continue
+        if in_char:
+            if c == "\\" and i + 1 < len(source):
+                i += 2
+                continue
+            if c == "'":
+                in_char = False
+            i += 1
+            continue
+        if c == "/" and i + 1 < len(source) and source[i + 1] == "/":
+            in_comment = True
+            i += 2
+            continue
+        if c == "\\" and i + 1 < len(source) and source[i + 1] == "\\":
+            while i < len(source) and source[i] != "\n":
+                i += 1
+            continue
+        if c == '"':
+            in_string = True
+            i += 1
+            continue
+        if c == "'":
+            in_char = True
+            i += 1
+            continue
+        if c == "{":
+            brace_depth += 1
+            i += 1
+            continue
+        if c == "}":
+            brace_depth -= 1
+            i += 1
+            continue
+        match = match_top_level_named_struct(source, i) if brace_depth == 0 else None
+        if match is not None:
+            start_line = line
+            body_start = find_body_start(source, match[3])
+            end = find_body_end(source, body_start)
+            end_line = source.count("\n", 0, end) + 1
+            structs.append(
+                TopLevelStruct(
+                    name=match[0],
+                    start_line=start_line,
+                    end_line=end_line,
+                    is_pub=match[1],
+                    is_extern=match[2],
+                )
+            )
+            i = end
+            line = end_line
+            continue
+        i += 1
+    return structs
 
 
 def top_level_block_lines(source: str, match_block) -> set[int]:
@@ -353,6 +477,10 @@ def top_level_block_lines(source: str, match_block) -> set[int]:
         if c == "/" and i + 1 < len(source) and source[i + 1] == "/":
             in_comment = True
             i += 2
+            continue
+        if c == "\\" and i + 1 < len(source) and source[i + 1] == "\\":
+            while i < len(source) and source[i] != "\n":
+                i += 1
             continue
         if c == '"':
             in_string = True
@@ -409,6 +537,36 @@ def match_top_level_testing_struct(source: str, index: int) -> int | None:
     return consume_keyword(source, next_index, "struct")
 
 
+def match_top_level_named_struct(source: str, index: int) -> tuple[str, bool, bool, int] | None:
+    next_index = index
+    is_pub = False
+    if keyword_end := consume_keyword(source, next_index, "pub"):
+        is_pub = True
+        next_index = skip_space(source, keyword_end)
+    next_index = consume_keyword(source, next_index, "const")
+    if next_index is None:
+        return None
+    next_index = skip_space(source, next_index)
+    name_end = consume_identifier(source, next_index)
+    if name_end is None:
+        return None
+    name = source[next_index:name_end]
+    next_index = skip_space(source, name_end)
+    if next_index >= len(source) or source[next_index] != "=":
+        return None
+    next_index = skip_space(source, next_index + 1)
+    is_extern = False
+    if keyword_end := consume_keyword(source, next_index, "extern"):
+        is_extern = True
+        next_index = skip_space(source, keyword_end)
+    elif keyword_end := consume_keyword(source, next_index, "packed"):
+        next_index = skip_space(source, keyword_end)
+    struct_end = consume_keyword(source, next_index, "struct")
+    if struct_end is None:
+        return None
+    return name, is_pub, is_extern, struct_end
+
+
 def count_test_blocks(source: str) -> int:
     return len(re.findall(r"(?m)^\s*test\b", strip_comments_and_strings(source)))
 
@@ -437,12 +595,56 @@ def count_functions(source: str) -> tuple[int, int]:
 
 
 def find_body_start(source: str, start: int) -> int | None:
-    for index in range(start, len(source)):
+    index = start
+    in_string = False
+    in_char = False
+    in_comment = False
+    while index < len(source):
         c = source[index]
+        if c == "\n":
+            in_comment = False
+            index += 1
+            continue
+        if in_comment:
+            index += 1
+            continue
+        if in_string:
+            if c == "\\" and index + 1 < len(source):
+                index += 2
+                continue
+            if c == '"':
+                in_string = False
+            index += 1
+            continue
+        if in_char:
+            if c == "\\" and index + 1 < len(source):
+                index += 2
+                continue
+            if c == "'":
+                in_char = False
+            index += 1
+            continue
+        if c == "/" and index + 1 < len(source) and source[index + 1] == "/":
+            in_comment = True
+            index += 2
+            continue
+        if c == "\\" and index + 1 < len(source) and source[index + 1] == "\\":
+            while index < len(source) and source[index] != "\n":
+                index += 1
+            continue
+        if c == '"':
+            in_string = True
+            index += 1
+            continue
+        if c == "'":
+            in_char = True
+            index += 1
+            continue
         if c == "{":
             return index
         if c == ";":
             return None
+        index += 1
     return None
 
 
@@ -451,8 +653,50 @@ def find_body_end(source: str, start: int | None) -> int:
         return len(source)
     depth = 1
     index = start + 1
+    in_string = False
+    in_char = False
+    in_comment = False
     while index < len(source):
         c = source[index]
+        if c == "\n":
+            in_comment = False
+            index += 1
+            continue
+        if in_comment:
+            index += 1
+            continue
+        if in_string:
+            if c == "\\" and index + 1 < len(source):
+                index += 2
+                continue
+            if c == '"':
+                in_string = False
+            index += 1
+            continue
+        if in_char:
+            if c == "\\" and index + 1 < len(source):
+                index += 2
+                continue
+            if c == "'":
+                in_char = False
+            index += 1
+            continue
+        if c == "/" and index + 1 < len(source) and source[index + 1] == "/":
+            in_comment = True
+            index += 2
+            continue
+        if c == "\\" and index + 1 < len(source) and source[index + 1] == "\\":
+            while index < len(source) and source[index] != "\n":
+                index += 1
+            continue
+        if c == '"':
+            in_string = True
+            index += 1
+            continue
+        if c == "'":
+            in_char = True
+            index += 1
+            continue
         if c == "{":
             depth += 1
         elif c == "}":
@@ -474,6 +718,15 @@ def consume_keyword(source: str, index: int, keyword: str) -> int | None:
     if source.startswith(keyword, index) and word_boundary(source, index, len(keyword)):
         return index + len(keyword)
     return None
+
+
+def consume_identifier(source: str, index: int) -> int | None:
+    if index >= len(source) or not (source[index].isalpha() or source[index] == "_"):
+        return None
+    end = index + 1
+    while end < len(source) and ident_char(source[end]):
+        end += 1
+    return end
 
 
 def skip_space(source: str, index: int) -> int:
