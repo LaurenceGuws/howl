@@ -798,6 +798,22 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Thirty-fifth accepted prod-reduction cut landed in `howl-vt/src/parser/utf8.zig`.
+- Removed the unreachable non-ASCII one-byte path from `Utf8Decoder.feed(...)`.
+- Added `std.debug.assert(seq_len > 1);` immediately after `utf8ByteSequenceLength(...)` in the non-ASCII path to make the dead-branch proof explicit.
+- Removed the redundant cast on the remaining `utf8Decode(...)` success return.
+- Added owner-local reset proofs for:
+  - invalid start leaves the decoder clear
+  - invalid continuation resets the partial sequence
+- Research authority:
+  - `ses_160a6e765ffe6zO7JiAPRqVf8R`
+- Review path:
+  - worker-ready acceptance in reviewer session `ses_160a45454ffe8Xsd2HHzOLMrKM`
+  - final diff acceptance in reviewer session `ses_160a03eeaffef03i2SEj7fR2FR`: `No findings.`
+- Verification after the cut:
+  - `howl-vt`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:
