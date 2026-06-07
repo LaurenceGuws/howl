@@ -498,6 +498,36 @@ PY`
   - grep gate: no `provider_mod.State` in `howl-render/src/text/font/ft_hb/glyph_raster.zig`
   - grep gate: no `support.State` in `howl-render/src/text/font/ft_hb/support_test.zig`
 
+- Accepted nineteenth bucket-lane hygiene slice in `howl-render`.
+- Accepted cut:
+  - changed `SpriteResourceStore.Result` to `SpriteResourceStore.ResourceAllocation`
+  - changed `SpriteResourceStore.AtlasResult` to `SpriteResourceStore.AtlasPlacement`
+  - updated owner-local return types and owner-local test references only
+  - kept fields, nested `Lifetime`, function names, and behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave9`
+  - reviewer session id: `ses_15db85aedffe9l4pKZGmb06JVA`
+  - coder/worker session id: `ses_15db9a6b3ffeLtHc1LSdq3am84`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-render/src/prepared/sprite_resource_store.zig"`
+  - `zig build test && zig build check` in `howl-render`
+  - grep gate: no `pub const Result = struct` in `howl-render/src/prepared/sprite_resource_store.zig`
+  - grep gate: no `pub const AtlasResult = struct` in `howl-render/src/prepared/sprite_resource_store.zig`
+  - grep gate: no `SpriteResourceStore.Result` in `howl-render/src`
+  - grep gate: no `SpriteResourceStore.AtlasResult` in `howl-render/src`
+  - grep gate: `pub const ResourceAllocation = struct` exists in `howl-render/src/prepared/sprite_resource_store.zig`
+  - grep gate: `pub const AtlasPlacement = struct` exists in `howl-render/src/prepared/sprite_resource_store.zig`
+
+- Bucket-struct lane close verdict:
+  - planned narrow queue is complete
+  - remaining inventory hits are classified as one of:
+    - redesign-only
+    - tolerated aggregate root / acceptable boundary shape
+    - proof-only
+    - benchmark-only
+    - already resolved
+  - do not continue this lane without new researcher-backed evidence reopening a remaining hit
+
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection
   - parallel teammate work is allowed for:

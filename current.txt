@@ -1,10 +1,10 @@
-# Loop Index
+# No Active Slice
 
 Purpose:
 
-- Global index of active parallel loops.
-- Durable history, classifications, and queue details live in `project-memory.md`.
-- Each active independent loop gets its own current-contract file under `loops/`.
+- Bucket-struct lane narrow queue complete.
+- Durable history, classifications, receipts, and redesign-only residue live in `project-memory.md`.
+- No active worker slice is open.
 
 Sprint:
 
@@ -16,20 +16,9 @@ Scope source:
 
 Active loops:
 
-- `loops/bucket-struct-lane.txt`
-  - lane: bucket-struct cleanup
-  - status: wave 8 active
-  - next queued render slice after wave 8: `howl-render/src/prepared/sprite_resource_store.zig::{Result, AtlasResult}`
-- `loops/bucket-host-config-state.txt`
-  - lane: bucket-struct cleanup
-  - status: accepted; pending receipt/commit
-  - target: `howl-linux-host/src/config/config.zig::State`
-- `loops/bucket-render-support-state.txt`
-  - lane: bucket-struct cleanup
-  - status: accepted; pending receipt/commit
-  - target: `howl-render/src/text/font/ft_hb/support.zig::State`
+- none
 
-Lane rules:
+Lane status:
 
 - Default to a parallel worker-loop pipeline when the work allows it.
 - Parallelize research, inventory refresh, redesign-vs-narrow-fix classification, slice review, and independent implementation slices when they do not overlap in files, owners, or verification risk.
@@ -39,6 +28,12 @@ Lane rules:
 - Every accepted slice needs a receipt with orchestrator, reviewer, and coder/worker session ids.
 - If pre-implementation review rejects a slice, the corrected contract must carry a researcher session id before coder seeding resumes.
 
+Bucket-struct lane close state:
+
+- Planned narrow queue is complete.
+- Remaining bucket hits are redesign-only, tolerated boundary shapes, proof/benchmark-only, or accepted false positives under current source-backed classifications.
+- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the final receipts and residue classification.
+
 Queue source:
 
-- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the full planned bucket-struct execution queue and the do-not-touch classifications.
+- See `project-memory.md` under `2026-06-07 Zig Hygiene Refocus` for the completed execution queue, receipts, and the remaining redesign-only / tolerated residue.
