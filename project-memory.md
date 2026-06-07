@@ -430,6 +430,38 @@ PY`
   - grep gate: no `stream_terminal.State` in `howl-vt/src/terminal.zig`
   - grep gate: `pub const TerminalStreamState = struct` appears in `howl-vt/src/stream_terminal.zig`
 
+- Accepted fifteenth bucket-lane hygiene slice in `howl-linux-host`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const Selection = struct` in `howl-linux-host/src/terminal/selection.zig`
+  - updated `Context.selection` from `terminal_selection.State` to `terminal_selection.Selection`
+  - kept behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave7`
+  - reviewer session id: `ses_15dcf8f37ffeNiAEYiCiexvQT6`
+  - coder/worker session id: `ses_15dd1218ffferlHS0vePHAOZWt`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-linux-host/src/terminal/selection.zig" "howl-linux-host/src/terminal/context.zig"`
+  - `zig build test && zig build check` in `howl-linux-host`
+  - grep gate: no `pub const State = struct` in `howl-linux-host/src/terminal/selection.zig`
+  - grep gate: no `terminal_selection.State` in `howl-linux-host/src/terminal/context.zig`
+
+- Accepted sixteenth bucket-lane hygiene slice in `howl-vt`.
+- Accepted cut:
+  - changed `pub const State = struct` to `pub const KittyState = struct` in `howl-vt/src/kitty/state.zig`
+  - updated method receivers/signatures in `kitty/state.zig` from `*State` / `*const State` to `*KittyState` / `*const KittyState`
+  - updated `howl-vt/src/terminal.zig` from `kitty_state.State` to `kitty_state.KittyState`
+  - kept field layout, behavior, allocation/deinit flow, and reset behavior unchanged
+- Receipt:
+  - orchestrator session id: `orch-2026-06-07-bucket-wave7`
+  - reviewer session id: `ses_15dcf8e60ffeR8JCIpoQDPrY14`
+  - coder/worker session id: `ses_15dd12128ffemdRbag75fpJ6W5`
+- Verification after the cut:
+  - `python utils/hygene/style_scan.py "howl-vt/src/kitty/state.zig" "howl-vt/src/terminal.zig"`
+  - `zig build test && zig build check` in `howl-vt`
+  - grep gate: no `pub const State = struct` in `howl-vt/src/kitty/state.zig`
+  - grep gate: no `kitty_state.State` in `howl-vt/src/terminal.zig`
+  - grep gate: `pub const KittyState = struct` appears in `howl-vt/src/kitty/state.zig`
+
 - Bucket-struct lane execution law after the initial two accepted cuts:
   - the lane is planned now; no opportunistic per-commit target selection
   - parallel teammate work is allowed for:
