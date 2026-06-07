@@ -380,6 +380,16 @@ Completed slices:
   - kept positional roots plus `--by-file`, `--by-repo`, `--json`, `--touched-files`, `--touched-repos`, and `--failures` usable
   - research authority: `ses_15ea81d8bfferd89FsbPXSfNRB`, `ses_15ea81cd8ffe0nyVT821p6uPlX`
   - reviewer acceptance: `ses_15ea2c292ffeePF9yel3yTHiEt`
+- Style-tool rewrite 1b: grew the inventory with type-discipline metrics while keeping the ownership lanes intact.
+  - kept `usizes` unchanged
+  - added `anytypes` from stripped Zig source token counting
+  - added `casts` from whole-builtin stripped Zig source counting across the fixed explicit cast builtin list
+  - added `base_anytypes`, `delta_anytypes`, `base_casts`, and `delta_casts` in baseline mode
+  - threaded `anytypes` and `casts` through inventory file/repo summaries
+  - kept touched-file, touched-repo, and failure views unchanged
+  - fixed `workspace-repos` to return the repo list so rootless `style.nu` modes do not crash
+  - research authority: `ses_15e86d0f1ffe3C13fMUFZO1kL2`, `ses_15e86d0c8ffeMnWe86avo21kGW`
+  - reviewer acceptance: `ses_15e7f9a21ffeSJeEOsj9MLHElp`
 
 Reopened previously skipped low-yield avenues:
 

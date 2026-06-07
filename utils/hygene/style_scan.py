@@ -8,12 +8,36 @@ from dataclasses import dataclass, asdict
 
 ASSERT_RE = re.compile(r"\bassert\s*\(")
 USIZE_RE = re.compile(r"\busize\b")
+ANYTYPE_RE = re.compile(r"\banytype\b")
 FN_RE = re.compile(r"\bfn\b")
+
+CAST_BUILTINS = (
+    "@as",
+    "@bitCast",
+    "@alignCast",
+    "@constCast",
+    "@volatileCast",
+    "@ptrCast",
+    "@ptrFromInt",
+    "@intFromPtr",
+    "@truncate",
+    "@intCast",
+    "@floatCast",
+    "@floatFromInt",
+    "@intFromFloat",
+    "@intFromBool",
+    "@intFromEnum",
+    "@enumFromInt",
+)
+
+CAST_RE = re.compile("|".join(re.escape(builtin) + r"\b" for builtin in CAST_BUILTINS))
 
 
 RELEVANT_BASELINE_FIELDS = (
     "asserts",
     "usizes",
+    "anytypes",
+    "casts",
     "funcs",
     "long_funcs",
     "test_blocks",
@@ -34,6 +58,8 @@ class Counts:
     benchmark: int = 0
     asserts: int = 0
     usizes: int = 0
+    anytypes: int = 0
+    casts: int = 0
     funcs: int = 0
     long_funcs: int = 0
     test_blocks: int = 0
@@ -93,6 +119,7 @@ def count_source(path: str, source: str) -> Counts:
     counts = Counts(files=1)
     lines = source.splitlines()
     path_is_test = is_test_path(path)
+    stripped = strip_comments_and_strings(source) if path.endswith(".zig") else ""
 
     test_lines: set[int] = set()
     proof_lines: set[int] = set()
@@ -110,8 +137,10 @@ def count_source(path: str, source: str) -> Counts:
             proof_lines = test_lines
             test_hook_lines = top_level_testing_struct_lines(source)
 
-    counts.asserts = len(ASSERT_RE.findall(strip_comments_and_strings(source))) if path.endswith(".zig") else 0
-    counts.usizes = len(USIZE_RE.findall(strip_comments_and_strings(source))) if path.endswith(".zig") else 0
+    counts.asserts = len(ASSERT_RE.findall(stripped)) if path.endswith(".zig") else 0
+    counts.usizes = len(USIZE_RE.findall(stripped)) if path.endswith(".zig") else 0
+    counts.anytypes = len(ANYTYPE_RE.findall(stripped)) if path.endswith(".zig") else 0
+    counts.casts = count_casts(stripped) if path.endswith(".zig") else 0
     if path.endswith(".zig"):
         funcs, long_funcs = count_functions(source)
         counts.funcs = funcs
@@ -273,6 +302,10 @@ def strip_comments_and_strings(source: str) -> str:
         out.append(c)
         i += 1
     return "".join(out)
+
+
+def count_casts(source: str) -> int:
+    return len(CAST_RE.findall(source))
 
 
 def top_level_test_lines(source: str) -> set[int]:

@@ -6,7 +6,7 @@ def workspace-repos [] {
     | where type == dir and name =~ '^howl-'
     | get name
   )
-  # ['.'] | append $repos
+  $repos
 }
 
 def default-roots [] {
@@ -92,6 +92,8 @@ def summarize [rows: list<any>] {
     benchmark: (sum-field $rows benchmark)
     asserts: (sum-field $rows asserts)
     usizes: (sum-field $rows usizes)
+    anytypes: (sum-field $rows anytypes)
+    casts: (sum-field $rows casts)
     funcs: (sum-field $rows funcs)
     long_funcs: (sum-field $rows long_funcs)
     test_blocks: (sum-field $rows test_blocks)

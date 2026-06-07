@@ -58,6 +58,59 @@ Rules:
   - `nu ./style.nu howl-linux-host --by-file`
   - `nu ./style.nu howl-render --by-repo --json`
 
+- Accepted second rewrite slice for `style.nu` and `utils/hygene/style_scan.py`.
+- Purpose of the slice:
+  - grow type-discipline evidence without changing the accepted ownership-lane model
+  - keep `usize`
+  - add `anytype`
+  - add explicit cast builtin counting
+- Exact accepted behavior in the second slice:
+  - preserved `prod`, `proof`, `test_hooks`, and `benchmark` behavior from slice 1a
+  - kept `usizes` unchanged
+  - added `anytypes` on stripped Zig source via `\banytype\b`
+  - added `casts` on stripped Zig source by counting whole builtin tokens from this exact list:
+    - `@as`
+    - `@bitCast`
+    - `@alignCast`
+    - `@constCast`
+    - `@volatileCast`
+    - `@ptrCast`
+    - `@ptrFromInt`
+    - `@intFromPtr`
+    - `@truncate`
+    - `@intCast`
+    - `@floatCast`
+    - `@floatFromInt`
+    - `@intFromFloat`
+    - `@intFromBool`
+    - `@intFromEnum`
+    - `@enumFromInt`
+  - added baseline fields:
+    - `base_anytypes`
+    - `delta_anytypes`
+    - `base_casts`
+    - `delta_casts`
+  - threaded `anytypes` and `casts` through inventory file/repo summaries only
+  - kept touched-file, touched-repo, and failure views unchanged
+  - fixed `workspace-repos` to return the repo list so rootless `style.nu` invocations do not crash
+- Concrete proof receipts after the rewrite:
+  - `howl-render/src/text/raster/special.zig`: `anytypes=3`, `casts=181`
+  - `howl-linux-host/src/app/processor.zig`: `anytypes=0`, `casts=13`
+  - `howl-vt/src/screen.zig`: `anytypes=0`, `casts=27`, `usizes=0`
+- Review path:
+  - first review rejected raw substring cast counting because `@as` would overcount builtins like `@asm`
+  - direct fix changed cast counting to whole builtin token matching
+  - final diff acceptance in reviewer session `ses_15e7f9a21ffeSJeEOsj9MLHElp`: `No findings.`
+- Verification after the slice:
+  - `python -c "from utils.hygene.style_scan import count_casts; assert count_casts('@as(u32, 1)') == 1; assert count_casts('@asm volatile (\"nop\")') == 0; assert count_casts('@ptrCast(@alignCast(p))') == 2"`
+  - `python utils/hygene/style_scan.py "howl-render/src/text/raster/special.zig" "howl-linux-host/src/app/processor.zig" "howl-vt/src/screen.zig"`
+  - `python utils/hygene/style_scan.py --baseline HEAD "howl-render/src/text/raster/special.zig" "howl-linux-host/src/app/processor.zig" "howl-vt/src/screen.zig"`
+  - `nu ./style.nu howl-render --by-file`
+  - `nu ./style.nu howl-linux-host --by-file`
+  - `nu ./style.nu howl-vt --by-file`
+  - `nu ./style.nu --touched-files`
+  - `nu ./style.nu --failures`
+
 ### 2026-06-06 Sprint Refocus
 
 - The primary sprint metric is now materially smaller `prod`, not generic hygiene progress.
