@@ -17,7 +17,8 @@ Execution state:
 - This file is the current-contract file for the pacing lane.
 - Research and hostile review are complete for the initial pacing slices.
 - `Slice B` accepted.
-- No worker slice is active until the orchestrator promotes `Slice A`.
+- `Slice A` accepted.
+- No worker slice is active.
 
 Loop rules:
 
@@ -45,9 +46,25 @@ Accepted slice receipt:
 - Coder/worker session id:
   - `ses_15d4e1711ffeSW9UL5Ba9H23Jm`
 
-Next ready slice:
+Accepted slice receipt:
 
-- `Slice A`: per-terminal continuation admission plus active-tab input admission fix
+- Slice:
+  - `Slice A`: per-terminal continuation admission plus active-tab input admission fix
+- Files changed:
+  - `howl-linux-host/src/terminal/context.zig`
+  - `howl-linux-host/src/app/processor.zig`
+  - `howl-linux-host/src/terminal/context_test.zig`
+- Verification:
+  - `zig build test:unit --summary all`
+- Reviewer session id:
+  - `ses_15c73d29cffeYAedDUNN6EtjWD`
+- Coder/worker session id:
+  - `ses_15c773036ffeI1i9IE651EQKuL`
+
+Lane state:
+
+- Initial pacing slices complete.
+- Further pacing work requires a new promoted slice from the accepted scratchpad or new researcher-backed correction.
 
 Research cache:
 
