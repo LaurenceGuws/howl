@@ -246,9 +246,8 @@ Audit rules during implementation:
 - No test-only helpers left in production owners.
 - No benchmark or simulation code hidden behind proof paths.
 - Every kept abstraction must answer: what exact owner truth does this file preserve that direct imports would not?
-- Material-yield bar:
-  - reject micro-cuts that only remove a handful of lines unless they unlock a broader accepted cut immediately
-  - for top prod files, prefer either a meaningful reduction or an explicit keeper verdict recorded quickly
+- Small cuts are still in scope when they remove real dead code, aliasing, owner-false shaping, repeated casts, or local datatype mirrors.
+- Do not skip a cut only because it is small; skip it only when it is not real debt or when it broadens into redesign.
 - Cast discipline:
   - cast once at the narrowest true source boundary, then keep the datatype stable through the rest of the pipeline
   - repeated cast ladders and owner-false local type mirrors are presumed debt until proved necessary by ABI or product boundaries
