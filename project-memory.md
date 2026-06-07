@@ -814,6 +814,24 @@ Accepted production/test separation cuts completed so far:
   - `howl-vt`: `zig build test && zig build check`
   - workspace root: `zig build test && zig build check`
 
+- Thirty-sixth accepted prod-reduction cut landed in `howl-linux-host/src/display/renderer/render_surface.zig`.
+- Removed the dead always-true sprite/glyph draw result seam from `uploadRenderSurfaceCommands(...)`.
+- Changed `drawSpriteCommand(...)` from `bool` to `void` and deleted its dead `return true;`.
+- Changed `drawGlyphCommand(...)` from `bool` to `void` and deleted its dead `return true;`.
+- Deleted the unreachable local panic wrappers around both helper calls in `uploadRenderSurfaceCommands(...)`.
+- Kept the real recoverable fill-upload boundary intact:
+  - `uploadRenderSurface(...) -> bool`
+  - `uploadFillCommands(...) -> bool`
+  - `uploadFillCommand(...) -> bool`
+- Kept classifier behavior and the `testing` namespace unchanged.
+- Research authority:
+  - `ses_1609913f2ffedSaTIQzCwf7uPy`
+- Review path:
+  - final diff acceptance in reviewer session `ses_16095178bffe2bN1PJal2DgQ7r`: `No findings.`
+- Verification after the cut:
+  - `howl-linux-host`: `zig build test && zig build check`
+  - workspace root: `zig build test && zig build check`
+
 ### Host Render-Surface Runtime Fix Accepted
 
 - Accepted a narrow host correctness fix in:

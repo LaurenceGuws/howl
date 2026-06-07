@@ -348,6 +348,14 @@ Completed slices:
     - invalid continuation resets the partial sequence
   - research authority: `ses_160a6e765ffe6zO7JiAPRqVf8R`
   - reviewer acceptance: `ses_160a03eeaffef03i2SEj7fR2FR`
+- Item 10aj: removed the dead always-true sprite/glyph draw result seam from `howl-linux-host/src/display/renderer/render_surface.zig`.
+  - changed `drawSpriteCommand(...)` from `bool` to `void`
+  - changed `drawGlyphCommand(...)` from `bool` to `void`
+  - deleted the unreachable `if (!drawSpriteCommand(...))` panic wrapper
+  - deleted the unreachable `if (!drawGlyphCommand(...))` panic wrapper
+  - kept `uploadRenderSurface(...) -> bool`, fill upload recovery, classifier behavior, and the `testing` namespace unchanged
+  - research authority: `ses_1609913f2ffedSaTIQzCwf7uPy`
+  - reviewer acceptance: `ses_16095178bffe2bN1PJal2DgQ7r`
 
 Reopened previously skipped low-yield avenues:
 
