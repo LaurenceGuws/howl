@@ -87,6 +87,9 @@ def summarize [rows: list<any>] {
     code: (sum-field $rows code)
     tests: (sum-field $rows tests)
     prod: (sum-field $rows prod)
+    proof: (sum-field $rows proof)
+    test_hooks: (sum-field $rows test_hooks)
+    benchmark: (sum-field $rows benchmark)
     asserts: (sum-field $rows asserts)
     usizes: (sum-field $rows usizes)
     funcs: (sum-field $rows funcs)
@@ -241,8 +244,11 @@ def main [
       print-table ([ (summarize $rows) ] | append $rows)
     }
   } else {
-    let touched_rows = (scan-files (touched-paths $selected_roots) false 'HEAD')
-    let rows = (checkpoint-summary $touched_rows)
-    if $json { print-json $rows } else { print-table $rows }
+    let rows = (sort-rows (scan-files (gather-files $selected_roots) false '') 'prod')
+    if $json {
+      print-json ([ (summarize $rows) ] | append $rows)
+    } else {
+      print-table ([ (summarize $rows) ] | append $rows)
+    }
   }
 }

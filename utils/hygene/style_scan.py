@@ -29,6 +29,9 @@ class Counts:
     code: int = 0
     tests: int = 0
     prod: int = 0
+    proof: int = 0
+    test_hooks: int = 0
+    benchmark: int = 0
     asserts: int = 0
     usizes: int = 0
     funcs: int = 0
@@ -77,19 +80,35 @@ def read_source(path: str) -> str:
 def baseline_metrics(path: str, rev: str) -> dict:
     source = baseline_source(path, rev)
     counts = Counts() if source is None else count_source(path, source)
+    current_counts = count_source(path, read_source(path))
     metrics: dict[str, int] = {}
     for field in RELEVANT_BASELINE_FIELDS:
         value = getattr(counts, field)
         metrics[f"base_{field}"] = value
-        metrics[f"delta_{field}"] = getattr(count_source(path, read_source(path)), field) - value
+        metrics[f"delta_{field}"] = getattr(current_counts, field) - value
     return metrics
 
 
 def count_source(path: str, source: str) -> Counts:
     counts = Counts(files=1)
     lines = source.splitlines()
-    test_lines = top_level_test_lines(source) if path.endswith(".zig") else set()
     path_is_test = is_test_path(path)
+
+    test_lines: set[int] = set()
+    proof_lines: set[int] = set()
+    test_hook_lines: set[int] = set()
+    benchmark_lines: set[int] = set()
+
+    if path.endswith(".zig"):
+        if os.path.basename(path) == "benchmark_main.zig":
+            benchmark_lines = set(range(1, len(lines) + 1))
+        elif path.endswith("_test.zig"):
+            proof_lines = set(range(1, len(lines) + 1))
+            test_lines = set(range(1, len(lines) + 1))
+        else:
+            test_lines = top_level_test_lines(source)
+            proof_lines = test_lines
+            test_hook_lines = top_level_testing_struct_lines(source)
 
     counts.asserts = len(ASSERT_RE.findall(strip_comments_and_strings(source))) if path.endswith(".zig") else 0
     counts.usizes = len(USIZE_RE.findall(strip_comments_and_strings(source))) if path.endswith(".zig") else 0
@@ -114,7 +133,16 @@ def count_source(path: str, source: str) -> Counts:
         if path_is_test or index in test_lines:
             counts.tests += 1
 
-    counts.prod = counts.code - counts.tests
+        if index in benchmark_lines:
+            counts.benchmark += 1
+            continue
+        if index in proof_lines:
+            counts.proof += 1
+            continue
+        if index in test_hook_lines:
+            counts.test_hooks += 1
+
+    counts.prod = counts.code - counts.proof - counts.test_hooks - counts.benchmark
     return counts
 
 
@@ -248,6 +276,14 @@ def strip_comments_and_strings(source: str) -> str:
 
 
 def top_level_test_lines(source: str) -> set[int]:
+    return top_level_block_lines(source, match_top_level_test)
+
+
+def top_level_testing_struct_lines(source: str) -> set[int]:
+    return top_level_block_lines(source, match_top_level_testing_struct)
+
+
+def top_level_block_lines(source: str, match_block) -> set[int]:
     lines: set[int] = set()
     i = 0
     line = 1
@@ -301,9 +337,10 @@ def top_level_test_lines(source: str) -> set[int]:
             brace_depth -= 1
             i += 1
             continue
-        if brace_depth == 0 and source.startswith("test", i) and word_boundary(source, i, 4):
+        match_end = match_block(source, i) if brace_depth == 0 else None
+        if match_end is not None:
             start_line = line
-            end = find_body_end(source, find_body_start(source, i + 4))
+            end = find_body_end(source, find_body_start(source, match_end))
             end_line = source.count("\n", 0, end) + 1
             for current in range(start_line, end_line + 1):
                 lines.add(current)
@@ -312,6 +349,31 @@ def top_level_test_lines(source: str) -> set[int]:
             continue
         i += 1
     return lines
+
+
+def match_top_level_test(source: str, index: int) -> int | None:
+    if source.startswith("test", index) and word_boundary(source, index, 4):
+        return index + 4
+    return None
+
+
+def match_top_level_testing_struct(source: str, index: int) -> int | None:
+    next_index = consume_keyword(source, index, "pub")
+    if next_index is None:
+        return None
+    next_index = skip_space(source, next_index)
+    next_index = consume_keyword(source, next_index, "const")
+    if next_index is None:
+        return None
+    next_index = skip_space(source, next_index)
+    next_index = consume_keyword(source, next_index, "testing")
+    if next_index is None:
+        return None
+    next_index = skip_space(source, next_index)
+    if next_index >= len(source) or source[next_index] != "=":
+        return None
+    next_index = skip_space(source, next_index + 1)
+    return consume_keyword(source, next_index, "struct")
 
 
 def count_test_blocks(source: str) -> int:
@@ -373,6 +435,18 @@ def word_boundary(source: str, index: int, length: int) -> bool:
     next_index = index + length
     next_ok = next_index >= len(source) or not ident_char(source[next_index])
     return prev_ok and next_ok
+
+
+def consume_keyword(source: str, index: int, keyword: str) -> int | None:
+    if source.startswith(keyword, index) and word_boundary(source, index, len(keyword)):
+        return index + len(keyword)
+    return None
+
+
+def skip_space(source: str, index: int) -> int:
+    while index < len(source) and source[index].isspace():
+        index += 1
+    return index
 
 
 def ident_char(char: str) -> bool:
