@@ -1,0 +1,39 @@
+Host profiler entrypoint accountability contract
+
+Date: 2026-06-08.
+Role owner: orchestrator.
+Orchestrator session id: orch-2026-06-08-host-profiler-entrypoint-01.
+Scope: prepare the first performance-accountable sprint by getting the linux host profiler build path planned, reviewed, executed, verified, and accepted without cluttering the production binary.
+
+Problem statement:
+
+- The current performance focus is getting Howl ahead of the reference implementations.
+- The first prerequisite slice was a separate linux host profiler build path so workers can capture real profiling logs without turning the production host binary into a profiling mode bucket.
+- The repo had recently been reset for accountability failures, so this slice restarted inside the live loop surface with explicit review, scope, tests, receipts, verification, and commit recording.
+
+Archived artifacts:
+
+- research: `research/done/cache-2026-06-07-host-profiler-entrypoint.md`
+- sprint: `sprints/done/host-profiler-entrypoint.txt`
+
+Final review verdict on research:
+
+- Accepted by reviewer session `ses_157343204ffeKrMjOcON9g138q` after rejection follow-up by researcher session `ses_1572b12e1ffegeBg595JWVQJMW`.
+- Accepted execution boundary:
+  - `howl-linux-host/build.zig` only
+  - build-only `profile` artifact
+  - `run` remains production-only
+  - `check` remains production-only
+
+Execution outcome:
+
+- Slice 1 implemented in host repo commit `15b140093a26a046fd1103e38f778e8819afd8d7`.
+- Reviewer accepted the implemented diff in session `ses_157343204ffeKrMjOcON9g138q`.
+- Orchestrator verification passed:
+  - `zig build check`
+  - `zig build profile`
+  - `zig build test:unit`
+
+Closure:
+
+- This loop artifact is historical and archived because the profiler build-path sprint is complete.
