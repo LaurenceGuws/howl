@@ -1,0 +1,22 @@
+# Active Sprint Index
+
+Purpose:
+
+- Track the current sprint guidance.
+- Point coders and reviewers only at live active artifacts.
+
+Sprint:
+
+- No promoted execution sprint is active.
+
+Active research:
+
+- `research/cache-2026-06-07-host-profiler-entrypoint.md`
+
+Active loops:
+
+- none
+
+Rule:
+
+- If a sprint or loop is not active, it must not be treated as authoritative.

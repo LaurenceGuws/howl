@@ -2,19 +2,73 @@
 
 Owner: workspace root.
 
-Purpose: exact, biased reference map.
+Purpose: exact reference weight, curated entrypoints, and preload/cache order.
 
 ## Rule
 
-Use the design source order:
+- Use this file during preload and research work instead of browsing reference trees ad hoc.
+- Grep accepted research caches first for likely paths, symbols, and prior proof gaps.
+- Then read references in the real project order below.
+- Old caches are navigation only until re-proved from current source or accepted references.
 
-1. Ghostty does it.
-2. Alacritty does it.
-3. TigerBeetle mandates it.
+## Real Weight
 
-Do not start by browsing random reference trees.
+1. References.
+2. User.
 
-## Ghostty First
+Reference order:
+
+1. Alacritty for host runtime, event loop, display, window, input, presentation, and most renderer organization.
+2. Ghostty for VT shape, embedding seams, and C-facing VT surface shape.
+3. TigerBeetle for Zig discipline, ownership proof, bounds, assertions, directness, and tests.
+4. Kitty for UX and protocol maturity only.
+5. Official docs for protocol, platform, ABI, and OS facts only.
+
+Rules:
+
+- Existing Howl code is presumed wrong until proven otherwise by the references.
+- Do not use existing Howl structure as authority by default.
+- If references conflict with each other, stop and escalate for explicit review.
+- If a user wants to override the reference lessons, that override must be:
+  - explicit for that exact case
+  - reviewed with the orchestrator
+  - recorded with receipts in the active planning artifact
+- Without that recorded user override receipt, the references win.
+
+## Preload Order
+
+For non-trivial work, preload in this order:
+
+1. `AGENTS.md`
+2. `loop/flow.md`
+3. This `reference-index.md`
+4. `sprints/current.txt`
+5. active `loops/*.txt` file
+6. accepted research caches for the slice
+7. only then current source and external references
+
+## Cache Locations
+
+- active sprint index: `sprints/current.txt`
+- active loop contracts: direct contents of `loops/`
+- archived loop contracts: `loops/done/`, `loops/defered/`
+- active research caches: direct contents of `research/`
+- archived research caches: `research/done/`, `research/defered/`
+- active sprint planning artifacts: direct contents of `sprints/`
+- archived sprint planning artifacts: `sprints/done/`, `sprints/defered/`
+
+## Alacritty First For Host
+
+Use Alacritty first for host/runtime disputes unless the user's C ABI or embeddable render boundary directly fights it.
+
+Host/runtime questions to ask before accepting any Howl shape:
+
+1. Does Alacritty have this concept?
+2. Does Alacritty have this folder boundary?
+3. Does Alacritty have this file boundary?
+4. Does Alacritty have this symbol or data-shape pattern?
+
+## Ghostty First For VT
 
 Root:
 
@@ -91,13 +145,13 @@ Render/text seam:
 - `/home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/font/sprite/draw/special.zig`
   - special glyph/sprite ownership
 
-## Alacritty Second
+## Alacritty Host Curated
 
 Root:
 
 - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty`
 
-Use Alacritty second for host runtime shape, event-loop posture, PTY/read pacing, window/runtime control spine, and pragmatic renderer organization.
+Use Alacritty for host runtime shape, event-loop posture, PTY/read pacing, window/runtime control spine, and pragmatic renderer organization.
 
 Terminal core and PTY loop:
 
@@ -158,13 +212,20 @@ Renderer/text:
 - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glyph_cache.rs`
   - glyph cache ownership
 
-## TigerBeetle Third
+## TigerBeetle Curated
 
 Root:
 
 - `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle`
 
-Use TigerBeetle third for bounds, assertions, naming, structure, directness, and docs discipline.
+Use TigerBeetle for bounds, assertions, naming, structure, directness, and docs discipline.
+
+When researching build, benchmark, profiler, or simulation entrypoints, read these first in addition to the style docs:
+
+- `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/internals/vopr.md`
+  - deterministic proof surface separation
+- `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/internals/HACKING.md`
+  - build/benchmark workflow posture
 
 Start here:
 
@@ -191,7 +252,7 @@ Important code references:
 - `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/src/constants.zig`
   - explicit constants and invariants
 
-## Protocol And Spec Truth Only
+## Kitty And Spec Truth Only
 
 Use these only for protocol/spec facts, not architecture shape:
 

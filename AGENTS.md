@@ -20,7 +20,10 @@ Purpose: agent accountability, ABI boundary, source order, and project law.
 
 ## Reference Pressure
 
-- The user owns product direction and all non-negotiables.
+- For tough choices, precedence is:
+  1. References
+  2. User
+- The user still owns product direction and all explicit non-negotiables.
 - Alacritty carries the main pressure for host runtime, event loop, display, window,
   input, presentation, and most renderer organization.
 - TigerBeetle carries the main pressure for Zig discipline: exact names, owner truth,
@@ -30,6 +33,7 @@ Purpose: agent accountability, ABI boundary, source order, and project law.
 - Official docs define protocol, platform, ABI, and OS facts.
 - Howl-only architecture is presumed wrong until the references and user boundary prove
   that no source-backed shape exists.
+- Existing Howl code is presumed wrong until the references prove it right.
 
 For host/display/window/render organization, ask these questions before accepting any
 concept, folder, file, symbol, or data shape:
@@ -39,8 +43,18 @@ concept, folder, file, symbol, or data shape:
 3. Does Alacritty have this file boundary?
 4. Does Alacritty have this symbol or data-shape pattern?
 
-If Alacritty directly fights the user's C ABI or embeddable render boundary, stop for
-orchestrator/user review. Otherwise Alacritty wins host-shape disputes.
+If references directly conflict with each other or a user wants to override the reference lessons,
+stop for explicit per-case orchestrator/user review.
+
+- Do not override the references on inference, tone, convenience, or implied preference.
+- A user override is valid only when it is explicit for that case and recorded with receipts.
+- The receipt for a reference override must record:
+  - the exact user decision
+  - the exact reference being overridden
+  - the reason for the override
+  - the accountable orchestrator session id
+  - the user approval receipt in the active planning artifact
+- Without that recorded receipt, the references win.
 
 ## Core Premise
 
@@ -71,10 +85,8 @@ Required TigerBeetle readings before non-trivial work:
 ### Main Agent
 
 - Preserves context like gold.
-- Reads enough source and references to keep accountability without wasting context.
 - Defines the problem plainly before work starts.
-- Builds scratchpads from current code, official docs, and strong references.
-- Promotes one explicit slice at a time to `current.txt`.
+- Promotes one explicit slice at a time to `sprints/current.txt`.
 - Seeds workers with enough context that they have zero room for guessing.
 - Assumes worker output is lazy until proved otherwise.
 - Reviews diffs harshly against TigerBeetle law, source order, ABI boundaries,
@@ -89,22 +101,20 @@ Required TigerBeetle readings before non-trivial work:
 
 ### Research Agent
 
-- Reads the TigerBeetle bible before reading anything else.
 - Answers explicit questions only.
-- Reads assigned references and current code paths.
 - Returns source-backed findings, proposed shape, exact paths, proof gaps, and risks.
+- Stops and escalates if the user appears to be inventing truths against the references without an explicit receipted override.
 - Does not implement.
 - Does not invent Howl-only shapes while reference-backed options remain unexplored.
 
 ### Worker Agent
 
-- Implements only the promoted `current.txt` slice.
-- Reads the role preload before editing. Do not re-read large preloads on follow-up tasks
-  in the same worker session unless instructed; use accepted caches and prior task context.
+- Implements only the promoted `sprints/current.txt` slice.
 - Uses assigned scratchpads, reference paths, source paths, invariants, and tests.
 - Does not broaden scope.
 - Does not add convenience runtimes, demos, managers, engines, compatibility aliases, or
   Zig-shaped host shortcuts.
+- Stops and escalates if the assigned work depends on a user claim that conflicts with the references without an explicit receipted override.
 - Stops when requirements are ambiguous instead of guessing.
 
 ### Reviewer Agent
@@ -113,6 +123,7 @@ Required TigerBeetle readings before non-trivial work:
 - Treats the diff as guilty until proved source-backed, owner-true, ABI-safe, bounded,
   asserted, and tested.
 - Rejects fake simplicity and vague ownership.
+- Blocks work and escalates if user direction appears to conflict with the references and no explicit receipted override exists.
 - If a slice is fixable, produces a rejection seed for the same worker instead of
   accepting second-best work.
 
@@ -215,64 +226,10 @@ Anything outside these rules is presumed stale debt until proved otherwise.
 
 ## Workflow
 
-Read `loop.txt`.
-
-The work loop is adaptive, not ritual. The main agent chooses the role sequence that fits
-the work, while preserving research, scratchpad, worker contract, hostile review, and
-handoff accountability where they matter.
-
-For a planned sprint lane with multiple candidate slices, the default posture is a parallel
-worker-loop pipeline when the work allows it.
-
-Default broad-sprint sequence:
-
-1. Parallel research across the lane to produce the candidate slice list and source-backed classifications.
-2. Pre-implementation review of each ready candidate slice for correctness and scope.
-   - If pre-implementation review rejects a slice, the correction must be backed by a researcher session id before worker seeding resumes.
-3. Parallel worker implementation across independent accepted slices when they do not share files, ownership moves, or verification risk.
-4. Post-implementation reviewer pass on each actual diff.
-5. Orchestrator decides slice-by-slice when work is pristine enough to accept, verify, commit, and push.
-
-Use sequential implementation only when the work is coupled, slow, high-risk, or would create dirty-tree ambiguity between slices.
-
-Scratchpads are persistent project memory:
-
-- Scratchpads record current code facts, reference findings, exact files, exact symbols,
-  invariants, test gates, accepted decisions, proof gaps, and follow-up slices.
-- Scratchpads are not deleted when work completes.
-- `current.txt` is the global loop index.
-- Each active independent loop gets its own current-contract file under `loops/`.
-- A loop file contains exactly one active slice for that loop.
-- Every accepted slice needs a receipt.
-- Every receipt must record the orchestrator session id, reviewer session id, and coder/worker session id.
-- No code work starts until the active slice is planned deeply enough to leave workers no
-  room for guessing.
-
-Every fresh non-trivial subagent session must receive a role preload requiring TigerBeetle
-reading before any other source:
-
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
-- `utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-
-Any subagent output that does not show TigerBeetle pressure in ownership, bounds,
-assertions, tests, and directness is rejected.
-
-For follow-up tasks in the same subagent session, reference the prior role preload and
-accepted caches instead of re-sending large context unless quality or clarity requires it.
-
-Any summarize, compact, or handoff must order the next agent to read its role preload,
-role work, active scratchpad, `current.txt`, the relevant active `loops/*.txt` file,
-relevant research caches, reviewer findings, dirty-state notes, and verification results
-before continuing.
-
-If the work gets ambiguous, broad, rushed, or difficult, stop. Read the bible again.
-Break the problem into smaller source-backed slices.
-
-Do not confuse small slices with tiny diffs. A slice may require broad code movement when
-the existing shape is wrong. The gate is source-backed ownership and TigerBeetle style,
-not preserving vibe-coded structure.
-
-If the sprint is complete, check in with the user.
+- `loop/flow.md` is the operating procedure.
+- This file does not define the live role sequence, scratchpad contract, worker contract, or commit choreography.
+- Any work product that does not show TigerBeetle pressure in ownership, bounds, assertions, tests, and directness is rejected.
+- If the work gets ambiguous, broad, rushed, or difficult, stop, reread the bible, and cut a smaller source-backed slice.
 
 ## References
 

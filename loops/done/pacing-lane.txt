@@ -22,7 +22,7 @@ Execution state:
 
 Loop rules:
 
-- Follow the worker/coder loop from `loop.txt` exactly: accepted research, then worker, then hostile review, then orchestrator acceptance.
+- Follow `loop/flow.md` exactly.
 - Workers do not design.
 - Reviewers assume the researcher and worker both tried to be lazy.
 - Do not broaden beyond the accepted pacing scratchpad without a new researcher-backed correction.

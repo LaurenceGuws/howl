@@ -570,10 +570,14 @@ def terminate(proc: subprocess.Popen[bytes]) -> None:
     proc.wait()
 
 
-def read_last_json(path: Path) -> dict[str, object] | None:
+def read_metrics_status(path: Path) -> dict[str, object]:
+    last_metrics: dict[str, object] | None = None
     if not path.exists():
-        return None
-    last: dict[str, object] | None = None
+        return {
+            "last_metrics": None,
+            "metrics_complete": False,
+            "metrics_invalid_reason": "metrics_missing",
+        }
     with path.open("r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
@@ -585,10 +589,43 @@ def read_last_json(path: Path) -> dict[str, object] | None:
                     continue
                 line = line[begin:]
             try:
-                last = json.loads(line)
+                parsed = json.loads(line)
             except json.JSONDecodeError:
                 continue
-    return last
+            if not isinstance(parsed, dict):
+                continue
+            if parsed.get("type") != "stress_metrics":
+                continue
+            last_metrics = parsed
+
+    if last_metrics is None:
+        return {
+            "last_metrics": None,
+            "metrics_complete": False,
+            "metrics_invalid_reason": "metrics_missing_stress_metrics",
+        }
+
+    schema = last_metrics.get("schema")
+    if schema != 1:
+        return {
+            "last_metrics": last_metrics,
+            "metrics_complete": False,
+            "metrics_invalid_reason": "metrics_schema_mismatch",
+        }
+
+    final = last_metrics.get("final")
+    if final is not True:
+        return {
+            "last_metrics": last_metrics,
+            "metrics_complete": False,
+            "metrics_invalid_reason": "metrics_final_false",
+        }
+
+    return {
+        "last_metrics": last_metrics,
+        "metrics_complete": True,
+        "metrics_invalid_reason": None,
+    }
 
 
 def run_terminal(name: str, args: argparse.Namespace, run_dir: Path) -> dict[str, object] | None:
@@ -597,7 +634,20 @@ def run_terminal(name: str, args: argparse.Namespace, run_dir: Path) -> dict[str
     cmd = stress_command(args, metrics_path)
     launched = launch_command(name, args, cmd, trace_path)
     if launched is None:
-        return None
+        return {
+            "terminal": name,
+            "mode": args.mode,
+            "duration_s": 0.0,
+            "returncode": None,
+            "metrics_path": str(metrics_path),
+            "trace_path": str(trace_path) if name == "howl" and args.trace_howl else None,
+            "process_log_path": None,
+            "resources_path": None,
+            "resource_summary": None,
+            "last_metrics": None,
+            "metrics_complete": False,
+            "metrics_invalid_reason": "launch_failed",
+        }
 
     argv, env = launched
     print(f"run {name}: {' '.join(shlex.quote(part) for part in argv)}")
@@ -620,7 +670,12 @@ def run_terminal(name: str, args: argparse.Namespace, run_dir: Path) -> dict[str
             sampler.close()
         terminate(proc)
     elapsed = time.monotonic() - start
-    metrics = read_last_json(metrics_path)
+    metrics_status = read_metrics_status(metrics_path)
+    metrics_complete = bool(metrics_status["metrics_complete"])
+    metrics_invalid_reason = metrics_status["metrics_invalid_reason"]
+    if proc.returncode != 0:
+        metrics_complete = False
+        metrics_invalid_reason = "returncode_nonzero"
     return {
         "terminal": name,
         "mode": args.mode,
@@ -631,7 +686,9 @@ def run_terminal(name: str, args: argparse.Namespace, run_dir: Path) -> dict[str
         "process_log_path": None,
         "resources_path": str(resources_path) if resource_summary is not None else None,
         "resource_summary": resource_summary,
-        "last_metrics": metrics,
+        "last_metrics": metrics_status["last_metrics"],
+        "metrics_complete": metrics_complete,
+        "metrics_invalid_reason": metrics_invalid_reason,
     }
 
 
@@ -675,6 +732,9 @@ def main() -> int:
     summary_path = run_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(f"summary: {summary_path}")
+    for result in results:
+        if not bool(result["metrics_complete"]):
+            return 1
     return 0
 
 

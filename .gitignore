@@ -1,12 +1,6 @@
 .zig-cache/
 zig-out/
-howl-hosts/
-howl-render-core/
-howl-session/
-howl-term/
-howl-vt-core/
 utils/dev_references/
 utils/official_docs/
-utils/howl-pm/
 vendor/
 zig16-release-notes.txt
