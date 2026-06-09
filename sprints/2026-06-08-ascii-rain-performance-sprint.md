@@ -42,3 +42,11 @@ Primary receipts preserved by the deferred sprint:
 - deferred loops:
   - `loops/defered/direct-normal-scan-reduction.txt`
   - `loops/defered/direct-normal-plain-ascii-shortcut.txt`
+
+Current restart note:
+
+- The live active loop is now `loops/direct-normal-plain-ascii-shortcut.txt`.
+- Rejected coder attempt `coder-2026-06-09-direct-normal-plain-ascii-shortcut-01` proved the first shortcut shape was invalid:
+  - it still called `lane.classifyRenderableCell(...)` on the hit path
+  - it failed the clean benchmark gate
+  - it did not produce a usable direct host timing receipt

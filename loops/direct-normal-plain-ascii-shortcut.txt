@@ -49,6 +49,12 @@ Rejected attempt recorded against this slice:
   - `direct_normal_scan_avg_us` improved modestly
   - whole-frame receipts regressed materially
   - this exact rewrite shape is no longer authorized
+- coder session id: `coder-2026-06-09-direct-normal-plain-ascii-shortcut-01`
+- reviewer verdict: rejected at verification
+- dropped probe summary:
+  - the worker kept one shared loop but still called `lane.classifyRenderableCell(...)` on fast-path hits
+  - the branch therefore was not a real cheaper decision point
+  - the clean benchmark regressed hard and the timing attempt did not yield usable timing lines
 
 Allowed files:
 
@@ -61,6 +67,7 @@ Required shape:
 - keep one shared `appendVisible(...)` loop
 - add one local fast-path predicate for the dominant printable-ASCII normal class
 - on fast-path hit, bypass generic `lane.classifyRenderableCell(...)`, record normal-lane counters directly, and call the existing `appendRenderable(...)`
+- no generic classifier call is allowed on the release fast-path hit path
 - leave generic classification untouched for every non-eligible cell
 - do not replace one shared candidate pipeline with four copied source-specific hot loops
 - preserve current normal-path eligibility and visible-span behavior
@@ -71,7 +78,8 @@ Required shape:
 
 Required assertions:
 
-- fast-path hit must satisfy `lane.classifyRenderableCell(renderable, text).lane == .normal`
+- fast-path eligibility must be proved without paying generic classifier cost on the release hit path
+- if classifier equivalence is checked, keep it in debug-only proof or owner-local tests, not on the release hit path
 - normal-only rejection behavior is preserved
 - empty, continuation, and publication-empty cells still do not enter renderable output
 - visible-span filtering still agrees with `direct_scene.includeSpan`
@@ -89,6 +97,7 @@ Required verification:
 - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
 - rerun direct host timing receipt on ASCII rain and compare against:
   - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+- the direct host timing rerun must emit usable timing lines; missing timing output fails verification
 - rerun clean Howl vs Alacritty benchmark and compare against:
   - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
 
