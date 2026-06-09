@@ -465,3 +465,11 @@ The next honest contract is not renderer-side fill command production and not a 
 - The accepted host-fill optimization materially reduced the next measured owner.
 - Fill playback remains a major cost, but the row-by-row upload tax is substantially lower after the staged multi-row upload tile.
 - The next work should rebaseline from this accepted host-fill state before choosing between another host-fill pass, a return to renderer-side fill production, or a new ownership correction.
+
+## Post-Host-Fill Rebaseline
+
+- Fresh clean benchmark receipt on the accepted host-fill state:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143819-ascii/summary.json`
+  - Howl `85.47 fps`
+  - Alacritty `1026.21 fps`
+- This replaces the prior clean benchmark baseline for further sprint comparisons.
