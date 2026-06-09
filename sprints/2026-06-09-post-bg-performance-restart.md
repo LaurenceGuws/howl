@@ -28,28 +28,49 @@ Honest baseline receipts:
 
 Sequential slice queue:
 
-1. `post-bg-performance-rebaseline`
-- accept the corrected-path owner order from fresh receipts
-- authorize one more proof-only split on the top corrected-path subowner only after reviewer acceptance
+1. Historical completed slices, navigation only:
+- `post-bg-performance-rebaseline`
+- `owner-create-after-bg-proof`
+- `emitter-alpha-atlas-hit-without-byte-walk`
 
-2. `owner-create-after-bg-proof`
-- split `owner_create` / emitter work further if the corrected receipts still prove it is the top true subowner
-- stop and reshape ownership first if that split exposes another bucket seam
+2. `direct-upload-playback-proof-after-alpha-hit-rejection`
+- first pending slice
+- next active slice
+- purpose:
+  - separate host playback and submit costs enough to name the next true owner from honest direct receipts
 - allowed files:
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output changes
-- non-goals:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/app/process_accounting.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+- required shape:
+  - proof only
   - no behavior change
-  - no `direct_normal` or `direct_scene` edits
-  - no source-mapping edits
-  - no host GL or runtime work
+  - split fill playback dispatch/walk from fill draw execution
+  - split glyph-run playback dispatch/walk from glyph draw execution
+  - split sprite playback dispatch/walk from sprite draw execution
+  - keep submit/present timing separate
+- non-goals:
+  - no `howl-render/*`
+  - no emitter or sprite-store changes
+  - no `direct_normal` changes
+  - no ABI changes
+  - no host UX/event-loop redesign
 - stop conditions:
-  - hidden top cost falls outside the allowed files
-  - emitter proof exposes another false owner or bucket seam
+  - isolating the subowners requires behavior change
+  - proof exposes a false owner that needs structural review first
+  - direct receipts still cannot name one next owner
 
-3. `direct-normal-after-bg`
-- allowed only if the accepted corrected receipts after the owner-create proof still prove `direct_normal` is the next true owner
+3. Historical rejected optimization evidence:
+- completed and rejected as historical evidence only
+- proved:
+  - clean benchmark improved
+  - valid direct host path regressed
+  - removed emitter tax was real but not the next shippable owner
+- no further emitter optimization is authorized from this result alone
+
+4. `direct-normal-after-playback-proof`
+- allowed only if the accepted playback proof still proves `direct_normal` is the next true owner
 - allowed files:
   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/prepare_counters.zig` only if proof fields change
@@ -57,11 +78,11 @@ Sequential slice queue:
 - non-goals:
   - no emitter, source, session, host, or ABI changes
 - stop conditions:
-  - corrected receipts show background fill or emitter work above `direct_normal`
+  - accepted playback proof ranks host playback or submit above `direct_normal`
   - the cut needs files outside the allowed set
 
-4. `background-fill-after-bg`
-- allowed only if the accepted corrected receipts prove restored background fill work dominates
+5. `background-fill-after-playback-proof`
+- allowed only if the accepted playback proof proves restored background fill work dominates
 - allowed files:
   - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
@@ -69,7 +90,7 @@ Sequential slice queue:
 - non-goals:
   - no source-mapping, session, host, or ABI changes
 - stop conditions:
-  - the real top cost is glyph/normal-path work instead of fill work
+  - accepted playback proof ranks glyph/normal-path work above fill work
   - the seam exposes a new bucket owner
 
 Completion gate:

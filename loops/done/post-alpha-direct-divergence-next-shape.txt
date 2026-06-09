@@ -4,7 +4,7 @@ Date: 2026-06-09.
 Role owner: orchestrator.
 Status: active.
 Orchestrator session id: `orch-2026-06-09-background-default-01`.
-Researcher session id: pending.
+Researcher session id: `research-2026-06-09-post-alpha-direct-divergence-01`.
 Reviewer session id: pending.
 Coder session id: none.
 Scope: explain the benchmark/direct divergence after the rejected alpha-atlas hit probe and cut the next honest coding contract from the valid direct receipt.
@@ -39,7 +39,7 @@ Current blocker to coding:
 
 Required sources:
 
-- `/home/home/personal/projects/howl/loops/emitter-sprite-after-bg-next-shape.txt`
+- `/home/home/personal/projects/howl/loops/done/emitter-sprite-after-bg-next-shape.txt`
 - `/home/home/personal/projects/howl/research/post-bg-performance-restart-2026-06-09.md`
 - `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
 - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log`

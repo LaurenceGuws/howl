@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/post-alpha-direct-divergence-next-shape.txt`
+- `loops/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
 
 Rule:
 

@@ -1,246 +1,240 @@
-# Post-BG Performance Restart
+# Post-Alpha Direct Divergence Next Shape
 
 Date: 2026-06-09.
 Role: researcher.
 Status: active.
-Primary researcher session id: `research-2026-06-09-post-bg-performance-01`.
-Sprint: `sprints/2026-06-09-post-bg-performance-restart.md`.
-Loop: `loops/emitter-sprite-after-bg-next-shape.txt`.
+Primary researcher session id: `research-2026-06-09-post-alpha-direct-divergence-01`.
+Sprint: `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`.
+Loop: `/home/home/personal/projects/howl/loops/direct-upload-playback-proof-after-alpha-hit-rejection.txt`.
 
 ## Sources Read In Order
 
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/publication-default-background-truth.txt`
-5. `/home/home/personal/projects/howl/research/background-default-correctness-2026-06-09.md`
+4. `/home/home/personal/projects/howl/loops/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
+5. `/home/home/personal/projects/howl/loops/done/post-alpha-direct-divergence-next-shape.txt`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-9. Current Howl source:
-   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
-   - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
-   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
-   - `/home/home/personal/projects/howl/howl-linux-host/src/app/process_accounting.zig`
-   - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
-10. Honest corrected-path receipts:
+9. Historical loop navigation cache only:
+   - `/home/home/personal/projects/howl/loops/done/emitter-sprite-after-bg-next-shape.txt`
+10. Current receipts:
    - `/home/home/personal/projects/howl/artifacts/stress/20260609-131321-ascii/summary.json`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
    - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log`
    - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-direct-ascii.metrics.ndjson`
-11. Alacritty references:
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-term.stderr.log`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
+11. Current Howl source:
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render/retained.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/app/process_accounting.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+12. Alacritty references:
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs`
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs`
 
+## Hygiene
+
+- Active sprint: `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`
+- Active loop: `/home/home/personal/projects/howl/loops/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
+- Active research: `/home/home/personal/projects/howl/research/post-bg-performance-restart-2026-06-09.md`
+- Hygiene issues: none
+- Research execution is authorized.
+- Implementation is still not authorized.
+
 ## Current-Code Facts
 
-- Source mapping now preserves default background truth in both source seams:
-  - `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
-- Background emission still skips only truly transparent cells:
-  - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig:82`
-- `direct_normal` still owns the normal-path candidate walk and append path:
-  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:110`
-  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:178`
-  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:261`
-- `render_surface_emitter` still publishes fills and sprites with row-local fill merging:
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:316`
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:385`
-
-## Honest Receipt Facts
-
-- Corrected clean benchmark:
-  - Howl `33.16 fps`
-  - Alacritty `1004.67 fps`
-  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-131321-ascii/summary.json`
-- Corrected direct host run:
-  - `47.88 fps`
-  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-direct-ascii.metrics.ndjson`
-- Corrected direct host owner order:
-  - `render_prepare_avg_us ~= 1674-1788`
-  - `render_upload_avg_us ~= 495-579`
-  - `present_submit_avg_us ~= 71-95`
-  - `direct_normal_avg_us ~= 722-867`
-  - `direct_normal_scan_avg_us ~= 658-718`
-  - `owner_create_avg_us ~= 957-1084`
-  - `render_upload_fill_avg_us ~= 311-372`
-  - `render_upload_glyph_avg_us ~= 88-123`
-  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log`
-- PTY-side work is still not the limiter:
-  - `howl-main` remains saturated while `howl-term-host` stays near idle in the direct receipt above
-- Accepted owner-create proof receipt:
-  - `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-term.stderr.log`
-  - narrowed emitter split:
-    - `sprites_avg_us ~= 407-421`
-    - `sprite_lookup_avg_us ~= 63-65`
-    - `stage_upload_avg_us ~= 93-96`
-    - `atlas_resource_avg_us ~= 97-100`
-    - `alpha_glyph_append_avg_us ~= 30-31`
-    - `publish_avg_us ~= 2`
-    - `publish_glyph_fixup_avg_us ~= 1-2`
-  - conclusion:
-    - `owner_create` remains inside the emitter seam
-    - publish fixup is negligible
-    - no new false owner or bucket seam is proved
+- The current source is back on the baseline emitter path. It still stages sprite bytes before the alpha-atlas lookup, then asks the atlas/store for placement, then appends atlas upload on miss:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:508-558`
+- `PreparedHandle.create(...)` still emits the render-surface payload up front, inside `emitPreparedFresh(...)`, before host submit:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig:71-93`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig:168-179`
+- The host direct path measures three distinct surfaces per render turn:
+  - prepare time from the terminal/context seam:
+    - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig:656-705`
+  - upload/playback counts and times forwarded into process accounting:
+    - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig:204-233`
+    - `/home/home/personal/projects/howl/howl-linux-host/src/app/process_accounting.zig:52-66`
+    - `/home/home/personal/projects/howl/howl-linux-host/src/app/process_accounting.zig:223-251`
+  - submit timing counted separately:
+    - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig:230-233`
+- Host upload/playback already separates fill, sprite, and glyph command timing:
+  - upload stats owner:
+    - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:274-289`
+  - command playback split:
+    - fill commands: `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:567-577`
+    - sprite commands: `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:578-590`
+    - glyph-run commands: `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:592-602`
+- `direct_normal` still owns the full visible-cell walk, renderable classification, and sprite-draw append before the emitter ever runs:
+  - source scan and classification: `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:178-210`
+  - append path: `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:261-306`
 
 ## Reference Facts
 
-- Alacritty computes background truth at content prep, not by erasing it upstream:
-  - `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
-- Alacritty keeps rect/background work and text/glyph work in separate owners:
-  - `utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs`
-  - `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs`
+- Alacritty’s content owner iterates only renderable cells and does not turn that owner into renderer playback policy:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:24-38`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:153-183`
+- Alacritty keeps rect/background playback in its own renderer owner:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:54-67`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:158-177`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:181-226`
+- Alacritty keeps text batching and glyph drawing in a separate text owner:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:49-69`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:97-132`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:134-172`
 
 ## Findings
 
-- The old post-owner performance plan is invalid for execution because it was based on broken background semantics.
-- On the corrected path, the hot order is still render-side, not PTY-side.
-- The top true owner is still `render_prepare`.
-- On the corrected direct-host receipt, `owner_create` / emitter work is currently larger than `direct_normal`:
-  - `owner_create_avg_us ~= 957-1084`
-  - `direct_normal_avg_us ~= 722-867`
-  - `direct_normal_scan_avg_us ~= 658-718`
-- Restored background truth also raised fill playback materially, so any optimization slice must preserve the option that fill work becomes the next owner after a `direct_normal` cut.
-- No new bucket owner is currently proved from the corrected receipts alone, but `render_surface_emitter.zig` remains large enough that the next proof slice must stop immediately if it exposes another false owner.
-- The accepted owner-create proof now narrows the top corrected-path tax further:
-  - the remaining `owner_create` cost is primarily sprite/emitter work
-  - publish fixup is not the next owner
-  - any next emitter slice must account for the previously rejected byte-walk-first alpha reuse premise before coding starts
-- The main proof gap for a cheap reuse key is now closed only for glyph-driven alpha sprites:
-  - `contract.SpriteKey` for glyph groups is derived from face id, glyph ids, cell span, and cell metrics in `/home/home/personal/projects/howl/howl-render/src/text/raster/key.zig`
-  - raster requests dedupe by that key in `/home/home/personal/projects/howl/howl-render/src/text/raster/rasterizer.zig`
-  - cached raster lookup also keys by that same sprite key in `/home/home/personal/projects/howl/howl-render/src/session/text.zig` and `lookupPreparedSprite(...)`
-  - so the honest cheap query identity for glyph-driven alpha-atlas reuse can be `sprite.key + clipped width/height + upload format`
-  - this does not justify dropping width/height from the reuse key, because clipping changes the uploaded payload shape even when the source raster key stays the same
-  - this proof does not yet cover every prepared sprite path or the direct color-resource path
+1. The clean benchmark improved, but it is only a coarse macro receipt.
+   - Honest clean baseline:
+     - Howl `33.16 fps`
+     - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-131321-ascii/summary.json:45-80`
+   - Rejected probe clean rerun:
+     - Howl `38.62 fps`
+     - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json:45-80`
+   - That proves only that the whole app moved faster on that uninstrumented harness. It does not prove which owner got better.
+
+2. The valid direct host receipt disproves that the removed atlas-hit tax was the next shippable owner.
+   - Honest direct baseline:
+     - `47.88 fps`
+     - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-direct-ascii.metrics.ndjson:1-5`
+   - Rejected-probe direct rerun:
+     - `36.94 fps`
+     - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson:1-4`
+   - The probe did remove the measured emitter subcost it targeted:
+     - baseline `stage_upload_avg_us ~= 88-95`, `atlas_resource_avg_us ~= 93-102`
+       - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log:34-42`
+       - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log:82-87`
+     - rejected probe `stage_upload_avg_us = 0`, `atlas_resource_avg_us ~= 69-76`
+       - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log:34-42`
+       - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log:91-99`
+
+3. The most likely reason for the divergence is that the probe removed one emitter tax, but the direct host path remained bottlenecked by unchanged or slightly worse frame-level owners.
+   - Honest direct baseline late steady-state:
+     - `direct_normal_avg_us ~= 722-725`
+     - `owner_create_avg_us ~= 957-965`
+     - `render_upload_fill_avg_us ~= 327-366`
+     - `render_upload_glyph_avg_us ~= 99-109`
+     - `present_submit_avg_us ~= 71-78`
+     - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log:70-78`
+     - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log:91-99`
+   - Rejected probe late steady-state:
+     - `direct_normal_avg_us ~= 776-782`
+     - `owner_create_avg_us ~= 1034-1061`
+     - `render_upload_fill_avg_us ~= 326-381`
+     - `render_upload_glyph_avg_us ~= 90-113`
+     - `present_submit_avg_us ~= 85-103`
+     - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log:70-78`
+     - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log:91-99`
+   - The direct receipt also shows less terminal progress on the main owner thread:
+     - honest baseline `terminal_drive_performed ~= 1323-1428`
+       - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log:65-78`
+     - rejected probe `terminal_drive_performed ~= 929-1199`
+       - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log:65-99`
+   - So the honest read is:
+     - the clean benchmark saw a coarse win from cheaper atlas-hit handling
+     - but on the valid direct host path, that win was too small to change the real owner order
+     - and the main thread still spent enough time in `render_prepare` plus fill/glyph playback plus submit that end-to-end PTY/frame throughput fell anyway
+
+4. The next true seam is not another blind emitter optimization.
+   - The direct receipt does not show a new dominant emitter subowner after `stage_upload` was removed.
+   - What it does show is a still-heavy playback side:
+     - fills are materially larger than glyph playback
+     - fill plus glyph playback together remain a large competing owner under the same direct receipt
+   - Under Alacritty pressure, rect/background playback and text playback are separate renderer owners, so the next honest move is to prove the playback split directly instead of forcing another mixed emitter slice.
+
+5. No newly exposed bucket/false owner is proved strongly enough to pause performance for structural surgery first.
+   - `render_surface_emitter.zig` and `sprite_resource_store.zig` are still suspiciously broad.
+   - But the valid direct receipt does not prove `sprite_lookup` or `atlas_resource` as the dominant remaining owner:
+     - `sprite_lookup_avg_us ~= 59-65`
+     - `atlas_resource_avg_us ~= 69-76`
+     - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log:70-78`
+   - So this is still performance-proof work, not mandatory ownership-correction work, provided the next slice stays proof-only.
 
 ## Proposed Shape
 
-- Authorize one proof-only restart slice first.
-- Do not optimize yet.
-- Accept the corrected-path owner order into the live loop.
-- Then authorize one more proof-only split on `owner_create` / emitter work, because that is the top corrected-path subowner on current receipts.
-- Only after that may the loop authorize the first real optimization seam.
-- After the accepted owner-create proof, coding pauses again until research/review cut the next exact emitter/sprite slice against the fresh proof and the earlier rejected alpha-reuse findings.
+### Owner Roles
 
-## Explicit Ordered Slice Plan
+- `howl-render/src/text/direct_normal.zig` still owns candidate walk and sprite-draw production.
+- `howl-render/src/prepared/render_surface_emitter.zig` owns prepared-surface emission.
+- `howl-linux-host/src/display/renderer/render_surface.zig` owns host playback of fill/sprite/glyph commands.
+- `howl-linux-host/src/terminal/context.zig` owns the prepare/upload/submit handoff timing seam.
 
-1. `post-bg-performance-rebaseline`
-   - completed and accepted
-2. `owner-create-after-bg-proof`
-   - completed and accepted
-3. `emitter-sprite-after-bg-next-shape`
-   - planning/research only
-   - purpose:
-     - cut the next exact emitter/sprite coding contract from the accepted owner-create proof
-     - avoid repeating the rejected byte-walk-first alpha-reuse premise
-   - corrected coding direction:
-     - use cheap identity `sprite.key + clipped width/height + format` for glyph-driven alpha-atlas hit queries only
-     - keep byte-content proof only on miss insertion, never on hit queries
-4. `direct-normal-after-bg`
-   - fallback only if fresh planning proves emitter/sprite is no longer the next true coding target
-5. `background-fill-after-bg`
-   - fallback if restored background work overtakes `direct_normal`
-   - allowed files:
-     - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
-     - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
-     - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output changes
-   - required shape:
-     - reduce background fill production/publication while preserving corrected background truth
-     - keep rect/fill ownership local to the true owners
-   - required tests:
-     - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
-     - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
-     - corrected direct host timing rerun
-     - corrected clean benchmark rerun
-   - non-goals:
-     - no source-mapping, session, host, or ABI changes
-   - stop conditions:
-     - the real top cost is glyph/normal-path work instead of fill work
-     - the seam exposes a new bucket owner
+### Next Honest Slice
+
+Promote a proof-only contract, not a coding optimization slice.
+
+- Slice name: `direct-upload-playback-proof-after-alpha-hit-rejection`
+- Purpose:
+  - explain whether the direct-host regression lives primarily in fill playback, glyph playback, or frame-submit/pacing under the same corrected path
+  - prove whether the next optimization seam should move to host playback or back to `direct_normal`
+  - avoid repeating another emitter-side guess after the rejected atlas-hit probe already removed its targeted tax
+
+### Exact Loop Contract To Promote
+
+- Allowed files:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/app/process_accounting.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+- Required shape:
+  - add one narrower proof split inside host playback only
+  - keep fill playback, glyph playback, and submit/present as distinct measured subowners
+  - split fill playback into dispatch/walk time and draw execution time
+  - split glyph playback into dispatch/walk time and draw execution time
+  - split sprite playback into dispatch/walk time and draw execution time
+  - do not change renderer policy, emitter policy, sprite keys, atlas reuse logic, or `direct_normal`
+  - produce a fresh valid direct host receipt that can answer:
+    - is fill playback still the next owner?
+    - is glyph playback the next owner?
+    - or did the regression actually come from submit/pacing overhead?
+- Exact non-goals:
+  - no emitter changes
+  - no `howl-render/src/prepared/render_surface_emitter.zig`
+  - no `howl-render/src/prepared/sprite_resource_store.zig`
+  - no `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no host UX/event-loop redesign
+- Exact stop conditions:
+  - stop if the proof requires behavior change instead of measurement split
+  - stop if the proof exposes a real false owner in host playback that needs review before more performance work
+  - stop if the direct receipt still cannot separate fill/glyph/submit enough to name a single next owner
 
 ## Required Tests
 
-- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
 - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
-- `cd /home/home/personal/projects/howl/howl-linux-host && python3 ../utils/tools/benchmark_terminals.py --build --duration 10 --mode ascii --terminals howl alacritty`
-- direct host timing receipt on the same corrected path
+- fresh valid direct host rerun on the corrected path with timing enabled
+- fresh clean benchmark rerun only after the proof slice, to confirm that the proof code itself did not change behavior
 
 ## Risks
 
-- Optimizing from the old `79.42 fps` plan would be optimizing lies.
-- If `owner_create` hides another bucket seam, performance must pause for ownership correction before optimization.
-- If restored background work dominates after an owner-create or `direct_normal` attempt, the loop must stop and retarget instead of forcing a stale premise through.
-- `render_surface_emitter.zig` remains large enough that a future corrected receipt could still expose it as another bucket seam.
+- Another emitter-side optimization slice would still be guesswork against the current receipts.
+- If playback proof shows `render_surface.zig` mixing too many owner responsibilities, performance work must pause for ownership correction before optimization resumes.
+- Fill playback may dominate because restored background truth materially increased rect work; forcing a glyph-centric story would repeat the same mistake in a new owner.
 
 ## Proof Gaps
 
-- The next exact emitter/sprite coding contract is not yet written into the active loop.
-- Reviewer acceptance of that next coding contract is still pending.
-
-## Coder Trial Update
-
-- The accepted coding contract `emitter-alpha-atlas-hit-without-byte-walk` was executed under coder session `coder-2026-06-09-emitter-alpha-atlas-hit-01`.
-- The implementation stayed inside:
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
-- The owner-local unit suite passed, but the diff is not accepted because the valid direct host receipt regressed.
-
-### Accepted coder-run receipts
-
-- clean benchmark rerun:
-  - `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
-  - Howl `38.62 fps`
-  - Alacritty `994.84 fps`
-- valid direct host rerun:
-  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log`
-  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
-  - Howl direct `36.94 fps`
-
-### Dropped invalid coder receipts
-
-- `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct/`
-  - invalid relative stress-binary path
-- `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-3/`
-  - incomplete metrics, not an acceptance receipt
-
-### Findings from the valid direct host receipt
-
-- The accepted cheap-hit seam does remove the targeted staged-upload tax on the measured path:
-  - `stage_upload_avg_us = 0`
-  - `render_upload_bytes_avg = 0`
-- Atlas query work also dropped relative to the pre-slice proof:
-  - `atlas_resource_avg_us ~= 69-76`
-  - pre-slice proof was `97-100`
-- The remaining emitter split in the valid receipt is roughly:
-  - `sprites_avg_us ~= 255-278`
-  - `sprite_lookup_avg_us ~= 59-65`
-  - `alpha_glyph_append_avg_us ~= 36-39`
-- But the valid direct host outcome regressed against the accepted honest baseline:
-  - accepted honest direct baseline: `47.88 fps`
-  - coder-run valid direct receipt: `36.94 fps`
-- The direct receipt also kept overall top owners high enough that the slice cannot be accepted on benchmark-only improvement:
-  - `owner_create_avg_us ~= 1034-1061`
-  - `direct_normal_avg_us ~= 776-782`
-  - `render_upload_fill_avg_us ~= 326-381`
-  - `render_upload_glyph_avg_us ~= 90-113`
-
-### Updated judgment
-
-- Reject the `emitter-alpha-atlas-hit-without-byte-walk` coding slice.
-- The clean benchmark win is not enough because the valid direct host receipt hit the slice stop condition.
-- The next work is research/review only:
-  - explain why benchmark and direct host receipts diverged
-  - re-order the next owner seam from the valid direct receipt
-  - authorize a new coding contract only after that
+- The exact direct-host regression source is still not isolated below:
+  - fill playback
+  - glyph playback
+  - submit/present pacing
+- The clean benchmark win is real, but it is not owner-attributed.
+- The current source is already back on the baseline emitter path, so the rejected probe survives only as receipt evidence, not as live code to inspect.
 
 ## Readiness Judgment
 
-Not ready to authorize coding from chat alone.
+Ready to authorize one proof-only host-playback split.
 
-Ready to seed the next exact coding contract:
+Not ready to authorize another optimization slice yet.
 
-- slice name: `emitter-alpha-atlas-hit-without-byte-walk`
-- owner seam:
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe remains valid historical evidence only. The next honest contract is `direct-upload-playback-proof-after-alpha-hit-rejection`, because the valid direct receipt proves the removed atlas-hit tax was real, but not large enough to beat the still-heavy `render_prepare` plus fill/glyph playback path on the owner thread.

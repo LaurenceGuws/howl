@@ -1,0 +1,93 @@
+Direct upload playback proof after alpha-hit rejection
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `research-2026-06-09-post-alpha-direct-divergence-01`.
+Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
+Coder session id: none.
+Scope: prove the next direct-host owner after the rejected alpha-atlas hit probe by splitting host playback and submit costs more narrowly, with no behavior change.
+
+Problem statement:
+
+- The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe improved the clean benchmark:
+  - Howl `33.16 fps -> 38.62 fps`
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
+- But the valid direct host rerun regressed:
+  - Howl direct `47.88 fps -> 36.94 fps`
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
+- The valid direct receipt proved the emitter tax reduction was real:
+  - `stage_upload_avg_us = 0`
+  - `atlas_resource_avg_us ~= 69-76`
+- But the same valid direct receipt still left the real owner order unresolved at frame level:
+  - `owner_create_avg_us ~= 1034-1061`
+  - `direct_normal_avg_us ~= 776-782`
+  - `render_upload_fill_avg_us ~= 326-381`
+  - `render_upload_glyph_avg_us ~= 90-113`
+  - `present_submit_avg_us ~= 85-103`
+- So no further emitter optimization is authorized yet. The next honest step is proof-only host playback/accounting work.
+
+Required sources:
+
+- `/home/home/personal/projects/howl/loops/done/post-alpha-direct-divergence-next-shape.txt`
+- `/home/home/personal/projects/howl/loops/done/emitter-sprite-after-bg-next-shape.txt`
+- `/home/home/personal/projects/howl/research/post-bg-performance-restart-2026-06-09.md`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-direct-ascii.metrics.ndjson`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/app/process_accounting.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+
+Required shape:
+
+- proof only, no behavior change
+- keep existing aggregate `render_upload_fill_*`, `render_upload_glyph_*`, and `present_submit_*` counters intact
+- add exact narrower host-side timing splits for:
+  - fill playback dispatch/walk time separate from fill draw execution time
+  - glyph-run playback dispatch/walk time separate from glyph draw execution time
+  - sprite playback dispatch/walk time separate from sprite draw execution time
+- keep submit/present timing separate from upload/playback timing
+- forward the new counters through the current host accounting seam only
+- produce one fresh valid direct host receipt that can answer exactly:
+  - whether fill playback remains the next owner
+  - whether glyph playback is actually the next owner
+  - whether sprite playback matters materially on this workload
+  - whether submit/present pacing is still large enough to outrank playback work
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- fresh valid direct host rerun on the corrected path with timing enabled
+- fresh clean benchmark rerun after the proof slice, to confirm the proof code did not change behavior materially
+
+Non-goals:
+
+- no `howl-render/*`
+- no emitter changes
+- no sprite-store changes
+- no `direct_normal` changes
+- no ABI changes
+- no host UX/event-loop redesign
+- no benchmark-tool changes
+
+Stop conditions:
+
+- stop if isolating these subowners requires behavior change instead of measurement split
+- stop if the host playback proof exposes a real false owner that needs a structural review before more performance work
+- stop if the fresh valid direct receipt still cannot separate fill, glyph, sprite, and submit enough to name one next owner
+
+Acceptance gate:
+
+- reviewer verdict on this exact proof contract
+- coder session id
+- valid direct host receipt
+- clean benchmark receipt
+- explicit next-owner judgment recorded back into the active research artifact
