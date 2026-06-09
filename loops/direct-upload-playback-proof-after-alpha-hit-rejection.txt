@@ -6,7 +6,7 @@ Status: active.
 Orchestrator session id: `orch-2026-06-09-background-default-01`.
 Researcher session id: `research-2026-06-09-post-alpha-direct-divergence-01`.
 Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
-Coder session id: none.
+Coder session id: `019eac48-c12a-7483-9d1f-a832326bc6bc`.
 Scope: prove the next direct-host owner after the rejected alpha-atlas hit probe by splitting host playback and submit costs more narrowly, with no behavior change.
 
 Problem statement:
