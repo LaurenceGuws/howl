@@ -6,7 +6,7 @@ Status: active.
 Orchestrator session id: `orch-2026-06-09-background-default-01`.
 Researcher session id: `019eac57-4579-7883-87b3-ca9bb0c01ab0`.
 Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
-Coder session id: none.
+Coder session id: `019eac5c-a688-7c30-b945-41630260d8b9`.
 Scope: execute the next exact host-fill coding contract from the accepted host-playback proof, with hard pause if the seam exposes another bucket.
 
 Problem statement:
