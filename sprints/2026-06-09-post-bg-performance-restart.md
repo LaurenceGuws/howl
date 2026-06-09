@@ -69,9 +69,7 @@ Sequential slice queue:
 - no further emitter optimization is authorized from this result alone
 
 4. `background-fill-after-playback-proof`
-- first pending optimization seam
-- allowed only because the accepted playback proof proves restored background fill work dominates
-- planning/research still required before coding starts
+- completed and accepted host-fill optimization slice
 - allowed files:
   - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
   - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface_test.zig`
@@ -84,8 +82,12 @@ Sequential slice queue:
   - the honest change requires renderer-side fill production edits
   - the honest change requires files outside the two-file host fill set
 
-5. `direct-normal-after-playback-proof`
-- allowed only if later accepted fill planning/proof disproves fill as the next true owner and restores `direct_normal` to the top spot
+5. `post-host-fill-rebaseline`
+- next active measurement step
+- rerun honest clean benchmark and update current owner order from the accepted host-fill state before more optimization coding
+
+6. `direct-normal-after-playback-proof`
+- allowed only if later accepted rebaseline/proof disproves fill as the next true owner and restores `direct_normal` to the top spot
 - allowed files:
   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/prepare_counters.zig` only if proof fields change

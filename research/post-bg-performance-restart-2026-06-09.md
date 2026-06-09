@@ -5,16 +5,17 @@ Role: researcher.
 Status: active.
 Primary researcher session id: `research-2026-06-09-post-alpha-direct-divergence-01`.
 Sprint: `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`.
-Loop: `/home/home/personal/projects/howl/loops/background-fill-after-playback-next-shape.txt`.
+Loop: `/home/home/personal/projects/howl/loops/post-host-fill-rebaseline.txt`.
 
 ## Sources Read In Order
 
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/background-fill-after-playback-next-shape.txt`
-5. `/home/home/personal/projects/howl/loops/done/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
-6. `/home/home/personal/projects/howl/loops/done/post-alpha-direct-divergence-next-shape.txt`
+4. `/home/home/personal/projects/howl/loops/post-host-fill-rebaseline.txt`
+5. `/home/home/personal/projects/howl/loops/done/background-fill-after-playback-next-shape.txt`
+6. `/home/home/personal/projects/howl/loops/done/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
+7. `/home/home/personal/projects/howl/loops/done/post-alpha-direct-divergence-next-shape.txt`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
@@ -46,7 +47,7 @@ Loop: `/home/home/personal/projects/howl/loops/background-fill-after-playback-ne
 ## Hygiene
 
 - Active sprint: `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`
-- Active loop: `/home/home/personal/projects/howl/loops/background-fill-after-playback-next-shape.txt`
+- Active loop: `/home/home/personal/projects/howl/loops/post-host-fill-rebaseline.txt`
 - Active research: `/home/home/personal/projects/howl/research/post-bg-performance-restart-2026-06-09.md`
 - Hygiene issues: none
 - Research execution is authorized.
@@ -437,3 +438,30 @@ The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe remains valid his
 Ready to promote one host-only coding slice for fill playback.
 
 The next honest contract is not renderer-side fill command production and not a forced ownership-correction pause. It is a two-file host slice centered on `howl-linux-host/src/display/renderer/render_surface.zig`, with direct-host receipt comparison against `20260609-121557-direct-upload-playback-proof-2` as the acceptance proof.
+
+## Host Fill Execution Update
+
+- Coder session id: `019eac5c-a688-7c30-b945-41630260d8b9`
+- Allowed-file diff only:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface_test.zig`
+- Verification passed:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- Valid direct execution receipt:
+  - stderr: `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-direct-ascii.metrics.ndjson`
+  - final direct result: `81.44 fps`
+
+### Direct receipt judgment
+
+- The slice satisfies the active loop’s direct improvement bar.
+- `render_upload_fill_draw_avg_us` improved from about `424` in `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log` to about `179` in `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log`.
+- Direct host throughput improved from `47.96 fps` to `81.44 fps`.
+- The shape stayed inside the accepted host fill owner seam and did not broaden into renderer, accounting, or runtime policy work.
+
+### Post-execution owner judgment
+
+- The accepted host-fill optimization materially reduced the next measured owner.
+- Fill playback remains a major cost, but the row-by-row upload tax is substantially lower after the staged multi-row upload tile.
+- The next work should rebaseline from this accepted host-fill state before choosing between another host-fill pass, a return to renderer-side fill production, or a new ownership correction.
