@@ -178,7 +178,7 @@ Sequential slice queue:
 - receipt:
   - `howl-render` commit `590694b` `remove prepared owner from ffi surface`
 
-8. `delete-owner-zig` — next coder slice
+8. `delete-owner-zig` — completed
 - allowed files:
   - `howl-render/src/prepared/handle.zig`
   - `howl-render/src/prepared/surface.zig`
@@ -200,12 +200,18 @@ Sequential slice queue:
   - no further optimisation work in the same slice
 - stop condition:
   - `prepared/owner.zig` is gone and no retained dependency on it remains
+- accepted result:
+  - `prepared/owner.zig` deleted
+  - owner tests rewritten against the real seams
+  - compatibility aliasing removed entirely
+- receipt:
+  - `howl-render` commit `5c812b8` `delete prepared owner shim`
 
-9. `post-owner-performance` — queued only after slice 8 is accepted
+9. `post-owner-performance` — next slice
 - purpose:
   - resume measured optimisation work on the cleaned seam
-- rule:
-  - no performance slice is authorized before `delete-owner-zig` is accepted
+- first action:
+  - rerun the accepted benchmark/accounting receipts on the cleaned seam before planning the next fix
 
 Autonomy rule for this sprint:
 

@@ -20,10 +20,12 @@ Problem statement:
 - Accepted ownership-correction slice `owner-map-landing` moved metadata and failure ownership out of `prepared/owner.zig`, rewired `TextSessionOwner` handle storage, and reduced `prepared/owner.zig` to a temporary shim.
 - Accepted ownership-correction slice `session-submit-choreography` moved publish/submit policy into `TextSessionOwner` and reduced `PreparedHandle` to storage/liveness/render-surface access plus release/consume.
 - Accepted ownership-correction slice `prepared-surface-boundary-cleanup` removed `prepared/owner.zig` from the prepared-surface FFI boundary and isolated the shim to itself plus owner tests.
+- Accepted ownership-correction slice `delete-owner-zig` deleted the shim entirely. There is no remaining `Owner` seam in `src/ffi`, `src/session`, or `src/prepared`.
 - Accepted nested commits:
   - `howl-render` `3c786f7` `split prepared handle metadata ownership`
   - `howl-render` `0ee034a` `move prepared submit policy to session`
   - `howl-render` `590694b` `remove prepared owner from ffi surface`
+  - `howl-render` `5c812b8` `delete prepared owner shim`
 
 Current measured context:
 
@@ -50,28 +52,18 @@ Dropped work from acceptance:
   - `howl-render/src/benchmark_main.zig`
   are not sprint progress unless they survive reviewer acceptance under a later loop
 
-Active coder slice: `delete-owner-zig`
+Active coder slice: `post-owner-performance-rebaseline`
 
 Allowed files:
 
-- `howl-render/src/prepared/handle.zig`
-- `howl-render/src/prepared/surface.zig`
-- `howl-render/src/prepared/render_surface_emitter.zig`
-- `howl-render/src/prepared/owner_test.zig`
-- `howl-render/src/test/unit/root.zig`
-- delete `howl-render/src/prepared/owner.zig`
+- no file edits authorized in this slice unless a measurement-only receipt bug forces a follow-up planning restart
 
 Required shape:
 
-- delete `howl-render/src/prepared/owner.zig`
-- remove the remaining compatibility aliasing in `prepared/owner_test.zig`
-- keep tests owner-true to the real seams:
-  - prepared-handle lifecycle
-  - prepared-surface metadata
-  - emitter failure mapping
-- do not reintroduce `Owner` under another generic name
-- do not change the ABI surface
-- do not broaden into host or performance work
+- rerun the accepted benchmark and direct host receipts on the cleaned seam
+- record whether the hot owner order changed after deleting `prepared/owner.zig`
+- do not redesign or implement a fix in this slice
+- use the existing benchmark contract and accounting surfaces only
 
 Required tests:
 
@@ -80,11 +72,13 @@ Required tests:
 Required verification:
 
 - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
-- `cd /home/home/personal/projects/howl/howl-render && rg 'prepared/owner\\.zig|\\bOwner\\b' src/ffi src/session src/prepared -n -S`
-- prove from the final diff that:
-  - `src/prepared/owner.zig` is gone
-  - there is no remaining `Owner` seam in `src/prepared`
-  - owner tests were rewritten around the real owners instead of the shim
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- rerun the direct host ASCII-rain harness against the cleaned tree
+- compare against the accepted receipts:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-verify-1/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1/howl-term.stderr.log`
+- prove whether the top owner order changed materially after deleting the shim
 
 Non-goals:
 
@@ -92,22 +86,20 @@ Non-goals:
 - no benchmark-tool changes
 - no PTY/runtime changes
 - no publication background correctness work unless this slice cannot compile without touching the owning seam
-- no submit-policy reshuffle; that already landed in `0ee034a`
-- no direct performance claims from this slice
+- no implementation fix in this slice
+- no fresh design work until the post-delete receipts are in hand
 
 Stop conditions:
 
-- stop if the split requires a new umbrella layer or any generic bucket owner
-- stop if the ABI shape would change
-- stop if deleting `prepared/owner.zig` requires files outside the allowed set
-- stop if the tests need new non-curated roots
+- stop if the cleaned tree fails the accepted benchmark surface
+- stop if the measurement surface itself no longer matches the accepted benchmark contract
+- stop if new work would require edits before the receipts are recorded
 
 Acceptance gate for this slice:
 
-- commit hash
 - orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`
 - researcher session id: `research-2026-06-09-owner-delete-plan-01`
 - reviewer session id: `rev-2026-06-09-owner-delete-plan-01`
 - coder session id
 - verification results from the required commands above
-- explicit note whether any compatibility aliasing remains after the slice
+- explicit receipt paths for the post-delete benchmark/accounting reruns
