@@ -43,6 +43,12 @@ Problem statement:
     - `session_preparer_avg_us = 3881`
     - `session_prepare_cells_avg_us = 1824`
     - `direct_normal_avg_us = 570`
+- Accepted `FtHbSupport` metrics-cache reduction moved the top owner materially:
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4/howl-term.stderr.log`
+  - `prepare_surface_avg_us` dropped from `6216` to `394`
+  - `render_prepare_avg_us` dropped from `8359` to `2348`
+  - `owner_create_avg_us` remained the next hot owner at about `1922`
+  - direct timed host result moved from about `4 fps` to `55.66 fps`
 - So the next slice remains in renderer prepare ownership, but it must target a larger share of `direct_normal` or the surrounding prepare path than the removed duplicate pass did.
 
 Accepted research inputs:
@@ -144,13 +150,26 @@ Accepted renderer receipts:
     - `session_preparer_avg_us = 3881`
     - `session_prepare_cells_avg_us = 1824`
     - `direct_normal_avg_us = 570`
+  - accepted metrics-cache reduction:
+    - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4`
+    - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4/howl-term.stderr.log`
+    - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4/howl-render.metrics.ndjson`
+    - final result: `frames=101`, `fps=55.66`
+    - stable split after warmup:
+      - `prepare_surface_avg_us = 394`
+      - `input_avg_us = 185`
+      - `session_preparer_avg_us = 0`
+      - `session_prepare_cells_avg_us = 207`
+      - `direct_normal_avg_us = 207`
+      - `owner_create_avg_us = 1922`
+      - `render_prepare_avg_us = 2348`
 
 Next stop conditions:
 
 - stop if the broader render slice cannot be shaped from the curated Alacritty renderer organization without overriding references
 - stop if the next render reduction crashes the host or weakens the benchmark receipt surface
 - stop if no bounded render-path change stronger than fixed-function immediate mode can be made without larger backend restructuring
-- stop if the next slice tries to optimize `direct_normal` again without first accounting for the larger real host costs now pinned in `ensureTextPreparer` and `Owner.create`
+- stop if the next slice ignores the now-proved `Owner.create` hot owner and tries to optimize `ensureTextPreparer` again without new contradictory receipts
 
 Delegation boundary:
 
@@ -168,8 +187,8 @@ Acceptance state:
   - `howl-linux-host/src/main.zig`
 - next slice: queued in `howl-render` prepare ownership
 - next measured target:
-  - first: `TextSession.ensureTextPreparer` and its real FT/HB/session setup cost inside `prepareSurface`
-  - second: `prepared_owner.Owner.create` / render-surface emission cost
+  - first: `prepared_owner.Owner.create` / render-surface emission cost
+  - second: any remaining `prepareCellsWithSessionOptions` cost only after `Owner.create` is split further
 
 Prior measurement receipts:
 

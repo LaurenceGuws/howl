@@ -275,24 +275,39 @@ Receipt proof:
     - `session_preparer_avg_us = 3881`
     - `session_prepare_cells_avg_us = 1824`
     - `direct_normal_avg_us = 570`
+- Accepted `FtHbSupport` metrics-cache reduction:
+  - owner path: `howl-render/src/text/font/ft_hb/support.zig`
+  - receipt:
+    - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4`
+    - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4/howl-term.stderr.log`
+    - final metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4/howl-render.metrics.ndjson`
+  - measured result: `frames=101`, `fps=55.66`
+  - live host split after warmup:
+    - `render_prepare_avg_us = 2348`
+    - `prepare_surface_avg_us = 394`
+    - `owner_create_avg_us = 1922`
+    - `input_avg_us = 185`
+    - `session_preparer_avg_us = 0`
+    - `session_prepare_cells_avg_us = 207`
+    - `direct_normal_avg_us = 207`
 - Defensible conclusion:
   - the redundant-pass removal is accepted: it materially improved the renderer benchmark and slightly improved the real host workload without destabilizing the tree
-  - the sprint is still far from done because the real host workload remains around `4 fps`, and `render_prepare` still dominates the host loop
-  - the next dominant owner is no longer just generic `howl-render prepare`; it is specifically:
-    - first: `TextSession.ensureTextPreparer` and adjacent real font/session setup work inside `prepareSurface`
-    - second: `prepared_owner.Owner.create` / render-surface emission
-    - third: `prepareCellsWithSessionOptions`, where the earlier `direct_normal` reduction already removed one proven tax
+  - the metrics-cache reduction is accepted: it removed the previously dominant `ensureTextPreparer` tax on the real host path
+  - the sprint is still not done, but the dominant owner has now moved to:
+    - first: `prepared_owner.Owner.create` / render-surface emission
+    - second: remaining `prepareCellsWithSessionOptions` work
 
 ## Proposed Next Slice Contract Shape
 
-Purpose: first real render-path fix, shaped by the measured main-thread churn and Alacritty’s buffered text submission.
+Purpose: next real render-path fix, shaped by the measured main-thread churn and Alacritty’s buffered text submission.
 
 Likely allowed files:
 
 - `loops/ascii-rain-baseline-bottleneck.txt`
 - `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
-- `howl-linux-host/src/display/renderer/render_surface.zig`
-- any small adjacent renderer-owner files strictly required to support a buffered glyph path
+- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/prepared/render_surface_emitter.zig`
+- any small adjacent prepared/render-surface owner files strictly required to support a bounded emission reduction
 
 Exact tests and verification:
 
@@ -301,7 +316,7 @@ Exact tests and verification:
 - `zig test src/app/processor.zig`
 - `zig build install -Doptimize=ReleaseFast`
 - `python3 utils/tools/benchmark_terminals.py --duration 10 --mode ascii --terminals howl alacritty`
-- one direct host accounting rerun only if the benchmark result changes enough to require reclassification
+- one direct host accounting rerun on the same `320x120` ASCII-rain harness
 - verify:
   - no crash on the seeded benchmark
   - Howl benchmark receipt remains complete
@@ -313,10 +328,11 @@ Exact non-goals:
 - no benchmark workload redesign
 - no hidden runtime layer
 - no acceptance of client-array or similar compatibility-profile shortcuts that break the real benchmark
+- no reopening of `ensureTextPreparer` without new contradictory receipts
 
 Exact stop conditions:
 
-- stop if the render-path change crashes the host on the benchmark
+- stop if the render-surface emission change crashes the host on the benchmark
 - stop if the change broadens into backend-wide architecture without an updated sprint slice
 - stop if reference pressure requires a larger buffered-renderer move than can fit honestly in one accountable slice
 
@@ -331,10 +347,14 @@ Reason:
   - first to host render/submit churn
   - then to `howl-render` prepare
   - then to `prepareSurface ~= 6.2 ms` vs `Owner.create ~= 2.1 ms`
-  - then inside `prepareSurface` to:
+  - then inside `prepareSurface` before the metrics-cache reduction to:
     - `session_preparer ~= 3.9 ms`
     - `prepare_cells ~= 1.8 ms`
     - `input ~= 0.5 ms`
     - `direct_normal ~= 0.57 ms`
+  - and after the accepted metrics-cache reduction to:
+    - `prepareSurface ~= 0.39 ms`
+    - `Owner.create ~= 1.92 ms`
+    - `render_prepare ~= 2.35 ms`
 - One accepted renderer reduction is already proved with both renderer-benchmark and real-host receipts.
-- The next accountable move is not more Python or wrapper work. It is a renderer/session slice against real FT/HB/session setup ownership first, with render-surface emission second.
+- The next accountable move is not more Python or wrapper work. It is a render-surface emission slice against `prepared_owner.Owner.create`.
