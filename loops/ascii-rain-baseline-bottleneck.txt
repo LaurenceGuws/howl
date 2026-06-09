@@ -7,16 +7,19 @@ Orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`.
 Researcher session id: `research-2026-06-09-owner-delete-plan-01`.
 Reviewer session id: `rev-2026-06-09-owner-delete-plan-01`.
 Coder session id: pending.
-Scope: active coder contract for the next slice only. The user explicitly changed sprint direction. The next slice is not another renderer micro-optimization. The next slice exists to land the first owner-true teardown step toward deleting `howl-render/src/prepared/owner.zig`.
+Scope: active coder contract for the next slice only. The user explicitly changed sprint direction. The active queue is now in ownership-correction mode until `howl-render/src/prepared/owner.zig` is gone.
 
 Problem statement:
 
 - The broad sprint goal remains beating Alacritty on the agreed ASCII rain benchmark.
 - The measured receipts already proved that `howl-render/src/prepared/owner.zig` sits on the live hot path.
 - The user explicitly rejected continuing to optimize around that file.
-- Reviewer `rev-2026-06-09-owner-delete-plan-01` rejected the previous active loop because it still authorized `normal-fill-class-proof` after the user changed sprint direction.
+- Reviewer `rev-2026-06-09-owner-delete-plan-01` rejected the old `normal-fill-class-proof` path after the user changed sprint direction.
 - Researcher `research-2026-06-09-owner-delete-plan-01` proved that `prepared/owner.zig` is broad bucket ownership, not an owner-true seam, and produced the deletion queue now governing this sprint.
 - Performance receipts remain valid context, but they are not authority for the next implementation slice until the ownership correction lands cleanly.
+- Accepted ownership-correction slice `owner-map-landing` moved metadata and failure ownership out of `prepared/owner.zig`, rewired `TextSessionOwner` handle storage, and reduced `prepared/owner.zig` to a temporary shim.
+- Accepted nested commit:
+  - `howl-render` `3c786f7` `split prepared handle metadata ownership`
 
 Current measured context:
 
@@ -43,30 +46,29 @@ Dropped work from acceptance:
   - `howl-render/src/benchmark_main.zig`
   are not sprint progress unless they survive reviewer acceptance under a later loop
 
-Active coder slice: `owner-map-landing`
+Active coder slice: `session-submit-choreography`
 
 Allowed files:
 
 - `howl-render/src/prepared/handle.zig`
-- `howl-render/src/prepared/owner.zig`
-- `howl-render/src/prepared/surface.zig`
-- `howl-render/src/prepared/render_surface_emitter.zig`
 - `howl-render/src/session/text.zig`
-- `howl-render/src/ffi/handle.zig`
-- `howl-render/src/prepared/owner_test.zig`
-- `howl-render/src/ffi/prepared_surface_test.zig`
+- `howl-render/src/ffi/submission.zig`
+- `howl-render/src/ffi/submission_test.zig`
 - `howl-render/src/ffi/test_support.zig`
 - `howl-render/src/test/unit/root.zig` only if needed to keep the curated unit root honest
 
 Required shape:
 
-- introduce a domain-true prepared handle owner in `howl-render/src/prepared/handle.zig`
-- move pure prepared metadata truth out of `prepared/owner.zig` into `prepared/surface.zig`
-- move emission-failure ownership out of `prepared/owner.zig` into `prepared/render_surface_emitter.zig`
-- rewire `TextSessionOwner` to register and store `PreparedHandle` pointers instead of `Owner` pointers
-- keep `ffi/handle.zig` as casts only
-- do not move submit-policy ownership into FFI
-- allow `prepared/owner.zig` to remain only as a temporary compile-through shim for this slice if strictly necessary
+- move publish/submit state policy and execution out of `PreparedHandle`
+- make `TextSessionOwner` the parent owner for:
+  - publish transition
+  - submit-ready transition
+  - token validation
+  - submit execution against `session.submitSurface(...)`
+- keep `PreparedHandle` as storage, liveness, render-surface access, and release/consume only
+- keep `ffi/submission.zig` translation-only
+- do not change the ABI surface
+- do not delete the shim yet unless the entire slice can still stay within the allowed set
 
 Required tests:
 
@@ -77,10 +79,9 @@ Required verification:
 - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
 - `cd /home/home/personal/projects/howl/howl-render && rg 'prepared/owner\\.zig|\\bOwner\\b' src/ffi src/session src/prepared -n -S`
 - prove from the final diff that:
-  - `PreparedInfo` no longer lives in `prepared/owner.zig`
-  - `PreparedBuffer` no longer lives in `prepared/owner.zig`
-  - render-surface emission failure mapping no longer lives in `prepared/owner.zig`
-  - `TextSessionOwner.prepared_handles` no longer stores `*prepared_owner.Owner`
+  - submit policy no longer lives in `PreparedHandle.submit(...)` or `PreparedHandle.submitOwned(...)`
+  - `TextSessionOwner` owns the session-side publish/submit choreography
+  - `ffi/submission.zig` no longer performs owner policy itself beyond ABI translation and status mapping
 
 Non-goals:
 
@@ -88,14 +89,14 @@ Non-goals:
 - no benchmark-tool changes
 - no PTY/runtime changes
 - no publication background correctness work unless this slice cannot compile without touching the owning seam
-- no full deletion of `prepared/owner.zig` yet if a one-slice shim is required
+- no metadata or emission-failure reshuffle; that already landed in `3c786f7`
 - no direct performance claims from this slice
 
 Stop conditions:
 
 - stop if the split requires a new umbrella layer or any generic bucket owner
 - stop if the ABI shape would change
-- stop if `ffi/*` starts owning lifecycle or submit policy
+- stop if `ffi/*` still owns lifecycle or submit policy after the slice
 - stop if deleting or narrowing `prepared/owner.zig` requires files outside the allowed set
 - stop if the tests need new non-curated roots
 
@@ -107,4 +108,4 @@ Acceptance gate for this slice:
 - reviewer session id: `rev-2026-06-09-owner-delete-plan-01`
 - coder session id
 - verification results from the required commands above
-- explicit note whether `prepared/owner.zig` is still present only as a shim or has already been reduced further
+- explicit note whether `prepared/owner.zig` still contains submit-policy re-exports or only a narrower compatibility shim

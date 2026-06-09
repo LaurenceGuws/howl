@@ -94,7 +94,7 @@ Sequential slice queue:
 - receipt:
   - `research/owner-delete-plan-2026-06-09.md`
 
-5. `owner-map-landing` — next coder slice
+5. `owner-map-landing` — completed
 - allowed files:
   - `howl-render/src/prepared/handle.zig`
   - `howl-render/src/prepared/surface.zig`
@@ -120,8 +120,15 @@ Sequential slice queue:
   - no performance claims from this slice
 - stop condition:
   - no caller still needs metadata or emission-failure ownership from `prepared/owner.zig`
+- accepted result:
+  - `PreparedInfo` and `PreparedBuffer` moved to `prepared/surface.zig`
+  - emission failure ownership moved to `prepared/render_surface_emitter.zig`
+  - `TextSessionOwner` handle storage moved to `*prepared_handle.PreparedHandle`
+  - `prepared/owner.zig` reduced to a temporary compatibility shim
+- receipt:
+  - `howl-render` commit `3c786f7` `split prepared handle metadata ownership`
 
-6. `session-submit-choreography` — queued
+6. `session-submit-choreography` — next coder slice
 - allowed files:
   - `howl-render/src/session/text.zig`
   - `howl-render/src/prepared/handle.zig`
