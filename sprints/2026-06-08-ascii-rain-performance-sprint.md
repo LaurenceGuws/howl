@@ -54,8 +54,10 @@ Execution model:
 
 Accepted planning and review sessions:
 
-- reviewer session id: `rev-2026-06-09-ascii-rain-workflow-01`
-- active researcher session id for next bottleneck shape: `research-2026-06-09-alacritty-bottleneck-01`
+- original reviewer session id for the completed bottleneck-proof queue: `rev-2026-06-09-ascii-rain-workflow-01`
+- original researcher session id for bottleneck/reference shape: `research-2026-06-09-alacritty-bottleneck-01`
+- active reviewer session id for the ownership-correction queue: `rev-2026-06-09-owner-delete-plan-01`
+- active researcher session id for the ownership-correction queue: `research-2026-06-09-owner-delete-plan-01`
 
 Sequential slice queue:
 
@@ -83,65 +85,108 @@ Sequential slice queue:
   - map the current measured hot path to Alacritty’s content/text/rect renderer organization
   - identify the smallest reference-backed next slice
 - receipt:
-  - `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+  - `research/done/cache-2026-06-08-ascii-rain-benchmark-surface.md`
 
-4. `normal-fill-class-proof` — next coder slice
+4. `owner-delete-plan` — completed
+- purpose:
+  - prove that `howl-render/src/prepared/owner.zig` is style debt, not an owner-true seam
+  - map exact replacement ownership and exact sequential deletion slices
+- receipt:
+  - `research/owner-delete-plan-2026-06-09.md`
+
+5. `owner-map-landing` — next coder slice
 - allowed files:
-  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/prepared/surface.zig`
   - `howl-render/src/prepared/render_surface_emitter.zig`
-  - `howl-render/src/benchmark_main.zig` only if needed for proof output
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/ffi/handle.zig`
+  - `howl-render/src/prepared/owner_test.zig`
+  - `howl-render/src/ffi/prepared_surface_test.zig`
+  - `howl-render/src/ffi/test_support.zig`
+  - `howl-render/src/test/unit/root.zig` only if needed to keep the curated root honest
 - required shape:
-  - separate ordinary normal-path background work from clears, decorations, and cursor work
-  - prove which fill commands are semantically required vs ordinary tax on the normal path
-  - reduce no behavior yet unless a proof-only reduction is inseparable from the measurement surface
+  - introduce `PreparedHandle`
+  - move prepared metadata truth to `prepared/surface.zig`
+  - move emission-failure ownership to `prepared/render_surface_emitter.zig`
+  - rewire `TextSessionOwner` handle storage to the new owner
+  - keep `prepared/owner.zig` only as a temporary shim if strictly necessary
 - required tests:
   - `cd howl-render && zig build test:unit`
-  - `cd howl-render && zig build benchmark:render -- --runs 20`
-  - direct host receipt on the existing ASCII-rain harness
 - non-goals:
-  - no host GL changes
+  - no host GL work
+  - no benchmark-tool changes
   - no ABI reshaping
-  - no `utils/tools/*`
-  - no broad renderer redesign
+  - no performance claims from this slice
 - stop condition:
-  - receipts identify whether ordinary normal backgrounds dominate the remaining fill-command tax strongly enough to justify the next implementation slice
+  - no caller still needs metadata or emission-failure ownership from `prepared/owner.zig`
 
-5. `normal-background-inband-reduction` — queued, conditional on slice 4 proof
+6. `session-submit-choreography` — queued
 - allowed files:
-  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/ffi/submission.zig`
+  - related owner-true tests/support only
+- required shape:
+  - move publish/submit state policy and execution into `TextSessionOwner`
+  - keep `PreparedHandle` as storage/liveness only
+  - keep FFI translation-only
+- required tests:
+  - `cd howl-render && zig build test:unit`
+- non-goals:
+  - no ABI changes
+  - no host-side renderer work
+- stop condition:
+  - submit policy no longer lives in the prepared-handle file
+
+7. `prepared-surface-boundary-cleanup` — queued
+- allowed files:
+  - `howl-render/src/ffi/prepared_surface.zig`
+  - `howl-render/src/ffi/handle.zig`
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/prepared/surface.zig`
   - `howl-render/src/prepared/render_surface_emitter.zig`
-  - adjacent owner-true tests only if required
+  - related owner-true tests/support only
 - required shape:
-  - move ordinary normal-path background handling toward the text path where source-backed proof permits
-  - keep explicit rect emission for clears, decorations, cursor, and non-text cases that cannot honestly stay in-band
+  - describe reads `PreparedSurface` metadata helpers
+  - render-surface failure mapping comes from the emitter owner
+  - no FFI file imports `prepared/owner.zig`
 - required tests:
-  - same as slice 4 plus direct host comparison against accepted receipts
+  - `cd howl-render && zig build test:unit`
 - non-goals:
-  - no host GL path work
-  - no new runtime layer
-  - no umbrella renderer abstraction
+  - no ABI changes
+  - no performance-only edits
 - stop condition:
-  - lower `render_upload_fill_count_avg`
-  - lower `render_upload_fill_avg_us`
-  - no crash
+  - `ffi/*` no longer depends on `prepared/owner.zig`
 
-6. `host-buffered-rect-path` — queued only if slice 5 lands cleanly and host upload remains a real secondary owner
+8. `delete-owner-zig` — queued
 - allowed files:
-  - `howl-linux-host/src/display/renderer/render_surface.zig`
-  - host-side owner-true tests only if required
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/prepared/surface.zig`
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/ffi/prepared_surface.zig`
+  - `howl-render/src/ffi/submission.zig`
+  - `howl-render/src/ffi/handle.zig`
+  - `howl-render/src/prepared/owner_test.zig`
+  - related owner-true tests/support only
+  - delete `howl-render/src/prepared/owner.zig`
 - required shape:
-  - follow Alacritty `renderer/rects.rs` pressure toward buffered rect submission
-  - keep policy out of the host GL layer
+  - final tree has no `Owner` seam for prepared-surface lifecycle
+  - tests are split by true owner instead of one bucket-owner test file
 - required tests:
-  - `cd howl-linux-host && zig build test:unit`
-  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast`
-  - direct host receipt on the existing ASCII-rain harness
+  - `cd howl-render && zig build test:unit`
+  - `cd howl-render && rg 'owner\\.zig|\\bOwner\\b' src -n -S`
 - non-goals:
-  - no PTY/runtime redesign
-  - no Python-tool changes
-  - no ABI reshaping
+  - no further optimisation work in the same slice
 - stop condition:
-  - clean direct-host improvement after renderer command-count reductions have already landed
+  - `prepared/owner.zig` is gone and no retained dependency on it remains
+
+9. `post-owner-performance` — queued only after slice 8 is accepted
+- purpose:
+  - resume measured optimisation work on the cleaned seam
+- rule:
+  - no performance slice is authorized before `delete-owner-zig` is accepted
 
 Autonomy rule for this sprint:
 

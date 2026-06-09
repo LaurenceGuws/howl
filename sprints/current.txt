@@ -11,7 +11,7 @@ Sprint:
 
 Active research:
 
-- `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+- `research/owner-delete-plan-2026-06-09.md`
 
 Active loops:
 

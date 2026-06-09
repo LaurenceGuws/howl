@@ -318,6 +318,309 @@ Receipt proof:
     - `session_prepare_cells_avg_us = 1824`
     - `direct_normal_avg_us = 570`
 - Accepted `FtHbSupport` metrics-cache reduction:
+
+## Owner Delete Plan
+
+Date: 2026-06-09.
+Role: researcher.
+Researcher session id: `research-2026-06-09-owner-delete-plan-01`.
+Status: active planning research for a sprint-direction change.
+
+### Sources Read In Order
+
+1. `/home/home/personal/projects/howl/loop/flow.md`
+2. `/home/home/personal/projects/howl/loop/researcher.md`
+3. `/home/home/personal/projects/howl/sprints/current.txt`
+4. `/home/home/personal/projects/howl/loops/ascii-rain-baseline-bottleneck.txt`
+5. `/home/home/personal/projects/howl/research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+6. `/home/home/personal/projects/howl/reference-index.md`
+7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+9. Current Howl source:
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/surface.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/session/text.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/ffi/prepared_surface.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/ffi/submission.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/ffi/handle.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/owner_test.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/ffi/prepared_surface_test.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/ffi/test_support.zig`
+10. Alacritty references:
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/mod.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs`
+
+### Exact File And Line References
+
+- `prepared/owner.zig` currently mixes:
+  - debug timing: `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig:20-64`
+  - exported metadata/failure types: `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig:66-93`
+  - handle object state and lifecycle: `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig:95-180`
+  - info/buffer/render-surface accessors: `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig:182-215`
+  - submit validation and submit execution: `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig:217-249`
+  - consume/release/deinit: `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig:251-284`
+  - summary construction and failure mapping: `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig:287-316`
+- `TextSessionOwner` already owns prepared-handle arrays and cached publish/submit handles in `/home/home/personal/projects/howl/howl-render/src/session/text.zig:430-444`.
+- `TextSessionOwner.prepareHandle` already owns the prepare request consume, `session.prepareSurface`, and current handoff into `Owner.create` in `/home/home/personal/projects/howl/howl-render/src/session/text.zig:499-523`.
+- `TextSessionOwner` already owns handle registration and cached-handle clearing in `/home/home/personal/projects/howl/howl-render/src/session/text.zig:525-533`.
+- `PreparedSurface` already owns prepared render data and token derivation in `/home/home/personal/projects/howl/howl-render/src/prepared/surface.zig:7-43`.
+- `render_surface_emitter.zig` already owns render-surface payload construction and bounded command/resource emission in `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:117-240`, `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:243-679`.
+- FFI prepared-surface boundary currently depends on `Owner` for handle cast, liveness, metadata, surface access, and emission-failure mapping in `/home/home/personal/projects/howl/howl-render/src/ffi/prepared_surface.zig:21-80`.
+- FFI submission boundary currently depends on `Owner` for belongs-to-session checks, state transitions, token validation, and submit execution in `/home/home/personal/projects/howl/howl-render/src/ffi/submission.zig:15-23`, `/home/home/personal/projects/howl/howl-render/src/ffi/submission.zig:57-70`, `/home/home/personal/projects/howl/howl-render/src/ffi/submission.zig:82-189`.
+- FFI handle casts currently depend on `PreparedSurfaceHandle` from `owner.zig` in `/home/home/personal/projects/howl/howl-render/src/ffi/handle.zig:10-15`.
+- Test roots directly encode `Owner` shape in:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/owner_test.zig:1-262`
+  - `/home/home/personal/projects/howl/howl-render/src/ffi/prepared_surface_test.zig:21-103`
+  - `/home/home/personal/projects/howl/howl-render/src/ffi/test_support.zig:12-33`
+  - `/home/home/personal/projects/howl/howl-render/src/ffi/test_support.zig:63-79`
+- Alacritty keeps cell/content preparation separate from frame orchestration and renderer submission:
+  - renderable cell filtering and empty-cell rule: `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:153-183`, `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:301-307`
+  - display orchestration of clear, cell draw, rect collection, rect draw: `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:783-1008`
+  - renderer root keeps drawing APIs only: `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/mod.rs:177-255`
+  - text renderer keeps batching/draw-cell ownership only: `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:49-172`
+
+### Current-Code Facts
+
+- `prepared/owner.zig` is not a small owner. It holds one object that spans:
+  - prepared data ownership
+  - cached render-surface payload ownership
+  - publish/submit/release lifecycle
+  - C-handle casting target
+  - submit validation against session and execution geometry
+  - render-surface emission failure translation
+  - debug timing
+- The file name and symbol name are both weak under repo law. `Owner` is a generic bucket noun, and the file combines unrelated policy seams.
+- The ABI does not require `Owner` as a concept. The ABI only requires:
+  - an opaque prepared-surface handle
+  - stable token/describe/render-surface calls
+  - stable publish/submit/release choreography
+- Current code already exposes natural owner seams:
+  - prepared render data: `prepared/surface.zig`
+  - render-surface emission: `prepared/render_surface_emitter.zig`
+  - session-side prepare and submission orchestration: `session/text.zig`
+  - FFI translation only: `ffi/prepared_surface.zig`, `ffi/submission.zig`, `ffi/handle.zig`
+
+### Reference Facts
+
+- Alacritty does not centralize content prep, frame orchestration, rect submission, and text draw batching inside a generic owner wrapper. The roles stay separate across `display/content.rs`, `display/mod.rs`, and `renderer/*`.
+- TigerBeetle law is against vague ownership and broad containers. The current `Owner` symbol and mixed file responsibility are on the wrong side of that pressure. The style docs explicitly push toward small direct owners, centralized policy in the true parent, and bounded leaf helpers.
+
+### Owner Roles And Proposed Shape
+
+Exact split for deleting `prepared/owner.zig` safely:
+
+1. `howl-render/src/prepared/surface.zig`
+- Keep `PreparedSurface` as the prepared data owner.
+- Move here:
+  - `PreparedInfo`
+  - `PreparedBuffer`
+  - any pure metadata derivation now built by `ownerBase(...)`
+- Add owner-true helpers on `PreparedSurface` for:
+  - info export
+  - upload-count truth
+  - token/geometry summary needed by FFI
+- Do not put lifecycle state here.
+
+2. `howl-render/src/prepared/render_surface_emitter.zig`
+- Keep bounded render-surface emission here.
+- Move here:
+  - `RenderSurfaceEmissionFailure`
+  - `renderSurfaceEmissionFailureFromError(...)`
+  - `RenderSurfacePayload` alias or equivalent emitter-owned payload type
+- Keep emission failure mapping close to the emitting owner, not in a session/handle wrapper.
+- Keep payload allocation-free semantics inside the emitter path where possible; the session/handle owner should only own the pointer lifecycle, not command construction rules.
+
+3. New `howl-render/src/prepared/handle.zig`
+- Replace `Owner` with a domain-true handle owner: `PreparedHandle`.
+- This file should own only:
+  - opaque prepared-handle storage
+  - `State`
+  - pointer to `TextSessionOwner`
+  - owned `PreparedSurface`
+  - optional emitted render-surface payload pointer
+  - release/consume/liveness transitions
+  - borrowed surface access
+- This file should not own:
+  - emission failure mapping logic
+  - prepared metadata shaping
+  - session submit policy
+  - debug timing
+
+4. `howl-render/src/session/text.zig`
+- Expand `TextSessionOwner` to own the session-side handle choreography it already partially owns:
+  - handle allocation from prepared surface
+  - prepared-handle registration array
+  - cached publish/submit handle slots
+  - session-owned publish/submit transitions
+  - session-side submit execution against `session.submitSurface(...)`
+- Move submit policy out of `PreparedHandle.submit(...)` and `submitOwned(...)` into `TextSessionOwner` methods.
+- Keep the session as the parent control-flow owner. That matches TigerBeetle pressure and the file’s current role.
+
+5. `howl-render/src/ffi/handle.zig`
+- Retain opaque C-handle casts only.
+- Update casts from `PreparedSurfaceHandle`/`Owner` to `PreparedHandle`.
+- Do not add policy here.
+
+6. `howl-render/src/ffi/prepared_surface.zig`
+- Keep C ABI translation only.
+- Read metadata from `PreparedSurface` helpers through `PreparedHandle`.
+- Read render-surface failure enum from `render_surface_emitter.zig` or its emitter-owned export, not from a bucket handle file.
+
+7. `howl-render/src/ffi/submission.zig`
+- Keep token parsing and C ABI statuses only.
+- Delegate publish/submit state transitions to `TextSessionOwner` and `PreparedHandle`.
+- Do not keep copied submit policy in the FFI layer.
+
+### Exact Dependent Files That Must Change First
+
+First-order source dependencies:
+
+- `/home/home/personal/projects/howl/howl-render/src/session/text.zig`
+- `/home/home/personal/projects/howl/howl-render/src/ffi/prepared_surface.zig`
+- `/home/home/personal/projects/howl/howl-render/src/ffi/submission.zig`
+- `/home/home/personal/projects/howl/howl-render/src/ffi/handle.zig`
+- `/home/home/personal/projects/howl/howl-render/src/prepared/surface.zig`
+- `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+
+First-order test dependencies:
+
+- `/home/home/personal/projects/howl/howl-render/src/prepared/owner_test.zig`
+- `/home/home/personal/projects/howl/howl-render/src/ffi/prepared_surface_test.zig`
+- `/home/home/personal/projects/howl/howl-render/src/ffi/test_support.zig`
+
+Second-order test fallout likely touched by symbol rename/choreography changes:
+
+- `/home/home/personal/projects/howl/howl-render/src/test_abi.zig`
+- any curated roots that import the three tests above through the ABI/unit suites
+
+### Sprint Scratchpad
+
+- The user changed sprint direction explicitly: delete `prepared/owner.zig` before more optimization.
+- That is compatible with the references. Current `Owner` is style debt and a mixed-responsibility seam.
+- The split must preserve the C ABI exactly. Handle type remains opaque C ABI; internal Zig owner shape can change.
+- The split should not invent a new umbrella runtime or submission layer. Existing seams already exist and should absorb the responsibilities.
+
+### Explicit Ordered Slice Plan
+
+1. Slice: prove and land the new owner map without deletion yet
+- Allowed files:
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/prepared/surface.zig`
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/ffi/handle.zig`
+  - tests/support files needed for new symbols
+- Shape:
+  - introduce `PreparedHandle`
+  - move metadata types to `surface.zig`
+  - move emission failure mapping to `render_surface_emitter.zig`
+  - keep old `owner.zig` as a compile-through shim only for one slice if needed
+- Stop condition:
+  - no call site needs `PreparedInfo`, `PreparedBuffer`, or emission-failure types from `owner.zig`
+
+2. Slice: move session-side submit and lifecycle policy into `TextSessionOwner`
+- Allowed files:
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/ffi/submission.zig`
+  - related tests/support
+- Shape:
+  - `PreparedHandle` keeps only state/liveness/storage
+  - `TextSessionOwner` owns publish/submit transitions and execution
+  - FFI submission becomes translation-only
+- Stop condition:
+  - submit policy no longer lives in the prepared-handle file
+
+3. Slice: move prepared-surface describe/render-surface boundary to the new owners
+- Allowed files:
+  - `howl-render/src/ffi/prepared_surface.zig`
+  - `howl-render/src/ffi/handle.zig`
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/prepared/surface.zig`
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - related tests/support
+- Shape:
+  - describe reads `PreparedSurface` metadata helpers
+  - render-surface failure mapping comes from emitter owner
+  - handle cast layer uses `PreparedHandle`, not `Owner`
+- Stop condition:
+  - no FFI file imports `prepared/owner.zig`
+
+4. Slice: delete `prepared/owner.zig` and replace tests with owner-true coverage
+- Allowed files:
+  - delete `howl-render/src/prepared/owner.zig`
+  - delete or rename `howl-render/src/prepared/owner_test.zig`
+  - update imports in affected files
+- Shape:
+  - final compile tree has no `Owner` symbol and no `owner.zig`
+  - tests are split by true owner:
+    - prepared-handle lifecycle tests
+    - prepared-surface metadata tests
+    - render-surface emission failure mapping tests
+    - FFI prepared-surface boundary tests
+    - FFI submission choreography tests
+- Stop condition:
+  - `rg 'owner\\.zig|\\bOwner\\b' howl-render/src` returns only unrelated words or none for this seam
+
+5. Slice: only after deletion, resume performance work on the cleaned seam
+- This is outside the current research request and should not start until reviewer acceptance of the deletion plan and the deletion slices.
+
+### Required Assertions
+
+- Assert positive/negative lifecycle transitions on `PreparedHandle`:
+  - prepared -> published allowed
+  - published -> submit_ready allowed
+  - released/consumed are terminal
+  - invalid transitions fail explicitly
+- Assert session ownership at the session boundary, not only at FFI entry.
+- Assert prepared token equality/mismatch separately from execution-geometry equality.
+- Assert that render-surface emission failure mapping remains one-to-one with emitter errors after the split.
+
+### Required Tests
+
+- Prepared-handle lifecycle tests:
+  - liveness before/after release
+  - consume clears cached handles
+  - release/consume do not double free payload/prepared surface
+- Prepared-surface metadata tests:
+  - info and upload-count truth remain correct after moving types/helpers to `surface.zig`
+- Emitter tests:
+  - all emission errors map to stable ABI-facing failure enums
+- FFI prepared-surface tests:
+  - describe still returns stable ABI layout
+  - render-surface retrieval still maps all failure statuses correctly
+- FFI submission tests:
+  - publish/submit/take-submit-handle choreography remains stable
+  - stale/missing/mismatched token cases remain rejected
+
+### Explicit Non-Goals
+
+- No performance optimization in this planning change.
+- No publication-background semantic fix in this planning change.
+- No host GL changes.
+- No ABI signature changes.
+- No new umbrella runtime/submission layer.
+- No Python tooling work.
+
+### Risks
+
+- The current test support and FFI tests directly instantiate `Owner`; they will break early in the split and must move with the owner map, not after.
+- `TextSessionOwner.destroy()` currently destroys all prepared handles through the `Owner` API. That teardown path must stay safe while the split is in flight.
+- If the split leaves submit policy half in FFI and half in the session owner, the result will be worse than the current bucket.
+
+### Proof Gaps
+
+- I have not yet mapped the exact curated unit-test roots that pull `owner_test.zig` into `zig build test:unit`; execution planning should confirm that root before seeding coder slices.
+- I have not yet proposed exact new file names beyond `prepared/handle.zig`; reviewer may still reject that name if another narrower domain noun emerges during planning review.
+
+### Readiness Judgment
+
+- This is ready for reviewer gating as planning research.
+- The evidence is strong enough to treat deletion of `prepared/owner.zig` as the next sprint queue, not an optional cleanup.
+- The split can preserve the C ABI without keeping the current bucket owner alive.
   - owner path: `howl-render/src/text/font/ft_hb/support.zig`
 
 ## Alacritty Bottleneck Shape Research
