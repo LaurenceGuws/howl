@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-08-ascii-rain-performance-sprint.md`
+- `sprints/2026-06-09-post-bg-performance-restart.md`
 
 Active research:
 
-- `research/post-owner-performance-restart-2026-06-09.md`
+- `research/post-bg-performance-restart-2026-06-09.md`
 
 Active loops:
 
-- `loops/direct-normal-plain-ascii-shortcut.txt`
+- `loops/post-bg-performance-rebaseline.txt`
 
 Rule:
 

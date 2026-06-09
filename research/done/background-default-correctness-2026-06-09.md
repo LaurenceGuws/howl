@@ -110,12 +110,24 @@ Required verification:
 
 ## Proof Gaps
 
-- The exact reproducing host command for the user-visible regression is not yet recorded in an active artifact.
-- We have source-backed proof of the likely owner seam, but not yet a receipted before/after visual verification artifact for the correctness symptom.
+- None for the correctness slice after the accepted source fix and host verification receipts below.
 
 ## Readiness Judgment
 
-Ready to seed the first correctness fix slice in the source-mapping seam.
+Ready for acceptance of the source-mapping correction slice and for performance work to resume from corrected behavior only.
+
+## Accepted Verification Receipts
+
+- Unit verification:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- User visual proof on the real host path:
+  - main-thread user verification on 2026-06-09: “I tested, bg color is fixed”
+- Honest benchmark receipt on the corrected path:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-131321-ascii/summary.json`
+  - result:
+    - Howl `33.16 fps`
+    - Alacritty `1004.67 fps`
+  - this receipt replaces the earlier dishonest performance baseline because default background truth is now restored
 
 ## Dropped Probe Logging Rule For This Sprint
 
