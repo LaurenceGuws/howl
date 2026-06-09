@@ -18,8 +18,10 @@ Problem statement:
 - Researcher `research-2026-06-09-owner-delete-plan-01` proved that `prepared/owner.zig` is broad bucket ownership, not an owner-true seam, and produced the deletion queue now governing this sprint.
 - Performance receipts remain valid context, but they are not authority for the next implementation slice until the ownership correction lands cleanly.
 - Accepted ownership-correction slice `owner-map-landing` moved metadata and failure ownership out of `prepared/owner.zig`, rewired `TextSessionOwner` handle storage, and reduced `prepared/owner.zig` to a temporary shim.
-- Accepted nested commit:
+- Accepted ownership-correction slice `session-submit-choreography` moved publish/submit policy into `TextSessionOwner` and reduced `PreparedHandle` to storage/liveness/render-surface access plus release/consume.
+- Accepted nested commits:
   - `howl-render` `3c786f7` `split prepared handle metadata ownership`
+  - `howl-render` `0ee034a` `move prepared submit policy to session`
 
 Current measured context:
 
@@ -46,27 +48,26 @@ Dropped work from acceptance:
   - `howl-render/src/benchmark_main.zig`
   are not sprint progress unless they survive reviewer acceptance under a later loop
 
-Active coder slice: `session-submit-choreography`
+Active coder slice: `prepared-surface-boundary-cleanup`
 
 Allowed files:
 
+- `howl-render/src/ffi/prepared_surface.zig`
+- `howl-render/src/ffi/handle.zig`
 - `howl-render/src/prepared/handle.zig`
-- `howl-render/src/session/text.zig`
-- `howl-render/src/ffi/submission.zig`
-- `howl-render/src/ffi/submission_test.zig`
+- `howl-render/src/prepared/surface.zig`
+- `howl-render/src/prepared/render_surface_emitter.zig`
+- `howl-render/src/ffi/prepared_surface_test.zig`
 - `howl-render/src/ffi/test_support.zig`
 - `howl-render/src/test/unit/root.zig` only if needed to keep the curated unit root honest
 
 Required shape:
 
-- move publish/submit state policy and execution out of `PreparedHandle`
-- make `TextSessionOwner` the parent owner for:
-  - publish transition
-  - submit-ready transition
-  - token validation
-  - submit execution against `session.submitSurface(...)`
-- keep `PreparedHandle` as storage, liveness, render-surface access, and release/consume only
-- keep `ffi/submission.zig` translation-only
+- make `ffi/prepared_surface.zig` and `ffi/handle.zig` independent from `prepared/owner.zig`
+- make describe read `PreparedSurface` metadata helpers through `PreparedHandle`
+- make render-surface failure mapping come from `prepared/render_surface_emitter.zig`
+- keep FFI translation-only
+- do not move policy back into the prepared-handle or FFI layers
 - do not change the ABI surface
 - do not delete the shim yet unless the entire slice can still stay within the allowed set
 
@@ -79,9 +80,9 @@ Required verification:
 - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
 - `cd /home/home/personal/projects/howl/howl-render && rg 'prepared/owner\\.zig|\\bOwner\\b' src/ffi src/session src/prepared -n -S`
 - prove from the final diff that:
-  - submit policy no longer lives in `PreparedHandle.submit(...)` or `PreparedHandle.submitOwned(...)`
-  - `TextSessionOwner` owns the session-side publish/submit choreography
-  - `ffi/submission.zig` no longer performs owner policy itself beyond ABI translation and status mapping
+  - `ffi/prepared_surface.zig` no longer imports `prepared/owner.zig`
+  - `ffi/handle.zig` uses `PreparedHandle`, not `Owner`
+  - render-surface failure mapping used by the prepared-surface boundary comes from `prepared/render_surface_emitter.zig`
 
 Non-goals:
 
@@ -89,14 +90,14 @@ Non-goals:
 - no benchmark-tool changes
 - no PTY/runtime changes
 - no publication background correctness work unless this slice cannot compile without touching the owning seam
-- no metadata or emission-failure reshuffle; that already landed in `3c786f7`
+- no submit-policy reshuffle; that already landed in `0ee034a`
 - no direct performance claims from this slice
 
 Stop conditions:
 
 - stop if the split requires a new umbrella layer or any generic bucket owner
 - stop if the ABI shape would change
-- stop if `ffi/*` still owns lifecycle or submit policy after the slice
+- stop if `ffi/*` starts owning policy instead of translating
 - stop if deleting or narrowing `prepared/owner.zig` requires files outside the allowed set
 - stop if the tests need new non-curated roots
 
@@ -108,4 +109,4 @@ Acceptance gate for this slice:
 - reviewer session id: `rev-2026-06-09-owner-delete-plan-01`
 - coder session id
 - verification results from the required commands above
-- explicit note whether `prepared/owner.zig` still contains submit-policy re-exports or only a narrower compatibility shim
+- explicit note whether `prepared/owner.zig` is still needed anywhere outside tests after the slice

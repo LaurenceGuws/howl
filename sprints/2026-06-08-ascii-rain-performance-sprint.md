@@ -128,7 +128,7 @@ Sequential slice queue:
 - receipt:
   - `howl-render` commit `3c786f7` `split prepared handle metadata ownership`
 
-6. `session-submit-choreography` — next coder slice
+6. `session-submit-choreography` — completed
 - allowed files:
   - `howl-render/src/session/text.zig`
   - `howl-render/src/prepared/handle.zig`
@@ -145,8 +145,14 @@ Sequential slice queue:
   - no host-side renderer work
 - stop condition:
   - submit policy no longer lives in the prepared-handle file
+- accepted result:
+  - publish/submit policy moved into `TextSessionOwner`
+  - `ffi/submission.zig` became translation-only
+  - `PreparedHandle` no longer owns submit policy
+- receipt:
+  - `howl-render` commit `0ee034a` `move prepared submit policy to session`
 
-7. `prepared-surface-boundary-cleanup` — queued
+7. `prepared-surface-boundary-cleanup` — next coder slice
 - allowed files:
   - `howl-render/src/ffi/prepared_surface.zig`
   - `howl-render/src/ffi/handle.zig`
