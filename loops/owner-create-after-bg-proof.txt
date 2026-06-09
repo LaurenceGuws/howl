@@ -6,7 +6,7 @@ Status: active.
 Orchestrator session id: `orch-2026-06-09-background-default-01`.
 Researcher session id: `research-2026-06-09-post-bg-performance-01`.
 Reviewer session id: `reviewer-2026-06-09-bg-fix-acceptance-01`.
-Coder session id: pending.
+Coder session id: `coder-2026-06-09-owner-create-after-bg-proof-01`.
 Scope: current execution contract for the next performance slice only.
 
 Problem statement:
@@ -44,6 +44,7 @@ Required shape:
 
 - proof-only or env-gated timing split inside the smallest true owner files
 - no behavior change
+- it is acceptable to split fill-pass and publish subphases inside the same emitter owner if that proof is needed to rule them out while narrowing `owner_create`
 - no `direct_normal` or `direct_scene` edits
 - no source-mapping edits
 - no session edits
@@ -91,3 +92,42 @@ Acceptance gate:
 - required verification results
 - accepted commit hash
 - explicit direct host receipt path
+
+Execution notes:
+
+- Worker diff stayed inside:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+- `handle.zig` and `benchmark_main.zig` did not need changes.
+- The proof broadened inside the same emitter owner to split:
+  - fill subpasses
+  - sprite lookup / upload / atlas / alpha append
+  - publish fixup / surface-span publication
+  This is accepted scope for the proof slice because it narrows `owner_create` and rules out fill/publication as the dominant hidden cost without changing behavior.
+
+Verification results:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - passed
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+  - passed
+- `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+  - passed
+- fresh corrected direct host timing receipt:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-direct-ascii.metrics.ndjson`
+
+Current proof result:
+
+- no new false owner or bucket seam exposed
+- `owner_create` remains inside the emitter owner seam
+- dominant remaining subowner is sprite/emitter work, not publish fixup
+- current stable split from the fresh receipt:
+  - `sprites_avg_us ~= 407-421`
+  - `sprite_lookup_avg_us ~= 63-65`
+  - `stage_upload_avg_us ~= 93-96`
+  - `atlas_resource_avg_us ~= 97-100`
+  - `alpha_glyph_append_avg_us ~= 30-31`
+  - `publish_avg_us ~= 2`
+  - `publish_glyph_fixup_avg_us ~= 1-2`
+  - `background_pass_avg_us ~= 8`
+  - `decoration_pass_avg_us ~= 29`

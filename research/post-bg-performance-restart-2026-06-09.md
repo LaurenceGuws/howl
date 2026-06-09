@@ -5,7 +5,7 @@ Role: researcher.
 Status: active.
 Primary researcher session id: `research-2026-06-09-post-bg-performance-01`.
 Sprint: `sprints/2026-06-09-post-bg-performance-restart.md`.
-Loop: `loops/post-bg-performance-rebaseline.txt`.
+Loop: `loops/owner-create-after-bg-proof.txt`.
 
 ## Sources Read In Order
 
