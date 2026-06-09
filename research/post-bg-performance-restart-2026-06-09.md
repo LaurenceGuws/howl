@@ -12,8 +12,8 @@ Loop: `/home/home/personal/projects/howl/loops/background-fill-after-playback-ne
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/done/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
-5. `/home/home/personal/projects/howl/loops/background-fill-after-playback-next-shape.txt`
+4. `/home/home/personal/projects/howl/loops/background-fill-after-playback-next-shape.txt`
+5. `/home/home/personal/projects/howl/loops/done/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
 6. `/home/home/personal/projects/howl/loops/done/post-alpha-direct-divergence-next-shape.txt`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
@@ -295,3 +295,145 @@ Accepted the proof-only host-playback split.
 Ready to seed follow-on research/review for the next exact fill-owner contract.
 
 The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe remains valid historical evidence only. The accepted proof result from `direct-upload-playback-proof-after-alpha-hit-rejection` is that host fill playback, specifically fill draw execution, is the next true owner on the honest direct path. The next active work is planning, not coding, for `background-fill-after-playback-proof`.
+
+## Next Fill Contract
+
+### Follow-on sources read
+
+13. Accepted proof receipts:
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-direct-ascii.metrics.ndjson`
+14. Current fill-path source:
+   - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface_test.zig`
+
+### Current-code facts
+
+- The accepted direct proof names host fill playback, not renderer-side fill production, as the next owner:
+  - `render_upload_fill_avg_us ~= 387-488`
+  - `render_upload_fill_draw_avg_us ~= 340-428`
+  - `render_upload_fill_dispatch_avg_us ~= 47-60`
+  - `render_upload_glyph_avg_us ~= 94-138`
+  - `render_upload_sprite_avg_us = 0`
+  - `present_submit_avg_us ~= 79-96`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log:19-31`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log:35-47`
+- The direct proof stayed behavior-flat on the authoritative host path:
+  - `47.96 fps`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-direct-ascii.metrics.ndjson:1-5`
+- Renderer-side fill production already has two owner-true merge stages before host playback:
+  - `direct_scene.appendBackgrounds(...)` merges contiguous same-color row spans into `TextBackgroundDraw` records:
+    - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig:82-124`
+  - `render_surface_emitter.appendPreparedFillCommand(...)` merges adjacent prepared fill commands of the same kind and color:
+    - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:445-506`
+- The host playback owner still pays the actual fill draw cost in one leaf:
+  - fill commands are dispatched in `uploadRenderSurfaceCommands(...)`:
+    - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:503-625`
+  - fill draw execution lands in `drawFillCommand(...)` and `drawQuad(...)`:
+    - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:896-1003`
+- The same file also contains the fill-only shortcut path:
+  - `uploadFillCommands(...)`:
+    - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:481-501`
+
+### Reference facts
+
+- Alacritty keeps renderable-cell discovery outside the renderer owner:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:24-38`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:153-183`
+- Alacritty keeps rect/background playback in a dedicated renderer owner with its own rect data shape and batch:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:19-33`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:247-255`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:257-280`
+- Alacritty keeps text batching separate from rect/background drawing:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:49-69`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:97-132`
+- TigerBeetle pressure still rejects broad bucket owners and says to move behavior toward the smallest true owner:
+  - `/home/home/personal/projects/howl/AGENTS.md:103-118`
+  - `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md:80-118`
+
+### Answers
+
+1. The next honest optimization seam is host-side fill playback.
+   - The accepted receipt proves fill draw execution, not dispatch, dominates the remaining fill cost:
+     - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log:19-31`
+     - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log:35-47`
+   - Current renderer-side fill production already merges at `direct_scene` and again at `render_surface_emitter`, so there is no receipt-backed proof that command production outranks host draw execution:
+     - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig:82-124`
+     - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:445-506`
+   - Under Alacritty pressure, this also matches the right owner boundary: rect/background playback belongs in the renderer owner, separate from text production:
+     - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:247-280`
+     - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:49-69`
+
+2. The next coding slice should be allowed to touch exactly:
+   - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface_test.zig`
+   - No other source file is justified by the accepted proof.
+   - The next owner is inside host fill playback, and the existing unit-test root for that owner already exists:
+     - owner file: `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:481-625`
+     - test root: `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface_test.zig:55-236`
+
+3. The next loop should promote this exact coding contract:
+   - Slice name:
+     - `background-fill-host-playback-owner`
+   - Required shape:
+     - optimize host fill playback only inside `render_surface.zig`
+     - keep rect/background playback as a renderer-owned path, separate from glyph playback
+     - keep render-surface command semantics, command ordering, fill colors, and patch/full-surface behavior unchanged
+     - keep renderer-side fill production unchanged; no `direct_scene` or emitter changes in this slice
+     - if a helper is introduced, it must remain owner-local to `render_surface.zig` and serve fill playback only
+     - preserve the existing upload/playback accounting fields so the same direct receipts remain comparable
+   - Required tests:
+     - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+     - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+     - one fresh direct-host timing rerun with `HOWL_RENDER_DEBUG_TIMING` enabled against the ASCII-rain workload
+     - acceptance requires the fresh direct receipt to improve `render_upload_fill_draw_avg_us` relative to `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log`
+   - Non-goals:
+     - no `howl-render/*`
+     - no `howl-linux-host/src/terminal/context.zig`
+     - no `howl-linux-host/src/app/process_accounting.zig`
+     - no `howl-linux-host/src/app/processor.zig`
+     - no ABI changes
+     - no event-loop, wake-policy, or present-policy redesign
+     - no glyph or sprite playback changes
+   - Stop conditions:
+     - stop if the honest change requires renderer-side command production edits
+     - stop if the honest change requires touching files outside the two-file set above
+     - stop if reducing fill draw cost requires changing command ordering or fill semantics
+     - stop if implementation reveals `render_surface.zig` must first be split into a new owner file to avoid a false owner
+
+4. Current code does expose a bucket-shaped struct, but not one that should pause this performance slice first.
+   - `direct_scene.MergedBuffers` is a generic grouping of clear/cursor/background/sprite/decoration/missing slices:
+     - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig:25-32`
+   - But the accepted direct-normal-only path that produced the fill proof bypasses that bucket by borrowing the direct scene directly:
+     - `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig:358-367`
+   - `MergedBuffers` is only used in the merge path when direct output is combined with an existing text scene:
+     - `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig:324-355`
+   - So it is real style debt, but it is not the proved next owner on the accepted fill path and does not justify pausing the host fill playback slice first.
+
+### Sprint scratchpad
+
+- Next owner:
+  - host fill playback
+- Smallest accountable owner:
+  - `howl-linux-host/src/display/renderer/render_surface.zig`
+- Proof basis:
+  - accepted direct receipt `20260609-121557-direct-upload-playback-proof-2`
+- Why not renderer-side fill production:
+  - current source already merges fill spans before host playback, and no receipt proves that path outranks host fill draw
+- Why not ownership correction first:
+  - no current receipt proves a false owner ahead of host fill playback on the accepted path
+
+### Risks
+
+- `render_surface.zig` currently owns shape classification, fill-only upload, mixed command playback, and GL draw leaves in one file:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig:439-625`
+- That breadth is tolerable for one more tightly scoped owner-local optimization, but if the change wants to escape that file or change command semantics, stop and re-cut the owner boundary first.
+
+### Readiness judgment
+
+Ready to promote one host-only coding slice for fill playback.
+
+The next honest contract is not renderer-side fill command production and not a forced ownership-correction pause. It is a two-file host slice centered on `howl-linux-host/src/display/renderer/render_surface.zig`, with direct-host receipt comparison against `20260609-121557-direct-upload-playback-proof-2` as the acceptance proof.

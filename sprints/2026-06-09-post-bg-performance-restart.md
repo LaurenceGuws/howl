@@ -73,14 +73,16 @@ Sequential slice queue:
 - allowed only because the accepted playback proof proves restored background fill work dominates
 - planning/research still required before coding starts
 - allowed files:
-  - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output changes
+  - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface_test.zig`
 - non-goals:
-  - no source-mapping, session, host, or ABI changes
+  - no `howl-render/*`
+  - no host runtime/accounting file changes
+  - no ABI changes
 - stop conditions:
   - the seam exposes a new bucket owner
-  - reference-backed research proves host playback or ownership correction should come first
+  - the honest change requires renderer-side fill production edits
+  - the honest change requires files outside the two-file host fill set
 
 5. `direct-normal-after-playback-proof`
 - allowed only if later accepted fill planning/proof disproves fill as the next true owner and restores `direct_normal` to the top spot
