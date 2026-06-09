@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/emitter-sprite-after-bg-next-shape.txt`
+- `loops/post-alpha-direct-divergence-next-shape.txt`
 
 Rule:
 

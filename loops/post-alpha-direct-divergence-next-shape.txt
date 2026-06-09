@@ -1,0 +1,51 @@
+Post alpha direct divergence next shape
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: pending.
+Reviewer session id: pending.
+Coder session id: none.
+Scope: explain the benchmark/direct divergence after the rejected alpha-atlas hit probe and cut the next honest coding contract from the valid direct receipt.
+
+Problem statement:
+
+- The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe improved the clean benchmark:
+  - Howl `33.16 fps -> 38.62 fps`
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
+- But the valid direct host rerun regressed:
+  - Howl direct `47.88 fps -> 36.94 fps`
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
+- The valid direct receipt still proved useful owner facts:
+  - `stage_upload_avg_us = 0`
+  - `atlas_resource_avg_us ~= 69-76`
+  - `owner_create_avg_us ~= 1034-1061`
+  - `direct_normal_avg_us ~= 776-782`
+  - `render_upload_fill_avg_us ~= 326-381`
+  - `render_upload_glyph_avg_us ~= 90-113`
+- So the cheap-hit atlas probe removed one measured tax but still lost on the direct host surface.
+
+Required planning output:
+
+- explain the likely reason the clean benchmark improved while the valid direct host run regressed
+- identify whether the next true owner is still emitter-side, has shifted to fill/glyph upload playback, or requires a new measurement split
+- name the next exact research-backed coding or proof slice
+- preserve the rejection of the alpha-atlas hit probe as accepted project history
+
+Current blocker to coding:
+
+- no new coding is authorized until the benchmark/direct divergence is explained from current receipts
+
+Required sources:
+
+- `/home/home/personal/projects/howl/loops/emitter-sprite-after-bg-next-shape.txt`
+- `/home/home/personal/projects/howl/research/post-bg-performance-restart-2026-06-09.md`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
+
+Stop conditions:
+
+- stop if the current receipts are too contradictory to support a single next owner without another proof-only split
+- stop if the next honest slice would require broad owner surgery outside an explicit new planning/review pass
