@@ -338,6 +338,67 @@ Receipt proof:
     - second: host/render upload work at about `460-482 us`
     - third: sprite staging and atlas lookup work still inside `render_surface_emitter`
 
+- Rejected direct-normal dirty-span scan probe:
+  - owner path: `howl-render/src/text/direct_normal.zig`
+  - hypothesis:
+    - limit normal-only scanning to damaged spans only
+  - receipts:
+    - benchmark command: `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+    - dropped host run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-direct-normal-dirty-scan-1`
+  - accountable result:
+    - partial-damage microbenches improved
+    - full-grid microbenches regressed materially
+    - real host result regressed to `frames=71`, `fps=38.78`
+  - conclusion:
+    - dropped from acceptance
+
+- Accepted publication-source normal-only fast path:
+  - owner paths:
+    - `howl-render/src/source/publication_cell_map.zig`
+    - `howl-render/src/source/text_input.zig`
+    - `howl-render/src/text/direct_normal.zig`
+    - `howl-render/src/text/frame_preparer.zig`
+    - `howl-render/src/session/text.zig`
+  - current-code proof before the reduction:
+    - `TextSession.prepareSurface(...)` always built full `CellInput` buffers from `PublicationSource` before trying the normal-only renderer path
+    - the accepted owner split already showed:
+      - `input_avg_us ~= 525`
+      - `session_prepare_cells_us ~= 516`
+      - `direct_normal_us ~= 516`
+    - that meant the normal-only publication path was paying for full publication remapping before `direct_normal` even decided the frame could stay on the fast path
+  - accepted shape:
+    - add a publication-cell mapping owner shared by the source and direct-normal paths
+    - try the normal-only renderer path directly from `PublicationSource`
+    - keep the existing full mapped-cell fallback only for reject cases
+  - timing receipt:
+    - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-1`
+    - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-1/howl-term.stderr.log`
+    - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-1/howl-render.metrics.ndjson`
+  - measured result with timing enabled:
+    - `frames=185`, `fps=102.26`
+  - stable split:
+    - `prepare_surface_avg_us = 715`
+    - `input_avg_us = 0`
+    - `session_prepare_cells_avg_us = 0`
+    - `direct_normal_avg_us = 713`
+    - `owner_create_avg_us = 990`
+    - `emit_prepared sprites_avg_us = 201`
+    - `emit_prepared stage_upload_avg_us = 61`
+    - `render_upload_avg_us = 455`
+  - clean verification receipt:
+    - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-verify-1`
+    - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-verify-1/howl-term.stderr.log`
+    - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-verify-1/howl-render.metrics.ndjson`
+  - clean profiled direct result:
+    - `frames=153`, `fps=84.75`
+- Defensible conclusion:
+  - the publication-source normal-only fast path is accepted
+  - it removed the full publication remap tax from the normal-only host path
+  - after that cut, the measured owner order moves again to:
+    - first: `prepared_owner.Owner.create` / `render_surface_emitter` at about `990 us`
+    - second: remaining direct-normal publication prepare at about `713-715 us`
+    - third: host/render upload at about `455-465 us`
+
 ## Proposed Next Slice Contract Shape
 
 Purpose: next real render-path fix, shaped by the measured main-thread churn and Alacritty’s buffered text submission.
@@ -346,12 +407,11 @@ Likely allowed files:
 
 - `loops/ascii-rain-baseline-bottleneck.txt`
 - `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
-- `howl-render/src/session/text.zig`
-- `howl-render/src/text/frame_preparer.zig`
+- `howl-render/src/prepared/owner.zig`
 - `howl-render/src/prepared/render_surface_emitter.zig`
 - `howl-linux-host/src/terminal/context.zig`
 - `howl-linux-host/src/app/processor.zig`
-- any small adjacent owner-true files strictly required to support a bounded prepare or upload reduction
+- any small adjacent owner-true files strictly required to support a bounded emission or upload reduction
 
 Exact tests and verification:
 
@@ -373,7 +433,7 @@ Exact non-goals:
 - no benchmark workload redesign
 - no hidden runtime layer
 - no acceptance of client-array or similar compatibility-profile shortcuts that break the real benchmark
-- no reopening of the fresh-payload copy tax; that owner is already accepted and committed
+- no reopening of the fresh-payload copy tax or publication-input remap tax; both owners are already accepted and committed
 
 Exact stop conditions:
 
@@ -406,7 +466,14 @@ Reason:
     - `Owner.create ~= 1.01 ms`
     - `render_prepare ~= 1.76-1.79 ms`
     - `render_upload ~= 0.46-0.48 ms`
+  - and after the accepted publication-source normal-only fast path to:
+    - `prepareSurface ~= 0.71 ms`
+    - `input ~= 0`
+    - `session_prepare_cells ~= 0`
+    - `direct_normal ~= 0.71 ms`
+    - `Owner.create ~= 0.99 ms`
+    - `render_upload ~= 0.45-0.46 ms`
 - One accepted renderer reduction is already proved with both renderer-benchmark and real-host receipts.
 - The next accountable move is not more Python or wrapper work. It is either:
-  - a bounded `prepareSurface` reduction in the remaining renderer-prepare owners, or
-  - a bounded upload/staging reduction across the prepared emitter and host upload seam.
+  - a bounded emission/upload reduction across the prepared emitter and host upload seam, or
+  - a bounded direct-normal reduction only after the emission/upload seam moves again.

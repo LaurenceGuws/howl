@@ -59,9 +59,9 @@ Problem statement:
   - `render_prepare_avg_us` dropped from about `2348` to about `1787`
   - clean profiled direct host result landed at `frames=92`, `fps=50.60`
 - So the next slice remains in renderer ownership, but the measured hot path has moved again:
-  - first: remaining `prepareSurface` work at about `733 us`
-  - second: `render_upload` / sprite upload realization at about `460 us`
-  - third: remaining `emitPrepared` sprite staging and atlas-resource work inside `howl-render/src/prepared/render_surface_emitter.zig`
+  - first: remaining `Owner.create` / `emitPrepared` work at about `990 us`
+  - second: remaining normal-only publication prepare at about `715 us`
+  - third: `render_upload` / sprite upload realization at about `455-465 us`
 
 Accepted research inputs:
 
@@ -81,6 +81,9 @@ Current accepted files from the completed accounting slice:
 - `howl-render/src/benchmark_main.zig`
 - `howl-render/src/prepared/owner.zig`
 - `howl-render/src/prepared/render_surface_emitter.zig`
+- `howl-render/src/source/publication_cell_map.zig`
+- `howl-render/src/source/text_input.zig`
+- `howl-render/src/session/text.zig`
 
 Completed accounting receipt:
 
@@ -193,6 +196,31 @@ Accepted renderer receipts:
   - clean verification stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-verify-1/howl-term.stderr.log`
   - clean verification metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-verify-1/howl-render.metrics.ndjson`
   - clean verification result: `frames=92`, `fps=50.60`
+- rejected dirty-span scan probe:
+  - owner path: `howl-render/src/text/direct_normal.zig`
+  - dropped receipt dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-direct-normal-dirty-scan-1`
+  - rejection reason:
+    - real host result regressed to `frames=71`, `fps=38.78`
+    - benchmark surface also regressed the full-grid workloads
+  - accountable outcome:
+    - that scan-shape probe is dropped from acceptance and not part of the live tree
+- accepted publication-source normal-only fast path:
+  - timing run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-1`
+  - timing stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-1/howl-term.stderr.log`
+  - timing metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-1/howl-render.metrics.ndjson`
+  - timing result: `frames=185`, `fps=102.26`
+  - stable split:
+    - `prepare_surface_avg_us = 715`
+    - `input_avg_us = 0`
+    - `session_prepare_cells_avg_us = 0`
+    - `direct_normal_avg_us = 713`
+    - `owner_create_avg_us = 990`
+    - `emit_prepared sprites_avg_us = 201`
+    - `emit_prepared stage_upload_avg_us = 61`
+  - clean verification run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-verify-1`
+  - clean verification stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-verify-1/howl-term.stderr.log`
+  - clean verification metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-publication-fastpath-verify-1/howl-render.metrics.ndjson`
+  - clean verification result: `frames=153`, `fps=84.75`
 
 Next stop conditions:
 
@@ -217,8 +245,9 @@ Acceptance state:
   - `howl-linux-host/src/main.zig`
 - next slice: queued in `howl-render` prepare ownership
 - next measured target:
-  - first: remaining `prepareSurface` cost in `howl-render/src/session/text.zig` and adjacent renderer prepare owners
+  - first: remaining `prepared_owner.Owner.create` / `render_surface_emitter` cost
   - second: upload/staging cost across `howl-render/src/prepared/render_surface_emitter.zig` and the host upload path
+  - third: remaining normal-only `direct_normal` cost only after the emission/upload seam moves again
 
 Prior measurement receipts:
 
