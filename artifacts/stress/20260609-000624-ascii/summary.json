@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "run_id": "20260609-000624-ascii",
+  "tooling": {
+    "available": {
+      "strace": true,
+      "nvidia_smi": true,
+      "nvtop": true,
+      "glxinfo": true,
+      "nsys": true,
+      "ncu": true,
+      "nvcc": true,
+      "kitty": true,
+      "ghostty": true,
+      "alacritty": true,
+      "wezterm": true
+    },
+    "paths": {
+      "strace": "/usr/bin/strace",
+      "nvidia_smi": "/usr/bin/nvidia-smi",
+      "nvtop": "/usr/bin/nvtop",
+      "glxinfo": "/usr/bin/glxinfo",
+      "nsys": "/usr/bin/nsys",
+      "ncu": "/usr/bin/ncu",
+      "nvcc": "/opt/cuda/bin/nvcc",
+      "kitty": "/usr/bin/kitty",
+      "ghostty": "/usr/bin/ghostty",
+      "alacritty": "/usr/bin/alacritty",
+      "wezterm": "/usr/bin/wezterm"
+    }
+  },
+  "config": {
+    "duration_s": 10.0,
+    "mode": "ascii",
+    "cols": 320,
+    "rows": 120,
+    "frames": 100000000,
+    "seed": "0xC0FFEE",
+    "metrics_every": 100,
+    "flush_every": 1,
+    "resource_interval_s": 0.25,
+    "gpu_resource_interval_s": 1.0,
+    "resources_enabled": false
+  },
+  "results": [
+    {
+      "terminal": "howl",
+      "mode": "ascii",
+      "duration_s": 0.478,
+      "returncode": -11,
+      "metrics_path": "/home/home/personal/projects/howl/artifacts/stress/20260609-000624-ascii/howl-ascii.metrics.ndjson",
+      "trace_path": null,
+      "process_log_path": null,
+      "resources_path": null,
+      "resource_summary": null,
+      "last_metrics": null,
+      "metrics_complete": false,
+      "metrics_invalid_reason": "returncode_nonzero"
+    }
+  ]
+}

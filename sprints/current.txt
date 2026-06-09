@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- No promoted execution sprint is active.
+- `sprints/2026-06-08-ascii-rain-performance-sprint.md`
 
 Active research:
 
-- none
+- `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
 
 Active loops:
 
-- none
+- `loops/ascii-rain-baseline-bottleneck.txt`
 
 Rule:
 

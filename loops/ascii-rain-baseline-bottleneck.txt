@@ -1,0 +1,184 @@
+ASCII rain internal bottleneck-proof accountability contract
+
+Date: 2026-06-08.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: orch-2026-06-08-ascii-rain-performance-01.
+Scope: keep the broad sprint on the measured render-path bottleneck. The direct host accounting slice is complete. The current active slice moved the hot path from vague host render churn into `howl-render` prepare ownership and proved one accepted reduction there. The next queued slice stays inside renderer prepare, not wrapper/tool work.
+
+Problem statement:
+
+- The broad sprint goal remains beating Alacritty on the agreed ASCII rain benchmark.
+- The seeded benchmark already proved a large gap on the current tree:
+  - Howl: `18.38 fps`
+  - Alacritty: `1032.43 fps`
+- The current launcher receipts prove the gap, but they do not prove the hot owner path inside the host.
+- The prior attempt to repair `utils/tools/benchmark_terminals.py` is dropped from acceptance. The user explicitly rejected a Python-tool diagnostic slice for this sprint.
+- The direct host accounting slice restored bounded internal proof in the current Zig owners.
+- That slice pinned the current bottleneck class:
+  - `howl-main` stays near `1000 cpu_milli`
+  - runtime wake stays hot every interval
+  - `terminal_should_redraw`, `terminal_drive_performed`, `render_step_rendered`, and `present_submitted` all stay hot every interval
+  - the PTY host thread is effectively idle
+- The first attempted follow-up reduction using GL client-side vertex arrays was rejected because it crashed the host on the real benchmark. That work is dropped from acceptance.
+- Host timing proof now pins most render-turn time inside `howl-render` prepare, not host upload/present:
+  - direct host receipt `20260609-010018-ascii-direct` showed steady-state averages around:
+    - `render_turn_avg_us ~= 8400-8700`
+    - `render_prepare_avg_us ~= 7950-8250`
+    - `render_upload_avg_us ~= 430-530`
+    - `present_submit_avg_us ~= 118-136`
+- Renderer benchmark proof now pins the normal-only fast path:
+  - before reduction, `howl-render` benchmark `ascii_full` warm median was `143 us`, with `direct_normal_us = 143`
+  - after reduction, `ascii_full` warm median is `62 us`, with `direct_normal_us = 62`
+- The accepted renderer reduction removed one redundant full-source pass from `howl-render/src/text/direct_normal.zig`.
+- That reduction moved the end-to-end host receipt only slightly:
+  - before: direct host `3.82 fps`
+  - after: direct host `3.95 fps`
+- Real host telemetry now splits `howl_render_text_session_prepare_handle` itself on the live `320x120` ASCII rain surface:
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-3/howl-term.stderr.log`
+  - `prepare_surface_avg_us = 6216`
+  - `owner_create_avg_us = 2088`
+  - inside `prepareSurface`:
+    - `input_avg_us = 508`
+    - `session_preparer_avg_us = 3881`
+    - `session_prepare_cells_avg_us = 1824`
+    - `direct_normal_avg_us = 570`
+- So the next slice remains in renderer prepare ownership, but it must target a larger share of `direct_normal` or the surrounding prepare path than the removed duplicate pass did.
+
+Accepted research inputs:
+
+- `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+
+Current accepted files from the completed accounting slice:
+
+- `loops/ascii-rain-baseline-bottleneck.txt`
+- `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+- `howl-linux-host/src/app/process_accounting.zig`
+- `howl-linux-host/src/app/processor.zig`
+- `howl-linux-host/src/cli/args.zig`
+- `howl-linux-host/src/main.zig`
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-render/src/text/frame_preparer.zig`
+- `howl-render/src/text/direct_normal.zig`
+- `howl-render/src/benchmark_main.zig`
+
+Completed accounting receipt:
+
+- direct run dir:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260608-235810-ascii-direct`
+- accounting log:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260608-235810-ascii-direct/howl-direct.accounting.log`
+- direct metrics:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260608-235810-ascii-direct/howl-direct-ascii.metrics.ndjson`
+- direct measured result:
+  - Howl direct with accounting: `3.87 fps`
+- dominant owner-path proof from that log:
+  - `howl-main` consumed essentially all sampled CPU
+  - `howl-term-host` stayed near zero
+  - there was almost no waiting after the first interval
+  - nearly every loop turn rendered and submitted a terminal frame
+
+Current queued slice requirements:
+
+- keep `utils/tools/benchmark_terminals.py` out of scope
+- preserve the accepted accounting owners and receipt surface
+- shape the next fix against Alacritty’s renderer organization:
+  - batched text submission
+  - explicit GPU buffers instead of fixed-function per-vertex calls
+  - no hidden runtime layer
+- treat the current `howl-linux-host/src/display/renderer/render_surface.zig` batching diff as live starting state, not as proven sufficient state
+
+Completed verification commands:
+
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig test src/cli/args.zig`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig test src/app/process_accounting.zig`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig test src/app/processor.zig`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- `cd /home/home/personal/projects/howl/utils/tools && zig build stress:rain:build -Doptimize=ReleaseFast`
+- `cd /home/home/personal/projects/howl/howl-linux-host && ./zig-out/harness/howl_term_release_fast --duration-ms 12000 --debug-process-accounting --debug-log-every-ms 1000 --command "sh -lc '/home/home/personal/projects/howl/utils/tools/zig-out/harness/ascii_rain_stress_release_fast --cols 320 --rows 120 --frames 100000000 --duration-ms 10000 --seed 0xC0FFEE --ascii --metrics --metrics-every 100 --flush-every 1 2> /home/home/personal/projects/howl/artifacts/stress/20260608-235810-ascii-direct/howl-direct-ascii.metrics.ndjson'" > /home/home/personal/projects/howl/artifacts/stress/20260608-235810-ascii-direct/howl-direct.stdout.log 2> /home/home/personal/projects/howl/artifacts/stress/20260608-235810-ascii-direct/howl-direct.accounting.log`
+- `sed -n '1,120p' /home/home/personal/projects/howl/artifacts/stress/<timestamp>-ascii/howl-direct.accounting.log`
+- `python3 - <<'PY' ... read the final metrics record from howl-direct-ascii.metrics.ndjson ... PY`
+
+Rejected work dropped from acceptance:
+
+- GL client-array vertex batching inside `howl-linux-host/src/display/renderer/render_surface.zig`
+- benchmark receipt:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-000131-ascii/summary.json`
+- rejection reason:
+  - Howl crashed with `returncode=-11` before completing the benchmark
+- accountable outcome:
+  - that attempted reduction is rejected and must not be treated as accepted progress
+
+Accepted renderer receipts:
+
+- direct host timing receipt before renderer reduction:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-010018-ascii-direct`
+  - accounting log: `/home/home/personal/projects/howl/artifacts/stress/20260609-010018-ascii-direct/howl-direct.accounting.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-010018-ascii-direct/howl-direct-ascii.metrics.ndjson`
+  - result: `frames=39`, `fps=3.82`
+- renderer benchmark receipt before fast-path reduction:
+  - command: `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+  - `ascii_full`: `warm_median_ns=143696`, `warm_median_direct_normal_us=143`
+- direct host timing receipt after renderer reduction:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-010535-ascii-direct`
+  - accounting log: `/home/home/personal/projects/howl/artifacts/stress/20260609-010535-ascii-direct/howl-direct.accounting.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-010535-ascii-direct/howl-direct-ascii.metrics.ndjson`
+  - result: `frames=40`, `fps=3.95`
+- renderer benchmark receipt after fast-path reduction:
+  - command: `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+  - `ascii_full`: `warm_median_ns=62838`, `warm_median_direct_normal_us=62`
+- real host prepare-handle split receipts:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing`
+  - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing/howl-term.stderr.log`
+  - first stable split:
+    - `render_prepare_avg_us = 8264`
+    - `prepare_surface_avg_us = 6215`
+    - `owner_create_avg_us = 2041`
+  - refined split:
+    - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-3`
+    - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-3/howl-term.stderr.log`
+    - `render_prepare_avg_us = 8359`
+    - `prepare_surface_avg_us = 6216`
+    - `owner_create_avg_us = 2088`
+    - `input_avg_us = 508`
+    - `session_preparer_avg_us = 3881`
+    - `session_prepare_cells_avg_us = 1824`
+    - `direct_normal_avg_us = 570`
+
+Next stop conditions:
+
+- stop if the broader render slice cannot be shaped from the curated Alacritty renderer organization without overriding references
+- stop if the next render reduction crashes the host or weakens the benchmark receipt surface
+- stop if no bounded render-path change stronger than fixed-function immediate mode can be made without larger backend restructuring
+- stop if the next slice tries to optimize `direct_normal` again without first accounting for the larger real host costs now pinned in `ensureTextPreparer` and `Owner.create`
+
+Delegation boundary:
+
+- Researcher may update only `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`.
+- Worker/coder may change only the allowed host files listed above.
+- Reviewer reviews the research artifact, this loop contract, the host diff, and the direct-accounting receipts.
+
+Acceptance state:
+
+- internal-accounting slice: complete
+- accepted host files:
+  - `howl-linux-host/src/app/process_accounting.zig`
+  - `howl-linux-host/src/app/processor.zig`
+  - `howl-linux-host/src/cli/args.zig`
+  - `howl-linux-host/src/main.zig`
+- next slice: queued in `howl-render` prepare ownership
+- next measured target:
+  - first: `TextSession.ensureTextPreparer` and its real FT/HB/session setup cost inside `prepareSurface`
+  - second: `prepared_owner.Owner.create` / render-surface emission cost
+
+Prior measurement receipts:
+
+- Clean baseline receipt:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260608-232747-ascii`
+  - summary: `/home/home/personal/projects/howl/artifacts/stress/20260608-232747-ascii/summary.json`
+  - measured result:
+    - Howl: `18.38 fps`
+    - Alacritty: `1032.43 fps`
+- Current live host change already in tree:
+  - `howl-linux-host/src/display/renderer/render_surface.zig`
+  - glyph rendering batches quads by bound texture instead of opening and closing a GL quad batch per glyph

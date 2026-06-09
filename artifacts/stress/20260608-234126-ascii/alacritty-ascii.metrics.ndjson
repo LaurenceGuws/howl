@@ -1,0 +1,4 @@
+{"type":"stress_metrics","schema":1,"final":false,"frames":100,"fps":1071.88,"p50_us":921,"p95_us":1051,"p99_us":1153,"max_us":1319}
+{"type":"stress_metrics","schema":1,"final":false,"frames":200,"fps":1071.42,"p50_us":924,"p95_us":1051,"p99_us":1319,"max_us":1421}
+{"type":"stress_metrics","schema":1,"final":false,"frames":300,"fps":1053.73,"p50_us":936,"p95_us":1066,"p99_us":1319,"max_us":1421}
+{"type":"stress_metrics","schema":1,"final":false,"frames":400,"fps":1058.53,"p50_us":931,"p95_us":1067,"p99_us":1282,"max_us":1421}

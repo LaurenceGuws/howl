@@ -1,0 +1,31 @@
+==25201== Callgrind, a call-graph generating cache profiler
+==25201== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==25201== Using Valgrind-3.25.1 and LibVEX; rerun with -h for copyright info
+==25201== Command: ./zig-out/harness/howl_term_profile_release_fast --duration-ms 2500 --debug-process-accounting --debug-log-every-ms 1000 --command sh\ -lc\ '/home/home/personal/projects/howl/utils/tools/zig-out/harness/ascii_rain_stress_release_fast\ --cols\ 320\ --rows\ 120\ --frames\ 100000000\ --duration-ms\ 1800\ --seed\ 0xC0FFEE\ --ascii\ --metrics\ --metrics-every\ 50\ --flush-every\ 1\ 2\>\ /home/home/personal/projects/howl/artifacts/stress/20260609-005327-callgrind/howl-callgrind.metrics.ndjson'
+==25201== 
+==25201== For interactive control, run 'callgrind_control -h'.
+vex amd64->IR: unhandled instruction bytes: 0x62 0xF1 0x7C 0x48 0x11 0x5 0xB 0xF7 0x2A 0x0
+vex amd64->IR:   REX=0 REX.W=0 REX.R=0 REX.X=0 REX.B=0
+vex amd64->IR:   VEX=0 VEX.L=0 VEX.nVVVV=0x0 ESC=NONE
+vex amd64->IR:   PFX.66=0 PFX.F2=0 PFX.F3=0
+==25201== valgrind: Unrecognised instruction at address 0x1d393db.
+==25201==    at 0x1D393DB: main (start.zig:633)
+==25201== Your program just tried to execute an instruction that Valgrind
+==25201== did not recognise.  There are two possible reasons for this.
+==25201== 1. Your program has a bug and erroneously jumped to a non-code
+==25201==    location.  If you are running Memcheck and you just saw a
+==25201==    warning about a bad jump, it's probably your program's fault.
+==25201== 2. The instruction is legitimate but Valgrind doesn't handle it,
+==25201==    i.e. it's Valgrind's fault.  If you think this is the case or
+==25201==    you are not sure, please let us know and we'll try to fix it.
+==25201== Either way, Valgrind will now raise a SIGILL signal which will
+==25201== probably kill your program.
+==25201== 
+==25201== Process terminating with default action of signal 4 (SIGILL): dumping core
+==25201==  Illegal opcode at address 0x1D393DB
+==25201==    at 0x1D393DB: main (start.zig:633)
+==25201== 
+==25201== Events    : Ir
+==25201== Collected : 4195293
+==25201== 
+==25201== I   refs:      4,195,293
