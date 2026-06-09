@@ -11,11 +11,11 @@ Sprint:
 
 Active research:
 
-- `research/owner-delete-plan-2026-06-09.md`
+- `research/post-owner-performance-plan-2026-06-09.md`
 
 Active loops:
 
-- `loops/ascii-rain-baseline-bottleneck.txt`
+- `loops/emitter-alpha-reuse-fast-path.txt`
 
 Rule:
 

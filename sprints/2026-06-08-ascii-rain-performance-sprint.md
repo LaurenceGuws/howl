@@ -207,11 +207,52 @@ Sequential slice queue:
 - receipt:
   - `howl-render` commit `5c812b8` `delete prepared owner shim`
 
-9. `post-owner-performance` — next slice
+9. `post-owner-performance-rebaseline` — completed
 - purpose:
-  - resume measured optimisation work on the cleaned seam
-- first action:
-  - rerun the accepted benchmark/accounting receipts on the cleaned seam before planning the next fix
+  - rerun the accepted benchmark/accounting receipts on the cleaned seam after deleting `prepared/owner.zig`
+  - prove the new hot owner order on the cleaned seam before queuing the next fix
+- accepted result:
+  - clean benchmark moved to Howl `79.42 fps` vs Alacritty `1039.12 fps`
+  - direct host run moved to `109.56 fps`
+  - post-delete hot order is now:
+    1. `PreparedHandle.create` / render-surface emission
+    2. `direct_normal` scan
+    3. host fill playback tail
+- receipts:
+  - `artifacts/stress/20260609-115340-ascii/summary.json`
+  - `artifacts/stress/20260609-095340-ascii-direct-post-owner/howl-direct.accounting.log`
+  - `artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+
+10. `emitter-alpha-reuse-fast-path` — next slice
+- purpose:
+  - remove measured false steady-state work from the cleaned emitter/resource-cache seam
+- allowed files:
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - `howl-render/src/prepared/sprite_resource_store.zig`
+  - `howl-render/src/benchmark_main.zig` only if proof output is required
+- required shape:
+  - query atlas reuse before staging upload bytes for alpha sprites
+  - pay upload-byte staging only on atlas misses
+  - leave session/FFI/host GL untouched
+  - stop and escalate if another false owner is exposed
+- required tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - targeted owner tests for atlas-hit and atlas-miss behavior
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+  - rerun direct host timing receipt
+  - rerun clean Howl vs Alacritty benchmark receipt
+- non-goals:
+  - no ownership refactor unless implementation proves another false owner
+  - no `session/text.zig`
+  - no `ffi/*`
+  - no host GL work
+  - no PTY/runtime work
+  - no `direct_normal` work in the same slice
+- stop conditions:
+  - stop if the implementation needs files outside the allowed set
+  - stop if session or FFI ownership needs reopening
+  - stop if the emitter proves not to be the smallest true owner after all
+  - stop if clean benchmark or direct host receipts regress against the accepted post-owner baseline
 
 Autonomy rule for this sprint:
 
