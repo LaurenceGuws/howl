@@ -52,6 +52,97 @@ Execution model:
 - Later loops: choose the smallest accountable fix that actually resolves the measured bottleneck, then re-measure against the same benchmark.
 - Fix slices may be broad if the bottleneck demands broad change, but every slice still needs exact allowed files, tests, non-goals, stop conditions, review, verification, and receipts.
 
+Accepted planning and review sessions:
+
+- reviewer session id: `rev-2026-06-09-ascii-rain-workflow-01`
+- active researcher session id for next bottleneck shape: `research-2026-06-09-alacritty-bottleneck-01`
+
+Sequential slice queue:
+
+1. `baseline-and-owner-proof` — completed
+- purpose:
+  - benchmark contract
+  - Howl vs Alacritty baseline
+  - direct host accounting
+  - top owner proof
+- receipts:
+  - `artifacts/stress/20260608-232747-ascii/summary.json`
+  - `artifacts/stress/20260608-235810-ascii-direct/howl-direct.accounting.log`
+
+2. `renderer-owner-proof` — completed
+- purpose:
+  - split `prepareSurface`, `Owner.create`, `direct_normal`, and host upload cost
+  - confirm PTY/runtime are not the bottleneck
+- receipts:
+  - `artifacts/stress/20260609-prepare-handle-timing-3/howl-term.stderr.log`
+  - `artifacts/stress/20260609-070618-direct-normal-shape-1/howl-term.stderr.log`
+  - `artifacts/stress/20260609-081249-host-command-shape-1/howl-term.stderr.log`
+
+3. `alacritty-shape-research` — completed
+- purpose:
+  - map the current measured hot path to Alacritty’s content/text/rect renderer organization
+  - identify the smallest reference-backed next slice
+- receipt:
+  - `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+
+4. `normal-fill-class-proof` — next coder slice
+- allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - `howl-render/src/benchmark_main.zig` only if needed for proof output
+- required shape:
+  - separate ordinary normal-path background work from clears, decorations, and cursor work
+  - prove which fill commands are semantically required vs ordinary tax on the normal path
+  - reduce no behavior yet unless a proof-only reduction is inseparable from the measurement surface
+- required tests:
+  - `cd howl-render && zig build test:unit`
+  - `cd howl-render && zig build benchmark:render -- --runs 20`
+  - direct host receipt on the existing ASCII-rain harness
+- non-goals:
+  - no host GL changes
+  - no ABI reshaping
+  - no `utils/tools/*`
+  - no broad renderer redesign
+- stop condition:
+  - receipts identify whether ordinary normal backgrounds dominate the remaining fill-command tax strongly enough to justify the next implementation slice
+
+5. `normal-background-inband-reduction` — queued, conditional on slice 4 proof
+- allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - adjacent owner-true tests only if required
+- required shape:
+  - move ordinary normal-path background handling toward the text path where source-backed proof permits
+  - keep explicit rect emission for clears, decorations, cursor, and non-text cases that cannot honestly stay in-band
+- required tests:
+  - same as slice 4 plus direct host comparison against accepted receipts
+- non-goals:
+  - no host GL path work
+  - no new runtime layer
+  - no umbrella renderer abstraction
+- stop condition:
+  - lower `render_upload_fill_count_avg`
+  - lower `render_upload_fill_avg_us`
+  - no crash
+
+6. `host-buffered-rect-path` — queued only if slice 5 lands cleanly and host upload remains a real secondary owner
+- allowed files:
+  - `howl-linux-host/src/display/renderer/render_surface.zig`
+  - host-side owner-true tests only if required
+- required shape:
+  - follow Alacritty `renderer/rects.rs` pressure toward buffered rect submission
+  - keep policy out of the host GL layer
+- required tests:
+  - `cd howl-linux-host && zig build test:unit`
+  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast`
+  - direct host receipt on the existing ASCII-rain harness
+- non-goals:
+  - no PTY/runtime redesign
+  - no Python-tool changes
+  - no ABI reshaping
+- stop condition:
+  - clean direct-host improvement after renderer command-count reductions have already landed
+
 Autonomy rule for this sprint:
 
 - The orchestrator should continue without routine check-ins.

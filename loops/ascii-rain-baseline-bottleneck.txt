@@ -4,7 +4,10 @@ Date: 2026-06-08.
 Role owner: orchestrator.
 Status: active.
 Orchestrator session id: orch-2026-06-08-ascii-rain-performance-01.
-Scope: keep the broad sprint on the measured render-path bottleneck. The direct host accounting slice is complete. The current active slice moved the hot path from vague host render churn into `howl-render` prepare ownership and proved one accepted reduction there. The next queued slice stays inside renderer prepare, not wrapper/tool work.
+Researcher session id: `research-2026-06-09-alacritty-bottleneck-01`.
+Reviewer session id: `rev-2026-06-09-ascii-rain-workflow-01`.
+Coder session id: pending.
+Scope: active coder contract for the next slice only. Do not treat this file as broad sprint prose. The next slice exists to prove the exact class mix inside the remaining normal-path fill-command tax before any broader renderer rewrite.
 
 Problem statement:
 
@@ -85,7 +88,7 @@ Problem statement:
     - `render_upload_fill_avg_us = 309-384`
     - `render_upload_glyph_avg_us = 79-130`
     - `render_upload_sprite_count_avg = 0`
-- So the next slice remains in renderer/host render ownership, but the measured hot path has moved again:
+- Current owner order remains:
   - first: remaining `Owner.create` / `emitPrepared` work at about `999-1014 us`
   - second: remaining normal-only publication prepare scan at about `681-687 us`
   - third: host upload playback dominated by fill command execution at about `309-384 us`, not resource uploads or sprite playback
@@ -128,15 +131,54 @@ Completed accounting receipt:
   - there was almost no waiting after the first interval
   - nearly every loop turn rendered and submitted a terminal frame
 
-Current queued slice requirements:
+Active coder slice: `normal-fill-class-proof`
 
-- keep `utils/tools/benchmark_terminals.py` out of scope
-- preserve the accepted accounting owners and receipt surface
-- shape the next fix against Alacritty’s renderer organization:
-  - batched text submission
-  - explicit GPU buffers instead of fixed-function per-vertex calls
-  - no hidden runtime layer
-- treat the current `howl-linux-host/src/display/renderer/render_surface.zig` batching diff as live starting state, not as proven sufficient state
+Allowed files:
+
+- `howl-render/src/text/direct_normal.zig`
+- `howl-render/src/prepared/render_surface_emitter.zig`
+- `howl-render/src/benchmark_main.zig` only if a proof-only benchmark receipt needs one more explicit field
+
+Required shape:
+
+- prove the class mix inside the remaining normal-path fill-command tax
+- separate ordinary normal-path background work from:
+  - clears
+  - decorations
+  - cursor
+  - non-text cases
+- keep the proof at renderer/content owners, not host GL owners
+- preserve current behavior unless a proof-only suppression path is inseparable from the measurement surface
+
+Required reference pressure:
+
+- use the accepted Alacritty research in `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+- follow Alacritty’s shape:
+  - ordinary per-cell background reduction first at content preparation
+  - rect reduction second at rect emission
+  - buffered GL submission later, not as the first rescue point
+
+Required verification:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+- direct host receipt on the existing ASCII-rain harness, compared against:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1/howl-term.stderr.log`
+
+Non-goals:
+
+- no `utils/tools/*`
+- no `howl-linux-host/src/display/renderer/render_surface.zig`
+- no ABI reshaping
+- no broad host renderer redesign
+- no PTY/runtime work
+
+Stop conditions:
+
+- stop when receipts prove whether ordinary normal-path backgrounds are the dominant remaining fill-command class
+- stop immediately on crash, command-bound regression, or widened write scope
+- if proof requires host-side classification counters or any file outside the allowed set, reject this coder slice and restart from research/planning
 
 Completed verification commands:
 
@@ -164,6 +206,16 @@ Rejected work dropped from acceptance:
   - clean verification regressed further to `frames=347`, `fps=34.66`
 - accountable outcome:
   - the fill batching mechanics are dropped from the live tree and must not be treated as accepted progress
+
+Acceptance gate for this slice:
+
+- commit hash
+- orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`
+- researcher session id: `research-2026-06-09-alacritty-bottleneck-01`
+- reviewer session id: `rev-2026-06-09-ascii-rain-workflow-01`
+- coder session id
+- verification results from the required commands above
+- final receipt paths
 
 Accepted renderer receipts:
 

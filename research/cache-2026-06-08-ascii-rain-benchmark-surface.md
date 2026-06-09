@@ -4,6 +4,7 @@ Date: 2026-06-08.
 Role: researcher.
 Status: active.
 Loop: `loops/ascii-rain-baseline-bottleneck.txt`.
+Primary researcher session id: `research-2026-06-09-alacritty-bottleneck-01`.
 
 ## Sources Read In Order
 
@@ -44,7 +45,7 @@ Loop: `loops/ascii-rain-baseline-bottleneck.txt`.
 - The top-level build maps stress commands through `utils/tools` only; this loop should not invent another stress entrypoint (`/home/home/personal/projects/howl/build.zig:56-66`).
 - The host build has a dedicated `profile` step that installs `howl_term_profile`, but the current active loop does not require a profile binary yet. The host release-fast binary already accepts `--duration-ms` and `--command`, which is enough to drive the same workload directly for internal accounting (`/home/home/personal/projects/howl/howl-linux-host/build.zig:33-39`, `/home/home/personal/projects/howl/howl-linux-host/build.zig:52-67`, `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig:3-10`, `/home/home/personal/projects/howl/howl-linux-host/src/main.zig:19-29`).
 - Current host startup wires almost all execution through `Processor` after CLI parsing and startup. That makes `src/app/processor.zig` the true owner for loop-turn accounting in the current tree (`/home/home/personal/projects/howl/howl-linux-host/src/main.zig:87-108`, `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig:102-194`).
-- Current `Args` does not expose any debug accounting flags yet. Restoring internal accounting therefore requires explicit CLI additions in `src/cli/args.zig` and startup wiring in `src/main.zig` before `Processor.run()` begins (`/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig:3-44`, `/home/home/personal/projects/howl/howl-linux-host/src/main.zig:19-29`, `/home/home/personal/projects/howl/howl-linux-host/src/main.zig:87-108`).
+- Current host CLI already exposes explicit debug accounting opt-in, and current startup already wires it into the loop owner. That accepted host accounting path is now part of the live tree and is no longer a planning gap.
 - The repository previously had a bounded `src/app/process_accounting.zig` owner and direct loop integration. Commit `47dbe56` shows the exact old shape: explicit enable flag, periodic logging interval, loop counters, wait/render/present/SDL pump counters, and `/proc/self` thread sampling with no background thread. That shape was later removed, but it is direct proof that the host can support bounded internal accounting without inventing a runtime layer.
 - Current source does not contain any live owner for `HOWL_TRACE_PATH`, process-accounting flags, or process-accounting log output. The only current trace-path reference outside the Python launcher is a commented config example in `assets/default_config/init.lua` (`/home/home/personal/projects/howl/howl-linux-host/assets/default_config/init.lua:79-83`).
 
@@ -148,14 +149,14 @@ These checks prove the loop has no immediate binary-availability blocker for the
   - present completion draining
 - Current startup in `src/main.zig` owns CLI-to-processor wiring. That is the right place to create the accounting state and pass it into `Processor`.
 - Current CLI parsing in `src/cli/args.zig` is the right place for explicit `--debug-process-accounting` and `--debug-log-every-ms` opt-in flags.
-- The already-dirty renderer batching diff in `src/display/renderer/render_surface.zig` is part of the live benchmark tree, but this research does not yet claim whether it is sufficient or insufficient. The next loop exists to measure the tree as it stands.
+- The previously attempted host-side fill batching path in `src/display/renderer/render_surface.zig` has already been rejected and dropped from the live tree. Current host evidence should therefore be read against the accepted command-shape instrumentation state, not against an assumed live batching experiment.
 
 ## Proof Gaps
 
-1. Current source still has no live internal accounting owner or flags. The next slice must restore that explicitly inside current host owners.
-2. The direct accounting run path does not yet have an accepted artifact naming contract inside the host. For now, the shell redirection path in the loop contract is the receipt boundary.
-3. The exact final artifact directory name cannot be stated before execution because the launcher-generated baseline receipt path depends on wall-clock time, and the direct diagnostic run is intended to write into the same timestamped run directory.
-4. This research proves the benchmark surface, current host owner map, and a previously proven accounting shape. It still does not prove the dominant bottleneck class. That requires the accounting run receipts from the next slice.
+1. The direct accounting run path still relies on shell redirection naming rather than an owner-true artifact contract inside the host binary.
+2. The exact final artifact directory name cannot be stated before execution because the benchmark receipt path depends on wall-clock time.
+3. The benchmark-surface half of this file is now historical context; the live blocker is no longer “which owner is hot” but “which renderer/content reduction is reference-shaped enough for the next coder slice”.
+4. The remaining proof gap for the next coder slice is classifying the ordinary normal-path fill tax more precisely without broadening into host GL or ABI redesign.
 
 ## Measured Receipts
 
@@ -318,6 +319,120 @@ Receipt proof:
     - `direct_normal_avg_us = 570`
 - Accepted `FtHbSupport` metrics-cache reduction:
   - owner path: `howl-render/src/text/font/ft_hb/support.zig`
+
+## Alacritty Bottleneck Shape Research
+
+Date: 2026-06-09.
+Role: researcher.
+Researcher session id: `research-2026-06-09-alacritty-bottleneck-01`.
+Scope: source-backed mapping of the current measured Howl hot owners to Alacritty, focused on render/content/display organization and the smallest accountable next slice.
+
+### Sources Read In Order
+
+1. `/home/home/personal/projects/howl/loop/flow.md`
+2. `/home/home/personal/projects/howl/loop/researcher.md`
+3. `/home/home/personal/projects/howl/sprints/current.txt`
+4. `/home/home/personal/projects/howl/loops/ascii-rain-baseline-bottleneck.txt`
+5. `/home/home/personal/projects/howl/research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+6. `/home/home/personal/projects/howl/reference-index.md`
+7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+9. `/home/home/personal/projects/howl/howl-render/src/prepared/owner.zig`
+10. `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+11. `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+12. `/home/home/personal/projects/howl/howl-render/src/session/text.zig`
+13. `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
+14. `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+15. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
+16. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/damage.rs`
+17. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs`
+18. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/mod.rs`
+19. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs`
+20. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs`
+21. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glyph_cache.rs`
+22. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glsl3.rs`
+23. `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/gles2.rs`
+
+### Current-Code Facts
+
+- `howl-render/src/session/text.zig` keeps prepare ownership in `TextSession.prepareSurface(...)`, with current timing split around `ensureTextPreparer`, publication mapping, direct-normal preparation, and `prepared_owner.Owner.create(...)` (`howl-render/src/session/text.zig:220-240`).
+- `howl-render/src/prepared/owner.zig` makes `Owner.create(...)` the retained-surface owner: allocate owner, register handle, then emit the render-surface payload (`howl-render/src/prepared/owner.zig:95-140`).
+- `howl-render/src/prepared/render_surface_emitter.zig` converts prepared scene data into ABI commands. The hot path is still a full fill/sprite/cursor emission pass inside `emitPreparedFresh(...)` (`howl-render/src/prepared/render_surface_emitter.zig:210-231`).
+- Fill work is emitted as one command per clear/background/decoration/cursor rectangle, with only same-row horizontal merging in `tryMergePreparedFillCommand(...)` (`howl-render/src/prepared/render_surface_emitter.zig:288-329`, `howl-render/src/prepared/render_surface_emitter.zig:357-376`).
+- `howl-render/src/text/direct_normal.zig` still performs a full source scan in `appendVisible(...)`, then separately emits background, clear, decoration, and cursor draw lists from the accumulated renderable cells (`howl-render/src/text/direct_normal.zig:110-140`, `howl-render/src/text/direct_normal.zig:178-210`).
+- The publication path already imports Alacritty-like empty-cell semantics at the cell-map boundary: `mapPublicationCellInput(...)` marks a cell empty only when it is a plain space with transparent default background and no styling (`howl-render/src/source/publication_cell_map.zig:24-45`, `howl-render/src/source/publication_cell_map.zig:137-150`).
+- `howl-linux-host/src/display/renderer/render_surface.zig` realizes uploads separately from command playback, then plays commands through multiple shape-specialized paths (`howl-linux-host/src/display/renderer/render_surface.zig:433-473`).
+- The remaining host upload/playback cost is fill-dominated because `uploadRenderSurfaceCommands(...)` still executes one GL immediate-mode quad per fill command and one immediate-mode grouped loop per glyph-run command (`howl-linux-host/src/display/renderer/render_surface.zig:497-609`, `howl-linux-host/src/display/renderer/render_surface.zig:880-905`, `howl-linux-host/src/display/renderer/render_surface.zig:940-971`).
+
+### Reference Facts
+
+- Alacritty splits render preparation from renderer execution at the display layer. `Display` first collects `RenderableContent`, drains only non-empty cells, tracks line decorations, and then hands cells to the text renderer and rects to the rect renderer (`utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:783-881`, `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:895-1009`).
+- Alacritty reduces content-preparation work before GL by skipping empty/background-only cells in `RenderableContent::next()`: only cursor cells or non-empty non-spacer cells become render items (`utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:156-184`).
+- Alacritty also reduces rect work before GL by aggregating underline/strikeout spans into `RenderLines`, only materializing `RenderRect`s after the text-cell pass (`utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:839-881`, `utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:158-227`).
+- Alacritty further reduces frame scope with damage shaping. `DamageTracker` stores per-line and extra-rect damage, and converts that into bounded render rects rather than treating every frame as a full redraw (`utils/dev_references/terminals/alacritty/alacritty/src/display/damage.rs:16-103`, `utils/dev_references/terminals/alacritty/alacritty/src/display/damage.rs:138-202`).
+- Alacritty does not realize backgrounds as standalone host-side fill commands for ordinary cells. Text rendering batches per-glyph instance data, and each instance carries both foreground and background color; the shader renders background and text in separate passes from the same batch (`utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:33-69`, `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glsl3.rs:223-260`, `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glsl3.rs:351-374`, `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/gles2.rs:395-420`).
+- Alacritty’s text renderer batches by atlas texture and flushes only on texture change or batch capacity, not per cell (`utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:111-132`, `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glsl3.rs:223-260`, `utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glsl3.rs:321-403`).
+- Alacritty’s standalone rect path is explicit and buffered. `Renderer.draw_rects(...)` hands `Vec<RenderRect>` to `RectRenderer`, which builds vertex vectors and submits them through one VBO-backed draw per rect kind, not immediate-mode per rectangle (`utils/dev_references/terminals/alacritty/alacritty/src/renderer/mod.rs:242-265`, `utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:247-370`).
+- Alacritty front-loads stable font metrics and hot glyphs in `GlyphCache::new(...)` and `load_glyphs_for_font(...)`, which matches the accepted Howl metrics-cache win and confirms that repeated font/session setup should stay out of the frame hot path (`utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glyph_cache.rs:81-124`).
+
+### Proposed Shape
+
+- The closest Alacritty correspondence for `howl-render/src/text/direct_normal.zig` is `display/content.rs` plus the text-facing half of `display/mod.rs`: content iteration should decide what is renderable and avoid manufacturing ordinary background work as separate draw commands when the text path can carry it.
+- The closest Alacritty correspondence for `howl-render/src/prepared/render_surface_emitter.zig` is split across `renderer/text/*` and `renderer/rects.rs`: text payloads are batched by texture and rendered with background in-band, while only non-text rect classes stay on a separate rect path.
+- The closest Alacritty correspondence for `howl-render/src/prepared/owner.zig` is the `Display` to `Renderer` handoff in `display/mod.rs`: one owner prepares frame-local content, then hands a ready-to-submit buffered representation to the renderer without redoing policy in the GL layer.
+- The closest Alacritty correspondence for `howl-linux-host/src/display/renderer/render_surface.zig` is `renderer/mod.rs` plus `renderer/rects.rs`: the host GL layer should realize already-batched commands through buffered draw paths; it should not be the place where thousands of ordinary cell backgrounds are still being paid as individual fill commands.
+
+### Direct Answer To The Fill Question
+
+- Alacritty reduces ordinary background/fill work primarily at the content-preparation layer and carries the surviving per-cell background through the text batch itself.
+- Alacritty also reduces line/decor rect count at the rect-emission layer through `RenderLines`.
+- Alacritty does use a buffered GL rect draw layer, but the reference shape does not rely on the GL layer to rescue an explosion of ordinary per-cell background commands after the fact.
+- For Howl, the measured fill bottleneck is therefore upstream of host GL realization. The host immediate-mode cost is real, but the reference-backed correction starts by reducing how many fill commands exist at all for normal text frames.
+
+### Explicit Next Slice Plan
+
+1. Research/coder target files only:
+   - `howl-render/src/text/direct_normal.zig`
+   - `howl-render/src/prepared/render_surface_emitter.zig`
+   - tests/bench surface already used by the active loop
+2. Keep out of scope:
+   - `utils/tools/*`
+   - `howl-linux-host/src/display/renderer/render_surface.zig`
+   - ABI contract reshaping
+3. Required shape:
+   - prove which normal-path backgrounds can stay in-band with glyph rendering rather than being emitted as standalone fill commands
+   - preserve explicit rect emission only for clears, decorations, cursor, and genuinely non-text background cases that cannot be represented in the glyph/text path
+   - if a full in-band move is too broad for one accountable slice, first cut a proof-backed pre-emission suppression path for plain default-background cells on the normal publication path, since Alacritty already drops those at content iteration (`display/content.rs:156-184`) and Howl already has an `empty` cell predicate at `publication_cell_map.zig:137-150`
+4. Stop condition:
+   - accepted receipt shows lower `render_upload_fill_count_avg` and lower `render_upload_fill_avg_us` on the same direct ASCII-rain harness
+   - no regression in `zig build test:unit` for `howl-render`
+   - no host-path crash
+
+### Required Tests
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+- direct host receipt on the existing harness and accounting surface, compared against:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1/howl-term.stderr.log`
+
+### Risks
+
+- The strongest reference-backed fix crosses the renderer contract boundary between text payload and fill payload. That is the right direction, but it can broaden quickly if the slice tries to redesign the entire render-surface ABI in one step.
+- The current host path still uses immediate mode, so a renderer-side fill reduction might expose glyph-run cost more sharply after the fill count drops.
+- If Howl’s embeddable render ABI requires explicit background rectangles for host independence, any move toward in-band background must be justified as ABI-preserving or escalated for orchestrator review.
+
+### Proof Gaps
+
+1. This research proves Alacritty’s shape, but it does not yet prove which exact subset of Howl background draws are plain default-background tax versus semantically required explicit rects.
+2. The current receipts separate fill playback time, but they do not yet separate clear/background/decoration/cursor command counts on the host path.
+3. A stronger reference-backed long-term shape would likely require buffered host draw realization too, but that is not the smallest accountable next slice while fill-command count is still inflated upstream.
+
+### Readiness Judgment
+
+- Ready for a coder slice.
+- The next slice should be renderer-side command-count reduction, not another host GL micro-probe.
+- Reference pressure points first to content-preparation and rect-emission suppression, then to buffered host realization if needed.
   - receipt:
     - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4`
     - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-prepare-handle-timing-4/howl-term.stderr.log`
