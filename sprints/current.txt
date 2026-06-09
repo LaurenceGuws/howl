@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/post-bg-performance-rebaseline.txt`
+- `loops/owner-create-after-bg-proof.txt`
 
 Rule:
 
