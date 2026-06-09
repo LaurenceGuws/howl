@@ -3,7 +3,7 @@
 Date: 2026-06-09.
 Role: researcher.
 Status: active.
-Loop: `loops/post-owner-performance-research-restart.txt`.
+Loop: `loops/direct-normal-plain-ascii-shortcut.txt`.
 Primary researcher session id: `research-2026-06-09-post-owner-performance-01`.
 
 ## Sources Read In Order
@@ -11,7 +11,7 @@ Primary researcher session id: `research-2026-06-09-post-owner-performance-01`.
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/post-owner-performance-research-restart.txt`
+4. `/home/home/personal/projects/howl/loops/direct-normal-plain-ascii-shortcut.txt`
 5. `/home/home/personal/projects/howl/reference-index.md`
 6. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
@@ -339,3 +339,183 @@ Active loop at rejection time: `/home/home/personal/projects/howl/loops/direct-n
 - Research remains valid overall.
 - The `direct-normal-scan-reduction` slice itself remains valid.
 - The rejected implementation should restart from the coder stage with a narrower rejection seed, not from ownership correction and not from a full research restart.
+
+## Direct-Normal Refinement
+
+Date: 2026-06-09.
+Researcher refinement session id: `research-2026-06-09-direct-normal-refine-01`.
+Active loop: `/home/home/personal/projects/howl/loops/direct-normal-scan-reduction.txt`.
+
+### Sources Read In Order
+
+1. `/home/home/personal/projects/howl/loop/flow.md`
+2. `/home/home/personal/projects/howl/loop/researcher.md`
+3. `/home/home/personal/projects/howl/sprints/current.txt`
+4. `/home/home/personal/projects/howl/loops/direct-normal-scan-reduction.txt`
+5. `/home/home/personal/projects/howl/research/post-owner-performance-restart-2026-06-09.md`
+6. `/home/home/personal/projects/howl/reference-index.md`
+7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+9. Current source:
+   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/text/classify/lane.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/text/classify/symbol_map.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/text/font/session.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/text/contract.zig`
+10. Accepted receipts:
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+11. Rejected direct-normal probe findings already recorded in this artifact
+12. Alacritty references:
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glyph_cache.rs`
+
+### Exact File And Line References
+
+- Shared candidate loop still lives at:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:178-197`
+- Current generic classification point:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:199-210`
+- Current append path:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:261-305`
+- Current primary-face shortcut already exists in append path:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:343-345`
+- Current generic lane normal test is effectively:
+  - single-codepoint text, non-emoji presentation, non-special-sprite, non-icon, no curly underline
+  - `/home/home/personal/projects/howl/howl-render/src/text/classify/lane.zig:260-280`
+- Symbol-map facts for excluding special sprites/icons:
+  - `/home/home/personal/projects/howl/howl-render/src/text/classify/symbol_map.zig:4-18`
+
+### Current-Code Facts
+
+- On the accepted post-owner host receipt, `direct_normal` is still large:
+  - `direct_normal_avg_us ~= 731-737`
+  - `direct_normal_scan_avg_us ~= 664-671`
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+- The rejected four-loop rewrite improved the narrow scan metric only modestly:
+  - `direct_normal_scan_avg_us ~= 640-644`
+  - but regressed the clean benchmark to `43.27 fps`
+  - receipts:
+    - `/home/home/personal/projects/howl/artifacts/stress/20260609-123151-ascii/summary.json`
+    - rejected direct-host receipt already recorded in this artifact
+- Current `direct_normal` still pays generic lane classification for every candidate before it can take the already-existing primary-face shortcut in `resolveFace(...)`:
+  - classification first: `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:206-210`
+  - primary-face shortcut later: `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:343-345`
+- For plain single-codepoint printable ASCII cells, the generic classifier is proving something the later code already assumes:
+  - no emoji presentation
+  - no special sprite route
+  - no icon codepoint
+  - one codepoint only
+  - no curly underline
+
+### Reference Facts
+
+- Alacritty’s content iterator yields only renderable cells and skips empty cells before renderer work:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:153-182`
+- Alacritty’s text renderer then performs glyph-cache lookup on those renderable cells directly:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:140-160`
+- Alacritty’s glyph-cache hit is cheap and early:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/glyph_cache.rs:200-207`
+- The pressure is to make the hot normal-text cell path cheap in one shared iteration, not to duplicate the iteration by source kind.
+
+### Owner Roles And Proposed Shape
+
+- One exact next cut:
+  - `direct-normal-plain-ascii-shortcut`
+- Exact cheaper decision point:
+  - inside the existing shared `appendVisible(...)` loop, after `sourceCandidate(...)` returns the renderable/text pair and after `includeSpan(...)` already passed, but **before** `lane.classifyRenderableCell(...)`
+- Exact narrower eligibility class:
+  - single-codepoint printable ASCII normal candidate:
+    - `text.codepoints.len == 1`
+    - `text.first_cp >= 0x20`
+    - `text.first_cp < 0x7f`
+    - `candidate.item.renderable.presentation != .emoji`
+    - `!(candidate.item.renderable.underline and candidate.item.renderable.underline_style == .curly)`
+  - this class is enough because printable ASCII excludes icon/special-sprite routes in `symbol_map`, and the one-codepoint gate excludes multi-codepoint classification
+- Required shape:
+  1. keep the current single shared `appendVisible(...)` loop
+  2. add one local fast-path predicate for the narrower class above
+  3. when the predicate matches:
+     - treat the candidate as normal without calling `lane.classifyRenderableCell(...)`
+     - record normal-lane counters directly
+     - call the existing `appendRenderable(...)`
+  4. leave the generic `candidateDecision(...)` / lane-classification path intact for everything else
+- Why this is likely cheaper on the real host path:
+  - it removes generic lane-classification work from the hottest plain-ASCII class without duplicating the source loop
+  - ASCII rain is dominated by single-codepoint printable ASCII glyph cells on the accepted host receipts, so this shortcut should hit the bulk of the hot path
+  - it compounds with the already-existing primary-face shortcut in `resolveFace(...)`, so the same cells avoid both generic lane classification and fallback face search
+- Why this is not optimizing a false owner:
+  - the change stays entirely inside `direct_normal.zig`
+  - it does not invent a new data shape or owner boundary
+  - it only specializes the current owner’s hottest proven normal-cell path
+
+### Sprint Scratchpad
+
+- Accepted benchmark baseline remains:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+  - Howl `79.42 fps`
+  - Alacritty `1039.12 fps`
+- Accepted direct-host timing baseline remains:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+- Rejected shape to avoid:
+  - broad source-kind loop duplication
+- New narrower target:
+  - skip generic lane classification only for the provably-normal printable-ASCII class
+
+### Explicit Ordered Slice Plan
+
+1. `direct-normal-plain-ascii-shortcut`
+   - allowed files:
+     - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+     - `/home/home/personal/projects/howl/howl-render/src/text/prepare_counters.zig` only if proof fields are needed
+     - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output is needed
+   - required shape:
+     - keep one shared loop
+     - specialize only the printable-ASCII single-codepoint normal class
+     - preserve the existing generic path for all other candidates
+   - required receipts:
+     - fresh direct-host timing receipt
+     - fresh clean Howl vs Alacritty benchmark receipt
+2. Re-evaluate whether the next hot subowner is still generic direct-normal scan or has moved into glyph lookup / atlas reserve
+
+### Required Assertions
+
+- For every fast-path hit, assert equivalence against the generic classifier:
+  - `std.debug.assert(lane.classifyRenderableCell(renderable, text).lane == .normal);`
+- Assert the exact shortcut eligibility positively:
+  - one codepoint
+  - printable ASCII range
+  - non-emoji presentation
+  - not curly underline
+- Preserve existing positive/negative-space gates:
+  - continuation and empty/publication-empty rejection
+  - damage-span agreement
+  - normal-only rejection behavior for non-shortcut candidates
+
+### Required Tests
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- If proof output changes:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+- Required verification receipts:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+  - rerun direct host timing on ASCII rain against:
+    - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+  - rerun clean benchmark against:
+    - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+
+### Risks
+
+- If the shortcut predicate is too broad, it can silently misclassify special cases that the generic lane classifier would route complex.
+- If the shortcut predicate is too narrow, the win will be too small to matter on the real host path.
+
+### Proof Gaps
+
+- The accepted receipts do not break scan cost into “sourceItem construction” versus “lane classification” exactly.
+- The current code still makes lane classification the cheapest remaining explicit decision point to remove without broadening the seam.
+
+### Readiness Judgment
+
+- Ready to seed a narrower coder retry.
+- The next retry should target `direct-normal-plain-ascii-shortcut`, not another broad scan rewrite.

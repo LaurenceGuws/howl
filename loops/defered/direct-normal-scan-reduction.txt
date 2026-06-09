@@ -1,0 +1,115 @@
+ASCII rain direct-normal scan reduction
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: deferred.
+Orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`.
+Researcher session id: `research-2026-06-09-post-owner-performance-01`.
+Reviewer session id: `rev-2026-06-09-post-owner-performance-01`.
+Scope: superseded performance execution contract preserved for context.
+
+Reason deferred:
+
+- The user paused performance work to address a correctness regression in default background rendering.
+- This loop was already superseded by a later `direct-normal-plain-ascii-shortcut` planning pass.
+- The original active file was lost during active-surface cleanup and is recreated here so the rejected path is still recorded.
+
+Original problem statement:
+
+- The broad sprint goal remained beating Alacritty on the agreed ASCII rain benchmark.
+- The accepted post-owner baseline was the live truth.
+- The first emitter alpha-reuse probe was rejected and dropped.
+- The corrected next owner-true cut was `direct_normal`, specifically repeated candidate-walk and append work on the normal path.
+
+Accepted baseline receipts:
+
+- clean benchmark:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+  - Howl `79.42 fps`
+  - Alacritty `1039.12 fps`
+- direct host accounting:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-095340-ascii-direct-post-owner/howl-direct.accounting.log`
+  - direct host run `109.56 fps`
+- detailed timing:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+  - accepted direct-normal split:
+    - `direct_normal_avg_us ~= 731-737`
+    - `direct_normal_scan_avg_us ~= 664-671`
+    - `direct_normal_backgrounds_avg_us ~= 26-27`
+    - `direct_normal_decorations_avg_us ~= 29-30`
+    - `direct_normal_raster_avg_us ~= 5-8`
+
+Accepted research input:
+
+- `research/defered/post-owner-performance-restart-2026-06-09.md`
+
+Queued slice:
+
+- `direct-normal-scan-reduction`
+
+Rejected attempt recorded against this slice:
+
+- coder session id: `coder-2026-06-09-direct-normal-scan-reduction-01`
+- reviewer verdict: rejected at verification
+- dropped probe summary:
+  - the worker split one shared candidate path into four source-specific loops
+  - `direct_normal_scan_avg_us` improved modestly
+  - whole-frame receipts regressed materially
+  - this exact rewrite shape is no longer authorized
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/prepare_counters.zig` only if needed for proof fields
+- `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if needed for proof output
+
+Required shape:
+
+- reduce repeated candidate-walk / append work inside the `direct_normal` owner seam
+- do not replace one shared candidate pipeline with four copied source-specific hot loops
+- find a true cheaper decision point or narrower eligibility class inside `direct_normal`
+- preserve current normal-path eligibility and visible-span behavior
+- no emitter/resource-store changes
+- no `session/text.zig` changes
+- no `ffi/*` changes
+- no host GL work
+
+Required assertions:
+
+- normal-only rejection behavior is preserved
+- empty, continuation, and publication-empty cells still do not enter renderable output
+- visible-span filtering still agrees with `direct_scene.includeSpan`
+- any new fast path asserts its exact eligibility conditions at entry
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- if proof counters or benchmark output changes:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+
+Required verification:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- rerun direct host timing receipt on ASCII rain and compare against:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+- rerun clean Howl vs Alacritty benchmark and compare against:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+
+Non-goals:
+
+- no ownership refactor unless the slice exposes a new false owner
+- no emitter/resource-store work
+- no `session/text.zig`
+- no `ffi/*`
+- no host GL work
+- no PTY/runtime work
+- no publication background correctness work
+
+Stop conditions:
+
+- stop if implementation needs files outside the allowed set
+- stop if a new bucket seam is exposed
+- stop if the slice needs emitter/session/host reshaping
+- stop if the best idea requires broad source-kind duplication without a proven cheaper decision point
+- stop if clean benchmark or direct host receipts regress against the accepted post-owner baseline

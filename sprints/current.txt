@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-08-ascii-rain-performance-sprint.md`
+- `sprints/2026-06-09-background-default-correctness-sprint.md`
 
 Active research:
 
-- `research/post-owner-performance-restart-2026-06-09.md`
+- `research/background-default-correctness-2026-06-09.md`
 
 Active loops:
 
-- `loops/direct-normal-scan-reduction.txt`
+- `loops/publication-default-background-truth.txt`
 
 Rule:
 

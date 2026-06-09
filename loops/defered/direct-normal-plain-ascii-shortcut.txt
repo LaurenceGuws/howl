@@ -1,4 +1,4 @@
-ASCII rain direct-normal scan reduction
+ASCII rain direct-normal plain ASCII shortcut
 
 Date: 2026-06-09.
 Role owner: orchestrator.
@@ -38,7 +38,7 @@ Accepted research input:
 
 - `research/post-owner-performance-restart-2026-06-09.md`
 
-Queued slice: `direct-normal-scan-reduction`
+Queued slice: `direct-normal-plain-ascii-shortcut`
 
 Rejected attempt recorded against this slice:
 
@@ -58,9 +58,11 @@ Allowed files:
 
 Required shape:
 
-- reduce repeated candidate-walk / append work inside the `direct_normal` owner seam
+- keep one shared `appendVisible(...)` loop
+- add one local fast-path predicate for the dominant printable-ASCII normal class
+- on fast-path hit, bypass generic `lane.classifyRenderableCell(...)`, record normal-lane counters directly, and call the existing `appendRenderable(...)`
+- leave generic classification untouched for every non-eligible cell
 - do not replace one shared candidate pipeline with four copied source-specific hot loops
-- find a true cheaper decision point or narrower eligibility class inside `direct_normal`
 - preserve current normal-path eligibility and visible-span behavior
 - no emitter/resource-store changes
 - no `session/text.zig` changes
@@ -69,6 +71,7 @@ Required shape:
 
 Required assertions:
 
+- fast-path hit must satisfy `lane.classifyRenderableCell(renderable, text).lane == .normal`
 - normal-only rejection behavior is preserved
 - empty, continuation, and publication-empty cells still do not enter renderable output
 - visible-span filtering still agrees with `direct_scene.includeSpan`
