@@ -223,36 +223,57 @@ Sequential slice queue:
   - `artifacts/stress/20260609-095340-ascii-direct-post-owner/howl-direct.accounting.log`
   - `artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
 
-10. `emitter-alpha-reuse-fast-path` — next slice
+10. `emitter-alpha-reuse-fast-path` — rejected
 - purpose:
   - remove measured false steady-state work from the cleaned emitter/resource-cache seam
+- rejected execution:
+  - reviewer session id: `rev-2026-06-09-post-owner-performance-01`
+  - coder session id: `coder-2026-06-09-emitter-alpha-reuse-fast-path-01`
+- rejection reason:
+  - the probe removed staged upload work but replaced it with a worse per-query prepared-sprite byte hash
+  - real benchmark and direct host receipts regressed, so the slice is dropped
+- restart point:
+  - restart from researcher correction for the next slice premise, not from another coder pass on the same shape
+
+11. `post-owner-performance-research-restart` — active
+- purpose:
+  - correct the next-slice premise after the rejected alpha-reuse probe
+  - decide whether the next valid cut remains in emitter/resource-store or switches to `direct_normal`
+- current authority:
+  - `loops/done/post-owner-performance-research-restart.txt`
+  - `research/post-owner-performance-restart-2026-06-09.md`
+- accepted result:
+  - the next valid slice is `direct-normal-scan-reduction`
+  - the emitter/resource-store seam stays owner-true, but no longer has a source-backed next-cut premise
+
+12. `direct-normal-scan-reduction` — next slice
+- purpose:
+  - reduce repeated normal-path candidate-walk and append work inside `direct_normal`
 - allowed files:
-  - `howl-render/src/prepared/render_surface_emitter.zig`
-  - `howl-render/src/prepared/sprite_resource_store.zig`
-  - `howl-render/src/benchmark_main.zig` only if proof output is required
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/prepare_counters.zig` only if needed for proof fields
+  - `howl-render/src/benchmark_main.zig` only if needed for proof output
 - required shape:
-  - query atlas reuse before staging upload bytes for alpha sprites
-  - pay upload-byte staging only on atlas misses
-  - leave session/FFI/host GL untouched
-  - stop and escalate if another false owner is exposed
+  - reduce repeated candidate-walk / append work inside `direct_normal`
+  - preserve current normal-path eligibility and visible-span behavior
+  - leave emitter/resource-store, session, FFI, and host GL untouched
 - required tests:
   - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
-  - targeted owner tests for atlas-hit and atlas-miss behavior
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20` if proof output changes
   - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
-  - rerun direct host timing receipt
-  - rerun clean Howl vs Alacritty benchmark receipt
+  - rerun fresh direct host timing receipt
+  - rerun fresh clean Howl vs Alacritty benchmark receipt
 - non-goals:
-  - no ownership refactor unless implementation proves another false owner
+  - no ownership refactor unless the slice exposes a new false owner
+  - no emitter/resource-store work
   - no `session/text.zig`
   - no `ffi/*`
   - no host GL work
-  - no PTY/runtime work
-  - no `direct_normal` work in the same slice
 - stop conditions:
-  - stop if the implementation needs files outside the allowed set
-  - stop if session or FFI ownership needs reopening
-  - stop if the emitter proves not to be the smallest true owner after all
-  - stop if clean benchmark or direct host receipts regress against the accepted post-owner baseline
+  - stop if implementation needs files outside the allowed set
+  - stop if a new bucket seam is exposed
+  - stop if the slice needs emitter/session/host reshaping
+  - stop if receipts regress against the accepted post-owner baseline
 
 Autonomy rule for this sprint:
 

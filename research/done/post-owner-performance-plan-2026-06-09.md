@@ -184,6 +184,88 @@ Proof-only file if needed:
 - Current timing split does not yet isolate glyph-run packing and publish fixup as separate subowners.
 - No post-fix receipt exists yet. This file is planning authority only.
 
+## Failed Probe Addendum
+
+Date: 2026-06-09.
+Researcher session id: `research-2026-06-09-alpha-reuse-failure-01`.
+
+### Sources Read In Order For Failed Probe
+
+1. `/home/home/personal/projects/howl/loop/flow.md`
+2. `/home/home/personal/projects/howl/loop/researcher.md`
+3. `/home/home/personal/projects/howl/sprints/current.txt`
+4. `/home/home/personal/projects/howl/loops/emitter-alpha-reuse-fast-path.txt`
+5. `/home/home/personal/projects/howl/research/post-owner-performance-plan-2026-06-09.md`
+6. current uncommitted diff:
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+7. failed receipts:
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-121132-ascii-direct-alpha-reuse-timing/howl-term.stderr.log`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-121159-ascii/summary.json`
+8. accepted comparison receipt:
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+
+### Exact File And Line References For Failed Probe
+
+- new alpha fast path branch in emitter:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:430-432`
+- new helper that replaces eager byte staging with atlas lookup first:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:485-519`
+- atlas lookup now hashes the prepared sprite region on every query:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig:167-170`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig:306-349`
+- accepted pre-probe comparison path staged bytes first, then reused the cached atlas answer:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig` prior accepted shape, proven by accepted receipt:
+    - `stage_upload_avg_us ~= 87-90`
+    - `atlas_resource_avg_us ~= 92-95`
+    - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+
+### Current-Code Facts From Failed Probe
+
+- The failed clean benchmark regressed hard:
+  - Howl `79.42 fps -> 35.65 fps`
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-121159-ascii/summary.json`
+- The failed direct timing receipt shows the intended win did happen locally:
+  - `stage_upload_avg_us` fell from about `87-90` to `0`
+- But the cost moved into atlas lookup work instead of disappearing:
+  - `atlas_resource_avg_us` rose from about `92-95` to about `173-233`
+  - `emit_prepared sprites_avg_us` improved only modestly from about `265-273` to about `235-253`
+- The probe added a new per-sprite cost on every alpha glyph query:
+  - `hashPreparedSpriteRegion(...)` walks the sprite bytes row by row and hashes them every time:
+    - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig:306-349`
+- That means the probe removed one form of per-sprite byte walk (`stagePreparedUploadBytes`) but replaced it with another byte walk (`hashPreparedSpriteRegion`) before the atlas lookup can answer reuse.
+- The probe did not expose a new bucket owner. The false step is inside the current emitter/resource-store owner seam.
+
+### Most Likely Cause Of The Regression
+
+- The most likely cause is that the new atlas-hit fast path is not actually a cheap cache hit path.
+- It still scans the sprite bytes for every alpha glyph through `hashPreparedSpriteRegion(...)`, so the slice replaced a bounded memcpy-style staging cost with a per-query hash cost.
+- The receipts show that directly:
+  - `stage_upload_avg_us` goes to `0`
+  - `atlas_resource_avg_us` roughly doubles
+  - overall sprite emission cost does not improve enough to pay for the added lookup work
+- In short: the optimization removed upload staging, but it did not remove per-glyph byte work. It just moved that work earlier into atlas lookup.
+
+### Exact Earliest Restart Stage After Rejection
+
+- Restart from the researcher stage for the current slice, not from coding.
+- The earliest broken stage is the slice research/planning assumption behind `emitter-alpha-reuse-fast-path`.
+- Reason:
+  - the implementation stayed inside the authorized files
+  - the probe answered the question honestly
+  - the failure is that the planned fix shape was wrong, because the proposed “cheap atlas hit” still requires expensive per-query sprite hashing
+- So the sprint should restart from:
+  1. researcher correction for the current slice
+  2. reviewer re-gate of the corrected slice plan
+  3. only then a new coder pass
+
+### Whether This Probe Exposed Another False Owner Or Bucket Seam
+
+- No.
+- This probe exposed a wrong optimization hypothesis, not another broad ownership lie.
+- `render_surface_emitter.zig` and `sprite_resource_store.zig` remain the true local owners of this failure.
+- The correction should be a new research/planning pass for the same seam, unless later proof shows the next best move is to abandon this seam and switch to `direct_normal`.
+
 ## Readiness Judgment
 
 Ready for the next performance slice.
