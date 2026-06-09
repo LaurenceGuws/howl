@@ -6,7 +6,7 @@ Status: active.
 Orchestrator session id: `orch-2026-06-09-background-default-01`.
 Researcher session id: `research-2026-06-09-emitter-sprite-next-01`.
 Reviewer session id: `reviewer-2026-06-09-emitter-sprite-next-01`.
-Coder session id: none.
+Coder session id: `coder-2026-06-09-emitter-alpha-atlas-hit-01`.
 Scope: seed the next exact implementation contract from the accepted corrected-path emitter proof.
 
 Problem statement:
@@ -26,6 +26,19 @@ Accepted proof receipts:
 - `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-term.stderr.log`
 - `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-direct-ascii.metrics.ndjson`
 
+Coder-run receipts:
+
+- accepted clean benchmark rerun:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
+  - Howl improved from `33.16 fps` to `38.62 fps`
+- accepted valid direct host rerun:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
+  - direct host result regressed from `47.88 fps` to `36.94 fps`
+- invalid coder receipts dropped:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct/`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-3/`
+
 Required planning output:
 
 - exact allowed files for the next coding slice
@@ -37,7 +50,9 @@ Required planning output:
 
 Current blocker to coding:
 
-- none
+- the first accepted coding contract was run and rejected on its own stop condition:
+  - valid direct host receipt regressed even though the clean benchmark improved
+  - this slice is not accepted and the worktree diff was dropped
 
 Draft next coding contract:
 
@@ -91,9 +106,21 @@ Draft next coding contract:
   - stop if corrected direct host receipts show no reduction in `stage_upload_avg_us` and `atlas_resource_avg_us`
 - stop if clean benchmark or corrected direct host receipt regresses
 
+Execution outcome:
+
+- The coder implemented the accepted contract only inside:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+- The owner-local unit suite passed.
+- The clean benchmark improved.
+- The valid direct host rerun regressed, so the slice hit its explicit stop condition and was dropped.
+- Current accepted conclusion from the valid direct receipt:
+  - the alpha-atlas hit path can drive `stage_upload_avg_us` to `0`
+  - `atlas_resource_avg_us` falls to roughly `69-76`
+  - but overall direct-host truth still regressed, so the cheap-key atlas hit is not accepted as the next shipped optimization
+
 Planning acceptance notes:
 
-- Accepted for execution planning as the next coding contract:
-  - `emitter-alpha-atlas-hit-without-byte-walk`
-- Reviewer explicitly accepted this only for glyph-driven alpha-atlas reuse.
-- Direct color-resource optimization remains out of scope and unauthorized.
+- This file remains active only as the truthful record of the rejected `emitter-alpha-atlas-hit-without-byte-walk` probe.
+- No new coding is authorized from this file.
+- The next step is a fresh research/review contract that explains the benchmark/direct divergence and names the next owner seam from the valid direct receipt.

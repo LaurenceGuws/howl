@@ -178,6 +178,62 @@ Loop: `loops/emitter-sprite-after-bg-next-shape.txt`.
 - The next exact emitter/sprite coding contract is not yet written into the active loop.
 - Reviewer acceptance of that next coding contract is still pending.
 
+## Coder Trial Update
+
+- The accepted coding contract `emitter-alpha-atlas-hit-without-byte-walk` was executed under coder session `coder-2026-06-09-emitter-alpha-atlas-hit-01`.
+- The implementation stayed inside:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+- The owner-local unit suite passed, but the diff is not accepted because the valid direct host receipt regressed.
+
+### Accepted coder-run receipts
+
+- clean benchmark rerun:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
+  - Howl `38.62 fps`
+  - Alacritty `994.84 fps`
+- valid direct host rerun:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
+  - Howl direct `36.94 fps`
+
+### Dropped invalid coder receipts
+
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct/`
+  - invalid relative stress-binary path
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-3/`
+  - incomplete metrics, not an acceptance receipt
+
+### Findings from the valid direct host receipt
+
+- The accepted cheap-hit seam does remove the targeted staged-upload tax on the measured path:
+  - `stage_upload_avg_us = 0`
+  - `render_upload_bytes_avg = 0`
+- Atlas query work also dropped relative to the pre-slice proof:
+  - `atlas_resource_avg_us ~= 69-76`
+  - pre-slice proof was `97-100`
+- The remaining emitter split in the valid receipt is roughly:
+  - `sprites_avg_us ~= 255-278`
+  - `sprite_lookup_avg_us ~= 59-65`
+  - `alpha_glyph_append_avg_us ~= 36-39`
+- But the valid direct host outcome regressed against the accepted honest baseline:
+  - accepted honest direct baseline: `47.88 fps`
+  - coder-run valid direct receipt: `36.94 fps`
+- The direct receipt also kept overall top owners high enough that the slice cannot be accepted on benchmark-only improvement:
+  - `owner_create_avg_us ~= 1034-1061`
+  - `direct_normal_avg_us ~= 776-782`
+  - `render_upload_fill_avg_us ~= 326-381`
+  - `render_upload_glyph_avg_us ~= 90-113`
+
+### Updated judgment
+
+- Reject the `emitter-alpha-atlas-hit-without-byte-walk` coding slice.
+- The clean benchmark win is not enough because the valid direct host receipt hit the slice stop condition.
+- The next work is research/review only:
+  - explain why benchmark and direct host receipts diverged
+  - re-order the next owner seam from the valid direct receipt
+  - authorize a new coding contract only after that
+
 ## Readiness Judgment
 
 Not ready to authorize coding from chat alone.
