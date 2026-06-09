@@ -106,6 +106,13 @@ Loop: `loops/emitter-sprite-after-bg-next-shape.txt`.
   - the remaining `owner_create` cost is primarily sprite/emitter work
   - publish fixup is not the next owner
   - any next emitter slice must account for the previously rejected byte-walk-first alpha reuse premise before coding starts
+- The main proof gap for a cheap reuse key is now closed only for glyph-driven alpha sprites:
+  - `contract.SpriteKey` for glyph groups is derived from face id, glyph ids, cell span, and cell metrics in `/home/home/personal/projects/howl/howl-render/src/text/raster/key.zig`
+  - raster requests dedupe by that key in `/home/home/personal/projects/howl/howl-render/src/text/raster/rasterizer.zig`
+  - cached raster lookup also keys by that same sprite key in `/home/home/personal/projects/howl/howl-render/src/session/text.zig` and `lookupPreparedSprite(...)`
+  - so the honest cheap query identity for glyph-driven alpha-atlas reuse can be `sprite.key + clipped width/height + upload format`
+  - this does not justify dropping width/height from the reuse key, because clipping changes the uploaded payload shape even when the source raster key stays the same
+  - this proof does not yet cover every prepared sprite path or the direct color-resource path
 
 ## Proposed Shape
 
@@ -127,6 +134,9 @@ Loop: `loops/emitter-sprite-after-bg-next-shape.txt`.
    - purpose:
      - cut the next exact emitter/sprite coding contract from the accepted owner-create proof
      - avoid repeating the rejected byte-walk-first alpha-reuse premise
+   - corrected coding direction:
+     - use cheap identity `sprite.key + clipped width/height + format` for glyph-driven alpha-atlas hit queries only
+     - keep byte-content proof only on miss insertion, never on hit queries
 4. `direct-normal-after-bg`
    - fallback only if fresh planning proves emitter/sprite is no longer the next true coding target
 5. `background-fill-after-bg`
@@ -165,11 +175,16 @@ Loop: `loops/emitter-sprite-after-bg-next-shape.txt`.
 
 ## Proof Gaps
 
-- The next exact emitter/sprite coding contract is not yet written.
+- The next exact emitter/sprite coding contract is not yet written into the active loop.
 - Reviewer acceptance of that next coding contract is still pending.
 
 ## Readiness Judgment
 
-Not ready to authorize the next optimization slice yet.
+Not ready to authorize coding from chat alone.
 
-Ready to seed the next planning/research correction loop: `emitter-sprite-after-bg-next-shape`.
+Ready to seed the next exact coding contract:
+
+- slice name: `emitter-alpha-atlas-hit-without-byte-walk`
+- owner seam:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
