@@ -152,7 +152,7 @@ Sequential slice queue:
 - receipt:
   - `howl-render` commit `0ee034a` `move prepared submit policy to session`
 
-7. `prepared-surface-boundary-cleanup` — next coder slice
+7. `prepared-surface-boundary-cleanup` — completed
 - allowed files:
   - `howl-render/src/ffi/prepared_surface.zig`
   - `howl-render/src/ffi/handle.zig`
@@ -171,8 +171,14 @@ Sequential slice queue:
   - no performance-only edits
 - stop condition:
   - `ffi/*` no longer depends on `prepared/owner.zig`
+- accepted result:
+  - `ffi/prepared_surface.zig` no longer imports `prepared/owner.zig`
+  - prepared-surface FFI uses `PreparedHandle`, `PreparedSurface`, and emitter-owned failure mapping directly
+  - the shim is isolated to itself plus owner tests
+- receipt:
+  - `howl-render` commit `590694b` `remove prepared owner from ffi surface`
 
-8. `delete-owner-zig` — queued
+8. `delete-owner-zig` — next coder slice
 - allowed files:
   - `howl-render/src/prepared/handle.zig`
   - `howl-render/src/prepared/surface.zig`
