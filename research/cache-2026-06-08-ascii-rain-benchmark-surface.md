@@ -178,8 +178,39 @@ These checks prove the loop has no immediate binary-availability blocker for the
       - `terminal_should_redraw ~= loop_turns`
       - `terminal_drive_performed ~= loop_turns`
       - `render_step_rendered ~= loop_turns`
-      - `present_submitted ~= loop_turns`
+    - `present_submitted ~= loop_turns`
     - that pins the current bottleneck class as main-thread render/present churn under continuous terminal redraw, not PTY-thread saturation and not wait-heavy pacing
+- Accepted host upload-shape receipt:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-070303-host-upload-shape-1`
+  - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-070303-host-upload-shape-1/howl-term.stderr.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-070303-host-upload-shape-1/howl-render.metrics.ndjson`
+  - measured result: `frames=455`, `fps=45.42`
+  - steady-state proof:
+    - `render_upload_count_avg = 0`
+    - `render_upload_bytes_avg = 0`
+    - steady-state host upload is not texture upload churn
+- Accepted direct-normal shape receipt:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1`
+  - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-term.stderr.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-render.metrics.ndjson`
+  - measured result: `frames=462`, `fps=46.16`
+  - steady-state proof:
+    - `direct_normal_avg_us = 741-746`
+    - `direct_normal_scan_avg_us = 675-679`
+    - backgrounds, decorations, and raster are smaller secondary costs
+- Accepted host command-shape receipt:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1`
+  - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1/howl-term.stderr.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1/howl-render.metrics.ndjson`
+  - measured result: `frames=429`, `fps=42.83`
+  - steady-state proof:
+    - `render_upload_avg_us = 536-614`
+    - `render_upload_fill_count_avg = 2294-2921`
+    - `render_upload_fill_avg_us = 309-384`
+    - `render_upload_glyph_avg_us = 79-130`
+    - `render_upload_sprite_count_avg = 0`
+  - defensible conclusion:
+    - the remaining host upload cost is dominated by fill command playback, not texture uploads and not sprite playback
 Howl resource receipts for the baseline run captured only two samples:
 
 - first sample at process start with one live `howl-main` process and no computed CPU deltas
@@ -214,6 +245,12 @@ Receipt proof:
 - Defensible conclusion:
   - client-array tricks are not an acceptable narrow fix on the current GL host path
   - the next render slice should be shaped more like Alacritty’s explicit buffered text renderer than a compatibility-profile shortcut
+- A later fill-command batching probe in `howl-linux-host/src/display/renderer/render_surface.zig` is also rejected.
+- Outcome:
+  - instrumented run reached only `frames=441`, `fps=43.99`
+  - clean verification regressed to `frames=347`, `fps=34.66`
+- Defensible conclusion:
+  - batching fills inside the current fixed-function host path is not an accepted improvement and remains dropped from the live tree
 
 ## Current Renderer Proof
 
@@ -235,6 +272,10 @@ Receipt proof:
 - Defensible conclusion:
   - most render-turn cost sits inside `howl-render` prepare
   - host GL upload/present are real but clearly secondary on this workload
+- Later accepted host-upload diagnostics refined that secondary host work:
+  - texture resource upload is near zero in steady state
+  - host upload time is mostly playback of thousands of fill commands plus a smaller glyph draw tail
+  - future host-side work should focus on render-surface command shape or command-count reduction, not atlas upload plumbing
 
 - `howl-render` already had benchmark timing for `resolve`, `shape`, `group`, and `scene`, but the normal-only fast path was invisible because `direct_normal` time was not recorded.
 - The live accepted renderer slice added `direct_normal_us` timing in:

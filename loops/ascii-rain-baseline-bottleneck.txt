@@ -58,10 +58,37 @@ Problem statement:
   - under owner timing, `emit_avg_us` dropped from about `2363` to about `1009`
   - `render_prepare_avg_us` dropped from about `2348` to about `1787`
   - clean profiled direct host result landed at `frames=92`, `fps=50.60`
-- So the next slice remains in renderer ownership, but the measured hot path has moved again:
-  - first: remaining `Owner.create` / `emitPrepared` work at about `990 us`
-  - second: remaining normal-only publication prepare at about `715 us`
-  - third: `render_upload` / sprite upload realization at about `455-465 us`
+- Accepted upload-shape receipts proved the remaining host upload time is not texture upload churn:
+  - receipt:
+    - `/home/home/personal/projects/howl/artifacts/stress/20260609-070303-host-upload-shape-1/howl-term.stderr.log`
+  - steady-state host upload stayed near:
+    - `render_upload_count_avg = 0`
+    - `render_upload_bytes_avg = 0`
+    - `render_upload_avg_us = 440-520`
+- Accepted direct-normal shape receipts proved the remaining prepare cost is mostly scan/append work:
+  - receipt:
+    - `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-term.stderr.log`
+  - stable split:
+    - `direct_normal_avg_us = 741-746`
+    - `direct_normal_scan_avg_us = 675-679`
+    - backgrounds, decorations, and raster are clearly secondary
+- Accepted host command-shape receipts moved the upload picture again:
+  - receipt:
+    - `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1/howl-term.stderr.log`
+  - direct metrics:
+    - `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1/howl-render.metrics.ndjson`
+  - result:
+    - `frames=429`, `fps=42.83`
+  - stable split:
+    - `render_upload_avg_us = 536-614`
+    - `render_upload_fill_count_avg = 2294-2921`
+    - `render_upload_fill_avg_us = 309-384`
+    - `render_upload_glyph_avg_us = 79-130`
+    - `render_upload_sprite_count_avg = 0`
+- So the next slice remains in renderer/host render ownership, but the measured hot path has moved again:
+  - first: remaining `Owner.create` / `emitPrepared` work at about `999-1014 us`
+  - second: remaining normal-only publication prepare scan at about `681-687 us`
+  - third: host upload playback dominated by fill command execution at about `309-384 us`, not resource uploads or sprite playback
 
 Accepted research inputs:
 
@@ -131,6 +158,12 @@ Rejected work dropped from acceptance:
   - Howl crashed with `returncode=-11` before completing the benchmark
 - accountable outcome:
   - that attempted reduction is rejected and must not be treated as accepted progress
+- fill command batching probe inside `howl-linux-host/src/display/renderer/render_surface.zig`
+- rejection reason:
+  - instrumented run stayed weak at `frames=441`, `fps=43.99`
+  - clean verification regressed further to `frames=347`, `fps=34.66`
+- accountable outcome:
+  - the fill batching mechanics are dropped from the live tree and must not be treated as accepted progress
 
 Accepted renderer receipts:
 
