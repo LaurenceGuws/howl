@@ -34,8 +34,7 @@ Sequential slice queue:
 - `emitter-alpha-atlas-hit-without-byte-walk`
 
 2. `direct-upload-playback-proof-after-alpha-hit-rejection`
-- first pending slice
-- next active slice
+- completed and accepted proof slice
 - purpose:
   - separate host playback and submit costs enough to name the next true owner from honest direct receipts
 - allowed files:
@@ -69,8 +68,22 @@ Sequential slice queue:
   - removed emitter tax was real but not the next shippable owner
 - no further emitter optimization is authorized from this result alone
 
-4. `direct-normal-after-playback-proof`
-- allowed only if the accepted playback proof still proves `direct_normal` is the next true owner
+4. `background-fill-after-playback-proof`
+- first pending optimization seam
+- allowed only because the accepted playback proof proves restored background fill work dominates
+- planning/research still required before coding starts
+- allowed files:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output changes
+- non-goals:
+  - no source-mapping, session, host, or ABI changes
+- stop conditions:
+  - the seam exposes a new bucket owner
+  - reference-backed research proves host playback or ownership correction should come first
+
+5. `direct-normal-after-playback-proof`
+- allowed only if later accepted fill planning/proof disproves fill as the next true owner and restores `direct_normal` to the top spot
 - allowed files:
   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/prepare_counters.zig` only if proof fields change
@@ -80,18 +93,6 @@ Sequential slice queue:
 - stop conditions:
   - accepted playback proof ranks host playback or submit above `direct_normal`
   - the cut needs files outside the allowed set
-
-5. `background-fill-after-playback-proof`
-- allowed only if the accepted playback proof proves restored background fill work dominates
-- allowed files:
-  - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output changes
-- non-goals:
-  - no source-mapping, session, host, or ABI changes
-- stop conditions:
-  - accepted playback proof ranks glyph/normal-path work above fill work
-  - the seam exposes a new bucket owner
 
 Completion gate:
 

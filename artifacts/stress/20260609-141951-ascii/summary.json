@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "run_id": "20260609-141951-ascii",
+  "tooling": {
+    "available": {
+      "strace": true,
+      "nvidia_smi": true,
+      "nvtop": true,
+      "glxinfo": true,
+      "nsys": true,
+      "ncu": true,
+      "nvcc": true,
+      "kitty": true,
+      "ghostty": true,
+      "alacritty": true,
+      "wezterm": true
+    },
+    "paths": {
+      "strace": "/usr/bin/strace",
+      "nvidia_smi": "/usr/bin/nvidia-smi",
+      "nvtop": "/usr/bin/nvtop",
+      "glxinfo": "/usr/bin/glxinfo",
+      "nsys": "/usr/bin/nsys",
+      "ncu": "/usr/bin/ncu",
+      "nvcc": "/opt/cuda/bin/nvcc",
+      "kitty": "/usr/bin/kitty",
+      "ghostty": "/usr/bin/ghostty",
+      "alacritty": "/usr/bin/alacritty",
+      "wezterm": "/usr/bin/wezterm"
+    }
+  },
+  "config": {
+    "duration_s": 10.0,
+    "mode": "ascii",
+    "cols": 320,
+    "rows": 120,
+    "frames": 100000000,
+    "seed": "0xC0FFEE",
+    "metrics_every": 100,
+    "flush_every": 1,
+    "resource_interval_s": 0.25,
+    "gpu_resource_interval_s": 1.0,
+    "resources_enabled": true
+  },
+  "results": [
+    {
+      "terminal": "howl",
+      "mode": "ascii",
+      "duration_s": 10.235,
+      "returncode": 0,
+      "metrics_path": "/home/home/personal/projects/howl/artifacts/stress/20260609-141951-ascii/howl-ascii.metrics.ndjson",
+      "trace_path": null,
+      "process_log_path": null,
+      "resources_path": "/home/home/personal/projects/howl/artifacts/stress/20260609-141951-ascii/howl-ascii.resources.ndjson",
+      "resource_summary": {
+        "samples": 2,
+        "interval_s": 0.25,
+        "gpu_interval_s": 1.0,
+        "peak_rss_kib": 219772,
+        "peak_threads": 1,
+        "peak_processes": 1,
+        "max_cpu_percent": 0.0,
+        "peak_vram_mib": null,
+        "max_gpu_util_percent": 56,
+        "peak_gpu_memory_used_mib": 2247,
+        "gpu_available": true,
+        "hottest_threads": [],
+        "path": "/home/home/personal/projects/howl/artifacts/stress/20260609-141951-ascii/howl-ascii.resources.ndjson"
+      },
+      "last_metrics": {
+        "type": "stress_metrics",
+        "schema": 1,
+        "final": true,
+        "frames": 436,
+        "fps": 43.5,
+        "p50_us": 21796,
+        "p95_us": 45456,
+        "p99_us": 78654,
+        "max_us": 105118
+      },
+      "metrics_complete": true,
+      "metrics_invalid_reason": null
+    },
+    {
+      "terminal": "alacritty",
+      "mode": "ascii",
+      "duration_s": 10.203,
+      "returncode": 0,
+      "metrics_path": "/home/home/personal/projects/howl/artifacts/stress/20260609-141951-ascii/alacritty-ascii.metrics.ndjson",
+      "trace_path": null,
+      "process_log_path": null,
+      "resources_path": "/home/home/personal/projects/howl/artifacts/stress/20260609-141951-ascii/alacritty-ascii.resources.ndjson",
+      "resource_summary": {
+        "samples": 2,
+        "interval_s": 0.25,
+        "gpu_interval_s": 1.0,
+        "peak_rss_kib": 214452,
+        "peak_threads": 3,
+        "peak_processes": 1,
+        "max_cpu_percent": 0.0,
+        "peak_vram_mib": null,
+        "max_gpu_util_percent": 39,
+        "peak_gpu_memory_used_mib": 2247,
+        "gpu_available": true,
+        "hottest_threads": [],
+        "path": "/home/home/personal/projects/howl/artifacts/stress/20260609-141951-ascii/alacritty-ascii.resources.ndjson"
+      },
+      "last_metrics": {
+        "type": "stress_metrics",
+        "schema": 1,
+        "final": true,
+        "frames": 10066,
+        "fps": 1006.5,
+        "p50_us": 966,
+        "p95_us": 1266,
+        "p99_us": 1413,
+        "max_us": 3158
+      },
+      "metrics_complete": true,
+      "metrics_invalid_reason": null
+    }
+  ]
+}

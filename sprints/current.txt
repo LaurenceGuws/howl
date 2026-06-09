@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
+- `loops/background-fill-after-playback-next-shape.txt`
 
 Rule:
 

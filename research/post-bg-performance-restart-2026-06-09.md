@@ -5,15 +5,16 @@ Role: researcher.
 Status: active.
 Primary researcher session id: `research-2026-06-09-post-alpha-direct-divergence-01`.
 Sprint: `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`.
-Loop: `/home/home/personal/projects/howl/loops/direct-upload-playback-proof-after-alpha-hit-rejection.txt`.
+Loop: `/home/home/personal/projects/howl/loops/background-fill-after-playback-next-shape.txt`.
 
 ## Sources Read In Order
 
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
-5. `/home/home/personal/projects/howl/loops/done/post-alpha-direct-divergence-next-shape.txt`
+4. `/home/home/personal/projects/howl/loops/done/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
+5. `/home/home/personal/projects/howl/loops/background-fill-after-playback-next-shape.txt`
+6. `/home/home/personal/projects/howl/loops/done/post-alpha-direct-divergence-next-shape.txt`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
@@ -45,11 +46,12 @@ Loop: `/home/home/personal/projects/howl/loops/direct-upload-playback-proof-afte
 ## Hygiene
 
 - Active sprint: `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`
-- Active loop: `/home/home/personal/projects/howl/loops/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
+- Active loop: `/home/home/personal/projects/howl/loops/background-fill-after-playback-next-shape.txt`
 - Active research: `/home/home/personal/projects/howl/research/post-bg-performance-restart-2026-06-09.md`
 - Hygiene issues: none
 - Research execution is authorized.
-- Implementation is still not authorized.
+- The proof-only host playback slice has executed and is under reviewer gate.
+- No optimization beyond this proof slice is authorized yet.
 
 ## Current-Code Facts
 
@@ -224,17 +226,72 @@ Promote a proof-only contract, not a coding optimization slice.
 
 ## Proof Gaps
 
-- The exact direct-host regression source is still not isolated below:
-  - fill playback
-  - glyph playback
-  - submit/present pacing
-- The clean benchmark win is real, but it is not owner-attributed.
+- The next optimization seam inside host fill playback is not yet planned/reviewed.
+- The clean benchmark harness remains too noisy to act as the behavior-stability proof for accounting-only slices.
 - The current source is already back on the baseline emitter path, so the rejected probe survives only as receipt evidence, not as live code to inspect.
+
+## Execution Update
+
+- Coder session id: `019eac48-c12a-7483-9d1f-a832326bc6bc`
+- Allowed-file diff only:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/app/process_accounting.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+- Verification passed:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- Invalid direct receipt dropped:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-121533-direct-upload-playback-proof-1/`
+  - wrong CLI shape (`--mode ascii` instead of `--ascii`)
+- Valid direct proof receipt:
+  - stderr: `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-direct-ascii.metrics.ndjson`
+  - direct result: `47.96 fps` vs honest direct baseline `47.88 fps`
+- Fresh clean benchmark receipts on the same proof-only code:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-141537-ascii/summary.json`
+    - Howl `51.18 fps`
+    - Alacritty `981.58 fps`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-141951-ascii/summary.json`
+    - Howl `43.50 fps`
+    - Alacritty `1006.50 fps`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-142016-ascii/summary.json`
+    - Howl `45.69 fps`
+    - Alacritty `1001.49 fps`
+
+### Accepted proof judgment
+
+- The proof slice successfully isolates the next owner on the honest direct path.
+- `fill` remains the next owner.
+- Within `fill`, draw execution dominates dispatch/walk overhead.
+- `glyph` playback is materially smaller than fill playback.
+- `sprite` playback is irrelevant on this workload.
+- `present_submit` remains below fill playback and does not outrank it.
+
+### Receipt-backed direct numbers
+
+- From `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log` late steady-state:
+  - `render_upload_fill_avg_us ~= 387-488`
+  - `render_upload_fill_dispatch_avg_us ~= 47-60`
+  - `render_upload_fill_draw_avg_us ~= 340-428`
+  - `render_upload_glyph_avg_us ~= 94-138`
+  - `render_upload_sprite_avg_us = 0`
+  - `present_submit_avg_us ~= 79-96`
+
+### Clean-benchmark gate judgment
+
+- The proof-only host slice does not change renderer policy or command behavior; it only adds narrower accounting splits on the host playback path.
+- Repeated clean benchmark reruns remain materially above the old `33.16 fps` honest baseline, but they also vary widely (`43.50`, `45.69`, `51.18`) while the valid direct host path stays effectively flat (`47.88 -> 47.96 fps`).
+- So the clean benchmark harness is too noisy to serve as the acceptance proof for “no material behavior change” on this accounting-only slice.
+- For this slice, the authoritative acceptance proof is:
+  - bounded allowed-file diff with no behavior-path edits
+  - stable direct host receipt
+  - explicit next-owner judgment from the direct timing split
 
 ## Readiness Judgment
 
-Ready to authorize one proof-only host-playback split.
+Accepted the proof-only host-playback split.
 
-Not ready to authorize another optimization slice yet.
+Ready to seed follow-on research/review for the next exact fill-owner contract.
 
-The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe remains valid historical evidence only. The next honest contract is `direct-upload-playback-proof-after-alpha-hit-rejection`, because the valid direct receipt proves the removed atlas-hit tax was real, but not large enough to beat the still-heavy `render_prepare` plus fill/glyph playback path on the owner thread.
+The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe remains valid historical evidence only. The accepted proof result from `direct-upload-playback-proof-after-alpha-hit-rejection` is that host fill playback, specifically fill draw execution, is the next true owner on the honest direct path. The next active work is planning, not coding, for `background-fill-after-playback-proof`.
