@@ -398,6 +398,43 @@ Receipt proof:
     - first: `prepared_owner.Owner.create` / `render_surface_emitter` at about `990 us`
     - second: remaining direct-normal publication prepare at about `713-715 us`
     - third: host/render upload at about `455-465 us`
+- Accepted upload-shape diagnostics:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-070303-host-upload-shape-1`
+  - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-070303-host-upload-shape-1/howl-term.stderr.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-070303-host-upload-shape-1/howl-render.metrics.ndjson`
+  - direct result: `frames=455`, `fps=45.42`
+  - stable host proof:
+    - `render_prepare_avg_us ~= 1664-1805`
+    - `render_upload_avg_us ~= 439-526`
+    - `render_upload_count_avg = 0`
+    - `render_upload_bytes_avg = 0`
+  - defensible conclusion:
+    - steady-state host upload cost is not texture-resource upload churn
+    - the remaining upload phase is command playback / host realization work
+- Accepted direct-normal subphase diagnostics:
+  - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1`
+  - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-term.stderr.log`
+  - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-render.metrics.ndjson`
+  - direct result: `frames=462`, `fps=46.16`
+  - stable split:
+    - `prepare_surface_avg_us ~= 743-747`
+    - `direct_normal_avg_us ~= 741-746`
+    - `direct_normal_scan_avg_us ~= 675-679`
+    - `direct_normal_backgrounds_avg_us ~= 27`
+    - `direct_normal_decorations_avg_us ~= 30-31`
+    - `direct_normal_raster_avg_us ~= 5-6`
+    - `owner_create_avg_us ~= 969-977`
+  - defensible conclusion:
+    - the remaining direct-normal cost is overwhelmingly scan/append work
+    - backgrounds, decorations, cursor, and raster are not the next meaningful target
+- Rejected per-prepare glyph-cache probe:
+  - owner path: `howl-render/src/text/direct_normal.zig`
+  - dropped receipt dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-070957-glyph-cache-verify-1`
+  - rejection reason:
+    - real host result moved only within noise to `frames=489`, `fps=48.82`
+    - the direct-normal split did not improve cleanly enough to justify acceptance
+  - accountable outcome:
+    - the glyph-cache probe is dropped from acceptance and not part of the live tree
 
 ## Proposed Next Slice Contract Shape
 
@@ -473,7 +510,11 @@ Reason:
     - `direct_normal ~= 0.71 ms`
     - `Owner.create ~= 0.99 ms`
     - `render_upload ~= 0.45-0.46 ms`
+  - and after the accepted upload/direct-normal diagnostics to:
+    - exclude steady-state resource uploads as the main host upload owner
+    - pin the remaining direct-normal work specifically to `scan/append ~= 0.67-0.68 ms`
+    - keep `Owner.create ~= 0.94-0.98 ms` as the next strongest owner
 - One accepted renderer reduction is already proved with both renderer-benchmark and real-host receipts.
 - The next accountable move is not more Python or wrapper work. It is either:
-  - a bounded emission/upload reduction across the prepared emitter and host upload seam, or
-  - a bounded direct-normal reduction only after the emission/upload seam moves again.
+  - a bounded emission / command-playback reduction across the prepared emitter and host upload seam, or
+  - a bounded direct-normal scan reduction now that scan/append is the only meaningful remaining direct-normal subphase.
