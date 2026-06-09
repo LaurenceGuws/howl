@@ -293,9 +293,50 @@ Receipt proof:
 - Defensible conclusion:
   - the redundant-pass removal is accepted: it materially improved the renderer benchmark and slightly improved the real host workload without destabilizing the tree
   - the metrics-cache reduction is accepted: it removed the previously dominant `ensureTextPreparer` tax on the real host path
-  - the sprint is still not done, but the dominant owner has now moved to:
-    - first: `prepared_owner.Owner.create` / render-surface emission
-    - second: remaining `prepareCellsWithSessionOptions` work
+  - the sprint is still not done, but the dominant owner moved to `prepared_owner.Owner.create` / render-surface emission, which justified a narrower prepared-owner slice
+
+- Accepted fresh-payload emission reduction:
+  - owner paths:
+    - `howl-render/src/prepared/owner.zig`
+    - `howl-render/src/prepared/render_surface_emitter.zig`
+  - current-code proof before the reduction:
+    - `Owner.create` always allocates a fresh `RenderSurfacePayload`
+    - `Emitter.emitPrepared(...)` still paid for full `self.*` copy-in and copy-out even on that fresh payload path
+    - the general emitter API must preserve accepted-surface state on failure, and unit coverage proved that removing the general rollback contract is rejected
+  - accepted shape:
+    - keep `emitPrepared(...)` rollback semantics for the general emitter API
+    - add a fresh-payload emission entrypoint for `Owner.create`, where no accepted-surface rollback is needed
+    - preserve resource-store rollback through a copied `next_resources`
+  - timing receipt with owner split:
+    - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-timing-2`
+    - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-timing-2/howl-term.stderr.log`
+    - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-timing-2/howl-render.metrics.ndjson`
+  - measured result with timing enabled:
+    - `frames=80`, `fps=44.38`
+  - stable split after warmup:
+    - `emit_prepared copy_in_avg_us = 0`
+    - `emit_prepared fills_avg_us = 36`
+    - `emit_prepared sprites_avg_us = 275`
+    - `emit_prepared publish_avg_us = 2`
+    - `emit_prepared stage_upload_avg_us = 90`
+    - `emit_prepared atlas_resource_avg_us = 87`
+    - `owner_create_avg_us = 1011`
+    - `prepare_surface_avg_us = 733`
+    - `render_prepare_avg_us = 1787`
+    - `render_upload_avg_us = 482`
+    - `present_submit_avg_us = 99`
+  - clean verification receipt:
+    - run dir: `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-verify-1`
+    - stderr log: `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-verify-1/howl-term.stderr.log`
+    - metrics: `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-verify-1/howl-render.metrics.ndjson`
+  - clean profiled direct result:
+    - `frames=92`, `fps=50.60`
+- Defensible conclusion:
+  - the fresh-payload emission reduction is accepted: it removed the dominant copy tax from the true owner path without weakening the general emitter rollback contract
+  - the dominant costs have moved again, and the next measured owner order is now:
+    - first: remaining `prepareSurface` work at about `733 us`
+    - second: host/render upload work at about `460-482 us`
+    - third: sprite staging and atlas lookup work still inside `render_surface_emitter`
 
 ## Proposed Next Slice Contract Shape
 
@@ -305,9 +346,12 @@ Likely allowed files:
 
 - `loops/ascii-rain-baseline-bottleneck.txt`
 - `research/cache-2026-06-08-ascii-rain-benchmark-surface.md`
-- `howl-render/src/prepared/owner.zig`
+- `howl-render/src/session/text.zig`
+- `howl-render/src/text/frame_preparer.zig`
 - `howl-render/src/prepared/render_surface_emitter.zig`
-- any small adjacent prepared/render-surface owner files strictly required to support a bounded emission reduction
+- `howl-linux-host/src/terminal/context.zig`
+- `howl-linux-host/src/app/processor.zig`
+- any small adjacent owner-true files strictly required to support a bounded prepare or upload reduction
 
 Exact tests and verification:
 
@@ -320,7 +364,8 @@ Exact tests and verification:
 - verify:
   - no crash on the seeded benchmark
   - Howl benchmark receipt remains complete
-  - Howl fps improves against the accepted `18.38 fps` baseline
+  - `render_prepare_avg_us` improves against `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-verify-1/howl-term.stderr.log`
+  - or `render_upload_avg_us` improves against that same accepted receipt
 
 Exact non-goals:
 
@@ -328,7 +373,7 @@ Exact non-goals:
 - no benchmark workload redesign
 - no hidden runtime layer
 - no acceptance of client-array or similar compatibility-profile shortcuts that break the real benchmark
-- no reopening of `ensureTextPreparer` without new contradictory receipts
+- no reopening of the fresh-payload copy tax; that owner is already accepted and committed
 
 Exact stop conditions:
 
@@ -356,5 +401,12 @@ Reason:
     - `prepareSurface ~= 0.39 ms`
     - `Owner.create ~= 1.92 ms`
     - `render_prepare ~= 2.35 ms`
+  - and after the accepted fresh-payload emission reduction to:
+    - `prepareSurface ~= 0.73 ms`
+    - `Owner.create ~= 1.01 ms`
+    - `render_prepare ~= 1.76-1.79 ms`
+    - `render_upload ~= 0.46-0.48 ms`
 - One accepted renderer reduction is already proved with both renderer-benchmark and real-host receipts.
-- The next accountable move is not more Python or wrapper work. It is a render-surface emission slice against `prepared_owner.Owner.create`.
+- The next accountable move is not more Python or wrapper work. It is either:
+  - a bounded `prepareSurface` reduction in the remaining renderer-prepare owners, or
+  - a bounded upload/staging reduction across the prepared emitter and host upload seam.

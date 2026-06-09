@@ -1,0 +1,1 @@
+{"type":"stress_metrics","schema":1,"final":true,"frames":17,"fps":9.26,"p50_us":105071,"p95_us":133249,"p99_us":133249,"max_us":136977}
