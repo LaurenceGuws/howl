@@ -1,0 +1,41 @@
+Emitter sprite after BG next shape
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: pending.
+Reviewer session id: pending.
+Coder session id: none.
+Scope: seed the next exact implementation contract from the accepted corrected-path emitter proof.
+
+Problem statement:
+
+- The accepted `owner-create-after-bg-proof` slice proved that the remaining `owner_create` tax stays inside the emitter seam.
+- The dominant remaining cost is sprite/emitter work:
+  - `sprites_avg_us ~= 407-421`
+  - `sprite_lookup_avg_us ~= 63-65`
+  - `stage_upload_avg_us ~= 93-96`
+  - `atlas_resource_avg_us ~= 97-100`
+  - `alpha_glyph_append_avg_us ~= 30-31`
+- The old alpha-reuse fast-path premise was already rejected before the background-fix restart.
+- The next coding slice must not guess its way back into the same dead end.
+
+Accepted proof receipts:
+
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-term.stderr.log`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-direct-ascii.metrics.ndjson`
+
+Required planning output:
+
+- exact allowed files for the next coding slice
+- exact required shape
+- exact tests
+- exact non-goals
+- exact stop conditions
+- explicit rejection of any byte-walk-first sprite reuse premise unless new source-backed proof overturns the earlier rejection
+
+Current blocker to coding:
+
+- researcher correction for the next emitter/sprite slice is still pending
+- reviewer acceptance of that corrected plan is still pending

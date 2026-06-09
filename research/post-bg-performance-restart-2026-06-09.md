@@ -5,7 +5,7 @@ Role: researcher.
 Status: active.
 Primary researcher session id: `research-2026-06-09-post-bg-performance-01`.
 Sprint: `sprints/2026-06-09-post-bg-performance-restart.md`.
-Loop: `loops/owner-create-after-bg-proof.txt`.
+Loop: `loops/emitter-sprite-after-bg-next-shape.txt`.
 
 ## Sources Read In Order
 
@@ -68,6 +68,20 @@ Loop: `loops/owner-create-after-bg-proof.txt`.
   - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log`
 - PTY-side work is still not the limiter:
   - `howl-main` remains saturated while `howl-term-host` stays near idle in the direct receipt above
+- Accepted owner-create proof receipt:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-term.stderr.log`
+  - narrowed emitter split:
+    - `sprites_avg_us ~= 407-421`
+    - `sprite_lookup_avg_us ~= 63-65`
+    - `stage_upload_avg_us ~= 93-96`
+    - `atlas_resource_avg_us ~= 97-100`
+    - `alpha_glyph_append_avg_us ~= 30-31`
+    - `publish_avg_us ~= 2`
+    - `publish_glyph_fixup_avg_us ~= 1-2`
+  - conclusion:
+    - `owner_create` remains inside the emitter seam
+    - publish fixup is negligible
+    - no new false owner or bucket seam is proved
 
 ## Reference Facts
 
@@ -88,6 +102,10 @@ Loop: `loops/owner-create-after-bg-proof.txt`.
   - `direct_normal_scan_avg_us ~= 658-718`
 - Restored background truth also raised fill playback materially, so any optimization slice must preserve the option that fill work becomes the next owner after a `direct_normal` cut.
 - No new bucket owner is currently proved from the corrected receipts alone, but `render_surface_emitter.zig` remains large enough that the next proof slice must stop immediately if it exposes another false owner.
+- The accepted owner-create proof now narrows the top corrected-path tax further:
+  - the remaining `owner_create` cost is primarily sprite/emitter work
+  - publish fixup is not the next owner
+  - any next emitter slice must account for the previously rejected byte-walk-first alpha reuse premise before coding starts
 
 ## Proposed Shape
 
@@ -96,54 +114,22 @@ Loop: `loops/owner-create-after-bg-proof.txt`.
 - Accept the corrected-path owner order into the live loop.
 - Then authorize one more proof-only split on `owner_create` / emitter work, because that is the top corrected-path subowner on current receipts.
 - Only after that may the loop authorize the first real optimization seam.
+- After the accepted owner-create proof, coding pauses again until research/review cut the next exact emitter/sprite slice against the fresh proof and the earlier rejected alpha-reuse findings.
 
 ## Explicit Ordered Slice Plan
 
 1. `post-bg-performance-rebaseline`
-   - no behavior change
-   - active work is receipt capture and owner-order acceptance only
+   - completed and accepted
 2. `owner-create-after-bg-proof`
+   - completed and accepted
+3. `emitter-sprite-after-bg-next-shape`
+   - planning/research only
    - purpose:
-     - prove whether the corrected-path `owner_create` tax is primarily sprite path, fill publication, atlas-resource work, or another hidden subowner
-   - allowed files:
-     - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
-     - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
-     - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output changes
-   - required shape:
-     - proof-only or env-gated timing split inside the smallest true owner files
-     - no behavior change
-     - no `direct_normal`, `direct_scene`, source-mapping, host, or ABI edits
-   - required tests:
-     - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
-     - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
-     - corrected direct host timing rerun
-   - non-goals:
-     - no optimization yet
-     - no ownership rename unless the proof itself exposes a false owner
-   - stop conditions:
-     - hidden top cost falls outside the allowed files
-     - proof exposes another false owner or bucket seam
-3. `direct-normal-after-bg`
-   - allowed only if accepted corrected receipts after the owner-create proof show `direct_normal` as the next true owner
-   - allowed files:
-     - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
-     - `/home/home/personal/projects/howl/howl-render/src/text/prepare_counters.zig` only if proof fields change
-     - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output changes
-   - required shape:
-     - reduce candidate walk / append work inside the direct-normal owner only
-     - no emitter, source, session, host, or ABI work
-   - required tests:
-     - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
-     - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
-     - corrected direct host timing rerun
-     - corrected clean benchmark rerun
-   - non-goals:
-     - no background-fill optimization
-     - no source-mapping changes
-   - stop conditions:
-     - corrected receipts show background fill or emitter work above `direct_normal`
-     - the cut needs files outside the allowed set
-4. `background-fill-after-bg`
+     - cut the next exact emitter/sprite coding contract from the accepted owner-create proof
+     - avoid repeating the rejected byte-walk-first alpha-reuse premise
+4. `direct-normal-after-bg`
+   - fallback only if fresh planning proves emitter/sprite is no longer the next true coding target
+5. `background-fill-after-bg`
    - fallback if restored background work overtakes `direct_normal`
    - allowed files:
      - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
@@ -179,10 +165,11 @@ Loop: `loops/owner-create-after-bg-proof.txt`.
 
 ## Proof Gaps
 
-- Reviewer acceptance of the new performance restart loop is still pending.
+- The next exact emitter/sprite coding contract is not yet written.
+- Reviewer acceptance of that next coding contract is still pending.
 
 ## Readiness Judgment
 
-Ready to seed one proof-only performance restart slice: `post-bg-performance-rebaseline`.
+Not ready to authorize the next optimization slice yet.
 
-Not ready to authorize an optimization slice yet.
+Ready to seed the next planning/research correction loop: `emitter-sprite-after-bg-next-shape`.
