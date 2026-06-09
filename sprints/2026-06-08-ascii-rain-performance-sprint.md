@@ -274,6 +274,12 @@ Sequential slice queue:
   - stop if a new bucket seam is exposed
   - stop if the slice needs emitter/session/host reshaping
   - stop if receipts regress against the accepted post-owner baseline
+- rejected execution:
+  - coder session id: `coder-2026-06-09-direct-normal-scan-reduction-01`
+  - verdict: rejected at verification
+  - rejection seed:
+    - do not split the shared candidate pipeline into four copied source-specific loops
+    - the next attempt must target a true cheaper decision point or narrower eligibility class inside `direct_normal`
 
 Autonomy rule for this sprint:
 

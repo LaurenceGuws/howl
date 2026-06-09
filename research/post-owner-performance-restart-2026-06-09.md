@@ -214,3 +214,128 @@ Ready to leave research restart once the reviewer re-gates this corrected plan.
 - the next valid coder slice is `direct-normal-scan-reduction`
 - no new bucket owner is currently proved
 - emitter/resource-store should not be retried until a new byte-walk-free cache-hit premise is source-backed
+
+## Failed Direct-Normal Probe Addendum
+
+Date: 2026-06-09.
+Researcher correction session id: `research-2026-06-09-direct-normal-failure-01`.
+Active loop at rejection time: `/home/home/personal/projects/howl/loops/direct-normal-scan-reduction.txt`.
+
+### Sources Read In Order
+
+1. `/home/home/personal/projects/howl/loop/flow.md`
+2. `/home/home/personal/projects/howl/loop/researcher.md`
+3. `/home/home/personal/projects/howl/sprints/current.txt`
+4. `/home/home/personal/projects/howl/loops/direct-normal-scan-reduction.txt`
+5. `/home/home/personal/projects/howl/research/post-owner-performance-restart-2026-06-09.md`
+6. `/home/home/personal/projects/howl/reference-index.md`
+7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+9. Current uncommitted worker diff:
+   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+10. Failed verification receipts:
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-123129-ascii-direct-direct-normal-scan/howl-term.stderr.log`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-123151-ascii/summary.json`
+11. Accepted comparison receipts:
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+
+### Exact File And Line References
+
+- The worker deleted the shared candidate pipeline and replaced it with four source-specific loops:
+  - removed `Candidate` / `Item` path in the diff around `src/text/direct_normal.zig`
+  - new source-specific loops at:
+    - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:177-250`
+- New raw-path per-cell construction:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:177-195`
+- New publication-path per-cell construction:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:197-216`
+- New input-path per-cell construction:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:218-236`
+- New prepared-path per-cell construction:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:238-250`
+- Central classification/append path still terminates at:
+  - `candidateDecision`: `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:252-257`
+  - `appendRenderable`: `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:275-319`
+
+### Current-Code Facts
+
+- The clean benchmark regressed from accepted `79.42 fps` to failed `43.27 fps`:
+  - accepted: `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+  - failed: `/home/home/personal/projects/howl/artifacts/stress/20260609-123151-ascii/summary.json`
+- The direct-normal scan micro-metric did improve modestly in the failed direct receipt:
+  - accepted steady-state: `direct_normal_scan_avg_us ~= 664-671`
+  - failed steady-state: `direct_normal_scan_avg_us ~= 640-644`
+  - failed receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-123129-ascii-direct-direct-normal-scan/howl-term.stderr.log`
+- But whole-frame costs regressed at the same time:
+  - accepted steady-state:
+    - `owner_create_avg_us ~= 938-951`
+    - `emit_prepared sprites_avg_us ~= 265-273`
+    - `stage_upload_avg_us ~= 87-90`
+  - failed steady-state:
+    - `owner_create_avg_us ~= 1025-1036`
+    - `emit_prepared sprites_avg_us ~= 282-291`
+    - `stage_upload_avg_us ~= 93-95`
+  - accepted receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+  - failed receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-123129-ascii-direct-direct-normal-scan/howl-term.stderr.log`
+- The failed receipt also shows the worker did not reduce total prepared-frame work enough to survive verification:
+  - `prepare_surface_avg_us` only moved from accepted `732-738` to failed `710-715`
+  - that gain was overwhelmed by the rest of the frame path
+- There is no receipt evidence of a crash, assertion failure, or correctness fault:
+  - both failed receipts show `returncode: 0`
+  - the log shows no assertion trip or invariant failure
+
+### Reference Facts
+
+- TigerBeetle pressure says this is a rejected implementation cut inside a still-valid owner seam, not proof that the seam itself is false:
+  - the measured local metric moved in the intended direction
+  - the total benchmark moved sharply in the wrong direction
+  - therefore the implementation is wrong or incomplete for the chosen slice, and the rejection must restart from the earliest broken stage
+
+### Owner Roles And Proposed Shape
+
+- Most likely cause of the regression:
+  - the worker removed one shared candidate pipeline and replaced it with four source-specific loops, duplicating hot-path cell/span/text/renderable construction work across source kinds
+  - that cut shaved a small amount off `direct_normal_scan_avg_us`, but it did not reduce enough real frame work to offset the broader whole-frame costs it introduced or failed to remove
+  - exact duplicated hot path is visible at `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig:177-250`
+- Earliest restart stage after rejection:
+  - restart from the **coder stage**, not the research stage
+  - reason:
+    - the active planning premise remains valid: `direct_normal` is still owner-true and still hot
+    - the failed implementation did not expose a new bucket seam
+    - the failed implementation did not disprove the slice target itself, only this specific code shape
+- This failed probe did **not** expose another false owner or bucket seam.
+- This failed probe also did **not** prove a semantic regression.
+  - It introduced semantic-risky duplication inside the owner seam, but the receipts only prove performance regression, not product-correctness breakage.
+
+### Required Assertions
+
+- Any replacement coder attempt should preserve one central source-to-candidate truth or explicitly assert equivalence if it splits by source kind again.
+- If a new fast path is introduced, assert exact eligibility and preserve the same positive/negative-space gates:
+  - continuation rejection
+  - empty/publication-empty rejection
+  - damage-span agreement
+  - normal-only rejection behavior
+
+### Required Tests
+
+- Keep the existing required tests and receipts from the active loop.
+- Add focused proof before another broad rewrite of the direct-normal loop:
+  - benchmark proof or counters if the next cut changes candidate-count or source-kind behavior
+  - direct host timing receipt must be compared directly against the accepted post-owner baseline, not just the failed probe
+
+### Risks
+
+- Repeating source-specific duplication inside `direct_normal` risks widening semantic drift between raw/publication/input/prepared paths even when unit tests still pass.
+- Because this path feeds the real renderer hot loop, a superficially faster local metric can still lose badly on the real benchmark.
+
+### Proof Gaps
+
+- The failed receipts do not isolate which portion of the new source-specific duplication caused the clean-benchmark collapse.
+- They do prove this exact rewrite is not an acceptable cut.
+
+### Readiness Judgment
+
+- Research remains valid overall.
+- The `direct-normal-scan-reduction` slice itself remains valid.
+- The rejected implementation should restart from the coder stage with a narrower rejection seed, not from ownership correction and not from a full research restart.

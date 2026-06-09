@@ -40,6 +40,16 @@ Accepted research input:
 
 Queued slice: `direct-normal-scan-reduction`
 
+Rejected attempt recorded against this slice:
+
+- coder session id: `coder-2026-06-09-direct-normal-scan-reduction-01`
+- reviewer verdict: rejected at verification
+- dropped probe summary:
+  - the worker split one shared candidate path into four source-specific loops
+  - `direct_normal_scan_avg_us` improved modestly
+  - whole-frame receipts regressed materially
+  - this exact rewrite shape is no longer authorized
+
 Allowed files:
 
 - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
@@ -49,6 +59,8 @@ Allowed files:
 Required shape:
 
 - reduce repeated candidate-walk / append work inside the `direct_normal` owner seam
+- do not replace one shared candidate pipeline with four copied source-specific hot loops
+- find a true cheaper decision point or narrower eligibility class inside `direct_normal`
 - preserve current normal-path eligibility and visible-span behavior
 - no emitter/resource-store changes
 - no `session/text.zig` changes
@@ -92,6 +104,7 @@ Stop conditions:
 - stop if implementation needs files outside the allowed set
 - stop if a new bucket seam is exposed
 - stop if the slice needs emitter/session/host reshaping
+- stop if the best idea requires broad source-kind duplication without a proven cheaper decision point
 - stop if clean benchmark or direct host receipts regress against the accepted post-owner baseline
 
 Acceptance gate:
