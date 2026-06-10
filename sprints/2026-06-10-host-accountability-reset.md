@@ -52,7 +52,7 @@ Sequential slice queue:
   - active sprint/loop/research all carry `Performance remains paused pending host accountability reset.`
 
 2. `host-cli-record-seam-deletion`
-- completed accepted execution slice
+- landed partial cleanup, not accepted complete
 - goal:
   - remove `--pty-vt-record-path`, `HOWL_PTY_VT_RECORD_PATH`, and runtime `feed_record` startup plumbing from the host seam
 - allowed files:
@@ -68,17 +68,14 @@ Sequential slice queue:
   - no ABI changes
 - stop conditions:
   - deletion requires shipped PTY/VT/render C ABI changes
-- acceptance receipts:
-  - host commit `4b0cdb9` `delete host record cli seam`
-  - `zig test src/cli/args.zig` passed with:
-    - `parse rejects pty vt record path`
-    - `parse keeps command and debug switches after record seam deletion`
-  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
-  - grep receipt: `HOWL_PTY_VT_RECORD_PATH` no longer appears in the allowed host files
-  - reviewer continuity preserved under reviewer `019eac44-6df8-7e91-842d-c9cffd973aff`
+- current landing truth:
+  - host commit `4b0cdb9` removed CLI/env/startup plumbing from the allowed file set
+  - reviewer rejected this slice as complete because replay owner residue still exists outside the authorized owner set
+  - no active artifact may treat the full host replay seam as deleted yet
+  - next work is a reset around the remaining replay owner residue
 
 3. `host-command-and-log-proof`
-- completed accepted proof slice
+- landed proof receipts, pending truthful re-promotion after replay-owner reset
 - goal:
   - prove host command launch and host log/accounting behavior remain correct after seam deletion
 - allowed files:
@@ -94,7 +91,7 @@ Sequential slice queue:
 - stop conditions:
   - truthful proof requires files outside the allowed host/docs set above
   - proof reveals host command/log behavior still depends on stale benchmark/replay ownership
-- acceptance receipts:
+- current receipt state:
   - command proof receipt:
     - `artifacts/host/20260610-host-command-and-log-proof/command.result.txt`
     - `artifacts/host/20260610-host-command-and-log-proof/command.stderr.log`
@@ -109,8 +106,14 @@ Sequential slice queue:
   - host-doc grep receipt:
     - `artifacts/host/20260610-host-command-and-log-proof/stress-grep.txt`
 
-4. `rain-tooling-decoupling`
-- next active correction slice
+4. `host-replay-owner-residue-reset`
+- next active planning slice
+- goal:
+  - re-prove the current replay owner residue after the landed startup-path cleanup
+  - cut the next truthful host deletion contract for the remaining replay state in `term.zig`, `pty/pump.zig`, and adjacent owners
+
+5. `rain-tooling-decoupling`
+- deferred until replay-owner residue is truthfully resolved
 - goal:
   - remove active Howl ownership of the rain client and cross-terminal launcher
 - allowed files:
@@ -127,14 +130,14 @@ Sequential slice queue:
   - the user wants a specific external repo/project destination that is not yet explicitly seeded
   - truthful decoupling requires code movement outside the allowed tool/docs set above
 
-5. `lower-module-replay-replacement`
+6. `lower-module-replay-replacement`
 - conditional only if replay is still actually needed outside the host seam
 Completion gate:
 
 - active research names the exact files to delete, move, or reshape
 - reviewer accepts the full correction plan
 - the active docs/accountability reset slice lands cleanly
-- the host record/replay seam is deleted from live host ownership
+- the host record/replay seam is truthfully deleted from live host ownership
 - performance remains paused until those corrections land
 
 Active state receipt:

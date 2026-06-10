@@ -1,0 +1,61 @@
+Host command and log proof
+
+Date: 2026-06-10.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `019eb073-8e59-75b3-8819-36a35701b521`.
+Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
+Coder session id: none.
+Scope: prove the host still owns only command launch and host logging/accounting after the record-seam deletion.
+
+Problem statement:
+
+- Performance remains paused pending host accountability reset.
+- The accepted host seam deletion removed:
+  - `--pty-vt-record-path`
+  - `HOWL_PTY_VT_RECORD_PATH`
+  - runtime `feed_record` host startup plumbing
+- The next accountable step is proof:
+  - host command launch still works
+  - host debug logging/accounting still works
+
+Required sources:
+
+- `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+- `/home/home/personal/projects/howl/howl-linux-host/stress.md`
+- `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/stress.md`
+- host-owned arg/startup tests directly proving command launch and debug logging/accounting
+
+Required shape:
+
+- prove `--command` remains accepted and routed through the host launch path
+- prove debug logging/accounting switches remain accepted
+- prove host docs/examples stay command/log only
+- no replay seam reintroduction
+- no rain-tooling movement in this slice
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig test src/cli/args.zig`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- receipt that `howl-linux-host/stress.md` stays command/log only
+
+Non-goals:
+
+- no lower-module replay replacement
+- no benchmark-client movement
+- no ABI changes
+- no performance work
+
+Stop conditions:
+
+- truthful proof requires files outside the allowed host/docs set above
+- proof reveals host command/log behavior still depends on stale benchmark/replay ownership

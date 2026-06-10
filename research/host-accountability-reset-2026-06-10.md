@@ -1,6 +1,6 @@
 Host accountability reset before more ASCII-rain performance work
 
-Status: active accepted research.
+Status: active research ready for review.
 
 User direction receipt:
 
@@ -16,25 +16,34 @@ Active state receipt:
 - Performance remains paused pending host accountability reset.
 - No active artifact may treat rain generation, cross-terminal launch tooling, or replay capture as live host-owned workflow.
 
-Execution receipt:
+Landing truth receipt:
 
-- Accepted slice `host-cli-record-seam-deletion` landed in `howl-linux-host` commit `4b0cdb9` `delete host record cli seam`.
-- The live host executable no longer accepts `--pty-vt-record-path`, no longer reads `HOWL_PTY_VT_RECORD_PATH`, and no longer threads `feed_record` startup through host `main -> Processor -> Context`.
-- Verification receipts:
-  - `cd howl-linux-host && zig test src/cli/args.zig` passed
-  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
-  - grep proof on the allowed host files returned no matches for `HOWL_PTY_VT_RECORD_PATH`
-- Accepted slice `host-command-and-log-proof` produced live host receipts under `artifacts/host/20260610-host-command-and-log-proof/`.
-- The command proof run exited `0` under `--command 'sleep 2'`, which proves the narrowed host still accepts and launches a command through the live harness.
-- The debug proof run exited `0` under `--debug-process-accounting --debug-log-every-ms 100 --command 'sleep 2'` and emitted `howl-debug ...` accounting lines, which proves host logging/accounting still works after the seam deletion.
-- Performance remains paused. The next active slice is `rain-tooling-decoupling`.
+- Landed host commit `4b0cdb9` removed CLI/env/startup replay plumbing from the previously authorized file set.
+- Reviewer `019eac44-6df8-7e91-842d-c9cffd973aff` rejected the slice as complete because replay owner residue still exists outside that file set, including:
+  - `howl-linux-host/src/terminal/term.zig`
+  - `howl-linux-host/src/terminal/pty/pump.zig`
+  - remaining write-only replay owner logic in `howl-linux-host/src/terminal/pty/feed_record.zig`
+- The host command/log proof receipts under `artifacts/host/20260610-host-command-and-log-proof/` are preserved, but they are not yet promoted as an accepted completed slice while the replay-owner reset is active.
+- Performance remains paused. The next active slice is `host-replay-owner-residue-reset`.
+
+Historical note:
+
+- Detailed pre-landing code facts below are navigation only wherever they describe CLI/env/startup replay plumbing that commit `4b0cdb9` already removed.
+- The next active research pass must re-prove current code truth for the remaining replay owner residue before more execution work.
+- The current landed-code section appended below supersedes any older fact in this file where the two conflict.
 
 Docs execution receipt:
 
 - `howl-linux-host/stress.md` is now host-only command/log guidance.
 - Historical rain/replay claims below are pre-reset facts used to justify this sprint, not current active-doc truth.
 
-## Research Subtask: Rain Decoupling And Host Command Boundary Reset
+## Historical Research Subtask: Rain Decoupling And Host Command Boundary Reset
+
+Historical status:
+
+- This section is pre-landing navigation only.
+- It justified the docs reset and startup-plumbing removal, but it is not the current landed-code truth.
+- The active current-code truth for further work is the replay-residue section below.
 
 Role: researcher.
 Session: `research-2026-06-10-host-command-boundary-reset-01`.
@@ -44,7 +53,8 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/host-doc-and-current-surface-reset.txt`
+4. Historical active loop at the time of this research:
+   - `/home/home/personal/projects/howl/loops/done/host-doc-and-current-surface-reset.txt`
 5. `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
@@ -72,7 +82,7 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/tests/ref.rs`
 
-### Exact File And Line References
+### Historical Exact File And Line References
 
 - Current host CLI record seam:
   - `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig:3-12`
@@ -118,7 +128,7 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:205-225`
   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/tests/ref.rs:100-117`
 
-### Current-Code Facts
+### Historical Pre-Landing Code Facts
 
 1. The host executable currently owns an explicit PTY/VT chunk-recording surface.
    - `Args` includes `pty_vt_record_path`, and the parser accepts `--pty-vt-record-path` with a dedicated test proving it: `src/cli/args.zig:3-12`, `14-52`, `74-86`.
@@ -210,7 +220,13 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
    - if PTY/VT capture remains needed, move it out of the host CLI and into a lower-module explicit proof surface owned by `howl-pty` or `howl-vt`
    - Alacritty pressure says this should look like ref-test/benchmark machinery, not host runtime launch behavior
 
-### Explicit Ordered Slice Plan
+### Historical Ordered Slice Plan
+
+Historical status:
+
+- This slice plan was executed or superseded during the docs reset and startup-plumbing cleanup.
+- It is retained only as navigation and receipt history.
+- The active next slice is defined by the replay-residue section below.
 
 1. `host-doc-and-current-surface-reset`
    - Goal:
@@ -220,7 +236,7 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
      - `/home/home/personal/projects/howl/howl-linux-host/stress.md`
      - `/home/home/personal/projects/howl/sprints/current.txt`
      - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md`
-     - `/home/home/personal/projects/howl/loops/host-doc-and-current-surface-reset.txt`
+     - historical loop at that stage: `/home/home/personal/projects/howl/loops/done/host-doc-and-current-surface-reset.txt`
      - `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
    - Non-goals:
      - no host code yet
@@ -316,244 +332,170 @@ Ready for planning and reviewer gating.
 
 The current coupling is now source-backed and precise:
 - real host-code coupling exists in the CLI/env/runtime record seam
-- real workflow coupling exists in `stress.md` and `utils/tools/benchmark_terminals.py`
-- the host build itself is already narrower than the stale docs imply
-- Alacritty pressure supports a host boundary that accepts a command and logs, while keeping recording/replay in explicit test machinery rather than host runtime
 
-So the next accountable work should not resume performance. It should first delete the host record/replay seam and reset the live host guidance, then decouple the rain client from active Howl host ownership.
+## Research Subtask: Remaining Host Replay Owner Residue After `4b0cdb9`
 
-## Researcher subtask: PTY/VT record-replay seam inside the live host path
+Role: researcher.
+Session: `research-2026-06-10-host-replay-owner-residue-reset-01`.
 
-### Sources read in order
+### Sources Read In Order
 
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/host-doc-and-current-surface-reset.txt`
+4. `/home/home/personal/projects/howl/loops/host-replay-owner-residue-reset.txt`
 5. `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
-9. Current Howl sources and docs:
-   - `/home/home/personal/projects/howl/howl-linux-host/stress.md`
-   - `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
+9. Current landed host sources and adjacent owners needed to explain the residue truthfully:
+   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/term.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/pump.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/feed_record.zig`
+   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
    - `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
    - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
-   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
-   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/term.zig`
-   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/feed_record.zig`
-   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/pump.zig`
-   - `/home/home/personal/projects/howl/howl-vt/src/test/terminal_benchmark.zig`
-   - `/home/home/personal/projects/howl/howl-vt/src/test/pty_feed_record.zig`
-10. Reference host/test seams:
+   - `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
+10. Archived cache navigation only:
+   - `/home/home/personal/projects/howl/research/done/cache-2026-06-01-host-owner-inventory.md`
+   - `/home/home/personal/projects/howl/research/done/cache-2026-06-01-terminal-context-owner-map.md`
+11. Alacritty-first references used for host/runtime boundary pressure:
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/cli.rs`
-   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs`
-   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/tests/ref.rs`
-   - `/home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/termio/Termio.zig`
 
-### Exact file and line references
+### Exact File And Line References
 
-- Host CLI/runtime plumbing:
-  - `howl-linux-host/src/cli/args.zig:3-12`
-  - `howl-linux-host/src/cli/args.zig:44-47`
-  - `howl-linux-host/src/cli/args.zig:74-86`
-  - `howl-linux-host/src/main.zig:14-16`
-  - `howl-linux-host/src/main.zig:20-26`
-  - `howl-linux-host/src/main.zig:88-111`
-  - `howl-linux-host/src/app/processor.zig:21-36`
-  - `howl-linux-host/src/app/processor.zig:138-147`
-  - `howl-linux-host/src/terminal/context.zig:138-161`
-  - `howl-linux-host/src/terminal/context.zig:201-207`
-  - `howl-linux-host/src/terminal/context.zig:503-513`
-- Host PTY/VT record ownership:
-  - `howl-linux-host/src/terminal/term.zig:30-35`
-  - `howl-linux-host/src/terminal/pty/feed_record.zig:4-15`
-  - `howl-linux-host/src/terminal/pty/feed_record.zig:18-32`
-  - `howl-linux-host/src/terminal/pty/pump.zig:168-180`
-  - `howl-linux-host/src/terminal/pty/pump.zig:250-287`
-- Host docs after the docs reset:
-  - `howl-linux-host/stress.md:5-13`
-  - `howl-linux-host/stress.md:15-53`
-- Downstream `howl-vt` replay/test coupling:
-  - `howl-vt/src/test/terminal_benchmark.zig:27-31`
-  - `howl-vt/src/test/terminal_benchmark.zig:414-442`
-  - `howl-vt/src/test/pty_feed_record.zig:6-24`
-  - `howl-vt/src/test/pty_feed_record.zig:46-56`
-  - `howl-vt/src/test/pty_feed_record.zig:71-120`
-- Reference facts:
-  - `utils/dev_references/terminals/alacritty/alacritty/src/cli.rs:23-31`
-  - `utils/dev_references/terminals/alacritty/alacritty/src/cli.rs:93-103`
-  - `utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs:208-227`
-  - `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:46-55`
-  - `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:148-155`
-  - `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:221-225`
-  - `utils/dev_references/terminals/alacritty/alacritty_terminal/tests/ref.rs:100-117`
-  - `utils/dev_references/terminals/ghostty/src/termio/Termio.zig:675-693`
+- Current landed host startup and command/log boundary after `4b0cdb9`:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig:3-11`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig:13-47`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig:69-89`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/main.zig:19-25`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/main.zig:27-39`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/main.zig:84-109`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/main.zig:118-123`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig:21-35`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig:137-157`
+- Remaining replay owner residue in current landed host code:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/term.zig:30-35`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig:479-510`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/pump.zig:1-7`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/pump.zig:168-180`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/pump.zig:250-286`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/feed_record.zig:1-11`
+- Current host docs boundary:
+  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:13`
+  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:53`
+- Alacritty reference boundary:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/cli.rs:155-193`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/tests/ref.rs:100-117`
 
-### Current-code facts
+### Current Landed-Code Facts
 
-1. The live host executable still exposes PTY/VT record capture as a first-class runtime option.
-   - `Args` owns `pty_vt_record_path` alongside the real host CLI surface, and parsing accepts `--pty-vt-record-path` directly in the main executable path (`howl-linux-host/src/cli/args.zig:3-12`, `:44-47`).
-   - The CLI test keeps this option alive as accepted host behavior (`howl-linux-host/src/cli/args.zig:74-86`).
+Historical pre-landing facts above in this file described a live host CLI/env/startup replay seam. Those facts are no longer current after landed host commit `4b0cdb9`.
 
-2. The live host also exposes the same seam through environment policy, not just CLI.
-   - `main.zig` reads `HOWL_PTY_VT_RECORD_PATH` and feeds it into normal startup before constructing `Processor` (`howl-linux-host/src/main.zig:14-16`, `:20-26`, `:88-111`).
+1. The live host startup boundary no longer owns replay configuration.
+   - `Args` now owns only `command`, `shell`, `start_path`, duration, debug accounting, debug log cadence, and `window_title`: `src/cli/args.zig:3-11`.
+   - The parser no longer accepts any replay option. It now explicitly rejects `--pty-vt-record-path` in a regression test: `src/cli/args.zig:69-75`.
+   - `main.zig` parses CLI args, loads config overrides, applies child environment policy, initializes process accounting, and opens a tab without any replay env/config input: `src/main.zig:19-25`, `27-39`, `84-109`, `118-123`.
+   - `Processor` no longer stores or forwards any replay path; its live state is host runtime, display, input, pacing, and accounting only: `src/app/processor.zig:21-35`.
 
-3. The record path is threaded through the normal host startup spine, not isolated to a test harness.
-   - `Processor` stores `feed_record_path` as ordinary app state and passes it during `openTab` (`howl-linux-host/src/app/processor.zig:21-36`, `:138-147`).
-   - `TerminalContext.init(...)` receives `feed_record_path`, and `startRuntime(...)` unconditionally tries to start the recorder before PTY startup (`howl-linux-host/src/terminal/context.zig:138-161`, `:503-513`).
+2. `Context` no longer seeds replay state at terminal startup.
+   - `initTerm()` builds the term from launch/session/vt/render state and sets `self.term.pty = .{ .launch = launch };` only: `src/terminal/context.zig:479-497`.
+   - `startRuntime()` resets the title, starts the PTY session, syncs focus, and starts the progress thread. It does not call any replay initializer and does not touch replay file state: `src/terminal/context.zig:499-510`.
 
-4. The terminal owner carries record-file state in the live PTY state.
-   - `PtyState` owns `feed_record_file` and `feed_record_io` fields (`howl-linux-host/src/terminal/term.zig:30-35`).
-   - `Context.deinit()` explicitly tears the recorder down as part of the normal host runtime shutdown (`howl-linux-host/src/terminal/context.zig:201-207`).
+3. The remaining replay owner residue is now dead host state plus a dead PTY-pump branch.
+   - `terminal/term.zig` still gives `PtyState` two replay-specific fields, `feed_record_file` and `feed_record_io`, even though current startup never initializes them: `src/terminal/term.zig:30-35`.
+   - `pty/pump.zig` still imports `feed_record.zig` and still routes every locked transport chunk through `recordChunkLocked(...)` before feeding bytes into VT: `src/terminal/pty/pump.zig:1-7`, `168-177`, `250-286`.
+   - `recordTermDataLocked(...)` still treats a replay-write failure as terminal lifecycle failure by setting `term.pty.lifecycle = .failed`: `src/terminal/pty/pump.zig:281-285`.
+   - `feed_record.writeChunkLocked(...)` is no longer a file opener/closer. It now only attempts to write hex lines if `term.pty.feed_record_file` is non-null, and otherwise returns immediately: `src/terminal/pty/feed_record.zig:4-11`.
 
-5. PTY transport feeding is coupled to recording inside the hot path.
-   - In `pumpTransportSliceWith(...)`, a chunk is recorded before it is fed into VT, and a record-write failure marks the PTY lifecycle failed (`howl-linux-host/src/terminal/pty/pump.zig:168-180`, `:281-287`).
-   - That means record/replay is not passive documentation; it is executable host runtime behavior coupled to live PTY -> VT progress.
+4. In current landed code, that replay path is not a live feature. It is stale residue.
+   - Because `initTerm()` initializes `self.term.pty` with launch only and no current startup owner writes those replay fields, `term.pty.feed_record_file` and `term.pty.feed_record_io` stay null on the live host path: `src/terminal/context.zig:484-489`, `src/terminal/term.zig:30-35`.
+   - That means `feed_record.writeChunkLocked(...)` is a no-op on the landed host path, but the PTY pump still pays the ownership complexity and still carries a dead failure branch for an impossible state: `src/terminal/pty/pump.zig:175-177`, `281-285`; `src/terminal/pty/feed_record.zig:4-11`.
 
-6. The dedicated record owner is a host runtime file, not a test-only artifact.
-   - `feed_record.start(...)` creates the output file and writes the replay header (`howl-linux-host/src/terminal/pty/feed_record.zig:4-15`).
-   - `writeChunkLocked(...)` emits each PTY -> VT chunk as lowercase hex (`howl-linux-host/src/terminal/pty/feed_record.zig:25-32`).
+5. The host docs are now narrower than the remaining code residue.
+   - `stress.md` explicitly says benchmark workloads and replay fixtures are not live host-owned workflow: `howl-linux-host/stress.md:13`, `53`.
+   - So current accountability truth is inverted from the old problem: docs are already narrowed, while stale replay owner logic still lingers in the host source.
 
-7. Before the docs reset slice, host docs presented both ASCII-rain and PTY/VT capture as normal host stress procedure.
-   - That pre-reset state is the historical reason this sprint exists.
-   - The live `stress.md` is now host-only command/log guidance and no longer presents those workflows.
+### Reference Facts
 
-8. `howl-vt` currently consumes the host-produced format directly in benchmark/test code.
-   - `terminal_benchmark.zig` owns replay fixture paths and loads every `.hex` file into benchmark fixtures (`howl-vt/src/test/terminal_benchmark.zig:27-31`, `:414-442`).
-   - `pty_feed_record.zig` hardcodes the same `"howl-pty-vt-hex-v1"` format and replays chunks slice-by-slice into the VT stream harness (`howl-vt/src/test/pty_feed_record.zig:6-24`, `:46-56`).
-   - So the host runtime capture format is not just archived evidence; it is an upstream producer for current VT benchmark surfaces.
+1. Alacritty keeps the host CLI/runtime boundary narrow.
+   - `TerminalOptions` owns working directory, hold policy, and command override, then maps only those into PTY launch options: `alacritty/src/cli.rs:155-193`.
+   - That matches the current Howl direction that the host should accept a command and own logging, not record replay fixtures as a runtime feature.
 
-### Reference facts
+2. Alacritty keeps recording/replay in explicit test machinery, not host runtime startup.
+   - Reference replay loads `alacritty.recording` in `alacritty_terminal/tests/ref.rs` and feeds it directly into the parser inside tests: `alacritty_terminal/tests/ref.rs:100-117`.
+   - That remains the relevant reference pressure for Howl: any replay that still matters belongs in lower-module proof surfaces, not in `howl-linux-host` runtime owners.
 
-1. Alacritty keeps PTY recording behind explicit debug/ref-test surface, not in the ordinary host command contract.
-   - The main CLI exposes `ref_test` as a debug option, not a runtime product contract for normal host startup (`utils/dev_references/terminals/alacritty/alacritty/src/cli.rs:23-31`, `:93-103`).
-   - The PTY event loop takes a `ref_test` boolean and only writes `./alacritty.recording` when that flag is enabled (`utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:46-55`, `:148-155`, `:221-225`).
-   - The reference consumer lives under `alacritty_terminal/tests/ref.rs`, where the recording is read from a test fixture directory and fed to the parser in ref tests (`utils/dev_references/terminals/alacritty/alacritty_terminal/tests/ref.rs:100-117`).
-   - Alacritty window startup passes `config.debug.ref_test` into the PTY event loop as a debug/testing concern, not as the main host command/product seam (`utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs:208-227`).
+### Owner Roles And Proposed Shape
 
-2. Ghostty also keeps PTY-byte recording outside the normal host command seam.
-   - The cited live path records PTY bytes only when an inspector is active; otherwise the termio stream consumes the whole slice directly (`utils/dev_references/terminals/ghostty/src/termio/Termio.zig:675-693`).
-   - That is selective diagnostic instrumentation, not part of the default host command surface.
+#### Current landed owner truth
 
-3. TigerBeetle pressure cuts against the current Howl shape.
-   - The current host seam mixes product runtime work with replay-fixture production and makes a file-write failure able to poison PTY lifecycle state. That violates the repo’s stated owner truth and TigerBeetle’s directness/safety pressure for explicit bounded owners and non-fake structure.
+- `howl-linux-host/src/main.zig`, `src/app/processor.zig`, and `src/terminal/context.zig` now correctly own host command launch, config override, startup, wake, and logging/accounting without replay startup plumbing.
+- `howl-linux-host/src/terminal/pty/pump.zig` still incorrectly owns replay recording as part of the transport-to-VT hot path.
+- `howl-linux-host/src/terminal/term.zig` still incorrectly stores replay file state in `PtyState`.
+- `howl-linux-host/src/terminal/pty/feed_record.zig` is now only a stale helper for those two stale owners.
 
-### Owner roles and proposed shape
+#### Proposed shape
 
-1. Host role:
-   - accept command
-   - launch child through `howl-pty`
-   - feed live bytes to `howl-vt`
-   - log host/runtime receipts
-   - stop
+1. Delete replay state from `PtyState`.
+2. Delete replay recording from the PTY pump hot path.
+3. Delete `terminal/pty/feed_record.zig` entirely if no other current host owner remains.
+4. Keep lower-module replay questions deferred. This slice is host seam deletion only.
 
-2. `howl-linux-host` should not own PTY/VT replay-fixture production in the live host command seam.
-   - The current `feed_record_path` plumbing is stale benchmark/testing coupling, not host product shape.
-   - The exact hostile seam is the thread from `Args.pty_vt_record_path` and `HOWL_PTY_VT_RECORD_PATH` through `Processor`, `TerminalContext`, `PtyState`, and `pty/pump.zig`.
+### Explicit Ordered Next Slice
 
-3. The replay format belongs in an explicit proof surface, not in host runtime startup.
-   - If record/replay remains useful, it should be produced by a dedicated benchmark/test tool or fixture-preparation path outside the live host runtime seam.
-   - The host should not open replay files, carry replay file handles in terminal state, or fail PTY lifecycle because fixture capture failed.
+Next slice name: `host-replay-owner-residue-deletion`
 
-4. The remaining ASCII-rain coupling outside the live host doc is further evidence that the host seam is carrying stale benchmark ownership.
-   - This subtask is bounded to PTY/VT record-replay, but the remaining shared tooling still ties host benchmarking to a Howl-coupled rain generator.
-   - The live `stress.md` no longer ties host benchmarking to a rain generator; the remaining coupling is in shared tooling and deferred historical artifacts.
-   - That coupling should be handled in separate slices after the replay seam is removed from the live host path.
-
-### Explicit ordered slice plan
-
-1. Strip the record/replay option out of the live host executable surface.
-   - Allowed owner targets:
-     - `howl-linux-host/src/cli/args.zig`
-     - `howl-linux-host/src/main.zig`
-     - `howl-linux-host/src/app/processor.zig`
-     - `howl-linux-host/src/terminal/context.zig`
-     - `howl-linux-host/src/terminal/term.zig`
-   - Remove:
-     - `Args.pty_vt_record_path`
-     - `--pty-vt-record-path`
-     - `HOWL_PTY_VT_RECORD_PATH`
-     - `feed_record_path` plumbing through host startup
-     - record-file fields from live `PtyState`
-
-2. Delete the host runtime recorder owner and detach the PTY hot path from replay production.
-   - Allowed owner targets:
-     - `howl-linux-host/src/terminal/pty/feed_record.zig`
-     - `howl-linux-host/src/terminal/pty/pump.zig`
-   - Remove:
-     - file creation/header writing
-     - per-chunk hex output
-     - lifecycle failure on recorder write errors
-     - record-before-feed coupling in `pumpTransportSliceWith(...)`
-
-3. Correct host docs so the host command boundary is honest again.
-   - Allowed owner targets:
-     - `howl-linux-host/stress.md`
-   - Remove the PTY-to-VT chunk-capture instructions from host stress guidance.
-   - Rewrite host guidance around the user’s narrow host role:
-     - accept command
-     - log
-
-4. Re-home replay-fixture production/consumption into explicit non-host proof surfaces.
-   - This requires a second planning pass because the current active task is bounded to proving and removing the stale host seam first.
-   - Candidate follow-up owners:
-     - `howl-vt/src/test/terminal_benchmark.zig`
-     - `howl-vt/src/test/pty_feed_record.zig`
-   - Decision to make in the follow-up plan:
-     - keep the replay format but source fixtures from a dedicated tool/project
-     - or delete the replay format entirely and replace it with another explicit VT proof surface
-
-5. Re-plan the rain workload separately from host ownership.
-   - This is adjacent but distinct from PTY/VT replay removal.
-   - The active user direction says the rain app should be its own project and not coupled to Howl host. That needs its own research slice over build/docs/tooling ownership after the record/replay seam is corrected.
-
-### Required assertions/tests
-
-1. Host CLI tests:
-   - remove the `parse accepts pty vt record path` test because it currently proves stale host behavior (`howl-linux-host/src/cli/args.zig:74-86`)
-   - replace it with negative-space coverage proving the stale option is rejected
-
-2. Host runtime tests/builds:
-   - host build/install must still pass after removing `feed_record_path` plumbing
-   - startup with `--command` must still exercise the live PTY path without any replay-file state
-
-3. PTY pump safety:
-   - assert that PTY transport feed no longer depends on replay writer success to keep lifecycle valid
-   - if a helper remains, it must only feed VT bytes, not combine feed and side-band fixture output
-
-4. VT proof surface:
-   - if replay stays, add or preserve tests proving the format owner outside the host
-   - if replay is deleted, replace it with a direct VT proof surface before removing coverage
+- Goal:
+  - truthfully delete the remaining replay owner residue from the live host seam after `4b0cdb9`
+- Allowed files:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/term.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/pump.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/feed_record.zig`
+- Required shape:
+  - remove `feed_record_file` and `feed_record_io` from `PtyState`
+  - remove replay recording from `pumpTransportSliceWith(...)` / `RealTransportOps`
+  - remove the dead lifecycle-failure branch that exists only for replay write failure
+  - delete `feed_record.zig` if no current host owner remains after the above removals
+  - preserve the bounded transport/feed behavior, lock posture, and existing non-replay semantics
+- Required tests:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+  - `cd /home/home/personal/projects/howl && rg -n "feed_record|feed_record_file|feed_record_io" howl-linux-host/src`
+    - expected result after acceptance: no matches
+- Non-goals:
+  - no lower-module replay replacement
+  - no `howl-vt` replay/test changes
+  - no `utils/tools/*` movement
+  - no renewed performance work
+  - no host docs rewrite in the same slice
+- Stop conditions:
+  - deletion requires changing shipped PTY/VT/render C ABI
+  - deletion proves some other current host owner still initializes replay state outside the three-file set
+  - deletion proves a lower-module replay surface must land in the same slice for host command/log startup to remain valid
 
 ### Risks
 
-1. `howl-vt` benchmark/test code currently depends on host-generated `.hex` fixtures, so host cleanup alone can strand the existing replay benchmark surface.
+1. Historical tests and archives still mention replay.
+   - That is expected and not itself a blocker. The active question here is live host ownership, not archive wording.
 
-2. `stress.md` currently mixes two separate cleanup problems:
-   - record/replay host coupling
-   - ASCII-rain host coupling
-   If these are edited in one unbounded coder pass, scope drift is likely.
+2. `cli/args.zig` still contains a rejection test for the removed flag.
+   - That is not live runtime replay ownership, but it is historical cleanup residue. It can be cleaned in a later host-accountability slice if the reviewer wants the host tests fully free of removed-surface references.
 
-3. The old benchmark loop already leaked bad accountability into host docs and CLI shape. Any coder slice that “just removes the flag” without rewriting the active docs and tests leaves stale truth behind.
+### Proof Gaps
 
-### Proof gaps
+1. This research pass does not decide whether the lower-module replay surface should survive under `howl-vt`.
+   - Current evidence only proves it must not live in the host seam.
 
-1. This bounded research does not yet prove the best replacement owner for replay-fixture generation.
-   - It proves only that the live host is the wrong owner.
+2. This research pass does not yet cover rain-tooling decoupling.
+   - That remains a later ordered slice after the host replay residue is deleted.
 
-2. This bounded research does not yet map the full build/tooling surface for turning ASCII-rain into an external benchmark client/project.
-   - That needs separate research over build roots and tooling ownership.
+### Readiness Judgment
 
-3. I did not read every archived benchmark script/tool in this subtask because the assignment was bounded to the PTY/VT record-replay seam inside the host path.
+Ready for reviewer gating and bounded execution.
 
-### Readiness judgment
-
-Ready for planning and review on the host record/replay removal.
-
-The evidence is sufficient to say:
-- the live host executable still owns stale PTY/VT replay-fixture production
-- that seam is benchmark/testing coupling, not host product shape
-- Alacritty and Ghostty keep analogous byte recording behind explicit debug/test/inspector surfaces rather than in the normal host command boundary
-- the first correction pass should remove record/replay from the live host path before any further performance or benchmark work resumes
+The landed host code after `4b0cdb9` is now re-proved precisely:
+- startup replay plumbing is gone
+- the remaining residue is confined to `term.zig`, `pty/pump.zig`, and `pty/feed_record.zig`
+- the next honest step is deletion of that residue, not performance work and not a broad lower-module replay redesign
