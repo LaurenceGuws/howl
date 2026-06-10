@@ -14,7 +14,8 @@ User direction receipt:
 Active state receipt:
 
 - Performance remains paused pending host accountability reset.
-- No active artifact may treat rain generation, cross-terminal launch tooling, or replay capture as live host-owned workflow.
+- The live host replay seam is deleted from host ownership.
+- No active artifact may treat rain generation or cross-terminal launch tooling as live host-owned workflow.
 
 Landing truth receipt:
 
@@ -25,6 +26,19 @@ Landing truth receipt:
   - remaining write-only replay owner logic in `howl-linux-host/src/terminal/pty/feed_record.zig`
 - The host command/log proof receipts under `artifacts/host/20260610-host-command-and-log-proof/` are preserved, but they are not yet promoted as an accepted completed slice while the replay-owner reset is active.
 - Performance remains paused. The next active slice is `host-replay-owner-residue-reset`.
+
+Replay residue deletion receipt:
+
+- Accepted host commit `7d511c2` deleted the remaining replay residue from:
+  - `howl-linux-host/src/terminal/term.zig`
+  - `howl-linux-host/src/terminal/pty/pump.zig`
+  - `howl-linux-host/src/terminal/pty/feed_record.zig`
+- Reviewer `019eac44-6df8-7e91-842d-c9cffd973aff` accepted the bounded three-file deletion slice.
+- Verification receipts:
+  - `cd howl-linux-host && zig build test` passed
+  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
+  - `rg -n "feed_record|feed_record_file|feed_record_io" howl-linux-host/src` returned no matches
+- The next active slice is `rain-tooling-decoupling`.
 
 Historical note:
 

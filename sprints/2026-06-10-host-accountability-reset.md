@@ -106,14 +106,19 @@ Sequential slice queue:
   - host-doc grep receipt:
     - `artifacts/host/20260610-host-command-and-log-proof/stress-grep.txt`
 
-4. `host-replay-owner-residue-reset`
-- next active planning slice
+4. `host-replay-owner-residue-deletion`
+- completed accepted execution slice
 - goal:
-  - re-prove the current replay owner residue after the landed startup-path cleanup
-  - cut the next truthful host deletion contract for the remaining replay state in `term.zig`, `pty/pump.zig`, and adjacent owners
-
+  - truthfully delete the remaining replay owner residue from the live host seam after `4b0cdb9`
+- acceptance receipts:
+  - reviewer `019eac44-6df8-7e91-842d-c9cffd973aff` accepted the three-file deletion slice
+  - `howl-linux-host` commit `7d511c2` `delete replay owner residue`
+  - `cd howl-linux-host && zig build test` passed
+  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
+  - `rg -n "feed_record|feed_record_file|feed_record_io" howl-linux-host/src` returned no matches
+  - the live host replay seam is now truthfully deleted from host ownership
 5. `rain-tooling-decoupling`
-- deferred until replay-owner residue is truthfully resolved
+- next active correction slice
 - goal:
   - remove active Howl ownership of the rain client and cross-terminal launcher
 - allowed files:
@@ -143,4 +148,5 @@ Completion gate:
 Active state receipt:
 
 - Performance remains paused pending host accountability reset.
-- No active artifact may present benchmark workloads, replay capture, or cross-terminal launch tooling as live host-owned workflow.
+- The live host replay seam is deleted from host ownership.
+- No active artifact may present benchmark workloads or cross-terminal launch tooling as live host-owned workflow.

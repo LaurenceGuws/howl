@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/host-replay-owner-residue-reset.txt`
+- `loops/rain-tooling-decoupling.txt`
 
 Rule:
 
