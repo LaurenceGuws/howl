@@ -23,6 +23,8 @@ Sources read in order:
 6. `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
 7. `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
 8. `/home/home/personal/projects/howl/howl-vt/src/simulation/scrollback.zig`
+9. `/home/home/personal/projects/howl/howl-render/build.zig.zon`
+10. local tracked/untracked font asset paths under `/home/home/personal/projects/howl/howl-render/`
 
 Current proof receipts:
 
@@ -81,3 +83,13 @@ Risks:
 - repo-owned fonts may require explicit licensing review
 - a fixture change may expose more render failures once the skipped test actually runs
 - render and VT failures should stay separate slices so test accountability remains attributable
+
+Fixture accountability correction:
+
+- local font-like assets found under `howl-render/zig-pkg/` and `howl-render/vendor/` are not accountable repo-owned fixtures for default repo validation
+- `howl-render/build.zig.zon` ships only `build.zig`, `build.zig.zon`, `include`, and `src`, so the accountable smallest shape is to add tracked fixture files under `howl-render/src/text/font/ft_hb/testdata/`
+- accepted fixture target paths for slice 1 are:
+  - `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/primary.ttf`
+  - `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/symbols.ttf`
+  - `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/LICENSE.txt`
+- if lawful provenance for those exact tracked paths cannot be established, slice 1 must stop and record the licensing blocker instead of inventing a different fixture mechanism

@@ -28,7 +28,9 @@ Sequential slice queue:
 - allowed files:
   - `/home/home/personal/projects/howl/howl-render/build.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/support_test.zig`
-  - repo-local render test fixture paths added under `howl-render/` if required
+  - `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/primary.ttf`
+  - `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/symbols.ttf`
+  - `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/LICENSE.txt`
   - `/home/home/personal/projects/howl/loops/render-test-fixture-accountability.txt`
   - `/home/home/personal/projects/howl/research/2026-06-10-test-accountability-research.md`
 - required shape:
@@ -36,14 +38,14 @@ Sequential slice queue:
   - repo test defaults must supply deterministic font fixtures
   - override flags may remain optional, but not required for normal repo validation
 - required tests:
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test`
-  - proof that the prior skip path no longer triggers in default repo test execution
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "provider loads fallback face for symbol glyph with primary present"`
+  - proof that the command above runs the named test under repo-default build options without `error.SkipZigTest`
 - non-goals:
   - no render behavior fixes yet unless needed to keep the font proof runnable
   - no performance changes
 - stop conditions:
-  - repo-owned font fixtures would violate licensing or cannot be sourced lawfully
-  - reference-backed alternative proof shape is required
+  - repo-owned fixtures cannot be added at the exact `src/text/font/ft_hb/testdata/` paths with explicit license text
+  - if a reference-backed alternative to local tracked font fixtures is required, stop after recording the blocking reference and do not invent a different mechanism inside this slice
 
 2. `render-test-regression-repair`
 - goal:

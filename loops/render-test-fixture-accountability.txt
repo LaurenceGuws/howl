@@ -4,8 +4,8 @@ Date: 2026-06-10.
 Role owner: orchestrator.
 Status: active.
 Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
-Researcher session id: pending fresh delegation.
-Reviewer session id: pending.
+Researcher session id: `019eb2c0-f2c9-7da1-ac2d-eab59be18679`.
+Reviewer session id: `019eb2c1-0991-7d73-9724-463ca0289931`.
 Coder session id: none.
 
 Goal:
@@ -16,7 +16,9 @@ Allowed files:
 
 - `/home/home/personal/projects/howl/howl-render/build.zig`
 - `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/support_test.zig`
-- repo-local render test fixture paths added under `/home/home/personal/projects/howl/howl-render/` if required
+- `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/primary.ttf`
+- `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/symbols.ttf`
+- `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/testdata/LICENSE.txt`
 - `/home/home/personal/projects/howl/research/2026-06-10-test-accountability-research.md`
 - `/home/home/personal/projects/howl/loops/render-test-fixture-accountability.txt`
 
@@ -29,8 +31,8 @@ Required shape:
 
 Required tests:
 
-- `cd /home/home/personal/projects/howl/howl-render && zig build test`
-- direct proof that the previous `error.SkipZigTest` path in `support_test.zig` is no longer the default repo behavior
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "provider loads fallback face for symbol glyph with primary present"`
+- direct proof that the command above runs the named test under repo-default build options without `error.SkipZigTest`
 
 Non-goals:
 
@@ -41,5 +43,5 @@ Non-goals:
 
 Stop conditions:
 
-- lawful repo-owned test font fixtures cannot be added
-- the reference-backed correct shape requires a different deterministic fixture mechanism than local fonts
+- lawful repo-owned fixtures cannot be added at the exact `src/text/font/ft_hb/testdata/` paths above with explicit license text
+- if a reference-backed alternative to local tracked font fixtures is required, stop after recording the blocking reference and do not invent a different mechanism inside this slice
