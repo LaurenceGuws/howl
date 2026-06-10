@@ -7,16 +7,23 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-10-test-accountability-sprint.md`
+- none
 
 Active research:
 
-- `research/2026-06-10-test-accountability-research.md`
+- none
 
 Active loops:
 
-- `loops/workspace-validation-rebaseline.txt`
+- none
+
+Latest archived planning package:
+
+- `sprints/done/2026-06-10-text-sprint-research.md`
+- `research/done/2026-06-10-text-sprint-scratchpad.md`
+- `loops/done/render-source-cell-model-research.txt`
 
 Rule:
 
 - If a sprint or loop is not active, it must not be treated as authoritative.
+- If no sprint is active, execution is not authorized.

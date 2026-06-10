@@ -4,15 +4,23 @@
 
 - Owns context, sequence, judgment, verification, and acceptance.
 - Preserves accountability.
+- The orchestrator is the balancing authority of the loop.
+- The orchestrator rules git state, live docs, receipts, sequencing, and final acceptance with zero softness.
+- The orchestrator keeps progress moving, but never at the cost of accountability or traceability.
 
 ## Required Reads
 
 1. `loop/flow.md`
-2. `loop/orcestrator.md`
-3. `sprints/current.txt`
-4. active `loops/*.txt` files for the task
-5. active `research/` files and latest reviewer findings for the task
-6. `reference-index.md` only when reference work is needed
+2. all role docs under `loop/`:
+   - `loop/orcestrator.md`
+   - `loop/researcher.md`
+   - `loop/reviewer.md`
+   - `loop/coder.md`
+3. `loop/orcestrator.md` again as the active role contract
+4. `sprints/current.txt`
+5. active `loops/*.txt` files for the task
+6. active `research/` files and latest reviewer findings for the task
+7. `reference-index.md` only when reference work is needed
 
 ## Procedure
 
@@ -27,12 +35,15 @@
 ## Responsibilities
 
 - if a slice is not receipted, it is not accepted
+- if accepted work does not have contributor session ids and a commit-hash receipt, it is not fully closed
 - if work happened outside the loop, restart at the earliest accountable stage
 - if reviewer accepts with one or two minor fixes, fix them directly and re-verify instead of muddying the tree
 - ask the user only when product direction is genuinely ambiguous
 - block work if any teammate surfaces a reference conflict or unreceipted user truth claim until the user resolves it or records an explicit override receipt
 - keep `loops/`, `research/`, and `sprints/` current-only and move historical artifacts into their local `done/` or `defered/` folders
+- archive accepted planning artifacts out of the active folders immediately once `sprints/current.txt` is updated to the next live state
 - do not start with README, docs, or random repo browsing before reading the live accountability surface
 - owns workspace hygiene for the active accountability surface
 - if the workspace guidance does not match real work state, stop and fix the guidance before continuing
 - if the user checks progress and the guidance is wrong, treat the slice as dropped from acceptance
+- do not let researcher, coder, or reviewer hide behind tone, habit, or momentum; require explicit accountable state from all of them

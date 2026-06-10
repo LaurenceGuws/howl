@@ -29,6 +29,12 @@ Planning completion gate:
   - exact non-goals
   - exact stop conditions
   - accountable planning session ids
+- Accepted planning artifacts must record:
+  - orchestrator session id
+  - researcher/worker session id
+  - reviewer session id
+  - commit-hash receipt status
+- If the accepted planning package is documentation-only and no dedicated commit exists yet, the artifact must say so explicitly and the orchestrator must close that receipt when archiving the accepted package.
 
 ## Sprint Execution
 
@@ -38,7 +44,7 @@ Planning completion gate:
 
 Execution order:
 
-1. Orchestrator seeds the next accepted slice from the sprint queue.
+1. Orchestrator seeds the next accepted slice from the sprint queue with the receipt fields the coder and reviewer will require, including coder/worker session id and commit-hash demand.
 2. Coder implements only that slice.
 3. The same reviewer from planning reviews the actual diff and gates acceptance or rejection.
 4. Orchestrator verifies the slice after the review verdict.
@@ -79,6 +85,7 @@ When this stop is triggered:
 
 - Accountability is the workflow.
 - Every accepted slice needs receipts.
+- Accepted planning packages also need receipts. The orchestrator must either record the commit-hash receipt on acceptance or record the exact missing receipt as an open handoff that blocks archival completion.
 - Work outside the loop is dropped and redone from the earliest missing accountable stage.
 - Live accountability files are read first.
 - Broad repo doc browsing before reading the live accountability surface is a workflow violation.
@@ -105,9 +112,14 @@ When this stop is triggered:
 Before any non-trivial work, read in this order:
 
 1. `loop/flow.md`
-2. the role doc under `loop/`
-3. `sprints/current.txt`
-4. active `loops/*.txt` files explicitly seeded for the task
-5. active `research/` files explicitly seeded for the task
+2. all role docs under `loop/`:
+   - `loop/orcestrator.md`
+   - `loop/researcher.md`
+   - `loop/reviewer.md`
+   - `loop/coder.md`
+3. the role doc for the current task, reread with special attention
+4. `sprints/current.txt`
+5. active `loops/*.txt` files explicitly seeded for the task
+6. active `research/` files explicitly seeded for the task
 
 Only after that may the role read additional source, project docs, or external references required by the task.
