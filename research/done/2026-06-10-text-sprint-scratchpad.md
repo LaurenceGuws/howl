@@ -1,7 +1,7 @@
 Text sprint scratchpad
 
 Date: 2026-06-10.
-Status: reviewer-accepted planning package; archive after current index handoff.
+Status: archived reviewer-accepted planning package.
 Role owner: researcher.
 Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
 Researcher session id: `research-2026-06-10-text-sprint-01`.

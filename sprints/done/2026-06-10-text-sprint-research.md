@@ -1,7 +1,7 @@
 Text sprint research and review
 
 Date: 2026-06-10.
-Status: accepted planning package; archive after current index handoff.
+Status: archived accepted planning package.
 Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
 Researcher session id: `research-2026-06-10-text-sprint-01`.
 Reviewer session id: `review-2026-06-10-text-sprint-01`.

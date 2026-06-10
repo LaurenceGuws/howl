@@ -2,7 +2,7 @@ Text sprint research orchestration
 
 Date: 2026-06-10.
 Role owner: orchestrator.
-Status: accepted planning loop; archive after current index handoff.
+Status: archived accepted planning loop.
 Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
 Researcher session id: `research-2026-06-10-text-sprint-01`.
 Reviewer session id: `review-2026-06-10-text-sprint-01`.
