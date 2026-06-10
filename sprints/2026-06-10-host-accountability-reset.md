@@ -135,40 +135,50 @@ Sequential slice queue:
   - the user wants a specific external repo/project destination that is not yet explicitly seeded
   - truthful decoupling requires code movement outside the allowed tool/docs set above
 
-6. `rain-tooling-delete-from-howl-workspace`
+6. `rain-bench-package-root-split`
 - next active execution slice
 - goal:
-  - delete the in-repo rain benchmark client and launcher from current Howl ownership now that host replay/runtime coupling is gone
+  - separate the rain benchmark client into its own in-workspace product boundary without deleting it and without leaving it as live Howl host/workspace ownership
 - allowed files:
+  - `/home/home/personal/projects/howl/build.zig`
   - `/home/home/personal/projects/howl/utils/tools/build.zig`
   - `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig`
   - `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig`
   - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+  - `/home/home/personal/projects/howl/rain-bench/build.zig`
+  - `/home/home/personal/projects/howl/rain-bench/ascii_rain_stress.zig`
+  - `/home/home/personal/projects/howl/rain-bench/visual_rain_stress.zig`
+  - `/home/home/personal/projects/howl/rain-bench/benchmark_terminals.py`
   - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md`
-  - `/home/home/personal/projects/howl/loops/rain-tooling-delete-from-howl-workspace.txt`
+  - `/home/home/personal/projects/howl/loops/rain-bench-package-root-split.txt`
   - `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
 - required shape:
-  - remove all `stress:rain*` step definitions and wiring from `utils/tools/build.zig`
-  - delete the two Zig rain binaries and the Python cross-terminal launcher
-  - rewrite the active sprint/loop/research text so it records deletion as the chosen outcome, not `move/archive/remove`
-  - keep performance paused until an external benchmark-client project/path is explicitly seeded later
+  - create `rain-bench/` as a top-level sibling package root
+  - move the current rain build owner and the three rain product files from `utils/tools/` to `rain-bench/`
+  - keep the package-local rain build steps inside `rain-bench/build.zig`
+  - remove root `build.zig` aggregation of `stress:rain*`
+  - rewrite the active sprint/loop/research text so the accepted target is `separate in-workspace product boundary` rather than deletion or live Howl ownership
+  - leave host docs and host code untouched
 - required tests and receipts:
-  - `cd /home/home/personal/projects/howl/utils/tools && zig build`
+  - `cd /home/home/personal/projects/howl/rain-bench && zig build stress:rain:build`
   - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
-  - `cd /home/home/personal/projects/howl && rg -n "stress:rain|ascii_rain_stress|visual_rain_stress|benchmark_terminals\\.py" utils/tools`
-    - expected result after acceptance: no matches
-  - `cd /home/home/personal/projects/howl && rg -n "ascii_rain_stress|visual_rain_stress|benchmark_terminals\\.py|stress:rain" sprints/current.txt sprints/2026-06-10-host-accountability-reset.md loops/rain-tooling-delete-from-howl-workspace.txt research/host-accountability-reset-2026-06-10.md howl-linux-host/stress.md`
-    - expected result after acceptance: no matches except historical archive files outside the active surface
+  - `cd /home/home/personal/projects/howl && rg -n "package_dir = \\\"utils/tools\\\"|stress:rain" build.zig`
+    - expected result after acceptance: no root `stress:rain*` mappings remain
+  - `cd /home/home/personal/projects/howl && rg -n "ascii_rain_stress|visual_rain_stress|benchmark_terminals\\.py" utils/tools`
+    - expected result after acceptance: no rain-product file definitions remain in `utils/tools`
+  - `cd /home/home/personal/projects/howl && rg -n "delete-from-workspace|delete the in-repo rain|deleted from the Howl workspace" sprints/2026-06-10-host-accountability-reset.md loops/rain-bench-package-root-split.txt research/host-accountability-reset-2026-06-10.md`
+    - expected result after acceptance: no stale delete-direction claims remain in the active surface
 - non-goals:
-  - no new benchmark wrapper inside Howl
   - no host/runtime/render/pty/vt code changes
-  - no archived artifact cleanup outside the active surface
   - no renewed performance work
-  - no external repo creation or migration
+  - no launcher behavior redesign beyond path movement needed for the package split
+  - no external repo creation
+  - no historical archive cleanup outside the active files above
 - stop conditions:
-  - `utils/tools/build.zig` still needs to keep some non-rain live tool owner that cannot be separated inside the allowed file set
-  - truthful deletion requires changing active files outside the allowed set above
-  - reviewer concludes the external-client reseed must be specified before deletion can be accepted
+  - truthful package split requires changing active files outside the allowed set above
+  - `utils/tools/build.zig` still owns non-rain live tooling that cannot move in this slice
+  - the package split reveals a broader false owner than `utils/tools` that must be planned first
+  - reviewer concludes the launcher defaults must be decoupled from repo-relative Howl paths in the same slice for the boundary to be honest
 
 7. `lower-module-replay-replacement`
 - conditional only if replay is still actually needed outside the host seam

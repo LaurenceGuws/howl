@@ -16,6 +16,7 @@ Active state receipt:
 - Performance remains paused pending host accountability reset.
 - The live host replay seam is deleted from host ownership.
 - No active artifact may treat rain generation or cross-terminal launch tooling as live host-owned workflow.
+- User clarification supersedes the prior delete outcome: rain tooling is its own product, not something to delete.
 
 Landing truth receipt:
 
@@ -39,7 +40,7 @@ Replay residue deletion receipt:
   - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
 - `rg -n "feed_record|feed_record_file|feed_record_io" howl-linux-host/src` returned no matches
 - The old `rain-tooling-decoupling` loop is not yet reviewer-clean enough for coding.
-- The next active slice is `rain-tooling-decoupling-reset`.
+- The next active slice is `rain-product-boundary-reset`.
 
 Historical note:
 
@@ -692,3 +693,216 @@ The current post-replay-deletion state is now specific enough to stop hedging:
 - the host seam is already narrowed
 - the remaining stale ownership is fully concentrated in `utils/tools/*` plus the active reset text
 - the next honest outcome inside current file ownership is deletion from the Howl workspace, not another temporary coupling layer
+
+## Research Subtask: Rain Product Boundary Reset After User Clarification
+
+Status:
+
+- This section supersedes the prior delete-from-workspace outcome above.
+- The prior delete outcome is invalid under the explicit user direction now recorded in the active loop:
+  - rain tooling is its own product
+  - it is not to be deleted
+  - it must not remain coupled as live Howl host ownership
+
+Role: researcher.
+Session: `research-2026-06-10-rain-product-boundary-reset-01`.
+
+### Sources Read In Order
+
+1. `/home/home/personal/projects/howl/loop/flow.md`
+2. `/home/home/personal/projects/howl/loop/researcher.md`
+3. `/home/home/personal/projects/howl/sprints/current.txt`
+4. `/home/home/personal/projects/howl/loops/rain-product-boundary-reset.txt`
+5. `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+6. `/home/home/personal/projects/howl/reference-index.md`
+7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
+8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
+9. Archived cache navigation only:
+   - `/home/home/personal/projects/howl/research/done/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+10. Current code and active artifact reads required by this task:
+   - `/home/home/personal/projects/howl/build.zig`
+   - `/home/home/personal/projects/howl/utils/tools/build.zig`
+   - `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig`
+   - `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig`
+   - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+   - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md`
+11. Alacritty-first references used for host/runtime boundary pressure:
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/cli.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/main.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/tests/ref.rs`
+
+### Exact File And Line References
+
+- Active loop and sprint boundary:
+  - `/home/home/personal/projects/howl/loops/rain-product-boundary-reset.txt:1-33`
+  - `/home/home/personal/projects/howl/sprints/current.txt:1-13`
+  - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md:9-17`
+  - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md:120-143`
+  - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md:154-158`
+- Current workspace-root coupling:
+  - `/home/home/personal/projects/howl/build.zig:56-76`
+- Current rain-product files:
+  - `/home/home/personal/projects/howl/utils/tools/build.zig:6-17`
+  - `/home/home/personal/projects/howl/utils/tools/build.zig:19-28`
+  - `/home/home/personal/projects/howl/utils/tools/build.zig:30-75`
+  - `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig:18-29`
+  - `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig:47-95`
+  - `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig:156-163`
+  - `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig:15-25`
+  - `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig:51-114`
+  - `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig:198-205`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py:23-28`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py:30-58`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py:463-466`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py:485-520`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py:523-563`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py:631-738`
+- Reference boundary pressure:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/cli.rs:155-193`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/main.rs:136-175`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:205-225`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/tests/ref.rs:100-117`
+
+### Current Landed-Code Facts
+
+1. The live host seam is already narrow enough for the user direction.
+   - The active sprint still says the host must stay narrow: accept a command and log, and that performance is paused until rain is no longer part of host shape: `sprints/2026-06-10-host-accountability-reset.md:9-17`, `154-158`.
+   - The active loop explicitly says the delete-from-workspace outcome is rejected and must be replaced with a source-backed product-boundary plan: `loops/rain-product-boundary-reset.txt:10-18`, `27-33`.
+
+2. The current stale coupling is no longer in `howl-linux-host`; it is in workspace orchestration and the rain package placement.
+   - Root `build.zig` still aggregates `stress:rain*` from `utils/tools` as if those steps are part of the live workspace command surface: `build.zig:56-76`.
+   - `utils/tools/build.zig` defines only rain step creation, rain executable compilation, and harness staging. It owns no general shared tooling: `utils/tools/build.zig:6-17`, `19-28`, `30-75`.
+
+3. `ascii_rain_stress.zig` and `visual_rain_stress.zig` are already self-owned benchmark clients.
+   - `ascii_rain_stress.zig` owns its own config, CLI, deterministic hostile traffic generation, and stderr metrics; its usage text says it is for terminal throughput testing: `utils/tools/ascii_rain_stress.zig:18-29`, `47-95`, `156-163`.
+   - `visual_rain_stress.zig` owns its own config, terminal-size probing, drop simulation, redraw behavior, and metrics; its usage text says it is for visible correctness stress: `utils/tools/visual_rain_stress.zig:15-25`, `51-114`, `198-205`.
+
+4. `benchmark_terminals.py` is also its own benchmark product surface today, but it is still workspace-coupled.
+   - It hard-codes the Howl repo root, `howl-linux-host` harness dir, and the rain harness dir from the same tree: `benchmark_terminals.py:23-28`.
+   - Its CLI assumes combined ownership of the benchmark client and the Howl host harness, and `run_build()` builds both in one path: `benchmark_terminals.py:30-58`, `463-466`.
+   - It injects the stress command into Howl through `--command` and treats Howl as one peer in a cross-terminal runner: `benchmark_terminals.py:505-563`, `631-738`.
+
+5. The current bad boundary is placement and aggregation, not rain-client logic itself.
+   - The actual rain logic is already separate from host code.
+   - What keeps it coupled is that it lives under vague `utils/tools`, is exported by the root workspace build, and is still named by the active reset artifacts as if it were a Howl-owned next correction target: `build.zig:56-76`; `sprints/2026-06-10-host-accountability-reset.md:120-143`.
+
+### Reference Facts
+
+1. Alacritty keeps host CLI/runtime narrow.
+   - `TerminalOptions` maps only working directory, hold policy, and command override into PTY launch options: `alacritty/src/cli.rs:155-193`.
+   - `main.rs` owns startup, logging, config, and environment setup; it does not bundle a benchmark client into the host runtime surface: `alacritty/src/main.rs:136-175`.
+
+2. Alacritty keeps recording/replay in explicit test machinery, not in host runtime ownership.
+   - Recording is guarded behind ref-test behavior in the terminal event loop: `alacritty_terminal/src/event_loop.rs:205-225`.
+   - Replay is loaded from test fixtures and fed directly into terminal/parser state in tests: `alacritty_terminal/tests/ref.rs:100-117`.
+
+3. No direct reference defines “separate benchmark product in same workspace.”
+   - That means Howl must invent the smallest possible shape consistent with the existing workspace package pattern and the user’s explicit product direction.
+   - The existing root build already treats sibling package directories as separate owners aggregated only by step mappings: `build.zig:1-18`, `20-76`, `92-95`.
+
+### Owner Roles And Proposed Shape
+
+#### Current owner truth
+
+- `howl-linux-host` owns command acceptance and logging only.
+- `utils/tools/build.zig` is not an honest owner. It is a vague bucket carrying a separate benchmark product.
+- `ascii_rain_stress.zig`, `visual_rain_stress.zig`, and `benchmark_terminals.py` are a benchmark product, not Howl host code.
+- Root `build.zig` currently mis-presents that product as a live Howl workspace stress surface.
+
+#### Proposed shape
+
+1. Split the rain benchmark into its own top-level package root inside the same workspace.
+   - Create a dedicated sibling package directory with an owner-true noun, `rain-bench/`.
+   - Move the rain build owner and rain binaries/launcher there.
+
+2. Remove live Howl workspace aggregation of that product.
+   - Root `build.zig` must stop exporting `stress:rain*` through the Howl workspace aggregate.
+   - Active sprint/loop/research files must stop treating the rain package as a live Howl-owned correction target once the split lands.
+
+3. Keep the rain product in the same repo for now, but as a separate package boundary.
+   - This honors the user direction not to delete it.
+   - It also stops lying that the product is part of host ownership.
+
+4. Do not redesign the rain client itself in this first slice.
+   - The first truthful cut is structural ownership: package root, package-local build, and removal from Howl root aggregation.
+   - Deeper launcher decoupling, such as removing repo-relative default binary paths, can be planned after the product boundary is clean.
+
+### One Exact Next Slice
+
+Next slice name: `rain-bench-package-root-split`
+
+- Goal:
+  - separate the rain benchmark client into its own in-workspace product boundary without deleting it and without leaving it as live Howl host/workspace ownership
+- Allowed files:
+  - `/home/home/personal/projects/howl/build.zig`
+  - `/home/home/personal/projects/howl/utils/tools/build.zig`
+  - `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig`
+  - `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+  - `/home/home/personal/projects/howl/rain-bench/build.zig`
+  - `/home/home/personal/projects/howl/rain-bench/ascii_rain_stress.zig`
+  - `/home/home/personal/projects/howl/rain-bench/visual_rain_stress.zig`
+  - `/home/home/personal/projects/howl/rain-bench/benchmark_terminals.py`
+  - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md`
+  - `/home/home/personal/projects/howl/loops/rain-product-boundary-reset.txt`
+  - `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+- Required shape:
+  - create `rain-bench/` as a top-level sibling package root
+  - move the current rain build owner and the three rain product files from `utils/tools/` to `rain-bench/`
+  - keep the package-local rain build steps inside `rain-bench/build.zig`
+  - remove root `build.zig` aggregation of `stress:rain*`
+  - rewrite the active sprint/loop/research text so the accepted target is “separate in-workspace product boundary” rather than deletion or live Howl ownership
+  - leave host docs and host code untouched
+- Required tests and receipts:
+  - `cd /home/home/personal/projects/howl/rain-bench && zig build stress:rain:build`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+  - `cd /home/home/personal/projects/howl && rg -n "package_dir = \\\"utils/tools\\\"|stress:rain" build.zig`
+    - expected result after acceptance: no root `stress:rain*` mappings remain
+  - `cd /home/home/personal/projects/howl && rg -n "ascii_rain_stress|visual_rain_stress|benchmark_terminals\\.py" utils/tools`
+    - expected result after acceptance: no rain-product file definitions remain in `utils/tools`
+  - `cd /home/home/personal/projects/howl && rg -n "delete-from-workspace|delete the in-repo rain|deleted from the Howl workspace" sprints/2026-06-10-host-accountability-reset.md loops/rain-product-boundary-reset.txt research/host-accountability-reset-2026-06-10.md`
+    - expected result after acceptance: no stale delete-direction claims remain in the active surface
+- Non-goals:
+  - no host/runtime/render/PTY/VT code changes
+  - no renewed performance work
+  - no launcher behavior redesign beyond path movement needed for the package split
+  - no external repo creation
+  - no historical archive cleanup outside the active files above
+- Stop conditions:
+  - truthful package split requires changing active files outside the allowed set above
+  - `utils/tools/build.zig` still owns non-rain live tooling that cannot move in this slice
+  - the package split reveals a broader false owner than `utils/tools` that must be planned first
+  - reviewer concludes the launcher defaults must be decoupled from repo-relative Howl paths in the same slice for the boundary to be honest
+
+### Risks
+
+1. `benchmark_terminals.py` may still be too coupled by default paths even after the package-root split.
+   - That does not invalidate the structural ownership cut.
+   - It does mean a second rain-product slice may be needed immediately after the split.
+
+2. `utils/tools/build.zig` may become dead after the move.
+   - That is acceptable in this slice if it collapses to no live owner work.
+   - A follow-up deletion of the now-dead file can be planned only after the package split is accepted.
+
+3. Historical performance receipts under `artifacts/stress/` will remain Howl-side evidence even though the benchmark product moved.
+   - That is acceptable; receipts are history, not ownership.
+
+### Proof Gaps
+
+1. This research does not prove whether `rain-bench/benchmark_terminals.py` should require explicit `--howl-bin` instead of repo-relative defaults.
+   - That is the main likely immediate follow-up after the structural split.
+
+2. This research does not seed a separate external repository.
+   - The user did not require that.
+   - The current task is an in-workspace separate product boundary.
+
+### Readiness Judgment
+
+Ready for reviewer gating and bounded execution.
+
+The next honest move is not deletion and not resumed performance work. It is a structural package-boundary cut:
+- move the rain benchmark product out of vague `utils/tools`
+- stop exporting it through the Howl root build
+- keep it in the workspace as its own product boundary
+- then review whether launcher-path defaults still require a second decoupling slice before performance resumes

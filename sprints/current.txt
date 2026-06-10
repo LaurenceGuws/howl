@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/rain-tooling-delete-from-howl-workspace.txt`
+- `loops/rain-bench-package-root-split.txt`
 
 Rule:
 
