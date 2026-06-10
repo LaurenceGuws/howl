@@ -1,0 +1,49 @@
+Render prepared handle teardown repair
+
+Date: 2026-06-10.
+Role owner: orchestrator.
+Status: accepted.
+Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
+Researcher session id: `019eb2da-8728-7da1-ab36-c0d4250c487b`.
+Reviewer session id: `019eb2c1-0991-7d73-9724-463ca0289931`.
+Coder session id: `019eb2c9-1b71-7aa2-9047-f34b9cd3c084`.
+Accepted commit: pending `howl-render` commit for slice 2.
+Verification:
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "render surface prepared ffi borrowed surface realizes explicit rgba oracle"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "render ffi prepared render-surface retrieval reports emission failure"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi` still fails only on the already-queued `source text input` mapping regressions
+
+Goal:
+
+- repair the current `howl-render` ABI-test teardown crashes in the prepared-handle owner path
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
+- `/home/home/personal/projects/howl/howl-render/src/ffi/prepared_surface_test.zig`
+- `/home/home/personal/projects/howl/research/2026-06-10-test-accountability-research.md`
+- `/home/home/personal/projects/howl/sprints/2026-06-10-test-accountability-sprint.md`
+- `/home/home/personal/projects/howl/loops/render-prepared-handle-teardown-repair.txt`
+
+Required shape:
+
+- the `PreparedHandle` lifecycle must tear down emitted payload and prepared state without crashing when the ABI tests destroy a borrowed prepared handle
+- lifecycle policy stays in the prepared-handle owner, with explicit assertions for valid state transitions
+- no ABI contract value or layout changes
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "render surface prepared ffi borrowed surface realizes explicit rgba oracle"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "render ffi prepared render-surface retrieval reports emission failure"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi` may still fail only on the already-queued `source text input` mapping regressions until slice 3 lands
+
+Non-goals:
+
+- no text-input mapping fixes
+- no fixture-path work
+- no render-surface contract redesign
+
+Stop conditions:
+
+- if the crash is proved to originate outside prepared-handle teardown ownership, stop and record the exact owner path before broadening files
+- if a fix requires changing shipped ABI status values or C layout, stop and escalate instead of mutating contracts inside this slice
