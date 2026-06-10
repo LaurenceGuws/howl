@@ -1,6 +1,6 @@
 Host accountability reset before more ASCII-rain performance work
 
-Status: active research ready for review.
+Status: active accepted research.
 
 User direction receipt:
 
@@ -11,7 +11,15 @@ User direction receipt:
   - log
 - The rain workload must become a decoupled benchmark client instead of a Howl-coupled host stress dependency.
 
-Research in progress.
+Active state receipt:
+
+- Performance remains paused pending host accountability reset.
+- No active artifact may treat rain generation, cross-terminal launch tooling, or replay capture as live host-owned workflow.
+
+Docs execution receipt:
+
+- `howl-linux-host/stress.md` is now host-only command/log guidance.
+- Historical rain/replay claims below are pre-reset facts used to justify this sprint, not current active-doc truth.
 
 ## Research Subtask: Rain Decoupling And Host Command Boundary Reset
 
@@ -23,7 +31,7 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/host-command-boundary-reset.txt`
+4. `/home/home/personal/projects/howl/loops/host-doc-and-current-surface-reset.txt`
 5. `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
@@ -71,12 +79,9 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig:503-513`
   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/feed_record.zig:4-15`
   - `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/feed_record.zig:25-32`
-- Current stale host docs/build/launcher coupling:
-  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:5-12`
-  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:24-34`
-  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:40-59`
-  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:63-92`
-  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:94-112`
+- Current host docs/build/launcher boundary after the docs reset:
+  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:5-13`
+  - `/home/home/personal/projects/howl/howl-linux-host/stress.md:15-53`
   - `/home/home/personal/projects/howl/utils/tools/build.zig:8-17`
   - `/home/home/personal/projects/howl/utils/tools/build.zig:25-27`
   - `/home/home/personal/projects/howl/utils/tools/build.zig:32-39`
@@ -114,18 +119,18 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
    - `Context.refreshTitle()` falls back to the configured `command`/`shell`, which is consistent with “host accepts a command”: `src/terminal/context.zig:293-299`.
    - Debug logging/accounting is already a separate host concern via `debug_process_accounting` and `debug_log_every_ms`: `src/cli/args.zig:8-10`, `37-43`; `src/main.zig:102`.
 
-3. The strongest current coupling between the Howl host workflow and ASCII rain is not a code dependency inside `howl-linux-host/build.zig`; it is documentation and shared tooling wiring.
+3. The strongest remaining workflow coupling between the Howl host workflow and ASCII rain is not a code dependency inside `howl-linux-host/build.zig`; it is shared tooling wiring plus historical pressure from the pre-reset host doc.
    - `howl-linux-host/build.zig` defines only harness/profile/run/test steps for the host executable and does not define any rain/stress build step: `build.zig:33-60`.
-   - `stress.md` tells users to build the host harness and also build `stress:rain:*` binaries, then treats `../utils/tools/zig-out/harness/ascii_rain_stress_release_fast` as the normal workload path for the host: `stress.md:24-34`, `40-59`, `63-92`.
-   - `stress.md` also documents the stale PTY/VT replay capture path as part of host stress usage: `stress.md:94-112`.
+   - The live `stress.md` is now narrowed to host-only command/log guidance and explicitly excludes benchmark-client generation, cross-terminal comparison, and replay-fixture capture from the live host boundary: `stress.md:5-13`, `15-53`.
+   - The pre-reset host-doc coupling is now historical only; it is preserved in this research artifact as the reason the docs reset slice was necessary.
    - `utils/tools/build.zig` owns the actual rain binaries and advertises them as `stress:rain`, `stress:rain:ascii`, `stress:rain:mixed`, and `stress:rain:visual`: `utils/tools/build.zig:8-17`, `25-27`, `32-39`, `43-67`.
    - `benchmark_terminals.py` hard-codes both the host harness path and the rain binary path from the same repo, can build both with one `--build`, and injects the rain command into Howl through `--command`: `benchmark_terminals.py:23-28`, `30-58`, `505-520`, `523-563`.
 
-4. The live docs are internally contradictory, which is itself an accountability failure.
-   - `stress.md` says “The host stress roots live under src/stress/”: `howl-linux-host/stress.md:36`.
+4. The pre-reset docs were internally contradictory, which is itself the historical accountability failure that triggered this sprint.
+   - The live `stress.md` no longer claims host-owned stress roots; it is now limited to host command/log verification: `stress.md:5-13`, `15-53`.
    - There is no `howl-linux-host/src/stress/` path in the repo; the actual binaries live under `utils/tools/`.
    - `howl-linux-host/design.md` says remaining direct `@cImport` stress-tool sites are explicit non-goals: `design.md:39-45`.
-   - So the host design already says stress tooling is not core host ownership, while `stress.md` still presents rain as host-owned operational guidance.
+   - So the host design already says stress tooling is not core host ownership; the docs reset slice corrected the former mismatch.
 
 5. The stale performance loop also depended on this coupling.
    - The deferred sprint and research artifacts explicitly define the broad goal around the ASCII-rain benchmark and rely on receipts produced by `artifacts/stress/...`: `sprints/defered/2026-06-09-post-bg-performance-restart.md:11-18`, `83-112`; `research/defered/post-bg-performance-restart-2026-06-09.md:100-118`.
@@ -202,7 +207,7 @@ Session: `research-2026-06-10-host-command-boundary-reset-01`.
      - `/home/home/personal/projects/howl/howl-linux-host/stress.md`
      - `/home/home/personal/projects/howl/sprints/current.txt`
      - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md`
-     - `/home/home/personal/projects/howl/loops/host-command-boundary-reset.txt`
+     - `/home/home/personal/projects/howl/loops/host-doc-and-current-surface-reset.txt`
      - `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
    - Non-goals:
      - no host code yet
@@ -311,7 +316,7 @@ So the next accountable work should not resume performance. It should first dele
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/host-command-boundary-reset.txt`
+4. `/home/home/personal/projects/howl/loops/host-doc-and-current-surface-reset.txt`
 5. `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
@@ -354,10 +359,9 @@ So the next accountable work should not resume performance. It should first dele
   - `howl-linux-host/src/terminal/pty/feed_record.zig:18-32`
   - `howl-linux-host/src/terminal/pty/pump.zig:168-180`
   - `howl-linux-host/src/terminal/pty/pump.zig:250-287`
-- Host docs that keep the seam live:
-  - `howl-linux-host/stress.md:24-34`
-  - `howl-linux-host/stress.md:63-92`
-  - `howl-linux-host/stress.md:94-112`
+- Host docs after the docs reset:
+  - `howl-linux-host/stress.md:5-13`
+  - `howl-linux-host/stress.md:15-53`
 - Downstream `howl-vt` replay/test coupling:
   - `howl-vt/src/test/terminal_benchmark.zig:27-31`
   - `howl-vt/src/test/terminal_benchmark.zig:414-442`
@@ -399,10 +403,9 @@ So the next accountable work should not resume performance. It should first dele
    - `feed_record.start(...)` creates the output file and writes the replay header (`howl-linux-host/src/terminal/pty/feed_record.zig:4-15`).
    - `writeChunkLocked(...)` emits each PTY -> VT chunk as lowercase hex (`howl-linux-host/src/terminal/pty/feed_record.zig:25-32`).
 
-7. Host docs still present both ASCII-rain and PTY/VT capture as normal host stress procedure.
-   - `stress.md` instructs building and running `ascii_rain_stress_release_fast` as part of host stress (`howl-linux-host/stress.md:24-59`).
-   - The same doc instructs benchmark runs that launch the host with `--command` pointing at the rain generator (`howl-linux-host/stress.md:63-92`).
-   - The same active doc also instructs `--pty-vt-record-path` capture and says `howl-vt` benchmark replay scans those host-produced fixtures (`howl-linux-host/stress.md:94-112`).
+7. Before the docs reset slice, host docs presented both ASCII-rain and PTY/VT capture as normal host stress procedure.
+   - That pre-reset state is the historical reason this sprint exists.
+   - The live `stress.md` is now host-only command/log guidance and no longer presents those workflows.
 
 8. `howl-vt` currently consumes the host-produced format directly in benchmark/test code.
    - `terminal_benchmark.zig` owns replay fixture paths and loads every `.hex` file into benchmark fixtures (`howl-vt/src/test/terminal_benchmark.zig:27-31`, `:414-442`).
@@ -441,8 +444,9 @@ So the next accountable work should not resume performance. It should first dele
    - If record/replay remains useful, it should be produced by a dedicated benchmark/test tool or fixture-preparation path outside the live host runtime seam.
    - The host should not open replay files, carry replay file handles in terminal state, or fail PTY lifecycle because fixture capture failed.
 
-4. The current ASCII-rain coupling in `stress.md` is further evidence that the host seam is carrying stale benchmark ownership.
-   - This subtask is bounded to PTY/VT record-replay, but the same doc currently ties host benchmarking to a Howl-coupled rain generator.
+4. The remaining ASCII-rain coupling outside the live host doc is further evidence that the host seam is carrying stale benchmark ownership.
+   - This subtask is bounded to PTY/VT record-replay, but the remaining shared tooling still ties host benchmarking to a Howl-coupled rain generator.
+   - The live `stress.md` no longer ties host benchmarking to a rain generator; the remaining coupling is in shared tooling and deferred historical artifacts.
    - That coupling should be handled in separate slices after the replay seam is removed from the live host path.
 
 ### Explicit ordered slice plan

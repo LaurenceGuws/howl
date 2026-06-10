@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/host-doc-and-current-surface-reset.txt`
+- `loops/host-cli-record-seam-deletion.txt`
 
 Rule:
 

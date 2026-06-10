@@ -14,6 +14,7 @@ Problem statement:
 - Performance remains paused.
 - Active host guidance still mixes host ownership with stale rain/replay workflow claims.
 - The first correction slice is docs/accountability only so the live surface stops lying before code deletion starts.
+- Performance remains paused pending host accountability reset.
 
 Required sources:
 

@@ -25,7 +25,7 @@ Planning rule:
 Sequential slice queue:
 
 1. `host-doc-and-current-surface-reset`
-- next active execution slice
+- completed accepted execution slice
 - goal:
   - strip live host guidance of rain/replay ownership claims
   - rewrite active sprint/loop/current surface so no active artifact treats rain as host-owned runtime behavior
@@ -46,9 +46,13 @@ Sequential slice queue:
   - no lower-module replay replacement
 - stop conditions:
   - live artifact truth requires a benchmark-client destination receipt that does not exist yet
+- acceptance receipts:
+  - reviewer `019eac44-6df8-7e91-842d-c9cffd973aff` accepted the slice
+  - `howl-linux-host/stress.md` no longer matches `ascii_rain_stress|benchmark_terminals\\.py|pty-vt-record-path|artifacts/replay`
+  - active sprint/loop/research all carry `Performance remains paused pending host accountability reset.`
 
 2. `host-cli-record-seam-deletion`
-- next code slice after docs/accountability reset
+- next active code slice after docs/accountability reset
 - goal:
   - remove `--pty-vt-record-path`, `HOWL_PTY_VT_RECORD_PATH`, and runtime `feed_record` startup plumbing from the host seam
 - allowed files:
@@ -80,3 +84,8 @@ Completion gate:
 - the active docs/accountability reset slice lands cleanly
 - the host record/replay seam is deleted from live host ownership
 - performance remains paused until those corrections land
+
+Active state receipt:
+
+- Performance remains paused pending host accountability reset.
+- No active artifact may present benchmark workloads, replay capture, or cross-terminal launch tooling as live host-owned workflow.
