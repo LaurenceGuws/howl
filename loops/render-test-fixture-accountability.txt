@@ -1,0 +1,45 @@
+Render test fixture accountability
+
+Date: 2026-06-10.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
+Researcher session id: pending fresh delegation.
+Reviewer session id: pending.
+Coder session id: none.
+
+Goal:
+
+- remove the unjustified default skip in `howl-render` font-dependent tests by making the render test font inputs repo-owned and defaulted
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/build.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/font/ft_hb/support_test.zig`
+- repo-local render test fixture paths added under `/home/home/personal/projects/howl/howl-render/` if required
+- `/home/home/personal/projects/howl/research/2026-06-10-test-accountability-research.md`
+- `/home/home/personal/projects/howl/loops/render-test-fixture-accountability.txt`
+
+Required shape:
+
+- no test should skip by default because external font paths were not passed in
+- default repo test execution must provide deterministic primary and symbol font fixtures
+- optional override flags may remain, but only as explicit replacements
+- test language must stop treating skip as the normal outcome
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test`
+- direct proof that the previous `error.SkipZigTest` path in `support_test.zig` is no longer the default repo behavior
+
+Non-goals:
+
+- no prepared-handle crash repair yet
+- no `source/text_input.zig` regression repair yet
+- no VT simulation changes
+- no performance work
+
+Stop conditions:
+
+- lawful repo-owned test font fixtures cannot be added
+- the reference-backed correct shape requires a different deterministic fixture mechanism than local fonts

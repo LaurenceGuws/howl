@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-10-host-accountability-reset.md`
+- `sprints/2026-06-10-test-accountability-sprint.md`
 
 Active research:
 
-- `research/host-accountability-reset-2026-06-10.md`
+- `research/2026-06-10-test-accountability-research.md`
 
 Active loops:
 
-- `loops/rain-bench-package-root-split.txt`
+- `loops/render-test-fixture-accountability.txt`
 
 Rule:
 
