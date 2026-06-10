@@ -7,6 +7,22 @@ Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
 Researcher session id: `019eb2da-a14a-79b3-9864-65c43dd3a991`.
 Reviewer session id: `019eb2c1-0991-7d73-9724-463ca0289931`.
 Coder session id: none.
+Rebaseline receipt:
+- passed:
+  - `cd /home/home/personal/projects/howl/howl-pty && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-vt && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-vt && zig build simulate`
+  - `cd /home/home/personal/projects/howl/howl-vt && zig build benchmark:m7_baseline`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+- failed:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`
+- exact blocker:
+  - `howl-render` `test:abi` still fails only on `source text input` proofs in `src/source/text_input.zig`:
+    - `source text input converts VT source to text scene input`
+    - `source text input maps publication style attrs dim and invisible`
+    - `source text input marks Alacritty-empty cells before color mapping`
+    - `source text input keeps fg-colored blanks empty`
 
 Goal:
 

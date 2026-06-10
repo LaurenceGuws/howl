@@ -123,37 +123,83 @@ Remaining sprint plan after slice 1:
   - owner is `howl-render` prepared-handle lifecycle, not FFI convenience code
   - risk is double-destroy or deinit-after-state-transition if teardown does not match `released` and `consumed` semantics exactly
 
-2. `render-text-input-mapping-regressions`
+2. `render-text-input-default-background-model`
 - exact current-code facts:
-  - failing VT-source expectations are in `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:470`, `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:863`, and `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:887`
-  - the failing publication-source expectation is in `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:734`
-  - VT cell mapping is owned by `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:224`
-  - publication cell mapping is delegated to `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig:24`
+  - the remaining failures reproduce only on the ABI surface:
+    - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
+  - current failing ABI proofs are still:
+    - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:470`
+    - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:734`
+    - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:863`
+    - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:887`
+  - `source/cell.zig` already carries semantic source color identity as `default|indexed|rgb` for fg/bg/underline:
+    - `/home/home/personal/projects/howl/howl-render/src/source/cell.zig:1-49`
+  - the publication ABI mirror preserves the same distinction and ships default color state separately in `SourceColors`:
+    - `/home/home/personal/projects/howl/howl-render/src/source/vt.zig:13-26`
+    - `/home/home/personal/projects/howl/howl-render/src/source/vt.zig:48-65`
+  - `text_input.zig` and `publication_cell_map.zig` immediately resolve semantic colors to `contract.Rgba8` and then infer emptiness from alpha:
+    - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:72-87`
+    - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:116-123`
+    - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig:224-245`
+    - `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig:24-45`
+    - `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig:67-83`
+    - `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig:136-149`
+  - `contract.CellInput` has only resolved RGBA plus `empty`; it has no field that preserves "default background" as a semantic fact:
+    - `/home/home/personal/projects/howl/howl-render/src/text/contract.zig:81-95`
+  - direct consumers use `empty` and `bg.a == 0` as render policy:
+    - `/home/home/personal/projects/howl/howl-render/src/text/shape/cluster.zig:291`
+    - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig:82-124`
+- reference-backed finding:
+  - Ghostty keeps semantic cell content and style separate instead of flattening default background into RGB:
+    - `utils/dev_references/terminals/ghostty/src/terminal/c/cell.zig:40-47`
+    - `utils/dev_references/terminals/ghostty/src/terminal/style.zig:102-125`
+  - Kitty treats default foreground/background as distinct semantic colors and keeps reverse-video behavior explicit:
+    - `utils/official_docs/kitty/color-stack.md:27-29`
+    - `utils/official_docs/kitty/color-stack.md:60-63`
+    - `utils/official_docs/kitty/underlines.md:59-60`
+    - `utils/official_docs/kitty/misc-protocol.md:33-36`
+  - Alacritty preserves semantic named background in the terminal cell model and computes render-time background alpha later:
+    - `utils/dev_references/terminals/alacritty/alacritty_terminal/src/term/cell.rs:134-151`
+    - `utils/dev_references/terminals/alacritty/alacritty_terminal/src/term/cell.rs:224-239`
+    - `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:158-183`
+    - `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:214-219`
+    - `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:301-307`
+    - `utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:388-395`
+- owner roles and proposed shape:
+  - `source/cell.zig` and `source/vt.zig` are already sufficient owners for semantic source-cell truth
+  - the missing owner-true distinction is at the text-input contract seam, not the source-cell seam
+  - the next slice should add an explicit contract-level way to preserve default-background semantics through `contract.CellInput` and then make `text_input.zig`, `publication_cell_map.zig`, `cluster.zig`, and `direct_scene.zig` consume that field owner-truly
+  - publication dim/invisible behavior is not a model gap; it is a mapper inconsistency that should be corrected while aligning both paths to the shared source-cell model
 - allowed files:
+  - `/home/home/personal/projects/howl/howl-render/src/text/contract.zig`
   - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
   - `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/shape/cluster.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
+  - `/home/home/personal/projects/howl/research/2026-06-10-test-accountability-research.md`
+  - `/home/home/personal/projects/howl/sprints/2026-06-10-test-accountability-sprint.md`
 - required shape:
-  - restore owner-true text-scene mapping for VT-source and publication-source cells without adding compatibility aliases or separate fallback mappers
-  - keep VT-source mapping fixes in `text_input.zig`
-  - keep publication-source mapping fixes in `publication_cell_map.zig`
-  - preserve existing explicit mapping concepts: empty-cell detection, inverse handling, dim handling, invisible handling, and default background truth
+  - preserve semantic default-background truth through the text-input contract seam instead of resolving it away inside local mappers
+  - keep source-cell semantic facts in the source owners and render policy in render-text owners
+  - correct publication dim/invisible mapping to match the shared source-cell semantics, not a publication-only shortcut
+  - remove or rewrite stale opaque-default-background tests once the contract carries the semantic distinction explicitly
 - tests/proof:
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "source text input converts VT source to text scene input"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "source text input maps publication style attrs dim and invisible"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "source text input marks Alacritty-empty cells before color mapping"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "source text input keeps fg-colored blanks empty"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "publication cell map"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input converts VT source to text scene input"`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input maps publication style attrs dim and invisible"`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input marks Alacritty-empty cells before color mapping"`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps fg-colored blanks empty"`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
 - non-goals:
   - no prepared-handle teardown work
   - no font fixture work
-  - no broad scene/frame-preparer redesign
+  - no shipped C ABI changes in `include/howl_render.h` or `source/vt.zig`
+  - no broad renderer architecture rewrite beyond the contract seam and its direct consumers
 - stop conditions:
-  - if any failing expectation is proved to belong to a different owner than `text_input.zig` or `publication_cell_map.zig`, stop and record the exact owner path before broadening
-  - if making the tests pass requires changing `contract.CellInput` shape or render ABI contracts, stop and escalate instead of expanding this slice
+  - if preserving semantic default background requires changing the shipped `HowlRenderSourceCell` / publication ABI layout, stop and escalate
+  - if references prove Howl must keep resolving default background to opaque RGBA inside `text_input.zig`, stop and convert this to an explicit test-correction slice with the conflicting references recorded
 - owner/risk notes:
-  - this slice crosses two owners only because `text_input.zig` delegates publication mapping explicitly
-  - risk is masking one regression by weakening empty-cell or invisible semantics; fixes must preserve explicit positive/negative-space tests
+  - the current blocker is `howl-render/src/text/contract.zig`, not `howl-render/src/source/cell.zig`
+  - risk is fixing the ABI proofs by another local alpha hack while leaving publication/direct-normal/damage consumers with contradictory semantics
 
 3. `vt-simulate-canonical-repair`
 - exact current-code facts:
@@ -229,8 +275,22 @@ Slice 4 receipt:
   - `cd /home/home/personal/projects/howl/howl-vt && time zig build simulate -- scrollback`
   - `real 1m23.989s`
 
+Workspace rebaseline blocker:
+
+- the final workspace rebaseline does not close the sprint yet
+- current exposed surfaces passed:
+  - `howl-pty`: `zig build test`
+  - `howl-vt`: `zig build test`, `zig build simulate`, `zig build benchmark:m7_baseline`
+  - `howl-render`: `zig build benchmark:render`
+  - `howl-linux-host`: `zig build test`
+- current exposed surface still failing:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`
+- failure is confined to `howl-render` `test:abi` and still names the four `source text input` proofs in `src/source/text_input.zig`
+- this means slice 3 was only a unit-surface rebaseline, not the full ABI-surface closure needed for workspace completion
+
 Slice 3 receipt:
 
+- superseded by `render-source-cell-model-research`
 - `render-text-input-mapping-regressions` closed as an honest no-op on the accepted tree
 - current `howl-render` proof surface already passes with zero file changes:
   - `source text input converts VT source to text scene input`
@@ -240,3 +300,45 @@ Slice 3 receipt:
   - `publication cell map`
   - aggregate `zig build test:unit`
 - no remaining reproducing mapping regression exists inside the allowed owner files on the current accepted tree
+
+Blocked slice receipt:
+
+- `render-text-input-abi-closure` stopped on reviewer-accepted blocker
+- blocker accepted by reviewer session `019eb2c1-0991-7d73-9724-463ca0289931`
+- coder proved the current allowed mapper owners are insufficient to distinguish at least one failing ABI case
+- exact owner-path blocker re-proved as the text-input contract seam rooted at `howl-render/src/text/contract.zig`
+- next step is research, not coding
+
+Render source cell model research:
+
+- user-scoped reference-order override receipt:
+  - exact user decision:
+    - for this sub-sprint only, read references in this order: Ghostty, Kitty, Alacritty
+  - exact reference being overridden:
+    - `/home/home/personal/projects/howl/reference-index.md` default reference order
+  - reason:
+    - this sub-sprint is about VT/value-model shape, not host/runtime organization
+  - accountable orchestrator session id:
+    - `orch-2026-06-10-test-accountability-01`
+  - user approval receipt:
+    - current user instruction that seeded `loops/render-source-cell-model-research.txt`
+- current-code facts:
+  - `zig build test:unit` passes because the unit root does not import `src/source/text_input.zig` directly:
+    - `/home/home/personal/projects/howl/howl-render/src/test_unit.zig:1-3`
+    - `/home/home/personal/projects/howl/howl-render/src/test/unit/root.zig:1-9`
+  - `zig build test:abi` imports `libhowl_render.zig` through `refAllDecls`, which executes the inline `source/text_input.zig` tests and reproduces the four failures:
+    - `/home/home/personal/projects/howl/howl-render/src/test_abi.zig:1-11`
+- what the current source-cell model can represent:
+  - semantic fg/bg/underline color identity
+  - dim/inverse/invisible/underline/selection/style flags
+  - combining truth and continuation truth
+  - publication default/palette color state separate from per-cell semantic colors
+- what the ABI tests require:
+  - default background must remain semantically distinguishable from explicit RGB background through the text-input seam so render-time alpha/emptiness policy can match reference behavior
+  - publication mapping must apply the same dim/invisible semantics as VT mapping
+- stale-test judgment:
+  - the stale expectations are the recently-added opaque-default-background proofs in `text_input.zig` and `publication_cell_map.zig`, not the four remaining ABI failures
+  - the four failing ABI tests align with the upstream distinction between semantic default background and render-time background alpha
+- readiness judgment:
+  - the repo is ready for one explicit model-change slice
+  - a pure test-correction slice would be dishonest because it would codify the same flattened model the references reject

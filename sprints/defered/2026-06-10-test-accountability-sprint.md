@@ -71,35 +71,40 @@ Sequential slice queue:
   - if the crash is proved to originate outside prepared-handle teardown ownership, stop and record the exact owner path before broadening files
   - if a fix requires changing shipped ABI status values or C layout, stop and escalate instead of mutating contracts inside this slice
 
-3. `render-text-input-mapping-regressions`
+3. `render-text-input-default-background-model`
 - goal:
-  - repair the current `howl-render` VT-source and publication-source text-input mapping regressions
+  - preserve semantic source-cell default-background truth through the `howl-render` text-input contract seam and close the remaining ABI `source text input` failures without local mapper hacks
 - allowed files:
+  - `/home/home/personal/projects/howl/howl-render/src/text/contract.zig`
   - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
   - `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/shape/cluster.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
   - `/home/home/personal/projects/howl/research/2026-06-10-test-accountability-research.md`
   - `/home/home/personal/projects/howl/sprints/2026-06-10-test-accountability-sprint.md`
 - required shape:
-  - restore owner-true mapping for VT-source cells in `text_input.zig`
-  - restore owner-true publication mapping in `publication_cell_map.zig`
-  - preserve explicit semantics for empty-cell detection, inverse, dim, invisible, and default-background truth
-  - do not add alternate mappers or compatibility shims
+  - keep `source/cell.zig` and `source/vt.zig` semantic color truth intact
+  - add an owner-true contract-level distinction for semantic default background instead of flattening it into opaque `Rgba8` inside `text_input.zig`
+  - keep background-alpha and empty-cell render policy in the render-text owners that consume `contract.CellInput`
+  - align publication dim/invisible mapping with the shared source-cell model; do not keep a publication-only shortcut
+  - correct stale opaque-default-background tests once the contract carries the semantic distinction explicitly
 - required tests:
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "source text input converts VT source to text scene input"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "source text input maps publication style attrs dim and invisible"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "source text input marks Alacritty-empty cells before color mapping"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "source text input keeps fg-colored blanks empty"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "publication cell map"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input converts VT source to text scene input"`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input maps publication style attrs dim and invisible"`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input marks Alacritty-empty cells before color mapping"`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps fg-colored blanks empty"`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
 - non-goals:
   - no prepared-handle teardown work
   - no font fixture work
-  - no broad render scene contract changes
+  - no shipped C ABI changes in `include/howl_render.h` or `source/vt.zig`
+  - no broad renderer rewrite beyond the direct contract consumers
 - stop conditions:
-  - if any failing expectation is proved to belong to a different owner than `text_input.zig` or `publication_cell_map.zig`, stop and record the exact owner path before broadening
-  - if making the tests pass requires changing `contract.CellInput` shape or render ABI contracts, stop and escalate instead of expanding this slice
-- acceptance note:
-  - accepted as a no-op on the current tree because the full required proof surface already passes with zero file changes
+  - if preserving semantic default background requires changing the shipped `HowlRenderSourceCell` / publication ABI layout, stop and escalate
+  - if references prove the source-text seam must keep resolving default background to opaque RGBA, stop and convert this to an explicit test-correction slice with the conflicting references recorded
+- research receipt:
+  - `render-source-cell-model-research` found the blocker at `howl-render/src/text/contract.zig`, not `howl-render/src/source/cell.zig`
+  - Ghostty, Kitty, and Alacritty all preserve semantic default background or equivalent style truth past the terminal cell owner before render-time alpha policy is applied
 
 4. `vt-simulate-canonical-repair`
 - goal:
@@ -161,6 +166,21 @@ Sequential slice queue:
 - stop conditions:
   - any command above fails or skips unexpectedly
   - any accepted earlier slice lacks required receipts or proof output
+- current blocker:
+  - `howl-render` aggregate `zig build test` still fails in `test:abi` on the `source text input` proofs, so the sprint remains open and needs slice 3 model work before rebaseline can close
+
+Reference override receipt for `render-source-cell-model-research`:
+
+- exact user decision:
+  - for that sub-sprint only, use reference pressure in this order: Ghostty, Kitty, Alacritty
+- exact reference being overridden:
+  - `/home/home/personal/projects/howl/reference-index.md` default order
+- reason for override:
+  - the task is VT/value-model research rather than host/runtime organization
+- accountable orchestrator session id:
+  - `orch-2026-06-10-test-accountability-01`
+- user approval receipt:
+  - current user instruction that seeded `loops/render-source-cell-model-research.txt`
 
 Completion gate:
 

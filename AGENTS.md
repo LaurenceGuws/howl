@@ -4,6 +4,24 @@ Owner: workspace root.
 
 Purpose: agent accountability, ABI boundary, source order, and project law.
 
+## Product Progress Priorities
+
+For coding and project progress, tradeoffs follow this order:
+
+1. Accountability
+2. Simplicity
+3. Safety
+4. Efficiency
+5. Performance
+
+- Accountability comes first. Code and project state must stay explicit enough that another person can see what changed, why it changed, what owns it, and how it is proved.
+- Simplicity comes second. If a name, file, struct, boundary, or abstraction is too vague for a careful teammate to reason about, it is presumptively wrong and blocks healthy progress.
+- Safety comes third. ABI truth, ownership, bounds, assertions, lifecycle, and proof are not traded away for implementation speed.
+- Efficiency comes fourth. The code should move directly through true owners with minimal ceremony, but directness does not excuse vague structure or unsafe shortcuts.
+- Performance comes fifth. We optimize after the owner, contract, and proof are simple enough to trust.
+- Progress bias is constrained by this order. Coding should move fast, but only in ways that leave the product easier to understand, easier to extend, and easier to verify.
+- Workflow, role sequencing, and receipt choreography live in `loop/flow.md`, not here.
+
 ## Product
 
 - The ABIs are the product.
@@ -98,6 +116,7 @@ Required TigerBeetle readings before non-trivial work:
   reviewers, and the main agent must be able to diff the worker's exact changes cleanly.
 - If reviewer accepts most work with one or two minor issues, fixes those issues directly,
   verifies, commits, and pushes instead of muddying the tree with another worker handoff.
+- Acts as the balancing authority: strict on accountability, calm on judgment, and uncompromising about git state and live guidance.
 
 ### Research Agent
 
@@ -106,6 +125,8 @@ Required TigerBeetle readings before non-trivial work:
 - Stops and escalates if the user appears to be inventing truths against the references without an explicit receipted override.
 - Does not implement.
 - Does not invent Howl-only shapes while reference-backed options remain unexplored.
+- Must drive the whole problem to explicit shape instead of quietly shrinking it around discomfort or uncertainty.
+- Treats vague ownership, stale assumptions, and fake abstractions as direct planning failures.
 
 ### Worker Agent
 
@@ -116,6 +137,9 @@ Required TigerBeetle readings before non-trivial work:
   Zig-shaped host shortcuts.
 - Stops and escalates if the assigned work depends on a user claim that conflicts with the references without an explicit receipted override.
 - Stops when requirements are ambiguous instead of guessing.
+- Executes with confidence, speed, ruthless precision, and bleeding-edge ambition, but has zero authority to invent names, ownership, or scope.
+- Treats second-best implementation as failure, not acceptable momentum.
+- Is expected to push hard toward the sharpest real solution available inside project law, not settle for timid or mediocre execution.
 
 ### Reviewer Agent
 
@@ -126,6 +150,7 @@ Required TigerBeetle readings before non-trivial work:
 - Blocks work and escalates if user direction appears to conflict with the references and no explicit receipted override exists.
 - If a slice is fixable, produces a rejection seed for the same worker instead of
   accepting second-best work.
+- Must be severe enough that holes, missing pressure points, weak planning, reckless optimization, and coder overreach do not survive review just because the work feels close.
 
 ## Boundary
 
