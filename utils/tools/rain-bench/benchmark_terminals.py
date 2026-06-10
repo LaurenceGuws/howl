@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resource-interval", type=float, default=0.25, help="seconds between process resource samples")
     parser.add_argument("--gpu-resource-interval", type=float, default=1.0, help="seconds between nvidia-smi GPU resource samples")
     parser.add_argument("--no-resources", action="store_true", help="disable child process resource sampling")
-    parser.add_argument("--out-dir", type=Path, default=REPO_ROOT / "artifacts" / "stress")
+    parser.add_argument("--out-dir", type=Path, default=TOOLS_ROOT / "artifacts" / "stress")
     parser.add_argument(
         "--build",
         action="store_true",
@@ -538,8 +538,7 @@ def launch_command(name: str, args: argparse.Namespace, command: str, trace_path
         existing_ld = env.get("LD_LIBRARY_PATH")
         lib_path = ":".join(lib_dirs)
         env["LD_LIBRARY_PATH"] = lib_path if existing_ld is None else f"{lib_path}:{existing_ld}"
-        duration_ms = str(int((args.duration + 2.0) * 1000))
-        return ([str(args.howl_bin), "--duration-ms", duration_ms, "--command", titled_command], env)
+        return ([str(args.howl_bin), "--command", titled_command], env)
     if name == "kitty":
         kitty = shutil.which(args.kitty_bin)
         if kitty is None:
