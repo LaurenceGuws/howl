@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/render-text-input-mapping-regressions.txt`
+- `loops/vt-simulate-canonical-repair.txt`
 
 Rule:
 

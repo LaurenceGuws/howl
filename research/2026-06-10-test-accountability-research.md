@@ -218,3 +218,15 @@ Remaining sprint plan after slice 1:
 - owner/risk notes:
   - this slice is verification-only and must not hide unresolved failures behind documentation edits
   - benchmark commands are part of the exposed validation surface for this sprint because the active sprint file already names them
+
+Slice 3 receipt:
+
+- `render-text-input-mapping-regressions` closed as an honest no-op on the accepted tree
+- current `howl-render` proof surface already passes with zero file changes:
+  - `source text input converts VT source to text scene input`
+  - `source text input maps publication style attrs dim and invisible`
+  - `source text input marks Alacritty-empty cells before color mapping`
+  - `source text input keeps fg-colored blanks empty`
+  - `publication cell map`
+  - aggregate `zig build test:unit`
+- no remaining reproducing mapping regression exists inside the allowed owner files on the current accepted tree

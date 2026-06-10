@@ -98,6 +98,8 @@ Sequential slice queue:
 - stop conditions:
   - if any failing expectation is proved to belong to a different owner than `text_input.zig` or `publication_cell_map.zig`, stop and record the exact owner path before broadening
   - if making the tests pass requires changing `contract.CellInput` shape or render ABI contracts, stop and escalate instead of expanding this slice
+- acceptance note:
+  - accepted as a no-op on the current tree because the full required proof surface already passes with zero file changes
 
 4. `vt-simulate-canonical-repair`
 - goal:
