@@ -83,11 +83,42 @@ Sequential slice queue:
   - the honest change requires files outside the two-file host fill set
 
 5. `post-host-fill-rebaseline`
-- next active measurement step
-- rerun honest clean benchmark and update current owner order from the accepted host-fill state before more optimization coding
+- completed rebaseline step
+- latest clean accepted benchmark:
+  - Howl `85.47 fps`
+  - Alacritty `1026.21 fps`
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-143819-ascii/summary.json`
 
-6. `direct-normal-after-playback-proof`
-- allowed only if later accepted rebaseline/proof disproves fill as the next true owner and restores `direct_normal` to the top spot
+6. `prepared-emission-owner-proof-after-host-fill`
+- next active proof slice
+- allowed because the post-host-fill accepted state still shows:
+  - `render_prepare_avg_us ~= 1335-1368`
+  - `owner_create_avg_us ~= 1032-1038`
+  - `direct_normal_avg_us ~= 417-419`
+  - `render_upload_avg_us ~= 343-350`
+- allowed files:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/session/text.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/owner_test.zig`
+- required shape:
+  - proof only
+  - no behavior change
+  - keep existing timing counters intact
+  - split fresh emission / `owner_create` enough to measure resource-store copy, fill emission, sprite emission, publish/fixup, and any remaining gap truthfully
+- non-goals:
+  - no host files
+  - no `direct_normal`
+  - no `frame_preparer`
+  - no `sprite_resource_store`
+  - no ABI changes
+- stop conditions:
+  - truthful proof needs files outside the four-file set
+  - proof shows `SpriteResourceStore` ownership must change first
+  - seam exposes a broader false owner requiring a new planning pass
+
+7. `direct-normal-after-playback-proof`
+- allowed only if later accepted prepare/emission proof disproves `owner_create` as the next true owner and restores `direct_normal` to the top spot
 - allowed files:
   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/prepare_counters.zig` only if proof fields change

@@ -473,3 +473,160 @@ The next honest contract is not renderer-side fill command production and not a 
   - Howl `85.47 fps`
   - Alacritty `1026.21 fps`
 - This replaces the prior clean benchmark baseline for further sprint comparisons.
+
+## Next Contract After Host-Fill Rebaseline
+
+### Sources read in order
+
+15. Accepted host-fill rebaseline receipts:
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-direct-ascii.metrics.ndjson`
+   - `/home/home/personal/projects/howl/artifacts/stress/20260609-143819-ascii/summary.json`
+16. Current renderer/prepare owners:
+   - `/home/home/personal/projects/howl/howl-render/src/session/text.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/owner_test.zig`
+17. Alacritty renderer references:
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs`
+   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs`
+
+### Current-code facts
+
+- The accepted host-fill slice removed the previous host bottleneck materially:
+  - direct host `47.96 fps -> 81.44 fps`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-direct-ascii.metrics.ndjson:8-9`
+  - `render_upload_fill_draw_avg_us ~= 179-184`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log:66`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log:102`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log:115`
+- On the same accepted state, the direct receipt now ranks renderer prepare/emission above host playback:
+  - `render_prepare_avg_us ~= 1335-1368`
+  - `owner_create_avg_us ~= 1032-1038`
+  - `direct_normal_avg_us ~= 417-419`
+  - `render_upload_avg_us ~= 343-350`
+  - `render_upload_glyph_avg_us ~= 65-67`
+  - `present_submit_avg_us ~= 80-81`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log:101-115`
+- `owner_create` is not an independent owner. It is the `PreparedHandle.create(...)` wrapper around allocation, registration, and render-surface emission:
+  - `/home/home/personal/projects/howl/howl-render/src/session/text.zig:529-534`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig:71-93`
+- `PreparedHandle.create(...)` immediately pushes the work into `emitRenderSurfacePayload()` and then `emitPreparedFresh(...)`:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig:85-92`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig:168-179`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:328-361`
+- The current emitter timing is incomplete on the hot fresh path:
+  - `emitPreparedFresh(...)` copies `resources.*` into `next_resources` but hard-codes `copy_in_ns = 0` and `copy_out_ns = 0`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:328-360`
+- That gap matters because the accepted receipt shows:
+  - `prepared_handle_create emit_avg_us ~= 1031-1037`
+  - while the emitter’s reported internal stages on the same steady state are much smaller:
+    - `fills_avg_us ~= 22`
+    - `sprites_avg_us ~= 250-252`
+    - `publish_avg_us ~= 1`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log:106-111`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log:114-115`
+- `direct_normal` is no longer the next owner on this accepted state:
+  - it remains well below `owner_create`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log:108-111`
+
+### Reference facts
+
+- Alacritty keeps renderable-cell discovery outside the renderer playback owner:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:24-38`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/content.rs:153-183`
+- Alacritty keeps rect/background and text drawing in distinct renderer owners:
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:19-33`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/rects.rs:247-255`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:49-69`
+  - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/renderer/text/mod.rs:97-132`
+- TigerBeetle pressure rejects bucket owners and requires that timing and behavior belong to the smallest true owner:
+  - `/home/home/personal/projects/howl/AGENTS.md:103-118`
+  - `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md:80-118`
+
+### Answers
+
+1. The next true bottleneck owner from the current accepted state is `howl-render` prepared render-surface emission rooted at `PreparedHandle.create(...)`, not host playback and not `direct_normal`.
+   - Receipt proof:
+     - `/home/home/personal/projects/howl/artifacts/stress/20260609-143338-background-fill-host-playback-owner/howl-term.stderr.log:101-115`
+   - Current owner path:
+     - `/home/home/personal/projects/howl/howl-render/src/session/text.zig:529-534`
+     - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig:71-93`
+     - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig:168-179`
+
+2. The next honest seam is back in `howl-render` prepare/emission, but the next loop should be proof-first inside that seam, not another host playback optimization pass.
+   - Reason:
+     - current host playback is already below the prepare/emission path on the accepted receipt
+     - the emitter’s fresh-path timing is not owner-true yet because it hides the `resources.*` copy cost
+   - This is a local ownership/measurement correction, not a broad architecture reset:
+     - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:328-360`
+
+3. The next coding slice should be allowed to touch exactly:
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/session/text.zig`
+   - `/home/home/personal/projects/howl/howl-render/src/prepared/owner_test.zig`
+   - No host files are justified by the accepted post-fill receipt.
+
+4. The next loop should promote this exact contract:
+   - Slice name:
+     - `prepared-emission-owner-proof-after-host-fill`
+   - Required shape:
+     - proof only, no behavior change
+     - keep existing `prepare_surface_avg_us`, `direct_normal_*`, `owner_create_avg_us`, and host upload/present counters intact
+     - split the current `owner_create` / `emit` path enough to answer exactly:
+       - how much time is spent copying `SpriteResourceStore` on the fresh emission path
+       - how much time is spent in fill emission, sprite emission, publish/fixup, and any remaining fresh-path work
+       - whether `owner_create` is effectively “resource-store copy + sprite emission” or whether another unmeasured subowner remains
+     - keep the proof inside the current renderer prepare/emission owners; no host/runtime changes
+     - if a helper is introduced, it must stay owner-local to the prepare/emission files above
+   - Required tests:
+     - `cd /home/home/personal/projects/howl/howl-render && zig build test`
+     - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+     - one fresh direct-host timing rerun with `HOWL_RENDER_DEBUG_TIMING` enabled
+     - acceptance requires the fresh direct receipt to name one subowner inside `owner_create`/emit without regressing behavior materially on the direct host path
+   - Non-goals:
+     - no `howl-linux-host/*`
+     - no `howl-render/src/text/direct_normal.zig`
+     - no `howl-render/src/text/frame_preparer.zig`
+     - no `howl-render/src/prepared/sprite_resource_store.zig`
+     - no ABI changes
+     - no renderer policy or command-semantics changes
+     - no optimization yet
+   - Stop conditions:
+     - stop if making the seam truthful requires touching files outside the four-file set above
+     - stop if the proof shows `SpriteResourceStore` ownership itself must change before more measurement is honest
+     - stop if the fresh direct receipt still leaves `owner_create` as a bucket after the split
+
+5. Current code does expose a bucket/false owner on the next seam, and it should pause direct optimization first.
+   - `owner_create_avg_us` is a mixed wrapper metric in `session/text.zig`, not a smallest true owner:
+     - `/home/home/personal/projects/howl/howl-render/src/session/text.zig:529-534`
+   - `emitPreparedFresh(...)` then hides part of its own cost by copying `resources.*` while reporting zero copy time:
+     - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:328-360`
+   - So the right pause is narrow:
+     - do the proof/measurement correction inside prepare/emission first
+     - do not broaden into a speculative host pass or a repo-wide ownership refactor
+
+### Required assertions
+
+- Assert that any new timing split on the fresh path records positive space for the copied/emitted owner and does not silently drop fresh-path work.
+- Assert that the proof keeps `PreparedHandle.create(...)` behavior unchanged: same handle state transitions, same emission failure behavior, same live render-surface availability.
+
+### Risks
+
+- Jumping straight into an emitter optimization would repeat the same mistake as the rejected alpha-atlas probe: changing a subcost before the accepted receipt proves it is the next owner.
+- If the proof shows `SpriteResourceStore` copy dominates and cannot be isolated honestly inside the current ownership boundary, performance work must pause for an ownership re-cut rather than guessing.
+
+### Proof gaps
+
+- The accepted receipts do not yet quantify the hidden fresh-path copy cost.
+- The current emitter debug output does not explain the full gap between `prepared_handle_create emit_avg_us` and the emitter’s reported internal stages.
+
+### Readiness judgment
+
+Ready to promote one renderer-side proof slice.
+
+The next honest contract is not another host playback pass. It is a four-file `howl-render` proof slice that makes the prepare/emission owner truthful enough to name the next real optimization target inside `PreparedHandle.create(...)` and `emitPreparedFresh(...)`.
