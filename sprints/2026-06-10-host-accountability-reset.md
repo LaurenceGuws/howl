@@ -118,7 +118,7 @@ Sequential slice queue:
   - `rg -n "feed_record|feed_record_file|feed_record_io" howl-linux-host/src` returned no matches
   - the live host replay seam is now truthfully deleted from host ownership
 5. `rain-tooling-decoupling`
-- next active correction slice
+- historical umbrella topic only
 - goal:
   - remove active Howl ownership of the rain client and cross-terminal launcher
 - allowed files:
@@ -135,7 +135,42 @@ Sequential slice queue:
   - the user wants a specific external repo/project destination that is not yet explicitly seeded
   - truthful decoupling requires code movement outside the allowed tool/docs set above
 
-6. `lower-module-replay-replacement`
+6. `rain-tooling-delete-from-howl-workspace`
+- next active execution slice
+- goal:
+  - delete the in-repo rain benchmark client and launcher from current Howl ownership now that host replay/runtime coupling is gone
+- allowed files:
+  - `/home/home/personal/projects/howl/utils/tools/build.zig`
+  - `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig`
+  - `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+  - `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md`
+  - `/home/home/personal/projects/howl/loops/rain-tooling-delete-from-howl-workspace.txt`
+  - `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+- required shape:
+  - remove all `stress:rain*` step definitions and wiring from `utils/tools/build.zig`
+  - delete the two Zig rain binaries and the Python cross-terminal launcher
+  - rewrite the active sprint/loop/research text so it records deletion as the chosen outcome, not `move/archive/remove`
+  - keep performance paused until an external benchmark-client project/path is explicitly seeded later
+- required tests and receipts:
+  - `cd /home/home/personal/projects/howl/utils/tools && zig build`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+  - `cd /home/home/personal/projects/howl && rg -n "stress:rain|ascii_rain_stress|visual_rain_stress|benchmark_terminals\\.py" utils/tools`
+    - expected result after acceptance: no matches
+  - `cd /home/home/personal/projects/howl && rg -n "ascii_rain_stress|visual_rain_stress|benchmark_terminals\\.py|stress:rain" sprints/current.txt sprints/2026-06-10-host-accountability-reset.md loops/rain-tooling-delete-from-howl-workspace.txt research/host-accountability-reset-2026-06-10.md howl-linux-host/stress.md`
+    - expected result after acceptance: no matches except historical archive files outside the active surface
+- non-goals:
+  - no new benchmark wrapper inside Howl
+  - no host/runtime/render/pty/vt code changes
+  - no archived artifact cleanup outside the active surface
+  - no renewed performance work
+  - no external repo creation or migration
+- stop conditions:
+  - `utils/tools/build.zig` still needs to keep some non-rain live tool owner that cannot be separated inside the allowed file set
+  - truthful deletion requires changing active files outside the allowed set above
+  - reviewer concludes the external-client reseed must be specified before deletion can be accepted
+
+7. `lower-module-replay-replacement`
 - conditional only if replay is still actually needed outside the host seam
 Completion gate:
 
