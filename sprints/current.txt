@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- none
+- `sprints/2026-06-11-text-source-mapper-proof-owner.md`
 
 Active research:
 
@@ -15,13 +15,17 @@ Active research:
 
 Active loops:
 
-- none
+- `loops/text-source-mapper-proof-owner.txt`
 
 Latest archived planning package:
 
 - `sprints/done/2026-06-10-text-sprint-research.md`
 - `research/done/2026-06-10-text-sprint-scratchpad.md`
 - `loops/done/render-source-cell-model-research.txt`
+
+Execution rule:
+
+- Archived planning artifacts remain the source of accepted slice truth until the active execution slice is accepted or rejected.
 
 Rule:
 
