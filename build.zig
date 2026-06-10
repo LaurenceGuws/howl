@@ -53,13 +53,6 @@ const simulate_mappings = [_]Mapping{
     .{ .package_dir = "howl-vt", .step_name = "simulate" },
 };
 
-const stress_mappings = [_]Mapping{
-    .{ .package_dir = "utils/tools", .step_name = "stress:rain" },
-    .{ .package_dir = "utils/tools", .step_name = "stress:rain:ascii" },
-    .{ .package_dir = "utils/tools", .step_name = "stress:rain:mixed" },
-    .{ .package_dir = "utils/tools", .step_name = "stress:rain:visual" },
-};
-
 const benchmark_mappings = [_]Mapping{
     .{ .package_dir = "howl-vt", .step_name = "benchmark:m7_baseline" },
     .{ .package_dir = "howl-render", .step_name = "benchmark:render" },
@@ -72,7 +65,6 @@ const root_aggregates = [_]RootAggregate{
     .{ .name = "test:abi", .description = "Run product-package ABI proofs across the workspace", .mappings = &test_abi_mappings },
     .{ .name = "test:integration", .description = "Run explicit package integration proofs across the workspace", .mappings = &test_integration_mappings },
     .{ .name = "simulate", .description = "Run deterministic package simulation workloads across the workspace", .mappings = &simulate_mappings },
-    .{ .name = "stress", .description = "Run currently exposed named package stress surfaces across the workspace", .mappings = &stress_mappings },
     .{ .name = "benchmark", .description = "Run currently exposed named package benchmarks across the workspace", .mappings = &benchmark_mappings },
 };
 

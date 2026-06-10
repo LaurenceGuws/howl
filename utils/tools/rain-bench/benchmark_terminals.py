@@ -20,8 +20,8 @@ CPU_HZ = os.sysconf(os.sysconf_names.get("SC_CLK_TCK", "SC_CLK_TCK"))
 PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-TOOLS_ROOT = REPO_ROOT / "utils" / "tools"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TOOLS_ROOT = Path(__file__).resolve().parent
 HOST_ROOT = REPO_ROOT / "howl-linux-host"
 HOWL_HARNESS_DIR = HOST_ROOT / "zig-out" / "harness"
 STRESS_HARNESS_DIR = TOOLS_ROOT / "zig-out" / "harness"
@@ -41,7 +41,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-resource-interval", type=float, default=1.0, help="seconds between nvidia-smi GPU resource samples")
     parser.add_argument("--no-resources", action="store_true", help="disable child process resource sampling")
     parser.add_argument("--out-dir", type=Path, default=REPO_ROOT / "artifacts" / "stress")
-    parser.add_argument("--build", action="store_true", help="run zig build install and zig build stress:rain:build before benchmarking")
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="build howl-linux-host and the local rain-bench stress binary before benchmarking",
+    )
     parser.add_argument("--trace-howl", action="store_true", help="enable HOWL_TRACE_PATH during Howl runs")
     parser.add_argument(
         "--terminals",
@@ -697,7 +701,10 @@ def main() -> int:
     if args.build:
         run_build()
     if not args.stress_bin.exists():
-        print(f"missing stress binary: {args.stress_bin}; run with --build or run zig build stress:rain:build -Doptimize=ReleaseFast", file=sys.stderr)
+        print(
+            f"missing stress binary: {args.stress_bin}; run with --build or run `zig build stress:rain:build -Doptimize=ReleaseFast` in utils/tools/rain-bench",
+            file=sys.stderr,
+        )
         return 2
 
     run_id = time.strftime("%Y%m%d-%H%M%S") + f"-{args.mode}"
