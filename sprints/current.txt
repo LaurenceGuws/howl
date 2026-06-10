@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-09-post-bg-performance-restart.md`
+- `sprints/2026-06-10-host-accountability-reset.md`
 
 Active research:
 
-- `research/post-bg-performance-restart-2026-06-09.md`
+- `research/host-accountability-reset-2026-06-10.md`
 
 Active loops:
 
-- `loops/post-host-fill-rebaseline.txt`
+- `loops/host-doc-and-current-surface-reset.txt`
 
 Rule:
 
