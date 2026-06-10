@@ -111,7 +111,7 @@ Remaining sprint plan after slice 1:
 - tests/proof:
   - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "render surface prepared ffi borrowed surface realizes explicit rgba oracle"`
   - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "render ffi prepared render-surface retrieval reports emission failure"`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi` may still fail only on the already-queued `source text input` mapping regressions until slice 3 lands
 - non-goals:
   - no text-input fixes
   - no fixture-path work
