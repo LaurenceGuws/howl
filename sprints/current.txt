@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/host-command-and-log-proof.txt`
+- `loops/rain-tooling-decoupling.txt`
 
 Rule:
 

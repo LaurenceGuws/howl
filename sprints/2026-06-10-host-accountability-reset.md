@@ -78,7 +78,7 @@ Sequential slice queue:
   - reviewer continuity preserved under reviewer `019eac44-6df8-7e91-842d-c9cffd973aff`
 
 3. `host-command-and-log-proof`
-- next active proof slice
+- completed accepted proof slice
 - goal:
   - prove host command launch and host log/accounting behavior remain correct after seam deletion
 - allowed files:
@@ -94,9 +94,38 @@ Sequential slice queue:
 - stop conditions:
   - truthful proof requires files outside the allowed host/docs set above
   - proof reveals host command/log behavior still depends on stale benchmark/replay ownership
+- acceptance receipts:
+  - command proof receipt:
+    - `artifacts/host/20260610-host-command-and-log-proof/command.result.txt`
+    - `artifacts/host/20260610-host-command-and-log-proof/command.stderr.log`
+  - debug accounting/log proof receipt:
+    - `artifacts/host/20260610-host-command-and-log-proof/accounting.result.txt`
+    - `artifacts/host/20260610-host-command-and-log-proof/accounting.stderr.log`
+  - command run exited `0` with `--command 'sleep 2'`
+  - debug accounting run exited `0` with `--debug-process-accounting --debug-log-every-ms 100 --command 'sleep 2'`
+  - host emitted `howl-debug ...` accounting lines during the proof run
+  - `zig test src/cli/args.zig` passed
+  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
+  - host-doc grep receipt:
+    - `artifacts/host/20260610-host-command-and-log-proof/stress-grep.txt`
 
 4. `rain-tooling-decoupling`
-- remove active Howl ownership of the rain client and cross-terminal launcher
+- next active correction slice
+- goal:
+  - remove active Howl ownership of the rain client and cross-terminal launcher
+- allowed files:
+  - `/home/home/personal/projects/howl/utils/tools/build.zig`
+  - `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig`
+  - `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig`
+  - `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+  - any docs/sprints/loops/research files still treating them as active Howl-owned host tooling
+- non-goals:
+  - no lower-module replay replacement
+  - no PTY/VT/render ABI changes
+  - no performance work
+- stop conditions:
+  - the user wants a specific external repo/project destination that is not yet explicitly seeded
+  - truthful decoupling requires code movement outside the allowed tool/docs set above
 
 5. `lower-module-replay-replacement`
 - conditional only if replay is still actually needed outside the host seam

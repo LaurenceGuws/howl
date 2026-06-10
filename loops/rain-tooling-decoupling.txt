@@ -1,0 +1,57 @@
+Rain tooling decoupling
+
+Date: 2026-06-10.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `019eb073-8e59-75b3-8819-36a35701b521`.
+Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
+Coder session id: none.
+Scope: remove active Howl ownership of the rain client and cross-terminal launcher while keeping host accountability narrow.
+
+Problem statement:
+
+- Performance remains paused pending host accountability reset.
+- The host seam is now narrowed to command launch and host logging/accounting.
+- The remaining stale ownership is benchmark-client coupling inside the Howl workspace:
+  - rain workload generators
+  - cross-terminal launcher/comparison tooling
+- No active host or sprint artifact may present those as live host-owned workflow.
+
+Required sources:
+
+- `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+- `/home/home/personal/projects/howl/howl-linux-host/stress.md`
+- `/home/home/personal/projects/howl/utils/tools/build.zig`
+- `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/utils/tools/build.zig`
+- `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig`
+- `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig`
+- `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+- any docs/sprints/loops/research files still treating them as active Howl-owned host tooling
+
+Required shape:
+
+- remove active Howl host ownership of rain workload generation
+- remove active Howl host ownership of cross-terminal launch/comparison tooling
+- either move those tools under a separately named benchmark-client surface or archive/remove them from live Howl ownership
+- preserve clear receipts showing performance remains paused until this decoupling lands
+
+Required tests:
+
+- proof that active host docs/current sprint surface no longer present rain tooling as host-owned workflow
+- proof that active Howl ownership no longer points coders/reviewers at benchmark-client tooling as host work
+
+Non-goals:
+
+- no lower-module replay replacement
+- no PTY/VT/render ABI changes
+- no performance work
+
+Stop conditions:
+
+- the user wants a specific external repo/project destination that is not yet explicitly seeded
+- truthful decoupling requires code movement outside the allowed tool/docs set above

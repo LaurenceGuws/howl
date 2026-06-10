@@ -24,7 +24,10 @@ Execution receipt:
   - `cd howl-linux-host && zig test src/cli/args.zig` passed
   - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
   - grep proof on the allowed host files returned no matches for `HOWL_PTY_VT_RECORD_PATH`
-- Performance remains paused. The next active slice is `host-command-and-log-proof`.
+- Accepted slice `host-command-and-log-proof` produced live host receipts under `artifacts/host/20260610-host-command-and-log-proof/`.
+- The command proof run exited `0` under `--command 'sleep 2'`, which proves the narrowed host still accepts and launches a command through the live harness.
+- The debug proof run exited `0` under `--debug-process-accounting --debug-log-every-ms 100 --command 'sleep 2'` and emitted `howl-debug ...` accounting lines, which proves host logging/accounting still works after the seam deletion.
+- Performance remains paused. The next active slice is `rain-tooling-decoupling`.
 
 Docs execution receipt:
 
