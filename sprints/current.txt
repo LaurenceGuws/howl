@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/render-test-fixture-accountability.txt`
+- `loops/render-prepared-handle-teardown-repair.txt`
 
 Rule:
 
