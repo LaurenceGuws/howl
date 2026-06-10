@@ -219,6 +219,16 @@ Remaining sprint plan after slice 1:
   - this slice is verification-only and must not hide unresolved failures behind documentation edits
   - benchmark commands are part of the exposed validation surface for this sprint because the active sprint file already names them
 
+Slice 4 receipt:
+
+- `vt-simulate-canonical-repair` accepted on `howl-vt` commit `ab39fda`
+- canonical proof now reads logical authority from history plus visible rows instead of the bounded projected-history view
+- canonical hashing now uses deterministic `u32` codepoint values instead of raw `u21` memory bytes
+- owner-local resize proof now covers canonical logical preservation when projected history saturates
+- measured primary proof:
+  - `cd /home/home/personal/projects/howl/howl-vt && time zig build simulate -- scrollback`
+  - `real 1m23.989s`
+
 Slice 3 receipt:
 
 - `render-text-input-mapping-regressions` closed as an honest no-op on the accepted tree

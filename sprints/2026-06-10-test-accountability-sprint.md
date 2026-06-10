@@ -133,6 +133,8 @@ Sequential slice queue:
 - stop conditions:
   - if the mismatch cannot be reproduced with `zig build simulate -- scrollback`, stop and record the exact missing seed or smoke-only condition before changing owners
   - if the required fix crosses outside resize/history ownership into unrelated parser/protocol paths, stop and record the proof before broadening scope
+- acceptance note:
+  - accepted on `howl-vt` commit `ab39fda`; primary `scrollback` simulation proof completed at original `400` churn strength
 
 5. `workspace-validation-rebaseline`
 - goal:

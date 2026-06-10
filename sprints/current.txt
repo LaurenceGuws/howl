@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/vt-simulate-canonical-repair.txt`
+- `loops/workspace-validation-rebaseline.txt`
 
 Rule:
 
