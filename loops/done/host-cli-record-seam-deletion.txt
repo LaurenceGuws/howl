@@ -1,0 +1,66 @@
+Host CLI record-seam deletion
+
+Date: 2026-06-10.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `019eb073-655c-79a3-8528-abc2d3e6116a`, `019eb073-8e59-75b3-8819-36a35701b521`.
+Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
+Coder session id: none.
+Scope: remove the stale PTY/VT record-replay seam from the live host executable after the docs/current-surface reset.
+
+Problem statement:
+
+- Performance remains paused pending host accountability reset.
+- The live host executable still exposes stale record/replay through:
+  - `--pty-vt-record-path`
+  - `HOWL_PTY_VT_RECORD_PATH`
+  - runtime `feed_record` startup plumbing
+- The host must keep command launch and host logging/accounting, but must stop owning replay-fixture production in the live runtime seam.
+
+Required sources:
+
+- `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+- `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/feed_record.zig`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/context.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/feed_record.zig`
+- host-owned arg/startup tests directly proving the seam deletion
+
+Required shape:
+
+- delete `Args.pty_vt_record_path`
+- delete CLI parsing of `--pty-vt-record-path`
+- delete `HOWL_PTY_VT_RECORD_PATH` host startup handling
+- delete runtime `feed_record_path` plumbing through host startup/context
+- preserve host `--command`, `--shell`, working-directory/start-path, and debug logging/accounting behavior
+- no lower-module replay replacement in this slice
+
+Required tests:
+
+- host arg tests prove `--pty-vt-record-path` is rejected or gone
+- host arg tests still prove `--command` and debug logging/accounting switches parse
+- host build/install passes:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- grep proof that `HOWL_PTY_VT_RECORD_PATH` no longer appears in allowed host files
+
+Non-goals:
+
+- no lower-module replay replacement
+- no benchmark-client movement
+- no ABI changes
+- no performance work
+
+Stop conditions:
+
+- stop if deletion requires shipped PTY/VT/render C ABI changes
+- stop if truthful deletion needs files outside the allowed host set above

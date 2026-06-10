@@ -52,7 +52,7 @@ Sequential slice queue:
   - active sprint/loop/research all carry `Performance remains paused pending host accountability reset.`
 
 2. `host-cli-record-seam-deletion`
-- next active code slice after docs/accountability reset
+- completed accepted execution slice
 - goal:
   - remove `--pty-vt-record-path`, `HOWL_PTY_VT_RECORD_PATH`, and runtime `feed_record` startup plumbing from the host seam
 - allowed files:
@@ -68,9 +68,32 @@ Sequential slice queue:
   - no ABI changes
 - stop conditions:
   - deletion requires shipped PTY/VT/render C ABI changes
+- acceptance receipts:
+  - host commit `4b0cdb9` `delete host record cli seam`
+  - `zig test src/cli/args.zig` passed with:
+    - `parse rejects pty vt record path`
+    - `parse keeps command and debug switches after record seam deletion`
+  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
+  - grep receipt: `HOWL_PTY_VT_RECORD_PATH` no longer appears in the allowed host files
+  - reviewer continuity preserved under reviewer `019eac44-6df8-7e91-842d-c9cffd973aff`
 
 3. `host-command-and-log-proof`
-- prove host command launch and host log/accounting behavior remain correct after seam deletion
+- next active proof slice
+- goal:
+  - prove host command launch and host log/accounting behavior remain correct after seam deletion
+- allowed files:
+  - `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
+  - `/home/home/personal/projects/howl/howl-linux-host/stress.md`
+  - host-owned arg/startup tests directly proving command launch and debug logging/accounting
+- non-goals:
+  - no lower-module replay replacement
+  - no benchmark-client movement
+  - no ABI changes
+  - no performance work
+- stop conditions:
+  - truthful proof requires files outside the allowed host/docs set above
+  - proof reveals host command/log behavior still depends on stale benchmark/replay ownership
 
 4. `rain-tooling-decoupling`
 - remove active Howl ownership of the rain client and cross-terminal launcher

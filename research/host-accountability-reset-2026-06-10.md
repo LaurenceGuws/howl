@@ -16,6 +16,16 @@ Active state receipt:
 - Performance remains paused pending host accountability reset.
 - No active artifact may treat rain generation, cross-terminal launch tooling, or replay capture as live host-owned workflow.
 
+Execution receipt:
+
+- Accepted slice `host-cli-record-seam-deletion` landed in `howl-linux-host` commit `4b0cdb9` `delete host record cli seam`.
+- The live host executable no longer accepts `--pty-vt-record-path`, no longer reads `HOWL_PTY_VT_RECORD_PATH`, and no longer threads `feed_record` startup through host `main -> Processor -> Context`.
+- Verification receipts:
+  - `cd howl-linux-host && zig test src/cli/args.zig` passed
+  - `cd howl-linux-host && zig build install -Doptimize=ReleaseFast` passed
+  - grep proof on the allowed host files returned no matches for `HOWL_PTY_VT_RECORD_PATH`
+- Performance remains paused. The next active slice is `host-command-and-log-proof`.
+
 Docs execution receipt:
 
 - `howl-linux-host/stress.md` is now host-only command/log guidance.

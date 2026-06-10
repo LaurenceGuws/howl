@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/host-cli-record-seam-deletion.txt`
+- `loops/host-command-and-log-proof.txt`
 
 Rule:
 
