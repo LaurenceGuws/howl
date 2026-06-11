@@ -1,0 +1,46 @@
+Text empty clear background repair
+
+Date: 2026-06-11.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-11-text-empty-clear-background-repair-01`.
+Execution reviewer session id: `review-2026-06-11-text-empty-clear-background-repair-01`.
+Coder session id: `coder-2026-06-11-text-empty-clear-background-repair-01`.
+Commit-hash receipt: pending coder handoff and acceptance.
+Scope: execute and review the post-sprint background-defect repair slice only.
+
+Problem statement:
+
+- After the completed text sprint, curses-style clear/delete workloads now show black background defects.
+- The likely seam is that `empty` cells are still dropped before scene background and clear owners run.
+- This loop exists only to land the narrow repair for preserved empty-cell background witnesses and honest proof.
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/text/shape/cluster.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/scene.zig`
+
+Required shape:
+
+- Keep cleared `empty` cells alive through renderable ownership for scene background and clear policy.
+- Do not emit blank glyph sprites for those preserved cells.
+- Prove partial-damage clears use empty default-background truth instead of black fallback.
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "sparse cells keep empty background witnesses for scene ownership"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "text preparation partial damage clears use empty default background truth"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "text preparation direct-renders pure normal cell text inputs"`
+
+Stop conditions:
+
+- stop if the fix needs files outside the allowed set
+- stop if preserving cleared background truth requires changing shipped source or publication ABI layouts
+
+Verification receipts:
+
+- pending coder implementation
+- pending reviewer verdict
+- pending orchestrator verification

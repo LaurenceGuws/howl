@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- none
+- `sprints/2026-06-11-text-empty-clear-background-repair.md`
 
 Active research:
 
@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- none
+- `loops/text-empty-clear-background-repair.txt`
 
 Latest archived planning package:
 
@@ -27,11 +27,6 @@ Latest accepted execution slice:
 
 - `sprints/done/2026-06-11-text-proof-surface-consolidation.md`
 - `loops/done/text-proof-surface-consolidation.txt`
-
-Sprint completion:
-
-- Text sprint execution queue is complete.
-- No active execution slice remains.
 
 Execution rule:
 
