@@ -4,10 +4,13 @@ Date: 2026-06-11.
 Role owner: orchestrator.
 Status: active live loop.
 Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
-Current required worker session id: `worker-2026-06-11-ascii-rain-control-run-01`.
-Next required worker session id: pending after control-run receipt.
-Researcher session id: pending until bottleneck evidence handoff.
-Reviewer session id: pending until bottleneck evidence handoff.
+Accepted control-run worker session id: `worker-2026-06-11-ascii-rain-control-run-01`.
+Accepted bottleneck-proof worker session id: `worker-2026-06-12-ascii-rain-bottleneck-proof-01`.
+Accepted direct-normal worker session id: `worker-2026-06-12-direct-normal-single-pass-01`.
+Current required worker session id: pending until reviewer-accepted owner-create plan.
+Next required worker session id: pending after reviewer-accepted owner-create plan.
+Researcher session id: `research-2026-06-12-owner-create-plan-01`.
+Reviewer session id: `review-2026-06-12-owner-create-plan-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -39,7 +42,7 @@ Loop goal:
 - Only after that evidence exists, hand the bottleneck package to researcher and reviewer for planning.
 - No optimization or broad redesign slice is authorized yet.
 
-Current slice: `control-run-receipt`
+Accepted slice: `control-run-receipt`
 
 - Purpose:
   - record one fresh base-number control run against the agreed utils FPS telemetry harness
@@ -47,10 +50,10 @@ Current slice: `control-run-receipt`
   - no file edits authorized
 - Required commands:
   - `/home/home/personal/projects/howl/howl-linux-host`: `zig build install -Doptimize=ReleaseFast`
-  - `/home/home/personal/projects/howl/utils/tools`: `zig build stress:rain:build -Doptimize=ReleaseFast`
-  - `/home/home/personal/projects/howl`: `python3 utils/tools/benchmark_terminals.py --duration 10 --mode ascii --terminals howl alacritty`
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench`: `zig build --release=fast stress:rain:build`
+  - `/home/home/personal/projects/howl`: `python3 utils/tools/rain-bench/benchmark_terminals.py --duration 10 --mode ascii --terminals howl alacritty`
 - Required output:
-  - exact run directory path under `/home/home/personal/projects/howl/artifacts/stress/<timestamp>-ascii/`
+  - exact run directory path under `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/<timestamp>-ascii/`
   - exact `summary.json` receipt path
   - exact final Howl FPS and Alacritty FPS from that receipt
 - Required verification:
@@ -69,31 +72,147 @@ Current slice: `control-run-receipt`
   - exact receipt paths
   - final Howl vs Alacritty FPS values
 
-Next slice after acceptance: `temporary-bottleneck-logging`
+Accepted receipt:
+
+- run directory:
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-000332-ascii/`
+- summary:
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-000332-ascii/summary.json`
+- final Howl FPS:
+  - `11.35`
+- final Alacritty FPS:
+  - `970.58`
+- metrics completion:
+  - both terminals completed with `schema=1` and `final=true`
+
+Current slice: `temporary-bottleneck-logging`
 
 - Purpose:
   - use temporary logs to pin down the current biggest performance bottleneck
-- Authorization:
-  - not yet seeded; orchestrator must seed exact allowed files, symbols, tests, and stop conditions after the control-run receipt lands
+- Allowed files:
+  - no source edits are required for the first proof pass
+  - if current built-in timing still proves insufficient, temporary debug-log edits are authorized only in:
+    - `/home/home/personal/projects/howl/howl-render/src/session/text.zig`
+    - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
+    - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+- Required current proof path:
+  - use the accepted decoupled rain-bench harness
+  - set `HOWL_RENDER_DEBUG_TIMING=1`
+  - capture Howl stderr to a proof log file while running a Howl-only benchmark through the decoupled wrapper
+- Required commands:
+  - `/home/home/personal/projects/howl/howl-linux-host`: `zig build install -Doptimize=ReleaseFast`
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench`: `zig build --release=fast stress:rain:build`
+  - `/home/home/personal/projects/howl`: `env HOWL_RENDER_DEBUG_TIMING=1 python3 utils/tools/rain-bench/benchmark_terminals.py --duration 3 --mode ascii --terminals howl 2> /tmp/opencode/howl-render-debug-control.log`
+- Required output:
+  - exact benchmark run directory path
+  - exact `summary.json` path for the Howl-only proof run
+  - exact stderr proof-log path
+  - exact timing lines showing the strongest current bottleneck class
+  - explicit conclusion naming the current biggest bottleneck owner seam
+- Required verification:
+  - the Howl-only benchmark completes with final metrics receipt
+  - the stderr proof log contains `howl-render-debug` timing lines
+- Non-goals:
+  - no product fix yet
+  - no broad host runtime logging resurrection
+  - no PTY, VT, or benchmark-wrapper redesign
+  - no research planning yet
+- Stop conditions:
+  - stop if the built-in timing seam does not emit enough signal to rank the biggest bottleneck honestly
+  - stop if the next truthful step would require temporary logging outside the three allowed owner files
+  - stop if the proof exposes a big correctness issue or vague bucket
+- Acceptance gate:
+  - worker session id
+  - exact commands run
+  - exact receipt paths
+  - exact stderr proof-log path
+  - quoted timing lines supporting the bottleneck ranking
+  - explicit biggest-bottleneck conclusion
+
+Orchestrator proof before worker handoff:
+
+- decoupling receipt:
+  - commit `5b138d9` `decouple rain bench from workspace root`
+- stable control-run proof:
+  - `utils/tools/build.zig` is intentionally empty; rain-bench owns the live build surface
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench/README.md` documents:
+    - `zig build --release=fast stress:rain:build`
+    - `python3 utils/tools/rain-bench/benchmark_terminals.py ...`
+- built-in temporary timing seam proof:
+  - `/home/home/personal/projects/howl/howl-render/src/session/text.zig`: `HOWL_RENDER_DEBUG_TIMING` emits `direct_normal_*` and `owner_create_*`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`: `HOWL_RENDER_DEBUG_TIMING` emits `prepared_handle_create`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`: `HOWL_RENDER_DEBUG_TIMING` emits `emit_prepared`
+- orchestrator sample proof receipt:
+  - benchmark run dir:
+    - `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-000456-ascii/`
+  - summary:
+    - `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-000456-ascii/summary.json`
+  - stderr timing log:
+    - `/tmp/opencode/howl-render-debug-control.log`
+  - current strongest timing signal from the sample proof:
+    - `direct_normal_scan_avg_us=2197-2229`
+    - `owner_create_avg_us=1277-1416`
+    - `sprites_avg_us=456-561`
+  - current working conclusion:
+    - the biggest current bottleneck class is direct-normal scan work in the text prepare path
 
 Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 - Researcher and reviewer start only after the bottleneck evidence exists.
 - If the bottleneck hunt exposes a big correctness issue or a vague bucket, stop and bring it to the user for a subsprint instead of forcing planning through it.
 
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-12-owner-create-bottleneck-plan.md`
+
+Research goal:
+
+- turn the accepted current bottleneck proof into a reviewer-accepted next worker slice that attacks the true owner seam in pristine shape
+- keep the scope inside the proven bottleneck owner seam unless current source proves another owner is entangled tightly enough that the slice would be dishonest without it
+- use Alacritty and TigerBeetle pressure to reject fake quick wins, vague bucket moves, or host-side distractions
+
+Research package must include:
+
+- sources read in order
+- exact file and line references
+- current-code facts
+- reference facts
+- compact anchor map for the bottleneck decision
+- exact proof receipts being relied on
+- owner roles and proposed shape
+- explicit ordered worker slice plan
+- exact allowed files
+- exact required shape
+- exact tests
+- exact non-goals
+- exact stop conditions
+- required assertions
+- risks
+- proof gaps
+- readiness judgment
+
+Reviewer acceptance gate for this handoff:
+
+- reject if the plan does not center the current `owner_create` proof seam explicitly
+- reject if the plan jumps to host GL, PTY, VT, or benchmark-wrapper redesign without current-source proof that the bottleneck ranking is wrong
+- reject if the next worker slice lacks exact allowed files, required shape, tests, non-goals, stop conditions, or receipt fields
+- reject if the plan recommends optimization before addressing owner truth or bottleneck-owner debt inside the true seam
+
 Required current-source read pack:
 
 - `/home/home/personal/projects/howl/reference-index.md`
-- `/home/home/personal/projects/howl/howl-linux-host/stress.md`
-- `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+- `/home/home/personal/projects/howl/utils/tools/rain-bench/README.md`
+- `/home/home/personal/projects/howl/utils/tools/rain-bench/benchmark_terminals.py`
 - `/home/home/personal/projects/howl/utils/tools/rain-bench/ascii_rain_stress.zig`
 - `/home/home/personal/projects/howl/utils/tools/rain-bench/visual_rain_stress.zig` if the current harness points there
-- `/home/home/personal/projects/howl/utils/tools/build.zig`
-- `/home/home/personal/projects/howl/build.zig`
+- `/home/home/personal/projects/howl/utils/tools/rain-bench/build.zig`
 - `/home/home/personal/projects/howl/howl-linux-host/build.zig`
 - `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
 - `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
 - `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+- `/home/home/personal/projects/howl/howl-render/src/session/text.zig`
+- `/home/home/personal/projects/howl/howl-render/src/prepared/handle.zig`
+- `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
 - Navigation only:
   - `/home/home/personal/projects/howl/research/done/cache-2026-06-08-ascii-rain-benchmark-surface.md`
   - `/home/home/personal/projects/howl/loops/done/pre-team-scratchpad/ascii-rain-baseline-bottleneck.txt`
@@ -106,9 +225,39 @@ Stop conditions:
 
 Completion gate:
 
-- `sprints/current.txt` continues to point only at the live sprint and active loop for this step
+- `sprints/current.txt` continues to point only at the live sprint, active loop, and active research artifact for this step
 - one accepted control-run receipt exists
-- the next worker bottleneck-proof slice is seeded from that receipt or the loop stops on an explicit blocker
+- one accepted bottleneck-proof receipt exists
+- one accepted direct-normal execution receipt exists
+- reviewer accepts or rejects the active owner-create bottleneck plan before the next worker slice is seeded
+
+Accepted execution slice: `direct-normal-single-pass-publication`
+
+- Coder session id:
+  - `worker-2026-06-12-direct-normal-single-pass-01`
+- Files changed:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig`
+- Tests run:
+  - `/home/home/personal/projects/howl/howl-render`: `zig build test:unit`
+  - `/home/home/personal/projects/howl/howl-linux-host`: `zig build install -Doptimize=ReleaseFast`
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench`: `zig build --release=fast stress:rain:build`
+  - `/home/home/personal/projects/howl`: `env HOWL_RENDER_DEBUG_TIMING=1 python3 utils/tools/rain-bench/benchmark_terminals.py --duration 3 --mode ascii --terminals howl 2> /tmp/opencode/howl-render-debug-control.log`
+  - `/home/home/personal/projects/howl`: `python3 utils/tools/rain-bench/benchmark_terminals.py --duration 10 --mode ascii --terminals howl alacritty`
+- Updated receipt paths:
+  - 3-second summary: `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-002652-ascii/summary.json`
+  - 10-second summary: `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-002709-ascii/summary.json`
+  - timing log: `/tmp/opencode/howl-render-debug-control.log`
+- Before timing proof:
+  - `direct_normal_scan_avg_us=1832 owner_create_avg_us=1315 sprites_avg_us=569`
+- After timing proof:
+  - `howl-render-debug prepare_handle count=640 prepare_surface_avg_us=973 prepare_surface_max_us=18814 input_avg_us=0 session_preparer_avg_us=0 session_prepare_cells_avg_us=0 direct_normal_avg_us=971 direct_normal_scan_avg_us=857 direct_normal_backgrounds_avg_us=31 direct_normal_clears_avg_us=0 direct_normal_decorations_avg_us=46 direct_normal_cursor_avg_us=0 direct_normal_raster_avg_us=34 owner_create_avg_us=1151 owner_create_max_us=4940`
+- Result:
+  - Howl improved from `11.35 fps` to `33.85 fps`
+  - Alacritty rerun is `1012.33 fps`
+  - `direct_normal_scan` is no longer the top bucket; `owner_create` is now higher
+- Commit-hash handoff status:
+  - pending orchestrator receipt closure after review and commit
 
 Team scratchpad
 
@@ -118,3 +267,66 @@ Team scratchpad
 - Intended task: seed one live loop that keeps the team on the same current step and clears out old loop clutter.
 - How one task went: I converted the active loop into the controlling shared scratchpad and prepared the old loop archive to move under one subdirectory.
 - Next handoff or blocker: the control-run worker can now use this file as the shared live handoff surface for the first receipt.
+
+2. Role: coder/worker
+- Session id: `worker-2026-06-11-ascii-rain-control-run-01`
+- Hello: hello
+- Intended task: run the seeded control benchmark commands and record the fresh Howl vs Alacritty receipt.
+- How one task went: the host ReleaseFast install command ran, but the seeded `utils/tools` stress build command failed immediately because the current `utils/tools` build entrypoint rejected `-Doptimize=ReleaseFast`.
+- Next handoff or blocker: blocker for orchestrator; the agreed control-run harness commands are stale on the current tree, so I stopped before forcing the benchmark step.
+
+3. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: re-prove the decoupled rain-bench control path myself, stabilize the control receipt, and seed the next worker with exact timing-proof usage.
+- How one task went: the decoupling proof is current, the control run completed at Howl `11.35 fps` vs Alacritty `970.58 fps`, and the built-in `HOWL_RENDER_DEBUG_TIMING` seam already isolated `direct_normal_scan` as the strongest current bottleneck signal.
+- Next handoff or blocker: the next worker can run the seeded `temporary-bottleneck-logging` slice exactly as written; temporary debug-log edits are authorized only if the built-in seam proves insufficient.
+
+4. Role: coder/worker
+- Session id: `worker-2026-06-12-ascii-rain-bottleneck-proof-01`
+- Hello: hello
+- Intended task: run the seeded Howl-only timing proof and identify the biggest current bottleneck owner seam without product edits.
+- How one task went: the built-in `HOWL_RENDER_DEBUG_TIMING` seam was sufficient on the first pass, and the stderr proof log kept `direct_normal_scan_avg_us` well above the other logged classes.
+- Next handoff or blocker: hand off the fresh receipt and timing proof to the orchestrator, researcher, and reviewer for the next planning step; no blocker in this slice.
+
+5. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: seed the researcher and reviewer handoff from the accepted bottleneck proof so the next worker slice is source-backed instead of improvised.
+- How one task went: the evidence is strong enough to hand off directly, with `direct_normal_scan` dominating the built-in timing proof and no correctness blocker exposed yet.
+- Next handoff or blocker: researcher owns the next pass in `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-scan-bottleneck-plan.md`, then reviewer gates the resulting plan.
+
+6. Role: researcher
+- Session id: `research-2026-06-12-direct-normal-scan-plan-01`
+- Hello: hello
+- Intended task: turn the accepted `direct_normal_scan` proof into a reviewer-acceptable worker slice centered on the true render owner seam.
+- How one task went: current source and the proof log lined up cleanly around `direct_normal`'s duplicated normal-lane scan, and I also found that `benchmark_main.zig` currently bypasses the exact publication hot path.
+- Next handoff or blocker: reviewer should gate the active research artifact; the main proof gap is that the owner-local render benchmark is not yet truthful for publication-path acceptance.
+
+7. Role: reviewer
+- Session id: `review-2026-06-12-direct-normal-scan-plan-01`
+- Hello: hello
+- Intended task: gate the active bottleneck plan and reject any vague slice boundary, weak proof target, or host-side drift.
+- How one task went: the first pass rejected real scope ambiguity around `benchmark_main.zig` and vague proof/test requirements, and the corrected plan now passes with one exact worker slice, one exact file boundary, and one exact timing target.
+- Next handoff or blocker: the next worker slice can now be seeded from `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-scan-bottleneck-plan.md`.
+
+8. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the researcher/reviewer planning step with an accepted next worker slice.
+- How one task went: the plan is now reviewer-accepted and centered on collapsing the duplicated `direct_normal` publication scan inside the true hot owner seam.
+- Next handoff or blocker: seed the `direct-normal-single-pass-publication` worker slice.
+
+9. Role: coder/worker
+- Session id: `worker-2026-06-12-direct-normal-single-pass-01`
+- Hello: hello
+- Intended task: remove the duplicated publication direct-normal scan without changing render consequences.
+- How one task went: the direct-normal owner now rolls back partial fast-path scratch on the first complex publication cell and reuses that same pass to carry the exact complex-cell proof into the shared fallback.
+- Next handoff or blocker: hand off the verified slice receipts to the orchestrator; the rerun moved `direct_normal_scan` below `owner_create`, so I stopped at the slice boundary instead of broadening further.
+
+10. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the accepted direct-normal slice honestly and restart the loop from the new post-slice bottleneck instead of coding by momentum.
+- How one task went: the slice passed its proof gate, but the rerun still trails Alacritty and the top bucket flipped from `direct_normal_scan` to `owner_create`, so the loop must restart at the new owner ranking.
+- Next handoff or blocker: researcher owns the new owner-create planning pass in `/home/home/personal/projects/howl/research/2026-06-12-owner-create-bottleneck-plan.md`.
