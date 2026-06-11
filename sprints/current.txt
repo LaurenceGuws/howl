@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-11-text-source-mapper-proof-owner.md`
+- `sprints/2026-06-11-text-renderable-normal-lane-owner.md`
 
 Active research:
 
@@ -15,13 +15,18 @@ Active research:
 
 Active loops:
 
-- `loops/text-source-mapper-proof-owner.txt`
+- `loops/text-renderable-normal-lane-owner.txt`
 
 Latest archived planning package:
 
 - `sprints/done/2026-06-10-text-sprint-research.md`
 - `research/done/2026-06-10-text-sprint-scratchpad.md`
 - `loops/done/render-source-cell-model-research.txt`
+
+Latest accepted execution slice:
+
+- `sprints/done/2026-06-11-text-source-mapper-proof-owner.md`
+- `loops/done/text-source-mapper-proof-owner.txt`
 
 Execution rule:
 
