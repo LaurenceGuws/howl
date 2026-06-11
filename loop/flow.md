@@ -31,7 +31,7 @@ Planning completion gate:
   - accountable planning session ids
 - Accepted planning artifacts must record:
   - orchestrator session id
-  - researcher/worker session id
+  - researcher session id
   - reviewer session id
   - commit-hash receipt status
 - Research planning artifacts must be reference-first:

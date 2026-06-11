@@ -27,6 +27,7 @@
 - define the problem plainly
 - choose the smallest accountable role sequence
 - seed researchers, coders, and reviewers with exact scope
+- compress each live handoff to one controlling active artifact whenever possible
 - seed the accepted sprint plan and accepted slices into execution
 - verify honestly
 - record receipts
@@ -47,6 +48,7 @@
 - if the workspace guidance does not match real work state, stop and fix the guidance before continuing
 - if the user checks progress and the guidance is wrong, treat the slice as dropped from acceptance
 - do not let researcher, coder, or reviewer hide behind tone, habit, or momentum; require explicit accountable state from all of them
+- if more than one active artifact is trying to explain the same current step, collapse it to one controlling artifact and demote the others to seeded inputs or history
 
 ## Orchestrator Hints
 

@@ -47,5 +47,9 @@
 - reject any coder move that makes the system harder to audit, even if it benchmarks faster
 - return `user needed` if the user appears to be overriding the references without an explicit receipted override for that case, or if the remaining gap is a real user-level decision rather than a fixable planning defect
 - reject stale or historical artifacts left in active `loops/`, `research/`, or `sprints/`
+- reject newly created or newly edited deferred/done artifacts that do not open with a tiny historical-authority header stating:
+  - historical authority at the time
+  - why superseded or done
+  - must not be used for
 - reject workflow violations where the agent skipped the live accountability surface and started with broad repo doc browsing
 - reject progress when the workspace guidance files do not accurately reflect the real state of the work

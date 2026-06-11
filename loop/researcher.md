@@ -31,11 +31,11 @@
 
 ## Procedure
 
-- Grep existing research caches first for likely paths, symbols, references, and proof gaps.
-- Use old caches as navigation only.
-- Prefer the local reference library over historical workspace prose.
-- Build a compact working anchor map from stable references and current source before expanding local notes.
-- Treat prior scratchpads and loops as receipt/index helpers, not as reasoning substitutes.
+- Grep existing research caches only when needed to recover likely paths, symbols, references, or proof gaps.
+- Use old caches as navigation only; do not dwell in archive prose once current-source or stable-reference anchors are in hand.
+- Prefer the local reference library and current source over historical workspace prose.
+- Build a compact working anchor map from stable references and current source first; expand local notes only after the anchors are explicit.
+- Treat prior scratchpads and loops as receipt/index helpers, not as reasoning substitutes or default reading material.
 - Re-prove every reused fact from current source or accepted references.
 - Read references in the order defined by `reference-index.md`.
 - Treat `research/` as current-only. Historical research belongs in `research/done/` or `research/defered/`, not in active `research/`.
@@ -47,13 +47,14 @@
 Reference-first working map rules:
 
 - Maintain one compact anchor map inside the active research artifact, not a second free-floating note file.
+- Start the anchor map with stable reference anchors and current owner seams; add archive-derived hints only after they are re-proved.
 - The anchor map should bias toward durable locations, for example:
   - Ghostty owner/parser seams
   - TigerBeetle control-spine, assertion, simulation, and proof anchors
   - Alacritty renderer/performance owner splits and useful commit/hash anchors when relevant
   - current Howl owner seams, proof roots, and benchmark receipts under study
 - If a historical workspace artifact says something important, turn it into a re-proved current-source fact or a reference anchor before trusting it.
-- Minimize local prose that merely paraphrases earlier local prose.
+- Minimize local prose that merely paraphrases earlier local prose or archive summaries.
 
 ## Output Contract
 

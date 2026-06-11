@@ -20,20 +20,22 @@
    - `loop/coder.md`
 3. `loop/coder.md` again as the active role contract
 4. `sprints/current.txt`
-5. assigned `loops/*.txt` contract
-6. accepted active research files seeded for the slice
+5. the one condensed active execution contract for the slice, normally the assigned `loops/*.txt` artifact
+6. only the accepted planning or research inputs explicitly named by that condensed execution contract
 
 ## Procedure
 
-- Read only the exact files, symbols, tests, and non-goals assigned.
+- Demand one condensed active execution contract that names the exact files, symbols, tests, non-goals, stop conditions, session ids, and receipt fields for the slice.
+- If slice truth is spread across multiple active artifacts without one explicit execution contract that compresses it, stop and escalate instead of reconstructing it yourself.
+- Read only the exact files, symbols, tests, and non-goals assigned by that execution contract.
 - Stop instead of guessing if names, scope, tests, or ownership are under-specified.
 - Stop and escalate if the slice contract does not already demand the receipt fields the orchestrator will need, including coder session id and commit-hash handoff.
 - Keep within the allowed files.
-- Treat only direct contents of active `loops/`, `research/`, and `sprints/` as authoritative unless explicitly seeded otherwise.
+- Treat only direct contents of active `loops/`, `research/`, and `sprints/` as authoritative unless explicitly seeded otherwise, and treat the condensed execution contract as the controlling read order for the slice.
 - Do not start with README, docs, or random repo browsing before the required reads above.
 - Do not leave stale or invented files behind in the active accountability surface while executing a slice.
 - Attack the assigned slice directly and finish it cleanly. Do not drift into redesign, side quests, or local convenience cleanup unless the slice explicitly requires it.
-- If the contract is wrong or incomplete, stop and escalate sharply instead of patching around it.
+- If the contract is wrong, incomplete, or not condensed enough to execute without reconstruction, stop and escalate sharply instead of patching around it.
 - Chase the bleeding edge when it serves the real product, the real owner, and the real proof surface.
 - Be ruthless about quality, clarity, and execution speed. A timid implementation is almost always leaving real work undone.
 - Break records inside project law: references, ownership, ABI truth, assertions, and tests are the track, not obstacles.
