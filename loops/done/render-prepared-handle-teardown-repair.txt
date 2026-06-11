@@ -7,7 +7,7 @@ Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
 Researcher session id: `019eb2da-8728-7da1-ab36-c0d4250c487b`.
 Reviewer session id: `019eb2c1-0991-7d73-9724-463ca0289931`.
 Coder session id: `019eb2c9-1b71-7aa2-9047-f34b9cd3c084`.
-Accepted commit: pending `howl-render` commit for slice 2.
+Accepted commit: `bfb74fe` in `howl-render`.
 Verification:
 - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "render surface prepared ffi borrowed surface realizes explicit rgba oracle"`
 - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "render ffi prepared render-surface retrieval reports emission failure"`
