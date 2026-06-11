@@ -4,12 +4,12 @@ Date: 2026-06-11.
 
 Owner: orchestrator.
 
-Status: accepted verification slice; root closure commit pending.
+Status: accepted verification slice and committed in root `17c539e`.
 
 Orchestrator session id: `orch-2026-06-11-test-accountability-workspace-rebaseline-02`.
 Execution reviewer session id: `review-2026-06-11-test-accountability-workspace-rebaseline-02`.
 Required coder session id: `coder-2026-06-11-test-accountability-workspace-rebaseline-02`.
-Required commit-hash receipt: pending root closure commit after active-surface cleanup.
+Required commit-hash receipt: fulfilled by root commit `17c539e`.
 
 ## Verification
 

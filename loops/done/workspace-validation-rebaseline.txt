@@ -6,7 +6,7 @@ Status: accepted.
 Orchestrator session id: `orch-2026-06-11-test-accountability-workspace-rebaseline-02`.
 Execution reviewer session id: `review-2026-06-11-test-accountability-workspace-rebaseline-02`.
 Coder session id: `coder-2026-06-11-test-accountability-workspace-rebaseline-02`.
-Accepted commit: pending root closure commit after active-surface cleanup.
+Accepted commit: `17c539e` in root workspace.
 Verification:
 - `cd /home/home/personal/projects/howl/howl-pty && zig build test`
 - `cd /home/home/personal/projects/howl/howl-vt && zig build test`
