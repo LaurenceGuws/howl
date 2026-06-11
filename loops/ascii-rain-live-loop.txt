@@ -9,7 +9,8 @@ Accepted bottleneck-proof worker session id: `worker-2026-06-12-ascii-rain-bottl
 Accepted direct-normal worker session id: `worker-2026-06-12-direct-normal-single-pass-01`.
 Accepted owner-create worker session id: `worker-2026-06-12-owner-create-cache-first-01`.
 Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-fresh-rollback-01`.
-Current required worker session id: pending for the next bottleneck-proof pass after fresh rollback.
+Accepted payload initialization worker session id: `worker-2026-06-12-payload-in-place-init-01`.
+Current required worker session id: pending for the next bottleneck-proof pass after payload initialization.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-render-surface-payload-init-01`.
 Reviewer session id: `review-2026-06-12-render-surface-payload-init-01`.
@@ -559,3 +560,24 @@ Team scratchpad
 - Intended task: turn the payload-init proof into one reviewer-acceptable optimization slice without drifting out of the prepared render-surface owner seam.
 - How one task went: current source proved `publishSurface` derives all host-visible spans from counts after `resetPrepared`, so the worker slice can remove the full payload aggregate assignment only if undefined fresh-emitter initialization is tested directly.
 - Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-render-surface-payload-init-plan.md`; proof gap is that `payload_init_avg_us` was temporary instrumentation and may not be re-emitted after cleanup.
+
+29. Role: coder/worker
+- Session id: `worker-2026-06-12-payload-in-place-init-01`
+- Hello: hello
+- Intended task: implement the accepted `prepared-handle-fresh-payload-in-place-init` slice by removing full payload aggregate initialization and proving fresh emission initializes undefined storage safely.
+- How one task went: the fresh payload path now publishes only after `emitPreparedFresh` resets and publishes initialized control fields, and the required rerun moved `prepared_handle_create emit_avg_us` from `1052` to `360`.
+- Next handoff or blocker: hand off the verified receipts to reviewer and orchestrator; no stop condition triggered and commit-hash closure remains pending.
+
+30. Role: reviewer
+- Session id: `review-2026-06-12-payload-in-place-init-01`
+- Hello: hello
+- Intended task: gate the implemented payload in-place initialization slice against undefined-storage and publication-safety requirements.
+- How one task went: the slice was accepted with no blocking findings; `payload.* = .{}` is removed, fresh emission initializes before publication, and unit tests passed independently in `howl-render`.
+- Next handoff or blocker: orchestrator should commit the accepted render slice and root receipts, then restart the loop because Howl remains slower than Alacritty.
+
+31. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the accepted payload initialization slice and restart from the new measured baseline.
+- How one task went: render commit `01e8bec` landed the accepted slice; receipts are `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-014446-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-014500-ascii/summary.json`, with Howl `55.54 fps` vs Alacritty `987.81 fps`.
+- Next handoff or blocker: seed the next bottleneck-proof worker pass from the payload-init baseline; no correctness or vague-bucket blocker is known.
