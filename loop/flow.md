@@ -34,6 +34,10 @@ Planning completion gate:
   - researcher/worker session id
   - reviewer session id
   - commit-hash receipt status
+- Research planning artifacts must be reference-first:
+  - historical local artifacts are navigation only
+  - stable reference anchors and current source re-proof carry the authority
+  - the active research artifact must include a compact anchor map for the references and current owner seams that actually govern the next decision
 - If the accepted planning package is documentation-only and no dedicated commit exists yet, the artifact must say so explicitly and the orchestrator must close that receipt when archiving the accepted package.
 
 ## Sprint Execution

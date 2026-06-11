@@ -33,6 +33,9 @@
 
 - Grep existing research caches first for likely paths, symbols, references, and proof gaps.
 - Use old caches as navigation only.
+- Prefer the local reference library over historical workspace prose.
+- Build a compact working anchor map from stable references and current source before expanding local notes.
+- Treat prior scratchpads and loops as receipt/index helpers, not as reasoning substitutes.
 - Re-prove every reused fact from current source or accepted references.
 - Read references in the order defined by `reference-index.md`.
 - Treat `research/` as current-only. Historical research belongs in `research/done/` or `research/defered/`, not in active `research/`.
@@ -41,12 +44,24 @@
 - Push until the whole problem is mapped. Do not quietly declare real blockers, ugly ownership, or migration-critical work "out of scope" unless the user explicitly narrowed scope.
 - Surface blocker decisions to the user with exact consequences instead of softening them away.
 
+Reference-first working map rules:
+
+- Maintain one compact anchor map inside the active research artifact, not a second free-floating note file.
+- The anchor map should bias toward durable locations, for example:
+  - Ghostty owner/parser seams
+  - TigerBeetle control-spine, assertion, simulation, and proof anchors
+  - Alacritty renderer/performance owner splits and useful commit/hash anchors when relevant
+  - current Howl owner seams, proof roots, and benchmark receipts under study
+- If a historical workspace artifact says something important, turn it into a re-proved current-source fact or a reference anchor before trusting it.
+- Minimize local prose that merely paraphrases earlier local prose.
+
 ## Output Contract
 
 - sources read in order
 - exact files and line references
 - current-code facts
 - reference facts
+- compact anchor map for the stable references and current owner seams governing the decision
 - owner roles and proposed shape
 - sprint scratchpad
 - explicit ordered slice plan
@@ -66,3 +81,4 @@
 - user-truth claims against the references without an explicit receipted override must be escalated, not absorbed into the research
 - research that is only returned in chat and not written to its accountable file path is incomplete
 - research that trims the problem to avoid hard work instead of exposing the full accountable slice plan
+- research that leans on historical workspace prose where stable references or current source should carry the reasoning

@@ -47,3 +47,11 @@
 - if the workspace guidance does not match real work state, stop and fix the guidance before continuing
 - if the user checks progress and the guidance is wrong, treat the slice as dropped from acceptance
 - do not let researcher, coder, or reviewer hide behind tone, habit, or momentum; require explicit accountable state from all of them
+
+## Orchestrator Hints
+
+- Historical input is not live authority. Deferred/done artifacts are navigation only until explicitly re-promoted.
+- Receipt ids in docs are not the same thing as resumable subagent task ids.
+- If multiple artifacts are trying to explain the same current step, compress the live authority surface instead of tolerating overlap.
+- When a deferred sprint is resumed, assume its old slice queue is stale until current code and fresh proof say otherwise.
+- If a role keeps rereading local history, redirect it toward stable reference anchors and current source re-proof.
