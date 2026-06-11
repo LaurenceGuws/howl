@@ -11,8 +11,8 @@ Accepted owner-create worker session id: `worker-2026-06-12-owner-create-cache-f
 Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-fresh-rollback-01`.
 Current required worker session id: pending for the next bottleneck-proof pass after fresh rollback.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: pending for the next bottleneck cycle.
-Reviewer session id: pending for the next bottleneck cycle.
+Researcher session id: `research-2026-06-12-prepared-handle-fresh-emission-gap-01`.
+Reviewer session id: `review-2026-06-12-prepared-handle-fresh-emission-gap-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -165,7 +165,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-owner-create-post-cache-first-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-prepared-handle-fresh-emission-gap-plan.md`
 
 Research goal:
 
@@ -489,3 +489,52 @@ Team scratchpad
 - Intended task: close the accepted fresh rollback slice and restart from the new measured baseline.
 - How one task went: render commit `8bd867b` landed the accepted slice; accepted receipts are `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-011550-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-011602-ascii/summary.json`, with Howl `36.85 fps` vs Alacritty `1009.95 fps`.
 - Next handoff or blocker: seed the next bottleneck-proof worker pass from the fresh rollback baseline; no correctness or vague-bucket blocker is known.
+
+21. Role: coder/worker
+- Session id: `worker-2026-06-12-post-fresh-bottleneck-proof-01`
+- Hello: hello
+- Intended task: prove the current biggest bottleneck after the accepted fresh rollback slice without implementing another performance fix.
+- How one task went: the existing `HOWL_RENDER_DEBUG_TIMING` control log was sufficient; `owner_create_avg_us=1053` remains above `direct_normal_avg_us=952`, and `prepared_handle_create emit_avg_us=1052` accounts for nearly all of the owner-create bucket.
+- Next handoff or blocker: researcher planning is ready to target the current prepared-handle fresh emission gap; no temporary logs were added and no correctness blocker was exposed.
+
+22. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: promote the next active research target from the post-fresh bottleneck proof.
+- How one task went: the current control proof keeps `owner_create` on top, but the visible emitter sub-buckets do not fully account for `prepared_handle_create emit_avg_us=1052`, so the active research target is now the prepared-handle fresh emission gap.
+- Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-prepared-handle-fresh-emission-gap-plan.md`; no correctness or vague-bucket blocker is known.
+
+23. Role: researcher
+- Session id: `research-2026-06-12-prepared-handle-fresh-emission-gap-01`
+- Hello: hello
+- Intended task: source-pin the residual gap inside post-fresh `owner_create` before allowing another optimization.
+- How one task went: the plan concluded optimization is not yet authorized because the residual between `prepared_handle_create emit_avg_us=1052` and visible emitter sub-buckets is not line-owned.
+- Next handoff or blocker: reviewer should gate the proof-only `prepared-handle-fresh-emission-residual-proof` worker slice.
+
+24. Role: reviewer
+- Session id: `review-2026-06-12-prepared-handle-fresh-emission-gap-01`
+- Hello: hello
+- Intended task: gate the prepared-handle fresh emission gap plan for a proof-only worker slice.
+- How one task went: the first pass rejected weak temporary-instrumentation cleanup ownership; the corrected plan now requires restoring temporary edits before final handoff or an explicit separate instrumentation receipt.
+- Next handoff or blocker: seed the proof-only worker slice from `/home/home/personal/projects/howl/research/2026-06-12-prepared-handle-fresh-emission-gap-plan.md`; no blocker.
+
+23. Role: researcher
+- Session id: `research-2026-06-12-prepared-handle-fresh-emission-gap-01`
+- Hello: hello
+- Intended task: source-pin the post-fresh prepared-handle emission gap and produce one reviewer-gated next worker slice.
+- How one task went: current source and receipts proved a real residual between `prepared_handle_create emit_avg_us=1052` and visible `emit_prepared` sub-buckets, so the proposed next slice is proof-only temporary owner-local timing rather than an optimization guess.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-prepared-handle-fresh-emission-gap-plan.md`; no correctness blocker is known, but optimization remains blocked until the residual is line-owned.
+
+24. Role: reviewer
+- Session id: `review-2026-06-12-prepared-handle-fresh-emission-gap-01`
+- Hello: hello
+- Intended task: gate the prepared-handle fresh emission gap plan as a proof-only worker slice before any optimization.
+- How one task went: the plan is correctly centered on `handle.zig` and `render_surface_emitter.zig`, but the temporary instrumentation cleanup contract is not explicit enough for acceptance.
+- Next handoff or blocker: researcher/orchestrator should correct the cleanup and receipt requirements before seeding a worker.
+
+25. Role: reviewer
+- Session id: `review-2026-06-12-prepared-handle-fresh-emission-gap-01`
+- Hello: hello
+- Intended task: re-review the corrected prepared-handle fresh emission gap plan after the cleanup-contract rejection.
+- How one task went: the updated plan now requires temporary instrumentation cleanup before handoff, explicit `git diff`/`git status` confirmation for the touched files, and an orchestrator receipt if instrumentation is intentionally kept.
+- Next handoff or blocker: the proof-only worker slice can be seeded from the active research artifact.
