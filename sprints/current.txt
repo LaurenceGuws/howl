@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- none
+- `sprints/2026-06-11-test-accountability-workspace-rebaseline.md`
 
 Active research:
 
@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- none
+- `loops/workspace-validation-rebaseline.txt`
 
 Latest archived planning package:
 
