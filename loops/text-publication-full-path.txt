@@ -1,0 +1,87 @@
+Text publication full path
+
+Date: 2026-06-11.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-11-text-publication-full-path-01`.
+Planning orchestrator session id: `orch-2026-06-10-test-accountability-01`.
+Researcher session ids:
+- `research-2026-06-10-text-sprint-01`
+- `research-2026-06-10-text-sprint-01-c1`
+Execution reviewer session id: `review-2026-06-11-text-publication-full-path-01`.
+Planning reviewer session id: `review-2026-06-10-text-sprint-01`.
+Coder session id: `coder-2026-06-11-text-publication-full-path-01`.
+Commit-hash receipt: pending coder handoff and acceptance.
+Scope: execute and review the fourth accepted text sprint slice only.
+
+Problem statement:
+
+- The accepted text sprint says the fourth slice is `text-publication-full-path`.
+- Publication still does not fully traverse the same normal-then-complex pipeline as raw VT cells and rich inputs.
+- This loop exists only to land that publication-path convergence slice with exact receipts.
+
+Accepted planning input:
+
+- `sprints/done/2026-06-10-text-sprint-research.md`
+- `research/done/2026-06-10-text-sprint-scratchpad.md`
+- `loops/done/render-source-cell-model-research.txt`
+
+Prior accepted slice dependencies:
+
+- accepted commits in `howl-render`:
+  - `bbf6242`
+  - `bc938aa`
+  - `74db9a4`
+
+Queued slice:
+
+- `text-publication-full-path`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/shape/cluster.zig`
+- `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
+- `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
+
+Required shape:
+
+- Publication must enter the same normal-then-complex pipeline as raw VT cells and rich inputs.
+- `preparePublicationWithSessionOptions` may not return `null` for mixed or complex text once the slice lands.
+- Publication damage, cursor, selection, and color-state facts must arrive at the same cluster and scene owners as VT source facts.
+
+Required assertions:
+
+- Assert publication complex-cell counts match lane-report complex-cell counts before shaping.
+- Assert publication path reaches the same scene owner as raw cells when direct normal rejects.
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input borrowed publication mapping reuses caller storage"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input borrowed publication mapping applies selection styling across scrollback rows"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "text preparation prepares mixed publication cells through non-null publication frame"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "text preparation prepares complex publication cells through non-null publication frame"`
+
+Non-goals:
+
+- no `SourceCell` layout changes
+- no exported symbol changes
+
+Stop conditions:
+
+- stop if publication needs a different host-facing ABI contract instead of the current source/publication contract
+- stop if the slice cannot prove non-null mixed and complex publication frames inside `text/frame_preparer.zig`
+
+Reviewer expectations:
+
+- review the diff against the accepted planning slice only
+- reject any separate publication-only lane that bypasses the established normal-then-complex owners
+- reject `null` mixed or complex publication frames after the slice lands
+- reject ABI drift or source-layout changes
+
+Verification receipts:
+
+- pending coder implementation
+- pending reviewer verdict
+- pending orchestrator verification
