@@ -330,3 +330,24 @@ Team scratchpad
 - Intended task: close the accepted direct-normal slice honestly and restart the loop from the new post-slice bottleneck instead of coding by momentum.
 - How one task went: the slice passed its proof gate, but the rerun still trails Alacritty and the top bucket flipped from `direct_normal_scan` to `owner_create`, so the loop must restart at the new owner ranking.
 - Next handoff or blocker: researcher owns the new owner-create planning pass in `/home/home/personal/projects/howl/research/2026-06-12-owner-create-bottleneck-plan.md`.
+
+11. Role: researcher
+- Session id: `research-2026-06-12-owner-create-plan-01`
+- Hello: hello
+- Intended task: turn the accepted `owner_create` proof into a reviewer-acceptable next worker slice centered on the true render owner seam.
+- How one task went: the current source and timing receipts lined up around `PreparedHandle.create` being hot only because it immediately runs render-surface emission, and the strongest owner-local debt is redundant sprite upload-byte staging before cache reuse admission.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-owner-create-bottleneck-plan.md`; no blocker yet, but the next worker must stay inside `render_surface_emitter` and `sprite_resource_store`.
+
+12. Role: reviewer
+- Session id: `review-2026-06-12-owner-create-plan-01`
+- Hello: hello
+- Intended task: gate the active owner-create bottleneck plan and reject vague proof placement, invented mechanisms, or weak stop conditions.
+- How one task went: the first pass rejected loose proof placement and an over-invented cache mechanism, and the corrected plan now passes with exact test files, exact assertions, and an exact `owner_create_avg_us < 1151` stop gate.
+- Next handoff or blocker: the next worker slice can now be seeded from `/home/home/personal/projects/howl/research/2026-06-12-owner-create-bottleneck-plan.md`.
+
+13. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the accepted owner-create planning step before handing new implementation work to the team.
+- How one task went: the plan is now reviewer-accepted and tightly centered on cache-first reuse admission inside `render_surface_emitter` plus `sprite_resource_store`.
+- Next handoff or blocker: commit and push this accepted planning state, then seed the `owner-create-cache-first-emission` worker slice.
