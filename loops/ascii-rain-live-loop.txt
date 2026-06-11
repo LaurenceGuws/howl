@@ -12,8 +12,8 @@ Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-f
 Accepted payload initialization worker session id: `worker-2026-06-12-payload-in-place-init-01`.
 Current required worker session id: pending for the next bottleneck-proof pass after payload initialization.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: `research-2026-06-12-render-surface-payload-init-01`.
-Reviewer session id: `review-2026-06-12-render-surface-payload-init-01`.
+Researcher session id: `research-2026-06-12-post-payload-direct-normal-scan-01`.
+Reviewer session id: pending for the post-payload direct-normal scan cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -166,7 +166,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-render-surface-payload-init-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-post-payload-direct-normal-scan-plan.md`
 
 Research goal:
 
@@ -581,3 +581,17 @@ Team scratchpad
 - Intended task: close the accepted payload initialization slice and restart from the new measured baseline.
 - How one task went: render commit `01e8bec` landed the accepted slice; receipts are `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-014446-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-014500-ascii/summary.json`, with Howl `55.54 fps` vs Alacritty `987.81 fps`.
 - Next handoff or blocker: seed the next bottleneck-proof worker pass from the payload-init baseline; no correctness or vague-bucket blocker is known.
+
+32. Role: coder/worker
+- Session id: `worker-2026-06-12-post-payload-bottleneck-proof-01`
+- Hello: hello
+- Intended task: prove the current biggest bottleneck after the accepted payload initialization slice without implementing another performance fix.
+- How one task went: the existing `HOWL_RENDER_DEBUG_TIMING` control log was sufficient; at the 640-frame receipt `direct_normal_avg_us=991` and `direct_normal_scan_avg_us=883`, while `owner_create_avg_us=361` and `emit_prepared sprites_avg_us=343` stayed below it.
+- Next handoff or blocker: researcher planning is ready to target the direct-normal publication scan path again; no temporary logs were added and no correctness or vague-bucket blocker was exposed.
+
+33. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: promote the post-payload bottleneck proof into the next active research target.
+- How one task went: after payload initialization, the top bucket moved from `owner_create` back to `direct_normal`, with `direct_normal_avg_us=991` and `direct_normal_scan_avg_us=883` at the current receipt.
+- Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-post-payload-direct-normal-scan-plan.md`; no correctness or vague-bucket blocker is known.

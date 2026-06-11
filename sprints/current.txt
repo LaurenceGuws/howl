@@ -11,7 +11,7 @@ Sprint:
 
 Active research:
 
-- `research/2026-06-12-render-surface-payload-init-plan.md`
+- `research/2026-06-12-post-payload-direct-normal-scan-plan.md`
 
 Active loops:
 
@@ -22,7 +22,7 @@ Active restart note:
 - The live performance sprint is the merged honest restart after the corrected-path and post-sprint repair closures.
 - The live loop starts with a control-run worker slice, then a temporary bottleneck-proof worker slice.
 - Researcher and reviewer planning starts only after the bottleneck evidence exists.
-- The current active step is researcher and reviewer planning for the line-owned render-surface payload initialization bottleneck.
+- The current active step is researcher and reviewer planning for the post-payload direct-normal scan bottleneck.
 
 Execution rule:
 
