@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-11-text-proof-surface-consolidation.md`
+- none
 
 Active research:
 
@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/text-proof-surface-consolidation.txt`
+- none
 
 Latest archived planning package:
 
@@ -25,8 +25,13 @@ Latest archived planning package:
 
 Latest accepted execution slice:
 
-- `sprints/done/2026-06-11-text-style-attrs-render-policy-owner.md`
-- `loops/done/text-style-attrs-render-policy-owner.txt`
+- `sprints/done/2026-06-11-text-proof-surface-consolidation.md`
+- `loops/done/text-proof-surface-consolidation.txt`
+
+Sprint completion:
+
+- Text sprint execution queue is complete.
+- No active execution slice remains.
 
 Execution rule:
 
