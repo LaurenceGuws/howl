@@ -12,7 +12,7 @@ Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-f
 Current required worker session id: pending for the next bottleneck-proof pass after fresh rollback.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-render-surface-payload-init-01`.
-Reviewer session id: pending for the render-surface payload init cycle.
+Reviewer session id: `review-2026-06-12-render-surface-payload-init-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -538,3 +538,24 @@ Team scratchpad
 - Intended task: promote the next active optimization-planning target from the proof-only residual receipt.
 - How one task went: the proof-only worker removed temporary instrumentation cleanly and line-owned the largest child bucket to `payload.* = .{}` with `payload_init_avg_us=740`, so the next research target is render-surface payload initialization.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-render-surface-payload-init-plan.md`; no correctness or vague-bucket blocker is known.
+
+28. Role: researcher
+- Session id: `research-2026-06-12-render-surface-payload-init-01`
+- Hello: hello
+- Intended task: turn the line-owned payload initialization proof into one reviewer-acceptable optimization slice.
+- How one task went: the plan centers on removing `payload.* = .{}` from `PreparedHandle.emitRenderSurfacePayload` by making fresh emission initialize undefined payload storage before publication.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-render-surface-payload-init-plan.md`; no blocker.
+
+29. Role: reviewer
+- Session id: `review-2026-06-12-render-surface-payload-init-01`
+- Hello: hello
+- Intended task: gate the render-surface payload initialization optimization plan before worker execution.
+- How one task went: the plan was accepted with no blocking findings because it stays inside `PreparedHandle` allocation/publication plus `Emitter` fresh initialization and requires undefined-storage and pointer-stability proof.
+- Next handoff or blocker: seed the `prepared-handle-fresh-payload-in-place-init` worker slice; no blocker.
+
+28. Role: researcher
+- Session id: `research-2026-06-12-render-surface-payload-init-01`
+- Hello: hello
+- Intended task: turn the payload-init proof into one reviewer-acceptable optimization slice without drifting out of the prepared render-surface owner seam.
+- How one task went: current source proved `publishSurface` derives all host-visible spans from counts after `resetPrepared`, so the worker slice can remove the full payload aggregate assignment only if undefined fresh-emitter initialization is tested directly.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-render-surface-payload-init-plan.md`; proof gap is that `payload_init_avg_us` was temporary instrumentation and may not be re-emitted after cleanup.
