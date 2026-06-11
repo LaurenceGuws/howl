@@ -13,7 +13,7 @@ Accepted payload initialization worker session id: `worker-2026-06-12-payload-in
 Current required worker session id: pending for the next bottleneck-proof pass after payload initialization.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-post-payload-direct-normal-scan-01`.
-Reviewer session id: pending for the post-payload direct-normal scan cycle.
+Reviewer session id: `review-2026-06-12-post-payload-direct-normal-scan-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -595,3 +595,17 @@ Team scratchpad
 - Intended task: promote the post-payload bottleneck proof into the next active research target.
 - How one task went: after payload initialization, the top bucket moved from `owner_create` back to `direct_normal`, with `direct_normal_avg_us=991` and `direct_normal_scan_avg_us=883` at the current receipt.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-post-payload-direct-normal-scan-plan.md`; no correctness or vague-bucket blocker is known.
+
+34. Role: researcher
+- Session id: `research-2026-06-12-post-payload-direct-normal-scan-01`
+- Hello: hello
+- Intended task: source-pin the post-payload direct-normal scan debt and produce one reviewer-acceptable next worker slice.
+- How one task went: current source pinned the residual scan cost to generic publication candidate mapping/classification inside `direct_normal.appendVisible`, and the proposed slice stays inside a strict default-style ASCII publication fast candidate with generic fallback preserved.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-post-payload-direct-normal-scan-plan.md`; proof gap is whether the live ASCII-rain cells all fit the strict fast subset, so the worker must stop if they do not.
+
+35. Role: reviewer
+- Session id: `review-2026-06-12-post-payload-direct-normal-scan-01`
+- Hello: hello
+- Intended task: gate the active post-payload direct-normal scan plan before worker execution.
+- How one task went: current source confirmed the proposed slice stays inside `direct_normal.zig` and adjacent publication tests, preserves generic fallback for unsupported publication cells, and has explicit timing receipts and stop conditions.
+- Next handoff or blocker: accepted for orchestrator seeding; commit-hash closure remains pending with the planning package.
