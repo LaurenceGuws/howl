@@ -1,0 +1,110 @@
+ASCII rain emitter alpha reuse fast path
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`.
+Researcher session id: `research-2026-06-09-post-owner-performance-01`.
+Reviewer session id: `rev-2026-06-09-post-owner-performance-01`.
+Coder session id: pending.
+Scope: current planning and execution contract for the next performance slice only.
+
+Problem statement:
+
+- The broad sprint goal remains beating Alacritty on the agreed ASCII rain benchmark.
+- The completed ownership-correction queue deleted `howl-render/src/prepared/owner.zig` and materially improved the hot path.
+- Post-delete rebaseline is complete. The current performance order must now start from the cleaned seam, not the archived owner-deletion loop.
+- Current accepted receipts show the next hottest remaining false work inside the emitter/resource-cache seam.
+- Pure performance work must stop immediately if this slice exposes another false owner or bucket seam.
+
+Current accepted receipts:
+
+- clean Howl vs Alacritty benchmark:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+  - Howl `79.42 fps`
+  - Alacritty `1039.12 fps`
+- direct host accounting:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-095340-ascii-direct-post-owner/howl-direct.accounting.log`
+  - direct host run `109.56 fps`
+- detailed render timing:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+  - stable split:
+    - `prepare_surface_avg_us ~= 732-738`
+    - `owner_create_avg_us ~= 938-951`
+    - `direct_normal_scan_avg_us ~= 664-671`
+    - `emit_prepared sprites_avg_us ~= 265-273`
+    - `stage_upload_avg_us ~= 87-90`
+    - `atlas_resource_avg_us ~= 92-95`
+
+Accepted research input:
+
+- `research/post-owner-performance-plan-2026-06-09.md`
+
+Queued slice: `emitter-alpha-reuse-fast-path`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+- `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+- `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output is required
+
+Required shape:
+
+- query alpha atlas reuse before staging upload bytes
+- pay upload-byte staging only on atlas misses
+- keep resource-id and publication behavior correct on atlas hits and misses
+- keep work inside the emitter/resource-store seam only
+- stop and escalate instead of broadening if another false owner is exposed
+
+Required assertions:
+
+- atlas-hit alpha sprites do not stage upload bytes
+- atlas-hit and atlas-miss paths preserve bounded counts and byte limits
+- atlas-hit reuse preserves stable resource ids
+- atlas misses still stage and publish exactly once when needed
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- targeted owner tests for atlas-hit and atlas-miss behavior
+- if proof output changes:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render -- --runs 20`
+
+Required verification:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- rerun direct host timing receipt on ASCII rain
+- rerun clean Howl vs Alacritty benchmark receipt
+- compare against:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-115340-ascii/summary.json`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-095340-ascii-direct-post-owner/howl-direct.accounting.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-095743-ascii-direct-post-owner-timing/howl-term.stderr.log`
+
+Non-goals:
+
+- no ownership refactor unless the slice proves another false owner
+- no `session/text.zig` changes
+- no `ffi/*` changes
+- no host GL work
+- no PTY/runtime work
+- no publication background correctness work
+- no benchmark-tool changes
+- no `direct_normal` work in the same slice
+
+Stop conditions:
+
+- stop if the implementation needs files outside the allowed set
+- stop if session or FFI ownership needs reopening
+- stop if the emitter proves not to be the smallest true owner after all
+- stop if clean benchmark or direct host receipts regress against the accepted post-owner baseline
+
+Acceptance gate:
+
+- orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`
+- researcher session id: `research-2026-06-09-post-owner-performance-01`
+- reviewer session id: `rev-2026-06-09-post-owner-performance-01`
+- coder session id
+- required verification results
+- accepted commit hash
+- explicit receipt paths for the fresh direct host timing rerun and clean benchmark rerun

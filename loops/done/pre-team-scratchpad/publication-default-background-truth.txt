@@ -1,0 +1,83 @@
+Publication default-background truth
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `research-2026-06-09-background-default-truth-01`.
+Reviewer session id: `reviewer-2026-06-09-bg-fix-acceptance-01`.
+Coder session id: `orch-2026-06-09-background-default-01-direct-fix`.
+Scope: accept the source-mapping correction slice and preserve dropped-probe accountability.
+
+Problem statement:
+
+- Ordinary cells are rendering with transparent backgrounds so the window background shows through.
+- The current likely owner seam is source mapping, not host GL realization.
+- Performance work is paused until this correctness regression is fixed and verified.
+
+Accepted research input:
+
+- `research/background-default-correctness-2026-06-09.md`
+
+Queued slice:
+
+- `publication-default-background-fix`
+
+Planned allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
+- `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
+- owner-local tests in those same files only if needed
+
+Planned required shape:
+
+- restore default background truth at the source-mapping seam
+- keep publication and generic mapping behavior aligned
+- preserve selection, inverse, invisible, and continuation behavior
+- preserve explicit partial-damage clear behavior unless failing tests prove otherwise
+- do not touch host GL, renderer emission, session, or benchmark tooling
+
+Planned required assertions and tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- targeted source-path tests for:
+  - default background mapping
+  - empty-cell classification
+  - selection/inverse behavior with default background
+
+Planned stop conditions:
+
+- stop if the fix needs files outside the source-mapping seam
+- stop if the scene partial-damage contract must change
+- stop if publication and generic source paths cannot stay aligned in the same slice
+
+Dropped-probe recording rule:
+
+- No future code probe for this sprint may be dropped silently.
+- Before code is reverted or abandoned, record:
+  - exact files touched
+  - exact tests or receipts produced
+  - result
+  - short hypothesis for failure
+  - whether failure was planning premise, owner seam, or implementation mechanics
+  - next restart point
+
+Current blocker to execution:
+- none
+
+Execution notes:
+
+- The initial source-fix diff landed inside the authorized seam but reviewer rejection found three fixable gaps:
+  - stale reviewer/coder fields in this active loop
+  - missing required verification receipt in the active artifact surface
+  - missing default-background selection/inverse tests
+- The orchestrator fixed those minor gaps directly without another worker handoff, per `loop/orcestrator.md`.
+
+Verification receipts:
+
+- Unit suite passed after the source fix and proof additions:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- Real host visual proof:
+  - explicit user verification in the main thread on 2026-06-09: “I tested, bg color is fixed”
+- Honest benchmark receipt on the corrected path:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-131321-ascii/summary.json`

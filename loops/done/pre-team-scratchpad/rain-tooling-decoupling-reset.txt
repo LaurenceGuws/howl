@@ -1,0 +1,40 @@
+Rain tooling decoupling reset
+
+Date: 2026-06-10.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `019eb09f-fb33-71a2-9f58-0dd1fc348aba`.
+Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
+Coder session id: none.
+Scope: replace the under-scoped rain-tooling loop with a current post-replay-deletion research package and an exact next slice.
+
+Problem statement:
+
+- Performance remains paused pending host accountability reset.
+- The live host replay seam is gone.
+- The remaining stale ownership is benchmark-client coupling inside `utils/tools/*` and related active docs/artifacts.
+- The previous `rain-tooling-decoupling` loop is rejected for coding because it leaves the action unresolved and the verification too loose.
+
+Required sources:
+
+- `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+- `/home/home/personal/projects/howl/utils/tools/build.zig`
+- `/home/home/personal/projects/howl/utils/tools/ascii_rain_stress.zig`
+- `/home/home/personal/projects/howl/utils/tools/visual_rain_stress.zig`
+- `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+- active sprint/loop/current files that still mention rain tooling
+
+Required output:
+
+- current post-replay-deletion ownership map for rain tooling
+- one exact next slice with:
+  - exact allowed files
+  - exact required shape
+  - exact tests/receipts
+  - exact non-goals
+  - exact stop conditions
+
+Current blocker to coding:
+
+- no rain-tooling edits are authorized until research/reviewer choose one exact outcome for the next slice inside the allowed tool/docs set

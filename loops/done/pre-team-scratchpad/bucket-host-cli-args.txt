@@ -1,0 +1,67 @@
+# Active Slice
+
+Loop:
+
+- Bucket-struct cleanup lane
+
+Slice:
+
+- host cli args 1
+
+Status:
+
+- Accepted after hostile review; pending receipt/commit
+
+Research authority:
+
+- orchestrator lane plan in `project-memory.md` under `2026-06-07 Zig Hygiene Refocus`
+- host lane audit classified this as the first recommended narrow host fix
+- pre-implementation reviewer acceptance session `ses_15e2eaa57ffexdniSs1udDzAiH`
+
+Reviewer acceptance:
+
+- reviewer session `ses_15e2b71aaffekUJ59DtW37LHcF`
+
+Allowed files:
+
+- `howl-linux-host/src/cli/args.zig`
+- `howl-linux-host/src/main.zig`
+
+Required shape:
+
+- rename `pub const Options = struct` in `howl-linux-host/src/cli/args.zig` to `pub const Args = struct`
+- update `parse` to return `Args` and initialize `Args{}`
+- update inline test variable/type references in `howl-linux-host/src/cli/args.zig` only as required by the rename
+- rename `pub const Options = cli_args.Options` in `howl-linux-host/src/main.zig` to `pub const Args = cli_args.Args`
+- update `start`, `loadConfig`, and `createWindow` signatures in `howl-linux-host/src/main.zig` from `Options` to `Args`
+- keep field set, parse behavior, exported function names, and call flow unchanged
+
+Non-goals:
+
+- no CLI behavior redesign
+- no new CLI aliases
+- no parse helper extraction
+- no field additions, removals, or renames
+- no config/window/process policy changes
+- no argument parsing policy changes
+- no unrelated host cleanup
+
+Stop conditions:
+
+- stop if any consumer beyond `howl-linux-host/src/main.zig` requires edits
+- stop if the rename requires changing CLI flags, parse branches, or field semantics
+- stop if a second plausible noun other than `Args` becomes necessary from current source or references
+
+Verification:
+
+- `python utils/hygene/style_scan.py "howl-linux-host/src/cli/args.zig" "howl-linux-host/src/main.zig"`
+- `zig build test && zig build check` in `howl-linux-host`
+- grep gate: no `pub const Options = struct` in `howl-linux-host/src/cli/args.zig`
+- grep gate: no `cli_args.Options` in `howl-linux-host/src/main.zig`
+- grep gate: no `pub const Options = cli_args.` in `howl-linux-host/src/main.zig`
+
+Receipt requirement:
+
+- record orchestrator session id
+- record reviewer session id
+- record coder/worker session id

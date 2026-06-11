@@ -1,0 +1,56 @@
+# Active Slice
+
+Loop:
+
+- Bucket-struct cleanup lane
+
+Slice:
+
+- vt dirty 1
+
+Status:
+
+- Accepted after hostile review; pending receipt/commit
+
+Reviewer acceptance:
+
+- reviewer session `ses_15e0eecdeffegaWzwVGj7dOo78`
+- post-implementation reviewer session `ses_15e088085ffezTEYSfEuZ9s25f`
+
+Research authority:
+
+- orchestrator lane plan in `project-memory.md` under `2026-06-07 Zig Hygiene Refocus`
+- VT lane audit classified this as the fourth recommended narrow VT fix
+
+Allowed files:
+
+- `howl-vt/src/screen/dirty.zig`
+- likely direct consumer files only if review confirms they are required for the rename
+
+Intended shape:
+
+- replace the generic `State` owner name in `howl-vt/src/screen/dirty.zig` with an exact dirty-tracking noun
+- keep behavior unchanged
+- keep this a rename-sized bucket cleanup only
+
+Non-goals:
+
+- no dirty-tracking behavior changes
+- no screen resize/scroll redesign
+- no unrelated VT cleanup
+
+Stop conditions:
+
+- stop if the rename broadens beyond a narrow owner-name correction
+- stop if the true noun is ambiguous after review
+- stop if consumer scope is wider than a small local rename slice
+
+Verification:
+
+- to be finalized by pre-implementation review
+
+Receipt requirement:
+
+- record orchestrator session id
+- record reviewer session id
+- record coder/worker session id

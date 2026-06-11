@@ -1,0 +1,71 @@
+Background fill after playback next shape
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `019eac57-4579-7883-87b3-ca9bb0c01ab0`.
+Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
+Coder session id: `019eac5c-a688-7c30-b945-41630260d8b9`.
+Scope: execute the next exact host-fill coding contract from the accepted host-playback proof, with hard pause if the seam exposes another bucket.
+
+Problem statement:
+
+- The accepted proof slice `direct-upload-playback-proof-after-alpha-hit-rejection` proved that host fill playback is the next true owner on the honest direct path.
+- The accepted direct proof receipt is:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-direct-ascii.metrics.ndjson`
+- The accepted next-owner judgment is:
+  - fill remains the next owner
+  - fill draw execution dominates fill dispatch/walk
+  - glyph playback is materially smaller
+  - sprite playback is irrelevant on this workload
+  - submit/present does not outrank fill
+- The sprint rule still applies:
+  - if the next fill seam exposes a false owner or bucket, pure performance pauses and ownership correction resumes first
+
+Required sources:
+
+- `/home/home/personal/projects/howl/loops/done/direct-upload-playback-proof-after-alpha-hit-rejection.txt`
+- `/home/home/personal/projects/howl/research/post-bg-performance-restart-2026-06-09.md`
+- `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-direct-ascii.metrics.ndjson`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/render_surface_test.zig`
+
+Required shape:
+
+- optimize host fill playback only inside `render_surface.zig`
+- keep rect/background playback as a renderer-owned path, separate from glyph playback
+- keep render-surface command semantics, command ordering, fill colors, and patch/full-surface behavior unchanged
+- keep renderer-side fill production unchanged; no `direct_scene` or emitter changes in this slice
+- if a helper is introduced, it must remain owner-local to `render_surface.zig` and serve fill playback only
+- preserve the existing upload/playback accounting fields so the same direct receipts remain comparable
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- one fresh direct-host timing rerun with `HOWL_RENDER_DEBUG_TIMING` enabled against the ASCII-rain workload
+- acceptance requires the fresh direct receipt to improve `render_upload_fill_draw_avg_us` relative to `/home/home/personal/projects/howl/artifacts/stress/20260609-121557-direct-upload-playback-proof-2/howl-term.stderr.log`
+
+Non-goals:
+
+- no `howl-render/*`
+- no `howl-linux-host/src/terminal/context.zig`
+- no `howl-linux-host/src/app/process_accounting.zig`
+- no `howl-linux-host/src/app/processor.zig`
+- no ABI changes
+- no event-loop, wake-policy, or present-policy redesign
+- no glyph or sprite playback changes
+
+Stop conditions:
+
+- stop if the honest change requires renderer-side command production edits
+- stop if the honest change requires touching files outside the two-file set above
+- stop if reducing fill draw cost requires changing command ordering or fill semantics
+- stop if implementation reveals `render_surface.zig` must first be split into a new owner file to avoid a false owner

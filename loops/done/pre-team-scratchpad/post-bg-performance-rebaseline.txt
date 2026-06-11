@@ -1,0 +1,53 @@
+Post-BG performance rebaseline
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `research-2026-06-09-post-bg-performance-01`.
+Reviewer session id: pending.
+Coder session id: none.
+Scope: accept the corrected-path owner order before any optimization slice.
+
+Problem statement:
+
+- Background correctness is fixed.
+- The old performance owner order was measured on dishonest behavior and is not execution-authoritative.
+- The corrected-path receipts must become the new baseline.
+
+Accepted research input:
+
+- `research/post-bg-performance-restart-2026-06-09.md`
+
+Allowed files:
+
+- none for the proof-only slice
+
+Required shape:
+
+- no behavior change
+- use the corrected-path receipts already captured in:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-131321-ascii/summary.json`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-1338-bg-honest-direct/howl-direct-ascii.metrics.ndjson`
+- decide the next real optimization seam from those receipts only
+
+Required owner-order conclusion to record:
+
+1. PTY/runtime is still not the limiting class
+2. `render_prepare` is still the top owner on the corrected path
+3. `owner_create` / emitter work is currently larger than `direct_normal` on the corrected path
+4. `direct_normal` remains a major competing subowner inside `render_prepare`
+5. upload/fill playback remains the next competing owner and may overtake after an emitter or `direct_normal` cut
+
+Required tests and receipts:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- corrected clean benchmark receipt
+- corrected direct host timing receipt
+
+Stop conditions:
+
+- stop if the corrected receipts expose a new bucket or false owner
+- stop if the corrected receipts do not support a stable next optimization seam
+- stop if any optimization is proposed before reviewer acceptance of this rebaseline loop

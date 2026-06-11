@@ -22,7 +22,7 @@
    - `loop/coder.md`
 3. `loop/researcher.md` again as the active role contract
 4. `sprints/current.txt`
-5. active `loops/*.txt` files explicitly seeded for the task
+5. the one active loop file explicitly seeded for the task
 6. active `research/` files explicitly seeded for the task
 7. `reference-index.md`
 8. TigerBeetle readings first for non-trivial work:
@@ -43,6 +43,7 @@
 - Keep research hygiene inside scope: no stale active research, no misplaced archive files, no invented extra files outside the assigned research output.
 - Push until the whole problem is mapped. Do not quietly declare real blockers, ugly ownership, or migration-critical work "out of scope" unless the user explicitly narrowed scope.
 - Surface blocker decisions to the user with exact consequences instead of softening them away.
+- Leave a short note in the active loop scratchpad for each non-trivial pass: hello, intended task, how at least one task went, and the next handoff or blocker.
 
 Reference-first working map rules:
 

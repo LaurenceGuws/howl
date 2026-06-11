@@ -1,0 +1,126 @@
+Emitter sprite after BG next shape
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `research-2026-06-09-emitter-sprite-next-01`.
+Reviewer session id: `reviewer-2026-06-09-emitter-sprite-next-01`.
+Coder session id: `coder-2026-06-09-emitter-alpha-atlas-hit-01`.
+Scope: seed the next exact implementation contract from the accepted corrected-path emitter proof.
+
+Problem statement:
+
+- The accepted `owner-create-after-bg-proof` slice proved that the remaining `owner_create` tax stays inside the emitter seam.
+- The dominant remaining cost is sprite/emitter work:
+  - `sprites_avg_us ~= 407-421`
+  - `sprite_lookup_avg_us ~= 63-65`
+  - `stage_upload_avg_us ~= 93-96`
+  - `atlas_resource_avg_us ~= 97-100`
+  - `alpha_glyph_append_avg_us ~= 30-31`
+- The old alpha-reuse fast-path premise was already rejected before the background-fix restart.
+- The next coding slice must not guess its way back into the same dead end.
+
+Accepted proof receipts:
+
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-term.stderr.log`
+- `/home/home/personal/projects/howl/artifacts/stress/20260609-132725-owner-create-after-bg-proof-1/howl-direct-ascii.metrics.ndjson`
+
+Coder-run receipts:
+
+- accepted clean benchmark rerun:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-134805-ascii/summary.json`
+  - Howl improved from `33.16 fps` to `38.62 fps`
+- accepted valid direct host rerun:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-2/howl-direct-ascii.metrics.ndjson`
+  - direct host result regressed from `47.88 fps` to `36.94 fps`
+- invalid coder receipts dropped:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct/`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-emitter-alpha-atlas-hit-direct-3/`
+
+Required planning output:
+
+- exact allowed files for the next coding slice
+- exact required shape
+- exact tests
+- exact non-goals
+- exact stop conditions
+- explicit rejection of any byte-walk-first sprite reuse premise unless new source-backed proof overturns the earlier rejection
+
+Current blocker to coding:
+
+- the first accepted coding contract was run and rejected on its own stop condition:
+  - valid direct host receipt regressed even though the clean benchmark improved
+  - this slice is not accepted and the worktree diff was dropped
+
+Draft next coding contract:
+
+- slice name: `emitter-alpha-atlas-hit-without-byte-walk`
+- allowed files:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig` only if proof output changes are strictly needed
+- required shape:
+  - add a cheap glyph-driven alpha-atlas reuse query key from already-available owner-local identity:
+    - `sprite.key`
+    - clipped `width_px`
+    - clipped `height_px`
+    - upload format / color mode
+  - ask alpha atlas hit before `stagePreparedUploadBytes`
+  - on hit:
+    - no byte staging
+    - no atlas upload append
+    - append glyph ref directly
+  - on miss:
+    - preserve existing alpha atlas stage/upload/create path
+    - record/store the cheap key alongside byte-backed miss truth
+  - byte-content proof is allowed only on miss insertion, never on hit queries
+  - restrict the slice to the alpha atlas path only
+  - leave the direct color-resource path unchanged
+  - keep all proof timing env-gated
+- required tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - owner-local tests for:
+    - alpha atlas hit without upload bytes
+    - alpha atlas hit without atlas upload append
+    - alpha atlas miss with one upload/create
+    - changed clipped dimensions miss
+    - changed mode/format miss
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+  - corrected direct host timing rerun
+  - corrected clean benchmark rerun
+- non-goals:
+  - no `direct_normal.zig`
+  - no `direct_scene.zig`
+  - no source-mapping files
+  - no direct color-resource path changes
+  - no host GL / `howl-linux-host/src/display/*`
+  - no session/font/shaper work
+  - no ABI / `ffi.zig`
+  - no broad emitter file split unless review proves a new bucket owner
+- stop conditions:
+  - stop if `sprite.key + clipped width/height + format` is not strong enough to identify stable glyph-driven alpha raster content
+  - stop if the only way to keep correctness is to byte-walk every query again
+  - stop if this exposes `sprite_resource_store.zig` as another bucket owner requiring structural split
+  - stop if corrected direct host receipts show no reduction in `stage_upload_avg_us` and `atlas_resource_avg_us`
+- stop if clean benchmark or corrected direct host receipt regresses
+
+Execution outcome:
+
+- The coder implemented the accepted contract only inside:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+- The owner-local unit suite passed.
+- The clean benchmark improved.
+- The valid direct host rerun regressed, so the slice hit its explicit stop condition and was dropped.
+- Current accepted conclusion from the valid direct receipt:
+  - the alpha-atlas hit path can drive `stage_upload_avg_us` to `0`
+  - `atlas_resource_avg_us` falls to roughly `69-76`
+  - but overall direct-host truth still regressed, so the cheap-key atlas hit is not accepted as the next shipped optimization
+
+Planning acceptance notes:
+
+- This file remains active only as the truthful record of the rejected `emitter-alpha-atlas-hit-without-byte-walk` probe.
+- No new coding is authorized from this file.
+- The next step is a fresh research/review contract that explains the benchmark/direct divergence and names the next owner seam from the valid direct receipt.

@@ -31,11 +31,12 @@
 - Stop instead of guessing if names, scope, tests, or ownership are under-specified.
 - Stop and escalate if the slice contract does not already demand the receipt fields the orchestrator will need, including coder session id and commit-hash handoff.
 - Keep within the allowed files.
-- Treat only direct contents of active `loops/`, `research/`, and `sprints/` as authoritative unless explicitly seeded otherwise, and treat the condensed execution contract as the controlling read order for the slice.
+- Treat only the seeded active loop file and the direct contents of active `research/` and `sprints/` as authoritative unless explicitly seeded otherwise, and treat the condensed execution contract as the controlling read order for the slice.
 - Do not start with README, docs, or random repo browsing before the required reads above.
 - Do not leave stale or invented files behind in the active accountability surface while executing a slice.
 - Attack the assigned slice directly and finish it cleanly. Do not drift into redesign, side quests, or local convenience cleanup unless the slice explicitly requires it.
 - If the contract is wrong, incomplete, or not condensed enough to execute without reconstruction, stop and escalate sharply instead of patching around it.
+- Leave a short note in the active loop scratchpad for each non-trivial pass: hello, intended task, how at least one task went, and the next handoff or blocker.
 - Chase the bleeding edge when it serves the real product, the real owner, and the real proof surface.
 - Be ruthless about quality, clarity, and execution speed. A timid implementation is almost always leaving real work undone.
 - Break records inside project law: references, ownership, ABI truth, assertions, and tests are the track, not obstacles.

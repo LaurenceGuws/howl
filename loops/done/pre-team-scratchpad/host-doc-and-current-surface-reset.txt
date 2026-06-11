@@ -1,0 +1,64 @@
+Host docs and current-surface reset
+
+Date: 2026-06-10.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-09-background-default-01`.
+Researcher session id: `019eb073-655c-79a3-8528-abc2d3e6116a`, `019eb073-8e59-75b3-8819-36a35701b521`.
+Reviewer session id: `019eac44-6df8-7e91-842d-c9cffd973aff`.
+Coder session id: none.
+Scope: land the accepted docs/accountability reset before any host code deletion.
+
+Problem statement:
+
+- Performance remains paused.
+- Active host guidance still mixes host ownership with stale rain/replay workflow claims.
+- The first correction slice is docs/accountability only so the live surface stops lying before code deletion starts.
+- Performance remains paused pending host accountability reset.
+
+Required sources:
+
+- `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+- `/home/home/personal/projects/howl/howl-linux-host/stress.md`
+- `/home/home/personal/projects/howl/sprints/current.txt`
+- `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-linux-host/stress.md`
+- `/home/home/personal/projects/howl/sprints/current.txt`
+- `/home/home/personal/projects/howl/sprints/2026-06-10-host-accountability-reset.md`
+- `/home/home/personal/projects/howl/loops/host-doc-and-current-surface-reset.txt`
+- `/home/home/personal/projects/howl/research/host-accountability-reset-2026-06-10.md`
+
+Required shape:
+
+- docs/accountability only
+- no host code changes
+- no utils changes
+- active artifacts must say performance remains paused
+- active host docs must stop presenting:
+  - `ascii_rain_stress`
+  - `benchmark_terminals.py`
+  - `pty-vt-record-path`
+  - `artifacts/replay`
+  as live host-owned workflow
+
+Required tests:
+
+- grep proof that `howl-linux-host/stress.md` no longer mentions:
+  - `ascii_rain_stress`
+  - `benchmark_terminals.py`
+  - `pty-vt-record-path`
+  - `artifacts/replay`
+- grep proof that active `sprints/*.md`, `loops/*.txt`, and active `research/*.md` say performance is paused pending accountability reset
+
+Non-goals:
+
+- no host code
+- no utils deletion or movement
+- no lower-module replay replacement
+
+Stop conditions:
+
+- stop if truthful docs/accountability reset requires a benchmark-client destination receipt that does not exist yet

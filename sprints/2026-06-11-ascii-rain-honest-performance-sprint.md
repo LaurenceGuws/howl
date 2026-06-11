@@ -63,10 +63,12 @@ Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-01`.
 
 ## Immediate Next Step
 
-- Seed one fresh control-run and bottleneck-proof artifact for current-code ASCII-rain performance restart.
-- No active loop is seeded yet because no current-tree proof slice has been promoted.
+- Seed the first live worker slice for one fresh control run against the agreed utils FPS telemetry harness.
+- After that receipt lands, seed one worker bottleneck-proof slice with temporary logs only.
+- Seed researcher <-> reviewer planning only after the bottleneck evidence exists.
 
 ## Execution Authorization
 
-- Execution is not authorized from this sprint alone.
-- Coding starts only after a fresh active loop/research package promotes one exact current-tree slice.
+- Execution is authorized only through exact slices seeded in the active loop.
+- The first authorized slice is the control-run receipt.
+- Research is not authorized as the first move in this loop.

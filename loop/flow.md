@@ -99,14 +99,22 @@ When this stop is triggered:
 
 - `loops/`, `research/`, and `sprints/` are the live accountability surface.
 - Only current active artifacts may live directly inside those folders.
+- The active loop file is the shared team scratchpad for the live step. It may carry the controlling contract plus teammate handoff notes in one place.
+- Every non-trivial teammate pass must append a short loop note with:
+  - role and session id
+  - a brief hello
+  - what the teammate intended to achieve in that pass
+  - how at least one task went
+  - next handoff or blocker
 - Historical artifacts must move into the domain-local archive folders:
-  - `loops/done/`
+  - `loops/done/` including accountable subdirectories when needed to keep the top level clean
   - `loops/defered/`
   - `research/done/`
   - `research/defered/`
   - `sprints/done/`
   - `sprints/defered/`
 - If stale or historical artifacts are left in the active folders, accountability is weakened and work should stop until the active surface is cleaned.
+- A bulk legacy archive subdirectory under `loops/done/` may use one directory header file to mark the whole relocated set as historical when the move is archive hygiene only and the inner files are left content-unchanged.
 - No stale files may linger in active folders.
 - No invented files may be created outside the active scope.
 - Active/done/defered placement is part of the work, not optional cleanup.
@@ -123,7 +131,7 @@ Before any non-trivial work, read in this order:
    - `loop/coder.md`
 3. the role doc for the current task, reread with special attention
 4. `sprints/current.txt`
-5. active `loops/*.txt` files explicitly seeded for the task
+5. the one active loop file explicitly seeded for the task
 6. active `research/` files explicitly seeded for the task
 
 Only after that may the role read additional source, project docs, or external references required by the task.

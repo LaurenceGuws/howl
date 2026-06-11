@@ -1,0 +1,60 @@
+VT simulate canonical repair
+
+Date: 2026-06-10.
+Role owner: orchestrator.
+Status: accepted.
+Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
+Researcher session id: `019eb2da-a14a-79b3-9864-65c43dd3a991`.
+Reviewer session id: `019eb2c1-0991-7d73-9724-463ca0289931`.
+Coder session id: `019eb2c9-1b71-7aa2-9047-f34b9cd3c084`.
+Accepted commit: `ab39fda` in `howl-vt`.
+Verification:
+- `cd /home/home/personal/projects/howl/howl-vt && time zig build simulate -- scrollback`
+- `cd /home/home/personal/projects/howl/howl-vt && zig build test:unit -- "screen resize"`
+- `cd /home/home/personal/projects/howl/howl-vt && zig build test:unit -- "resize keeps history enabled state"`
+- `cd /home/home/personal/projects/howl/howl-vt && zig build test:unit -- "snapshot: historyRowAt matches terminal after wraparound"`
+- `cd /home/home/personal/projects/howl/howl-vt && zig build test:unit`
+
+Goal:
+
+- repair the current `howl-vt` canonical scrollback mismatch across resize and zoom-jitter churn
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-vt/src/simulation/scrollback.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/terminal.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/screen_set.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/screen.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/screen/resize.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/screen/history.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/screen/resize_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/terminal_surface_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/terminal_snapshot_test.zig`
+- `/home/home/personal/projects/howl/research/2026-06-10-test-accountability-research.md`
+- `/home/home/personal/projects/howl/sprints/2026-06-10-test-accountability-sprint.md`
+- `/home/home/personal/projects/howl/loops/vt-simulate-canonical-repair.txt`
+
+Required shape:
+
+- preserve canonical logical content through resize and zoom-jitter churn without weakening the simulation claim
+- keep mutation fixes in the resize/history owners, not in simulation-only normalization
+- add or sharpen owner-local resize/history proofs for the preservation rule enforced by the simulation
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-vt && zig build simulate -- scrollback`
+- `cd /home/home/personal/projects/howl/howl-vt && zig build test:unit -- "screen resize"`
+- `cd /home/home/personal/projects/howl/howl-vt && zig build test:unit -- "resize keeps history enabled state"`
+- `cd /home/home/personal/projects/howl/howl-vt && zig build test:unit -- "snapshot: historyRowAt matches terminal after wraparound"`
+- `cd /home/home/personal/projects/howl/howl-vt && zig build test:unit`
+
+Non-goals:
+
+- no protocol simulation work
+- no host/FFI surface changes
+- no benchmark work
+
+Stop conditions:
+
+- if the mismatch cannot be reproduced with `zig build simulate -- scrollback`, stop and record the exact missing seed or smoke-only condition before changing owners
+- if the required fix crosses outside resize/history ownership into unrelated parser/protocol paths, stop and record the proof before broadening scope

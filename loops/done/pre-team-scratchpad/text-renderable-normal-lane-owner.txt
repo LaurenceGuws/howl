@@ -1,0 +1,51 @@
+Text renderable normal lane owner
+
+Date: 2026-06-11.
+Role owner: orchestrator.
+Status: accepted.
+Orchestrator session id: `orch-2026-06-11-text-renderable-normal-lane-owner-01`.
+Planning orchestrator session id: `orch-2026-06-10-test-accountability-01`.
+Researcher session ids:
+- `research-2026-06-10-text-sprint-01`
+- `research-2026-06-10-text-sprint-01-c1`
+Execution reviewer session id: `review-2026-06-11-text-renderable-normal-lane-owner-01`.
+Planning reviewer session id: `review-2026-06-10-text-sprint-01`.
+Coder session id: `coder-2026-06-11-text-renderable-normal-lane-owner-01`.
+Commit-hash receipt: fulfilled by accepted `howl-render` commit `bc938aa`.
+Scope: execute and review the second accepted text sprint slice only.
+
+Problem statement:
+
+- The accepted text sprint says the second slice is `text-renderable-normal-lane-owner`.
+- Renderable-cell construction and normal-lane preparation still crossed too many owners before this slice.
+- This slice converged that work onto cluster/direct-normal ownership with exact receipts.
+
+Accepted planning input:
+
+- `sprints/done/2026-06-10-text-sprint-research.md`
+- `research/done/2026-06-10-text-sprint-scratchpad.md`
+- `loops/done/render-source-cell-model-research.txt`
+
+Prior accepted slice dependency:
+
+- `sprints/done/2026-06-11-text-source-mapper-proof-owner.md`
+- `loops/done/text-source-mapper-proof-owner.txt`
+- accepted commit: `bbf6242` in `howl-render`
+
+Queued slice:
+
+- `text-renderable-normal-lane-owner`
+
+Verification receipts:
+
+- Reviewer verdict:
+  - `accept`
+  - reviewer session id: `review-2026-06-11-text-renderable-normal-lane-owner-01`
+- Orchestrator verification:
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "cell inputs build text cache renderable cells clusters and runs"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "partial damage filters clean clusters before shaping"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "text preparation direct-renders pure normal cell text inputs"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:unit -- "text preparation keeps mixed cell text normals out of legacy path"`
+- Acceptance state:
+  - reviewer accepted and orchestrator verification passed
+  - accepted commit hash: `bc938aa` in `howl-render`

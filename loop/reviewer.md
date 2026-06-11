@@ -47,9 +47,11 @@
 - reject any coder move that makes the system harder to audit, even if it benchmarks faster
 - return `user needed` if the user appears to be overriding the references without an explicit receipted override for that case, or if the remaining gap is a real user-level decision rather than a fixable planning defect
 - reject stale or historical artifacts left in active `loops/`, `research/`, or `sprints/`
-- reject newly created or newly edited deferred/done artifacts that do not open with a tiny historical-authority header stating:
+- reject newly created or content-edited deferred/done artifacts that do not open with a tiny historical-authority header stating:
   - historical authority at the time
   - why superseded or done
   - must not be used for
+- for bulk legacy archive relocations, allow one directory header file to carry that historical-authority warning for the whole moved set when the inner files are unchanged receipts
 - reject workflow violations where the agent skipped the live accountability surface and started with broad repo doc browsing
 - reject progress when the workspace guidance files do not accurately reflect the real state of the work
+- reject non-trivial passes that do not leave the required active-loop scratchpad note with hello, intent, outcome, and handoff or blocker

@@ -1,0 +1,100 @@
+Text source mapper proof owner
+
+Date: 2026-06-11.
+Role owner: orchestrator.
+Status: accepted.
+Orchestrator session id: `orch-2026-06-11-text-source-mapper-proof-owner-01`.
+Planning orchestrator session id: `orch-2026-06-10-test-accountability-01`.
+Researcher session ids:
+- `research-2026-06-10-text-sprint-01`
+- `research-2026-06-10-text-sprint-01-c1`
+Execution reviewer session id: `review-2026-06-11-text-source-mapper-proof-owner-01`.
+Planning reviewer session id: `review-2026-06-10-text-sprint-01`.
+Coder session id: `coder-2026-06-11-text-source-mapper-proof-owner-01`.
+Commit-hash receipt: fulfilled by accepted `howl-render` commit `bbf6242`.
+Scope: execute and review the first accepted text sprint slice only.
+
+Problem statement:
+
+- The accepted text sprint says the first honest execution slice is `text-source-mapper-proof-owner`.
+- Current mapper authority is still split for default-background truth, inverse or selection background preservation, and empty-cell classification.
+- This loop exists only to land that first mapper-owner slice with exact receipts.
+
+Accepted planning input:
+
+- `sprints/done/2026-06-10-text-sprint-research.md`
+- `research/done/2026-06-10-text-sprint-scratchpad.md`
+- `loops/done/render-source-cell-model-research.txt`
+
+Queued slice:
+
+- `text-source-mapper-proof-owner`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
+- `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
+
+Required shape:
+
+- Leave one authoritative mapper owner for default-background truth, inverse or selection preservation, and empty-cell classification.
+- Rewrite mapper proofs so they encode opaque default-background truth and Alacritty-empty semantics only.
+- Keep dim policy out of this slice.
+- Keep source ABI owners and exported layouts unchanged.
+
+Required assertions:
+
+- Assert `combining_len <= combining.len` at each VT and publication mapper entry.
+- Assert inverse and selection transforms preserve semantic default-background provenance.
+- Assert empty-cell classification happens before color-resolution shortcuts.
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input converts VT source to text scene input"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps opaque default background for blank VT cell"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps opaque default background for blank publication cell"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps default background truth through inverse VT cell"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps default background truth through publication selection"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input marks Alacritty-empty cells before color mapping"`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input treats foreground-colored blanks as non-empty"`
+
+Non-goals:
+
+- no semantic contract migration
+- no scene owner convergence
+- no frame-preparer control-flow changes
+- no dim or invisible factor choice
+- no source or publication C ABI changes
+
+Stop conditions:
+
+- stop if the slice needs files outside the two allowed files
+- stop if the slice needs `SourceCell`, `SourceColor`, or exported C ABI layout changes
+- stop if the stale proofs cannot be corrected without choosing a dim or faint factor
+- stop if empty-cell truth contradicts Alacritty empty-cell semantics
+
+Reviewer expectations:
+
+- review the diff against the accepted planning slice only
+- reject any broadening beyond mapper ownership and proof
+- reject missing receipts, missing tests, or stale active-surface guidance
+
+Verification receipts:
+
+- Coder implementation completed in the allowed files only:
+  - `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
+- Reviewer verdict:
+  - `accept`
+  - reviewer session id: `review-2026-06-11-text-source-mapper-proof-owner-01`
+- Orchestrator verification:
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input converts VT source to text scene input"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps opaque default background for blank VT cell"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps opaque default background for blank publication cell"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps default background truth through inverse VT cell"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input keeps default background truth through publication selection"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input marks Alacritty-empty cells before color mapping"`
+  - passed `cd /home/home/personal/projects/howl/howl-render && zig build test:abi -- "source text input treats foreground-colored blanks as non-empty"`
+- Acceptance state:
+  - reviewer accepted and orchestrator verification passed
+  - accepted commit hash: `bbf6242` in `howl-render`

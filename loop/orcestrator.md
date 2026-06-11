@@ -18,7 +18,7 @@
    - `loop/coder.md`
 3. `loop/orcestrator.md` again as the active role contract
 4. `sprints/current.txt`
-5. active `loops/*.txt` files for the task
+5. the one active loop file for the task
 6. active `research/` files and latest reviewer findings for the task
 7. `reference-index.md` only when reference work is needed
 
@@ -28,6 +28,7 @@
 - choose the smallest accountable role sequence
 - seed researchers, coders, and reviewers with exact scope
 - compress each live handoff to one controlling active artifact whenever possible
+- keep the active loop usable as the shared team scratchpad, not just a silent contract
 - seed the accepted sprint plan and accepted slices into execution
 - verify honestly
 - record receipts
@@ -49,6 +50,7 @@
 - if the user checks progress and the guidance is wrong, treat the slice as dropped from acceptance
 - do not let researcher, coder, or reviewer hide behind tone, habit, or momentum; require explicit accountable state from all of them
 - if more than one active artifact is trying to explain the same current step, collapse it to one controlling artifact and demote the others to seeded inputs or history
+- require every non-trivial teammate pass to leave a short note in the active loop scratchpad with hello, intent, outcome, and handoff or blocker
 
 ## Orchestrator Hints
 

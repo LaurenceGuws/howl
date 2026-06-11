@@ -1,0 +1,105 @@
+ASCII rain ownership-correction accountability contract
+
+Date: 2026-06-09.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`.
+Researcher session id: `research-2026-06-09-owner-delete-plan-01`.
+Reviewer session id: `rev-2026-06-09-owner-delete-plan-01`.
+Coder session id: pending.
+Scope: active coder contract for the next slice only. The user explicitly changed sprint direction. The active queue is now in ownership-correction mode until `howl-render/src/prepared/owner.zig` is gone.
+
+Problem statement:
+
+- The broad sprint goal remains beating Alacritty on the agreed ASCII rain benchmark.
+- The measured receipts already proved that `howl-render/src/prepared/owner.zig` sits on the live hot path.
+- The user explicitly rejected continuing to optimize around that file.
+- Reviewer `rev-2026-06-09-owner-delete-plan-01` rejected the old `normal-fill-class-proof` path after the user changed sprint direction.
+- Researcher `research-2026-06-09-owner-delete-plan-01` proved that `prepared/owner.zig` is broad bucket ownership, not an owner-true seam, and produced the deletion queue now governing this sprint.
+- Performance receipts remain valid context, but they are not authority for the next implementation slice until the ownership correction lands cleanly.
+- Accepted ownership-correction slice `owner-map-landing` moved metadata and failure ownership out of `prepared/owner.zig`, rewired `TextSessionOwner` handle storage, and reduced `prepared/owner.zig` to a temporary shim.
+- Accepted ownership-correction slice `session-submit-choreography` moved publish/submit policy into `TextSessionOwner` and reduced `PreparedHandle` to storage/liveness/render-surface access plus release/consume.
+- Accepted ownership-correction slice `prepared-surface-boundary-cleanup` removed `prepared/owner.zig` from the prepared-surface FFI boundary and isolated the shim to itself plus owner tests.
+- Accepted ownership-correction slice `delete-owner-zig` deleted the shim entirely. There is no remaining `Owner` seam in `src/ffi`, `src/session`, or `src/prepared`.
+- Accepted nested commits:
+  - `howl-render` `3c786f7` `split prepared handle metadata ownership`
+  - `howl-render` `0ee034a` `move prepared submit policy to session`
+  - `howl-render` `590694b` `remove prepared owner from ffi surface`
+  - `howl-render` `5c812b8` `delete prepared owner shim`
+
+Current measured context:
+
+- clean benchmark baseline:
+  - Howl: `18.38 fps`
+  - Alacritty: `1032.43 fps`
+  - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260608-232747-ascii/summary.json`
+- current measured hot seam before this direction change:
+  - `Owner.create` / render-surface emission around `~0.99-1.01 ms`
+  - remaining direct-normal scan around `~0.68 ms`
+  - host upload playback fill tail around `~0.31-0.38 ms`
+- publication-backed default-background behavior is also currently wrong on the normal path and remains tracked in active research, but this loop is not authorized to fix it yet unless the teardown slice directly requires touching the mapped owners.
+
+Accepted research input:
+
+- `research/owner-delete-plan-2026-06-09.md`
+
+Dropped work from acceptance:
+
+- the prior `normal-fill-class-proof` slice and its uncommitted diff are not accepted
+- any uncommitted proof-only edits in:
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - `howl-render/src/benchmark_main.zig`
+  are not sprint progress unless they survive reviewer acceptance under a later loop
+
+Active coder slice: `post-owner-performance-rebaseline`
+
+Allowed files:
+
+- no file edits authorized in this slice unless a measurement-only receipt bug forces a follow-up planning restart
+
+Required shape:
+
+- rerun the accepted benchmark and direct host receipts on the cleaned seam
+- record whether the hot owner order changed after deleting `prepared/owner.zig`
+- do not redesign or implement a fix in this slice
+- use the existing benchmark contract and accounting surfaces only
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+
+Required verification:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- `cd /home/home/personal/projects/howl/howl-linux-host && zig build install -Doptimize=ReleaseFast`
+- rerun the direct host ASCII-rain harness against the cleaned tree
+- compare against the accepted receipts:
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-owner-create-verify-1/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-070618-direct-normal-shape-1/howl-term.stderr.log`
+  - `/home/home/personal/projects/howl/artifacts/stress/20260609-081249-host-command-shape-1/howl-term.stderr.log`
+- prove whether the top owner order changed materially after deleting the shim
+
+Non-goals:
+
+- no host GL work
+- no benchmark-tool changes
+- no PTY/runtime changes
+- no publication background correctness work unless this slice cannot compile without touching the owning seam
+- no implementation fix in this slice
+- no fresh design work until the post-delete receipts are in hand
+
+Stop conditions:
+
+- stop if the cleaned tree fails the accepted benchmark surface
+- stop if the measurement surface itself no longer matches the accepted benchmark contract
+- stop if new work would require edits before the receipts are recorded
+
+Acceptance gate for this slice:
+
+- orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`
+- researcher session id: `research-2026-06-09-owner-delete-plan-01`
+- reviewer session id: `rev-2026-06-09-owner-delete-plan-01`
+- coder session id
+- verification results from the required commands above
+- explicit receipt paths for the post-delete benchmark/accounting reruns

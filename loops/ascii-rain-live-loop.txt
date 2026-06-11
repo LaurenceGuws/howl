@@ -1,0 +1,120 @@
+ASCII rain live performance loop scratchpad
+
+Date: 2026-06-11.
+Role owner: orchestrator.
+Status: active live loop.
+Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
+Current required worker session id: `worker-2026-06-11-ascii-rain-control-run-01`.
+Next required worker session id: pending after control-run receipt.
+Researcher session id: pending until bottleneck evidence handoff.
+Reviewer session id: pending until bottleneck evidence handoff.
+Loop commit-hash receipt: pending until archival.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, coder, researcher, or reviewer pass must append a short note with:
+  - role and session id
+  - a brief hello
+  - what the teammate wanted to achieve in the pass
+  - how at least one task went
+  - next handoff or blocker
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-11-ascii-rain-honest-performance-sprint.md`
+
+Problem statement:
+
+- The active sprint already settles the restart rule: no optimization before fresh proof on the corrected current tree.
+- Old benchmark receipts and old bottleneck conclusions are navigation only until the current tree re-proves the benchmark surface and current hot-owner order.
+- The orchestrator must keep one controlling live loop that the whole team can read and write without reconstructing the current step from archive prose.
+- The immediate target is not a performance fix. It is the first two accountable receipts in the user-directed order: control run first, temporary bottleneck proof second.
+- The first live sequence is user-directed: control run first, worker bottleneck proof second, researcher and reviewer planning third.
+
+Loop goal:
+
+- Land the first live receipt for the agreed Howl vs Alacritty control run on the current tree.
+- Then seed the next worker slice to identify the current biggest performance bottleneck with temporary logs only.
+- Only after that evidence exists, hand the bottleneck package to researcher and reviewer for planning.
+- No optimization or broad redesign slice is authorized yet.
+
+Current slice: `control-run-receipt`
+
+- Purpose:
+  - record one fresh base-number control run against the agreed utils FPS telemetry harness
+- Allowed files:
+  - no file edits authorized
+- Required commands:
+  - `/home/home/personal/projects/howl/howl-linux-host`: `zig build install -Doptimize=ReleaseFast`
+  - `/home/home/personal/projects/howl/utils/tools`: `zig build stress:rain:build -Doptimize=ReleaseFast`
+  - `/home/home/personal/projects/howl`: `python3 utils/tools/benchmark_terminals.py --duration 10 --mode ascii --terminals howl alacritty`
+- Required output:
+  - exact run directory path under `/home/home/personal/projects/howl/artifacts/stress/<timestamp>-ascii/`
+  - exact `summary.json` receipt path
+  - exact final Howl FPS and Alacritty FPS from that receipt
+- Required verification:
+  - the benchmark run completes for both terminals with a final metrics receipt
+- Non-goals:
+  - no source edits
+  - no temporary logs yet
+  - no redesign
+  - no researcher planning yet
+- Stop conditions:
+  - stop if the agreed control-run harness no longer works on the current tree
+  - stop if the control run exposes a correctness failure instead of a pure performance gap
+- Acceptance gate:
+  - worker session id
+  - exact commands run
+  - exact receipt paths
+  - final Howl vs Alacritty FPS values
+
+Next slice after acceptance: `temporary-bottleneck-logging`
+
+- Purpose:
+  - use temporary logs to pin down the current biggest performance bottleneck
+- Authorization:
+  - not yet seeded; orchestrator must seed exact allowed files, symbols, tests, and stop conditions after the control-run receipt lands
+
+Research handoff after worker evidence: `bottleneck-evidence-review-plan`
+
+- Researcher and reviewer start only after the bottleneck evidence exists.
+- If the bottleneck hunt exposes a big correctness issue or a vague bucket, stop and bring it to the user for a subsprint instead of forcing planning through it.
+
+Required current-source read pack:
+
+- `/home/home/personal/projects/howl/reference-index.md`
+- `/home/home/personal/projects/howl/howl-linux-host/stress.md`
+- `/home/home/personal/projects/howl/utils/tools/benchmark_terminals.py`
+- `/home/home/personal/projects/howl/utils/tools/rain-bench/ascii_rain_stress.zig`
+- `/home/home/personal/projects/howl/utils/tools/rain-bench/visual_rain_stress.zig` if the current harness points there
+- `/home/home/personal/projects/howl/utils/tools/build.zig`
+- `/home/home/personal/projects/howl/build.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/build.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/cli/args.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/app/processor.zig`
+- Navigation only:
+  - `/home/home/personal/projects/howl/research/done/cache-2026-06-08-ascii-rain-benchmark-surface.md`
+  - `/home/home/personal/projects/howl/loops/done/pre-team-scratchpad/ascii-rain-baseline-bottleneck.txt`
+
+Stop conditions:
+
+- stop if the current benchmark harness and the agreed user workflow materially conflict
+- stop if the current tree exposes a correctness blocker or vague bucket that would make temporary bottleneck logging dishonest
+- stop if stable references and current source directly disagree in a way that needs user override
+
+Completion gate:
+
+- `sprints/current.txt` continues to point only at the live sprint and active loop for this step
+- one accepted control-run receipt exists
+- the next worker bottleneck-proof slice is seeded from that receipt or the loop stops on an explicit blocker
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: seed one live loop that keeps the team on the same current step and clears out old loop clutter.
+- How one task went: I converted the active loop into the controlling shared scratchpad and prepared the old loop archive to move under one subdirectory.
+- Next handoff or blocker: the control-run worker can now use this file as the shared live handoff surface for the first receipt.

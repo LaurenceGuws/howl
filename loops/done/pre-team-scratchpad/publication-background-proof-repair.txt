@@ -1,0 +1,9 @@
+Publication background proof repair
+
+Date: 2026-06-11.
+Role owner: orchestrator.
+Status: accepted.
+Orchestrator session id: `orch-2026-06-11-publication-background-proof-repair-01`.
+Execution reviewer session id: `review-2026-06-11-publication-background-proof-repair-01`.
+Coder session id: `coder-2026-06-11-publication-background-proof-repair-01`.
+Commit-hash receipt: fulfilled by accepted `howl-render` commit `af68d23`.
