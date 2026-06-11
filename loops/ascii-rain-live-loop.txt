@@ -8,10 +8,11 @@ Accepted control-run worker session id: `worker-2026-06-11-ascii-rain-control-ru
 Accepted bottleneck-proof worker session id: `worker-2026-06-12-ascii-rain-bottleneck-proof-01`.
 Accepted direct-normal worker session id: `worker-2026-06-12-direct-normal-single-pass-01`.
 Accepted owner-create worker session id: `worker-2026-06-12-owner-create-cache-first-01`.
-Current required worker session id: pending until reviewer-accepted post-cache-first owner-create plan.
-Next required worker session id: pending after the next reviewer-accepted owner-create plan.
-Researcher session id: `research-2026-06-12-owner-create-post-cache-first-01`.
-Reviewer session id: `review-2026-06-12-owner-create-post-cache-first-01`.
+Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-fresh-rollback-01`.
+Current required worker session id: pending for the next bottleneck-proof pass after fresh rollback.
+Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
+Researcher session id: pending for the next bottleneck cycle.
+Reviewer session id: pending for the next bottleneck cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -467,3 +468,24 @@ Team scratchpad
 - Intended task: gate the post-cache-first owner-create plan before worker execution.
 - How one task went: the first pass rejected an incomplete rollback contract and unproved absolute timing gate; the corrected plan now explicitly restores `atlas_resource` and uses the accepted `1093`/`1094` timing baselines.
 - Next handoff or blocker: seed the `owner-create-fresh-resource-rollback` worker slice from `/home/home/personal/projects/howl/research/2026-06-12-owner-create-post-cache-first-plan.md`; no blocker.
+
+18. Role: coder/worker
+- Session id: `worker-2026-06-12-owner-create-fresh-rollback-01`
+- Hello: hello
+- Intended task: remove the fresh-path whole `SpriteResourceStore` copy while preserving exact retained admission rollback on emission failure.
+- How one task went: the fresh emitter now mutates the retained store directly behind an owner-local admission rollback, and the timing rerun moved `prepared_handle_create emit_avg_us` to `1052` and `owner_create_avg_us` to `1053`.
+- Next handoff or blocker: hand off the verified slice receipts to the orchestrator and reviewer; no stop condition triggered.
+
+19. Role: reviewer
+- Session id: `review-2026-06-12-owner-create-fresh-rollback-01`
+- Hello: hello
+- Intended task: gate the implemented fresh owner-create rollback slice against the accepted worker contract.
+- How one task went: the slice was accepted with no findings; `emitPreparedFresh` no longer copies the whole store, rollback covers `atlas_resource` and retained metadata, and fresh-path reuse/failure tests are present.
+- Next handoff or blocker: orchestrator should commit the accepted render slice and root receipts, then restart the loop because Howl is still slower than Alacritty.
+
+20. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the accepted fresh rollback slice and restart from the new measured baseline.
+- How one task went: render commit `8bd867b` landed the accepted slice; accepted receipts are `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-011550-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-011602-ascii/summary.json`, with Howl `36.85 fps` vs Alacritty `1009.95 fps`.
+- Next handoff or blocker: seed the next bottleneck-proof worker pass from the fresh rollback baseline; no correctness or vague-bucket blocker is known.
