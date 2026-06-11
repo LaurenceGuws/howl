@@ -7,10 +7,11 @@ Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
 Accepted control-run worker session id: `worker-2026-06-11-ascii-rain-control-run-01`.
 Accepted bottleneck-proof worker session id: `worker-2026-06-12-ascii-rain-bottleneck-proof-01`.
 Accepted direct-normal worker session id: `worker-2026-06-12-direct-normal-single-pass-01`.
-Current required worker session id: pending until reviewer-accepted owner-create plan.
-Next required worker session id: pending after reviewer-accepted owner-create plan.
-Researcher session id: `research-2026-06-12-owner-create-plan-01`.
-Reviewer session id: `review-2026-06-12-owner-create-plan-01`.
+Accepted owner-create worker session id: `worker-2026-06-12-owner-create-cache-first-01`.
+Current required worker session id: pending until the next bottleneck is re-proved and reviewer planning accepts the next slice.
+Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
+Researcher session id: pending for the next bottleneck cycle.
+Reviewer session id: pending for the next bottleneck cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -259,6 +260,86 @@ Accepted execution slice: `direct-normal-single-pass-publication`
 - Commit-hash handoff status:
   - pending orchestrator receipt closure after review and commit
 
+Current slice: `owner-create-cache-first-emission`
+
+- Coder session id:
+  - `worker-2026-06-12-owner-create-cache-first-01`
+- Purpose:
+  - remove repeated upload-byte staging from the hot prepared-surface emission path when the sprite/atlas cache already proves reuse
+- Allowed files:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter_test.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/owner_test.zig`
+- Not allowed:
+  - any other file
+- Required tests and verification:
+  - `/home/home/personal/projects/howl/howl-render`: `zig build test:unit`
+  - `/home/home/personal/projects/howl/howl-linux-host`: `zig build install -Doptimize=ReleaseFast`
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench`: `zig build --release=fast stress:rain:build`
+  - `/home/home/personal/projects/howl`: `env HOWL_RENDER_DEBUG_TIMING=1 python3 utils/tools/rain-bench/benchmark_terminals.py --duration 3 --mode ascii --terminals howl 2> /tmp/opencode/howl-render-debug-control.log`
+  - `/home/home/personal/projects/howl`: `python3 utils/tools/rain-bench/benchmark_terminals.py --duration 10 --mode ascii --terminals howl alacritty`
+- Required existing proof roots to keep green:
+  - `render surface surface emitter persists prepared sprite resource across surfaces`
+  - `render surface surface emitter failure preserves accepted persistent resource state`
+  - `render-surface sprite resource store reuses last atlas and resource lookups`
+  - `create reports missing-sprite diagnostic without double free`
+- Required new owner-local tests:
+  - reused alpha atlas sprite emits zero uploads and leaves `upload_bytes_count` unchanged on the second emission
+  - reused persistent color sprite emits zero uploads and leaves `upload_bytes_count` unchanged on the second emission
+  - cache admission reports reuse before emitter-side byte staging for both atlas and color sprite paths
+- Exact stop conditions:
+  - stop if truthful cache-first admission requires widening beyond the four allowed files
+  - stop if current tests expose a correctness bug in sprite/resource identity rather than a pure performance debt
+  - stop if the worker cannot preserve existing failure mapping and persistent/transient semantics
+  - stop if the 3-second timing rerun does not lower `owner_create_avg_us` below `1151`
+  - stop if the benchmark rerun changes semantics or breaks existing proof roots even when `owner_create_avg_us` improves
+- Receipt fields required from the worker:
+  - coder session id
+  - files changed
+  - exact tests run
+  - exact updated receipt paths
+  - quoted timing lines from `/tmp/opencode/howl-render-debug-control.log`
+  - exact before/after `owner_create_avg_us`, `prepared_handle_create emit_avg_us`, `stage_upload_avg_us`, and `sprites_avg_us`
+  - commit-hash handoff status pending orchestrator closure
+
+Execution receipt candidate for current review:
+
+- Files changed:
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter_test.zig`
+- Exact tests run:
+  - `/home/home/personal/projects/howl/howl-render`: `zig build test:unit`
+  - `/home/home/personal/projects/howl/howl-linux-host`: `zig build install -Doptimize=ReleaseFast`
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench`: `zig build --release=fast stress:rain:build`
+  - `/home/home/personal/projects/howl`: `env HOWL_RENDER_DEBUG_TIMING=1 python3 utils/tools/rain-bench/benchmark_terminals.py --duration 3 --mode ascii --terminals howl 2> /tmp/opencode/howl-render-debug-control.log`
+  - `/home/home/personal/projects/howl`: `python3 utils/tools/rain-bench/benchmark_terminals.py --duration 10 --mode ascii --terminals howl alacritty`
+- Exact receipt paths counted for acceptance:
+  - 3-second summary: `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-005326-ascii/summary.json`
+  - 10-second summary: `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-005338-ascii/summary.json`
+  - timing log: `/tmp/opencode/howl-render-debug-control.log`
+- Same-turn probe receipts that must not be used for acceptance:
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-005056-ascii/`
+  - `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-005103-ascii/`
+- Before timing proof:
+  - `owner_create_avg_us=1151`
+  - `prepared_handle_create emit_avg_us=1149`
+  - `stage_upload_avg_us=100`
+  - `sprites_avg_us=441`
+- After timing proof:
+  - `owner_create_avg_us=1094`
+  - `prepared_handle_create emit_avg_us=1093`
+  - `stage_upload_avg_us=0`
+  - `sprites_avg_us=345`
+- Result:
+  - 3-second Howl rerun: `34.1 fps`
+  - 10-second Howl rerun: `35.67 fps`
+  - 10-second Alacritty rerun: `1008.17 fps`
+  - `owner_create` improved below the `1151` gate, but Howl still trails Alacritty badly
+- Commit-hash handoff status:
+  - pending orchestrator receipt closure after review and commit
+
 Team scratchpad
 
 1. Role: orchestrator
@@ -298,6 +379,13 @@ Team scratchpad
 
 6. Role: researcher
 - Session id: `research-2026-06-12-direct-normal-scan-plan-01`
+
+7. Role: coder/worker
+- Session id: `worker-2026-06-12-owner-create-cache-first-01`
+- Hello: hello
+- Intended task: remove repeated prepared-sprite upload staging from the owner-create emission path when the cache already proves reuse.
+- How one task went: the first cache-first pass removed staging but missed the timing gate, and a same-owner contiguous fast path in the sprite resource store dropped `owner_create_avg_us` to `1094` on the required rerun.
+- Next handoff or blocker: hand off the verified slice receipts and timing proof to the reviewer and orchestrator for acceptance, review, and commit-hash closure.
 - Hello: hello
 - Intended task: turn the accepted `direct_normal_scan` proof into a reviewer-acceptable worker slice centered on the true render owner seam.
 - How one task went: current source and the proof log lined up cleanly around `direct_normal`'s duplicated normal-lane scan, and I also found that `benchmark_main.zig` currently bypasses the exact publication hot path.
@@ -351,3 +439,10 @@ Team scratchpad
 - Intended task: close the accepted owner-create planning step before handing new implementation work to the team.
 - How one task went: the plan is now reviewer-accepted and tightly centered on cache-first reuse admission inside `render_surface_emitter` plus `sprite_resource_store`.
 - Next handoff or blocker: commit and push this accepted planning state, then seed the `owner-create-cache-first-emission` worker slice.
+
+14. Role: coder/worker
+- Session id: `worker-2026-06-12-owner-create-cache-first-01`
+- Hello: hello
+- Intended task: remove repeated upload-byte staging when the prepared sprite cache already proves reuse.
+- How one task went: the cache-first emission pass cleared the timing gate after one in-slice refinement, with `stage_upload_avg_us` dropping to `0` and `owner_create_avg_us` dropping to `1094`.
+- Next handoff or blocker: hand off the verified slice receipts to the orchestrator and reviewer; Howl improved again, but the sprint must loop because we are still slower than Alacritty.
