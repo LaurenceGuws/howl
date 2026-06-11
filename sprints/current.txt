@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-11-text-style-attrs-render-policy-owner.md`
+- `sprints/2026-06-11-text-proof-surface-consolidation.md`
 
 Active research:
 
@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/text-style-attrs-render-policy-owner.txt`
+- `loops/text-proof-surface-consolidation.txt`
 
 Latest archived planning package:
 
@@ -25,8 +25,8 @@ Latest archived planning package:
 
 Latest accepted execution slice:
 
-- `sprints/done/2026-06-11-text-publication-full-path.md`
-- `loops/done/text-publication-full-path.txt`
+- `sprints/done/2026-06-11-text-style-attrs-render-policy-owner.md`
+- `loops/done/text-style-attrs-render-policy-owner.txt`
 
 Execution rule:
 

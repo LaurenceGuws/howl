@@ -1,0 +1,87 @@
+Text proof surface consolidation
+
+Date: 2026-06-11.
+Role owner: orchestrator.
+Status: active.
+Orchestrator session id: `orch-2026-06-11-text-proof-surface-consolidation-01`.
+Planning orchestrator session id: `orch-2026-06-10-test-accountability-01`.
+Researcher session ids:
+- `research-2026-06-10-text-sprint-01`
+- `research-2026-06-10-text-sprint-01-c1`
+Execution reviewer session id: `review-2026-06-11-text-proof-surface-consolidation-01`.
+Planning reviewer session id: `review-2026-06-10-text-sprint-01`.
+Coder session id: `coder-2026-06-11-text-proof-surface-consolidation-01`.
+Commit-hash receipt: pending coder handoff and acceptance.
+Scope: execute and review the final accepted text sprint slice only.
+
+Problem statement:
+
+- The accepted text sprint says the final slice is `text-proof-surface-consolidation`.
+- Owner and behavior convergence is now landed; the remaining work is proof-surface cleanup and full root verification.
+- This loop exists only to land that final proof-surface slice with exact receipts.
+
+Accepted planning input:
+
+- `sprints/done/2026-06-10-text-sprint-research.md`
+- `research/done/2026-06-10-text-sprint-scratchpad.md`
+- `loops/done/render-source-cell-model-research.txt`
+
+Prior accepted slice dependencies:
+
+- accepted commits in `howl-render`:
+  - `bbf6242`
+  - `bc938aa`
+  - `74db9a4`
+  - `603c0f1`
+  - `3a79b00`
+
+Queued slice:
+
+- `text-proof-surface-consolidation`
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/source/text_input.zig`
+- `/home/home/personal/projects/howl/howl-render/src/source/publication_cell_map.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/shape/cluster.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/scene.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig`
+- `/home/home/personal/projects/howl/howl-render/build.zig`
+
+Required shape:
+
+- Delete or rewrite stale tests that encode alpha-hack semantics or duplicated owner behavior.
+- Leave one proof owner for mapper truth, one for renderable or cluster truth, one for scene draw truth, and one full-pipeline frame proof.
+- Preserve `test:unit` and `test:abi` as the shipped proof roots.
+
+Required assertions:
+
+- Assert build-time test font options resolve to tracked repo-owned fixtures.
+- Assert no text-stack failures remain in the full ABI suite.
+
+Required tests:
+
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
+
+Non-goals:
+
+- no benchmark work
+- no host runtime changes
+
+Stop conditions:
+
+- stop if unrelated non-text failures appear; record them as external blockers and stop instead of hiding them inside the text sprint
+
+Reviewer expectations:
+
+- review the diff against the accepted planning slice only
+- reject stale alpha-hack proofs that survive the landed owner changes
+- reject proof sprawl that weakens the curated `test:unit` and `test:abi` roots
+- return `user needed` only if a blocker is genuinely outside the text sprint slice
+
+Verification receipts:
+
+- pending coder implementation
+- pending reviewer verdict
+- pending orchestrator verification
