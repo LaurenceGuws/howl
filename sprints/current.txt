@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- none
+- `sprints/2026-06-11-ascii-rain-honest-performance-sprint.md`
 
 Active research:
 
@@ -31,11 +31,15 @@ Latest accepted execution slice:
 Sprint completion:
 
 - Deferred sprint 3 test-accountability closure is complete.
-- No active execution slice remains.
 
 Post-sprint repair completion:
 
 - Empty-cell clear-background regression repair is complete.
+
+Active restart note:
+
+- The live performance sprint is the merged honest restart after the corrected-path and post-sprint repair closures.
+- No execution slice is authorized until the merged sprint seeds a fresh current-code proof slice.
 
 Execution rule:
 

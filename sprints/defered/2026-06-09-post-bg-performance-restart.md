@@ -1,7 +1,7 @@
 ASCII rain performance restart after background truth fix
 
 Date: 2026-06-09.
-Status: active.
+Status: deferred historical honest-restart input superseded by `sprints/2026-06-11-ascii-rain-honest-performance-sprint.md`.
 Orchestrator session id: `orch-2026-06-09-background-default-01`.
 
 Problem statement:

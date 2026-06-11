@@ -1,7 +1,7 @@
 ASCII rain performance sprint
 
 Date: 2026-06-08.
-Status: deferred.
+Status: deferred historical input superseded by `sprints/2026-06-11-ascii-rain-honest-performance-sprint.md`.
 Original orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`.
 
 Deferred reason:
