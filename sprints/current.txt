@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-11-text-renderable-normal-lane-owner.md`
+- `sprints/2026-06-11-text-scene-owner-convergence.md`
 
 Active research:
 
@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/text-renderable-normal-lane-owner.txt`
+- `loops/text-scene-owner-convergence.txt`
 
 Latest archived planning package:
 
@@ -25,8 +25,8 @@ Latest archived planning package:
 
 Latest accepted execution slice:
 
-- `sprints/done/2026-06-11-text-source-mapper-proof-owner.md`
-- `loops/done/text-source-mapper-proof-owner.txt`
+- `sprints/done/2026-06-11-text-renderable-normal-lane-owner.md`
+- `loops/done/text-renderable-normal-lane-owner.txt`
 
 Execution rule:
 
