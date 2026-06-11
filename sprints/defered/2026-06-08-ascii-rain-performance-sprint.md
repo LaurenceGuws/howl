@@ -43,9 +43,9 @@ Primary receipts preserved by the deferred sprint:
   - `loops/defered/direct-normal-scan-reduction.txt`
   - `loops/defered/direct-normal-plain-ascii-shortcut.txt`
 
-Current restart note:
+Historical restart note at defer time:
 
-- The live active loop is now `loops/direct-normal-plain-ascii-shortcut.txt`.
+- The then-live loop at defer time was `loops/defered/direct-normal-plain-ascii-shortcut.txt`.
 - Rejected coder attempt `coder-2026-06-09-direct-normal-plain-ascii-shortcut-01` proved the first shortcut shape was invalid:
   - it still called `lane.classifyRenderableCell(...)` on the hit path
   - it failed the clean benchmark gate

@@ -49,14 +49,21 @@ Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-01`.
 ## Active Restart Rule
 
 - No optimization slice is authorized yet.
-- The next valid step is a fresh current-tree research/proof restart on the live corrected codebase.
-- That restart must establish the current hot-owner order before a coder slice is seeded.
+- The next valid step is the user-required accountable loop on the live corrected codebase:
+  1. record one fresh control run for base numbers
+  2. seed one worker proof slice to identify the current biggest bottleneck with temporary logs only
+  3. send that bottleneck evidence through researcher <-> reviewer for a source-backed plan
+  4. clean the bottleneck owner into pristine shape and attack any owner debt inside that true owner seam
+  5. rerun Howl vs Alacritty on the same agreed monitor harness
+  6. if Howl is still slower, loop back to step 1 with the new current tree
+  7. if a big correctness issue or vague bucket is exposed mid-hunt, stop and bring it to the user for a subsprint
+- That restart must establish the current hot-owner order before a coder optimization slice is seeded.
 - If the fresh proof still points at the same next owner as the 2026-06-09 honest restart, that old planning can be reused as navigation only and re-promoted in current form.
 - If the fresh proof points elsewhere, the old slice queue is superseded and must not be revived by habit.
 
 ## Immediate Next Step
 
-- Seed one fresh research/proof artifact for current-code ASCII-rain performance restart.
+- Seed one fresh control-run and bottleneck-proof artifact for current-code ASCII-rain performance restart.
 - No active loop is seeded yet because no current-tree proof slice has been promoted.
 
 ## Execution Authorization

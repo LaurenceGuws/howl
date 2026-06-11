@@ -2,8 +2,8 @@
 
 Date: 2026-06-09.
 Role: researcher.
-Status: active.
-Loop: `loops/direct-normal-plain-ascii-shortcut.txt`.
+Status: deferred historical research input superseded by `sprints/2026-06-11-ascii-rain-honest-performance-sprint.md`.
+Historical loop at time of research: `loops/defered/direct-normal-plain-ascii-shortcut.txt`.
 Primary researcher session id: `research-2026-06-09-post-owner-performance-01`.
 
 ## Sources Read In Order
@@ -11,7 +11,7 @@ Primary researcher session id: `research-2026-06-09-post-owner-performance-01`.
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/direct-normal-plain-ascii-shortcut.txt`
+4. `/home/home/personal/projects/howl/loops/defered/direct-normal-plain-ascii-shortcut.txt`
 5. `/home/home/personal/projects/howl/reference-index.md`
 6. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
@@ -111,7 +111,7 @@ Primary researcher session id: `research-2026-06-09-post-owner-performance-01`.
   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig:431-454`
 - The current atlas-reuse seam still requires byte-derived hashing from sprite content for alpha atlas lookup:
   - `/home/home/personal/projects/howl/howl-render/src/prepared/sprite_resource_store.zig:161-198`
-- The rejected probe proved the obvious emitter-local “reuse before upload” idea was false on this shape because the reuse query still paid a full byte walk. The active research restart therefore cannot honestly authorize another emitter/resource-store cut without a new source-backed cheap-hit premise.
+- The rejected probe proved the obvious emitter-local “reuse before upload” idea was false on that shape because the reuse query still paid a full byte walk. This historical research restart therefore could not honestly authorize another emitter/resource-store cut without a new source-backed cheap-hit premise.
 - The accepted direct-normal timing is still large on the clean post-owner baseline:
   - `direct_normal_avg_us ~= 731-737`
   - `direct_normal_scan_avg_us ~= 664-671`
@@ -211,7 +211,7 @@ Primary researcher session id: `research-2026-06-09-post-owner-performance-01`.
 
 Ready to leave research restart once the reviewer re-gates this corrected plan.
 
-- the next valid coder slice is `direct-normal-scan-reduction`
+- the next valid coder slice at that time was `direct-normal-scan-reduction`
 - no new bucket owner is currently proved
 - emitter/resource-store should not be retried until a new byte-walk-free cache-hit premise is source-backed
 
@@ -219,15 +219,15 @@ Ready to leave research restart once the reviewer re-gates this corrected plan.
 
 Date: 2026-06-09.
 Researcher correction session id: `research-2026-06-09-direct-normal-failure-01`.
-Active loop at rejection time: `/home/home/personal/projects/howl/loops/direct-normal-scan-reduction.txt`.
+Active loop at rejection time: `/home/home/personal/projects/howl/loops/defered/direct-normal-scan-reduction.txt`.
 
 ### Sources Read In Order
 
 1. `/home/home/personal/projects/howl/loop/flow.md`
 2. `/home/home/personal/projects/howl/loop/researcher.md`
 3. `/home/home/personal/projects/howl/sprints/current.txt`
-4. `/home/home/personal/projects/howl/loops/direct-normal-scan-reduction.txt`
-5. `/home/home/personal/projects/howl/research/post-owner-performance-restart-2026-06-09.md`
+4. `/home/home/personal/projects/howl/loops/defered/direct-normal-scan-reduction.txt`
+5. `/home/home/personal/projects/howl/research/defered/post-owner-performance-restart-2026-06-09.md`
 6. `/home/home/personal/projects/howl/reference-index.md`
 7. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/TIGER_STYLE.md`
 8. `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/docs/ARCHITECTURE.md`
@@ -319,7 +319,7 @@ Active loop at rejection time: `/home/home/personal/projects/howl/loops/direct-n
 
 ### Required Tests
 
-- Keep the existing required tests and receipts from the active loop.
+- Keep the existing required tests and receipts from the then-active loop.
 - Add focused proof before another broad rewrite of the direct-normal loop:
   - benchmark proof or counters if the next cut changes candidate-count or source-kind behavior
   - direct host timing receipt must be compared directly against the accepted post-owner baseline, not just the failed probe
@@ -344,7 +344,7 @@ Active loop at rejection time: `/home/home/personal/projects/howl/loops/direct-n
 
 Date: 2026-06-09.
 Researcher refinement session id: `research-2026-06-09-direct-normal-refine-01`.
-Active loop: `/home/home/personal/projects/howl/loops/direct-normal-scan-reduction.txt`.
+Active loop at refinement time: `/home/home/personal/projects/howl/loops/defered/direct-normal-scan-reduction.txt`.
 
 ### Sources Read In Order
 

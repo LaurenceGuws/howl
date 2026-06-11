@@ -2,10 +2,10 @@
 
 Date: 2026-06-09.
 Role: researcher.
-Status: active.
+Status: deferred historical research input superseded by `sprints/2026-06-11-ascii-rain-honest-performance-sprint.md`.
 Primary researcher session id: `research-2026-06-09-post-alpha-direct-divergence-01`.
-Sprint: `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`.
-Loop: `/home/home/personal/projects/howl/loops/post-host-fill-rebaseline.txt`.
+Historical sprint at time of research: `/home/home/personal/projects/howl/sprints/defered/2026-06-09-post-bg-performance-restart.md`.
+Historical loop at time of research: `/home/home/personal/projects/howl/loops/post-host-fill-rebaseline.txt`.
 
 ## Sources Read In Order
 
@@ -46,13 +46,13 @@ Loop: `/home/home/personal/projects/howl/loops/post-host-fill-rebaseline.txt`.
 
 ## Hygiene
 
-- Active sprint: `/home/home/personal/projects/howl/sprints/2026-06-09-post-bg-performance-restart.md`
-- Active loop: `/home/home/personal/projects/howl/loops/post-host-fill-rebaseline.txt`
-- Active research: `/home/home/personal/projects/howl/research/post-bg-performance-restart-2026-06-09.md`
+- Historical sprint at time of research: `/home/home/personal/projects/howl/sprints/defered/2026-06-09-post-bg-performance-restart.md`
+- Historical loop at time of research: `/home/home/personal/projects/howl/loops/post-host-fill-rebaseline.txt`
+- Historical research path at time of research: `/home/home/personal/projects/howl/research/defered/post-bg-performance-restart-2026-06-09.md`
 - Hygiene issues: none
-- Research execution is authorized.
-- The proof-only host playback slice has executed and is under reviewer gate.
-- No optimization beyond this proof slice is authorized yet.
+- Research execution was authorized at that time.
+- The proof-only host playback slice had executed and was under reviewer gate at that time.
+- No optimization beyond that proof slice was authorized yet at that time.
 
 ## Current-Code Facts
 
@@ -295,7 +295,7 @@ Accepted the proof-only host-playback split.
 
 Ready to seed follow-on research/review for the next exact fill-owner contract.
 
-The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe remains valid historical evidence only. The accepted proof result from `direct-upload-playback-proof-after-alpha-hit-rejection` is that host fill playback, specifically fill draw execution, is the next true owner on the honest direct path. The next active work is planning, not coding, for `background-fill-after-playback-proof`.
+The rejected `emitter-alpha-atlas-hit-without-byte-walk` probe remains valid historical evidence only. The accepted proof result from `direct-upload-playback-proof-after-alpha-hit-rejection` was that host fill playback, specifically fill draw execution, was the next true owner on that honest direct path. The next work at that time was planning, not coding, for `background-fill-after-playback-proof`.
 
 ## Next Fill Contract
 

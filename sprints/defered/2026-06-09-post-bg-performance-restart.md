@@ -90,7 +90,7 @@ Sequential slice queue:
   - receipt: `/home/home/personal/projects/howl/artifacts/stress/20260609-143819-ascii/summary.json`
 
 6. `prepared-emission-owner-proof-after-host-fill`
-- next active proof slice
+- next proposed proof slice at the time
 - allowed because the post-host-fill accepted state still shows:
   - `render_prepare_avg_us ~= 1335-1368`
   - `owner_create_avg_us ~= 1032-1038`
@@ -129,7 +129,7 @@ Sequential slice queue:
   - accepted playback proof ranks host playback or submit above `direct_normal`
   - the cut needs files outside the allowed set
 
-Completion gate:
+Historical completion gate at the time:
 
 - The live sprint, loop, and research files all reflect corrected-path receipts.
 - The first optimization slice is authorized from honest owner order only.

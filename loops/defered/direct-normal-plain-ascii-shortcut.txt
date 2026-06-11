@@ -2,12 +2,12 @@ ASCII rain direct-normal plain ASCII shortcut
 
 Date: 2026-06-09.
 Role owner: orchestrator.
-Status: active.
+Status: deferred historical rejected execution input superseded by `sprints/2026-06-11-ascii-rain-honest-performance-sprint.md`.
 Orchestrator session id: `orch-2026-06-08-ascii-rain-performance-01`.
 Researcher session id: `research-2026-06-09-post-owner-performance-01`.
 Reviewer session id: `rev-2026-06-09-post-owner-performance-01`.
 Coder session id: pending.
-Scope: current execution contract for the next performance slice only.
+Scope: historical rejected execution contract preserved for navigation only.
 
 Problem statement:
 
@@ -36,7 +36,7 @@ Accepted baseline receipts:
 
 Accepted research input:
 
-- `research/post-owner-performance-restart-2026-06-09.md`
+- `research/defered/post-owner-performance-restart-2026-06-09.md`
 
 Queued slice: `direct-normal-plain-ascii-shortcut`
 
