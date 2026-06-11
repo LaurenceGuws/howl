@@ -11,8 +11,8 @@ Accepted owner-create worker session id: `worker-2026-06-12-owner-create-cache-f
 Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-fresh-rollback-01`.
 Current required worker session id: pending for the next bottleneck-proof pass after fresh rollback.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: `research-2026-06-12-prepared-handle-fresh-emission-gap-01`.
-Reviewer session id: `review-2026-06-12-prepared-handle-fresh-emission-gap-01`.
+Researcher session id: `research-2026-06-12-render-surface-payload-init-01`.
+Reviewer session id: pending for the render-surface payload init cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -165,7 +165,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-prepared-handle-fresh-emission-gap-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-render-surface-payload-init-plan.md`
 
 Research goal:
 
@@ -507,20 +507,6 @@ Team scratchpad
 23. Role: researcher
 - Session id: `research-2026-06-12-prepared-handle-fresh-emission-gap-01`
 - Hello: hello
-- Intended task: source-pin the residual gap inside post-fresh `owner_create` before allowing another optimization.
-- How one task went: the plan concluded optimization is not yet authorized because the residual between `prepared_handle_create emit_avg_us=1052` and visible emitter sub-buckets is not line-owned.
-- Next handoff or blocker: reviewer should gate the proof-only `prepared-handle-fresh-emission-residual-proof` worker slice.
-
-24. Role: reviewer
-- Session id: `review-2026-06-12-prepared-handle-fresh-emission-gap-01`
-- Hello: hello
-- Intended task: gate the prepared-handle fresh emission gap plan for a proof-only worker slice.
-- How one task went: the first pass rejected weak temporary-instrumentation cleanup ownership; the corrected plan now requires restoring temporary edits before final handoff or an explicit separate instrumentation receipt.
-- Next handoff or blocker: seed the proof-only worker slice from `/home/home/personal/projects/howl/research/2026-06-12-prepared-handle-fresh-emission-gap-plan.md`; no blocker.
-
-23. Role: researcher
-- Session id: `research-2026-06-12-prepared-handle-fresh-emission-gap-01`
-- Hello: hello
 - Intended task: source-pin the post-fresh prepared-handle emission gap and produce one reviewer-gated next worker slice.
 - How one task went: current source and receipts proved a real residual between `prepared_handle_create emit_avg_us=1052` and visible `emit_prepared` sub-buckets, so the proposed next slice is proof-only temporary owner-local timing rather than an optimization guess.
 - Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-prepared-handle-fresh-emission-gap-plan.md`; no correctness blocker is known, but optimization remains blocked until the residual is line-owned.
@@ -538,3 +524,17 @@ Team scratchpad
 - Intended task: re-review the corrected prepared-handle fresh emission gap plan after the cleanup-contract rejection.
 - How one task went: the updated plan now requires temporary instrumentation cleanup before handoff, explicit `git diff`/`git status` confirmation for the touched files, and an orchestrator receipt if instrumentation is intentionally kept.
 - Next handoff or blocker: the proof-only worker slice can be seeded from the active research artifact.
+
+26. Role: coder/worker
+- Session id: `worker-2026-06-12-prepared-handle-fresh-emission-proof-01`
+- Hello: hello
+- Intended task: run the accepted proof-only residual timing slice and remove all temporary source instrumentation before handoff.
+- How one task went: the proof run source-pinned the post-fresh prepared-handle gap to `payload.* = .{}` with `payload_init_avg_us=740`, while `payload_emit_residual_avg_us=0`, `fresh_residual_avg_us=0`, and `fresh_record_avg_us=0` at the 640-frame receipt.
+- Next handoff or blocker: hand off to researcher planning for the payload initialization owner; no blocker and no temporary source instrumentation remains.
+
+27. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: promote the next active optimization-planning target from the proof-only residual receipt.
+- How one task went: the proof-only worker removed temporary instrumentation cleanly and line-owned the largest child bucket to `payload.* = .{}` with `payload_init_avg_us=740`, so the next research target is render-surface payload initialization.
+- Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-render-surface-payload-init-plan.md`; no correctness or vague-bucket blocker is known.
