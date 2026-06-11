@@ -1,7 +1,7 @@
 Test accountability sprint research
 
 Date: 2026-06-10.
-Status: active planning input.
+Status: archived planning input for completed test-accountability sprint.
 Role: researcher.
 Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
 

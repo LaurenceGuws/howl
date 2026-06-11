@@ -2,14 +2,12 @@ Workspace validation rebaseline
 
 Date: 2026-06-11.
 Role owner: orchestrator.
-Status: active.
+Status: accepted.
 Orchestrator session id: `orch-2026-06-11-test-accountability-workspace-rebaseline-02`.
 Execution reviewer session id: `review-2026-06-11-test-accountability-workspace-rebaseline-02`.
 Coder session id: `coder-2026-06-11-test-accountability-workspace-rebaseline-02`.
-Commit-hash receipt: pending verification and acceptance.
-
-Required tests:
-
+Accepted commit: pending root closure commit after active-surface cleanup.
+Verification:
 - `cd /home/home/personal/projects/howl/howl-pty && zig build test`
 - `cd /home/home/personal/projects/howl/howl-vt && zig build test`
 - `cd /home/home/personal/projects/howl/howl-vt && zig build simulate`

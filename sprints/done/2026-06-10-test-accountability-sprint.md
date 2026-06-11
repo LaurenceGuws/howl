@@ -1,7 +1,7 @@
 Test accountability before more performance work
 
 Date: 2026-06-10.
-Status: active.
+Status: completed and archived after resumed rebaseline closure.
 Orchestrator session id: `orch-2026-06-10-test-accountability-01`.
 
 Problem statement:
