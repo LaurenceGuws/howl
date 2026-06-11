@@ -7,7 +7,7 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-11-publication-background-proof-repair.md`
+- `sprints/2026-06-11-test-accountability-workspace-rebaseline.md`
 
 Active research:
 
@@ -15,7 +15,7 @@ Active research:
 
 Active loops:
 
-- `loops/publication-background-proof-repair.txt`
+- `loops/workspace-validation-rebaseline.txt`
 
 Latest archived planning package:
 
@@ -25,13 +25,8 @@ Latest archived planning package:
 
 Latest accepted execution slice:
 
-- `sprints/done/2026-06-11-text-empty-clear-background-repair.md`
-- `loops/done/text-empty-clear-background-repair.txt`
-
-Deferred active slice blocked on earlier accepted proof:
-
-- `sprints/defered/2026-06-11-test-accountability-workspace-rebaseline.md`
-- `loops/defered/workspace-validation-rebaseline-2026-06-11-blocked.txt`
+- `sprints/done/2026-06-11-publication-background-proof-repair.md`
+- `loops/done/publication-background-proof-repair.txt`
 
 Post-sprint repair completion:
 
