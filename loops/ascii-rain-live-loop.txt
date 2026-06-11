@@ -8,10 +8,10 @@ Accepted control-run worker session id: `worker-2026-06-11-ascii-rain-control-ru
 Accepted bottleneck-proof worker session id: `worker-2026-06-12-ascii-rain-bottleneck-proof-01`.
 Accepted direct-normal worker session id: `worker-2026-06-12-direct-normal-single-pass-01`.
 Accepted owner-create worker session id: `worker-2026-06-12-owner-create-cache-first-01`.
-Current required worker session id: pending until the next bottleneck is re-proved and reviewer planning accepts the next slice.
-Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: pending for the next bottleneck cycle.
-Reviewer session id: pending for the next bottleneck cycle.
+Current required worker session id: pending until reviewer-accepted post-cache-first owner-create plan.
+Next required worker session id: pending after the next reviewer-accepted owner-create plan.
+Researcher session id: `research-2026-06-12-owner-create-post-cache-first-01`.
+Reviewer session id: `review-2026-06-12-owner-create-post-cache-first-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -164,7 +164,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-owner-create-bottleneck-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-owner-create-post-cache-first-plan.md`
 
 Research goal:
 
@@ -446,3 +446,24 @@ Team scratchpad
 - Intended task: remove repeated upload-byte staging when the prepared sprite cache already proves reuse.
 - How one task went: the cache-first emission pass cleared the timing gate after one in-slice refinement, with `stage_upload_avg_us` dropping to `0` and `owner_create_avg_us` dropping to `1094`.
 - Next handoff or blocker: hand off the verified slice receipts to the orchestrator and reviewer; Howl improved again, but the sprint must loop because we are still slower than Alacritty.
+
+15. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the accepted owner-create slice and immediately restart the sprint loop from the new baseline instead of stalling on a finished step.
+- How one task went: the owner-create slice is accepted and pushed, the new 10-second control rerun is `35.67 fps` vs Alacritty `1008.17 fps`, and `owner_create` remains the top bucket.
+- Next handoff or blocker: researcher owns the next post-cache-first owner-create planning pass in `/home/home/personal/projects/howl/research/2026-06-12-owner-create-post-cache-first-plan.md`.
+
+16. Role: researcher
+- Session id: `research-2026-06-12-owner-create-post-cache-first-01`
+- Hello: hello
+- Intended task: turn the fresh post-cache-first `owner_create` proof into the next reviewer-acceptable worker slice without drifting out of the current seam.
+- How one task went: current source and the fresh timing receipts lined up around `emitPreparedFresh` still copying the whole retained sprite-resource store even after cache-first reuse removed upload staging.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-owner-create-post-cache-first-plan.md`; no blocker yet, but the next worker must stay inside fresh emitter/resource-store rollback plus fresh-path tests.
+
+17. Role: reviewer
+- Session id: `review-2026-06-12-owner-create-post-cache-first-01`
+- Hello: hello
+- Intended task: gate the post-cache-first owner-create plan before worker execution.
+- How one task went: the first pass rejected an incomplete rollback contract and unproved absolute timing gate; the corrected plan now explicitly restores `atlas_resource` and uses the accepted `1093`/`1094` timing baselines.
+- Next handoff or blocker: seed the `owner-create-fresh-resource-rollback` worker slice from `/home/home/personal/projects/howl/research/2026-06-12-owner-create-post-cache-first-plan.md`; no blocker.

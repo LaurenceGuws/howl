@@ -1,7 +1,11 @@
 Owner create bottleneck plan
 
+Historical authority at the time: active researcher plan for the first `owner_create` bottleneck slice after the direct-normal publication scan fix landed.
+Why superseded or done: the `owner-create-cache-first-emission` slice landed, was remeasured, and the sprint restarted from the new post-cache-first `owner_create` proof.
+Must not be used for: current active planning after the `20260612-005338-ascii` rerun.
+
 Date: 2026-06-12.
-Status: active researcher target.
+Status: archived reviewer-accepted planning package.
 Role owner: researcher.
 Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
 Researcher session id: `research-2026-06-12-owner-create-plan-01`.
