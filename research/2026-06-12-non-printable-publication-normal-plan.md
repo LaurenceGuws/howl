@@ -5,7 +5,7 @@ Status: active researcher target.
 Role owner: researcher.
 Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
 Researcher session id: `research-2026-06-12-non-printable-publication-normal-01`.
-Reviewer session id: pending.
+Reviewer session id: `review-2026-06-12-non-printable-publication-normal-01`.
 Planning commit-hash receipt: pending; documentation-only planning artifact on this pass.
 
 Preload receipt:

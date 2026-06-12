@@ -11,7 +11,8 @@ Accepted owner-create worker session id: `worker-2026-06-12-owner-create-cache-f
 Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-fresh-rollback-01`.
 Accepted payload initialization worker session id: `worker-2026-06-12-payload-in-place-init-01`.
 Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled-ascii-direct-normal-fast-01`.
-Current required worker session id: pending for the next bottleneck-proof pass after styled ASCII direct-normal.
+Accepted zero-codepoint direct-normal worker session id: `worker-2026-06-12-zero-codepoint-fast-01`.
+Current required worker session id: pending for the next bottleneck-proof pass after zero-codepoint direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-non-printable-publication-normal-01`.
 Reviewer session id: `review-2026-06-12-non-printable-publication-normal-01`.
@@ -799,3 +800,24 @@ Team scratchpad
 - Intended task: explain the live non-printable publication-normal fallback class and produce one reviewer-ready worker slice without implementation.
 - How one task went: current source and the proof receipts line up on control-derived zero-codepoint publication cells from VT erase/edit/scroll owners; the proposed slice stays inside `direct_normal.zig` plus publication owner-local tests.
 - Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-non-printable-publication-normal-plan.md`; no blocker, but the worker must stop if zero-codepoint support fails to beat `direct_normal_scan_avg_us=811`.
+
+56. Role: coder/worker
+- Session id: `worker-2026-06-12-zero-codepoint-fast-01`
+- Hello: hello
+- Intended task: admit only publication `codepoint == 0` to the direct-normal fast path, prove tabs and other controls still fall back cleanly, and clear the required timing gates.
+- How one task went: the zero-codepoint fast candidate landed inside `direct_normal.zig`, the adjacent publication tests proved direct-normal blank rendering and fallback negative space, and the required 3-second timing receipt dropped `direct_normal_scan_avg_us` to `311`.
+- Next handoff or blocker: hand off the verified receipts and timing lines to reviewer and orchestrator; no blocker in this slice.
+
+57. Role: reviewer
+- Session id: `review-2026-06-12-zero-codepoint-fast-01`
+- Hello: hello
+- Intended task: gate the implemented zero-codepoint publication fast-candidate slice against scope, negative-space proof, and timing/product gates.
+- How one task went: the first pass rejected stale accountability fields only; after that fix, the slice was accepted with no blocking findings, and the reviewer confirmed the fast-candidate widening stays limited to `codepoint == 0`.
+- Next handoff or blocker: orchestrator should commit render commit `e391d92` and root receipts, then restart the loop because Howl is still slower than Alacritty.
+
+58. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the accepted zero-codepoint direct-normal slice and restart from the new measured baseline.
+- How one task went: render commit `e391d92` landed the accepted slice; accepted receipts are `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-084336-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-084355-ascii/summary.json`, with Howl `120.3 fps` vs Alacritty `1003.65 fps`.
+- Next handoff or blocker: seed the next bottleneck-proof worker pass from the zero-codepoint direct-normal baseline; no correctness or vague-bucket blocker is known.
