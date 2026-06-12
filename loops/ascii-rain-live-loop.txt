@@ -14,8 +14,8 @@ Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled
 Accepted zero-codepoint direct-normal worker session id: `worker-2026-06-12-zero-codepoint-fast-01`.
 Current required worker session id: pending for the next bottleneck-proof pass after zero-codepoint direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: `research-2026-06-12-direct-normal-publication-scan-post-zero-codepoint-01`.
-Reviewer session id: pending for the post-zero-codepoint direct-normal scan cycle.
+Researcher session id: `research-2026-06-12-post-damage-first-direct-normal-scan-01`.
+Reviewer session id: pending for the post-damage-first direct-normal scan cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -171,7 +171,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-post-damage-first-direct-normal-scan-plan.md`
 
 Current planning slice: `direct-normal-publication-damage-first-fast-candidate`
 
@@ -862,9 +862,30 @@ Team scratchpad
 - How one task went: after the zero-codepoint win, the top remaining bucket is still `direct_normal_scan_avg_us=311`, with `owner_create_avg_us=216` below it.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`; no correctness or vague-bucket blocker is known.
 
+61. Role: coder/worker
+- Session id: `worker-2026-06-12-damage-first-fast-01`
+- Hello: hello
+- Intended task: move damage rejection ahead of full fast-path publication renderable construction for the existing supported subset and beat the `direct_normal_scan_avg_us < 311` gate.
+- How one task went: the implementation stayed inside `direct_normal.zig` and `frame_preparer.zig` and passed tests, but the 3-second timing gate failed with final `direct_normal_scan_avg_us=509`, so the 10-second comparison was not run and the render edits were removed.
+- Next handoff or blocker: researcher planning should continue from failed timing receipt `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-090917-ascii/summary.json`; no correctness or vague-bucket blocker is known.
+
+62. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the failed damage-first slice without committing unaccepted render code and promote the next direct-normal planning step.
+- How one task went: render is clean again, and the failed timing proof shows damage-first ordering is not an acceptable next optimization even though correctness held.
+- Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-post-damage-first-direct-normal-scan-plan.md`; no correctness or vague-bucket blocker is known.
+
 61. Role: researcher
 - Session id: `research-2026-06-12-direct-normal-publication-scan-post-zero-codepoint-01`
 - Hello: hello
 - Intended task: explain the remaining post-zero-codepoint direct-normal scan cost and cut one reviewer-ready worker slice without implementation.
 - How one task went: current source pinned the residual cost to `publicationCandidate` building full fast-path renderable text before damage filtering, even though `includeDamage` only needs `first_cell` and `cell_span`.
 - Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`; no correctness blocker or vague bucket is currently exposed.
+
+62. Role: coder/worker
+- Session id: `worker-2026-06-12-damage-first-fast-01`
+- Hello: hello
+- Intended task: move publication damage rejection ahead of fast-path renderable construction inside the accepted ASCII plus zero-codepoint subset and re-run the required timing gates.
+- How one task went: the owner-local code and test changes stayed inside `direct_normal.zig` and `frame_preparer.zig`, but the required 3-second timing gate failed with `direct_normal_scan_avg_us=509`, so I stopped before the 10-second rerun.
+- Next handoff or blocker: blocker for orchestrator and reviewer; the current damage-first candidate regressed the scan bucket against the `311` baseline and is not acceptable as-is.
