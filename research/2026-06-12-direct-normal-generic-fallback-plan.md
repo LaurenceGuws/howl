@@ -170,7 +170,7 @@ Required temporary shape:
   - `publication_cells`
   - `publication_fast_candidate`
   - `publication_fast_skip_damage`
-  - `publication_generic_candidate`
+  - `publication_generic_entered`
   - `publication_generic_skip_damage`
   - `publication_generic_normal`
   - `publication_generic_complex`
@@ -181,7 +181,7 @@ Required temporary shape:
   - `unsupported_non_ascii`
   - `unsupported_combining`
   - `unsupported_continuation`
-  - `unsupported_span`
+  - `unsupported_multi_cell_span`
   - `unsupported_link`
   - `unsupported_rgb_fg`
   - `unsupported_rgb_bg`
@@ -190,7 +190,9 @@ Required temporary shape:
   - `unsupported_strikethrough`
   - `unsupported_underline_color`
   - `unsupported_underline_style`
-- If one cell has multiple unsupported reasons, count every true reason, and also count exactly one generic candidate/null/skip classification consequence. The proof needs both reason density and consequence density.
+- `publication_generic_entered` means the number of publication cells that fell through the fast candidate and entered the generic publication path before consequence classification.
+- `publication_generic_skip_damage`, `publication_generic_normal`, `publication_generic_complex`, and `publication_generic_null` are the four mutually exclusive consequence classes for those entered generic publication cells.
+- If one cell has multiple unsupported reasons, count every true reason, and also count exactly one generic consequence class. The proof needs both reason density and consequence density.
 - Keep control flow direct and bounded inside the existing scan loop. No allocation, no maps, no string buckets, no dynamic logging per cell.
 - The temporary code may add a small local debug counter struct only if it stays in `direct_normal.zig`, has exact field names, and is removed before handoff.
 - Remove the temporary counter struct, fields, print line, and call sites before handoff.
@@ -199,7 +201,7 @@ Required assertions while instrumented:
 
 - Assert publication-source indices are in range before reading cells, matching `direct_normal.zig:263-265` and `direct_normal.zig:552-555` style.
 - Assert the count-only path does not change `PublicationCandidate` decisions.
-- Assert `publication_generic_candidate == publication_generic_normal + publication_generic_complex` at report time if generic skip/null are accounted separately.
+- Assert `publication_generic_entered == publication_generic_skip_damage + publication_generic_normal + publication_generic_complex + publication_generic_null` at report time.
 - Assert all aggregate counters fit in `u64` and source lengths fit existing `u32` bounds.
 - Preserve existing no-partial-scratch assertions in `direct_normal.zig:221-238` and `direct_normal.zig:463-501`.
 
@@ -229,6 +231,10 @@ Required proof receipts:
 - Quoted final `howl-render-debug prepare_handle` line from the proof log.
 - Quoted final `howl-render-debug direct_normal_scan_children` line from the proof log if still present during the proof run.
 - Quoted final temporary `howl-render-debug direct_normal_generic_fallback_mix` line.
+- Explicit worker conclusion naming:
+  - the dominant unsupported reason by count
+  - the dominant generic consequence by count
+  - whether the next step should be optimization planning for a specific class or another proof slice
 - Exact cleanup proof:
   - `zig build test:unit` passes after cleanup
   - `git diff -- howl-render/src/text/direct_normal.zig` is empty after cleanup

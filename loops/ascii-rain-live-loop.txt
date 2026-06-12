@@ -757,3 +757,10 @@ Team scratchpad
 - Intended task: decide whether `scan_generic_candidate` is ready for optimization or needs a safer proof step first.
 - How one task went: current source showed `scan_generic_candidate` is a vague fallback bucket spanning multiple unsupported publication reasons and generic normal/complex consequences, while the child timers are ranking-only and the prior empty-space optimization failed.
 - Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-generic-fallback-plan.md`; proposed next slice is proof-only count instrumentation in `direct_normal.zig`, not optimization.
+
+51. Role: reviewer
+- Session id: `review-2026-06-12-direct-normal-generic-fallback-01`
+- Hello: hello
+- Intended task: gate the proof-only generic-fallback mix plan before worker execution.
+- How one task went: the first pass rejected vague count semantics and weak proof conclusions; the corrected plan now uses explicit `publication_generic_entered` accounting, mutually exclusive consequence classes, a precise `unsupported_multi_cell_span` field, and mandatory worker conclusions.
+- Next handoff or blocker: seed the accepted `direct-normal-generic-fallback-mix-proof` worker slice; no blocker.
