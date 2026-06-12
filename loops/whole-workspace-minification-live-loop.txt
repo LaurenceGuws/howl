@@ -32,8 +32,8 @@ Active research target:
 Current step:
 
 - Reviewer accepted the active research package.
-- Slices 1 and 2 are accepted and committed.
-- Orchestrator has seeded Slice 3 for execution.
+- Slices 1, 2, and 3 are accepted and committed.
+- Orchestrator has seeded Slice 4 for execution.
 - Coder may execute only the active condensed execution contract below.
 
 Exact non-goals:
@@ -207,6 +207,56 @@ Condensed execution contract for coder session `coder-2026-06-12-render-generate
   - exact verification run and results
   - blockers or deviations
   - coder session id `coder-2026-06-12-render-generated-special-raster-owner-deletion-01`
+  - commit-hash handoff status for orchestrator receipt closure
+
+Completed execution receipt for coder session `coder-2026-06-12-render-generated-special-raster-owner-deletion-01`:
+
+- Slice: `render-generated-special-raster-owner-deletion`.
+- Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
+- Verification:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`: passed.
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`: passed.
+  - Seeded and corrected by-file style metrics: passed.
+- Commit receipts:
+  - `howl-render` `2452fb6`.
+  - root `14ecbf9`.
+
+Condensed execution contract for coder session `coder-2026-06-12-benchmark-helper-deduplication-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`
+- Implement only Slice 4, `benchmark-helper-deduplication`.
+- Allowed files:
+  - `howl-render/src/benchmark_main.zig`
+  - `howl-vt/src/test/terminal_benchmark.zig`
+  - `loops/whole-workspace-minification-live-loop.txt` only for the required coder note
+- Required shape:
+  - First try same-file minification: shrink duplicate `CountingAllocator` implementations to the smallest local form in each repo without new cross-repo dependencies.
+  - Do not introduce shared helper files in this slice.
+  - If local minification cannot beat duplication without cross-repo coupling, keep the duplication and record why.
+  - Rename benchmark `Options` only if the name remains ambiguous after helper collapse; command-line option bags may be legitimate in benchmark entrypoints.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-vt && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`
+  - `cd /home/home/personal/projects/howl/howl-vt && zig build benchmark:m7_baseline:build`
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/benchmark_main.zig howl-vt/src/test/terminal_benchmark.zig`
+- Non-goals:
+  - No product runtime dependencies.
+  - No benchmark schema changes unless tests explicitly require schema version update.
+  - No performance tuning.
+  - No new shared helper file.
+- Stop conditions:
+  - Stop if deduplication creates a dependency across independent product repos.
+  - Stop if benchmark output schema changes accidentally.
+  - Stop if local minification cannot improve the duplicate helper shape without making benchmark ownership less clear; record the keep-duplication reason instead of forcing churn.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - benchmark output compatibility note
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-12-benchmark-helper-deduplication-01`
   - commit-hash handoff status for orchestrator receipt closure
 
 Team scratchpad
@@ -458,3 +508,10 @@ Team scratchpad
 - Intended task: verify and commit reviewer-accepted Slice 3.
 - How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test`, `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`, the seeded by-file style command, and a meaningful by-file style command over the remaining Slice 3 files after `special_sprite.zig` deletion; accepted implementation was committed in `howl-render` as `2452fb6`.
 - Next handoff or blocker: root submodule/loop receipt commit is pending; after that the orchestrator may seed Slice 4 from the accepted plan.
+
+28. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 3 root receipt and seed Slice 4 from the accepted minification plan.
+- How one task went: Slice 3 root receipt closed as `14ecbf9`, and Slice 4 now has an exact condensed execution contract with render/VT benchmark compile targets and no shared-helper-file authorization.
+- Next handoff or blocker: commit this Slice 4 execution seed, then coder session `coder-2026-06-12-benchmark-helper-deduplication-01` may execute only that contract.

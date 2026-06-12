@@ -23,7 +23,8 @@ Active restart note:
 - The active whole-workspace minification planning package is reviewer-accepted.
 - Slice 1, `render-emitter-duplicate-pass-collapse`, is accepted and committed in `howl-render` `49dfaf9` and root `33fecd5`.
 - Slice 2, `render-generated-special-routing-parity-proof`, is accepted and committed in `howl-render` `c91ac5c` and root `2ffd424`.
-- The active step is execution of Slice 3, `render-generated-special-raster-owner-deletion`.
+- Slice 3, `render-generated-special-raster-owner-deletion`, is accepted and committed in `howl-render` `2452fb6` and root `14ecbf9`.
+- The active step is execution of Slice 4, `benchmark-helper-deduplication`.
 - Coding is authorized only from the condensed execution contract in `loops/whole-workspace-minification-live-loop.txt`.
 
 Execution rule:
