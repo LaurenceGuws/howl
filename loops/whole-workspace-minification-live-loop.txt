@@ -869,3 +869,74 @@ Condensed execution contract for coder session `coder-2026-06-13-pty-posix-lifec
 - Intended task: close Slice 7 root receipt, record the rain-bench fix receipt, and seed Slice 8 from the accepted minification plan.
 - How one task went: Slice 7 root receipt is closed as `9cb766d`, rain-bench fix receipt is recorded as `3830f81`, and Slice 8 now has an exact condensed execution contract limited to PTY POSIX owner files with lifecycle order and `errdefer self.stopTransport()` called out as hard gates.
 - Next handoff or blocker: commit this Slice 8 execution seed, then coder session `coder-2026-06-13-pty-posix-lifecycle-spine-split-01` may execute only that contract.
+
+46. Role: coder
+- Session id: `coder-2026-06-13-pty-posix-lifecycle-spine-split-01`
+- Hello: hi
+- Intended task: implement Slice 8, `pty-posix-lifecycle-spine-split`, inside the allowed PTY POSIX files without touching git.
+- How one task went: `startTransport` now keeps the lifecycle spine visible as validate, open transport, open pipes, configure master, fork child, parent adoption, `errdefer self.stopTransport()`, await ready, live child transition, and started assertions, while owner-local helpers hold the non-branchy setup/adoption work.
+- Files changed: `howl-pty/src/pty/posix.zig` and this loop note.
+- PTY integration availability: integration tests were available in this environment; the first full `zig build test` run compiled and ran integration tests but one live stop/reap assertion failed transiently (`kill_result` was `0` instead of `-1`), then the immediate rerun of the same command passed with no output.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig fmt src/pty/posix.zig && zig build test`: failed first due to missing `try` on `forkChild`, fixed.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig fmt src/pty/posix.zig && zig build test`: integration ran; 44/45 tests passed, one live PTY stop/reap assertion failed transiently.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig build test`: passed on immediate rerun.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/pty/posix.zig`: passed.
+- Blockers or deviations: no blockers; no platform support changes, signal policy changes, ABI changes, file motion, shared helper file, or edits outside the allowed files. The transient integration failure is recorded for reviewer/orchestrator judgment rather than hidden.
+- Commit-hash handoff status: coder did not commit or touch git; implementation commit receipt remains pending for orchestrator closure.
+- Next handoff or blocker: ready for reviewer/orchestrator verification.
+
+47. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review execution Slice 8, `pty-posix-lifecycle-spine-split`, against the allowed-file diff, lifecycle equivalence, close ownership, child-ready pipe behavior, transient integration failure risk, verification, and loop hygiene.
+- How one task went: the nested `howl-pty` diff touches only `src/pty/posix.zig`; `startTransport` keeps the parent lifecycle order visible; pipe opening, master configuration, fork, parent adoption, child-ready await, and started assertions are split into owner-local helpers; child-ready parent/child close points and `errdefer self.stopTransport()` ordering are preserved.
+- Verdict: accept.
+- Acceptance notes: the transient live stop/reap failure is recorded and judged acceptable for this slice because the refactor does not change stop/reap signal policy or child-group termination logic, and reviewer reran `cd /home/home/personal/projects/howl/howl-pty && zig build test` twice successfully plus `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/pty/posix.zig` successfully.
+- Orchestrator verification expectations before commit: rerun `cd /home/home/personal/projects/howl/howl-pty && zig build test`; rerun `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/pty/posix.zig`; inspect root and nested status/diff to confirm product-code changes remain limited to `howl-pty/src/pty/posix.zig` plus this loop note, with no edits to `posix_test.zig`, `pty_test.zig`, platform support, signal policy, ABI, file motion, or shared helper files.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted slice if verification still passes, and close the Slice 8 implementation commit receipt.
+
+48. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: run final orchestrator verification for accepted Slice 8 and commit if the required gate passes.
+- How one task went: final verification did not pass. `cd /home/home/personal/projects/howl/howl-pty && zig build test` failed repeatedly in live PTY integration tests after reviewer acceptance. Failures included `pty_integration_test.test.owned unix pty stop reaps the child group and remains idempotent`, `pty_integration_test.test.owned unix pty interrupt reaches the child group`, `pty_integration_test.test.owned unix pty natural exit becomes not started`, and `session_integration_test.test.owned unix session natural child exit stops and stays stable` across different seeds.
+- Baseline check: created temporary detached worktree `/tmp/opencode/howl-pty-baseline` at nested commit `c908f42` and ran `cd /tmp/opencode/howl-pty-baseline && zig build test`; the committed baseline failed the same integration gate with `pty_integration_test.test.owned unix pty natural exit becomes not started` and `pty_integration_test.test.owned unix pty interrupt reaches the child group`, proving the red integration gate is not introduced by the Slice 8 diff.
+- Passing verification: `cd /home/home/personal/projects/howl/howl-pty && zig build test:unit`: passed. `cd /home/home/personal/projects/howl/howl-pty && zig build test:abi`: passed. `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/pty/posix.zig`: passed.
+- Blockers or deviations: no Slice 8 implementation commit was made because the accepted contract required `zig build test` before commit and that exact gate is red in this environment, even though baseline reproduction shows the red gate is ambient integration instability rather than a Slice 8 regression.
+- Commit-hash handoff status: blocked; nested implementation remains uncommitted pending explicit user/orchestrator decision on whether to accept with baseline-reproduced integration failures or first repair/quarantine the live PTY integration gate.
+- Next handoff or blocker: choose whether to fix the live PTY integration instability as a new slice before committing Slice 8, or explicitly accept Slice 8 with unit/ABI/style proof plus baseline-failing integration receipt.
+
+49. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: remove the baseline-reproduced PTY integration blocker so Slice 8 can close under the required `zig build test` gate.
+- How one task went: kept the fix inside `howl-pty/src/pty/posix.zig`. `waitReadablePty` now returns readable data before classifying `POLLHUP`; `readPty` drains the open master fd before refreshing child state and maps EOF/Linux PTY `EIO` to `NotStarted` once the child is gone; `stopLiveChild` now waits for the child process group to disappear, not only for the direct shell child to reap, before declaring stop complete.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig fmt src/pty/posix.zig && zig build test:unit`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig build test:abi`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig build test`: passed three consecutive runs after the final EOF/EIO/read-drain fix.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/pty/posix.zig`: passed.
+- Blockers or deviations: this broadens the local product diff beyond the original helper-only Slice 8 implementation, but only to fix the pre-existing red PTY integration gate that blocked the required acceptance proof; no ABI, platform support, signal enum, test weakening, file motion, or shared helper changes.
+- Commit-hash handoff status: pending reviewer re-check and orchestrator commit.
+- Next handoff or blocker: reviewer must re-review the combined `src/pty/posix.zig` diff for lifecycle split plus PTY integration stabilization before any commit.
+
+50. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: re-check Slice 8 after the orchestrator fixed the baseline-reproduced live PTY integration blocker, reviewing only the combined working-tree diff for `howl-pty/src/pty/posix.zig` plus this required loop note.
+- How one task went: the nested `howl-pty` product diff remains limited to `src/pty/posix.zig`; `startTransport` still exposes the lifecycle spine and preserves child-ready close behavior and `errdefer self.stopTransport()` ordering; read now drains the open master before child refresh and maps EOF/Linux PTY `EIO` to `NotStarted` only after the child is gone; `waitReadablePty` returns buffered `POLLIN` data before HUP stopped classification; and `stopLiveChild` waits boundedly for process-group disappearance without adding new signal policy.
+- Verdict: accept.
+- Acceptance notes: orchestrator must rerun before commit: `cd /home/home/personal/projects/howl/howl-pty && zig fmt src/pty/posix.zig && zig build test:unit`; `cd /home/home/personal/projects/howl/howl-pty && zig build test:abi`; `cd /home/home/personal/projects/howl/howl-pty && zig build test` at least three consecutive runs; `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/pty/posix.zig`. Orchestrator must inspect root and nested status/diff before staging to confirm product-code changes remain limited to `howl-pty/src/pty/posix.zig`, this loop note is the only intended root-file content change, unrelated untracked files are not staged, and there are no edits to tests, ABI/platform/signal enums, file motion, or shared helpers.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted Slice 8 implementation if verification still passes, and close the Slice 8 implementation commit receipt.
+
+51. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 8 after reviewer acceptance and final verification.
+- How one task went: final verification passed, nested `howl-pty` status showed only `src/pty/posix.zig`, and the accepted implementation was committed as `howl-pty` `e5a8203` (`Stabilize POSIX PTY lifecycle`). `sprints/current.txt` now records Slice 8 as accepted and moves the active step to Slice 9.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig fmt src/pty/posix.zig && zig build test:unit`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig build test:abi`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig build test && zig build test && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/pty/posix.zig`: passed.
+- Commit-hash receipt: nested `howl-pty` `e5a8203`; root receipt commit pending.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit this root receipt and submodule pointer, then seed Slice 9 from the accepted minification plan.
