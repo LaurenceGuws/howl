@@ -34,8 +34,8 @@ Active restart note:
 - Slice 11, `bucket-struct-naming-and-legitimacy-pass`, is accepted and committed in `howl-pty` `dd124dd`, `howl-vt` `c23a267`, and root `c250535`.
 - Slice 12, `anytype-usize-and-cast-boundary-pass`, is accepted and committed in `howl-linux-host` `c509c4e`, `howl-vt` `681bc28`, `howl-render` `84ea714`, and root `0b47d48`.
 - Rain-bench linked-library wrapper fix is committed in root `3830f81`.
-- Slice 13, `root-tooling-and-active-surface-hygiene`, is in final review/receipt closure.
-- No further coding is authorized from this sprint after Slice 13 root receipt closes.
+- Slice 13, `root-tooling-and-active-surface-hygiene`, is accepted and committed in root `d19a88c`.
+- The whole-workspace minification sprint is closed; no further coding is authorized from this sprint.
 
 Execution rule:
 
