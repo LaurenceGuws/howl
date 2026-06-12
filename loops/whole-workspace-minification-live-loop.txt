@@ -607,3 +607,32 @@ Condensed execution contract for coder session `coder-2026-06-12-host-terminal-r
 - Intended task: close Slice 4 root receipt and seed Slice 5 from the accepted minification plan.
 - How one task went: Slice 4 root receipt closed as `0c9e060`, and Slice 5 now has an exact condensed execution contract limited to host terminal context files, with lock-order preservation and render timing visibility called out as hard gates.
 - Next handoff or blocker: commit this Slice 5 execution seed, then coder session `coder-2026-06-12-host-terminal-render-result-collapse-01` may execute only that contract.
+
+33. Role: coder
+- Session id: `coder-2026-06-12-host-terminal-render-result-collapse-01`
+- Hello: hi
+- Intended task: implement Slice 5, `host-terminal-render-result-collapse`, inside the allowed host terminal context files without touching git.
+- How one task went: repeated zero `DriveResult` and `SubmitPreparedResult` literals were collapsed into owner-local constructors for idle drive, failed prepare/capture, missing prepared upload, failed upload, stale prepared upload, and submitted prepared upload results.
+- Files changed: `howl-linux-host/src/terminal/context.zig`, `howl-linux-host/src/terminal/context_test.zig`, and this loop note.
+- Lock-order preservation: the prepared upload block still visibly unlocks the terminal mutex, captures `upload_start_ns`, runs backend upload with `upload_stats`, captures `upload_end_ns`, and relocks before handle/present checks and submit.
+- Verification: `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/terminal/context.zig`: passed.
+- Blockers or deviations: no blockers; no GL upload behavior changes, no `Processor` event-loop changes, no ABI changes, no file motion, and no shared helper file.
+- Commit-hash handoff status: coder did not commit or touch git; implementation commit receipt remains pending for orchestrator closure.
+- Next handoff or blocker: ready for reviewer/orchestrator verification.
+
+34. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review execution Slice 5, `host-terminal-render-result-collapse`, against allowed-file scope, behavior/counter/timing semantics, lock ordering, tests, verification, and loop hygiene.
+- How one task went: the actual diff stayed inside `howl-linux-host/src/terminal/context.zig`, `howl-linux-host/src/terminal/context_test.zig`, and this loop note; repeated zero `DriveResult` and `SubmitPreparedResult` literals are collapsed into owner-local constructors; `Context` remains the host terminal owner; prepare, upload, and retained submit timing fields remain phase-visible; and the prepared upload block still visibly unlocks, times upload, relocks, checks stale handle/upload failure, then submits under lock.
+- Verdict: accept.
+- Acceptance notes: orchestrator must rerun before commit: `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`; `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/terminal/context.zig`; inspect root and nested status/diff to confirm product-code changes remain limited to `howl-linux-host/src/terminal/context.zig` and `howl-linux-host/src/terminal/context_test.zig`, this loop note is the only root-file change, and there is no GL upload behavior change, Processor event-loop change, ABI change, file motion, shared helper, generic Result/Info bucket, or Context owner rename. Reviewer reran both required verification commands successfully in this pass.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted Slice 5 implementation if verification still passes, and close the Slice 5 implementation commit receipt.
+
+35. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: verify and commit reviewer-accepted Slice 5.
+- How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-linux-host && zig build test` and `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/terminal/context.zig`; accepted implementation was committed in `howl-linux-host` as `4005d43`.
+- Next handoff or blocker: root submodule/loop receipt commit is pending; after that the orchestrator may seed Slice 6 from the accepted plan.
