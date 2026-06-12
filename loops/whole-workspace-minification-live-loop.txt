@@ -153,7 +153,7 @@ Team scratchpad
 - Hello: hi
 - Intended task: promote the accepted planning package and seed the first execution contract without implementing it.
 - How one task went: `sprints/current.txt`, the active sprint file, and this loop now identify the reviewer-accepted plan and the exact Slice 1 execution contract.
-- Next handoff or blocker: coder may execute only `coder-2026-06-12-render-emitter-duplicate-pass-collapse-01`; planning commit-hash receipt remains pending until the user asks for a commit.
+- Next handoff or blocker: coder may execute only `coder-2026-06-12-render-emitter-duplicate-pass-collapse-01`; planning commit-hash receipt is now closed in root commit `aa2c3de` and receipt update commit `fcfc380`.
 
 9. Role: orchestrator
 - Session id: `orch-2026-06-12-minify-sloppy-code-01`
@@ -162,7 +162,7 @@ Team scratchpad
 - How one task went: the accepted planning package was committed as root commit `aa2c3de`, and the active artifacts now record that receipt.
 - Next handoff or blocker: coder may execute only `coder-2026-06-12-render-emitter-duplicate-pass-collapse-01`; implementation commit receipt remains pending.
 
-7. Role: reviewer
+10. Role: reviewer
 - Session id: `review-2026-06-12-minify-sloppy-code-01`
 - Hello: hi
 - Intended task: re-gate the corrected minification planning package after metadata-only fixes, without implementing or committing.
@@ -170,3 +170,26 @@ Team scratchpad
 - Verdict: accept.
 - Acceptance notes: first executable slice is Slice 1, Render Emitter Duplicate Pass Collapse. Orchestrator seeding must constrain the coder to only `howl-render/src/prepared/render_surface_emitter.zig` and `howl-render/src/prepared/render_surface_emitter_test.zig`; preserve fresh rollback and non-fresh copy-in/copy-out semantics visibly; keep the parent pass order visible as reset, full damage, full-redraw clear, clears, backgrounds, decorations, sprites, cursors, publish; forbid ABI changes, debug timing redesign, sprite-resource-store redesign, and file motion; require assertions that published surface/resource state update only after append passes succeed; require `zig build test` in `howl-render`; require existing reusable/fresh emitter tests; and require the file style metric for `howl-render/src/prepared/render_surface_emitter.zig` before slice acceptance.
 - Next handoff or blocker: orchestrator may seed Slice 1 for execution with session receipts and commit-hash demand; no broader slice or product-code work is authorized by this review note.
+
+11. Role: coder
+- Session id: `coder-2026-06-12-render-emitter-duplicate-pass-collapse-01`
+- Hello: hi
+- Intended task: implement Slice 1, `render-emitter-duplicate-pass-collapse`, inside the allowed render emitter files without touching git.
+- How one task went: duplicate reusable/fresh prepared emission pass bodies were collapsed into one owner-local `appendPreparedPass`, while public entrypoints keep non-fresh copy-in/copy-out and fresh resource rollback explicit.
+- Next handoff or blocker: ready for reviewer/orchestrator verification; no blocker and no commit made by coder.
+
+12. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review execution Slice 1, `render-emitter-duplicate-pass-collapse`, against the allowed-file diff, loop hygiene, rollback/copy semantics, pass order, assertions, and claimed verification.
+- How one task went: the nested `howl-render` diff touches only `src/prepared/render_surface_emitter.zig`; duplicate reusable/fresh pass bodies are collapsed into owner-local `appendPreparedPass`; non-fresh copy-in/copy-out remains explicit; fresh resource rollback remains explicit; and publish assertions now gate pre-publish spans and post-publish counts.
+- Verdict: accept.
+- Acceptance notes: orchestrator must rerun before commit: `cd /home/home/personal/projects/howl/howl-render && zig build test`; `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/prepared/render_surface_emitter.zig`; inspect root and nested status/diff to confirm product-code changes remain limited to `howl-render/src/prepared/render_surface_emitter.zig` plus this loop note and no ABI/debug timing/sprite-resource-store/file-motion drift occurred. Reviewer reran both required verification commands successfully in this pass.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted slice if verification still passes, and close the Slice 1 implementation commit receipt.
+
+13. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: verify, accept, and commit Slice 1 after reviewer acceptance.
+- How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test` and `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/prepared/render_surface_emitter.zig`; accepted implementation was committed in `howl-render` as `49dfaf9`.
+- Next handoff or blocker: root submodule/loop receipt commit is pending; after that the orchestrator may seed Slice 2 from the accepted plan.
