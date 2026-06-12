@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-12-minify-sloppy-code-01`.
 
 Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
 
-Current coder session id: `coder-2026-06-12-host-gl-render-surface-classification-spine-01`.
+Current coder session id: `coder-2026-06-13-pty-posix-lifecycle-spine-split-01`.
 
 Loop commit-hash receipt: planning package closed in root commit `aa2c3de`.
 
@@ -32,8 +32,9 @@ Active research target:
 Current step:
 
 - Reviewer accepted the active research package.
-- Slices 1, 2, 3, 4, 5, and 6 are accepted and committed.
-- Orchestrator has seeded Slice 7 for execution.
+- Slices 1, 2, 3, 4, 5, 6, and 7 are accepted and committed.
+- Rain-bench linked-library wrapper fix is committed in root `3830f81`.
+- Orchestrator has seeded Slice 8 for execution.
 - Coder may execute only the active condensed execution contract below.
 
 Exact non-goals:
@@ -804,3 +805,67 @@ Condensed execution contract for coder session `coder-2026-06-12-host-gl-render-
 - Intended task: verify and commit reviewer-accepted Slice 7.
 - How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-linux-host && zig build test` and `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/display/renderer/render_surface.zig`; accepted implementation was committed in `howl-linux-host` as `c17cebe`.
 - Next handoff or blocker: root submodule/loop receipt commit is pending; after that the orchestrator may seed Slice 8 from the accepted plan.
+
+Completed execution receipt for coder session `coder-2026-06-12-host-gl-render-surface-classification-spine-01`:
+
+- Slice: `host-gl-render-surface-classification-spine`.
+- Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
+- Verification:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`: passed.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/display/renderer/render_surface.zig`: passed.
+- Commit receipts:
+  - `howl-linux-host` `c17cebe`.
+  - root `9cb766d`.
+
+44. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: diagnose and fix rain-bench Howl 2 FPS regression report before continuing minification.
+- How one task went: the issue was the rain-bench wrapper overriding the harness rpath with independently newest `.zig-cache/o` shared libraries; root commit `3830f81` removed that `LD_LIBRARY_PATH` override, and a 10s fixed comparison produced Howl `109.64 FPS` instead of the reported `2.44 FPS`.
+- Next handoff or blocker: continue minification from Slice 8.
+
+Condensed execution contract for coder session `coder-2026-06-13-pty-posix-lifecycle-spine-split-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`
+- Implement only Slice 8, `pty-posix-lifecycle-spine-split`.
+- Allowed files:
+  - `howl-pty/src/pty/posix.zig`
+  - `howl-pty/src/pty/posix_test.zig`
+  - `howl-pty/src/pty/pty_test.zig`
+  - `loops/whole-workspace-minification-live-loop.txt` only for the required coder note
+- Required shape:
+  - Keep parent `startTransport` as the readable lifecycle spine.
+  - Move non-branchy setup into exact owner-local helpers: open pipes, configure master, fork child, parent adoption, await ready, assert started.
+  - Do not hide the sequence behind a generic `startContext`, `manager`, `Options`, or broad bucket.
+  - Preserve child-ready pipe close behavior.
+  - Preserve `errdefer self.stopTransport()` semantics.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-pty && zig build test`
+  - Existing POSIX tests.
+  - Integration tests only if environment supports them; if unavailable, record skipped with exact reason.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/pty/posix.zig`
+- Non-goals:
+  - No platform support changes.
+  - No signal policy changes.
+  - No ABI changes.
+  - No file motion or shared helper file.
+- Stop conditions:
+  - Stop if lifecycle order becomes less visible in `startTransport`.
+  - Stop if tests require live PTY integration unavailable in the environment; record blocker and do not fake proof.
+  - Stop if the slice requires touching files outside the allowed list.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - PTY integration availability note
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-pty-posix-lifecycle-spine-split-01`
+  - commit-hash handoff status for orchestrator receipt closure
+
+45. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 7 root receipt, record the rain-bench fix receipt, and seed Slice 8 from the accepted minification plan.
+- How one task went: Slice 7 root receipt is closed as `9cb766d`, rain-bench fix receipt is recorded as `3830f81`, and Slice 8 now has an exact condensed execution contract limited to PTY POSIX owner files with lifecycle order and `errdefer self.stopTransport()` called out as hard gates.
+- Next handoff or blocker: commit this Slice 8 execution seed, then coder session `coder-2026-06-13-pty-posix-lifecycle-spine-split-01` may execute only that contract.
