@@ -15,7 +15,7 @@ Accepted zero-codepoint direct-normal worker session id: `worker-2026-06-12-zero
 Current required worker session id: pending for the next bottleneck-proof pass after zero-codepoint direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-post-damage-first-direct-normal-scan-01`.
-Reviewer session id: pending for the post-damage-first direct-normal scan cycle.
+Reviewer session id: `review-2026-06-12-post-damage-first-direct-normal-scan-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -173,23 +173,23 @@ Active research target:
 
 - `/home/home/personal/projects/howl/research/2026-06-12-post-damage-first-direct-normal-scan-plan.md`
 
-Current planning slice: `direct-normal-publication-damage-first-fast-candidate`
+Current planning slice: `direct-normal-publication-append-fast-path`
 
 - Purpose:
-  - move damage rejection ahead of full fast-path publication renderable construction for the already-accepted ASCII plus zero-codepoint publication subset
+  - sharpen supported-publication append work inside `direct_normal` without widening the accepted ASCII plus zero-codepoint subset
 - Allowed files:
   - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig` for owner-local tests only
 - Timing gate:
   - `direct_normal_scan_avg_us < 311`
   - if the 3-second gate passes, 10-second Howl FPS must beat `120.3`
 - Stop conditions:
   - stop if the worker cannot preserve `candidate|skip|unsupported`
-  - stop if the slice widens beyond the current printable ASCII plus zero-codepoint subset
+  - stop if the helper requires widening beyond the current printable ASCII plus zero-codepoint subset
   - stop if the worker must edit any file outside the two allowed files
   - stop if the 3-second gate or 10-second product gate fails
 - Authority:
-  - the full exact contract remains `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`
+  - the full exact contract remains `/home/home/personal/projects/howl/research/2026-06-12-post-damage-first-direct-normal-scan-plan.md`
 
 Research goal:
 
@@ -253,7 +253,7 @@ Completion gate:
 
 - `sprints/current.txt` continues to point only at the live sprint, active loop, and active research artifact for this step
 - current live loop guidance matches the currently proved bottleneck seam and active research target
-- reviewer accepts or rejects the active `direct-normal-publication-damage-first-fast-candidate` plan before the next worker slice is seeded
+- reviewer accepts or rejects the active `direct-normal-publication-append-fast-path` plan before the next worker slice is seeded
 
 Accepted execution slice: `direct-normal-single-pass-publication`
 
@@ -889,3 +889,10 @@ Team scratchpad
 - Intended task: move publication damage rejection ahead of fast-path renderable construction inside the accepted ASCII plus zero-codepoint subset and re-run the required timing gates.
 - How one task went: the owner-local code and test changes stayed inside `direct_normal.zig` and `frame_preparer.zig`, but the required 3-second timing gate failed with `direct_normal_scan_avg_us=509`, so I stopped before the 10-second rerun.
 - Next handoff or blocker: blocker for orchestrator and reviewer; the current damage-first candidate regressed the scan bucket against the `311` baseline and is not acceptable as-is.
+
+63. Role: researcher
+- Session id: `research-2026-06-12-post-damage-first-direct-normal-scan-01`
+- Hello: hello
+- Intended task: explain the remaining post-damage-first direct-normal scan cost and produce one reviewer-ready worker slice without implementing.
+- How one task went: current source proved the expensive residual scan work is still supported-publication append work inside `direct_normal`, not damage rejection, and I rewrote the active research artifact around a two-file direct append fast-path slice.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-post-damage-first-direct-normal-scan-plan.md`; no correctness blocker found, but the next worker must stop if the 3-second rerun does not beat `direct_normal_scan_avg_us < 311`.
