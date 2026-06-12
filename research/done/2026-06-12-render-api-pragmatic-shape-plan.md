@@ -1,12 +1,12 @@
 Render API pragmatic shape plan
 
 Date: 2026-06-12.
-Status: active researcher target.
+Status: done; accepted first slice receipt, historical authority only.
 Role owner: researcher.
 Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
 Researcher session id: `research-2026-06-12-render-api-pragmatic-shape-02`.
 Reviewer session id: `review-2026-06-12-render-api-pragmatic-shape-01`.
-Planning commit-hash receipt: implementation commits `howl-render` `975b723` and `howl-linux-host` `cf779db`; root accountability/submodule commit pending.
+Planning commit-hash receipt: closed by root commit `f05a6dc`, `howl-render` commit `975b723`, and `howl-linux-host` commit `cf779db`.
 
 Question
 

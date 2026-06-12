@@ -8,7 +8,7 @@ Status: active sprint framing.
 
 Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
 
-Commit-hash receipt: pending.
+Commit-hash receipt: first slice closed in root commit `f05a6dc`, `howl-render` commit `975b723`, and `howl-linux-host` commit `cf779db`; current VT ABI planning slice pending.
 
 ## Problem Statement
 
@@ -24,6 +24,8 @@ Commit-hash receipt: pending.
 - Port Alacritty render/API shape into Zig where it fits.
 - Start with render API.
 - Make render API smaller and more pragmatic than Alacritty.
+- Stop redefining VT-owned facts inside render.
+- Consume the `howl-vt` C ABI as the source of truth; do not use Zig-shaped VT internals as a shortcut.
 
 ## Reference Pressure
 
@@ -48,7 +50,7 @@ Commit-hash receipt: pending.
 
 ## Immediate Goal
 
-- Produce one accepted research artifact that identifies the first render-API simplification slice.
+- Produce one accepted research artifact that identifies the first slice replacing render-local VT redefinitions with direct `howl-vt` C ABI truth, then cuts `text/contract.zig` only around remaining render-owned facts.
 
 ## Execution Authorization
 

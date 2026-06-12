@@ -4,11 +4,11 @@ Date: 2026-06-12.
 Role owner: orchestrator.
 Status: active live loop.
 Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
-Researcher session id: `research-2026-06-12-render-api-pragmatic-shape-02`.
-Reviewer session id: `review-2026-06-12-render-api-pragmatic-shape-01`.
-Current required worker session id: `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`.
-Next required worker session id: pending after the next reviewer-accepted render-api naming slice.
-Loop commit-hash receipt: implementation commits created; `howl-render` `975b723`, `howl-linux-host` `cf779db`, root accountability/submodule commit pending.
+Researcher session id: `research-2026-06-12-render-vt-abi-source-01`.
+Reviewer session id: `review-2026-06-12-render-vt-abi-source-01`.
+Current required worker session id: `coder-2026-06-12-render-vt-abi-direct-publish-01`.
+Next required worker session id: pending after the next reviewer-accepted render API slice.
+Loop commit-hash receipt: first slice closed in root commit `f05a6dc`, `howl-render` commit `975b723`, and `howl-linux-host` commit `cf779db`; direct VT ABI publish implementation commits created as `howl-render` `323237d` and `howl-linux-host` `f8d9898`, root accountability/submodule commit pending.
 
 Shared scratchpad rule:
 
@@ -24,14 +24,16 @@ Controlling sprint:
 
 - `/home/home/personal/projects/howl/sprints/2026-06-12-render-api-pragmatic-shape-sprint.md`
 
-Current execution slice: `render-api-vt-sfc-rdr-sfc-first-cut`
+Completed execution slice: `render-api-vt-sfc-rdr-sfc-first-cut`
+
+Accepted execution slice: `render-vt-abi-direct-publish-first-cut`
 
 - Purpose:
-  - identify the first source-backed slice that kills or re-architects fake middle layers and makes the API read as `vt_sfc` input and `rdr_sfc` output
+  - identify the first source-backed slice that stops render from redefining VT-owned facts and makes `howl-vt` C ABI input the source of truth before cutting `text/contract.zig`
 - Active research target:
-  - `/home/home/personal/projects/howl/research/2026-06-12-render-api-pragmatic-shape-plan.md`
+  - `/home/home/personal/projects/howl/research/2026-06-12-render-vt-abi-source-plan.md`
 - Immediate role sequence:
-  - researcher defines the first simplification seam
+  - researcher audits render-local VT redefinitions against `howl-vt` C ABI
   - reviewer gates the plan
   - only then may a worker execute
 - Exact non-goals:
@@ -39,12 +41,82 @@ Current execution slice: `render-api-vt-sfc-rdr-sfc-first-cut`
   - no host, PTY, or VT redesign in this first render API step unless research proves it unavoidable
   - no fake “cleanup” that preserves oversized owner shape
   - no mixed generic `surface` naming that hides whether a symbol is input or output
+  - no Zig-shaped VT internals import shortcut; use the C ABI or sharpen it
 - Exact stop conditions:
   - stop if references and user direction conflict in a way that needs explicit override receipt
   - stop if the first proposed slice is still fundamentally Howl-invented instead of reference-backed
   - stop if the plan cannot name exact allowed files, required shape, tests, non-goals, and receipt fields
+  - stop if the proposed slice leaves render-local VT fact mirrors in place without proving render ownership
 
-Condensed execution contract for coder session `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`:
+Condensed execution contract for coder session `coder-2026-06-12-render-vt-abi-direct-publish-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-12-render-vt-abi-source-plan.md`
+- Implement only slice `render-vt-abi-direct-publish-first-cut`.
+- Allowed files:
+  - `howl-render/include/howl_render.h`
+  - `howl-render/src/ffi/vt_surface.zig`
+  - `howl-render/src/ffi/vt_surface_test.zig`
+  - `howl-render/src/ffi/test_support.zig`
+  - `howl-render/src/libhowl_render.zig`
+  - `howl-render/src/tv_surface/vt.zig`
+  - `howl-render/src/tv_surface/slot.zig`
+  - `howl-render/src/tv_surface/prepare_request.zig`
+  - `howl-render/src/tv_surface/damage.zig`
+  - `howl-render/src/tv_surface/publication_cell_map.zig`
+  - `howl-render/src/tv_surface/text_input.zig`
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/session/text_test.zig`
+  - `howl-render/src/benchmark_main.zig` only for compile fallout from source type rename/removal, not benchmark redesign.
+  - `howl-render/src/test_abi.zig` only if ABI deleted-symbol checks live there.
+  - `howl-linux-host/src/terminal/vt/surface.zig`
+  - `howl-linux-host/build.zig` only to add `howl_vt_include` to the `howl_render_c` translate-C include paths.
+  - `howl-linux-host/src/terminal/term.zig` only if render-cell scratch removal requires it.
+  - `howl-linux-host/src/terminal/render/retained.zig` only for tests that still publish test sources through the old render slot.
+  - `loops/render-api-pragmatic-shape-live-loop.txt` for the required coder note.
+- Required shape:
+  - `howl-render/include/howl_render.h` includes `howl_vt.h` and exposes `howl_render_text_session_publish_vt_surface(HowlRenderTextSessionHandle handle, const HowlVtSurfaceResult *vt_surface)`.
+  - Delete public render ABI definitions `HowlRenderSourceRgb`, `HowlRenderSourceColor`, `HowlRenderSourceCellFlags`, `HowlRenderSourceCellAttrs`, `HowlRenderSourceCell`, `HowlRenderSourceColors`, `HowlRenderSourceSelectionPos`, `HowlRenderSourceSelection`, `HowlRenderSourceCursor`, `HowlRenderVtCellWriteSpan`, `HowlRenderVtSurfaceSlot`, and `HowlRenderVtSurfaceCommit`.
+  - Delete public render entrypoints `howl_render_text_session_reserve_vt_surface_slot`, `howl_render_text_session_commit_vt_surface`, `howl_render_text_session_reject_vt_surface`, and `howl_render_text_session_cancel_vt_surface`.
+  - `ffi/vt_surface.zig` accepts a `HowlVtSurfaceResult` pointer from the C ABI, validates it, and copies it into render-owned retained storage before returning.
+  - Render must not retain pointers into host or VT scratch from `HowlVtSurfaceResult`.
+  - Host publishes the copied VT ABI surface result directly and no longer calls render reserve/commit/reject/cancel.
+  - Host hover overlay remains host-owned and mutates copied `vt_c.HowlVtSurfaceCell` scratch/dirty arrays before direct publish.
+  - Do not import `howl-vt` Zig internals from render or host.
+  - Do not edit `howl-linux-host/src/howl_render_c.h` or `howl-linux-host/src/howl_vt_c.h` in this slice.
+  - If host translated-C cannot find `howl_vt.h`, the only authorized build fallout is adding `howl_vt_include` to the `howl_render_c` translate-C include paths in `howl-linux-host/build.zig`.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+  - Add/update render ABI tests for valid direct publish from `HowlVtSurfaceResult`.
+  - Add/update render ABI tests for invalid VT surface inputs named in the accepted research artifact.
+  - Add/update deleted-symbol/type absence tests for public `HowlRenderSource*`, `HowlRenderVtSurfaceSlot`, and `HowlRenderVtSurfaceCommit`.
+  - Add/update host tests proving direct publish with no render reserve/commit/reject and hover overlay over VT ABI-shaped copied cells.
+- Non-goals:
+  - no `howl-vt` Zig internal import
+  - no `howl-vt` ABI sharpening unless implementation proves a missing fact; stop if so
+  - no whole `text/contract.zig` rewrite
+  - no renderer algorithm, direct-normal optimization, atlas, geometry, presentation, or host runtime redesign
+  - no compatibility aliases/wrappers for removed render source mirror ABI
+  - no C ABI shortcut redefining `HowlVt*` under `HowlRender*`
+- Stop conditions:
+  - stop if `howl_render.h` cannot include or name `HowlVtSurfaceResult` without a build-system/package decision
+  - stop if render needs a VT fact not present in `HowlVtSurfaceResult` / `HowlVtSurface` / `HowlVtSurfaceCell`
+  - stop if implementation would retain host/VT scratch pointers after publish returns
+  - stop if any public render ABI `HowlRenderSource*` or `HowlRenderVtSurfaceSlot` type remains after the slice
+  - stop if hover overlay cannot be expressed as host mutation of copied VT ABI-shaped scratch
+  - stop if tests require weakening ABI or unit roots
+  - stop if translated-C include ordering forces any host C import wrapper edit; only the `howl-linux-host/build.zig` include-path fix named above is authorized
+- Required handoff:
+  - files changed
+  - implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id
+  - commit-hash handoff status
+
+Completed execution contract receipt for coder session `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`:
 
 - Accepted planning input:
   - `/home/home/personal/projects/howl/research/2026-06-12-render-api-pragmatic-shape-plan.md`
@@ -191,4 +263,102 @@ Team scratchpad
 - Hello: hi
 - Intended task: verify and record the reviewer-accepted `render-api-vt-sfc-rdr-sfc-first-cut` execution slice.
 - How one task went: reviewer accepted the final repaired diff, orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test` and `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`, then implementation commits were created as `howl-render` `975b723` and `howl-linux-host` `cf779db`.
+- Next handoff or blocker: root accountability/submodule commit closed as `f05a6dc`; next researcher should plan the VT ABI source-of-truth cut.
+
+14. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: promote the next renderer-shape planning target from the user direction to stop redefining VT-owned facts in render.
+- How one task went: the active step is now `render-vt-abi-source-of-truth-first-cut`, with `research/2026-06-12-render-vt-abi-source-plan.md` as the active research target and the first handle-slice receipt closed by `f05a6dc` / `975b723` / `cf779db`.
+- Next handoff or blocker: researcher must audit current render-local VT mirrors against `howl-vt` C ABI and produce one exact reviewer-gateable first cut; no coder starts until reviewer accepts.
+
+15. Role: researcher
+- Session id: `research-2026-06-12-render-vt-abi-source-01`
+- Hello: hi
+- Intended task: audit render-local VT mirrors against current `howl-vt` C ABI and references, then write the first exact source-backed slice.
+- How one task went: the audit found `howl-vt` already exports the needed C ABI surface facts, while render and host duplicate them as `HowlRenderSource*`, `source_vt.Source*`, and host VT-to-render conversion functions.
+- Next handoff or blocker: reviewer should gate proposed slice `render-vt-abi-direct-publish-first-cut`; no user blocker unless reviewer rejects the explicit `howl_render.h` dependency on `howl_vt.h`.
+
+16. Role: reviewer
+- Session id: `review-2026-06-12-render-vt-abi-source-01`
+- Hello: hello
+- Intended task: gate the active VT ABI source-of-truth planning package and decide whether `howl_render.h` may directly depend on `howl_vt.h`.
+- How one task went: the plan correctly makes `howl-vt` C ABI the direct public source-of-truth and the active artifact surface is clean, but the slice still leaves host include-wrapper edits conditional instead of exact, which would let a worker invent ABI/include fallout fixes.
+- Next handoff or blocker: reject until the plan either removes host include-wrapper edits from the allowed files and makes include-order failure a stop/reseed condition, or specifies the exact one-line include-wrapper change and test proof.
+
+17. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: repair the VT ABI planning package after reviewer rejection.
+- How one task went: host include-wrapper files are no longer allowed in the slice; if translated-C include ordering fails after `howl_render.h` includes `howl_vt.h`, the coder must stop for reseeding instead of editing wrappers.
+- Next handoff or blocker: reviewer should re-gate `render-vt-abi-direct-publish-first-cut` with the include-wrapper ambiguity removed.
+
+18. Role: reviewer
+- Session id: `review-2026-06-12-render-vt-abi-source-01`
+- Hello: hello
+- Intended task: re-review the VT ABI source-of-truth planning package after the include-wrapper ambiguity fix.
+- How one task went: the allowed file list now excludes host C import wrappers, translated-C include-order fallout is an explicit stop/reseed condition, and `howl_render.h` depending on `howl_vt.h` is accepted as the direct C ABI source-of-truth boundary for this slice.
+- Next handoff or blocker: accept `render-vt-abi-direct-publish-first-cut` for orchestrator seeding; planning commit-hash receipt remains pending for orchestrator closure.
+
+19. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: seed the reviewer-accepted direct VT ABI publish slice for execution.
+- How one task went: the active loop now contains the condensed execution contract for coder session `coder-2026-06-12-render-vt-abi-direct-publish-01`, with host C import wrappers explicitly disallowed.
+- Next handoff or blocker: coder should implement only the accepted direct VT ABI publish slice, then reviewer session `review-2026-06-12-render-vt-abi-source-01` must review the diff.
+
+20. Role: coder
+- Session id: `coder-2026-06-12-render-vt-abi-direct-publish-01`
+- Hello: hello
+- Intended task: implement slice `render-vt-abi-direct-publish-first-cut` by deleting public render VT mirror ABI and publishing copied `HowlVtSurfaceResult` data directly.
+- How one task went: `howl-render` now exposes `howl_render_text_session_publish_vt_surface`, deletes scanned public `HowlRenderSource*`/slot/commit references, copies VT ABI cells and dirty spans into render-owned retained storage, and `cd /home/home/personal/projects/howl/howl-render && zig build test` passed.
+- Next handoff or blocker: stopped on the contracted host translated-C include blocker: `cd /home/home/personal/projects/howl/howl-linux-host && zig build test` fails because `howl_render.h` includes `howl_vt.h` but host translate-c for `howl_render_c.h` does not pass the VT include path; host C wrapper/build include changes are not allowed in this coder slice.
+
+21. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: reseed the stopped direct VT ABI publish slice for exact translated-C include-path fallout.
+- How one task went: `howl-linux-host/build.zig` is now allowed only to add `howl_vt_include` to the `howl_render_c` translate-C include paths; wrapper header edits remain disallowed.
+- Next handoff or blocker: coder should apply only that build include-path fallout fix if needed, rerun `howl-render` and `howl-linux-host` tests, and hand back to reviewer.
+
+22. Role: coder
+- Session id: `coder-2026-06-12-render-vt-abi-direct-publish-01`
+- Hello: hello
+- Intended task: repair only the stopped translated-C include-path blocker by adding `howl_vt_include` to the `howl_render_c` translate-C include paths in `howl-linux-host/build.zig`.
+- How one task went: the exact include-path repair worked and host translate-C progressed past `howl_vt.h` lookup; `cd /home/home/personal/projects/howl/howl-render && zig build test` passed again.
+- Next handoff or blocker: `cd /home/home/personal/projects/howl/howl-linux-host && zig build test` now fails later on `howl-linux-host/src/terminal/vt/surface.zig:260` because `markDirtyRange` still names removed `ReservedVtSurfaceSlot`; that file is outside this narrow repair authorization, so coder stopped for reseeding.
+
+23. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: reseed accepted-file compile fallout after include-path repair progressed host tests.
+- How one task went: `howl-linux-host/src/terminal/vt/surface.zig` is already an accepted-slice file, so stale `ReservedVtSurfaceSlot` naming is authorized as direct compile fallout inside the accepted file set.
+- Next handoff or blocker: coder should fix only that stale old-slot naming, rerun both test gates, and hand back to reviewer.
+
+24. Role: coder
+- Session id: `coder-2026-06-12-render-vt-abi-direct-publish-01`
+- Hello: hello
+- Intended task: finish direct VT ABI publish compile fallout inside the already allowed host VT surface file by removing stale old-slot naming.
+- How one task went: `markDirtyRange` now takes the direct-publish `PublishScratch` VT ABI scratch shape instead of the removed `ReservedVtSurfaceSlot`, and both required test gates passed.
+- Next handoff or blocker: hand off to reviewer for `render-vt-abi-direct-publish-first-cut`; no blocker from this pass.
+
+25. Role: reviewer
+- Session id: `review-2026-06-12-render-vt-abi-source-01`
+- Hello: hello
+- Intended task: execution-review coder session `coder-2026-06-12-render-vt-abi-direct-publish-01` against the accepted direct VT ABI publish contract.
+- How one task went: both `howl-render` and `howl-linux-host` `zig build test` gates passed locally, and the code seam deletes the public render VT mirror ABI, but root accountability has blockers: an unrelated `.gitignore` edit and duplicated/out-of-order live loop notes.
+- Next handoff or blocker: reject until root hygiene is repaired without changing the accepted implementation shape; then re-review the same code diff and receipts.
+
+26. Role: reviewer
+- Session id: `review-2026-06-12-render-vt-abi-source-01`
+- Hello: hello
+- Intended task: re-review `render-vt-abi-direct-publish-first-cut` after root hygiene fixes.
+- How one task went: root `.gitignore` is no longer touched, the live loop timeline is ordered through entry 25, tracked source scans show the deleted public render VT mirror ABI/reserve/commit/reject/cancel symbols are gone, and both required `zig build test` gates passed locally.
+- Next handoff or blocker: accept the execution slice for orchestrator verification and receipt closure; implementation commit hashes remain pending for orchestrator.
+
+27. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: verify and record reviewer-accepted `render-vt-abi-direct-publish-first-cut` execution.
+- How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test` and `cd /home/home/personal/projects/howl/howl-linux-host && zig build test` after reviewer acceptance, then implementation commits were created as `howl-render` `323237d` and `howl-linux-host` `f8d9898`.
 - Next handoff or blocker: root accountability/submodule commit remains pending.
