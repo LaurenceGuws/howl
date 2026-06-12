@@ -1,0 +1,53 @@
+Render API pragmatic shape live loop scratchpad
+
+Date: 2026-06-12.
+Role owner: orchestrator.
+Status: active live loop.
+Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
+Researcher session id: pending for render-api shape cycle.
+Reviewer session id: pending for render-api shape cycle.
+Current required worker session id: pending until reviewer-accepted render-api simplification plan.
+Next required worker session id: pending after the next reviewer-accepted renderer simplification plan.
+Loop commit-hash receipt: pending until archival.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, coder, researcher, or reviewer pass must append a short note with:
+  - role and session id
+  - a brief hello
+  - what the teammate wanted to achieve in the pass
+  - how at least one task went
+  - next handoff or blocker
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-12-render-api-pragmatic-shape-sprint.md`
+
+Current planning slice: `render-api-pragmatic-shape-first-cut`
+
+- Purpose:
+  - identify the first source-backed render API simplification slice that reduces code and moves Howl toward Alacritty render/API shape
+- Active research target:
+  - `/home/home/personal/projects/howl/research/2026-06-12-render-api-pragmatic-shape-plan.md`
+- Immediate role sequence:
+  - researcher defines the first simplification seam
+  - reviewer gates the plan
+  - only then may a worker execute
+- Exact non-goals:
+  - no more ASCII-rain micro-bottleneck experiments as the primary strategy
+  - no host, PTY, or VT redesign in this first render API step unless research proves it unavoidable
+  - no fake “cleanup” that preserves oversized owner shape
+- Exact stop conditions:
+  - stop if references and user direction conflict in a way that needs explicit override receipt
+  - stop if the first proposed slice is still fundamentally Howl-invented instead of reference-backed
+  - stop if the plan cannot name exact allowed files, required shape, tests, non-goals, and receipt fields
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: replace the deferred ASCII-rain loop with a new renderer-shape live loop that becomes the only current authority.
+- How one task went: the old loop was deferred and this file now owns the current render-api simplification step.
+- Next handoff or blocker: researcher should define the first render-api pragmatic-shape slice from Alacritty pressure.
