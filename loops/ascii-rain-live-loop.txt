@@ -14,7 +14,7 @@ Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled
 Current required worker session id: pending for the next bottleneck-proof pass after styled ASCII direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-non-printable-publication-normal-01`.
-Reviewer session id: pending for the non-printable publication normal cycle.
+Reviewer session id: `review-2026-06-12-non-printable-publication-normal-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -778,3 +778,24 @@ Team scratchpad
 - Intended task: promote the resolved generic-fallback proof into the next active research target.
 - How one task went: the vague bucket is now resolved enough for planning; the live generic fallback mix is dominated by `unsupported_non_printable` cells that still end in `publication_generic_normal`.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-non-printable-publication-normal-plan.md`; no correctness or vague-bucket blocker is known.
+
+54. Role: researcher
+- Session id: `research-2026-06-12-non-printable-publication-normal-01`
+- Hello: hello
+- Intended task: explain the non-printable publication cells that dominate live generic fallback and cut one reviewer-safe worker slice from that proof.
+- How one task went: current source and receipts point to `codepoint == 0` VT-published blank cells as the only source-backed live explanation for the `unsupported_non_printable -> publication_generic_normal` mix.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-non-printable-publication-normal-plan.md`; no blocker, but the worker must stop if zero-codepoint support widens beyond that exact shared shape.
+
+55. Role: reviewer
+- Session id: `review-2026-06-12-non-printable-publication-normal-01`
+- Hello: hello
+- Intended task: gate the zero-codepoint non-printable publication fast-candidate plan before worker execution.
+- How one task went: the first pass rejected a tab/blank negative-space hole, missing owner-seam proof, and a non-actionable stop condition; the corrected plan now proves `codepoint == 0` at the fast-candidate seam, keeps tabs/other non-printables on generic fallback, and uses only actionable stop gates.
+- Next handoff or blocker: seed the accepted `direct-normal-publication-zero-codepoint-fast-candidate` worker slice; no blocker.
+
+54. Role: researcher
+- Session id: `research-2026-06-12-non-printable-publication-normal-01`
+- Hello: hello
+- Intended task: explain the live non-printable publication-normal fallback class and produce one reviewer-ready worker slice without implementation.
+- How one task went: current source and the proof receipts line up on control-derived zero-codepoint publication cells from VT erase/edit/scroll owners; the proposed slice stays inside `direct_normal.zig` plus publication owner-local tests.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-non-printable-publication-normal-plan.md`; no blocker, but the worker must stop if zero-codepoint support fails to beat `direct_normal_scan_avg_us=811`.
