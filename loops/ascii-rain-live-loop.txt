@@ -90,8 +90,11 @@ Accepted receipt:
 - metrics completion:
   - both terminals completed with `schema=1` and `final=true`
 
-Current slice: `temporary-bottleneck-logging`
+Historical slice: `temporary-bottleneck-logging`
 
+- Historical note only:
+  - superseded by later accepted bottleneck proof, planning, and implementation slices
+  - not authoritative for the current step
 - Purpose:
   - use temporary logs to pin down the current biggest performance bottleneck
 - Allowed files:
@@ -196,9 +199,9 @@ Research package must include:
 - proof gaps
 - readiness judgment
 
-Reviewer acceptance gate for this handoff:
+Reviewer acceptance gate for the current handoff:
 
-- reject if the plan does not center the current `owner_create` proof seam explicitly
+- reject if the plan does not center the currently proved bottleneck seam explicitly
 - reject if the plan jumps to host GL, PTY, VT, or benchmark-wrapper redesign without current-source proof that the bottleneck ranking is wrong
 - reject if the next worker slice lacks exact allowed files, required shape, tests, non-goals, stop conditions, or receipt fields
 - reject if the plan recommends optimization before addressing owner truth or bottleneck-owner debt inside the true seam
@@ -264,7 +267,11 @@ Accepted execution slice: `direct-normal-single-pass-publication`
 - Commit-hash handoff status:
   - pending orchestrator receipt closure after review and commit
 
-Current slice: `owner-create-cache-first-emission`
+Historical slice: `owner-create-cache-first-emission`
+
+- Historical note only:
+  - superseded by later accepted owner-create, direct-normal, and publication-scan slices
+  - not authoritative for the current step
 
 - Coder session id:
   - `worker-2026-06-12-owner-create-cache-first-01`
@@ -835,3 +842,10 @@ Team scratchpad
 - Intended task: promote the post-zero-codepoint bottleneck proof into the next active research target.
 - How one task went: after the zero-codepoint win, the top remaining bucket is still `direct_normal_scan_avg_us=311`, with `owner_create_avg_us=216` below it.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`; no correctness or vague-bucket blocker is known.
+
+61. Role: researcher
+- Session id: `research-2026-06-12-direct-normal-publication-scan-post-zero-codepoint-01`
+- Hello: hello
+- Intended task: explain the remaining post-zero-codepoint direct-normal scan cost and cut one reviewer-ready worker slice without implementation.
+- How one task went: current source pinned the residual cost to `publicationCandidate` building full fast-path renderable text before damage filtering, even though `includeDamage` only needs `first_cell` and `cell_span`.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`; no correctness blocker or vague bucket is currently exposed.
