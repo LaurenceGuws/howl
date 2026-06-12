@@ -940,3 +940,36 @@ Condensed execution contract for coder session `coder-2026-06-13-pty-posix-lifec
 - Commit-hash receipt: nested `howl-pty` `e5a8203`; root receipt commit pending.
 - Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
 - Next handoff or blocker: commit this root receipt and submodule pointer, then seed Slice 9 from the accepted minification plan.
+
+52. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: seed and execute Slice 9, `host-input-literal-table-collapse`, after root Slice 8 receipt `051a1b0`.
+- How one task went: implementation stayed inside `howl-linux-host/src/input/input.zig`; the one-case-per-character `byteSlice` switch was replaced with a bounded static `[128][1]u8` ASCII table and `asciiByteSlice` accessor; `sdlAltTextBytes` behavior is preserved; owner-local tests now exhaust all current letter, digit, punctuation, space, and unsupported-key mappings and assert every returned slice is one byte backed by the stable table entry.
+- Verification: `cd /home/home/personal/projects/howl/howl-linux-host && zig fmt src/input/input.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/input/input.zig`: passed.
+- Scope: no new keyboard protocol behavior, no input binding redesign, no SDL event-loop policy changes, no files outside `howl-linux-host/src/input/input.zig` for product code.
+- Commit-hash handoff status: pending reviewer and orchestrator commit.
+- Next handoff or blocker: reviewer must check the mapping table, exhaustive proof, behavior preservation, and scope before commit.
+
+53. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review execution Slice 9, `host-input-literal-table-collapse`, against the single allowed file diff, behavior equivalence, table bounds, exhaustive mapping proof, absence of bucket shapes, scope, and claimed verification.
+- How one task went: the nested `howl-linux-host` product diff touches only `src/input/input.zig`; `byteSlice` is replaced by a bounded static `[128][1]u8` ASCII table and `asciiByteSlice` asserts the index is inside the table; `sdlAltTextBytes` preserves the existing letter, digit, punctuation, and space outputs; `processKeyDown` control flow and SDL key/mod behavior are unchanged; and owner-local tests exhaust all current returned bytes while asserting each returned slice is one byte and backed by the stable table entry.
+- Verdict: accept.
+- Findings: none.
+- Acceptance notes: reviewer reran `cd /home/home/personal/projects/howl/howl-linux-host && zig build test` successfully and reran `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/input/input.zig` successfully. Orchestrator must rerun before commit: `cd /home/home/personal/projects/howl/howl-linux-host && zig fmt src/input/input.zig && zig build test`; `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/input/input.zig`; inspect root and nested status/diff to confirm product-code changes remain limited to `howl-linux-host/src/input/input.zig`, this loop note is the only intended root-file content change, the exhaustive alt-text tests remain in `input.zig`, and there is no new keyboard protocol behavior, input binding redesign, SDL event-loop policy change, file motion, or bucket/helper owner drift.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted Slice 9 implementation if verification still passes, and close the Slice 9 implementation commit receipt.
+
+54. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 9 after reviewer acceptance and final verification.
+- How one task went: reviewer accepted with no findings; final verification passed; nested `howl-linux-host` status showed only `src/input/input.zig`; accepted implementation committed as `howl-linux-host` `1eb35f8` (`Collapse host input byte table`). `sprints/current.txt` now records Slice 9 as accepted and moves the active step to Slice 10.
+- Verification: `cd /home/home/personal/projects/howl/howl-linux-host && zig fmt src/input/input.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/input/input.zig`: passed.
+- Exhaustive byte mapping proof: tests cover all current `sdlAltTextBytes` returned letter shift/caps states, all digit states, all punctuation/space states, and unsupported keys, and assert returned slices are one byte and backed by the static ASCII table.
+- Commit-hash receipt: nested `howl-linux-host` `1eb35f8`; root receipt commit pending.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit this root receipt and submodule pointer, then seed Slice 10 from the accepted minification plan.
