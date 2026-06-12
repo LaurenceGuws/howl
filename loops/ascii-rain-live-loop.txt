@@ -314,7 +314,10 @@ Historical slice: `owner-create-cache-first-emission`
   - exact before/after `owner_create_avg_us`, `prepared_handle_create emit_avg_us`, `stage_upload_avg_us`, and `sprites_avg_us`
   - commit-hash handoff status pending orchestrator closure
 
-Execution receipt candidate for current review:
+Historical execution receipt:
+
+- Historical note only:
+  - superseded by later accepted slices and not authoritative for the current step
 
 - Files changed:
   - `/home/home/personal/projects/howl/howl-render/src/prepared/render_surface_emitter.zig`
