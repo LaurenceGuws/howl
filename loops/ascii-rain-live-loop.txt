@@ -173,6 +173,24 @@ Active research target:
 
 - `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`
 
+Current planning slice: `direct-normal-publication-damage-first-fast-candidate`
+
+- Purpose:
+  - move damage rejection ahead of full fast-path publication renderable construction for the already-accepted ASCII plus zero-codepoint publication subset
+- Allowed files:
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/frame_preparer.zig`
+- Timing gate:
+  - `direct_normal_scan_avg_us < 311`
+  - if the 3-second gate passes, 10-second Howl FPS must beat `120.3`
+- Stop conditions:
+  - stop if the worker cannot preserve `candidate|skip|unsupported`
+  - stop if the slice widens beyond the current printable ASCII plus zero-codepoint subset
+  - stop if the worker must edit any file outside the two allowed files
+  - stop if the 3-second gate or 10-second product gate fails
+- Authority:
+  - the full exact contract remains `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`
+
 Research goal:
 
 - turn the accepted current bottleneck proof into a reviewer-accepted next worker slice that attacks the true owner seam in pristine shape
@@ -234,10 +252,8 @@ Stop conditions:
 Completion gate:
 
 - `sprints/current.txt` continues to point only at the live sprint, active loop, and active research artifact for this step
-- one accepted control-run receipt exists
-- one accepted bottleneck-proof receipt exists
-- one accepted direct-normal execution receipt exists
-- reviewer accepts or rejects the active owner-create bottleneck plan before the next worker slice is seeded
+- current live loop guidance matches the currently proved bottleneck seam and active research target
+- reviewer accepts or rejects the active `direct-normal-publication-damage-first-fast-candidate` plan before the next worker slice is seeded
 
 Accepted execution slice: `direct-normal-single-pass-publication`
 
