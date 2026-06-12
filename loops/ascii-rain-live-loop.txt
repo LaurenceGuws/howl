@@ -750,3 +750,10 @@ Team scratchpad
 - Intended task: promote the child-cost proof into the next active research target while preserving its ranking-only limitation.
 - How one task went: the child proof receipts `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-025154-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-025340-ascii/summary.json` are retained as instrumentation proof only; they are not product FPS baselines.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-generic-fallback-plan.md`; no correctness or vague-bucket blocker is known.
+
+50. Role: researcher
+- Session id: `research-2026-06-12-direct-normal-generic-fallback-01`
+- Hello: hello
+- Intended task: decide whether `scan_generic_candidate` is ready for optimization or needs a safer proof step first.
+- How one task went: current source showed `scan_generic_candidate` is a vague fallback bucket spanning multiple unsupported publication reasons and generic normal/complex consequences, while the child timers are ranking-only and the prior empty-space optimization failed.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-generic-fallback-plan.md`; proposed next slice is proof-only count instrumentation in `direct_normal.zig`, not optimization.

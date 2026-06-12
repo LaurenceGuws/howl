@@ -48,6 +48,10 @@ For coding and project progress, tradeoffs follow this order:
   assertions, bounds, source order, directness, and tests.
 - Ghostty is selective pressure for embedding seams and VT shape.
 - Kitty is selective pressure for UX and protocol maturity.
+- For render API design specifically, bias weights are:
+  1. Alacritty for pragmatic, idiomatic renderer organization and API pressure.
+  2. Kitty for UX and quality pressure.
+  3. Ghostty only for embedding pressure, and no longer a primary render API source unless the slice is explicitly about embedding.
 - Official docs define protocol, platform, ABI, and OS facts.
 - Howl-only architecture is presumed wrong until the references and user boundary prove
   that no source-backed shape exists.
