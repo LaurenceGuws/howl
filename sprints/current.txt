@@ -22,7 +22,8 @@ Active restart note:
 - Prior render API pragmatic shape artifacts are archived as done and are navigation only.
 - The active whole-workspace minification planning package is reviewer-accepted.
 - Slice 1, `render-emitter-duplicate-pass-collapse`, is accepted and committed in `howl-render` `49dfaf9` and root `33fecd5`.
-- The active step is execution of Slice 2, `render-generated-special-routing-parity-proof`.
+- Slice 2, `render-generated-special-routing-parity-proof`, is accepted and committed in `howl-render` `c91ac5c` and root `2ffd424`.
+- The active step is execution of Slice 3, `render-generated-special-raster-owner-deletion`.
 - Coding is authorized only from the condensed execution contract in `loops/whole-workspace-minification-live-loop.txt`.
 
 Execution rule:

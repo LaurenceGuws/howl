@@ -32,8 +32,8 @@ Active research target:
 Current step:
 
 - Reviewer accepted the active research package.
-- Slice 1 is accepted and committed.
-- Orchestrator has seeded Slice 2 for execution.
+- Slices 1 and 2 are accepted and committed.
+- Orchestrator has seeded Slice 3 for execution.
 - Coder may execute only the active condensed execution contract below.
 
 Exact non-goals:
@@ -145,6 +145,68 @@ Condensed execution contract for coder session `coder-2026-06-12-render-generate
   - exact verification run and results
   - blockers or deviations
   - coder session id `coder-2026-06-12-render-generated-special-routing-parity-01`
+  - commit-hash handoff status for orchestrator receipt closure
+
+Completed execution receipt for coder session `coder-2026-06-12-render-generated-special-routing-parity-01`:
+
+- Slice: `render-generated-special-routing-parity-proof`.
+- Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
+- Verification:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`: passed.
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`: passed.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/ft_hb/special_sprite.zig howl-render/src/text/raster/special.zig howl-render/src/text/classify/special_glyphs.zig howl-render/src/text/classify/symbol_map.zig howl-render/src/text/classify/lane.zig howl-render/src/text/resolver.zig howl-render/src/text/ft_hb/glyph_raster.zig`: passed.
+- Commit receipts:
+  - `howl-render` `c91ac5c`.
+  - root `2ffd424`.
+
+Condensed execution contract for coder session `coder-2026-06-12-render-generated-special-raster-owner-deletion-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`
+  - Completed Slice 2 family table in this loop.
+- Implement only Slice 3, `render-generated-special-raster-owner-deletion`.
+- Allowed files:
+  - `howl-render/src/text/ft_hb/special_sprite.zig`
+  - `howl-render/src/text/raster/special.zig`
+  - `howl-render/src/text/raster/special_test.zig`
+  - `howl-render/src/text/classify/special_glyphs.zig`
+  - `howl-render/src/text/classify/symbol_map.zig`
+  - `howl-render/src/text/classify/lane.zig`
+  - `howl-render/src/text/resolver.zig`
+  - `howl-render/src/text/ft_hb/glyph_raster.zig`
+  - `loops/whole-workspace-minification-live-loop.txt` only for the required coder note
+- Required shape:
+  - Proceed only from Slice 2's accepted family table and tests.
+  - Make `text/raster/special.zig` the sole generated special raster owner for every family that remains routed as a generated/special sprite.
+  - Delete `special_sprite.zig` only if no fallback-only generated family remains after migrating coverage into `text/raster/special.zig` or after tests prove a route/support entry is intentionally removed.
+  - If a fallback-only family remains because deletion would remove supported visuals, stop instead of preserving duplicate owner code.
+  - Remove the `special_sprite` import and fallback call from `glyph_raster.zig` only after shared rasterization covers the routed family or tests prove the route/support entry was removed.
+  - Split long generated-special family dispatch into small exact helpers where the family is owner-true.
+  - Do not add `manager`, `engine`, or generic `types` buckets.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`
+  - All Slice 2 support/route/lane/resolver/fallback tests must still pass, with fallback expectations updated only when owner deletion is proved.
+  - `text/raster/special_test.zig` must include representative drawing tests for every migrated/routed family.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/ft_hb/special_sprite.zig howl-render/src/text/raster/special.zig howl-render/src/text/classify/special_glyphs.zig howl-render/src/text/classify/symbol_map.zig howl-render/src/text/classify/lane.zig howl-render/src/text/resolver.zig howl-render/src/text/ft_hb/glyph_raster.zig`
+- Non-goals:
+  - No new glyph protocol support.
+  - No visual redesign.
+  - No FreeType/HarfBuzz provider redesign.
+  - No host GL changes.
+  - No compatibility alias or empty wrapper for `special_sprite.zig` unless a concrete remaining import proves it is required inside allowed files.
+- Stop conditions:
+  - Stop if any accepted Slice 2 family still requires `special_sprite.zig` to draw supported/routed pixels.
+  - Stop if deleting fallback would change lane/resolver/provider behavior without exact tests proving the intended new route/support outcome.
+  - Stop if deletion requires touching files outside the allowed list.
+  - Stop if branch/private-use or private-use visual behavior requires a product decision rather than a current-test-backed migration.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - list of deleted/migrated codepoint families and the Slice 2 table rows that authorized each deletion/migration
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-12-render-generated-special-raster-owner-deletion-01`
   - commit-hash handoff status for orchestrator receipt closure
 
 Team scratchpad
@@ -320,3 +382,10 @@ Team scratchpad
 - Intended task: verify and commit reviewer-accepted Slice 2.
 - How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test`, `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`, and `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/ft_hb/special_sprite.zig howl-render/src/text/raster/special.zig howl-render/src/text/classify/special_glyphs.zig howl-render/src/text/classify/symbol_map.zig howl-render/src/text/classify/lane.zig howl-render/src/text/resolver.zig howl-render/src/text/ft_hb/glyph_raster.zig`; accepted implementation was committed in `howl-render` as `c91ac5c`.
 - Next handoff or blocker: root submodule/loop receipt commit is pending; after that the orchestrator may seed Slice 3 from the accepted plan.
+
+20. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 2 root receipt and seed Slice 3 from the accepted minification plan.
+- How one task went: Slice 2 root receipt closed as `2ffd424`, and Slice 3 now has an exact condensed execution contract tied to the accepted Slice 2 family table.
+- Next handoff or blocker: commit this Slice 3 execution seed, then coder session `coder-2026-06-12-render-generated-special-raster-owner-deletion-01` may execute only that contract.
