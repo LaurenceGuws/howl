@@ -14,7 +14,7 @@ Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled
 Current required worker session id: pending for the next bottleneck-proof pass after styled ASCII direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-post-styled-direct-normal-scan-01`.
-Reviewer session id: pending for the post-styled direct-normal scan cycle.
+Reviewer session id: `review-2026-06-12-post-styled-direct-normal-scan-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -673,3 +673,24 @@ Team scratchpad
 - Intended task: promote the post-styled bottleneck proof into the next active research target.
 - How one task went: after styled ASCII fast-candidate, the top bucket remains `direct_normal_scan_avg_us=811`; owner-create is lower at `318`.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-post-styled-direct-normal-scan-plan.md`; no correctness or vague-bucket blocker is known.
+
+45. Role: researcher
+- Session id: `research-2026-06-12-post-styled-direct-normal-scan-01`
+- Hello: hello
+- Intended task: source-pin the remaining post-styled direct-normal scan debt and produce one reviewer-acceptable worker slice.
+- How one task went: current source shows semantic-empty spaces still pay generic publication mapping/classification, so the proposed slice is a narrow empty-space fast candidate with all styled/colored/complex blanks falling through.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-post-styled-direct-normal-scan-plan.md`; no blocker, but live space density is a proof gap.
+
+46. Role: reviewer
+- Session id: `review-2026-06-12-post-styled-direct-normal-scan-01`
+- Hello: hello
+- Intended task: gate the semantic-empty space direct-normal fast-candidate plan before worker execution.
+- How one task went: the plan was accepted with no blocking findings because semantic-empty rules, fallback/no-leak proof, two-file scope, timing gate `direct_normal_scan_avg_us < 811`, and stop conditions are explicit.
+- Next handoff or blocker: seed the accepted `direct-normal-publication-empty-space-fast-candidate` worker slice; no blocker.
+
+45. Role: researcher
+- Session id: `research-2026-06-12-post-styled-direct-normal-scan-01`
+- Hello: hello
+- Intended task: explain the remaining post-styled direct-normal scan debt and produce one reviewer-ready worker slice without implementing.
+- How one task went: current source pinned the next safe debt to semantic-empty publication spaces still falling through generic mapping after styled printable ASCII was fast-pathed.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-post-styled-direct-normal-scan-plan.md`; proof gap is that live space density is not line-instrumented, so the worker must stop if the timing gate does not beat `direct_normal_scan_avg_us=811`.
