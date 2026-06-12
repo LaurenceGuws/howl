@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-12-minify-sloppy-code-01`.
 
 Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
 
-Commit-hash receipt: planning package pending commit; no implementation commit yet.
+Commit-hash receipt: planning package closed in root commit `aa2c3de`; no implementation commit yet.
 
 ## Problem Statement
 

@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-12-minify-sloppy-code-01`.
 
 Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
 
-Planning commit-hash receipt: pending.
+Planning commit-hash receipt: root commit `aa2c3de`.
 
 Question:
 
