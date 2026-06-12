@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-12-minify-sloppy-code-01`.
 
 Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
 
-Current coder session id: pending reviewer-accepted slice.
+Current coder session id: `coder-2026-06-12-host-terminal-render-result-collapse-01`.
 
 Loop commit-hash receipt: planning package closed in root commit `aa2c3de`.
 
@@ -32,8 +32,8 @@ Active research target:
 Current step:
 
 - Reviewer accepted the active research package.
-- Slices 1, 2, and 3 are accepted and committed.
-- Orchestrator has seeded Slice 4 for execution.
+- Slices 1, 2, 3, and 4 are accepted and committed.
+- Orchestrator has seeded Slice 5 for execution.
 - Coder may execute only the active condensed execution contract below.
 
 Exact non-goals:
@@ -547,3 +547,63 @@ Team scratchpad
 - Intended task: verify and commit reviewer-accepted Slice 4.
 - How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test`, `cd /home/home/personal/projects/howl/howl-vt && zig build test`, `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`, `cd /home/home/personal/projects/howl/howl-vt && zig build benchmark:m7_baseline:build`, and `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/benchmark_main.zig howl-vt/src/test/terminal_benchmark.zig`; accepted implementation was committed in `howl-render` as `57f2557` and in `howl-vt` as `2bd2d79`.
 - Next handoff or blocker: root submodule/loop receipt commit is pending; after that the orchestrator may seed Slice 5 from the accepted plan.
+
+Completed execution receipt for coder session `coder-2026-06-12-benchmark-helper-deduplication-01`:
+
+- Slice: `benchmark-helper-deduplication`.
+- Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
+- Verification:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`: passed.
+  - `cd /home/home/personal/projects/howl/howl-vt && zig build test`: passed.
+  - `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`: passed.
+  - `cd /home/home/personal/projects/howl/howl-vt && zig build benchmark:m7_baseline:build`: passed.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/benchmark_main.zig howl-vt/src/test/terminal_benchmark.zig`: passed.
+- Commit receipts:
+  - `howl-render` `57f2557`.
+  - `howl-vt` `2bd2d79`.
+  - root `0c9e060`.
+
+Condensed execution contract for coder session `coder-2026-06-12-host-terminal-render-result-collapse-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`
+- Implement only Slice 5, `host-terminal-render-result-collapse`.
+- Allowed files:
+  - `howl-linux-host/src/terminal/context.zig`
+  - `howl-linux-host/src/terminal/context_test.zig`
+  - `loops/whole-workspace-minification-live-loop.txt` only for the required coder note
+- Required shape:
+  - Collapse repeated zero `DriveResult` and `SubmitPreparedResult` literals into exact owner-local constructors such as `failedSubmit`, `idleDrive`, or equivalent domain nouns.
+  - Consider nesting upload telemetry as one exact `UploadStats` or `RenderTiming` field only if it reduces repeated field fanout and remains owner-true.
+  - Do not create a generic `Result` or `Info` bucket.
+  - Keep `Context` as the per-terminal owner; do not rename `Context` in this slice because it is a public host owner seam.
+  - Preserve lock/unlock ordering around prepared upload at `context.zig:644-660` and keep that ordering obvious in the diff.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+  - Existing `terminal/context_test.zig` tests.
+  - Add or sharpen tests for failed upload, stale handle, and idle render-action result constructors if not already covered.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/terminal/context.zig`
+- Non-goals:
+  - No GL upload behavior changes.
+  - No `Processor` event-loop changes.
+  - No ABI changes.
+  - No file motion or shared helper file.
+- Stop conditions:
+  - Stop if lock ordering becomes less obvious.
+  - Stop if collapsing fields hides which phase produced `prepare_ns`, `upload_ns`, or `retained_submit_ns`.
+  - Stop if the slice requires touching files outside the allowed list.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - lock-order preservation note
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-12-host-terminal-render-result-collapse-01`
+  - commit-hash handoff status for orchestrator receipt closure
+
+32. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 4 root receipt and seed Slice 5 from the accepted minification plan.
+- How one task went: Slice 4 root receipt closed as `0c9e060`, and Slice 5 now has an exact condensed execution contract limited to host terminal context files, with lock-order preservation and render timing visibility called out as hard gates.
+- Next handoff or blocker: commit this Slice 5 execution seed, then coder session `coder-2026-06-12-host-terminal-render-result-collapse-01` may execute only that contract.

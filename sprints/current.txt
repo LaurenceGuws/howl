@@ -24,7 +24,8 @@ Active restart note:
 - Slice 1, `render-emitter-duplicate-pass-collapse`, is accepted and committed in `howl-render` `49dfaf9` and root `33fecd5`.
 - Slice 2, `render-generated-special-routing-parity-proof`, is accepted and committed in `howl-render` `c91ac5c` and root `2ffd424`.
 - Slice 3, `render-generated-special-raster-owner-deletion`, is accepted and committed in `howl-render` `2452fb6` and root `14ecbf9`.
-- The active step is execution of Slice 4, `benchmark-helper-deduplication`.
+- Slice 4, `benchmark-helper-deduplication`, is accepted and committed in `howl-render` `57f2557`, `howl-vt` `2bd2d79`, and root `0c9e060`.
+- The active step is execution of Slice 5, `host-terminal-render-result-collapse`.
 - Coding is authorized only from the condensed execution contract in `loops/whole-workspace-minification-live-loop.txt`.
 
 Execution rule:
