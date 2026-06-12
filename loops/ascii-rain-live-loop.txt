@@ -13,7 +13,7 @@ Accepted payload initialization worker session id: `worker-2026-06-12-payload-in
 Current required worker session id: pending for the next bottleneck-proof pass after payload initialization.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-styled-ascii-direct-normal-scan-01`.
-Reviewer session id: pending for the styled ASCII direct-normal scan cycle.
+Reviewer session id: `review-2026-06-12-styled-ascii-direct-normal-scan-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -623,3 +623,17 @@ Team scratchpad
 - Intended task: close the stopped default-style fast-candidate attempt without committing unaccepted render code, then promote the corrected styled ASCII research target.
 - How one task went: the failed render edits were removed, the proof receipts `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-015956-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-020015-ascii/summary.json` are retained, and the next target is styled/color ASCII direct-normal publication.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-styled-ascii-direct-normal-scan-plan.md`; no correctness or vague-bucket blocker is known.
+
+38. Role: researcher
+- Session id: `research-2026-06-12-styled-ascii-direct-normal-scan-01`
+- Hello: hello
+- Intended task: prove the live styled/color ASCII publication subset and produce one reviewer-acceptable direct-normal worker slice without implementation.
+- How one task went: current source proves ASCII mode emits printable glyphs with indexed foreground/background plus accumulated SGR `0...7`, and the plan now requires a tri-state publication fast candidate so unsupported cells fall through to generic fallback instead of being skipped.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-styled-ascii-direct-normal-scan-plan.md`; no blocker, but execution must stop if the timing rerun does not beat `direct_normal_scan_avg_us=883`.
+
+39. Role: reviewer
+- Session id: `review-2026-06-12-styled-ascii-direct-normal-scan-01`
+- Hello: hello
+- Intended task: gate the styled ASCII direct-normal scan plan before worker execution.
+- How one task went: review first rejected unsafe space handling, contradictory RGB support, and weak unsupported-cell no-leak proof; the corrected plan now excludes spaces and RGB from the fast subset, requires generic fallback tests for both, and requires no partial scratch leakage for unsupported cases.
+- Next handoff or blocker: seed the accepted `direct-normal-styled-ascii-publication-fast-candidate` worker slice; no blocker.
