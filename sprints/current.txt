@@ -32,10 +32,10 @@ Active restart note:
 - Slice 9, `host-input-literal-table-collapse`, is accepted and committed in `howl-linux-host` `1eb35f8` and root `2419eb5`.
 - Slice 10, `render-text-prepare-pipeline-split`, is accepted and committed in `howl-render` `fc9de8d` and root `95928f3`.
 - Slice 11, `bucket-struct-naming-and-legitimacy-pass`, is accepted and committed in `howl-pty` `dd124dd`, `howl-vt` `c23a267`, and root `c250535`.
-- Slice 12, `anytype-usize-and-cast-boundary-pass`, is accepted and committed in `howl-linux-host` `c509c4e`, `howl-vt` `681bc28`, `howl-render` `84ea714`, with root receipt pending.
+- Slice 12, `anytype-usize-and-cast-boundary-pass`, is accepted and committed in `howl-linux-host` `c509c4e`, `howl-vt` `681bc28`, `howl-render` `84ea714`, and root `0b47d48`.
 - Rain-bench linked-library wrapper fix is committed in root `3830f81`.
-- The active step is execution of Slice 13, `root-tooling-and-active-surface-hygiene`.
-- Coding is authorized only from the condensed execution contract in `loops/whole-workspace-minification-live-loop.txt`.
+- Slice 13, `root-tooling-and-active-surface-hygiene`, is in final review/receipt closure.
+- No further coding is authorized from this sprint after Slice 13 root receipt closes.
 
 Execution rule:
 
