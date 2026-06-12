@@ -13,8 +13,8 @@ Accepted payload initialization worker session id: `worker-2026-06-12-payload-in
 Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled-ascii-direct-normal-fast-01`.
 Current required worker session id: pending for the next bottleneck-proof pass after styled ASCII direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: `research-2026-06-12-post-empty-space-direct-normal-scan-01`.
-Reviewer session id: `review-2026-06-12-post-empty-space-direct-normal-scan-01`.
+Researcher session id: `research-2026-06-12-direct-normal-generic-fallback-01`.
+Reviewer session id: pending for the direct-normal generic fallback cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -167,7 +167,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-post-empty-space-direct-normal-scan-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-generic-fallback-plan.md`
 
 Research goal:
 
@@ -736,3 +736,17 @@ Team scratchpad
 - Intended task: explain the remaining post-empty-space direct-normal scan debt and produce one reviewer-ready worker slice without implementing.
 - How one task went: current source proved the residual scan bucket includes multiple child owners under `appendVisible` and `appendRenderable`, so the plan now requires proof-only child timing before any new optimization.
 - Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-post-empty-space-direct-normal-scan-plan.md`; optimization remains blocked until the child-cost proof line-owns the residual scan debt.
+
+48. Role: coder/worker
+- Session id: `worker-2026-06-12-direct-normal-child-cost-proof-01`
+- Hello: hello
+- Intended task: execute the accepted proof-only `direct-normal-scan-child-cost-proof` slice, rank temporary child costs inside `direct_normal_scan_avg_us`, and remove all source instrumentation before handoff.
+- How one task went: the 3-second receipt `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-025340-ascii/summary.json` ranked `scan_generic_candidate_avg_us=767` largest, followed by `scan_publication_candidate_avg_us=276`, `scan_append_face_avg_us=249`, and `scan_damage_avg_us=236`; per-cell timer overhead inflated aggregate `direct_normal_scan_avg_us=2909`, so the proof is ranking-only, not additive timing truth.
+- Next handoff or blocker: source instrumentation was removed cleanly and clean-source unit tests passed; next research should target generic publication fallback/classification under `direct_normal.sourceCandidate` unless reviewer treats the timer perturbation as a proof-gap blocker.
+
+49. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: promote the child-cost proof into the next active research target while preserving its ranking-only limitation.
+- How one task went: the child proof receipts `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-025154-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-025340-ascii/summary.json` are retained as instrumentation proof only; they are not product FPS baselines.
+- Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-generic-fallback-plan.md`; no correctness or vague-bucket blocker is known.
