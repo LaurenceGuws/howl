@@ -1,3 +1,9 @@
+# Historical Authority: Done
+
+- Historical authority at the time: accepted planning package for direct VT ABI source-of-truth slice, closed by root commit `de8f30c` and nested render/host history.
+- Why superseded or done: implementation and follow-up alias deletion batch were accepted, committed, and pushed.
+- Must not be used for: active minification planning authority or new slice execution without re-proof from current source.
+
 Render VT ABI source-of-truth plan
 
 Date: 2026-06-12.

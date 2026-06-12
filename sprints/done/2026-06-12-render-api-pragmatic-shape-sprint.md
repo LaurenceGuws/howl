@@ -1,3 +1,9 @@
+# Historical Authority: Done
+
+- Historical authority at the time: active sprint through root commit `de8f30c` and nested commits `howl-render` `97e386b`, `howl-pty` `c908f42`, `howl-vt` `7bdf98f`.
+- Why superseded or done: render API pragmatic shape cleanup slices were executed, committed, and pushed; the active sprint is now whole-workspace minification planning.
+- Must not be used for: current execution authority, active scope, or fresh slice authorization.
+
 # Sprint: Render API Pragmatic Shape
 
 Date: 2026-06-12.

@@ -1,3 +1,9 @@
+# Historical Authority: Done
+
+- Historical authority at the time: active render API loop through root commit `de8f30c` and nested commits `howl-render` `97e386b`, `howl-pty` `c908f42`, `howl-vt` `7bdf98f`.
+- Why superseded or done: render API cleanup and alias-wrapper deletion batch are committed and pushed; user requested a new whole-workspace minification sprint.
+- Must not be used for: current execution authority, active reviewer continuity, or new slice authorization.
+
 Render API pragmatic shape live loop scratchpad
 
 Date: 2026-06-12.

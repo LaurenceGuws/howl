@@ -1,0 +1,165 @@
+Whole workspace minification live loop scratchpad
+
+Date: 2026-06-12.
+
+Role owner: orchestrator.
+
+Status: active planning loop.
+
+Orchestrator session id: `orch-2026-06-12-minify-sloppy-code-01`.
+
+Researcher session id: `research-2026-06-12-minify-sloppy-code-01`.
+
+Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
+
+Current coder session id: pending reviewer-accepted slice.
+
+Loop commit-hash receipt: planning package pending.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, coder, researcher, or reviewer pass must append a short note with role/session id, hello, intent, one outcome, and next handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-12-whole-workspace-minification-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`
+
+Current step:
+
+- Reviewer accepted the active research package.
+- Orchestrator has seeded Slice 1 for execution.
+- Coder may execute only the condensed execution contract below.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No sprint narrowing, v1 language, or partial cleanup unless the user explicitly narrows scope.
+- No Howl-only owner inventions while Alacritty, Ghostty, TigerBeetle, Kitty, or official docs provide source-backed pressure.
+- No compatibility aliases or wrapper preservation without a concrete ABI/downstream need.
+
+Exact stop conditions:
+
+- Stop if the active research cannot name exact allowed files, required shapes, tests, non-goals, stop conditions, and receipt fields for each slice.
+- Stop if current source and references conflict in a way that needs explicit user override.
+- Stop if the plan leaves stale active artifacts in `loops/`, `research/`, or `sprints/`.
+- Stop if proposed minification is just file motion, naming churn, or reduced LOC without owner/control-spine proof.
+
+Condensed execution contract for coder session `coder-2026-06-12-render-emitter-duplicate-pass-collapse-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`
+- Implement only Slice 1, `render-emitter-duplicate-pass-collapse`.
+- Allowed files:
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - `howl-render/src/prepared/render_surface_emitter_test.zig`
+- Required shape:
+  - Keep `Emitter` as owner and keep bounded arrays in `render_surface_emitter.zig`.
+  - Collapse duplicate `emitPrepared` / `emitPreparedFresh` pass bodies into one owner-local pass helper or exact private mode shape.
+  - Keep parent pass order visible: reset, full damage, full-redraw clear, clears, backgrounds, decorations, sprites, cursors, publish.
+  - Preserve fresh rollback behavior.
+  - Preserve non-fresh copy-in/copy-out behavior.
+  - Add assertions that published surface and resource state update only after all append passes succeed.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`
+  - Existing reusable/fresh emitter tests in `howl-render/src/prepared/render_surface_emitter_test.zig`.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/prepared/render_surface_emitter.zig`
+- Non-goals:
+  - No ABI changes.
+  - No debug timing redesign.
+  - No sprite-resource-store redesign.
+  - No file motion.
+  - No edits outside the allowed files.
+- Stop conditions:
+  - Stop if fresh/non-fresh behavior cannot be expressed without hiding rollback/copy semantics.
+  - Stop if tests require touching C ABI headers, host GL code, or any file outside the allowed list.
+  - Stop if the parent pass order becomes less visible.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-12-render-emitter-duplicate-pass-collapse-01`
+  - commit-hash handoff status for orchestrator receipt closure
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: archive stale render API accountability and seed the new whole-workspace minification planning surface.
+- How one task went: prior render planning artifacts were moved to `done/` with historical headers, and the active sprint index now points only at the minification sprint, loop, and research target.
+- Next handoff or blocker: researcher should produce the full current-source minification plan for reviewer gate; no coder is authorized.
+
+2. Role: researcher
+- Session id: `research-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: audit current source and references for the full whole-workspace minification sprint and write the active research artifact.
+- How one task went: current root and nested heads were checked, `style.py --by-repo --format json` was used only as a signal, and the research plan now maps exact current-code anchors into ordered executable slices.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`; no coder is authorized until reviewer acceptance and orchestrator seeding.
+
+3. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review the active whole-workspace minification planning package for full scope, exact slice boundaries, source proof, tests, receipts, and current-only active artifacts.
+- How one task went: active artifact hygiene passed at the top level (`loops/`, `research/`, and `sprints/` contain only the active package plus archive directories), and Slice 1 was verified as a legitimate first local duplicate-pass collapse from `howl-render/src/prepared/render_surface_emitter.zig:288-362`.
+- Verdict: reject.
+- Findings: Slice 11 violates the planning gate for exact allowed files. `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md:514-520` says allowed files are "Only files still above local threshold after Slices 1-10" plus initial candidates. That leaves file selection to a later coder/orchestrator pass instead of giving the coder exact allowed files as required by `/home/home/personal/projects/howl/loop/flow.md:24-31` and the user review standard.
+- Findings: Slice 2 is not safe enough as written and needs a preliminary parity/coverage proof slice or tighter allowed files. The plan asks to make `text/raster/special.zig` the sole generated special raster owner and prove parity for migrated powerline/block/eight/mosaic/branch cases at `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md:182-221`, but the allowed files omit `howl-render/src/text/classify/special_glyphs.zig` and `howl-render/src/text/classify/symbol_map.zig` even though current support/routing truth lives there at `special_glyphs.zig:11-24` and `symbol_map.zig:4-11`. Current FT/HB fallback still calls `special_sprite.rasterizeSpecialSpriteAlpha` at `howl-render/src/text/ft_hb/glyph_raster.zig:152-162`, and current special-sprite-only tested families include `0x1fb3c`, `0x1fb7c`, `0x1fba0`, `0x1fb8c`, `0x1fb98`, `0x1fb9a`, and `0x1fb9c` at `glyph_raster.zig:242-255`, while branch ownership exists only in `special_sprite.zig:83` and `special_sprite.zig:483`. This slice would force coder invention about classification/routing coverage or visual parity.
+- Findings: The active sprint artifact is stale relative to the research output. `/home/home/personal/projects/howl/sprints/2026-06-12-whole-workspace-minification-sprint.md:11-15` still marks researcher and reviewer as pending and has no ordered slice queue, while the active research artifact has a completed 12-slice plan at `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md:143-581`. Planning may keep research separate during review, but this package cannot be accepted as the execution-ready sprint plan until the sprint artifact is made current after correction and reviewer acceptance.
+- Rejection seed: researcher should correct the active research plan before another reviewer gate by replacing Slice 11 with exact post-Slice-10 candidate files or splitting it into named per-owner boundary slices; splitting Slice 2 into a parity/coverage proof slice before deletion or expanding the allowed files and required tests so classification, routing, and generated-raster support changes are explicitly owned; and making the active sprint artifact current only after the corrected plan is accepted. No coder is authorized.
+- Next handoff or blocker: researcher correction required; no user decision is needed unless the team wants to keep Slice 2 risky without preliminary parity proof, which would require an explicit override receipt.
+
+4. Role: researcher
+- Session id: `research-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: correct the rejected minification planning package without implementing product code or changing sprint metadata.
+- How one task went: current render special routing was re-read through `special_glyphs.zig`, `symbol_map.zig`, `lane.zig`, `resolver.zig`, `glyph_raster.zig`, `special.zig`, and `special_test.zig`; the research plan now splits special-glyph work into an exact routing/parity proof slice followed by deletion only after proof, and the boundary pass now has a fixed allowed-file list instead of threshold-based selection.
+- Next handoff or blocker: reviewer should re-gate `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`; orchestrator still owns sprint metadata promotion after reviewer acceptance, and no coder is authorized.
+
+5. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: re-gate the corrected whole-workspace minification planning package against the previous rejection findings and workflow acceptance rules.
+- How one task went: Slice 11 now uses exact allowed files, the risky generated-special deletion is split into a routing/parity proof slice before deletion with `special_glyphs.zig` and `symbol_map.zig` included, and the active sprint file now records researcher/reviewer session ids instead of marking them pending.
+- Verdict: reject.
+- Findings: The active research artifact still cannot be accepted as an accepted planning artifact because it records `Reviewer session id: review-2026-06-12-minify-sloppy-code-01 pending` at `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md:13`. `/home/home/personal/projects/howl/loop/flow.md:32-36` requires accepted planning artifacts to record reviewer session id, not a pending reviewer receipt.
+- Findings: The active research artifact also contains stale metadata guidance at `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md:678`, claiming `/home/home/personal/projects/howl/sprints/2026-06-12-whole-workspace-minification-sprint.md:11-15` still says researcher/reviewer pending. Current sprint lines 11-15 now show concrete researcher/reviewer ids and only the planning commit-hash receipt pending, so the research package is internally stale against the live active sprint surface.
+- Acceptance notes if corrected: first executable slice remains Slice 1, Render Emitter Duplicate Pass Collapse. Orchestrator seeding constraints should require only `howl-render/src/prepared/render_surface_emitter.zig` and `howl-render/src/prepared/render_surface_emitter_test.zig`, preserve fresh rollback and non-fresh copy-in/copy-out semantics visibly, forbid debug timing redesign/ABI/file motion, and require `zig build test` in `howl-render` plus the file style metric before acceptance.
+- Next handoff or blocker: researcher or orchestrator must correct the active research metadata/stale note only; no product-code implementation is authorized.
+
+6. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: correct the reviewer-found stale metadata in the active research artifact before re-gating.
+- How one task went: the research artifact now records reviewer session id `review-2026-06-12-minify-sloppy-code-01` directly and no longer claims the sprint metadata is pending.
+- Next handoff or blocker: reviewer should re-gate the same planning package; no coder is authorized.
+
+7. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: final re-gate the metadata-corrected whole-workspace minification planning package.
+- How one task went: prior rejection findings are fixed; the active research artifact records reviewer session id directly, the stale sprint-metadata risk note is gone, and the corrected full plan is accepted.
+- Verdict: accept.
+- Acceptance notes: first executable slice is Slice 1, Render Emitter Duplicate Pass Collapse, with allowed files limited to `howl-render/src/prepared/render_surface_emitter.zig` and `howl-render/src/prepared/render_surface_emitter_test.zig`; preserve fresh rollback and non-fresh copy-in/copy-out semantics visibly; forbid ABI changes, debug timing redesign, sprite-resource-store redesign, and file motion; require `howl-render` `zig build test` plus the file style metric.
+- Next handoff or blocker: orchestrator should seed the first execution contract and keep planning commit receipt pending until committed.
+
+8. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: promote the accepted planning package and seed the first execution contract without implementing it.
+- How one task went: `sprints/current.txt`, the active sprint file, and this loop now identify the reviewer-accepted plan and the exact Slice 1 execution contract.
+- Next handoff or blocker: coder may execute only `coder-2026-06-12-render-emitter-duplicate-pass-collapse-01`; planning commit-hash receipt remains pending until the user asks for a commit.
+
+7. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: re-gate the corrected minification planning package after metadata-only fixes, without implementing or committing.
+- How one task went: the prior rejection findings are fixed; the research artifact records the concrete reviewer session id and the risk/proof-gap note no longer claims researcher/reviewer sprint metadata is pending.
+- Verdict: accept.
+- Acceptance notes: first executable slice is Slice 1, Render Emitter Duplicate Pass Collapse. Orchestrator seeding must constrain the coder to only `howl-render/src/prepared/render_surface_emitter.zig` and `howl-render/src/prepared/render_surface_emitter_test.zig`; preserve fresh rollback and non-fresh copy-in/copy-out semantics visibly; keep the parent pass order visible as reset, full damage, full-redraw clear, clears, backgrounds, decorations, sprites, cursors, publish; forbid ABI changes, debug timing redesign, sprite-resource-store redesign, and file motion; require assertions that published surface/resource state update only after append passes succeed; require `zig build test` in `howl-render`; require existing reusable/fresh emitter tests; and require the file style metric for `howl-render/src/prepared/render_surface_emitter.zig` before slice acceptance.
+- Next handoff or blocker: orchestrator may seed Slice 1 for execution with session receipts and commit-hash demand; no broader slice or product-code work is authorized by this review note.

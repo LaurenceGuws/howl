@@ -7,28 +7,28 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-12-render-api-pragmatic-shape-sprint.md`
+- `sprints/2026-06-12-whole-workspace-minification-sprint.md`
 
 Active research:
 
-- `research/2026-06-12-render-vt-abi-source-plan.md`
+- `research/2026-06-12-whole-workspace-minification-plan.md`
 
 Active loops:
 
-- `loops/render-api-pragmatic-shape-live-loop.txt`
+- `loops/whole-workspace-minification-live-loop.txt`
 
 Active restart note:
 
-- The prior ASCII-rain micro-bottleneck sprint is deferred.
-- The current live sprint tackles the larger blocker first: oversized render machinery and non-pragmatic render API shape.
-- The completed first execution slice was `render-api-vt-sfc-rdr-sfc-first-cut`.
-- The current active step is execution of reviewer-accepted slice `render-vt-abi-direct-publish-first-cut`.
+- Prior render API pragmatic shape artifacts are archived as done and are navigation only.
+- The active whole-workspace minification planning package is reviewer-accepted.
+- The active step is execution seeding for Slice 1, `render-emitter-duplicate-pass-collapse`.
+- Coding is authorized only from the condensed execution contract in `loops/whole-workspace-minification-live-loop.txt`.
 
 Execution rule:
 
-- Only the active sprint and active loop are authoritative for the current step.
-- The seeded active research artifact is authoritative for accepted slice `render-vt-abi-direct-publish-first-cut`.
-- Deferred or done planning artifacts are navigation only until a new slice is explicitly accepted from the live active surface.
+- Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
+- The accepted research artifact is authoritative for the ordered minification slice plan.
+- Deferred or done planning artifacts are navigation only until fresh current-source proof re-promotes a fact into the active research artifact.
 
 Rule:
 
