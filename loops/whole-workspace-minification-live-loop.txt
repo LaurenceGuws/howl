@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-12-minify-sloppy-code-01`.
 
 Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
 
-Current coder session id: `coder-2026-06-12-host-terminal-render-result-collapse-01`.
+Current coder session id: `coder-2026-06-12-vt-report-bucket-removal-01`.
 
 Loop commit-hash receipt: planning package closed in root commit `aa2c3de`.
 
@@ -32,8 +32,8 @@ Active research target:
 Current step:
 
 - Reviewer accepted the active research package.
-- Slices 1, 2, 3, and 4 are accepted and committed.
-- Orchestrator has seeded Slice 5 for execution.
+- Slices 1, 2, 3, 4, and 5 are accepted and committed.
+- Orchestrator has seeded Slice 6 for execution.
 - Coder may execute only the active condensed execution contract below.
 
 Exact non-goals:
@@ -636,3 +636,59 @@ Condensed execution contract for coder session `coder-2026-06-12-host-terminal-r
 - Intended task: verify and commit reviewer-accepted Slice 5.
 - How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-linux-host && zig build test` and `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/terminal/context.zig`; accepted implementation was committed in `howl-linux-host` as `4005d43`.
 - Next handoff or blocker: root submodule/loop receipt commit is pending; after that the orchestrator may seed Slice 6 from the accepted plan.
+
+Completed execution receipt for coder session `coder-2026-06-12-host-terminal-render-result-collapse-01`:
+
+- Slice: `host-terminal-render-result-collapse`.
+- Reviewer session id: `review-2026-06-12-minify-sloppy-code-01`.
+- Verification:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`: passed.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/terminal/context.zig`: passed.
+- Commit receipts:
+  - `howl-linux-host` `4005d43`.
+  - root `14a8bf0`.
+
+Condensed execution contract for coder session `coder-2026-06-12-vt-report-bucket-removal-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-12-whole-workspace-minification-plan.md`
+- Implement only Slice 6, `vt-report-bucket-removal`.
+- Allowed files:
+  - `howl-vt/src/control/report.zig`
+  - `howl-vt/src/control/report_test.zig`
+  - `howl-vt/src/terminal.zig`
+  - `loops/whole-workspace-minification-live-loop.txt` only for the required coder note
+- Required shape:
+  - Delete or rename `Context` at `report.zig:90-103`.
+  - Prefer exact helper arguments for simple appenders and narrow view structs only where they are actual protocol views, such as cursor report, charset report, or mode views.
+  - Keep report side effects explicit: pending output append, checksum flag mutation, and active-screen reads must remain visible at call sites.
+  - Follow Ghostty pressure: terminal handler/effects are explicit; do not hide all report effects in one local bucket.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-vt && zig build test`
+  - Existing `control/report_test.zig` tests.
+  - Terminal OSC/report tests if wired: `terminal_osc_test.zig`, `terminal_modes_test.zig`.
+  - `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-vt/src/control/report.zig`
+- Non-goals:
+  - No protocol behavior changes.
+  - No new report support.
+  - No parser/action vocabulary redesign.
+  - No C ABI surface changes.
+- Stop conditions:
+  - Stop if any report action loses rollback behavior around pending output.
+  - Stop if the slice requires changing C ABI surfaces.
+  - Stop if the slice requires touching files outside the allowed list.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - list of report actions whose argument threading changed
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-12-vt-report-bucket-removal-01`
+  - commit-hash handoff status for orchestrator receipt closure
+
+36. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 5 root receipt and seed Slice 6 from the accepted minification plan.
+- How one task went: Slice 5 root receipt closed as `14a8bf0`, and Slice 6 now has an exact condensed execution contract limited to VT report/terminal files, with explicit report side effects and rollback behavior called out as hard gates.
+- Next handoff or blocker: commit this Slice 6 execution seed, then coder session `coder-2026-06-12-vt-report-bucket-removal-01` may execute only that contract.
