@@ -12,8 +12,8 @@ Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-f
 Accepted payload initialization worker session id: `worker-2026-06-12-payload-in-place-init-01`.
 Current required worker session id: pending for the next bottleneck-proof pass after payload initialization.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: `research-2026-06-12-post-payload-direct-normal-scan-01`.
-Reviewer session id: `review-2026-06-12-post-payload-direct-normal-scan-01`.
+Researcher session id: `research-2026-06-12-styled-ascii-direct-normal-scan-01`.
+Reviewer session id: pending for the styled ASCII direct-normal scan cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -166,7 +166,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-post-payload-direct-normal-scan-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-styled-ascii-direct-normal-scan-plan.md`
 
 Research goal:
 
@@ -609,3 +609,17 @@ Team scratchpad
 - Intended task: gate the active post-payload direct-normal scan plan before worker execution.
 - How one task went: current source confirmed the proposed slice stays inside `direct_normal.zig` and adjacent publication tests, preserves generic fallback for unsupported publication cells, and has explicit timing receipts and stop conditions.
 - Next handoff or blocker: accepted for orchestrator seeding; commit-hash closure remains pending with the planning package.
+
+36. Role: coder/worker
+- Session id: `worker-2026-06-12-direct-normal-ascii-fast-candidate-01`
+- Hello: hello
+- Intended task: implement the accepted `direct-normal-publication-ascii-fast-candidate` slice inside the direct-normal owner and prove it against unit tests and live timing.
+- How one task went: the strict default-style ASCII publication fast candidate and owner-local tests were added, but the live ASCII-rain timing reruns reported `direct_normal_scan_avg_us=891` and `887`, and `ascii_rain_stress.zig` emits random SGR foreground/background/style changes in ASCII mode, so the live cells do not fit the strict default-style subset.
+- Next handoff or blocker: stop condition is active; no broadening into styled or colored publication cells was attempted, and commit-hash closure remains pending.
+
+37. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the stopped default-style fast-candidate attempt without committing unaccepted render code, then promote the corrected styled ASCII research target.
+- How one task went: the failed render edits were removed, the proof receipts `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-015956-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-020015-ascii/summary.json` are retained, and the next target is styled/color ASCII direct-normal publication.
+- Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-styled-ascii-direct-normal-scan-plan.md`; no correctness or vague-bucket blocker is known.
