@@ -14,7 +14,7 @@ Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled
 Current required worker session id: pending for the next bottleneck-proof pass after styled ASCII direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-post-empty-space-direct-normal-scan-01`.
-Reviewer session id: pending for the post-empty-space direct-normal scan cycle.
+Reviewer session id: `review-2026-06-12-post-empty-space-direct-normal-scan-01`.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -702,6 +702,20 @@ Team scratchpad
 - How one task went: render is clean again, and the failed timing proof shows semantic-empty spaces are not the next acceptable optimization despite passing correctness checks.
 - Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-post-empty-space-direct-normal-scan-plan.md`; no correctness or vague-bucket blocker is known.
 
+49. Role: researcher
+- Session id: `research-2026-06-12-post-empty-space-direct-normal-scan-01`
+- Hello: hello
+- Intended task: replan after the semantic-empty timing stop without guessing another direct-normal optimization.
+- How one task went: the plan concludes optimization is blocked until a proof-only child-cost split line-owns the remaining `direct_normal_scan_avg_us=811` debt.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-post-empty-space-direct-normal-scan-plan.md`; no correctness blocker, but optimization is not authorized yet.
+
+50. Role: reviewer
+- Session id: `review-2026-06-12-post-empty-space-direct-normal-scan-01`
+- Hello: hello
+- Intended task: gate the proof-only direct-normal child-cost plan before worker execution.
+- How one task went: the plan was accepted because temporary edits are bounded to exact files, cleanup before handoff is mandatory, optimization is forbidden, child timing fields are explicit, and proof/stop gates are concrete.
+- Next handoff or blocker: seed `direct-normal-scan-child-cost-proof`; no blocker.
+
 45. Role: researcher
 - Session id: `research-2026-06-12-post-styled-direct-normal-scan-01`
 - Hello: hello
@@ -715,3 +729,10 @@ Team scratchpad
 - Intended task: implement the accepted semantic-empty publication space fast candidate inside the two-file render boundary and prove it with unit tests plus live timing.
 - How one task went: the owner-local fast candidate and fallback/no-leak tests passed unit proof, but the required timing reruns missed the `direct_normal_scan_avg_us < 811` gate with final attempts at `846` and `890`.
 - Next handoff or blocker: stop condition is active; I did not run the 10-second control rerun or broaden into styled/colored/tab/RGB/linked/selected/combining/continuation blanks.
+
+47. Role: researcher
+- Session id: `research-2026-06-12-post-empty-space-direct-normal-scan-01`
+- Hello: hello
+- Intended task: explain the remaining post-empty-space direct-normal scan debt and produce one reviewer-ready worker slice without implementing.
+- How one task went: current source proved the residual scan bucket includes multiple child owners under `appendVisible` and `appendRenderable`, so the plan now requires proof-only child timing before any new optimization.
+- Next handoff or blocker: reviewer should gate `/home/home/personal/projects/howl/research/2026-06-12-post-empty-space-direct-normal-scan-plan.md`; optimization remains blocked until the child-cost proof line-owns the residual scan debt.
