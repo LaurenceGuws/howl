@@ -1007,3 +1007,45 @@ Condensed execution contract for coder session `coder-2026-06-13-pty-posix-lifec
 - Commit-hash receipt: nested `howl-render` `fc9de8d`; root receipt commit pending.
 - Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
 - Next handoff or blocker: commit this root receipt and submodule pointer, then seed Slice 11 from the accepted minification plan.
+
+58. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: execute Slice 11, `bucket-struct-naming-and-legitimacy-pass`, after root Slice 10 receipt `95928f3`.
+- How one task went: inspected all allowed flagged `Config`/`State`/`Options` names and changed only the two names whose call sites stayed local/inferred and whose new names improved owner truth: `howl-pty/src/session.zig` `Config` -> `InitConfig`; `howl-vt/src/simulation/protocol.zig` `Options` -> `DeterminismOptions`.
+- Decision table: `howl-pty/src/session.zig` `Config`: rename to `InitConfig`; reason: session initialization input, not general configuration, and no broad call-site churn because callers infer `Session.init` parameter type.
+- Decision table: `howl-vt/src/simulation/protocol.zig` `Options`: rename to `DeterminismOptions`; reason: protocol simulation determinism run budget, not broad options, and usage stays inside the simulation protocol owner plus inferred `defaultOptions` callers.
+- Decision table: `howl-vt/src/host/state.zig` `State`: keep; reason: renaming to a sharper public `HostState` shape requires `howl-vt/src/terminal.zig` and test/import churn outside the allowed Slice 11 file list; stop condition blocks broad import churn without owner clarity inside this slice.
+- Decision table: `howl-linux-host/src/config/terminal.zig` `Config`: keep; reason: config module owner, accepted plan says config-file `Config` may be owner-true and should not be renamed for metrics only.
+- Decision table: `howl-linux-host/src/config/tab_bar.zig` `Config`: keep; reason: config module owner, same config-file exception.
+- Decision table: `howl-linux-host/src/terminal/render/surface_layout.zig` `State`: keep; reason: better domain name would require `terminal/context.zig` call-site churn outside allowed files; current field owner already names it `geometry` at use sites.
+- Decision table: `howl-linux-host/src/terminal/render/retained.zig` `State`: keep; reason: better domain name would require `terminal/term.zig` call-site churn outside allowed files; retained render field is already named `render` at use sites.
+- Decision table: `howl-linux-host/src/terminal/scrollbar.zig` `State`: keep; reason: better domain name would require `terminal/context.zig` call-site churn outside allowed files; current field owner already names it `scrollbar` at use sites.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig fmt src/session.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-vt && zig fmt src/simulation/protocol.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/session.zig howl-vt/src/host/state.zig howl-vt/src/simulation/protocol.zig howl-linux-host/src/config/terminal.zig howl-linux-host/src/config/tab_bar.zig howl-linux-host/src/terminal/render/surface_layout.zig howl-linux-host/src/terminal/render/retained.zig howl-linux-host/src/terminal/scrollbar.zig`: passed; flagged bucket count dropped from 8 to 6.
+- Scope: no behavior changes, no file motion, no compatibility aliases, no ABI-visible names changed.
+- Commit-hash handoff status: pending reviewer and orchestrator commit.
+- Next handoff or blocker: reviewer must check per-struct keep/rename decisions, allowed-file scope, and tests before commit.
+
+59. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review Slice 11, `bucket-struct-naming-and-legitimacy-pass`, against the per-name decision table, actual PTY/VT diffs, public import surfaces, ABI boundary, allowed-file scope, and claimed verification.
+- How one task went: product diffs are limited to `howl-pty/src/session.zig` and `howl-vt/src/simulation/protocol.zig`; `Config` -> `InitConfig` and `Options` -> `DeterminismOptions` are exact owner-domain names with no stale `session.Config` or `protocol.Options` source uses; the remaining `State` and config-module `Config` keep decisions are legitimate stop-condition/config-owner decisions rather than fake metric minimalism; no C ABI symbol/header or behavior boundary changed; and local reruns of the touched-repo tests plus the full allowed-file style metric passed.
+- Verdict: accept.
+- Findings: none.
+- Acceptance notes: orchestrator must rerun before commit: `cd /home/home/personal/projects/howl/howl-pty && zig fmt src/session.zig && zig build test`; `cd /home/home/personal/projects/howl/howl-vt && zig fmt src/simulation/protocol.zig && zig build test`; `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/session.zig howl-vt/src/host/state.zig howl-vt/src/simulation/protocol.zig howl-linux-host/src/config/terminal.zig howl-linux-host/src/config/tab_bar.zig howl-linux-host/src/terminal/render/surface_layout.zig howl-linux-host/src/terminal/render/retained.zig howl-linux-host/src/terminal/scrollbar.zig`. Orchestrator must inspect root and nested status/diff before staging to confirm product-code changes remain limited to `howl-pty/src/session.zig` and `howl-vt/src/simulation/protocol.zig`, this loop note is the only intended new root content change for review, the existing `sprints/current.txt` Slice 10 root receipt update is intentional, unrelated untracked `devtools_options.yaml` is not staged, no compatibility aliases were added, no ABI-visible names changed, and no untouched allowed host/VT-state files gained product diffs.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted Slice 11 implementation if verification still passes, and close the Slice 11 implementation commit receipt.
+
+60. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 11 after reviewer acceptance and final verification.
+- How one task went: reviewer accepted with no findings; final verification passed; nested product diffs were committed as `howl-pty` `dd124dd` (`Name session init config`) and `howl-vt` `c23a267` (`Name simulation determinism options`). `sprints/current.txt` now records Slice 11 as accepted and moves the active step to Slice 12.
+- Verification: `cd /home/home/personal/projects/howl/howl-pty && zig fmt src/session.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-vt && zig fmt src/simulation/protocol.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-pty/src/session.zig howl-vt/src/host/state.zig howl-vt/src/simulation/protocol.zig howl-linux-host/src/config/terminal.zig howl-linux-host/src/config/tab_bar.zig howl-linux-host/src/terminal/render/surface_layout.zig howl-linux-host/src/terminal/render/retained.zig howl-linux-host/src/terminal/scrollbar.zig`: passed; flagged bucket count is 6 after the two accepted renames.
+- Commit-hash receipt: nested `howl-pty` `dd124dd`; nested `howl-vt` `c23a267`; root receipt commit pending.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit this root receipt and submodule pointers, then seed Slice 12 from the accepted minification plan.
