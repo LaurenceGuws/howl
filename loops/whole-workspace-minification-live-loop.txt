@@ -261,3 +261,62 @@ Team scratchpad
 - Intended task: close Slice 1 root receipt and seed Slice 2 from the accepted minification plan.
 - How one task went: Slice 1 root receipt closed as `33fecd5`, and Slice 2 now has an exact condensed execution contract with allowed files, tests, non-goals, stop conditions, and receipt fields.
 - Next handoff or blocker: commit this Slice 2 execution seed, then coder session `coder-2026-06-12-render-generated-special-routing-parity-01` may execute only that contract.
+
+15. Role: coder
+- Session id: `coder-2026-06-12-render-generated-special-routing-parity-01`
+- Hello: hi
+- Intended task: implement Slice 2, `render-generated-special-routing-parity-proof`, inside the allowed render special routing/raster files without touching git.
+- How one task went: shared generated-special support now names only shared-raster families, fallback-only families remain routed as special sprites, and table-driven tests prove shared or FT/HB fallback drawing for every required family.
+- Next handoff or blocker: ready for reviewer/orchestrator verification; no blocker and no commit made by coder.
+
+16. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review execution Slice 2, `render-generated-special-routing-parity-proof`, against the allowed-file diff, loop hygiene, routing/support/raster/fallback parity, current-family table proof, and claimed verification.
+- How one task went: the diff stayed inside the allowed product files plus this loop note, `special_sprite.zig` was not deleted, and local reruns of `zig build test`, `zig build benchmark:render:build`, and the by-file style command all passed.
+- Verdict: reject.
+- Findings: `howl-render/src/text/raster/special_test.zig:54-74`, `howl-render/src/text/ft_hb/glyph_raster.zig:258-280`, `howl-render/src/text/classify/lane.zig:449-466`, and `howl-render/src/text/resolver.zig:294-328` do not prove the required current-family table for every listed fallback family. The table and route/provider tests use one representative for several ranges and omit required endpoint/special-arm cases including `0xe0d7`, `0x1fb67`, `0x1fb6f`, `0x1fb8b`, `0x1fb9f`, and `0xf60d`, even though `special_sprite.zig:13`, `special_sprite.zig:343`, `special_sprite.zig:357`, `special_sprite.zig:447`, `special_sprite.zig:78`, and `special_sprite.zig:612` show those codepoints have distinct fallback drawing branches. The slice contract required exact support/route/lane/resolver/provider fallback agreement and a current-family table for the listed ranges before deletion can be considered.
+- Findings: the coder handoff in this loop at lines 265-270 is missing the required family table with support owner, route owner, raster owner, fallback owner, and tests for every listed family, and it does not record exact verification commands/results, despite the active contract requiring those handoff fields.
+- Rejection seed: keep the current support/routing direction if intended, but add a literal family proof table that names every required family/range with support owner, route owner, raster owner, fallback owner, and test anchors; extend the raster/fallback, lane, resolver, and provider fallback tests to cover the omitted required endpoints or distinct fallback branches above; update the coder loop handoff with files changed, exact verification results, and the family table. Do not delete `special_sprite.zig`, do not add a routing bucket, and do not touch files outside the Slice 2 allowed list.
+- Next handoff or blocker: coder correction required; no user decision is needed.
+
+17. Role: coder
+- Session id: `coder-2026-06-12-render-generated-special-routing-parity-01`
+- Hello: hi
+- Intended task: correct rejected Slice 2 proof gaps without changing the implementation direction or touching files outside the accepted Slice 2 list.
+- How one task went: `special_test.zig` now has a literal owner/proof table naming every required family/range, and raster/fallback, lane, resolver, and provider tests now cover omitted endpoints and distinct fallback branches including `0xe0d7`, `0x1fb67`, `0x1fb6f`, `0x1fb8b`, `0x1fb9f`, and `0xf60d`.
+- Files changed: `howl-render/src/text/raster/special_test.zig`, `howl-render/src/text/classify/lane.zig`, `howl-render/src/text/resolver.zig`, `howl-render/src/text/ft_hb/glyph_raster.zig`, and this loop note; prior Slice 2 changes remain in `special_glyphs.zig` and `symbol_map.zig`.
+- Verification: `cd /home/home/personal/projects/howl/howl-render && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/ft_hb/special_sprite.zig howl-render/src/text/raster/special.zig howl-render/src/text/classify/special_glyphs.zig howl-render/src/text/classify/symbol_map.zig howl-render/src/text/classify/lane.zig howl-render/src/text/resolver.zig howl-render/src/text/ft_hb/glyph_raster.zig`: passed.
+- Family table: box `0x2500...0x257f`: support `special_glyphs` shared true; route `symbol_map .box`; raster `raster/special.zig`; fallback none; tests `special_test` support/current-family table plus `symbol_map`, `lane`, `resolver`, `glyph_raster` parity endpoints.
+- Family table: block `0x2580...0x259f`: support shared true; route `.block`; raster `raster/special.zig`; fallback none; tests same parity anchors.
+- Family table: braille `0x2800...0x28ff`: support shared true; route `.braille`; raster `raster/special.zig`; fallback none; tests same parity anchors.
+- Family table: powerline `0xe0b0...0xe0bf`: support shared true; route `.powerline`; raster `raster/special.zig`; fallback none; tests same parity anchors.
+- Family table: powerline triangle fallback `0xe0d6...0xe0d7`: support shared false; route `.powerline`; raster none; fallback `ft_hb/special_sprite.zig`; tests same parity anchors, including `0xe0d7`.
+- Family table: sextant `0x1fb00...0x1fb3b`: support shared true; route `.legacy_computing`; raster `raster/special.zig`; fallback none; tests same parity anchors.
+- Family table: smooth mosaic `0x1fb3c...0x1fb67`: support shared false; route `.legacy_computing`; raster none; fallback `ft_hb/special_sprite.zig`; tests same parity anchors, including `0x1fb67`.
+- Family table: half-triangle `0x1fb68...0x1fb6f`: support shared false; route `.legacy_computing`; raster none; fallback `ft_hb/special_sprite.zig`; tests same parity anchors, including `0x1fb6f`.
+- Family table: eight-bar shared `0x1fb70...0x1fb7b`: support shared true; route `.legacy_computing`; raster `raster/special.zig`; fallback none; tests same parity anchors.
+- Family table: eight-bar fallback `0x1fb7c...0x1fb8b`: support shared false; route `.legacy_computing`; raster none; fallback `ft_hb/special_sprite.zig`; tests same parity anchors, including `0x1fb8b`.
+- Family table: shade/corner/cross `0x1fb8c...0x1fb9f`: support shared false; route `.legacy_computing`; raster none; fallback `ft_hb/special_sprite.zig`; tests same parity anchors, including `0x1fb93` and `0x1fb9f`.
+- Family table: mid-line `0x1fba0...0x1fbae`: support shared false; route `.legacy_computing`; raster none; fallback `ft_hb/special_sprite.zig`; tests same parity anchors, including `0x1fbae`.
+- Family table: octant `0x1cd00...0x1cde5` plus `0x1fbe6...0x1fbe7`: support shared true; route `.legacy_computing`; raster `raster/special.zig`; fallback none; tests same parity anchors.
+- Family table: branch/private-use `0xf5d0...0xf60d`: support shared false; route `.legacy_computing`; raster none; fallback `ft_hb/special_sprite.zig`; tests same parity anchors, including `0xf60d`.
+- Next handoff or blocker: ready for reviewer/orchestrator verification; no blocker and no commit made by coder.
+
+18. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: re-review corrected execution Slice 2, `render-generated-special-routing-parity-proof`, against the prior rejection findings, allowed-file diff, family table proof, handoff receipts, and verification commands.
+- How one task went: the prior endpoint gaps are now covered in `special_test.zig`, `lane.zig`, `resolver.zig`, and `glyph_raster.zig`; the literal family table names every required family/range with support, route, raster, fallback, and test anchors; the coder handoff records files changed and exact verification results; and local reruns of `zig build test`, `zig build benchmark:render:build`, and the by-file style command all passed.
+- Verdict: accept.
+- Acceptance notes: orchestrator must rerun before commit: `cd /home/home/personal/projects/howl/howl-render && zig build test`; `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`; `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/ft_hb/special_sprite.zig howl-render/src/text/raster/special.zig howl-render/src/text/classify/special_glyphs.zig howl-render/src/text/classify/symbol_map.zig howl-render/src/text/classify/lane.zig howl-render/src/text/resolver.zig howl-render/src/text/ft_hb/glyph_raster.zig`; inspect root and nested status/diff to confirm product-code changes remain limited to Slice 2 allowed files, `special_sprite.zig` remains present, no new routing bucket/manager/engine/types/protocol support/visual redesign/FT-HB provider redesign/host GL changes were introduced, and the loop note is the only root-file change.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted Slice 2 implementation if verification still passes, and close the Slice 2 implementation commit receipt.
+
+19. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: verify and commit reviewer-accepted Slice 2.
+- How one task went: orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test`, `cd /home/home/personal/projects/howl/howl-render && zig build benchmark:render:build`, and `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/ft_hb/special_sprite.zig howl-render/src/text/raster/special.zig howl-render/src/text/classify/special_glyphs.zig howl-render/src/text/classify/symbol_map.zig howl-render/src/text/classify/lane.zig howl-render/src/text/resolver.zig howl-render/src/text/ft_hb/glyph_raster.zig`; accepted implementation was committed in `howl-render` as `c91ac5c`.
+- Next handoff or blocker: root submodule/loop receipt commit is pending; after that the orchestrator may seed Slice 3 from the accepted plan.
