@@ -14,8 +14,8 @@ Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled
 Accepted zero-codepoint direct-normal worker session id: `worker-2026-06-12-zero-codepoint-fast-01`.
 Current required worker session id: pending for the next bottleneck-proof pass after zero-codepoint direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: `research-2026-06-12-non-printable-publication-normal-01`.
-Reviewer session id: `review-2026-06-12-non-printable-publication-normal-01`.
+Researcher session id: `research-2026-06-12-direct-normal-publication-scan-post-zero-codepoint-01`.
+Reviewer session id: pending for the post-zero-codepoint direct-normal scan cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -168,7 +168,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-non-printable-publication-normal-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`
 
 Research goal:
 
@@ -821,3 +821,17 @@ Team scratchpad
 - Intended task: close the accepted zero-codepoint direct-normal slice and restart from the new measured baseline.
 - How one task went: render commit `e391d92` landed the accepted slice; accepted receipts are `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-084336-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-084355-ascii/summary.json`, with Howl `120.3 fps` vs Alacritty `1003.65 fps`.
 - Next handoff or blocker: seed the next bottleneck-proof worker pass from the zero-codepoint direct-normal baseline; no correctness or vague-bucket blocker is known.
+
+59. Role: coder/worker
+- Session id: `worker-2026-06-12-post-zero-codepoint-bottleneck-proof-01`
+- Hello: hello
+- Intended task: pin the current top bottleneck on the zero-codepoint baseline with the built-in timing seam only and stop before any optimization.
+- How one task went: the existing control receipts and `/tmp/opencode/howl-render-debug-control.log` were sufficient, and they now rank `direct_normal_scan` above `owner_create` on the fresh `7bd26ba` root and `e391d92` render commits.
+- Next handoff or blocker: researcher planning can target the direct-normal publication scan owner seam in `howl-render`; no temporary logs, correctness blocker, or vague bucket forced a stop.
+
+60. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: promote the post-zero-codepoint bottleneck proof into the next active research target.
+- How one task went: after the zero-codepoint win, the top remaining bucket is still `direct_normal_scan_avg_us=311`, with `owner_create_avg_us=216` below it.
+- Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-publication-scan-post-zero-codepoint-plan.md`; no correctness or vague-bucket blocker is known.
