@@ -1049,3 +1049,51 @@ Condensed execution contract for coder session `coder-2026-06-13-pty-posix-lifec
 - Commit-hash receipt: nested `howl-pty` `dd124dd`; nested `howl-vt` `c23a267`; root receipt commit pending.
 - Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
 - Next handoff or blocker: commit this root receipt and submodule pointers, then seed Slice 12 from the accepted minification plan.
+
+61. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: execute Slice 12, `anytype-usize-and-cast-boundary-pass`, after root Slice 11 receipt `c250535`.
+- User direction: user explicitly rejected compatibility-preserving fake progress and widened scope: "compatibility is an issue. wident scope instead of pretending to make progress". This authorizes updating real call sites rather than keeping stale compatibility names inside the original narrow file list.
+- How one task went: removed hidden generic boundaries where they were owner-clear and testable. `howl-linux-host/src/display/renderer/render_surface.zig` now types `destinationOverlaps` as `HowlRenderPixelSize` instead of `anytype`. `howl-render/src/prepared/render_surface_emitter.zig` deletes generic `appendPreparedFillPass` and uses typed draw loops for clear/background/decoration/cursor draws. `howl-vt/src/host/state.zig` replaces generic public `count32(anytype)` with byte-specific `byteCount([]const u8)` plus private `hyperlinkCount([]const []u8)`, and widened VT call sites in `control/report.zig`, `control/osc_color.zig`, `kitty/apply.zig`, `kitty/color.zig`, and `kitty/pointer.zig` now call `host_state.byteCount` explicitly.
+- Verification: `cd /home/home/personal/projects/howl/howl-linux-host && zig fmt src/display/renderer/render_surface.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-vt && zig fmt src/host/state.zig src/control/report.zig src/control/osc_color.zig src/kitty/apply.zig src/kitty/color.zig src/kitty/pointer.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-render && zig fmt src/prepared/render_surface_emitter.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/display/renderer/render_surface.zig howl-linux-host/src/display/renderer/render_surface_test.zig howl-linux-host/src/input/input.zig howl-vt/src/host/state.zig howl-vt/src/control/report.zig howl-vt/src/control/osc_color.zig howl-vt/src/kitty/apply.zig howl-vt/src/kitty/color.zig howl-vt/src/kitty/pointer.zig howl-render/src/text/surface_preparer.zig howl-render/src/text_session_test.zig howl-render/src/prepared/render_surface_emitter.zig howl-render/src/prepared/render_surface_emitter_test.zig`: passed.
+- Boundary proof: no C ABI type or protocol behavior changed; the widened VT edits are call-site naming repairs only, replacing a stale generic helper name with byte-count truth.
+- Commit-hash handoff status: pending reviewer and orchestrator commit.
+- Next handoff or blocker: reviewer must check widened scope, absence of compatibility aliasing, boundary/type truth, behavior preservation, and tests before commit.
+
+62. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review widened Slice 12 against user direction to avoid compatibility-preserving fake progress, actual diffs, boundary/type truth, behavior preservation, and verification.
+- How one task went: accepted the widened scope as the smallest honest removal of the stale VT helper name; product diffs type the host render overlap boundary, delete the generic render fill-pass helper without reintroducing another generic owner, replace VT host `count32(anytype)` with `byteCount([]const u8)`/`hyperlinkCount([]const []u8)`, and update real VT host-state call sites instead of keeping a compatibility alias.
+- Verdict: accept.
+- Findings: none.
+- Acceptance notes: reviewer reran `zig build test` in `howl-linux-host`, `howl-vt`, and `howl-render`, plus the widened Slice 12 style metric. Orchestrator must rerun before commit: host/render/VT `zig build test`, widened style metric, and root/nested status checks confirming unrelated `devtools_options.yaml` is not staged.
+- Next handoff or blocker: orchestrator may commit the accepted Slice 12 nested changes and root receipt if verification still passes.
+
+63. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 12 after reviewer acceptance and final verification.
+- How one task went: reviewer accepted with no findings; final verification passed; nested product diffs were committed as `howl-linux-host` `c509c4e` (`Type host render overlap boundary`), `howl-vt` `681bc28` (`Name VT host byte counts`), and `howl-render` `84ea714` (`Type render fill pass appends`). `sprints/current.txt` now records Slice 12 as accepted and moves the active step to Slice 13.
+- Verification: `cd /home/home/personal/projects/howl/howl-linux-host && zig fmt src/display/renderer/render_surface.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-vt && zig fmt src/host/state.zig src/control/report.zig src/control/osc_color.zig src/kitty/apply.zig src/kitty/color.zig src/kitty/pointer.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl/howl-render && zig fmt src/prepared/render_surface_emitter.zig && zig build test`: passed.
+- Verification: widened Slice 12 `python3 style.py --by-file --format json ...`: passed.
+- Commit-hash receipt: nested `howl-linux-host` `c509c4e`; nested `howl-vt` `681bc28`; nested `howl-render` `84ea714`; root receipt commit pending.
+- Blockers or deviations: widened VT call-site edits are explicitly user-directed; unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit this root receipt and submodule pointers, then seed Slice 13 from the accepted minification plan.
+
+62. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review Slice 12, `anytype-usize-and-cast-boundary-pass`, against the user-authorized widened scope, actual nested diffs, compatibility-alias removal, ABI/protocol boundaries, behavior preservation, hidden generic cleanup, formatting, and claimed verification.
+- How one task went: product diffs are limited to `howl-linux-host/src/display/renderer/render_surface.zig`, `howl-render/src/prepared/render_surface_emitter.zig`, and the widened VT compatibility call-site set in `howl-vt/src/host/state.zig`, `howl-vt/src/control/report.zig`, `howl-vt/src/control/osc_color.zig`, `howl-vt/src/kitty/apply.zig`, `howl-vt/src/kitty/color.zig`, and `howl-vt/src/kitty/pointer.zig`; no `host_state.count32` alias remains, `appendPreparedFillPass` is deleted instead of wrapped, and `destinationOverlaps` now takes `render_c.HowlRenderPixelSize` directly.
+- Verdict: accept.
+- Findings: none.
+- Acceptance notes: reviewer reran `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`, `cd /home/home/personal/projects/howl/howl-vt && zig build test`, `cd /home/home/personal/projects/howl/howl-render && zig build test`, and `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-linux-host/src/display/renderer/render_surface.zig howl-linux-host/src/display/renderer/render_surface_test.zig howl-linux-host/src/input/input.zig howl-vt/src/host/state.zig howl-vt/src/control/report.zig howl-vt/src/control/osc_color.zig howl-vt/src/kitty/apply.zig howl-vt/src/kitty/color.zig howl-vt/src/kitty/pointer.zig howl-render/src/text/surface_preparer.zig howl-render/src/text_session_test.zig howl-render/src/prepared/render_surface_emitter.zig howl-render/src/prepared/render_surface_emitter_test.zig`; all passed.
+- Orchestrator verification expectations before commit: rerun `cd /home/home/personal/projects/howl/howl-linux-host && zig fmt src/display/renderer/render_surface.zig && zig build test`; rerun `cd /home/home/personal/projects/howl/howl-vt && zig fmt src/host/state.zig src/control/report.zig src/control/osc_color.zig src/kitty/apply.zig src/kitty/color.zig src/kitty/pointer.zig && zig build test`; rerun `cd /home/home/personal/projects/howl/howl-render && zig fmt src/prepared/render_surface_emitter.zig && zig build test`; rerun the widened by-file style command above. Inspect root and nested status/diff before staging to confirm product-code changes remain limited to the reviewed files, this loop note is the only intended root content change, unrelated untracked `devtools_options.yaml` is not staged, no C ABI/header/protocol behavior changed, no compatibility alias or wrapper was restored, no stale `host_state.count32` call remains, and no broader render/VT/host cleanup slipped in.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted Slice 12 implementation if verification still passes, and close the Slice 12 implementation commit receipt.
