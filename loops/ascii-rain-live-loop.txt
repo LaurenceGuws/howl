@@ -10,7 +10,8 @@ Accepted direct-normal worker session id: `worker-2026-06-12-direct-normal-singl
 Accepted owner-create worker session id: `worker-2026-06-12-owner-create-cache-first-01`.
 Accepted fresh owner-create worker session id: `worker-2026-06-12-owner-create-fresh-rollback-01`.
 Accepted payload initialization worker session id: `worker-2026-06-12-payload-in-place-init-01`.
-Current required worker session id: pending for the next bottleneck-proof pass after payload initialization.
+Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled-ascii-direct-normal-fast-01`.
+Current required worker session id: pending for the next bottleneck-proof pass after styled ASCII direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
 Researcher session id: `research-2026-06-12-styled-ascii-direct-normal-scan-01`.
 Reviewer session id: `review-2026-06-12-styled-ascii-direct-normal-scan-01`.
@@ -637,3 +638,38 @@ Team scratchpad
 - Intended task: gate the styled ASCII direct-normal scan plan before worker execution.
 - How one task went: review first rejected unsafe space handling, contradictory RGB support, and weak unsupported-cell no-leak proof; the corrected plan now excludes spaces and RGB from the fast subset, requires generic fallback tests for both, and requires no partial scratch leakage for unsupported cases.
 - Next handoff or blocker: seed the accepted `direct-normal-styled-ascii-publication-fast-candidate` worker slice; no blocker.
+
+40. Role: coder/worker
+- Session id: `worker-2026-06-12-styled-ascii-direct-normal-fast-01`
+- Hello: hello
+- Intended task: implement the accepted styled/color ASCII direct-normal publication fast candidate while preserving generic fallback for unsupported cells.
+- How one task went: the tri-state fast candidate passed tests and timing, moving `direct_normal_scan_avg_us` from `887` to `811`; accepted receipts are `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-021917-ascii/summary.json` and `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-021928-ascii/summary.json`.
+- Next handoff or blocker: reviewer accepted the implementation; extra probe `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-021729-ascii/summary.json` is retained as non-acceptance context only.
+
+41. Role: reviewer
+- Session id: `review-2026-06-12-styled-ascii-direct-normal-fast-01`
+- Hello: hello
+- Intended task: gate the implemented styled ASCII direct-normal fast candidate.
+- How one task went: the slice was accepted with no findings; scope stayed inside `direct_normal.zig` and `frame_preparer.zig`, unsupported spaces/RGB/complex cells fall through to generic mapping, and `zig build test:unit` passed independently.
+- Next handoff or blocker: orchestrator should commit render commit `98bb85a` and root receipts, then restart the loop because Howl is still slower than Alacritty.
+
+42. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: close the accepted styled ASCII direct-normal slice and restart from the new baseline.
+- How one task went: render commit `98bb85a` landed the accepted slice; accepted 10-second receipt is `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-021928-ascii/summary.json`, with Howl `60.26 fps` vs Alacritty `981.84 fps`.
+- Next handoff or blocker: seed the next bottleneck-proof worker pass from the styled ASCII direct-normal baseline; no correctness or vague-bucket blocker is known.
+
+40. Role: coder/worker
+- Session id: `worker-2026-06-12-styled-ascii-direct-normal-fast-01`
+- Hello: hello
+- Intended task: implement the accepted `direct-normal-styled-ascii-publication-fast-candidate` slice inside the two-file code boundary.
+- How one task went: the tri-state direct-normal publication fast candidate passed after replacing a copied inline-slice repair with a static ASCII codepoint table; the final timing rerun brought `direct_normal_scan_avg_us` down to `811`.
+- Next handoff or blocker: hand off the verified slice receipts to reviewer and orchestrator; no stop condition is active and no commit was made.
+
+41. Role: reviewer
+- Session id: `review-2026-06-12-styled-ascii-direct-normal-fast-01`
+- Hello: hello
+- Intended task: review the implemented styled ASCII direct-normal fast-candidate slice against the accepted two-file contract, fallback safety, negative-space tests, and timing proof.
+- How one task went: the diff stayed inside `direct_normal.zig` and `frame_preparer.zig`, unsupported publication cells fall back through the generic candidate path without partial scratch leakage, and the timing receipt beats the `direct_normal_scan_avg_us < 883` gate at `811`.
+- Next handoff or blocker: accept the slice; orchestrator should close commit-hash and receipt accountability before the next loop step.

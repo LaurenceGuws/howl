@@ -1,0 +1,7 @@
+{"type":"stress_metrics","schema":1,"final":false,"frames":100,"fps":59.47,"p50_us":16065,"p95_us":22200,"p99_us":41672,"max_us":72688}
+{"type":"stress_metrics","schema":1,"final":false,"frames":200,"fps":60.23,"p50_us":16042,"p95_us":22200,"p99_us":30634,"max_us":72688}
+{"type":"stress_metrics","schema":1,"final":false,"frames":300,"fps":60.39,"p50_us":16035,"p95_us":22200,"p99_us":30406,"max_us":72688}
+{"type":"stress_metrics","schema":1,"final":false,"frames":400,"fps":59.90,"p50_us":16042,"p95_us":22977,"p99_us":31321,"max_us":72688}
+{"type":"stress_metrics","schema":1,"final":false,"frames":500,"fps":60.01,"p50_us":16045,"p95_us":22200,"p99_us":32710,"max_us":72688}
+{"type":"stress_metrics","schema":1,"final":false,"frames":600,"fps":60.28,"p50_us":16045,"p95_us":22163,"p99_us":31321,"max_us":72688}
+{"type":"stress_metrics","schema":1,"final":true,"frames":603,"fps":60.26,"p50_us":16056,"p95_us":21909,"p99_us":31282,"max_us":72688}
