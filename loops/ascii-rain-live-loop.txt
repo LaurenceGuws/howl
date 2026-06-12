@@ -13,8 +13,8 @@ Accepted payload initialization worker session id: `worker-2026-06-12-payload-in
 Accepted styled ASCII direct-normal worker session id: `worker-2026-06-12-styled-ascii-direct-normal-fast-01`.
 Current required worker session id: pending for the next bottleneck-proof pass after styled ASCII direct-normal.
 Next required worker session id: pending after the next reviewer-accepted bottleneck plan.
-Researcher session id: `research-2026-06-12-direct-normal-generic-fallback-01`.
-Reviewer session id: pending for the direct-normal generic fallback cycle.
+Researcher session id: `research-2026-06-12-non-printable-publication-normal-01`.
+Reviewer session id: pending for the non-printable publication normal cycle.
 Loop commit-hash receipt: pending until archival.
 
 Shared scratchpad rule:
@@ -167,7 +167,7 @@ Research handoff after worker evidence: `bottleneck-evidence-review-plan`
 
 Active research target:
 
-- `/home/home/personal/projects/howl/research/2026-06-12-direct-normal-generic-fallback-plan.md`
+- `/home/home/personal/projects/howl/research/2026-06-12-non-printable-publication-normal-plan.md`
 
 Research goal:
 
@@ -764,3 +764,17 @@ Team scratchpad
 - Intended task: gate the proof-only generic-fallback mix plan before worker execution.
 - How one task went: the first pass rejected vague count semantics and weak proof conclusions; the corrected plan now uses explicit `publication_generic_entered` accounting, mutually exclusive consequence classes, a precise `unsupported_multi_cell_span` field, and mandatory worker conclusions.
 - Next handoff or blocker: seed the accepted `direct-normal-generic-fallback-mix-proof` worker slice; no blocker.
+
+52. Role: coder/worker
+- Session id: `worker-2026-06-12-direct-normal-generic-fallback-mix-proof-01`
+- Hello: hello
+- Intended task: run the accepted count-only generic-fallback mix proof in `direct_normal.zig`, capture the live fallback reason/consequence mix, and remove all temporary source edits before handoff.
+- How one task went: the desktop proof receipt `/home/home/personal/projects/howl/utils/tools/rain-bench/artifacts/stress/20260612-082436-ascii/summary.json` reported `publication_generic_entered=6966461`, `publication_generic_normal=6966461`, and `unsupported_non_printable=6966461` at `count=640`, with every other unsupported reason and generic consequence count at `0`; source cleanup was proven with empty path-scoped `git diff` and `git status`, and clean-source `zig build test:unit` passed.
+- Next handoff or blocker: hand off to researcher planning; next research should explain why live generic fallback is dominated by non-printable publication cells that still classify normal rather than retrying semantic-empty optimization directly.
+
+53. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: promote the resolved generic-fallback proof into the next active research target.
+- How one task went: the vague bucket is now resolved enough for planning; the live generic fallback mix is dominated by `unsupported_non_printable` cells that still end in `publication_generic_normal`.
+- Next handoff or blocker: researcher owns `/home/home/personal/projects/howl/research/2026-06-12-non-printable-publication-normal-plan.md`; no correctness or vague-bucket blocker is known.
