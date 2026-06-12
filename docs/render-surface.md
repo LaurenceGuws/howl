@@ -27,7 +27,7 @@ path.
 
 ## Runtime Facts
 
-- Prepared handles expose render-surface surfaces through `howl_render_prepared_surface_render_surface()`.
+- `rdr_sfc` handles expose render-surface surfaces through `howl_render_rdr_sfc_render_surface()`.
 - Host presentation fails closed when the render-surface sidecar is missing, invalid, unsupported,
   or cannot be uploaded.
 - `prepared_buffer.compose()` remains an explicit proof oracle for render surface tests only.

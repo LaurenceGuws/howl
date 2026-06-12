@@ -21,12 +21,12 @@ Active restart note:
 
 - The prior ASCII-rain micro-bottleneck sprint is deferred.
 - The current live sprint tackles the larger blocker first: oversized render machinery and non-pragmatic render API shape.
-- The current active step is researcher and reviewer planning for the new render-api simplification sprint.
+- The current active step is execution of reviewer-accepted slice `render-api-vt-sfc-rdr-sfc-first-cut`.
 
 Execution rule:
 
 - Only the active sprint and active loop are authoritative for the current step.
-- The seeded active research artifact is authoritative for the current planning step.
+- The seeded active research artifact is authoritative for accepted slice `render-api-vt-sfc-rdr-sfc-first-cut`.
 - Deferred or done planning artifacts are navigation only until a new slice is explicitly accepted from the live active surface.
 
 Rule:

@@ -4,11 +4,11 @@ Date: 2026-06-12.
 Role owner: orchestrator.
 Status: active live loop.
 Orchestrator session id: `orch-2026-06-11-ascii-rain-honest-performance-02`.
-Researcher session id: pending for render-api shape cycle.
-Reviewer session id: pending for render-api shape cycle.
-Current required worker session id: pending until reviewer-accepted render-api simplification plan.
-Next required worker session id: pending after the next reviewer-accepted renderer simplification plan.
-Loop commit-hash receipt: pending until archival.
+Researcher session id: `research-2026-06-12-render-api-pragmatic-shape-02`.
+Reviewer session id: `review-2026-06-12-render-api-pragmatic-shape-01`.
+Current required worker session id: `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`.
+Next required worker session id: pending after the next reviewer-accepted render-api naming slice.
+Loop commit-hash receipt: implementation commits created; `howl-render` `975b723`, `howl-linux-host` `cf779db`, root accountability/submodule commit pending.
 
 Shared scratchpad rule:
 
@@ -24,10 +24,10 @@ Controlling sprint:
 
 - `/home/home/personal/projects/howl/sprints/2026-06-12-render-api-pragmatic-shape-sprint.md`
 
-Current planning slice: `render-api-pragmatic-shape-first-cut`
+Current execution slice: `render-api-vt-sfc-rdr-sfc-first-cut`
 
 - Purpose:
-  - identify the first source-backed render API simplification slice that reduces code and moves Howl toward Alacritty render/API shape
+  - identify the first source-backed slice that kills or re-architects fake middle layers and makes the API read as `vt_sfc` input and `rdr_sfc` output
 - Active research target:
   - `/home/home/personal/projects/howl/research/2026-06-12-render-api-pragmatic-shape-plan.md`
 - Immediate role sequence:
@@ -38,10 +38,67 @@ Current planning slice: `render-api-pragmatic-shape-first-cut`
   - no more ASCII-rain micro-bottleneck experiments as the primary strategy
   - no host, PTY, or VT redesign in this first render API step unless research proves it unavoidable
   - no fake “cleanup” that preserves oversized owner shape
+  - no mixed generic `surface` naming that hides whether a symbol is input or output
 - Exact stop conditions:
   - stop if references and user direction conflict in a way that needs explicit override receipt
   - stop if the first proposed slice is still fundamentally Howl-invented instead of reference-backed
   - stop if the plan cannot name exact allowed files, required shape, tests, non-goals, and receipt fields
+
+Condensed execution contract for coder session `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-12-render-api-pragmatic-shape-plan.md`
+- Implement only slice `render-api-vt-sfc-rdr-sfc-first-cut`.
+- Allowed files:
+  - `howl-render/include/howl_render.h`
+  - `howl-render/src/libhowl_render.zig`
+  - `howl-render/src/ffi/handle.zig`
+  - `howl-render/src/ffi/submission.zig`
+  - `howl-render/src/ffi/prepared_surface.zig`
+  - `howl-render/src/ffi/work_state.zig`
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/session/submitted.zig`
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/prepared/surface.zig`
+  - `howl-render/src/ffi/submission_test.zig`
+  - `howl-render/src/session/text_test.zig`
+  - `howl-render/src/ffi/test_support.zig`
+  - `howl-linux-host/src/terminal/context.zig`
+  - `howl-linux-host/src/terminal/context_test.zig`
+  - `howl-linux-host/src/terminal/render/retained.zig`
+  - `docs/render-surface.md`
+- Required shape:
+  - Delete exported ABI entrypoints `howl_render_text_session_publish_prepared`, `howl_render_text_session_publish_prepared_handle`, and `howl_render_text_session_take_submit_decision`.
+  - Delete owner methods `TextSessionOwner.publishPrepared`, `TextSessionOwner.publishPreparedHandle`, and `Submitted.publishPrepared`.
+  - Delete duplicated state `TextSessionOwner.prepared_publish_handle`, `TextSessionOwner.prepared_submit_handle`, and `Submitted.submit_mailbox`.
+  - `TextSessionOwner.takeSubmitHandle` is the only submit-readiness gate and validates one cached `rdr_sfc_handle` directly against latest `vt_sfc` and submitted-base facts.
+  - Touched public C ABI output handle noun is `HowlRenderRdrSfcHandle`; touched Zig output handle noun is `rdr_sfc_handle`.
+  - Touched input-side nouns read as `vt_sfc` or an already existing explicit VT-surface noun.
+  - No touched public/API seam may keep `prepared_surface` for the live input/output seam.
+  - Do not edit `text/contract.zig`; no touched public/API seam may use `contract` as the naming source for this boundary.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`
+  - Update or add proofs for current `rdr_sfc_handle` submit readiness, stale `vt_sfc` invalidation, partial wrong-base rejection, host retained flow without publish-prepared ABI, and deleted ABI symbol absence.
+- Non-goals:
+  - no whole-renderer rewrite
+  - no `text/contract.zig` owner split or mass rename
+  - no `surface_preparer` algorithm rewrite
+  - no geometry or VT publication redesign
+  - no compatibility shims for deleted publish-prepared entrypoints
+  - no leaving `prepared_surface` as the touched public handle noun
+- Stop conditions:
+  - stop if submit readiness cannot be expressed from one cached `rdr_sfc_handle` plus existing latest/submitted tokens
+  - stop if work broadens into `text/contract.zig`
+  - stop if touched naming still hides whether a symbol is `vt_sfc` input or `rdr_sfc` output
+  - stop if any touched public/API seam symbol still uses `prepared_surface` after the slice
+- Required handoff:
+  - files changed
+  - implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id
+  - commit-hash handoff status for orchestrator receipt closure
 
 Team scratchpad
 
@@ -50,4 +107,88 @@ Team scratchpad
 - Hello: hi
 - Intended task: replace the deferred ASCII-rain loop with a new renderer-shape live loop that becomes the only current authority.
 - How one task went: the old loop was deferred and this file now owns the current render-api simplification step.
-- Next handoff or blocker: researcher should define the first render-api pragmatic-shape slice from Alacritty pressure.
+- Next handoff or blocker: researcher should define the first `contract`/`prepared`/`session` cut from Alacritty pressure, with explicit `vt_sfc` input and `rdr_sfc` output naming.
+
+2. Role: researcher
+- Session id: `research-2026-06-12-render-api-pragmatic-shape-02`
+- Hello: hi
+- Intended task: prove the first honest render-API simplification slice from current `howl-render` seams and Alacritty pressure.
+- How one task went: current proof shows `PreparedHandle` already materializes the render output, so the token-only publish mailbox is the first fake middle layer to delete before any deeper `contract` rewrite.
+- Next handoff or blocker: reviewer should gate the proposed first slice that removes `publish_prepared*` and collapses submit readiness onto one cached `rdr_sfc` handle.
+
+3. Role: reviewer
+- Session id: `review-2026-06-12-render-api-pragmatic-shape-01`
+- Hello: hello
+- Intended task: gate the first render-API naming/simplification cut around `contract`, `prepared`, and `session`.
+- How one task went: the review pressure forced the first slice to stop hedging and settle one explicit public naming direction for the touched seam: `vt_sfc` input and `rdr_sfc` output, with no touched `prepared_surface` noun left alive.
+- Next handoff or blocker: the active research artifact must keep that exact naming consistently through allowed files, required shape, tests, stop conditions, and receipt fields before worker execution.
+
+4. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: seed the reviewer-accepted first render API slice for execution.
+- How one task went: the accepted planning package is compressed into this live loop as the controlling execution contract for coder session `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`.
+- Next handoff or blocker: coder should implement only the seeded slice, then reviewer session `review-2026-06-12-render-api-pragmatic-shape-01` must review the actual diff before orchestrator acceptance.
+
+5. Role: coder
+- Session id: `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`
+- Hello: hello
+- Intended task: implement slice `render-api-vt-sfc-rdr-sfc-first-cut` by deleting the publish-prepared ABI/mailbox path and making one cached `rdr_sfc_handle` the submit-readiness gate.
+- How one task went: `TextSessionOwner.takeSubmitHandle` now validates the cached `rdr_sfc_handle` directly against latest `vt_sfc` and submitted-base facts, and `zig build test` passed for `howl-render`.
+- Next handoff or blocker: hand off to reviewer; extra host-suite blocker for orchestrator awareness is that `howl-linux-host/src/terminal/context_test.zig` is outside the allowed file list and still references the deleted old handle type.
+
+6. Role: reviewer
+- Session id: `review-2026-06-12-render-api-pragmatic-shape-01`
+- Hello: hello
+- Intended task: review the actual coder diff for slice `render-api-vt-sfc-rdr-sfc-first-cut` against the accepted execution contract.
+- How one task went: `howl-render` verification passed, but host verification exposed stale `HowlRenderPreparedSurfaceHandle` / `preparedSurfaceHandle` references outside the allowed file list, including production context code and context tests.
+- Next handoff or blocker: reject this execution slice until orchestrator authorizes the small host stale-reference fix or reseeds the slice with the required host files.
+
+7. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: reseed the rejected execution slice for exact ABI-rename fallout.
+- How one task went: the contract now includes `howl-linux-host/src/terminal/context.zig` and `howl-linux-host/src/terminal/context_test.zig` only to repair stale host calls/types caused by replacing `prepared_surface` with `rdr_sfc`.
+- Next handoff or blocker: coder should make only that host fallout fix, rerun `howl-render` and `howl-linux-host` tests, and hand back to the same reviewer.
+
+8. Role: coder
+- Session id: `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`
+- Hello: hello
+- Intended task: repair reviewer-rejected host rename fallout by replacing stale `preparedSurfaceHandle` and `HowlRenderPreparedSurfaceHandle` references with the `rdr_sfc`/`RdrSfc` seam.
+- How one task went: production context and host tests now call `rdrSfcHandle` and use `HowlRenderRdrSfcHandle`; both `howl-render` and `howl-linux-host` `zig build test` gates passed.
+- Next handoff or blocker: hand off to reviewer for the rejection repair diff; no blocker from this pass.
+
+9. Role: reviewer
+- Session id: `review-2026-06-12-render-api-pragmatic-shape-01`
+- Hello: hello
+- Intended task: re-review the repaired `render-api-vt-sfc-rdr-sfc-first-cut` implementation after host fallout fixes.
+- How one task went: both required `zig build test` commands passed and the host stale references are fixed, but `howl-render/src/ffi/handle.zig` still carries old `HowlRenderPreparedSurfaceHandle` helper signatures in the FFI seam.
+- Next handoff or blocker: reject until the stale FFI helper is removed or renamed under an explicit allowed-file repair, then rerun both test gates.
+
+10. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: reseed the remaining stale FFI helper fallout from the accepted public handle rename.
+- How one task went: `howl-render/src/ffi/handle.zig` is now allowed only to remove or rename stale `HowlRenderPreparedSurfaceHandle` translation helpers into `HowlRenderRdrSfcHandle` truth.
+- Next handoff or blocker: coder should make only that FFI helper fallout fix, rerun `howl-render` and `howl-linux-host` tests, and hand back to reviewer.
+
+11. Role: coder
+- Session id: `coder-2026-06-12-render-api-vt-sfc-rdr-sfc-first-cut-01`
+- Hello: hello
+- Intended task: repair the remaining stale FFI helper naming in `howl-render/src/ffi/handle.zig`.
+- How one task went: the helper signatures now use `opaqueRdrSfcHandle`, `abiRdrSfcHandle`, and `HowlRenderRdrSfcHandle`; scans found no remaining `HowlRenderPreparedSurfaceHandle` in `howl-render` source/header, and both required test gates passed.
+- Next handoff or blocker: hand off to reviewer for the narrow FFI helper repair; no blocker from this pass.
+
+12. Role: reviewer
+- Session id: `review-2026-06-12-render-api-pragmatic-shape-01`
+- Hello: hello
+- Intended task: final execution review for slice `render-api-vt-sfc-rdr-sfc-first-cut` after host and FFI fallout repairs.
+- How one task went: the final diff satisfies the accepted contract, deleted ABI exports are gone, stale public/API `prepared_surface` handle references are removed from the touched live path, and both required test gates passed.
+- Next handoff or blocker: accept the execution slice for orchestrator verification and receipt closure; commit hash remains pending for orchestrator.
+
+13. Role: orchestrator
+- Session id: `orch-2026-06-11-ascii-rain-honest-performance-02`
+- Hello: hi
+- Intended task: verify and record the reviewer-accepted `render-api-vt-sfc-rdr-sfc-first-cut` execution slice.
+- How one task went: reviewer accepted the final repaired diff, orchestrator verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test` and `cd /home/home/personal/projects/howl/howl-linux-host && zig build test`, then implementation commits were created as `howl-render` `975b723` and `howl-linux-host` `cf779db`.
+- Next handoff or blocker: root accountability/submodule commit remains pending.
