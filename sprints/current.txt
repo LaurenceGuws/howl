@@ -29,9 +29,10 @@ Active restart note:
 - Slice 6, `vt-report-bucket-removal`, is accepted and committed in `howl-vt` `5fddd04` and root `5107c90`.
 - Slice 7, `host-gl-render-surface-classification-spine`, is accepted and committed in `howl-linux-host` `c17cebe` and root `9cb766d`.
 - Slice 8, `pty-posix-lifecycle-spine-split`, is accepted and committed in `howl-pty` `e5a8203` and root `051a1b0`.
-- Slice 9, `host-input-literal-table-collapse`, is accepted and committed in `howl-linux-host` `1eb35f8` with root receipt pending.
+- Slice 9, `host-input-literal-table-collapse`, is accepted and committed in `howl-linux-host` `1eb35f8` and root `2419eb5`.
+- Slice 10, `render-text-prepare-pipeline-split`, is accepted and committed in `howl-render` `fc9de8d` with root receipt pending.
 - Rain-bench linked-library wrapper fix is committed in root `3830f81`.
-- The active step is execution of Slice 10, `render-text-prepare-pipeline-split`.
+- The active step is execution of Slice 11, `bucket-struct-naming-and-legitimacy-pass`.
 - Coding is authorized only from the condensed execution contract in `loops/whole-workspace-minification-live-loop.txt`.
 
 Execution rule:

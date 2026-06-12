@@ -973,3 +973,37 @@ Condensed execution contract for coder session `coder-2026-06-13-pty-posix-lifec
 - Commit-hash receipt: nested `howl-linux-host` `1eb35f8`; root receipt commit pending.
 - Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
 - Next handoff or blocker: commit this root receipt and submodule pointer, then seed Slice 10 from the accepted minification plan.
+
+55. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: seed and execute Slice 10, `render-text-prepare-pipeline-split`, after root Slice 9 receipt `2419eb5`.
+- How one task went: implementation stayed inside `howl-render/src/text/surface_preparer.zig`; `prepareComplexSurface` keeps the high-level phase order and deinit/ownership transfer visible, while non-branchy bodies moved into owner-local helpers for complex-cell selection, resolve/shape/group, complex scene building, rasterization, and complex counter application.
+- Verification: `cd /home/home/personal/projects/howl/howl-render && zig fmt src/text/surface_preparer.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/surface_preparer.zig`: passed.
+- Deinit/errdefer audit: `final_prepared` remains protected by parent `errdefer`; `complex.deinit`, `text_scene.deinit`, `raster_plan.deinit`, merge ownership transfer, direct output ownership clearing, `final_prepared.deinit`, and returned owned scene/raster plan remain visible in the parent spine.
+- Scope: no shaping/raster behavior changes, no font provider changes, no benchmark tuning, no `Pipeline`/`Engine`/`Context` bucket.
+- Commit-hash handoff status: pending reviewer and orchestrator commit.
+- Next handoff or blocker: reviewer must check deinit ownership, helper boundaries, phase order visibility, behavior preservation, and scope before commit.
+
+56. Role: reviewer
+- Session id: `review-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: review execution Slice 10, `render-text-prepare-pipeline-split`, against the single allowed product-file diff, deinit/errdefer auditability, ownership transfer visibility, helper boundaries, behavior preservation, and claimed verification.
+- How one task went: the nested `howl-render` product diff touches only `src/text/surface_preparer.zig`; `prepareComplexSurface` keeps selection, resolve/shape/group, scene build, rasterize, merge, counter application, direct-output ownership clearing, `final_prepared.deinit`, and returned scene/raster-plan ownership visible in the parent; the new helpers are owner-local phase leaves and do not introduce `Pipeline`, `Engine`, `Context`, or generic bucket structs.
+- Verdict: accept.
+- Findings: none.
+- Acceptance notes: reviewer reran `cd /home/home/personal/projects/howl/howl-render && zig build test` successfully and reran `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/surface_preparer.zig` successfully. Orchestrator must rerun before commit: `cd /home/home/personal/projects/howl/howl-render && zig fmt src/text/surface_preparer.zig && zig build test`; `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/surface_preparer.zig`; inspect root and nested status/diff to confirm product-code changes remain limited to `howl-render/src/text/surface_preparer.zig`, this loop note is the only intended root-file content change for review, no `text_session_test.zig` edit was needed, and there are no shaping/raster behavior changes, font provider changes, benchmark tuning, file motion, or hidden deinit ownership transfers for `OwnedLineTextCache`, `OwnedRenderableCells`, or `OwnedClusters`.
+- Next handoff or blocker: orchestrator may verify, record receipts, commit the accepted Slice 10 implementation if verification still passes, and close the Slice 10 implementation commit receipt.
+
+57. Role: orchestrator
+- Session id: `orch-2026-06-12-minify-sloppy-code-01`
+- Hello: hi
+- Intended task: close Slice 10 after reviewer acceptance and final verification.
+- How one task went: reviewer accepted with no findings; final verification passed; nested `howl-render` status showed only `src/text/surface_preparer.zig`; accepted implementation committed as `howl-render` `fc9de8d` (`Split render complex prepare spine`). `sprints/current.txt` now records Slice 10 as accepted and moves the active step to Slice 11.
+- Verification: `cd /home/home/personal/projects/howl/howl-render && zig fmt src/text/surface_preparer.zig && zig build test`: passed.
+- Verification: `cd /home/home/personal/projects/howl && python3 style.py --by-file --format json howl-render/src/text/surface_preparer.zig`: passed.
+- Deinit/errdefer audit: parent `prepareComplexSurface` keeps `final_prepared` errdefer, `complex` defer, `text_scene` and `raster_plan` errdefers, merge ownership transfer, direct output ownership clearing, counter application, final prepared deinit, and returned owned scene/raster plan visible.
+- Commit-hash receipt: nested `howl-render` `fc9de8d`; root receipt commit pending.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit this root receipt and submodule pointer, then seed Slice 11 from the accepted minification plan.
