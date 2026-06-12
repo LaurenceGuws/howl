@@ -469,23 +469,6 @@ def run_build() -> None:
     subprocess.run(["zig", "build", "--release=fast", "stress:rain:build"], cwd=TOOLS_ROOT, check=True)
 
 
-def latest_library_dirs() -> list[str]:
-    cache_root = HOST_ROOT / ".zig-cache" / "o"
-    names = ("libhowl_render.so", "libhowl_pty.so", "libhowl_vt.so")
-    dirs: list[str] = []
-    seen: set[str] = set()
-    for name in names:
-        matches = sorted(cache_root.glob(f"**/{name}"), key=lambda path: path.stat().st_mtime, reverse=True)
-        if not matches:
-            continue
-        parent = str(matches[0].parent)
-        if parent in seen:
-            continue
-        seen.add(parent)
-        dirs.append(parent)
-    return dirs
-
-
 def tooling_snapshot() -> dict[str, object]:
     tools = {
         "strace": shutil.which("strace"),
@@ -534,10 +517,6 @@ def launch_command(name: str, args: argparse.Namespace, command: str, trace_path
             return None
         if args.trace_howl:
             env["HOWL_TRACE_PATH"] = str(trace_path)
-        lib_dirs = latest_library_dirs()
-        existing_ld = env.get("LD_LIBRARY_PATH")
-        lib_path = ":".join(lib_dirs)
-        env["LD_LIBRARY_PATH"] = lib_path if existing_ld is None else f"{lib_path}:{existing_ld}"
         return ([str(args.howl_bin), "--command", titled_command], env)
     if name == "kitty":
         kitty = shutil.which(args.kitty_bin)
