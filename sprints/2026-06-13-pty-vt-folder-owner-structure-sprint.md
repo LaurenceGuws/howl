@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: remaining plan reviewer-accepted after explicit user override; plan repair receipt pending.
+Status: Slice 4 active.
 
 Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 
@@ -43,7 +43,7 @@ Commit-hash receipt: root `efbd9ad`.
 
 ## Execution Authorization
 
-- Slice 3 is authorized through the live-loop execution contract only.
+- Slice 4 is authorized through the live-loop execution contract only.
 - The accepted slice plan is `/home/home/personal/projects/howl/research/2026-06-13-pty-vt-folder-owner-structure-plan.md`.
 - No other PTY or VT work is authorized.
 
@@ -52,6 +52,10 @@ Commit-hash receipt: root `efbd9ad`.
 - Slice 1, `PTY proof-root relocation out of src`: `howl-pty` `13b7fbd`; root `2718455`.
 - Slice 2, `VT proof and non-product roots out of src`: `howl-vt` `556ab69`; root `921f630`.
 - Slice 3, `VT terminal core root establishment`: `howl-vt` `20fb714`; root `4a4fec4`.
+
+## Planning Repair Receipts
+
+- Remaining Slice 4 and Slice 5 repair after explicit final no-`terminal/` override: root `27bcb75`.
 
 ## Explicit User Override
 

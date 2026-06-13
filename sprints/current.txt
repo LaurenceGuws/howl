@@ -24,7 +24,7 @@ Active restart note:
 - Slice 1, `PTY proof-root relocation out of src`, is accepted in `howl-pty` `13b7fbd` and root `2718455`.
 - Slice 2, `VT proof and non-product roots out of src`, is accepted in `howl-vt` `556ab69` and root `921f630`.
 - Slice 3, `VT terminal core root establishment`, is accepted in `howl-vt` `20fb714` and root `4a4fec4`.
-- Slice 4 and Slice 5 remaining plan is researcher-repaired and reviewer-accepted under the explicit final no-`terminal/` override; plan repair commit receipt pending.
+- Slice 4 and Slice 5 remaining plan is researcher-repaired and reviewer-accepted under the explicit final no-`terminal/` override; plan repair commit receipt root `27bcb75`.
 - User direction: PTY is small, so PTY and VT can be cleaned up together in one sprint.
 - Explicit user override receipt: user said, "ok slice 5 will be deleting terminal anmd moving all its content into src/ terminal makes the fodlers all 1 deeper for no reason. you can delegate until all that is done". This overrides the Ghostty-shaped `src/terminal/` subdomain pressure for the final Howl VT tree because the user rejected the extra folder depth as unjustified for Howl. Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 - Reference pressure: Ghostty terminal and termio structure is primary for VT and PTY owner/folder shape; Alacritty terminal/event_loop/tty pressure is secondary where it sharpens PTY/runtime folder boundaries.
@@ -37,7 +37,7 @@ Active restart note:
 
 Execution rule:
 
-- Coding is authorized only from the condensed Slice 4 execution contract in `loops/pty-vt-folder-owner-structure-live-loop.txt` after the plan repair commit receipt is recorded.
+- Coding is authorized only from the condensed Slice 4 execution contract in `loops/pty-vt-folder-owner-structure-live-loop.txt`.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

@@ -468,7 +468,7 @@ Stop conditions:
 
 Name: VT protocol bucket removal toward final no-wrapper layout.
 
-Status: accepted plan; execution waits for plan repair commit receipt.
+Status: active.
 
 Coder session id: `coder-2026-06-13-pty-vt-folder-structure-slice-4`.
 
@@ -589,3 +589,10 @@ Stop conditions:
 - Intended task: gate the repaired remaining Slice 4 and Slice 5 plan after prior rejection of stale proof buckets and broad dependency globs.
 - How one task went: accepted the repair; final proof shape no longer preserves `test/unit/action/`, `test/unit/control/`, or `test/unit/xterm/`, Slice 4 exact dependency files are current-source-proved, and the only remaining folder globs are owner folders being moved as units.
 - Next handoff or blocker: orchestrator may seed Slice 4 from the repaired research artifact; coder must stop and return to research if current-source proof finds an old protocol-bucket import or temporary terminal-wrapper import in a file not named by the accepted slice contract.
+
+31. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: record accepted remaining-plan repair receipt and activate Slice 4.
+- How one task went: committed the accepted remaining-plan repair at root `27bcb75` and marked Slice 4 active.
+- Next handoff or blocker: coder may implement Slice 4 from this live-loop contract only.
