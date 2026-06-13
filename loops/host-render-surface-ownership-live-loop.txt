@@ -61,3 +61,87 @@ Team scratchpad
 - Intended task: seed the next planning sprint around host render-surface ownership pressure.
 - How one task went: promoted a new host-focused planning sprint around `howl-linux-host/src/display/render_surface.zig` so the active surface stays live after the raster sprint close.
 - Next handoff or blocker: researcher must write the full planning package and either prove `render_surface.zig` is the first cut or prove one ranked fallback seam must preempt it.
+
+2. Role: researcher
+- Session id: `research-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: prove whether `howl-linux-host/src/display/render_surface.zig` is the first true host ownership cut and write the full slice plan.
+- How one task went: current source and Alacritty/TigerBeetle pressure both say `render_surface.zig` goes first; the true first split is its retained host resource owner, not a fallback seam and not helper shattering.
+- Next handoff or blocker: reviewer should gate the planning package in `research/2026-06-13-host-render-surface-ownership-plan.md`; no reference override is needed.
+
+3. Role: reviewer
+- Session id: `review-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: review the active host render-surface ownership planning package for source backing and executability.
+- How one task went: rejected the research artifact because the first-cut ranking against the sprint's fallback files was under-proved and the slice queue still left helper/symbol ownership to coder judgment.
+- Next handoff or blocker: researcher must add direct fallback-file comparison proof, replace category-level helper language with exact symbol-to-file slice instructions, and tighten allowed-file authority before planning can be accepted.
+
+4. Role: researcher
+- Session id: `research-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: repair the rejected planning package without implementation.
+- How one task went: read the ranked fallback files directly, rewrote the plan with explicit fallback comparison, exact symbol moves for Slice 1 and Slice 2, exact allowed-file consequences, and removed the under-proved claims.
+- Next handoff or blocker: reviewer should re-gate the repaired artifact in `research/2026-06-13-host-render-surface-ownership-plan.md`; no implementation is authorized.
+
+5. Role: reviewer
+- Session id: `review-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: re-gate the repaired host render-surface ownership planning package.
+- How one task went: rejected the repaired artifact because Slice 1 still left shared helper ownership unresolved; the extracted resource owner needs `spanSlice`, `sameResource`, `bytesPerPixel`, and `rectFitsResource` before Slice 2 moves them.
+- Next handoff or blocker: researcher must repair Slice 1 with exact interim symbol ownership/visibility for every helper the moved resource owner calls, then re-submit for review.
+
+6. Role: researcher
+- Session id: `research-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: repair the remaining Slice 1 shared-helper ownership blocker.
+- How one task went: assigned `spanSlice`, `sameResource`, `bytesPerPixel`, and `rectFitsResource` to `render_surface_resources.zig` in Slice 1 and allowed only temporary root-local aliases until command extraction.
+- Next handoff or blocker: reviewer should re-gate the repaired planning package; no implementation is authorized.
+
+7. Role: reviewer
+- Session id: `review-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: re-gate the twice-repaired host render-surface ownership planning package.
+- How one task went: rejected the artifact because Slice 1 still did not explicitly authorize the visibility/facade route for moved `RenderResourceTextures.Slot`, `commitUploadMetadata`, and `validateSurface`, and the active loop scratchpad contained a stale duplicated researcher note.
+- Next handoff or blocker: researcher must make Slice 1 executable without coder invention by naming the exact resource-owner visibility/testing-facade route, and orchestrator/researcher must clean the stale duplicate loop note before re-review.
+
+8. Role: researcher
+- Session id: `research-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: repair the Slice 1 resource testing-facade route and clean stale loop state.
+- How one task went: named `render_surface_resources.testing` as the resource-owned facade for `TextureSlot`, `commitUploadMetadata`, and `validateSurface`, kept `render_surface.testing` as the only test import facade, and removed the stale duplicate loop note.
+- Next handoff or blocker: reviewer should re-gate the repaired planning package; no implementation is authorized.
+
+9. Role: reviewer
+- Session id: `review-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: re-gate the latest repaired host render-surface ownership planning package.
+- How one task went: rejected the package because the main prior symbol/facade repairs are present, but the allowed-file lists still conditionally authorize files without exact expected changes.
+- Next handoff or blocker: researcher must remove or make exact the conditional `terminal/surface_test.zig` authorizations and the conditional Slice 2 `render_surface_resources.zig` visibility authorization before acceptance.
+
+10. Role: researcher
+- Session id: `research-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: repair conditional allowed-file authority after the latest reviewer rejection.
+- How one task went: removed `terminal/surface_test.zig` from all editable slice file lists and removed conditional Slice 2 authority for `render_surface_resources.zig`; the tests remain required verification only.
+- Next handoff or blocker: reviewer should re-gate the repaired planning package; no implementation is authorized.
+
+11. Role: reviewer
+- Session id: `review-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: re-gate the latest allowed-file repair for the host render-surface ownership planning package.
+- How one task went: rejected the package because the latest repair fixed the named Slice 1/Slice 2 symbol and facade defects, removed the stale duplicate loop note, and removed the prior conditional `terminal/surface_test.zig` and Slice 2 `render_surface_resources.zig` authority, but Slice 3 still conditionally authorized `render_surface_test.zig` edits.
+- Next handoff or blocker: researcher must make Slice 3 allowed files exact by removing the conditional test-file edit or replacing it with one named expected change, then update the readiness claim before re-review.
+
+12. Role: researcher
+- Session id: `research-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: repair the remaining Slice 3 conditional allowed-file authority.
+- How one task went: removed `render_surface_test.zig` from Slice 3 allowed files and added `No render_surface_test.zig edits` as a Slice 3 non-goal.
+- Next handoff or blocker: reviewer should re-gate the repaired planning package; no implementation is authorized.
+
+13. Role: reviewer
+- Session id: `review-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: re-gate the Slice 3 allowed-file repair for the host render-surface ownership planning package.
+- How one task went: accepted the repaired package; fallback ranking, exact Slice 1/Slice 2 symbol moves, Slice 1 helper ownership, resource testing facade routing, allowed-file authority, readiness claim, and active loop state now satisfy the planning gate.
+- Next handoff or blocker: orchestrator may promote the accepted planning package into execution seeding; no implementation is authorized until the next accepted execution slice is seeded.
