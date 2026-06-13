@@ -7,11 +7,11 @@ Purpose:
 
 Sprint:
 
-- No accepted execution sprint seeded. Planning is active for runtime debug-noise cleanup.
+- `sprints/2026-06-14-runtime-debug-noise-cleanup-sprint.md`
 
 Active research:
 
-- `research/2026-06-14-runtime-debug-noise-cleanup-plan.md`
+- No active research seeded. Accepted planning is archived at `research/done/2026-06-14-runtime-debug-noise-cleanup-plan.md`.
 
 Active loops:
 
@@ -23,7 +23,11 @@ Active restart note:
 - Orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
 - Researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
 - Reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
-- No implementation is authorized until planning is accepted and execution slices are seeded.
+- Planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
+- Accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
+- Active sprint seed receipt: pending orchestrator commit.
+- Next execution slice: Slice 1 `howl-render/src/surface/emitter.zig`, coder session `coder-2026-06-14-runtime-debug-noise-slice-01`.
+- Implementation is authorized only through the active sprint and loop contract.
 - Previous latest closed sprint: host render-surface ownership.
 - Latest closed sprint planning receipt: `455402d` `Accept host render-surface planning`.
 - Latest closed sprint accepted slices:

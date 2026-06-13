@@ -1,3 +1,9 @@
+# Historical Authority
+
+- Historical authority at time: accepted runtime debug-noise cleanup planning package for `orch-2026-06-14-runtime-debug-noise-01`, accepted by `review-2026-06-14-runtime-debug-noise-01`.
+- Why superseded or done: promoted into active sprint contract `sprints/2026-06-14-runtime-debug-noise-cleanup-sprint.md`.
+- Must not be used for: direct execution authority after sprint promotion; use the active sprint and loop contract instead.
+
 # Runtime Debug Noise Cleanup Plan
 
 Status:
@@ -9,7 +15,7 @@ Status:
 - Planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
 - Reviewer accepted planning.
 - No implementation is authorized from this file until the orchestrator seeds execution slices.
-- Acceptance receipt: pending orchestrator commit.
+- Acceptance receipt: `1ccaddd` `Accept runtime debug-noise planning`.
 
 ## Sources Read In Order
 

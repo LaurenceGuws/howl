@@ -68,3 +68,10 @@ Reviewer acceptance note:
 - Intent: re-review repaired runtime debug-noise cleanup planning package.
 - Outcome: accepted planning with no blocking findings. The repaired plan inventories `direct_normal.zig`, deletes runtime timing payloads instead of relocating them, tightens Slice 2 exact-file authority, adds direct-normal proof roots, and makes Slice 4 read-only/no-op verification.
 - Handoff: orchestrator may record the accepted planning receipt and promote the plan into an execution sprint contract. No implementation is authorized until that execution contract is seeded with exact slice/coder receipt fields.
+
+Orchestrator promotion note:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: promote accepted planning into a single active execution sprint contract.
+- Outcome: accepted planning receipt `1ccaddd` is recorded; `research/2026-06-14-runtime-debug-noise-cleanup-plan.md` was archived to `research/done/2026-06-14-runtime-debug-noise-cleanup-plan.md`; active execution contract is `sprints/2026-06-14-runtime-debug-noise-cleanup-sprint.md`.
+- Handoff: Slice 1 is ready to seed to coder `coder-2026-06-14-runtime-debug-noise-slice-01` after the sprint seed receipt is committed. Slice 1 authority is `howl-render/src/surface/emitter.zig` plus `emitter_test.zig` only if compile/test expectations require access changes.
