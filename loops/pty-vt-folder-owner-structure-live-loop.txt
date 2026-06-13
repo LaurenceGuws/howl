@@ -618,6 +618,13 @@ Stop conditions:
 - How one task went: reran `zig build test:unit`, `zig build test:abi`, and `zig build benchmark:m7_baseline:build` in `howl-vt`; committed nested Slice 4 as `538a96b`.
 - Next handoff or blocker: commit the root receipt for Slice 4 before seeding Slice 5.
 
+35. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: record Slice 4 root commit receipt.
+- How one task went: committed the root Slice 4 receipt as `3a3ea9d`.
+- Next handoff or blocker: commit this receipt update, then seed Slice 5.
+
 32. Role: coder
 - Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-4`
 - Hello: hi
