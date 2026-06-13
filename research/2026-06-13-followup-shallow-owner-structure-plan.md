@@ -2,7 +2,7 @@
 
 Date: 2026-06-13.
 
-Status: active research target.
+Status: reviewer-accepted planning artifact.
 
 Role owner: researcher.
 
@@ -13,6 +13,8 @@ Researcher session id: `research-2026-06-13-followup-shallow-structure-01`.
 Reviewer session id: `review-2026-06-13-followup-shallow-structure-01`.
 
 Planning seed commit-hash receipt: root `66927e2`.
+
+Planning package commit-hash receipt: root `04aa1b2`.
 
 Question:
 

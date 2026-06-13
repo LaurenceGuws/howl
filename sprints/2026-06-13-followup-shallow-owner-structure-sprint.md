@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: planning seeded; no implementation authorized.
+Status: Slice 1 active.
 
 Orchestrator session id: `orch-2026-06-13-followup-shallow-structure-01`.
 
@@ -36,6 +36,12 @@ Commit-hash receipt: root `66927e2`.
 
 ## Execution Authorization
 
-- No coder is authorized.
-- The researcher must write `/home/home/personal/projects/howl/research/2026-06-13-followup-shallow-owner-structure-plan.md`.
-- The reviewer must gate that plan before any execution slice is seeded.
+- Slice 1 is authorized through the live-loop execution contract only.
+- The accepted plan is `/home/home/personal/projects/howl/research/2026-06-13-followup-shallow-owner-structure-plan.md`.
+- No other slice is authorized.
+
+## Planning Receipts
+
+- Sprint seed: root `66927e2`.
+- Sprint seed receipt: root `75c8d07`.
+- Planning package acceptance: root `04aa1b2`.

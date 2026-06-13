@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: active planning loop.
+Status: active execution loop.
 
 Orchestrator session id: `orch-2026-06-13-followup-shallow-structure-01`.
 
@@ -29,10 +29,9 @@ Active research target:
 
 Current step:
 
-- New follow-up shallow owner-structure sprint is seeded for planning.
-- No implementation is authorized.
-- Researcher must produce the full source-backed follow-up plan.
-- Reviewer must gate the plan before orchestrator seeds any execution slice.
+- The follow-up shallow owner-structure planning package is accepted and committed.
+- Slice 1 is active.
+- No other implementation is authorized.
 
 Exact user direction:
 
@@ -107,6 +106,82 @@ Reviewer verdict for `research/2026-06-13-followup-shallow-owner-structure-plan.
 - Intended task: re-review the repaired follow-up shallow owner-structure plan for executable Slice 1 coverage, exact Slice 2 proof imports, and planning-package readiness.
 - How one task went: accepted the repaired plan because `research/2026-06-13-followup-shallow-owner-structure-plan.md` now re-proves all nineteen current `parser/main.zig` importers in the debt section, anchor map, and Slice 1 allowed-file list, and Slice 2 now records the exact ten direct imports already enumerated by `howl-render/src/test/unit/root.zig`.
 - Next handoff or blocker: orchestrator may commit the planning package and seed Slice 1.
+
+7. Role: orchestrator
+- Session id: `orch-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: record follow-up planning acceptance and seed Slice 1.
+- How one task went: committed the accepted planning package as root `04aa1b2`.
+- Next handoff or blocker: commit this receipt update and seed Slice 1 execution contract.
+
+## Slice 1 Execution Contract
+
+Name: Flatten VT parser owner root.
+
+Status: active.
+
+Coder session id: `coder-2026-06-13-followup-shallow-structure-slice-1`.
+
+Reviewer session id: `review-2026-06-13-followup-shallow-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-vt/src/parser.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/parser/main.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/vocabulary.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/stream_terminal.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/terminal.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/host_state.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/osc.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/howl_vt.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi_params.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/screen.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/screen/style.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/csi_mapping_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/terminal_surface_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/screen_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/report_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/route_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/screen/write_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/parser/csi_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/parser/events_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/parser/main_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/parser/string_control_test.zig`
+
+Required shape:
+
+- Move the current parser owner implementation from `src/parser/main.zig` to `src/parser.zig`.
+- Delete `src/parser/main.zig`.
+- Retarget all nineteen current direct imports listed in this contract from `parser/main.zig` to `parser.zig`.
+- Keep exported parser names, behavior, constants, and tests unchanged.
+
+Exact tests:
+
+- In `/home/home/personal/projects/howl/howl-vt`: `zig build test:unit`.
+- In `/home/home/personal/projects/howl/howl-vt`: `zig build simulate`.
+
+Non-goals:
+
+- No ABI/export renames.
+- No parser behavior changes.
+- No helper-file flattening under `src/parser/`.
+- No `ffi/main.zig` changes.
+- No simulation redesign.
+
+Stop conditions:
+
+- Stop if current source reveals any additional `parser/main.zig` importer beyond the nineteen files named here.
+- Stop if any ABI test root or header path starts depending on the parser file path.
+- Stop if flattening parser root pressures broader module-root redesign around `src/howl_vt.zig`.
+
+8. Role: orchestrator
+- Session id: `orch-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: seed Slice 1 follow-up VT parser-root flattening.
+- How one task went: wrote the condensed Slice 1 execution contract from the accepted follow-up research artifact.
+- Next handoff or blocker: coder may implement Slice 1 only.
 
 Reviewer verdict for repaired `research/2026-06-13-followup-shallow-owner-structure-plan.md`
 
