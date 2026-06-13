@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 3 accepted in nested render repo; root receipt pending.
+Status: Slice 4 seeded for execution; reviewer-gated implementation pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -32,9 +32,10 @@ Current step:
 - The planning package is accepted at root `0e53a8e`.
 - Slice 1, `Extract undercurl owner`, is accepted in `howl-render` `42b68b8`; root `a8c3e50`.
 - Slice 2, `Create generated-special root and extract box owner`, is accepted in `howl-render` `a542d8a`; root `c52f69d`.
-- Slice 3, `Extract powerline owner`, is accepted in `howl-render` `24286d6`.
-- Root receipt for Slice 3 is pending orchestrator commit.
-- No next execution slice is seeded yet.
+- Slice 3, `Extract powerline owner`, is accepted in `howl-render` `24286d6`; root `0a73776`.
+- Slice 4, `Extract the current block-plus-braille dispatch owner`, is the active execution slice.
+- Only Slice 4 is authorized.
+- Coder session id: `coder-2026-06-13-raster-special-04`.
 
 Exact user direction:
 
@@ -44,52 +45,46 @@ Exact user direction:
 
 Exact non-goals:
 
-- No box move.
-- No block or braille move.
-- No legacy-computing move.
-- No sprite-key semantic change.
+- No sextant move.
+- No octant move.
+- No branch move.
+- No support-table edit.
 
 Exact stop conditions:
 
-- Stop if the move changes powerline spacer absorption proved by `howl-render/src/text/shape/grouping.zig:277-298`.
-- Stop if the move changes route classification proved by `howl-render/src/text/symbol_map.zig:26-29,44-51` and `howl-render/src/text/resolver.zig:294-342`.
+- Stop if the move requires changing the current route split between `.block`, `.braille`, and `.legacy_computing` proved by `howl-render/src/text/symbol_map.zig:6-10`.
+- Stop if the move requires changing provider fallback routing proved by `howl-render/src/text/ft_hb/glyph_raster.zig:156-163,239-261`.
 
-Latest executed slice contract:
+Slice 4 execution contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/raster/generated_special.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special_powerline.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special_block_braille.zig`
 - Required shape:
-  - Move the powerline owner surface from `howl-render/src/text/raster/special.zig:158-176,253-259,1442-1687` out of the generated-special owner and into `howl-render/src/text/raster/special_powerline.zig`.
-  - `special_powerline.zig` owns exactly:
-    - `rasterizeGeneratedPowerlineAlpha`
-    - `rasterizeGeneratedPowerlineTriangleAlpha`
-    - `rasterizePowerlineTriangle`
-    - `rasterizePowerlineHalfDiagonal`
-    - `rasterizePowerlineD`
-    - `CubicBezier`
-    - `rasterizePowerlineFilledD`
-    - `TriangleCoverageCtx`
-    - `FilledDCoverageCtx`
-    - `supersampledTriangleCoverage`
-    - `supersampledFilledDCoverage`
-    - `triangleContains`
-    - `filledDContains`
-    - `rasterizePowerlineRoundedD`
-    - `findBezierControlX`
-    - `findBezierTForX`
-    - `drawCubicStrokeAlpha`
-    - `bezierX`
-    - `bezierY`
-    - `bezierValue`
-    - `PowerlineCorner`
-    - `rasterizePowerlineCornerTriangle`
-  - `generated_special.zig` keeps the exact helper surface still required by the remaining owners and by the extracted powerline owner:
+  - Move the current block-plus-braille dispatch owner from `howl-render/src/text/raster/special.zig:178-184,1369-1439,1688-1795` out of `generated_special.zig` and into `howl-render/src/text/raster/special_block_braille.zig`.
+  - `special_block_braille.zig` owns exactly:
+    - `rasterizeGeneratedBlockAlpha`
+    - `rasterizeBlockElementAlpha`
+    - `fillRows`
+    - `fillCols`
+    - `BlockQuadrant`
+    - `fillQuadrants`
+    - `fillQuadrant`
+    - `ShadeDensity`
+    - `fillShade`
+    - `rasterizeBrailleAlpha`
+    - `drawBrailleDotAlpha`
+    - `BrailleLayout`
+    - `brailleLayout`
+    - `BrailleDotCoverageCtx`
+    - `supersampledBrailleDotCoverage`
+    - `brailleDotContains`
+  - `generated_special.zig` keeps the exact shared helpers already used outside this owner:
+    - `Range`
+    - `eighthPartitionRange`
     - `PointF`
     - `lineY`
     - `drawLineAlpha`
-    - `Range`
-    - `eighthPartitionRange`
     - `supersampledCoverage`
     - `fillRectAlpha`
     - `saturatingSubU16`
@@ -98,12 +93,12 @@ Latest executed slice contract:
     - `pixelCount`
     - `count32`
 - Required proof roots and runs:
-  - `howl-render/src/text/raster/special_test.zig:173-214,618-626`
+  - `howl-render/src/text/raster/special_test.zig:113-171,216-301`
   - `howl-render/src/text/ft_hb/glyph_raster.zig:239-261`
-  - `howl-render/src/text/symbol_map.zig:26-29,44-51`
+  - `howl-render/src/text/symbol_map.zig:22-24,44-51`
   - `howl-render/src/text/resolver.zig:294-342`
   - `howl-render/src/text/lane.zig:449-465`
-  - `howl-render/src/text/shape/grouping.zig:277-298`
+  - `howl-render/src/text/shape/grouping.zig:259-275`
   - package-local run: `cd howl-render && zig build test:unit`
 - Verification handoff requirements:
   - coder must report files changed, concise implementation summary, verification run/results, blockers/deviations, coder session id, and commit-hash handoff status
@@ -257,3 +252,10 @@ Team scratchpad
 - Intended task: commit the accepted Slice 3 render work and close the root receipt.
 - How one task went: committed the nested `howl-render` Slice 3 diff as `24286d6` `Extract special powerline owner` after reviewer acceptance.
 - Next handoff or blocker: commit the root receipt for Slice 3, then seed Slice 4 if continuing.
+
+22. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: close the Slice 3 root receipt and seed Slice 4 for execution.
+- How one task went: recorded Slice 3 root receipt `0a73776` and condensed Slice 4 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-04`.
+- Next handoff or blocker: coder should implement Slice 4 only and return verification plus commit-hash handoff status for reviewer gating.
