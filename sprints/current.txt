@@ -28,8 +28,8 @@ Active restart note:
 - Active sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
 - Latest accepted execution slice: Slice 1 nested render commit `932bd29` `Remove emitter debug timing noise`.
 - Slice 2 correction acceptance receipt: `e94864b` `Accept runtime debug-noise Slice 2 correction`.
-- Latest accepted execution slice: Slice 2 nested render commit `3f54a58` `Remove prepare debug timing noise`.
-- Next execution slice: Slice 3 `howl-linux-host/src/terminal/surface.zig` and host upload stats plumbing, coder session `coder-2026-06-14-runtime-debug-noise-slice-03`.
+- Latest accepted execution slice: Slice 3 nested host commit `8a2f1d7` `Remove host upload stats noise`.
+- Next execution slice: Slice 4 read-only `howl-render/src/surface/realizer.zig` verification, coder session `coder-2026-06-14-runtime-debug-noise-slice-04`.
 - Implementation is authorized only through the active sprint and loop contract.
 - Previous latest closed sprint: host render-surface ownership.
 - Latest closed sprint planning receipt: `455402d` `Accept host render-surface planning`.

@@ -195,3 +195,24 @@ Slice 3 execution seed:
 - Required tests from `howl-linux-host`: `zig build test:unit -- terminal surface`, `zig build test:unit -- render surface`, `zig build test:unit`, `zig build test:integration`, and `zig build check`.
 - Stop conditions: if any non-test runtime caller requires upload timing/count fields for behavior, stop and classify that caller before proceeding; if GL upload correctness starts depending on observation structs, stop; if deletion would weaken present/submitted ordering assertions, stop.
 - Required handoff fields: changed files, summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
+Coder Slice 3 note:
+
+- Hello from `coder-2026-06-14-runtime-debug-noise-slice-03`.
+- Intent: remove host terminal/render-surface upload timing and stats plumbing while preserving runtime render decisions, stale-handle checks, GL upload behavior, metadata commits, present blocking, and assertions.
+- Outcome: deleted `UploadStats`, optional stats sinks, clocks, upload/dispatch/draw/retained-submit timing fields, and telemetry-only tests; required host unit, integration, and check commands passed.
+- Handoff: ready for reviewer `review-2026-06-14-runtime-debug-noise-01`; no blocker, no commit touched by coder.
+
+Reviewer Slice 3 acceptance note:
+
+- Hello from `review-2026-06-14-runtime-debug-noise-01`.
+- Intent: review Slice 3 host terminal/render-surface upload stats cleanup.
+- Outcome: accepted with no findings. Scope was clean, forbidden telemetry/debug plumbing was absent, runtime decision facts and GL/resource/present invariants were preserved, and tests were rewritten around runtime facts instead of telemetry.
+- Handoff: orchestrator should verify the Slice 3 host test set and record nested/root acceptance receipts.
+
+Orchestrator Slice 3 acceptance note:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: verify and accept Slice 3 after reviewer acceptance.
+- Outcome: `zig build test:unit -- terminal surface`, `zig build test:unit -- render surface`, `zig build test:unit`, `zig build test:integration`, and `zig build check` all passed from `howl-linux-host`. Nested host commit is `8a2f1d7` `Remove host upload stats noise`.
+- Handoff: root acceptance receipt is pending this commit; Slice 4 read-only realizer verification is next after root receipt closure.
