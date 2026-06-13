@@ -592,6 +592,13 @@ Stop conditions:
 - How one task went: wrote the condensed final verification and empty-directory audit contract from the accepted research artifact.
 - Next handoff or blocker: coder may implement Slice 5 only.
 
+31. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: record Slice 4 root receipt and prepare sprint closure after Slice 5 acceptance.
+- How one task went: committed root Slice 4 receipt as `5bc58e4`; Slice 5 is reviewer-accepted with all final audit gates passing, including the transient PTY aggregate-test rerun note.
+- Next handoff or blocker: commit sprint close and final receipt; no further coding is authorized from this sprint.
+
 19. Role: orchestrator
 - Session id: `orch-2026-06-13-all-src-shallow-structure-01`
 - Hello: hi
@@ -689,3 +696,17 @@ Stop conditions:
 - Intended task: re-gate Slice 4 after orchestrator corrected the live accountability surface mismatch and verify the live `howl-linux-host` diff plus required proof commands.
 - How one task went: confirmed the active sprint and live loop now both authorize Slice 4 execution, the `howl-linux-host` diff stays within the seeded allowed files, no `polling/`, `display/renderer/`, `terminal/pty/`, `terminal/vt/`, or `terminal/render/` path survives under `build.zig` or `src/`, the deleted wrapper directories are absent, and `zig build test:unit`, `zig build test:integration`, and `zig build check` all passed locally.
 - Next handoff or blocker: reviewer accepts Slice 4; orchestrator may commit nested `howl-linux-host` and record the required receipts.
+
+29. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-5`
+- Hello: hi
+- Intended task: run the Slice 5 workspace aggregate verification and empty-directory audit without changing product source.
+- How one task went: confirmed every deleted fake folder in PTY, VT, render, and host is absent, grep found no surviving deleted-path imports in live package source/build/test/support files, and all required package verification commands passed: `howl-pty zig build test`; `howl-vt zig build test`, `zig build simulate:build`, and `zig build benchmark:m7_baseline:build`; `howl-render zig build test:unit`, `zig build test:abi`, and `zig build check`; `howl-linux-host zig build test:unit`, `zig build test:integration`, and `zig build check`.
+- Next handoff or blocker: reviewer should gate Slice 5; coder made no commit and has no product-file blocker to route back to a prior slice.
+
+30. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: gate Slice 5 final audit by re-verifying deleted-folder absence, deleted-path reference removal, exact package proof commands, and that Slice 5 introduced no unauthorized product edits.
+- How one task went: confirmed `howl-pty/src/pty/`, `howl-vt/src/host/`, `howl-vt/src/selection/`, `howl-vt/src/csi/`, `howl-render/src/geometry/`, `howl-render/src/text/classify/`, `howl-linux-host/src/polling/`, `howl-linux-host/src/display/renderer/`, `howl-linux-host/src/terminal/pty/`, `howl-linux-host/src/terminal/vt/`, and `howl-linux-host/src/terminal/render/` are absent; `rg` over the live package `build.zig`, `src/`, and `test/` roots found no surviving deleted-path references; nested product repos are clean; and the Slice 5 proof commands passed locally, with `howl-pty` `zig build test` succeeding on rerun after one transient integration timeout in `session_integration_test`.
+- Next handoff or blocker: reviewer accepts Slice 5; orchestrator may close the sprint after recording the final receipts and deciding how to treat the transient PTY aggregate-test instability outside this folder-structure sprint.
