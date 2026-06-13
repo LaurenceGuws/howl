@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-render-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-render-folder-structure-01`.
 
-Loop commit-hash receipt: pending.
+Loop commit-hash receipt: planning package closed in root commit `ca6f1c4`.
 
 Shared scratchpad rule:
 
@@ -29,10 +29,9 @@ Active research target:
 
 Current step:
 
-- New render folder/file owner structure sprint is seeded for planning.
-- No implementation is authorized.
-- Researcher must produce the full source-backed slice plan.
-- Reviewer must gate the plan before orchestrator seeds any execution slice.
+- The render folder/file owner structure planning package is accepted and committed in root `ca6f1c4`.
+- Slice 1, `C boundary quarantine`, is seeded for execution.
+- Coder may execute only the active condensed execution contract below.
 
 Exact user direction:
 
@@ -80,6 +79,76 @@ Team scratchpad
 - Intended task: record reviewer acceptance and stop before execution until the planning commit-hash receipt is closed.
 - How one task went: active sprint, research, and current index now mark the render folder/file owner structure plan as reviewer-accepted with planning commit-hash receipt pending; no coder is authorized because the receipt is not closed.
 - Next handoff or blocker: commit the accepted planning package, then seed only Slice 1.
+
+Condensed execution contract for coder session `coder-2026-06-13-render-folder-structure-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-13-render-folder-owner-structure-plan.md`
+- Implement only Slice 1, `C boundary quarantine`.
+- Allowed files:
+  - `howl-render/src/libhowl_render.zig`
+  - `howl-render/src/text_session.zig`
+  - `howl-render/src/handle.zig`
+  - `howl-render/src/surface_geometry.zig`
+  - `howl-render/src/prepare_request.zig`
+  - `howl-render/src/prepared_surface.zig`
+  - `howl-render/src/submission.zig`
+  - `howl-render/src/work_state.zig`
+  - `howl-render/src/test_support.zig`
+  - `howl-render/src/text_session_test.zig`
+  - `howl-render/src/surface_geometry_test.zig`
+  - `howl-render/src/prepare_request_test.zig`
+  - `howl-render/src/prepared_surface_test.zig`
+  - `howl-render/src/submission_test.zig`
+  - `howl-render/src/c/text_session.zig`
+  - `howl-render/src/c/text_session_handle.zig`
+  - `howl-render/src/c/surface_geometry.zig`
+  - `howl-render/src/c/prepare_request.zig`
+  - `howl-render/src/c/prepared_surface.zig`
+  - `howl-render/src/c/submission.zig`
+  - `howl-render/src/c/work_state.zig`
+  - `howl-render/src/c/test_support.zig`
+  - `howl-render/src/c/text_session_test.zig`
+  - `howl-render/src/c/surface_geometry_test.zig`
+  - `howl-render/src/c/prepare_request_test.zig`
+  - `howl-render/src/c/prepared_surface_test.zig`
+  - `howl-render/src/c/submission_test.zig`
+  - `howl-render/src/test_abi.zig`
+  - `howl-render/src/test/unit/root.zig`
+- Exact required shape:
+  - `libhowl_render.zig` must import C shims only from `src/c/`.
+  - no top-level C shim files may remain.
+  - the old generic top-level `handle.zig` must be gone.
+  - `test_support.zig` must move to `src/c/test_support.zig`.
+  - the five top-level wrapper-test files must move to sibling files under `src/c/`.
+  - `test_abi.zig` must import the wrapper-test files from `src/c/` paths only.
+  - `test/unit/root.zig` must import `text_session_test.zig` and `submission_test.zig` from `src/c/` paths only.
+  - function names and ABI exports must stay byte-for-byte identical.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+- Exact non-goals:
+  - no movement of `render_session.zig`.
+  - no movement of `surface/`, `text/`, `geometry/`, or `vt_publication/` owners yet.
+  - no ABI symbol additions or removals.
+- Exact stop conditions:
+  - stop if any build root outside `libhowl_render.zig` requires a new public entrypoint name.
+  - stop if any caller outside `howl-render/src` depends on the deleted top-level shim paths directly.
+  - stop if reviewer judges the `c/` folder insufficiently source-backed.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-render-folder-structure-01`
+  - commit-hash handoff status for orchestrator receipt closure
+
+4. Role: orchestrator
+- Session id: `orch-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: close the accepted planning receipt and seed Slice 1 for execution.
+- How one task went: the accepted planning package was committed as root `ca6f1c4`, the active sprint/research/current index now record that receipt, and Slice 1 has an exact condensed execution contract with allowed files, required shape, tests, non-goals, stop conditions, and receipt demand.
+- Next handoff or blocker: coder may execute only `coder-2026-06-13-render-folder-structure-01`; no broader slice or product-code work is authorized.
 
 2. Role: researcher
 - Session id: `research-2026-06-13-render-folder-structure-01`

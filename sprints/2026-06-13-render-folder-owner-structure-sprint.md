@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: reviewer-accepted planning; planning commit-hash receipt pending; no implementation authorized until receipt closes.
+Status: reviewer-accepted planning committed; Slice 1 seeded for execution.
 
 Orchestrator session id: `orch-2026-06-13-render-folder-structure-01`.
 
@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-render-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-render-folder-structure-01`.
 
-Commit-hash receipt: pending.
+Commit-hash receipt: planning package closed in root commit `ca6f1c4`.
 
 ## Problem Statement
 
@@ -41,5 +41,5 @@ Commit-hash receipt: pending.
 
 - The reviewer accepted the planning package in session `review-2026-06-13-render-folder-structure-01`.
 - The accepted research artifact is `/home/home/personal/projects/howl/research/2026-06-13-render-folder-owner-structure-plan.md`.
-- Planning commit-hash receipt is still pending, so no coder is authorized yet.
-- After the planning receipt closes, orchestrator may seed only Slice 1 from the accepted research plan.
+- Planning commit-hash receipt is closed in root `ca6f1c4`.
+- Execution is authorized only through the condensed Slice 1 contract in `/home/home/personal/projects/howl/loops/render-folder-owner-structure-live-loop.txt`.

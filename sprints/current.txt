@@ -20,18 +20,19 @@ Active loops:
 Active restart note:
 
 - The render API owner surgery sprint is closed and archived as done; its artifacts are historical receipts only.
-- The active step is render folder/file owner planning, not implementation.
+- The active planning package is accepted and committed in root `ca6f1c4`.
+- The active step is execution of Slice 1, `C boundary quarantine`.
 - User direction: clean up file and folder locations and naming; keep only curated owner units directly under `src`; use shallow child folders only for true subdomains and per-owner definitions; take explicit pressure from `utils/dev_references/terminals/ghostty/src/terminal` and its child folders for intentional structure.
 - Current render shape still has folder/location discipline debt: empty `src/session/`, mixed top-level and folder owners, and folder boundaries that are not yet obviously owner-true.
 - Orchestrator session id: `orch-2026-06-13-render-folder-structure-01`.
 - Researcher session id: `research-2026-06-13-render-folder-structure-01`.
 - Reviewer session id: `review-2026-06-13-render-folder-structure-01`.
 - Planning status: reviewer-accepted.
-- Planning commit-hash receipt: pending.
+- Planning commit-hash receipt: root `ca6f1c4`.
 
 Execution rule:
 
-- No render product code is authorized until the reviewer-accepted planning package has a commit-hash receipt and orchestrator seeds Slice 1.
+- Coding is authorized only from the condensed Slice 1 execution contract in `loops/render-folder-owner-structure-live-loop.txt`.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical render-owner artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
