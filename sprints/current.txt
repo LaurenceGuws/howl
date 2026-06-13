@@ -26,13 +26,14 @@ Active restart note:
 - Reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
 - Planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
 - Accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
-- Active sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
+- Sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
 - Slice 2 correction acceptance receipt: `e94864b` `Accept runtime debug-noise Slice 2 correction`.
 - Runtime debug-noise cleanup accepted slices:
   - Slice 1 nested render commit `932bd29` `Remove emitter debug timing noise`, root receipt `cd00a7e` `Accept runtime debug-noise Slice 1`.
   - Slice 2 nested render commit `3f54a58` `Remove prepare debug timing noise`, root receipt `69eba22` `Accept runtime debug-noise Slice 2`.
   - Slice 3 nested host commit `8a2f1d7` `Remove host upload stats noise`, root receipt `9eddb77` `Accept runtime debug-noise Slice 3`.
   - Slice 4 read-only realizer verification, root receipt `8e42f54` `Accept runtime debug-noise Slice 4`.
+- Archive receipt: `2f62673` `Archive runtime debug-noise sprint`.
 - Runtime debug-noise cleanup sprint execution is complete and archived.
 
 Execution rule:
