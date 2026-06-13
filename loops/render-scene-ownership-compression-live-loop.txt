@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 3 seeded for execution; reviewer-gated implementation pending.
+Status: Slice 3 accepted in nested render repo; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-render-scene-01`.
 
@@ -32,9 +32,9 @@ Current step:
 - The planning package is accepted at root `2fde3dd`.
 - Slice 1, `Extract scene damage/span ownership and move callers to it`, is accepted in `howl-render` `959576d`; root `5bbe0ec`.
 - Slice 2, `Extract scene rect/fill ownership with explicit undercurl carve-out`, is accepted in `howl-render` `acb929e`; root `007a0ee`.
-- Slice 3, `Finish scene.zig as the sprite/raster scene root only`, is the active execution slice.
-- Only Slice 3 is authorized.
-- Coder session id: `coder-2026-06-13-render-scene-03`.
+- Slice 3, `Finish scene.zig as the sprite/raster scene root only`, is accepted in `howl-render` `27317db`.
+- Root receipt for Slice 3 is pending orchestrator commit.
+- No next execution slice is seeded yet.
 
 Exact user direction:
 
@@ -55,7 +55,7 @@ Exact stop conditions:
 - Stop if curly underline ownership leaves the sprite/raster owner.
 - Stop if lane-report proof no longer lines up with the sprite-producing owner.
 
-Slice 3 execution contract:
+Latest executed slice contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/scene.zig`
@@ -203,3 +203,38 @@ Team scratchpad
 - Intended task: close the Slice 2 root receipt and seed Slice 3 for execution.
 - How one task went: recorded Slice 2 root receipt `007a0ee` and condensed Slice 3 into this live-loop execution contract with coder session id `coder-2026-06-13-render-scene-03`.
 - Next handoff or blocker: coder should implement Slice 3 only and return verification plus commit-hash handoff status for reviewer gating.
+
+17. Role: coder
+- Session id: `coder-2026-06-13-render-scene-03`
+- Hello: hi
+- Intended task: implement Slice 3 only inside the allowed render files.
+- How one task went: removed the remaining rect-geometry helper ownership from `scene.zig`, kept sprite/raster and undercurl ownership there, moved shared rect truth consumed by curly assembly into `scene_rects.zig`, and passed all required exact-name proofs plus full `zig build test:unit`.
+- Next handoff or blocker: reviewer should gate the Slice 3 diff; no commit hash exists yet because git was intentionally untouched.
+
+18. Role: reviewer
+- Session id: `review-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: gate the executed Slice 3 diff against the live loop contract, accepted plan, and proof obligations.
+- How one task went: rejected Slice 3 because `scene.zig` still exports rect-owner delegation APIs instead of finishing as the sprite/raster scene root only; full `zig build test:unit` still passed on rerun.
+- Next handoff or blocker: coder must remove the remaining rect-delegation exports from `scene.zig`, update any local test call sites to use `scene_rects` directly, and return the corrected diff for re-review.
+
+19. Role: coder
+- Session id: `coder-2026-06-13-render-scene-03`
+- Hello: hi
+- Intended task: repair Slice 3 by deleting the remaining rect-delegation exports from `scene.zig` and rebinding the local test call site directly to `scene_rects`.
+- How one task went: removed the five remaining rect-delegation exports from `scene.zig`, updated the local cursor test to call `scene_rects.cursorDraws` directly, and passed the full Slice 3 proof set plus full `zig build test:unit` again.
+- Next handoff or blocker: reviewer should re-gate the repaired Slice 3 diff; no commit hash exists yet because git was intentionally untouched.
+
+20. Role: reviewer
+- Session id: `review-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: re-gate the repaired Slice 3 diff against the prior rejection point, accepted plan, and live-loop contract.
+- How one task went: accepted Slice 3; `scene.zig` no longer exports rect-owner delegation APIs, the local cursor test now calls `scene_rects` directly, sprite/raster and undercurl ownership remain in `scene.zig`, lane-report proof still records produced sprite draws, and rerun proof checks plus full `zig build test:unit` passed.
+- Next handoff or blocker: orchestrator may commit Slice 3 and record the commit-hash receipt.
+
+21. Role: orchestrator
+- Session id: `orch-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: commit the accepted Slice 3 render work and close the root receipt.
+- How one task went: committed the nested `howl-render` Slice 3 diff as `27317db` `Finish scene sprite owner` after reviewer acceptance.
+- Next handoff or blocker: commit the root receipt for Slice 3, then close the sprint if no further slice is needed.
