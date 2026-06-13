@@ -8,7 +8,7 @@ Status:
 - Reviewer session id: `review-2026-06-14-six-target-ownership-01`.
 - Planning seed receipt: `bbf5ca7` `Seed six-target ownership planning`.
 - Accepted planning receipt: `16591b9` `Accept six-target ownership planning`.
-- Sprint seed receipt: pending orchestrator commit.
+- Sprint seed receipt: `bf0da6e` `Seed six-target ownership sprint`.
 
 Problem:
 

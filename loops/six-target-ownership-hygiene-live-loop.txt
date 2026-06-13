@@ -100,4 +100,4 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
 - Intent: promote accepted planning into the active execution sprint contract without starting coder work yet.
 - Outcome: accepted planning receipt `16591b9` is recorded; `research/2026-06-14-six-target-ownership-hygiene-plan.md` moved to `research/done/2026-06-14-six-target-ownership-hygiene-plan.md`; active sprint contract is `sprints/2026-06-14-six-target-ownership-hygiene-sprint.md`.
-- Handoff: Slice 1 is next to seed for coder `coder-2026-06-14-six-target-ownership-slice-01` once the sprint seed receipt is committed.
+- Handoff: sprint seed receipt is `bf0da6e` `Seed six-target ownership sprint`. Slice 1 is next to seed for coder `coder-2026-06-14-six-target-ownership-slice-01` when execution is authorized.

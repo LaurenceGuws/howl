@@ -25,7 +25,7 @@ Active restart note:
 - Reviewer session id: `review-2026-06-14-six-target-ownership-01`.
 - Planning seed receipt: `bbf5ca7` `Seed six-target ownership planning`.
 - Accepted planning receipt: `16591b9` `Accept six-target ownership planning`.
-- Active sprint seed receipt: pending orchestrator commit.
+- Active sprint seed receipt: `bf0da6e` `Seed six-target ownership sprint`.
 - Next execution slice: Slice 1 `ft_hb` loaded-face owner cut, coder session `coder-2026-06-14-six-target-ownership-slice-01`.
 - Implementation is authorized only through the active sprint and loop contract.
 - Previous latest closed sprint: runtime debug-noise cleanup.
