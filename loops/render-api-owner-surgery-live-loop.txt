@@ -445,6 +445,118 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 - How one task went: the live Slice 3 contract now matches the accepted research allowlist and required shape, so execution can resume without forcing out-of-scope edits.
 - Next handoff or blocker: commit the accepted planning correction, then rerun Slice 3 under the refreshed contract.
 
+23. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-03`
+- Hello: hi
+- Intended task: implement Slice 3, `Prepare Queue Cutover And tv_surface Deletion`, under the refreshed allowlist.
+- How one task went: created `src/prepare/queue.zig` as the active prepare owner, moved `session/text.zig` off `tv_surface/prepare_request.zig`, removed every remaining `tv_surface/` import from the refreshed allowlist by pointing storage, renderable-content, VT publication, and benchmark code at real owners, replaced the last `tv_surface/cell.zig` cursor compatibility dependency with VT publication ABI cursor truth, and deleted all seven `tv_surface` files after cutover.
+- Next handoff or blocker: reviewer/orchestrator can verify the Slice 3 diff under the accepted contract.
+
+24. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review execution Slice 3, `Prepare Queue Cutover And tv_surface Deletion`, against the refreshed contract, owner boundaries, deletions, assertions/tests, and proof receipts.
+- Findings: none.
+- Outcome: accept.
+- Acceptance notes: orchestrator must verify passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`; verify final `tv_surface/` grep under `howl-render/src` returned no matches; verify `howl-render/src/tv_surface` glob returned no files; verify nested `howl-render` status stages only the Slice 3 allowed files; record the commit hash as `slice-3-prepare-storage-cutover=<hash>` before seeding Slice 4.
+- Next handoff or blocker: orchestrator may verify, commit the accepted nested render Slice 3 change, record the root receipt, and seed exactly Slice 4.
+
+25. Role: orchestrator
+- Session id: `orch-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: close Slice 3 after reviewer acceptance and final verification.
+- How one task went: final verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`, `cd /home/home/personal/projects/howl/howl-render && zig build check`, `rg "tv_surface/" src`, and `src/tv_surface` glob; nested `howl-render` status matched the Slice 3 allowed files; accepted implementation committed as `howl-render` `0f4fdb1` (`Delete tv surface bucket`).
+- Commit-hash receipt: `slice-3-prepare-storage-cutover=0f4fdb1`.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit the root Slice 3 receipt and seed Slice 4 from the accepted research plan.
+
+Condensed execution contract for coder session `coder-2026-06-13-render-api-owner-surgery-04`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-13-render-api-owner-surgery-plan.md`
+- Implement only Slice 4, `Text Effects Geometry Contract Recut`.
+- Allowed files:
+  - `howl-render/src/text/contract.zig`
+  - `howl-render/src/text/color.zig`
+  - `howl-render/src/text/effects.zig`
+  - `howl-render/src/text/metrics.zig`
+  - `howl-render/src/text/cell_input.zig`
+  - `howl-render/src/text/scene_contract.zig`
+  - `howl-render/src/text/raster/cache.zig`
+  - `howl-render/src/text/raster/atlas.zig`
+  - `howl-render/src/text/raster/key.zig`
+  - `howl-render/src/text/raster/operation.zig`
+  - `howl-render/src/text/raster/rasterizer.zig`
+  - `howl-render/src/text/raster/special.zig`
+  - `howl-render/src/text/raster/special_test.zig`
+  - `howl-render/src/text/ft_hb/cache.zig`
+  - `howl-render/src/text/ft_hb/support.zig`
+  - `howl-render/src/text/ft_hb/support_test.zig`
+  - `howl-render/src/text/ft_hb/glyph_raster.zig`
+  - `howl-render/src/text/ft_hb/provider.zig`
+  - `howl-render/src/text/session.zig`
+  - `howl-render/src/text/provider.zig`
+  - `howl-render/src/text/resolver.zig`
+  - `howl-render/src/text/resolve.zig`
+  - `howl-render/src/text/scene.zig`
+  - `howl-render/src/text/direct_scene.zig`
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/surface_preparer.zig`
+  - `howl-render/src/text/shape/cluster.zig`
+  - `howl-render/src/text/shape/grouping.zig`
+  - `howl-render/src/text/shape/run.zig`
+  - `howl-render/src/text/classify/lane.zig`
+  - `howl-render/src/text/classify/symbol_map.zig`
+  - `howl-render/src/benchmark_main.zig`
+  - `howl-render/src/test_support.zig`
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/session/text_test.zig`
+  - `howl-render/src/prepared/buffer.zig`
+  - `howl-render/src/prepared/handle_test.zig`
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - `howl-render/src/prepared/render_surface_emitter_test.zig`
+- Required shape:
+  - split `text/contract.zig` into exact owners: `text/color.zig`, `text/effects.zig`, `text/metrics.zig`, `text/cell_input.zig`, and `text/scene_contract.zig`.
+  - keep `text/contract.zig` as a curated re-export root only.
+  - rename `text/raster/cache.zig` to `text/raster/atlas.zig` and update all imports.
+  - `text/ft_hb/cache.zig` remains the FT/HB cache owner.
+- Required assertions:
+  - preserve existing text contract deterministic defaults in owner-local tests.
+  - add owner-local tests proving color defaults, effect enum stability, metrics nonzero fixtures, `CellInput.combining_len <= combining.len`, text scene draw spans retain first-cell/cell-span facts, raster atlas reserve/store bounds, and FT/HB cache capacity errors.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build check`
+- Non-goals:
+  - no VT publication changes.
+  - no render session move.
+  - no prepared surface split.
+  - no C ABI header changes.
+  - no feature additions.
+- Stop conditions:
+  - stop if `text/contract.zig` still owns structs or mutation after this slice.
+  - stop if `text/raster/cache.zig` remains as a live owner file.
+  - stop if FT/HB caches are merged with raster atlas cache.
+  - stop if geometry owner files receive text metrics or render effects.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-render-api-owner-surgery-04`
+  - commit-hash handoff status for orchestrator receipt closure
+
+23. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-03`
+- Hello: hi
+- Intended task: implement Slice 3 `Prepare Queue Cutover And tv_surface Deletion` inside the refreshed allowlist, run the exact proof commands, and leave the accountable handoff.
+- How one task went: created `howl-render/src/prepare/queue.zig` as the active prepare owner for admission, take/consume/retry/retire, blink refresh, and retained-source refresh; moved every remaining live import off `tv_surface` in the refreshed allowlist; replaced the old temporary VT cursor compatibility import with `vt_publication/abi.zig` cursor truth; and deleted `howl-render/src/tv_surface/prepare_request.zig`, `tv_surface/vt.zig`, `tv_surface/cell.zig`, `tv_surface/slot.zig`, `tv_surface/publication_cell_map.zig`, `tv_surface/damage.zig`, and `tv_surface/text_input.zig`.
+- Files changed: `howl-render/src/prepare/queue.zig`, `howl-render/src/session/text.zig`, `howl-render/src/storage/publication_storage.zig`, `howl-render/src/renderable_content/content.zig`, `howl-render/src/renderable_content/color.zig`, `howl-render/src/renderable_content/cursor.zig`, `howl-render/src/vt_publication/abi.zig`, `howl-render/src/vt_publication/publication.zig`, `howl-render/src/benchmark_main.zig`, and this active loop file; deleted `howl-render/src/tv_surface/prepare_request.zig`, `howl-render/src/tv_surface/vt.zig`, `howl-render/src/tv_surface/cell.zig`, `howl-render/src/tv_surface/slot.zig`, `howl-render/src/tv_surface/publication_cell_map.zig`, `howl-render/src/tv_surface/damage.zig`, `howl-render/src/tv_surface/text_input.zig`.
+- Concise implementation summary: Slice 3 now has a real `prepare/queue.zig` owner with the required assertions and queue-lifecycle tests, all remaining render imports point at `prepare`, `vt_publication`, `storage`, `damage`, and `renderable_content` owners, retained-source clone/deinit ownership is explicit in the queue cutover, geometry-epoch changes force full damage, blink refresh cannot fabricate a source, and the old `tv_surface` seam is fully deleted from `howl-render/src`.
+- Exact verification results: `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` passed; `cd /home/home/personal/projects/howl/howl-render && zig build check` passed; final grep for `tv_surface/` under `/home/home/personal/projects/howl/howl-render/src` returned no matches; final glob under `/home/home/personal/projects/howl/howl-render/src/tv_surface` returned no files.
+- Blockers or deviations: no blockers; one initial queue compile failure (`var` not mutated) and one stale-base queue test fixture mistake were fixed during proof; no out-of-scope files were touched and no git commands were used.
+- Commit-hash handoff status: pending reviewer acceptance and orchestrator receipt closure; no git was touched.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should review the current Slice 3 diff against the refreshed contract and proof receipts.
+
 13. Role: coder
 - Session id: `coder-2026-06-13-render-api-owner-surgery-01`
 - Hello: hi
@@ -479,3 +591,11 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 - Findings: no blocking findings. Changed render files stay within the Slice 2 allowlist: `src/tv_surface/text_input.zig`, `src/tv_surface/publication_cell_map.zig`, `src/tv_surface/damage.zig`, `src/benchmark_main.zig`, `src/session/text.zig`, `src/text/direct_normal.zig`, `src/text/surface_preparer.zig`, `src/text/shape/cluster.zig`, plus new `src/renderable_content/content.zig`, `src/renderable_content/color.zig`, `src/renderable_content/cursor.zig`, and `src/damage/publication_damage.zig`. `src/renderable_content/content.zig` owns VT/publication-to-text input mapping and borrowed/owned scene-input construction; `src/renderable_content/color.zig` owns theme, palette, semantic color truth, inverse/selection consequences, and empty classification; `src/renderable_content/cursor.zig` owns cursor visibility/shape mapping; `src/damage/publication_damage.zig` owns dirty metadata validation/canonicalization and full/partial damage classification. The old `tv_surface/text_input.zig:1-20`, `tv_surface/publication_cell_map.zig:1-15`, and `tv_surface/damage.zig:1-10` are temporary compatibility seams only. `renderable_content` does not own VT storage or prepare queue state, and `damage/publication_damage.zig` imports no text raster or font owners. Required assertions and tests are present and meaningful, including default background opacity, inverse style, selected style, continuation/invisible-not-empty truth, cursor blink hidden/visible mapping, partial dirty-row canonicalization, and full-vs-partial damage classification across `src/renderable_content/content.zig:260-482`, `src/renderable_content/color.zig:213-270`, `src/renderable_content/cursor.zig:51-95`, and `src/damage/publication_damage.zig:134-175`. The consumer changes in `benchmark_main.zig`, `session/text.zig`, `text/direct_normal.zig`, `text/surface_preparer.zig`, and `text/shape/cluster.zig` are import rewires only; no text shaping/raster redesign, resource-store changes, or C ABI header changes are in this slice.
 - Outcome: accept.
 - Next handoff or blocker: orchestrator should verify the passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`, confirm the nested `howl-render` status still stages only the Slice 2 allowed files, then record the commit hash as `slice-2-renderable-content-damage=<hash>` before seeding Slice 3.
+
+24. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review execution Slice 3 `Prepare Queue Cutover And tv_surface Deletion` against the refreshed condensed contract and accepted planning artifact, without implementing product code.
+- Findings: no blocking findings. The nested render worktree stays within the refreshed Slice 3 allowlist: modified `src/prepare/queue.zig`, `src/session/text.zig`, `src/storage/publication_storage.zig`, `src/renderable_content/content.zig`, `src/renderable_content/color.zig`, `src/renderable_content/cursor.zig`, `src/vt_publication/abi.zig`, `src/vt_publication/publication.zig`, `src/benchmark_main.zig`, and deleted `src/tv_surface/prepare_request.zig`, `src/tv_surface/vt.zig`, `src/tv_surface/cell.zig`, `src/tv_surface/slot.zig`, `src/tv_surface/publication_cell_map.zig`, `src/tv_surface/damage.zig`, and `src/tv_surface/text_input.zig`. `src/prepare/queue.zig` is the exact prepare owner for admission, take/consume/retry/retire, blink refresh, and retained-source refresh, and its imports are limited to `vt_publication/publication.zig`, `storage/publication_storage.zig`, `damage/publication_damage.zig`, `geometry/tokens.zig`, and `geometry/geometry_contract.zig` only. Every remaining live `tv_surface` import user in the refreshed allowlist was cut over, the final `tv_surface/` grep under `howl-render/src` returned no matches, and the final glob under `howl-render/src/tv_surface` returned no files, so all seven `tv_surface` files are deleted. Required Slice 3 assertions and tests are present and meaningful in `src/prepare/queue.zig`, including no-op duplicate admission, geometry change forcing full damage, stale-base partial forcing full damage, blink refresh after taken prepare, retry token mismatch, and retire-at-or-before ordering. The slice does not rename the text session, does not touch prepared/surface owners, and does not touch host code.
+- Outcome: accept.
+- Next handoff or blocker: orchestrator should verify the passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`, verify the final `tv_surface/` grep under `howl-render/src` returned no matches and the `howl-render/src/tv_surface` glob returned no files, confirm nested `howl-render` status stages only the Slice 3 allowed files, then record the commit hash as `slice-3-prepare-storage-cutover=<hash>` before seeding Slice 4.
