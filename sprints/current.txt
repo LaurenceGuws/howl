@@ -28,8 +28,9 @@ Active restart note:
 - Primary planning target: `howl-render/src/text/scene.zig`.
 - Planning package accepted at root `2fde3dd`.
 - Slice 1 `Extract scene damage/span ownership and move callers to it` accepted in `howl-render` `959576d`; root `5bbe0ec`.
-- Slice 2 `Extract scene rect/fill ownership with explicit undercurl carve-out` accepted in `howl-render` `acb929e`; root receipt pending.
-- No next execution slice seeded yet.
+- Slice 2 `Extract scene rect/fill ownership with explicit undercurl carve-out` accepted in `howl-render` `acb929e`; root `007a0ee`.
+- Active execution slice: Slice 3 `Finish scene.zig as the sprite/raster scene root only`.
+- Active coder session: `coder-2026-06-13-render-scene-03`.
 - Active planning sessions:
   - orchestrator `orch-2026-06-13-render-scene-01`
   - researcher `research-2026-06-13-render-scene-01`
@@ -38,7 +39,7 @@ Active restart note:
 Execution rule:
 
 - No coding is authorized without an accepted reviewer-gated execution slice under the active sprint.
-- No implementation is currently authorized until the orchestrator seeds the next accepted slice.
+- Only Slice 3 is authorized, and only through the active loop execution contract.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

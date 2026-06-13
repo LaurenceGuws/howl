@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 2 accepted in nested render repo; root receipt pending.
+Status: Slice 3 seeded for execution; reviewer-gated implementation pending.
 
 Orchestrator session id: `orch-2026-06-13-render-scene-01`.
 
@@ -31,9 +31,10 @@ Current step:
 
 - The planning package is accepted at root `2fde3dd`.
 - Slice 1, `Extract scene damage/span ownership and move callers to it`, is accepted in `howl-render` `959576d`; root `5bbe0ec`.
-- Slice 2, `Extract scene rect/fill ownership with explicit undercurl carve-out`, is accepted in `howl-render` `acb929e`.
-- Root receipt for Slice 2 is pending orchestrator commit.
-- No next execution slice is seeded yet.
+- Slice 2, `Extract scene rect/fill ownership with explicit undercurl carve-out`, is accepted in `howl-render` `acb929e`; root `007a0ee`.
+- Slice 3, `Finish scene.zig as the sprite/raster scene root only`, is the active execution slice.
+- Only Slice 3 is authorized.
+- Coder session id: `coder-2026-06-13-render-scene-03`.
 
 Exact user direction:
 
@@ -43,53 +44,48 @@ Exact user direction:
 
 Exact non-goals:
 
-- No curly underline or undercurl move.
-- No atlas ownership move.
-- No emitter-side merge cleanup.
-- No benchmark, host, or ABI changes.
+- No emitter cleanup.
+- No render-session orchestration redesign.
+- No host/runtime changes.
+- No ABI/header edits.
 
 Exact stop conditions:
 
-- Stop if `scene_rects.zig` becomes a bucket for both rect logic and sprite/raster logic.
-- Stop if curly underline leaves `scene.zig`.
-- Stop if draw ordering by `first_cell` is no longer explicit and asserted.
-- Stop if proof is weakened to make the move land.
+- Stop if `scene.zig` still owns rect synthesis or duplicated damage truth after the slice.
+- Stop if curly underline ownership leaves the sprite/raster owner.
+- Stop if lane-report proof no longer lines up with the sprite-producing owner.
 
-Latest executed slice contract:
+Slice 3 execution contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/scene.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/scene_damage.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/scene_rects.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/surface_preparer.zig`
 - Required shape:
-  - Create `scene_rects.zig` as the owner of background, clear, cursor, and rect-decoration synthesis now in `scene.zig:690-1130`.
-  - `scene_rects.zig` must own straight, double, dotted, and dashed underlines plus strikethrough.
-  - `scene_rects.zig` must not own curly underline or undercurl, any `SpriteRasterRequest`, any atlas-cache interaction, or any sprite append path.
-  - `scene.zig` must keep `appendUndercurl`, `countCurlyUnderlineSprites`, and the `.curly` sprite/raster path.
-  - `direct_scene.zig` must call the rect owner directly for backgrounds, clears, cursor draws, and non-curly decoration draws.
-  - `surface_preparer.buildClearDraws` and `surface_preparer.buildCursorDraws` must call the rect owner directly.
+  - `scene.zig` must finish as the scene root plus sprite/raster assembly owner only.
+  - Keep `BuildOptions`, `OwnedTextScene`, `BorrowedTextScene`, `RetainedScratch`, build entrypoints, `SceneAssembly`, group sprite append, icon span extension, atlas reservation, raster request enqueueing, sprite color policy, and curly underline or undercurl ownership in `scene.zig`.
+  - Remove any remaining damage normalization or rect synthesis ownership from `scene.zig`; it must consume `scene_damage.zig` and `scene_rects.zig`.
+  - `surface_preparer.buildComplexScene` must still build the complex borrowed scene through the scene root and must still record lane proof from produced sprite draws.
 - Required assertions:
-  - preserve decoration-merge invariants for contiguous rect draws
-  - preserve explicit draw ordering by `first_cell`
-  - preserve existing cursor geometry invariants
+  - preserve width and height non-zero assertions before rasterized sprite append
+  - preserve sorted-by-`first_cell` assertions at merged scene boundaries
+  - preserve lane-report proof alignment with the sprite-producing owner
 - Required tests by exact full name filters:
-  - `zig build test:unit -- "scene emits background draws from non-continuation cells"`
-  - `zig build test:unit -- "scene merges adjacent same-color background cells on one row"`
-  - `zig build test:unit -- "scene keeps distinct background spans across color changes"`
-  - `zig build test:unit -- "scene emits explicit clears for transparent default backgrounds on partial damage"`
-  - `zig build test:unit -- "scene cursor draws emit shared cursor geometry"`
-  - `zig build test:unit -- "scene build options include cursor draws"`
-  - `zig build test:unit -- "scene emits shared-geometry decoration draws from cells"`
-  - `zig build test:unit -- "scene merges contiguous straight underline spans"`
-  - `zig build test:unit -- "scene double underline count and geometry stay aligned"`
-  - `zig build test:unit -- "scene dotted underline geometry stays aligned with counted capacity"`
-  - `zig build test:unit -- "scene dashed underline geometry stays aligned with counted capacity"`
-  - `zig build test:unit -- "scene merges contiguous strikethrough spans"`
-  - `zig build test:unit -- "text preparation options produce scene cursor draws"`
-  - `zig build test:unit -- "text preparation partial damage clears use empty default background truth"`
-  - `zig build test:unit -- "text preparation publication clears use empty default background truth"`
+  - `zig build test:unit -- "scene builds ordered sprite draws from groups"`
+  - `zig build test:unit -- "scene emits undercurl sprite for curly underline"`
+  - `zig build test:unit -- "scene carries group placement offsets into sprite draw"`
+  - `zig build test:unit -- "scene extends wide icon groups into available blank cells"`
+  - `zig build test:unit -- "scene positions sprite draws by grid columns"`
+  - `zig build test:unit -- "scene reuses atlas slots for repeated sprite keys"`
+  - `zig build test:unit -- "scene does not request raster for cache hit"`
+  - `zig build test:unit -- "borrowed scene reuses retained draw list storage"`
+  - `zig build test:unit -- "text scene applies kitty dim opacity at render-time for sprite draws"`
+  - `zig build test:unit -- "text preparation scene is grid positioned"`
+  - `zig build test:unit -- "text preparation rerasterizes pending atlas entries across prepares"`
+  - `zig build test:unit -- "text preparation marks curly underline cells complex before shaping"`
+  - `zig build test:unit -- "text preparation prepares publication cells through shared full pipeline surface"`
+  - final acceptance sweep: `zig build test:unit`
 - Verification handoff requirements:
   - coder must report files changed, concise implementation summary, verification run/results, blockers/deviations, coder session id, and commit-hash handoff status
   - reviewer verdict plus exact findings is required before acceptance
@@ -200,3 +196,10 @@ Team scratchpad
 - Intended task: commit the accepted Slice 2 render work and close the root receipt.
 - How one task went: committed the nested `howl-render` Slice 2 diff as `acb929e` `Extract scene rect owner` after reviewer acceptance.
 - Next handoff or blocker: commit the root receipt for Slice 2, then seed Slice 3 if continuing.
+
+16. Role: orchestrator
+- Session id: `orch-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: close the Slice 2 root receipt and seed Slice 3 for execution.
+- How one task went: recorded Slice 2 root receipt `007a0ee` and condensed Slice 3 into this live-loop execution contract with coder session id `coder-2026-06-13-render-scene-03`.
+- Next handoff or blocker: coder should implement Slice 3 only and return verification plus commit-hash handoff status for reviewer gating.
