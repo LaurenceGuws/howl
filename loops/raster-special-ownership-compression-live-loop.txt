@@ -316,3 +316,17 @@ Team scratchpad
 - Intended task: close the Slice 4 root receipt and seed Slice 5 for execution.
 - How one task went: recorded Slice 4 root receipt pending in this active state and condensed Slice 5 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-05`.
 - Next handoff or blocker: coder should implement Slice 5 only and return verification plus commit-hash handoff status for reviewer gating.
+
+27. Role: coder
+- Session id: `coder-2026-06-13-raster-special-05`
+- Hello: hi
+- Intended task: implement Slice 5 only inside the allowed raster files.
+- How one task went: moved the full `.legacy_computing` raster owner into `special_legacy_computing.zig`, reduced `generated_special.zig` to the retained shared helper surface only, and passed `cd howl-render && zig fmt src/text/raster/generated_special.zig src/text/raster/special_legacy_computing.zig && zig build test:unit`.
+- Next handoff or blocker: reviewer should gate the Slice 5 diff; no commit hash exists yet because git was intentionally untouched.
+
+28. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: gate the executed Slice 5 diff for legacy-computing owner extraction against the accepted execution contract.
+- How one task went: rejected; the code move is close, but Slice 5 was executed before the live artifacts showed Slice 4 root receipt closure, and `generated_special.zig` still retains non-contract helpers `generatedSpecialMetrics` and `boxDrawingRasterMetrics` outside the exact retained helper surface.
+- Next handoff or blocker: orchestrator must close the Slice 4 root receipt and reseed Slice 5 under guidance that matches real state; coder must then remove or inline the extra retained helpers in `generated_special.zig` and return the slice for re-review.
