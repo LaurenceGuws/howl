@@ -2,13 +2,15 @@
 
 Date: 2026-06-13.
 
-Status: reviewer-repaired; ready for acceptance.
+Status: researcher-corrected after Slice 3 execution block; ready for reviewer gate.
 
 Role owner: researcher.
 
 Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 
 Researcher session id: `research-2026-06-13-pty-vt-folder-structure-01`.
+
+Slice 3 correction researcher session id: `research-2026-06-13-pty-vt-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
 
@@ -90,8 +92,27 @@ Question:
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/lib.rs`
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs`
    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/tty/mod.rs`
-   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/tty/unix.rs`
-   - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/term/mod.rs`
+    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/tty/unix.rs`
+    - `/home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/term/mod.rs`
+17. Slice 3 correction current-source import proof after Slice 2 acceptance:
+    - `rg -n '@import\("(\.\./)*(src/)?(terminal\.zig|screen\.zig|screen_set\.zig|stream_terminal\.zig|parser/main\.zig|parser/events\.zig|parser/owned_actions\.zig|selection/state\.zig|selection/projection\.zig|surface/publication\.zig|screen/|parser/)' howl-vt`
+    - `/home/home/personal/projects/howl/howl-vt/src/ffi/lifecycle.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/ffi/runtime.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/ffi/surface.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/ffi/handle.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/ffi/selection.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/action/vocabulary.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/action/route.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/host/apply.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/host/state.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/control/report.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/control/osc_color.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/xterm/osc.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/xterm/dcs.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/xterm/csi/params.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/libhowl_vt.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/ffi/main.zig`
+    - `/home/home/personal/projects/howl/howl-vt/build.zig`
 
 ## Exact Files And Line References
 
@@ -137,6 +158,20 @@ Question:
 - `howl-vt/src/test/screen_capture.zig:1-107`, `howl-vt/src/test/stream_harness.zig:1-23`, and `howl-vt/src/test/pty_feed_record.zig:1-120` prove `src/test/` currently mixes ABI tests with reusable proof helpers and replay support.
 - `howl-vt/src/test/terminal_benchmark.zig:1-220` and `howl-vt/src/terminal_benchmark_main.zig:1-6` show benchmark code currently lives under `src`, which violates the requested curated-owner-only rule for `src`.
 - `howl-vt/src/simulation/main.zig:5-7` explicitly says simulation is not a unit test, yet it still lives under `src`.
+
+### Slice 3 Block Correction Facts
+
+- `howl-vt/build.zig:33-49` and `howl-vt/build.zig:53-58` prove `zig build test:abi:build` compiles the ABI test artifact and its `ffi` import module, so stale FFI imports are a Slice 3 blocker, not a later cleanup.
+- `howl-vt/src/libhowl_vt.zig:1-32` exports the shipped C ABI through `src/ffi/main.zig`; Slice 3 must not change exported names, but `src/ffi/**` must stay buildable after terminal-core paths move.
+- `howl-vt/src/ffi/main.zig:1-13` imports host state plus FFI leaf owners; its children compile the terminal-core dependencies that `test:abi:build` reaches.
+- `howl-vt/src/ffi/lifecycle.zig:2-3`, `howl-vt/src/ffi/runtime.zig:2`, `howl-vt/src/ffi/surface.zig:2-7`, `howl-vt/src/ffi/handle.zig:1`, and `howl-vt/src/ffi/selection.zig:2-3` directly import old top-level terminal, screen, screen_set, selection, and projection paths. These files must be allowed for import-path updates in Slice 3.
+- `howl-vt/src/action/vocabulary.zig:1` and `howl-vt/src/action/route.zig:6` directly import parser paths that move under `src/terminal/`; these are import-path consequences only, not protocol-owner absorption.
+- `howl-vt/src/host/apply.zig:4` and `howl-vt/src/host/state.zig:6` directly import screen and parser paths that move under `src/terminal/`; host consequence ownership remains in place until Slice 4.
+- `howl-vt/src/control/report.zig:2` and `howl-vt/src/control/osc_color.zig:2` directly import `../screen.zig`; control owner movement remains Slice 4, but these import paths must be corrected in Slice 3.
+- `howl-vt/src/xterm/osc.zig:3`, `howl-vt/src/xterm/dcs.zig:1`, and `howl-vt/src/xterm/csi/params.zig:3` directly import parser paths that move under `src/terminal/`; xterm owner absorption remains Slice 4.
+- `rg` proof after Slice 2 shows benchmark and proof support files also import old terminal-core paths, including `howl-vt/benchmark/terminal_benchmark.zig:2`, `howl-vt/benchmark/pty_feed_record.zig:3`, `howl-vt/test/support/screen_capture.zig:2-3`, and `howl-vt/test/support/stream_harness.zig:1`; Slice 3 must update those direct imports rather than leave stale paths or add compatibility shims.
+- `rg` proof also shows no `howl-vt/src/kitty/**` file directly imports the terminal-core paths moved in Slice 3, so `src/kitty/**` is not required in the Slice 3 allowed file list.
+- Decision: Slice 3 can remain `VT terminal core root establishment` with an expanded allowed file list for direct import-path updates. Splitting or reordering would create an artificial compatibility window or require stale ABI/benchmark/proof imports, both of which violate the no-shim and proof requirements.
 
 ### Reference Facts
 
@@ -458,28 +493,49 @@ Rationale:
   - `howl-vt/src/screen/**`
   - `howl-vt/src/selection/**`
   - `howl-vt/src/surface/publication.zig`
+  - `howl-vt/src/ffi/**`
+  - `howl-vt/src/action/route.zig`
+  - `howl-vt/src/action/vocabulary.zig`
+  - `howl-vt/src/host/apply.zig`
+  - `howl-vt/src/host/state.zig`
+  - `howl-vt/src/control/report.zig`
+  - `howl-vt/src/control/osc_color.zig`
+  - `howl-vt/src/xterm/osc.zig`
+  - `howl-vt/src/xterm/dcs.zig`
+  - `howl-vt/src/xterm/csi/params.zig`
   - `howl-vt/src/terminal/**`
   - `howl-vt/test/unit.zig`
   - `howl-vt/test/unit/**`
+  - `howl-vt/test/support/**`
+  - `howl-vt/benchmark/terminal_benchmark.zig`
+  - `howl-vt/benchmark/pty_feed_record.zig`
 - Required shape:
   - Create `src/terminal/main.zig` as the curated VT-core root.
   - Move the terminal aggregate owner, screen owners, parser owner, stream owner, selection owner, point owner, and publication owner into `src/terminal/`.
   - Preserve snake_case file names.
   - Keep `screen/` and `parser/` as shallow per-owner definition folders under `src/terminal/`.
   - Update `src/howl_vt.zig` to import VT core through `src/terminal/`, not package-top owner files.
-  - Update `test/unit/` imports in the same slice; tests must follow the moved owner paths directly and must not rely on package-top compatibility shims.
+  - Update every current direct import of moved terminal-core paths in the same slice, including `src/ffi/**`, `src/action/{route,vocabulary}.zig`, `src/host/{apply,state}.zig`, `src/control/{report,osc_color}.zig`, `src/xterm/{osc,dcs}.zig`, `src/xterm/csi/params.zig`, `test/unit/**`, `test/support/**`, and the two benchmark files named above.
+  - These dependent files may receive import-path edits only. They must not absorb protocol owners, host consequence owners, ABI behavior, benchmark behavior, or test semantics in Slice 3.
+  - Tests, proof helpers, and benchmark files must follow the moved owner paths directly and must not rely on package-top compatibility shims.
 - Exact tests:
   - `zig build test:unit`
   - `zig build test:abi:build`
+  - `zig build benchmark:m7_baseline:build`
   - all in `/home/home/personal/projects/howl/howl-vt`
 - Non-goals:
   - no protocol-owner consolidation yet for `action`, `control`, `xterm`, `kitty`, or `host`
   - no behavior rewrites
+  - no C ABI symbol, enum, struct, or exported-name changes
+  - no benchmark or proof behavior changes beyond import-path updates
 - Stop conditions:
   - stop if terminal aggregate ownership is still split between top-level and `src/terminal/`
   - stop if old top-level owner files remain as compatibility shims after acceptance
   - stop if the coder needs to invent a second curated VT-core root
-  - stop if any unit proof file still imports old terminal-core source paths after acceptance
+  - stop if any product, ABI/FFI, benchmark, support, or unit proof file still imports old terminal-core source paths after acceptance
+  - stop if any allowed `src/ffi/**`, `src/action/**`, `src/host/**`, `src/control/**`, or `src/xterm/**` edit changes behavior instead of only correcting imports required by the terminal-core move
+  - stop if `zig build test:abi:build` fails from stale ABI/FFI imports after terminal-core paths move
+  - stop if current-source proof finds a direct moved-path import in a file not named here; return to research instead of guessing or adding a shim
 
 ### Slice 4
 
@@ -554,6 +610,14 @@ Rationale:
   - stop if final build roots still mention old locations
   - stop if reviewer cannot diff the final tree without reconstructing hidden moves
 
+## Slice 3 Split Or Reorder Decision
+
+- Slice 3 remains `VT terminal core root establishment`.
+- Required repair is expanded import-update authorization, not a new implementation slice, because current source proves the blocked files only need direct path updates to keep the same owners buildable after the terminal-core move.
+- Do not split Slice 3 into a move slice and an import-fix slice: the move slice would necessarily leave deleted package-top terminal-core paths referenced by `src/ffi/**`, and `zig build test:abi:build` would be invalid for that intermediate state.
+- Do not reorder protocol/consequence absorption before terminal-core establishment: `action`, `control`, `host`, `xterm`, and `kitty` owner absorption remains Slice 4, and current-source proof does not require semantic protocol-owner movement to complete Slice 3.
+- Replacement slices are not required. If reviewer rejects the expanded import-update scope, the only safe replacement would be Slice 3A `VT terminal-core move plus all current direct import-path updates` followed by Slice 3B `no-op verification receipt`, which is worse accountability than the repaired single Slice 3 because it creates an artificial boundary with no independent product state.
+
 ## Required Assertions
 
 - Preserve PTY exported symbols exactly as listed in `howl-pty/src/libhowl_pty.zig:3-18`.
@@ -574,6 +638,7 @@ Rationale:
   - `zig build test`
 - VT:
   - `zig build test:unit`
+  - `zig build test:abi:build`
   - `zig build test:abi`
   - `zig build test`
   - `zig build simulate:build`
@@ -594,10 +659,11 @@ Rationale:
 
 ## Readiness Judgment
 
-- Ready for reviewer acceptance after repair.
-- Reviewer gate found a real planning defect in the first draft: VT top-level and nested unit proof files would have remained under `src`, and later slices did not explicitly allow updating those proof imports after terminal-core and protocol re-homing.
-- The plan is repaired to move all VT `src/**/*_test.zig` files to `test/unit/` in Slice 2, make `test/unit.zig` the unit proof root, and allow later slices to update those proof imports alongside owner moves.
-- The repaired plan is full-sprint, sequential, reference-backed, and does not authorize coding.
+- Ready for reviewer gate after Slice 3 correction.
+- Coder correctly blocked because the accepted Slice 3 contract omitted product import owners that must compile under `zig build test:abi:build` after terminal-core paths move.
+- Current-source proof shows Slice 3 remains a terminal-core establishment slice if it also authorizes direct import-path updates in the named dependent FFI, action, host, control, xterm, benchmark, support, and unit proof files.
+- No split or reorder is required. No compatibility shims, protocol-owner absorption, C ABI changes, benchmark behavior changes, or proof semantic changes are authorized.
+- This artifact remains planning/correction only and does not authorize coding.
 
 ## Coding Authorization
 

@@ -29,10 +29,10 @@ Active research target:
 
 Current step:
 
-- New combined PTY+VT folder/file owner structure sprint is seeded for planning.
-- No implementation is authorized.
-- Researcher must produce the full source-backed slice plan.
-- Reviewer must gate the plan before orchestrator seeds any execution slice.
+- Slice 3, `VT terminal core root establishment`, was blocked before product edits because the execution contract omitted required import-update owners.
+- No implementation is authorized from this researcher correction.
+- Reviewer must gate the corrected Slice 3 contract before orchestrator may resume or reseed execution.
+- The corrected Slice 3 remains a terminal-core establishment slice with expanded import-path update authorization only.
 
 Exact user direction:
 
@@ -289,9 +289,148 @@ Stop conditions:
 - How one task went: committed the root Slice 2 receipt as `921f630`.
 - Next handoff or blocker: commit this receipt update, then seed Slice 3 if continuing.
 
+## Slice 3 Execution Contract
+
+Name: VT terminal core root establishment.
+
+Status: reviewer-accepted after researcher correction; coding may resume from this corrected contract.
+
+Coder session id: `coder-2026-06-13-pty-vt-folder-structure-slice-3`.
+
+Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- `howl-vt/src/howl_vt.zig`
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/screen.zig`
+- `howl-vt/src/screen_set.zig`
+- `howl-vt/src/stream_terminal.zig`
+- `howl-vt/src/parser/main.zig`
+- `howl-vt/src/parser/**`
+- `howl-vt/src/screen/**`
+- `howl-vt/src/selection/**`
+- `howl-vt/src/surface/publication.zig`
+- `howl-vt/src/ffi/**`
+- `howl-vt/src/action/route.zig`
+- `howl-vt/src/action/vocabulary.zig`
+- `howl-vt/src/host/apply.zig`
+- `howl-vt/src/host/state.zig`
+- `howl-vt/src/control/report.zig`
+- `howl-vt/src/control/osc_color.zig`
+- `howl-vt/src/xterm/osc.zig`
+- `howl-vt/src/xterm/dcs.zig`
+- `howl-vt/src/xterm/csi/params.zig`
+- `howl-vt/src/terminal/**`
+- `howl-vt/test/unit.zig`
+- `howl-vt/test/unit/**`
+- `howl-vt/test/support/**`
+- `howl-vt/benchmark/terminal_benchmark.zig`
+- `howl-vt/benchmark/pty_feed_record.zig`
+
+Required shape:
+
+- Create `src/terminal/main.zig` as the curated VT-core root.
+- Move terminal aggregate owner, screen owners, parser owner, stream owner, selection owner, point owner, and publication owner into `src/terminal/`.
+- Preserve snake_case file names.
+- Keep `screen/` and `parser/` as shallow per-owner definition folders under `src/terminal/`.
+- Update `src/howl_vt.zig` to import VT core through `src/terminal/`, not package-top owner files.
+- Update every current direct import of moved terminal-core paths in the same slice, including `src/ffi/**`, `src/action/{route,vocabulary}.zig`, `src/host/{apply,state}.zig`, `src/control/{report,osc_color}.zig`, `src/xterm/{osc,dcs}.zig`, `src/xterm/csi/params.zig`, `test/unit/**`, `test/support/**`, and the two benchmark files named above.
+- Dependent product, proof, support, and benchmark files may receive import-path edits only; no protocol-owner absorption, ABI behavior change, benchmark behavior change, or test semantic change is authorized in Slice 3.
+- Tests, proof helpers, and benchmark files must follow moved owner paths directly and must not rely on package-top compatibility shims.
+
+Exact tests:
+
+- `zig build test:unit` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build test:abi:build` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build benchmark:m7_baseline:build` in `/home/home/personal/projects/howl/howl-vt`
+
+Non-goals:
+
+- No protocol-owner consolidation yet for `action`, `control`, `xterm`, `kitty`, or `host`.
+- No behavior rewrites.
+- No PTY changes.
+- No C ABI symbol, enum, struct, or exported-name changes.
+- No benchmark or proof behavior changes beyond import-path updates.
+
+Stop conditions:
+
+- Stop if terminal aggregate ownership is still split between top-level and `src/terminal/`.
+- Stop if old top-level owner files remain as compatibility shims after acceptance.
+- Stop if the coder needs to invent a second curated VT-core root.
+- Stop if any product, ABI/FFI, benchmark, support, or unit proof file still imports old terminal-core source paths after acceptance.
+- Stop if any allowed `src/ffi/**`, `src/action/**`, `src/host/**`, `src/control/**`, or `src/xterm/**` edit changes behavior instead of only correcting imports required by the terminal-core move.
+- Stop if `zig build test:abi:build` fails from stale ABI/FFI imports after terminal-core paths move.
+- Stop if current-source proof finds a direct moved-path import in a file not named here; return to research instead of guessing or adding a shim.
+
+17. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: seed Slice 3 for VT terminal-core root establishment.
+- How one task went: wrote the active execution contract with exact files, required shape, tests, non-goals, stop conditions, session ids, and receipt demand.
+- Next handoff or blocker: coder may implement Slice 3 only.
+
 6. Role: orchestrator
 - Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
 - Hello: hi
 - Intended task: seed Slice 1 for PTY proof-root relocation.
 - How one task went: wrote the active execution contract with exact files, required shape, tests, non-goals, stop conditions, session ids, and receipt demand.
 - Next handoff or blocker: coder may implement Slice 1 only.
+
+18. Role: coder
+- Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-3`
+- Hello: hi
+- Intended task: implement Slice 3 VT terminal-core root establishment only within the allowed file list.
+- How one task went: stopped before product edits because moving `terminal.zig`, `screen.zig`, `screen_set.zig`, `stream_terminal.zig`, `parser/`, `screen/`, `selection/`, and `surface/publication.zig` under `src/terminal/` would leave disallowed source files importing deleted package-top paths, including `src/ffi/**`, `src/host/**`, `src/action/**`, `src/control/**`, and `src/xterm/**`; `zig build test:abi:build` is part of the Slice 3 proof and cannot be expected to build with those stale imports.
+- Next handoff or blocker: orchestrator/reviewer must repair the Slice 3 allowed file list or split the contract so all required import updates are authorized; no product files were edited.
+
+19. Role: researcher
+- Session id: `research-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: correct the blocked Slice 3 execution plan from current-source import proof without implementing product code.
+- How one task went: re-proved that `src/ffi/**`, `src/action/{route,vocabulary}.zig`, `src/host/{apply,state}.zig`, `src/control/{report,osc_color}.zig`, `src/xterm/{osc,dcs}.zig`, `src/xterm/csi/params.zig`, `test/unit/**`, `test/support/**`, and the two benchmark files directly import terminal-core paths that move under `src/terminal/`; corrected the research artifact and this loop contract to authorize import-path updates only in those files.
+- Next handoff or blocker: reviewer should gate the corrected Slice 3 contract; coding must not resume until reviewer acceptance because this researcher pass does not authorize execution.
+
+20. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate the researcher-corrected Slice 3 execution contract after the coder import-owner blocker.
+- How one task went: accepted the corrected Slice 3 contract; current-source import proof matches the expanded allowed import-update files, dependent `src/ffi/**`, selected `src/action/**`, `src/host/**`, `src/control/**`, `src/xterm/**`, `test/unit/**`, `test/support/**`, and benchmark edits are constrained to import-path churn only, and the contract forbids protocol-owner absorption, compatibility shims, ABI behavior changes, benchmark behavior changes, and proof semantic changes.
+- Next handoff or blocker: orchestrator may reseed/resume Slice 3 from this corrected live-loop contract; coder must stop and return to research if a direct moved terminal-core import is found in any file not named by the contract.
+
+21. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: resume Slice 3 from the reviewer-accepted corrected execution contract.
+- How one task went: marked the corrected Slice 3 contract reviewer-accepted and ready for coder execution after the import-owner blocker repair.
+- Next handoff or blocker: coder may implement Slice 3 from the corrected live-loop contract only.
+
+22. Role: coder
+- Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-3`
+- Hello: hi
+- Intended task: implement corrected Slice 3 VT terminal-core root establishment only within the reviewer-accepted allowed file list.
+- How one task went: moved terminal aggregate, screen, screen set, stream, parser, selection, and publication owners under `howl-vt/src/terminal/`, added `src/terminal/main.zig` as the curated VT-core root, repointed allowed dependent imports directly to moved paths, confirmed no stale moved-path imports outside `src/terminal/**`, and passed the required unit, ABI build, and benchmark build proofs.
+- Next handoff or blocker: reviewer should gate the Slice 3 diff; no commit was made, so commit-hash receipt remains pending for orchestrator acceptance closure.
+
+23. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate corrected Slice 3 implementation after coder verification.
+- How one task went: accepted Slice 3; `src/terminal/main.zig` is the curated VT-core root, old moved top-level owner paths are absent, stale moved-path imports outside `src/terminal/**` are clean, dependent allowed files show import-path churn only, and required proofs passed.
+- Next handoff or blocker: orchestrator may commit nested `howl-vt` and record receipts.
+
+24. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: verify and commit accepted Slice 3.
+- How one task went: reran `zig build test:unit`, `zig build test:abi:build`, and `zig build benchmark:m7_baseline:build` in `howl-vt`; committed nested Slice 3 as `20fb714`.
+- Next handoff or blocker: commit the root receipt for Slice 3 before seeding Slice 4.
+
+23. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate the corrected Slice 3 VT terminal-core root establishment diff after coder verification.
+- How one task went: accepted the Slice 3 diff; `src/terminal/main.zig` is present, moved VT-core owners are under `src/terminal/`, old package-top moved owner paths are gone, dependent product/proof/support/benchmark changes are import-path churn only, stale moved-path imports outside `src/terminal/**` are clean, and `zig build test:unit`, `zig build test:abi:build`, and `zig build benchmark:m7_baseline:build` passed locally.
+- Next handoff or blocker: orchestrator may commit nested `howl-vt` for Slice 3 and then record the nested/root commit receipts; no product blocker remains from review.
