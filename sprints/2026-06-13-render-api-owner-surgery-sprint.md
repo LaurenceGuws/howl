@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: execution completed through Slice 8; final root receipt closure pending.
+Status: sprint closed.
 
 Orchestrator session id: `orch-2026-06-13-render-api-owner-surgery-01`.
 
@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-render-api-owner-surgery-01`.
 
 Reviewer session id: `review-2026-06-13-render-api-owner-surgery-01`.
 
-Commit-hash receipt: planning package closed in root commit `e5f7e4b`.
+Commit-hash receipt: planning package closed in root commit `e5f7e4b`; final sprint close receipt root `8aa8327`.
 
 ## Problem Statement
 

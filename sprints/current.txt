@@ -28,8 +28,8 @@ Active restart note:
 - Slice 5, `Render Session Owner`, is accepted and committed in `howl-render` `81bc7ca` and root `bbebf33`.
 - Slice 6, `Prepared Surface And Surface Resource Split`, is accepted and committed in `howl-render` `09c6770` and root `785022e`.
 - Slice 7, `FFI And ABI Owner Sweep`, is accepted and committed in `howl-render` `c0675c8` and root `a0214a0`.
-- Slice 8, `Final Source Order, Deletion, And Proof Sweep`, is accepted and committed in `howl-render` `82a3e72` with root close receipt pending.
-- The render API owner surgery sprint is in final root receipt closure.
+- Slice 8, `Final Source Order, Deletion, And Proof Sweep`, is accepted and committed in `howl-render` `82a3e72` and root `8aa8327`.
+- The render API owner surgery sprint is closed; no further coding is authorized from this sprint.
 - User direction: cut `howl-render` into real idiomatic owners; `tv_surface` is fake; `tv_surface/vt.zig` wrongly uses renderer C imports and redefines VT structs; `session` is fake and must be checked against Alacritty cache/store naming pressure; `prepared` is a broad fake bucket; file names and mixed text/effects/geometry ownership are unacceptable; current render API structure is presumed wrong.
 - Orchestrator session id: `orch-2026-06-13-render-api-owner-surgery-01`.
 - Researcher session id: `research-2026-06-13-render-api-owner-surgery-01`.
