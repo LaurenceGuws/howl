@@ -376,3 +376,39 @@ Stop conditions:
 - Intended task: seed Slice 2 follow-up render wrapper deletion.
 - How one task went: wrote the condensed Slice 2 execution contract from the accepted follow-up research artifact.
 - Next handoff or blocker: coder may implement Slice 2 only.
+
+18. Role: coder
+- Session id: `coder-2026-06-13-followup-shallow-structure-slice-2`
+- Hello: hi
+- Intended task: delete the render unit-test wrapper chain by moving the exact ten current unit-proof imports into `src/test_unit.zig` and removing `src/test/unit/root.zig`.
+- How one task went: replaced the top-level wrapper import with the exact ten direct unit-proof imports and deleted the nested wrapper root without changing any proof membership.
+- Next handoff or blocker: run `zig build test:unit` in `howl-render`, then hand off for reviewer gating with commit-hash receipt still open.
+
+19. Role: reviewer
+- Session id: `review-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: review follow-up Slice 2 against the exact two-file execution contract, current `howl-render` diff, and claimed `zig build test:unit` verification.
+- How one task went: current `howl-render` worktree matched the Slice 2 boundary exactly, `src/test_unit.zig` now directly imports the exact ten planned unit proof files, `src/test/unit/root.zig` is deleted, `build.zig` remains unchanged at the curated top-level unit root, and `zig build test:unit` passed cleanly in `howl-render`.
+- Next handoff or blocker: orchestrator may accept and commit the existing nested `howl-render` worktree as Slice 2, then close the follow-up sprint after recording the remaining receipts.
+
+Reviewer verdict for follow-up Slice 2 implementation
+
+- Verdict: `accept`
+- Findings:
+  - None. The actual unstaged `howl-render` diff stays within the exact two-file Slice 2 boundary at `loops/followup-shallow-owner-structure-live-loop.txt:336-372`: `src/test_unit.zig` is modified and `src/test/unit/root.zig` is deleted, with no extra `howl-render` churn in `git diff --name-status`.
+  - `howl-render/src/test_unit.zig:1-12` now imports the exact ten current unit proof files named by the execution contract and research artifact, with no additions or omissions.
+  - `howl-render/build.zig:53-68` remains unchanged and still points the curated unit root at `src/test_unit.zig`, matching the required non-change.
+  - Verification passed in `/home/home/personal/projects/howl/howl-render`: `zig build test:unit`.
+- Acceptance notes:
+  - Slice 2 matches the expected shallow-owner cleanup exactly: the wrapper chain is gone, the curated proof set is preserved, and no product code or extra test-tree cleanup was introduced.
+  - This review no longer blocks orchestrator acceptance of the existing nested `howl-render` worktree as Slice 2.
+  - From the reviewer side, the follow-up sprint may be closed once orchestrator records the remaining commit-hash receipts.
+- Files edited: `/home/home/personal/projects/howl/loops/followup-shallow-owner-structure-live-loop.txt`
+- Orchestrator may commit nested `howl-render` and close the follow-up sprint: yes.
+
+21. Role: orchestrator
+- Session id: `orch-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: record follow-up slice receipts and close the sprint.
+- How one task went: Slice 1 is accepted in nested `howl-vt` `8d95998`; Slice 2 is accepted in nested `howl-render` `dbb8669`; reviewer accepted the final state and no further coding is authorized.
+- Next handoff or blocker: commit root receipts and the final sprint close receipt.
