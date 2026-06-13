@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-all-src-shallow-structure-01`.
 
 Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
 
-Loop commit-hash receipt: pending.
+Loop commit-hash receipt: root `16a877d`.
 
 Shared scratchpad rule:
 
@@ -63,3 +63,10 @@ Team scratchpad
 - Intended task: archive closed PTY+VT artifacts and seed a new all-`src/` shallow owner-structure planning sprint.
 - How one task went: moved the closed PTY+VT sprint artifacts to `done/`, created current sprint/research/loop artifacts, and recorded the user direction to delete fake abstractions and make all `src/` directories as shallow as possible.
 - Next handoff or blocker: researcher must produce the full source-backed plan; reviewer gates before coding.
+
+2. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: record the all-`src` shallow sprint seed receipt.
+- How one task went: committed the new sprint seed as root `16a877d`.
+- Next handoff or blocker: commit this receipt update, then delegate researcher planning.
