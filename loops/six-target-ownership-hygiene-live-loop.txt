@@ -149,4 +149,14 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
 - Intent: verify and accept Slice 2 after reviewer acceptance.
 - Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `927f032` `Move provisional runs into run owner`.
-- Handoff: root acceptance receipt is pending this commit; Slice 3 is next after root receipt closure.
+- Handoff: root acceptance receipt is `4c59cdd` `Accept six-target ownership Slice 2`; Slice 3 is next.
+
+- Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: seed Slice 3 exactly from the accepted sprint contract.
+- Outcome: Slice 3 is authorized for coder `coder-2026-06-14-six-target-ownership-slice-03` only.
+- Allowed files: `howl-vt/src/parser.zig`.
+- Required shape: keep `parser.zig` structurally large and owner-true; add parser-owner-local inline tests in `parser.zig` proving the control spine directly; do not cut new parser child files; do not move UTF-8 or string-control logic back into `parser.zig`; use inline tests only so the VT package keeps its current curated test root shape.
+- Required tests from `howl-vt`: `zig build test:unit`.
+- Minimum proof coverage: exit/transition/entry phase ordering; active-control exclusivity; CSI parameter and separator assembly; DCS hook boundary behavior.
+- Stop conditions: stop if direct parser-owner-local proof cannot be added within `parser.zig`; stop if the slice requires touching files outside the allowed set; stop if the work drifts from proof into parser architecture redesign.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
