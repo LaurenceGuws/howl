@@ -101,3 +101,12 @@ Orchestrator note:
 - Intent: promote accepted planning into the active execution sprint contract without starting coder work yet.
 - Outcome: accepted planning receipt `16591b9` is recorded; `research/2026-06-14-six-target-ownership-hygiene-plan.md` moved to `research/done/2026-06-14-six-target-ownership-hygiene-plan.md`; active sprint contract is `sprints/2026-06-14-six-target-ownership-hygiene-sprint.md`.
 - Handoff: sprint seed receipt is `bf0da6e` `Seed six-target ownership sprint`. Slice 1 is next to seed for coder `coder-2026-06-14-six-target-ownership-slice-01` when execution is authorized.
+
+- Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: seed Slice 1 exactly from the accepted sprint contract.
+- Outcome: Slice 1 is authorized for coder `coder-2026-06-14-six-target-ownership-slice-01` only.
+- Allowed files: `howl-render/src/text/ft_hb/support.zig`, `howl-render/src/text/ft_hb/loaded_faces.zig`, `howl-render/src/text/ft_hb/support_test.zig`.
+- Required shape: add a true child owner in `loaded_faces.zig` for FT/HB primary/fallback face lifecycle and face lookup only; move only the lifecycle and lookup symbols proved by the accepted planning package; keep cached metrics policy, resolve-stage policy, provider cache policy, and shaping-input scratch in `support.zig`; replace mixed ownership with delegation from `support.zig` to the new loaded-face owner; preserve fallback loading, deterministic test fallback, and metrics derivation; no C ABI change, no package-root export change, no host-facing API churn.
+- Required tests from `howl-render`: `zig build test:unit`.
+- Stop conditions: stop if the cut requires touching files outside the allowed set; stop if the new owner cannot stay limited to face lifecycle and face lookup without pulling policy with it; stop if preserving behavior would require public render-session or ABI churn.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
