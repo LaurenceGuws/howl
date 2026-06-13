@@ -22,8 +22,9 @@ Active restart note:
 - The render API owner surgery sprint is closed and archived as done; its artifacts are historical receipts only.
 - The active planning package is accepted and committed in root `ca6f1c4`.
 - Slice 1, `C boundary quarantine`, is accepted and committed in `howl-render` `b659e2f` and root `2cef6f3`.
-- Slice 2, `VT publication ingress consolidation`, is accepted and committed in `howl-render` `b12c39f` with root receipt pending.
-- The active step is execution of Slice 3, `Tree cleanup and proof-root closure`.
+- Slice 2, `VT publication ingress consolidation`, is accepted and committed in `howl-render` `b12c39f` and root `c2edc8e`.
+- Slice 3, `Tree cleanup and proof-root closure`, is accepted with final nested `howl-render` `b12c39f`; root close receipt pending.
+- The render folder/file owner structure sprint is in final root receipt closure.
 - User direction: clean up file and folder locations and naming; keep only curated owner units directly under `src`; use shallow child folders only for true subdomains and per-owner definitions; take explicit pressure from `utils/dev_references/terminals/ghostty/src/terminal` and its child folders for intentional structure.
 - Current render shape still has folder/location discipline debt: empty `src/session/`, mixed top-level and folder owners, and folder boundaries that are not yet obviously owner-true.
 - Orchestrator session id: `orch-2026-06-13-render-folder-structure-01`.

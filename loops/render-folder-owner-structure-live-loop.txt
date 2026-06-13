@@ -306,6 +306,32 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
 - Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
 - Next handoff or blocker: commit the root Slice 2 receipt and seed Slice 3 from the accepted research plan.
 
+12. Role: coder
+- Session id: `coder-2026-06-13-render-folder-structure-03`
+- Hello: hi
+- Intended task: implement Slice 3, `Tree cleanup and proof-root closure`, inside the allowed files only.
+- How one task went: removed the empty `src/session/` directory, rechecked final `src/` top-level closure against the accepted tree, and confirmed no stale `src/session/` path references remain.
+- Next handoff or blocker: reviewer/orchestrator can verify the final closure pass under the accepted contract.
+
+13. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 3, `Tree cleanup and proof-root closure`, against allowed-file scope, final top-level tree truth, proof-root closure, and proof receipts.
+- Findings: none.
+- Outcome: accept.
+- Acceptance notes: orchestrator must rerun `zig build check`, `zig build test:unit`, and `zig build test:abi`; confirm the final `src/` top-level directory exactly matches the accepted closure tree; record the final nested commit hash and sprint-close receipt fields.
+- Next handoff or blocker: orchestrator may close the sprint receipt.
+
+14. Role: orchestrator
+- Session id: `orch-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: close Slice 3 after reviewer acceptance and final verification.
+- How one task went: final verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build check`, `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`, and `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`; the final `src/` top-level tree contains only `benchmark_main.zig`, `libhowl_render.zig`, `render_session.zig`, `submitted_surface.zig`, `test_abi.zig`, `test_unit.zig`, plus `c/`, `geometry/`, `surface/`, `text/`, `vt_publication/`, and `test/`; the empty `src/session/` directory is gone. No new nested render commit was needed after `b12c39f` because this final closure pass only removed the empty directory.
+- Commit-hash receipt: final nested render proof remains `b12c39f`.
+- Final sprint proof hash: nested `howl-render` `b12c39f`.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit the root final sprint receipt closure.
+
 Condensed execution contract for coder session `coder-2026-06-13-render-folder-structure-03`:
 
 - Accepted planning input:
@@ -467,3 +493,29 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
   2. This narrow re-check closes the earlier Slice 2 rejection point without introducing any new scope or planning drift. The only reviewed change here is removal of the empty legacy ingress directories after the prior reject.
   3. Proof rerun receipts are recorded for `zig build test:unit`, `zig build test:abi`, and `zig build check` for this fix pass per the seeded re-check handoff.
 - Next handoff or blocker: orchestrator should verify before commit by re-checking the `howl-render/src` top-level directory no longer contains the four removed ingress folders, rerunning the three Slice 2 proof commands in `/home/home/personal/projects/howl/howl-render`, and then recording the Slice 2 commit-hash receipt for closure.
+
+13. Role: coder
+- Session id: `coder-2026-06-13-render-folder-structure-03`
+- Hello: hi
+- Intended task: close Slice 3 by deleting the empty `src/session/` directory, confirming the final `src/` top-level owner tree, and rerunning the required final proof roots without broadening the render tree changes.
+- How one task went: the file moves and build-root rewires from Slices 1-2 were already in the required final shape, so the only remaining tree-cleanup debt was the empty `howl-render/src/session/` directory; I removed it, rechecked that `src/` now contains only `benchmark_main.zig`, `libhowl_render.zig`, `render_session.zig`, `submitted_surface.zig`, `test_abi.zig`, `test_unit.zig`, and the allowed top-level folders `c/`, `geometry/`, `surface/`, `text/`, `vt_publication/`, and `test/`, and rechecked that no stale `src/session/` import/path references remain.
+- Verification:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build check` -> pass.
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` -> pass.
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi` -> pass.
+- Blockers or deviations: none.
+- Next handoff or blocker: reviewer should inspect the Slice 3 closure diff and proof receipts. Commit-hash handoff status: none; no git actions taken by coder. Current `howl-render` HEAD remains `b12c39f` pending orchestrator receipt closure for this slice.
+
+10. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 3 against the active condensed contract and accepted planning artifact.
+- How one task went: confirmed the nested `howl-render` worktree is clean after the claimed Slice 3 closure, the final `src/` top-level tree matches the contract exactly, and the proof-root/build-root surface remains the single unit root, ABI root, library root, and benchmark root.
+- Verdict: accept
+- Findings:
+  1. Allowed-file scope holds and the required closure is present. `src/session/` is deleted (`/home/home/personal/projects/howl/howl-render/src/session` returns not found), and `src/` top level now contains only `benchmark_main.zig`, `libhowl_render.zig`, `render_session.zig`, `submitted_surface.zig`, `test_abi.zig`, `test_unit.zig`, plus the allowed folders `c/`, `geometry/`, `surface/`, `text/`, `vt_publication/`, and `test/` (`howl-render/src` directory listing).
+  2. Build roots still point at one unit test root, one ABI test root, one library root, and one benchmark root only: `src/test_unit.zig`, `src/test_abi.zig`, `src/libhowl_render.zig`, and `src/benchmark_main.zig` (`howl-render/build.zig:53-85`, `howl-render/build.zig:103-152`). No new public roots or test roots were introduced.
+  3. Helper and wrapper-test owners live under `src/c/` only, and the curated proof roots import them there: `src/c/` contains `test_support.zig`, `text_session_test.zig`, `surface_geometry_test.zig`, `prepare_request_test.zig`, `prepared_surface_test.zig`, and `submission_test.zig`; `test_abi.zig` imports the wrapper tests from `c/*`; `test/unit/root.zig` imports the required wrapper tests from `c/*`; and the remaining support imports point at `c/test_support.zig` (`howl-render/src/c` directory listing; `howl-render/src/test_abi.zig:4-10`; `howl-render/src/test/unit/root.zig:1-12`; `howl-render/src/render_session.zig:892`; `howl-render/src/surface/handle_test.zig:11`; `howl-render/src/surface/emitter_test.zig:12`).
+  4. No stale imports to the deleted `src/session/` path remain, and no behavior-surface reshaping is visible in the final closure pass. The nested `howl-render` worktree is clean after the claimed Slice 3 work, which is consistent with this slice being pure final tree cleanup and proof-root closure.
+  5. Verification receipts and loop hygiene are present. The coder left the required loop note and recorded exact pass results for `zig build check`, `zig build test:unit`, and `zig build test:abi`.
+- Next handoff or blocker: orchestrator should verify before the final nested commit and sprint-close receipt by re-checking `git status --short` in `/home/home/personal/projects/howl/howl-render`, rerunning `zig build check`, `zig build test:unit`, and `zig build test:abi`, confirming the final `src/` top-level directory exactly matches the accepted Slice 3 closure tree, and then recording the final nested commit hash plus sprint-close receipt fields.
