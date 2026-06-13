@@ -183,4 +183,15 @@ Orchestrator Slice 2 acceptance note:
 - Hello from `orch-2026-06-14-runtime-debug-noise-01`.
 - Intent: verify and accept corrected Slice 2 after reviewer acceptance.
 - Outcome: `zig build test:unit -- render session`, `zig build test:unit -- direct normal`, `zig build test:unit -- prepared handle`, `zig build test:unit`, `zig build benchmark:render:build`, and `zig build check` all passed from `howl-render`. Nested render commit is `3f54a58` `Remove prepare debug timing noise`.
-- Handoff: root acceptance receipt is pending this commit; Slice 3 is next after root receipt closure.
+- Handoff: root acceptance receipt is `69eba22` `Accept runtime debug-noise Slice 2`; Slice 3 is next.
+
+Slice 3 execution seed:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: seed Slice 3 exactly from the accepted sprint contract after Slice 2 root acceptance.
+- Outcome: Slice 3 is authorized for coder `coder-2026-06-14-runtime-debug-noise-slice-03` only.
+- Allowed files: `howl-linux-host/src/terminal/surface.zig`, `howl-linux-host/src/terminal/surface_test.zig`, `howl-linux-host/src/display/render_surface.zig`, `howl-linux-host/src/display/render_surface_commands.zig`, `howl-linux-host/src/display/render_surface_resources.zig`, `howl-linux-host/src/display/render_surface_test.zig` only if compile/test expectations require stats signature changes.
+- Required shape: `TurnResult`, `DriveResult`, and `SubmitPreparedResult` carry runtime decision facts only: work before/after, prepared flag, step, present snapshot, submit result, snapshot sequence. Delete upload timing, upload counts/bytes, dispatch/draw timings, retained-submit timing, `UploadStats`, optional stats sinks, and clocks. Preserve render action, present blocking, stale-handle checks, GL upload behavior, resource metadata commits, and assertions.
+- Required tests from `howl-linux-host`: `zig build test:unit -- terminal surface`, `zig build test:unit -- render surface`, `zig build test:unit`, `zig build test:integration`, and `zig build check`.
+- Stop conditions: if any non-test runtime caller requires upload timing/count fields for behavior, stop and classify that caller before proceeding; if GL upload correctness starts depending on observation structs, stop; if deletion would weaken present/submitted ordering assertions, stop.
+- Required handoff fields: changed files, summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
