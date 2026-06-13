@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 3 seeded for execution; reviewer-gated implementation pending.
+Status: Slice 3 accepted in nested render repo; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -32,9 +32,9 @@ Current step:
 - The planning package is accepted at root `0e53a8e`.
 - Slice 1, `Extract undercurl owner`, is accepted in `howl-render` `42b68b8`; root `a8c3e50`.
 - Slice 2, `Create generated-special root and extract box owner`, is accepted in `howl-render` `a542d8a`; root `c52f69d`.
-- Slice 3, `Extract powerline owner`, is the active execution slice.
-- Only Slice 3 is authorized.
-- Coder session id: `coder-2026-06-13-raster-special-03`.
+- Slice 3, `Extract powerline owner`, is accepted in `howl-render` `24286d6`.
+- Root receipt for Slice 3 is pending orchestrator commit.
+- No next execution slice is seeded yet.
 
 Exact user direction:
 
@@ -54,7 +54,7 @@ Exact stop conditions:
 - Stop if the move changes powerline spacer absorption proved by `howl-render/src/text/shape/grouping.zig:277-298`.
 - Stop if the move changes route classification proved by `howl-render/src/text/symbol_map.zig:26-29,44-51` and `howl-render/src/text/resolver.zig:294-342`.
 
-Slice 3 execution contract:
+Latest executed slice contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/raster/generated_special.zig`
@@ -222,3 +222,38 @@ Team scratchpad
 - Intended task: close the Slice 2 root receipt and seed Slice 3 for execution.
 - How one task went: recorded Slice 2 root receipt `c52f69d` and condensed Slice 3 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-03`.
 - Next handoff or blocker: coder should implement Slice 3 only and return verification plus commit-hash handoff status for reviewer gating.
+
+17. Role: coder
+- Session id: `coder-2026-06-13-raster-special-03`
+- Hello: hi
+- Intended task: implement Slice 3 only inside the allowed raster files.
+- How one task went: extracted the full powerline raster owner surface into `special_powerline.zig`, rewired `generated_special.zig` to dispatch powerline families there, kept the shared helper surface in `generated_special.zig`, and passed `zig fmt` plus `cd howl-render && zig build test:unit`.
+- Next handoff or blocker: reviewer should gate the Slice 3 diff; no commit hash exists yet because git was intentionally untouched.
+
+18. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: gate the executed Slice 3 diff for powerline owner extraction against the accepted execution contract.
+- How one task went: reviewed the live contract, accepted plan, coder receipt, and the current `generated_special.zig` and `special_powerline.zig` sources; the powerline owner move is mostly in place, but `generated_special.zig` does not retain the contract-required shared helper `pixelCount`.
+- Next handoff or blocker: verdict is `reject`; coder must restore the exact retained helper surface in `generated_special.zig` and return the slice for re-review before orchestrator can commit.
+
+19. Role: coder
+- Session id: `coder-2026-06-13-raster-special-03`
+- Hello: hi
+- Intended task: repair Slice 3 by restoring the missing shared helper `pixelCount` in `generated_special.zig`.
+- How one task went: added back `pixelCount(width: u16, height: u16) u32` to `generated_special.zig` so the retained helper surface now matches the accepted Slice 3 contract exactly, and passed `zig fmt --check` plus `zig build test:unit` again.
+- Next handoff or blocker: reviewer should re-gate the repaired Slice 3 diff; no commit hash exists yet because git was intentionally untouched.
+
+20. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: re-gate the repaired Slice 3 powerline owner extraction after the `pixelCount` repair.
+- How one task went: accepted; `generated_special.zig` restores contract-required `pixelCount`, the retained shared helper surface and extracted `special_powerline.zig` owner match the Slice 3 contract, and verification passed with `zig fmt --check` plus `cd howl-render && zig build test:unit`.
+- Next handoff or blocker: orchestrator may commit Slice 3; no blocker from review.
+
+21. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: commit the accepted Slice 3 render work and close the root receipt.
+- How one task went: committed the nested `howl-render` Slice 3 diff as `24286d6` `Extract special powerline owner` after reviewer acceptance.
+- Next handoff or blocker: commit the root receipt for Slice 3, then seed Slice 4 if continuing.
