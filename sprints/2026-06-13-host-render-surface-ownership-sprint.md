@@ -19,7 +19,7 @@ Active execution slice:
 - Slice 1: extract retained host resource owner from `howl-linux-host/src/display/render_surface.zig`.
 - Coder session id: `coder-2026-06-13-host-render-surface-slice-01`.
 - Reviewer session id for execution: `review-2026-06-13-host-render-surface-01`.
-- Execution seed commit-hash receipt: pending orchestrator commit.
+- Execution seed commit-hash receipt: `3cb819a` `Seed host render-surface Slice 1`.
 
 ## Problem Statement
 

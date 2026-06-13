@@ -14,7 +14,7 @@ Reviewer session id: `review-2026-06-13-host-render-surface-01`.
 
 Planning acceptance commit-hash receipt: `455402d` `Accept host render-surface planning`.
 
-Execution seed commit-hash receipt: pending orchestrator commit.
+Execution seed commit-hash receipt: `3cb819a` `Seed host render-surface Slice 1`.
 
 Coder session id: `coder-2026-06-13-host-render-surface-slice-01`.
 
