@@ -20,7 +20,7 @@ Active loops:
 Active restart note:
 
 - The PTY+VT folder owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
-- The active step is all-`src/` shallow directory planning, not implementation.
+- The active step is Slice 2 execution under the all-`src/` shallow directory sprint.
 - User direction: restart the sprint; make dirs in all `src/` dirs as shallow as possible; delete fake abstractions; treat the just-deleted `terminal/` folder as the model.
 - Scope pressure: inspect every package `src/` tree in the workspace, identify fake abstraction directories and needless depth, then plan owner-true shallow cuts with exact slices.
 - Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
@@ -30,6 +30,7 @@ Active restart note:
 - Planning seed commit-hash receipt: root `16a877d`.
 - Planning package commit-hash receipt: root `c69e039`.
 - Slice 1, `PTY src/pty/ Depth Deletion`, is accepted in `howl-pty` `714d41c` and root `3e0b50e`.
+- Slice 2, `VT Fake Folder Deletion`, is accepted in `howl-vt` `da25b16`; root receipt pending.
 
 Execution rule:
 

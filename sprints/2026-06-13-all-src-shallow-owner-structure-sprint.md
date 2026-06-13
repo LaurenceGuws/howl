@@ -4,11 +4,12 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: Slice 2 active.
+Status: Slice 2 accepted in `howl-vt`; root receipt pending.
 
 ## Slice Receipts
 
 - Slice 1, `PTY src/pty/ Depth Deletion`: `howl-pty` `714d41c`; root `3e0b50e`.
+- Slice 2, `VT Fake Folder Deletion`: `howl-vt` `da25b16`; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
 
@@ -41,7 +42,7 @@ Commit-hash receipt: root `16a877d`.
 
 ## Execution Authorization
 
-- Slice 1 is authorized through the live-loop execution contract only.
+- Slice 2 is authorized through the live-loop execution contract only.
 - The accepted plan is `/home/home/personal/projects/howl/research/2026-06-13-all-src-shallow-owner-structure-plan.md`.
 - No other slice is authorized.
 

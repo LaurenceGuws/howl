@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: active planning loop.
+Status: active execution loop.
 
 Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
 
@@ -30,7 +30,8 @@ Active research target:
 Current step:
 
 - The all-`src/` shallow directory planning package is accepted and committed.
-- Slice 1 is active.
+- Slice 1 is accepted and receipted.
+- Slice 2 is active.
 - No other implementation is authorized.
 
 Exact user direction:
@@ -278,6 +279,27 @@ Stop conditions:
 - How one task went: wrote the condensed Slice 2 execution contract from the accepted research artifact.
 - Next handoff or blocker: coder may implement Slice 2 only.
 
+14. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-2`
+- Hello: hi
+- Intended task: implement Slice 2 VT fake folder deletion.
+- How one task went: moved `host/`, `selection/`, and `csi/` leaf owners to shallow root files, updated all allowed imports, removed the three deleted folders, and passed `zig build test:unit`, `zig build test:abi`, and the contract fallback `zig build simulate:build`.
+- Next handoff or blocker: reviewer should gate the Slice 2 diff; no commit was made by coder.
+
+15. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-gate Slice 2 after orchestrator corrected the stale active guidance.
+- How one task went: accepted Slice 2; active loop authority now matches the real state, old `host/`, `selection/`, and `csi/` path users are gone, and required proof commands passed with the documented simulation fallback.
+- Next handoff or blocker: orchestrator may commit nested `howl-vt` and record receipts.
+
+16. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: verify and commit accepted Slice 2.
+- How one task went: reran `zig build test:unit`, `zig build test:abi`, and `zig build simulate:build` in `howl-vt`; committed nested Slice 2 as `da25b16`.
+- Next handoff or blocker: commit the root receipt for Slice 2, then seed Slice 3.
+
 9. Role: coder
 - Session id: `coder-2026-06-13-all-src-shallow-structure-slice-1`
 - Hello: hi
@@ -291,3 +313,24 @@ Stop conditions:
 - Intended task: review Slice 1 actual `howl-pty` diff against the seeded execution contract, verify the deleted `src/pty/` folder has no survivors, and re-run the required proof commands.
 - How one task went: confirmed the diff stays within the allowed PTY files, updates `src/pty.zig` to import `src/unix.zig`, updates the two test imports to `src/posix.zig`, leaves no `src/pty/` directory behind, and `zig build test:unit`, `zig build test:abi`, and `zig build test:integration` all passed from `howl-pty`.
 - Next handoff or blocker: reviewer accepts Slice 1; orchestrator may record the acceptance receipts and commit nested `howl-pty`.
+
+14. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-2`
+- Hello: hi
+- Intended task: delete VT fake `host/`, `selection/`, and `csi/` folders by moving their files to direct `src/` owners and updating every allowed importer/test path.
+- How one task went: moved the VT owner files to `host_*`, `selection*`, and `csi_*` root files, updated the allowed root, FFI, Kitty, and test imports to those final shallow paths, and removed the old folder-path users without adding shims.
+- Next handoff or blocker: run `howl-vt` unit, ABI, and simulation proof plus confirm the deleted folders have zero live users for reviewer handoff.
+
+15. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: review Slice 2 VT fake folder deletion against the execution contract, verification claims, and live accountability state.
+- How one task went: confirmed the `howl-vt` diff stays within the allowed files, removes live `host/`, `selection/`, and `csi/` path users, and passes `zig build test:unit`, `zig build test:abi`, and the permitted fallback `zig build simulate:build` after `zig build simulate -- --iterations 1` reproduced the expected `UnknownSimulation` CLI failure.
+- Next handoff or blocker: reject Slice 2 for workflow accountability; this same live loop still says `Status: active planning loop` and `Slice 1 is active` with `No other implementation is authorized`, so orchestrator must repair the active loop guidance before this slice can be accepted or committed.
+
+16. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-gate Slice 2 after orchestrator repaired the live accountability surface mismatch and verify the current `howl-vt` diff plus required proof commands.
+- How one task went: confirmed the active sprint and live loop now both authorize Slice 2 execution, the `howl-vt` diff stays within the seeded allowed files, `src/host/`, `src/selection/`, and `src/csi/` are gone, product-source grep found no surviving `host/`, `selection/`, or `csi/` import paths, and `zig build test:unit`, `zig build test:abi`, and the permitted fallback `zig build simulate:build` all passed after `zig build simulate -- --iterations 1` reproduced the expected `UnknownSimulation` CLI failure.
+- Next handoff or blocker: reviewer accepts Slice 2; orchestrator may commit nested `howl-vt` and record the required receipts.
