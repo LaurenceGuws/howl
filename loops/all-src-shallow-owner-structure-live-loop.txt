@@ -31,7 +31,8 @@ Current step:
 
 - The all-`src/` shallow directory planning package is accepted and committed.
 - Slice 1 is accepted and receipted.
-- Slice 2 is active.
+- Slice 2 is accepted and receipted.
+- Slice 3 is active.
 - No other implementation is authorized.
 
 Exact user direction:
@@ -395,6 +396,34 @@ Stop conditions:
 - How one task went: wrote the condensed Slice 3 execution contract from the accepted research artifact.
 - Next handoff or blocker: coder may implement Slice 3 only.
 
+20. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-3`
+- Hello: hi
+- Intended task: implement Slice 3 render root geometry and text classification flattening.
+- How one task went: moved `src/geometry/` and `src/text/classify/` owners to shallow root/text files, updated all allowed importers, removed the deleted code folders, and passed `zig build test:unit`, `zig build test:abi`, and `zig build check`.
+- Next handoff or blocker: reviewer should gate Slice 3; no commit was made by coder.
+
+21. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-gate Slice 3 after orchestrator fixed the active guidance mismatch and removed the two empty leftover directories.
+- How one task went: accepted Slice 3; `src/geometry/` and `src/text/classify/` are absent, no deleted import paths survive, and `zig build test:unit`, `zig build test:abi`, and `zig build check` passed.
+- Next handoff or blocker: orchestrator may commit nested `howl-render` and record receipts.
+
+22. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: verify and commit accepted Slice 3.
+- How one task went: reran `zig build test:unit`, `zig build test:abi`, and `zig build check` in `howl-render`; committed nested Slice 3 as `d4445e3`.
+- Next handoff or blocker: commit the root receipt for Slice 3, then seed Slice 4.
+
+19. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: repair the minor Slice 3 post-review blocker without reopening the slice scope.
+- How one task went: removed the two empty leftover directories `howl-render/src/geometry/` and `howl-render/src/text/classify/`, then reran `zig build test:unit`, `zig build test:abi`, and `zig build check` in `howl-render` successfully.
+- Next handoff or blocker: reviewer should re-gate Slice 3; no remaining code-shape blocker is expected.
+
 9. Role: coder
 - Session id: `coder-2026-06-13-all-src-shallow-structure-slice-1`
 - Hello: hi
@@ -429,3 +458,31 @@ Stop conditions:
 - Intended task: re-gate Slice 2 after orchestrator repaired the live accountability surface mismatch and verify the current `howl-vt` diff plus required proof commands.
 - How one task went: confirmed the active sprint and live loop now both authorize Slice 2 execution, the `howl-vt` diff stays within the seeded allowed files, `src/host/`, `src/selection/`, and `src/csi/` are gone, product-source grep found no surviving `host/`, `selection/`, or `csi/` import paths, and `zig build test:unit`, `zig build test:abi`, and the permitted fallback `zig build simulate:build` all passed after `zig build simulate -- --iterations 1` reproduced the expected `UnknownSimulation` CLI failure.
 - Next handoff or blocker: reviewer accepts Slice 2; orchestrator may commit nested `howl-vt` and record the required receipts.
+
+17. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-3`
+- Hello: hi
+- Intended task: flatten render `src/geometry/` and `src/text/classify/` into direct shallow owner files, update every allowed importer, and prove the deleted folders have no survivors.
+- How one task went: moved the five geometry owners to render root and the four classification owners to direct `text/` files, updated the allowed root, C, surface, vt-publication, ft_hb, shape, raster, and direct text imports to the new paths, and `zig build test:unit`, `zig build test:abi`, and `zig build check` all passed in `howl-render` with no surviving `geometry/` or `text/classify/` importer paths.
+- Next handoff or blocker: reviewer should gate Slice 3; coder made no commit.
+
+19. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: gate Slice 3 render geometry and text classification flattening against the active execution contract, live accountability surface, and required proof commands.
+- How one task went: confirmed the `howl-render` diff stays within the seeded allowed files, deletes `src/geometry/` and `src/text/classify/`, leaves no surviving `geometry/` or `classify/` imports under `howl-render/src`, and `zig build test:unit`, `zig build test:abi`, and `zig build check` all passed locally.
+- Next handoff or blocker: reject Slice 3 for workflow accountability; the same live loop still says in `Current step` that Slice 2 is active and no other implementation is authorized, so orchestrator must repair the active loop guidance before this slice can be accepted or committed.
+
+20. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-gate Slice 3 after orchestrator corrected the live accountability surface mismatch and verify the live `howl-render` diff plus required proof commands.
+- How one task went: confirmed the active sprint and live loop now both authorize Slice 3 execution, the `howl-render` diff stays within the seeded allowed files, no `geometry/` or `classify/` imports survive under `howl-render/src`, and `zig build test:unit`, `zig build test:abi`, and `zig build check` all passed; however, the required-shape contract still is not met because `howl-render/src/geometry/` and `howl-render/src/text/classify/` still exist on disk as empty directories.
+- Next handoff or blocker: reject Slice 3; coder or orchestrator must remove the two leftover empty directories before reviewer can accept or allow orchestrator to commit nested `howl-render`.
+
+21. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-gate Slice 3 after orchestrator removed the two leftover empty render directories and reran the required render proof commands.
+- How one task went: confirmed `howl-render/src/geometry/` and `howl-render/src/text/classify/` are now absent, the live `howl-render` diff still stays within the seeded allowed files for Slice 3, no `geometry/` or `classify/` imports survive under `howl-render/src`, and the orchestrator-reported `zig build test:unit`, `zig build test:abi`, and `zig build check` reruns match the slice contract.
+- Next handoff or blocker: reviewer accepts Slice 3; orchestrator may commit nested `howl-render` and record the required receipts.
