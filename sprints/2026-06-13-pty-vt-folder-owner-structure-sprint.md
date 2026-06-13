@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: planning reviewer-accepted after repair; no implementation slice seeded yet.
+Status: Slice 1 accepted in `howl-pty`; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 
@@ -43,6 +43,10 @@ Commit-hash receipt: root `efbd9ad`.
 
 ## Execution Authorization
 
-- No coder is authorized until the orchestrator seeds an explicit slice in the live loop.
+- Slice 1 is accepted in `howl-pty` `13b7fbd`.
 - The accepted slice plan is `/home/home/personal/projects/howl/research/2026-06-13-pty-vt-folder-owner-structure-plan.md`.
-- Slice 1 may be seeded after the planning package commit-hash receipt is recorded.
+- No other PTY or VT work is authorized.
+
+## Slice Receipts
+
+- Slice 1, `PTY proof-root relocation out of src`: `howl-pty` `13b7fbd`; root receipt pending.

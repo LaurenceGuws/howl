@@ -213,6 +213,9 @@ Target `howl-pty/src/` shape:
 
 Target `howl-pty/` proof shape outside `src`:
 
+- `test_unit.zig`
+- `test_integration.zig`
+- `test_abi.zig`
 - `test/unit.zig`
 - `test/integration.zig`
 - `test/abi.zig`
@@ -229,6 +232,7 @@ Rationale:
 - Ghostty and Alacritty both keep PTY as an explicit boundary owner, not as terminal-core spillover.
 - The PTY `pty/` folder already qualifies as a shallow true subdomain because it holds platform implementation details only.
 - The real PTY debt is that tests live under `src`; that is placement debt, not owner debt.
+- Zig 0.16 module-boundary enforcement requires the test module root to sit at package root when out-of-`src` test files import `src` owners directly; package-root `test_unit.zig`, `test_integration.zig`, and `test_abi.zig` are proof entrypoints, while test bodies and support live under `test/`.
 
 ### VT
 
@@ -355,11 +359,15 @@ Rationale:
   - `howl-pty/src/pty_integration_test.zig`
   - `howl-pty/src/pty/posix_test.zig`
   - `howl-pty/src/pty/pty_test.zig`
+  - `howl-pty/test_unit.zig`
+  - `howl-pty/test_integration.zig`
+  - `howl-pty/test_abi.zig`
   - `howl-pty/test/**`
 - Required shape:
   - `src` keeps only PTY product owners and the true PTY platform subdomain.
   - All PTY proof roots move to `test/` outside `src`.
-  - PTY build roots point to `test/unit.zig`, `test/integration.zig`, and `test/abi.zig`.
+  - PTY build roots point to package-root `test_unit.zig`, `test_integration.zig`, and `test_abi.zig`, because Zig 0.16 rejects direct `../src` imports when the module root is `test/`.
+  - Package-root proof entrypoints load the actual test bodies and ABI proof files under `test/`.
   - ABI support helpers also move out of `src`.
 - Exact tests:
   - `zig build test:unit`
