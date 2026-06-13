@@ -7,40 +7,45 @@ Purpose:
 
 Sprint:
 
-- No active sprint seeded.
+- No accepted execution sprint seeded. Planning is active for six-target ownership hygiene.
 
 Active research:
 
-- No active research seeded.
+- `research/2026-06-14-six-target-ownership-hygiene-plan.md`
 
 Active loops:
 
-- No active loop seeded.
+- `loops/six-target-ownership-hygiene-live-loop.txt`
 
 Active restart note:
 
-- No active sprint is seeded. Waiting for next scope.
-- Latest closed sprint: runtime debug-noise cleanup.
-- Orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
-- Researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
-- Reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
-- Planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
-- Accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
-- Sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
-- Slice 2 correction acceptance receipt: `e94864b` `Accept runtime debug-noise Slice 2 correction`.
-- Runtime debug-noise cleanup accepted slices:
+- Active planning scope: six-target ownership hygiene.
+- Orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
+- Researcher session id: `research-2026-06-14-six-target-ownership-01`.
+- Reviewer session id: `review-2026-06-14-six-target-ownership-01`.
+- No implementation is authorized until planning is accepted and execution slices are seeded.
+- Previous latest closed sprint: runtime debug-noise cleanup.
+- Latest closed sprint orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
+- Latest closed sprint researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
+- Latest closed sprint reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
+- Latest closed sprint planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
+- Latest closed sprint accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
+- Latest closed sprint sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
+- Latest closed sprint correction receipt: `e94864b` `Accept runtime debug-noise Slice 2 correction`.
+- Latest closed sprint accepted slices:
   - Slice 1 nested render commit `932bd29` `Remove emitter debug timing noise`, root receipt `cd00a7e` `Accept runtime debug-noise Slice 1`.
   - Slice 2 nested render commit `3f54a58` `Remove prepare debug timing noise`, root receipt `69eba22` `Accept runtime debug-noise Slice 2`.
   - Slice 3 nested host commit `8a2f1d7` `Remove host upload stats noise`, root receipt `9eddb77` `Accept runtime debug-noise Slice 3`.
   - Slice 4 read-only realizer verification, root receipt `8e42f54` `Accept runtime debug-noise Slice 4`.
-- Archive receipt: `2f62673` `Archive runtime debug-noise sprint`.
-- Closure review accepted by `review-2026-06-14-runtime-debug-noise-01` after ledger fix `ac0fbd1` `Record runtime debug-noise archive receipt`.
+- Latest closed sprint archive receipt: `2f62673` `Archive runtime debug-noise sprint`.
+- Latest closed sprint closure ledger fix: `ac0fbd1` `Record runtime debug-noise archive receipt`.
+- Latest closed sprint closure acceptance: `d44da95` `Accept runtime debug-noise sprint closure`.
 - Runtime debug-noise cleanup sprint execution is complete and archived.
 
 Execution rule:
 
-- No coding is authorized until a new active sprint, loop, and execution contract are seeded.
-- The runtime debug-noise cleanup sprint execution is complete and archived.
+- No coding is authorized until the active planning package is reviewer-accepted and a slice execution contract is seeded.
+- The runtime debug-noise cleanup sprint is historical and archived.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

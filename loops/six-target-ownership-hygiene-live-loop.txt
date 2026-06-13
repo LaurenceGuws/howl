@@ -1,0 +1,78 @@
+# Six-Target Ownership Hygiene Live Loop
+
+Authority:
+
+- Live planning scratchpad for the six-target ownership and hygiene sprint.
+- Orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
+- User handoff supplied 2026-06-14.
+- No implementation is authorized until research planning is accepted by reviewer and exact slices are seeded.
+
+Problem statement:
+
+- Evaluate six current post-debug-cleanup pressure targets and distinguish true large owners from false concentration.
+- Do not treat line count as guilt.
+- A file is only a cut target if current source plus references prove mixed ownership, duplicate truth, fake seams, weak naming, excess `anytype`, or runtime/control flow that belongs elsewhere.
+- Preserve reference-backed large-owner shapes where they are real.
+
+Target set:
+
+1. `projects/howl/howl-render/src/text/shape/cluster.zig`
+2. `projects/howl/howl-render/src/text/ft_hb/support.zig`
+3. `projects/howl/howl-linux-host/src/terminal/surface.zig`
+4. `projects/howl/howl-render/src/surface/emitter.zig`
+5. `projects/howl/howl-render/src/surface/realizer.zig`
+6. `projects/howl/howl-vt/src/parser.zig`
+
+Research contract:
+
+- Researcher session id: `research-2026-06-14-six-target-ownership-01`.
+- Reviewer session id: `review-2026-06-14-six-target-ownership-01`.
+- Active research output path: `research/2026-06-14-six-target-ownership-hygiene-plan.md`.
+- For each target, research must produce:
+  - current-code facts with exact line references
+  - reference comparison
+  - owner judgment: keep large or cut
+  - exact reason
+  - if cut, exact proposed child-owner path and exact symbol movement
+  - required assertions
+  - required tests
+  - stop conditions
+  - sprint ranking
+- Research must produce an exact ranked sprint plan and seed the next execution slice with zero coder guesswork.
+
+Reference order and pressure:
+
+- Use Alacritty first for host/runtime and render organization.
+- Use Ghostty first for VT/parser shape.
+- Use TigerBeetle for simplicity, naming, bounds, assertions, and anti-bucket pressure.
+- Existing Howl shape is not authority by itself.
+- No coder invention. Every cut must be source-backed.
+
+Likely ranking bias only, not authorization:
+
+1. `howl-render/src/text/ft_hb/support.zig`
+2. `howl-render/src/text/shape/cluster.zig`
+3. `howl-linux-host/src/terminal/surface.zig`
+
+Hard non-goals:
+
+- No ABI/header churn unless explicitly re-approved.
+- No benchmark theater.
+- No debug-noise revisit.
+- No generic `helpers.zig`, `types.zig`, `manager`, `engine`, or `controller`.
+- No split-because-big reasoning.
+- No runtime redesign outside the proven target seam.
+
+Hard stop conditions:
+
+- Stop if a target is large but reference-shaped and owner-true.
+- Stop if references conflict and require user review.
+- Stop if a proposed cut needs invention rather than evidence.
+- Stop if the sprint cannot produce exact allowed files, tests, non-goals, and stop conditions for each candidate slice.
+
+Orchestrator note:
+
+- Hello from `orch-2026-06-14-six-target-ownership-01`.
+- Intent: seed a planning-only sprint around the six current ownership/hygiene pressure points.
+- Outcome: live loop now captures the target set, research outputs, reference order, likely ranking bias, and hard non-goals/stops.
+- Handoff: researcher must read required workflow docs, `sprints/current.txt`, this loop, `reference-index.md`, TigerBeetle readings, the six target files, and the governing reference seams before writing the active research package.
