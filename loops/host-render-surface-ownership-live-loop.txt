@@ -1,0 +1,63 @@
+Host render surface ownership live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: seeded planning loop; researcher pass required.
+
+Orchestrator session id: `orch-2026-06-13-host-render-surface-01`.
+
+Researcher session id: `research-2026-06-13-host-render-surface-01`.
+
+Reviewer session id: `review-2026-06-13-host-render-surface-01`.
+
+Loop commit-hash receipt: documentation-only seed pending orchestrator commit.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, outcome, and handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-host-render-surface-ownership-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-host-render-surface-ownership-plan.md`
+
+Current step:
+
+- The sprint is seeded for planning only.
+- Research must pressure `howl-linux-host/src/display/render_surface.zig` first against Alacritty and TigerBeetle.
+- Research may promote a different ranked fallback seam only if current-source and references prove `render_surface.zig` should not go first.
+- No implementation is authorized.
+
+Exact user direction:
+
+- Do not stay out of host code.
+- Make everything pristine.
+- Push the next sprint into host ownership pressure rather than avoiding it.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No ABI/header churn.
+- No benchmark theater.
+- No generalized host-runtime redesign.
+
+Exact stop conditions:
+
+- Stop if planning cannot name exact slice boundaries, allowed files, tests, non-goals, and stop conditions.
+- Stop if the references point to a conflicting shape that needs explicit user review.
+- Stop if active accountability files drift from the real live state.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: seed the next planning sprint around host render-surface ownership pressure.
+- How one task went: promoted a new host-focused planning sprint around `howl-linux-host/src/display/render_surface.zig` so the active surface stays live after the raster sprint close.
+- Next handoff or blocker: researcher must write the full planning package and either prove `render_surface.zig` is the first cut or prove one ranked fallback seam must preempt it.

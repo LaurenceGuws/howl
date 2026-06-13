@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- none
+- `sprints/2026-06-13-host-render-surface-ownership-sprint.md`
 
 Active research:
 
-- none
+- `research/2026-06-13-host-render-surface-ownership-plan.md`
 
 Active loops:
 
-- none
+- `loops/host-render-surface-ownership-live-loop.txt`
 
 Active restart note:
 
@@ -36,12 +36,18 @@ Active restart note:
   - `24286d6` `Extract special powerline owner`
   - `1986d89` `Extract special block braille owner`
   - `9270a11` `Extract special legacy owner`
-- No active sprint is seeded.
+- New active planning sprint: host render surface ownership.
+- Primary planning target: `howl-linux-host/src/display/render_surface.zig`.
+- Active planning sessions:
+  - orchestrator `orch-2026-06-13-host-render-surface-01`
+  - researcher `research-2026-06-13-host-render-surface-01`
+  - reviewer `review-2026-06-13-host-render-surface-01`
 
 Execution rule:
 
 - No coding is authorized without an accepted reviewer-gated execution slice under the active sprint.
 - No coding is authorized without a new seeded sprint.
+- This sprint is seeded for research only; no implementation is authorized.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
