@@ -1,0 +1,63 @@
+Raster special ownership compression live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: seeded planning loop; researcher pass required.
+
+Orchestrator session id: `orch-2026-06-13-raster-special-01`.
+
+Researcher session id: `research-2026-06-13-raster-special-01`.
+
+Reviewer session id: `review-2026-06-13-raster-special-01`.
+
+Loop commit-hash receipt: documentation-only seed pending orchestrator commit.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, outcome, and handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-raster-special-ownership-compression-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-raster-special-ownership-compression-plan.md`
+
+Current step:
+
+- The sprint is seeded for planning only.
+- Research must pressure `howl-render/src/text/raster/special.zig` first against Alacritty and TigerBeetle.
+- Research may promote a different ranked fallback seam only if current-source and references prove `special.zig` should not go first.
+- No implementation is authorized.
+
+Exact user direction:
+
+- Seed the next sprint now because the active surface is clean but empty.
+- Prefer `howl-render/src/text/raster/special.zig` as the next battlefield.
+- Pressure the target with reference guidance before execution planning is accepted.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No ABI/header churn.
+- No benchmark theater.
+- No render-wide redesign.
+
+Exact stop conditions:
+
+- Stop if planning cannot name exact slice boundaries, allowed files, tests, non-goals, and stop conditions.
+- Stop if the references point to a conflicting shape that needs explicit user review.
+- Stop if active accountability files drift from the real live state.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: seed the next planning sprint around the render raster concentration with `special.zig` as the first pressure target.
+- How one task went: converted the current post-scene-compression pressure ranking into live sprint, research, and loop artifacts; kept execution unauthorized and required reference-first pressure on `howl-render/src/text/raster/special.zig` before any slice plan can be accepted.
+- Next handoff or blocker: researcher must write the full planning package and either prove `special.zig` is the first cut or prove one ranked fallback seam must preempt it.
