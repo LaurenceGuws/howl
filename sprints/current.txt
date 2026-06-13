@@ -39,16 +39,17 @@ Active restart note:
 - New active sprint: host render surface ownership.
 - Primary sprint target: `howl-linux-host/src/display/render_surface.zig`.
 - Planning acceptance receipt: `455402d` `Accept host render-surface planning`.
+- Latest accepted slice: Slice 1 `5c7a2a2` `Extract host render-surface resources`.
 - Active execution sessions:
    - orchestrator `orch-2026-06-13-host-render-surface-01`
    - researcher `research-2026-06-13-host-render-surface-01`
    - reviewer `review-2026-06-13-host-render-surface-01`
-   - coder `coder-2026-06-13-host-render-surface-slice-01`
+   - coder `coder-2026-06-13-host-render-surface-slice-02`
 
 Execution rule:
 
-- No coding is authorized beyond the seeded Slice 1 execution contract.
-- Slice 1 is now the only authorized implementation step under the active sprint.
+- No coding is authorized beyond the seeded Slice 2 execution contract.
+- Slice 2 is now the only authorized implementation step under the active sprint.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

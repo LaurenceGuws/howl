@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: planning accepted; Slice 1 seeded for execution.
+Status: Slice 1 accepted; Slice 2 seeded for execution.
 
 Orchestrator session id: `orch-2026-06-13-host-render-surface-01`.
 
@@ -16,10 +16,11 @@ Planning acceptance commit-hash receipt: `455402d` `Accept host render-surface p
 
 Active execution slice:
 
-- Slice 1: extract retained host resource owner from `howl-linux-host/src/display/render_surface.zig`.
-- Coder session id: `coder-2026-06-13-host-render-surface-slice-01`.
+- Slice 1 acceptance receipt: `5c7a2a2` `Extract host render-surface resources`.
+- Slice 2: extract render-surface command grammar and draw owner from `howl-linux-host/src/display/render_surface.zig`.
+- Coder session id: `coder-2026-06-13-host-render-surface-slice-02`.
 - Reviewer session id for execution: `review-2026-06-13-host-render-surface-01`.
-- Execution seed commit-hash receipt: `3cb819a` `Seed host render-surface Slice 1`.
+- Execution seed commit-hash receipt: pending orchestrator commit.
 
 ## Problem Statement
 
@@ -52,9 +53,9 @@ Active execution slice:
 
 ## Execution Authorization
 
-- Only Slice 1 execution is authorized.
+- Only Slice 2 execution is authorized.
 - The active execution contract is the current top section of `loops/host-render-surface-ownership-live-loop.txt`.
-- No work beyond Slice 1 is authorized.
+- No work beyond Slice 2 is authorized.
 
 ## Seed Pressure Anchors
 

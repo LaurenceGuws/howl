@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: planning accepted; Slice 1 execution contract seeded.
+Status: Slice 1 accepted; Slice 2 execution contract seeded.
 
 Orchestrator session id: `orch-2026-06-13-host-render-surface-01`.
 
@@ -14,9 +14,11 @@ Reviewer session id: `review-2026-06-13-host-render-surface-01`.
 
 Planning acceptance commit-hash receipt: `455402d` `Accept host render-surface planning`.
 
-Execution seed commit-hash receipt: `3cb819a` `Seed host render-surface Slice 1`.
+Slice 1 acceptance receipt: `5c7a2a2` `Extract host render-surface resources`.
 
-Coder session id: `coder-2026-06-13-host-render-surface-slice-01`.
+Execution seed commit-hash receipt: pending orchestrator commit.
+
+Coder session id: `coder-2026-06-13-host-render-surface-slice-02`.
 
 Shared scratchpad rule:
 
@@ -34,39 +36,39 @@ Active research target:
 Current step:
 
 - Planning is accepted.
-- Slice 1 is seeded for execution.
-- Only Slice 1 is authorized.
+- Slice 2 is seeded for execution.
+- Only Slice 2 is authorized.
 
-Slice 1 execution contract:
+Slice 2 execution contract:
 
-- Name: extract retained host resource owner from `howl-linux-host/src/display/render_surface.zig`.
+- Name: extract render-surface command grammar and draw owner from `howl-linux-host/src/display/render_surface.zig`.
 - Allowed files:
   - `howl-linux-host/src/display/render_surface.zig`
-  - `howl-linux-host/src/display/render_surface_resources.zig`
+  - `howl-linux-host/src/display/render_surface_commands.zig`
   - `howl-linux-host/src/display/render_surface_test.zig`
 - Exact shape:
-  - Move `RenderResourceTextures`, nested `Slot`, nested `Slot.State`, and methods `deinit`, `realizeSurface`, `realizeSurfaceLocked`, `glErrorOk`, `validateSurface`, `validateSurfaceTransition`, `noteCreate`, `noteUpload`, `noteRetire`, `createTexture`, `uploadTexture`, `commitUploadMetadata`, `retireTexture`, `find`, `textureSlotFor`, `findEmpty`, `findValue`, `deleteSlot`, and `retireSlot` into `render_surface_resources.zig`.
-  - Move `resourceFormatValid`, `uploadValidForSlot`, `rectFitsResource`, `sameResource`, `glFormat`, `bytesPerPixel`, and `spanSlice` into `render_surface_resources.zig`.
-  - In `render_surface_resources.zig`, expose `pub const Slot` inside `RenderResourceTextures`, `pub fn textureSlotFor`, `pub` helper exports for `rectFitsResource`, `sameResource`, `bytesPerPixel`, and `spanSlice`, and `testing` exports only for `TextureSlot`, `commitUploadMetadata`, and `validateSurface`.
-  - In `render_surface.zig`, keep the public import path by re-exporting `pub const RenderResourceTextures`, keep `UploadStats`, `ensureSurface`, `uploadRenderSurface`, command grammar/draw logic, and keep `render_surface.testing` as the only test facade by delegating resource test hooks through `render_surface_resources.testing`.
-  - In `render_surface.zig`, keep only temporary root-local aliases for `rectFitsResource`, `sameResource`, `bytesPerPixel`, and `spanSlice` so the still-rooted command code compiles until Slice 2.
+  - Move `RenderSurfaceClass` into `render_surface_commands.zig`.
+  - Move `rectHasArea`, `resourceEmpty`, `spriteResourceKind`, `resourceHasFutureUpload`, the root-local aliases for `rectFitsResource`, `sameResource`, `bytesPerPixel`, and `spanSlice`, `rectsOverlap`, `destinationOverlaps`, and `spanCountValid` into `render_surface_commands.zig`.
+  - Move `classifyRenderSurface`, `assertRenderSurfacePatchHostSurface`, `uploadFillCommands`, `uploadRenderSurfaceCommands`, `renderSurfaceFillOnly`, `renderSurfaceFillPatch`, `renderSurfaceFillCoverage`, `renderSurfaceSprite`, `renderSurfaceSpritePatch`, `renderSurfaceGlyphs`, `renderSurfaceGlyphPatch`, `renderSurfaceFillCommand`, `renderSurfaceSpriteCommand`, `glyphCommandValid`, `glyphSpanValid`, `hasCommands`, `resourceFreeCommands`, `renderSurfaceFullClear`, `uploadFillCommand`, `row_pixels_max`, `fill_upload_tile_bytes_max`, `fillCommandFitsHostRow`, `fillUploadRowBytes`, `fillUploadRowsPerChunk`, `stageFillUploadTile`, `drawFillCommand`, `drawSpriteCommand`, `spriteUploadCoversCommand`, `glyphCommandHasFutureUpload`, `drawGlyphCommand`, `drawQuad`, `emitQuadVerticesWithTex`, `drawTexturedQuad`, `emitTexturedQuadVertices`, `monotonicNs`, `ndcX`, `ndcY`, and `unpackRenderSurfaceRgba` into `render_surface_commands.zig`.
+  - Keep `deleteTexture`, `panicGlBroken`, `UploadStats`, `RenderResourceTextures` re-export, `ensureSurface`, `uploadRenderSurface`, and `testing` in `render_surface.zig`.
+  - Keep `uploadRenderSurface` as the top-level branch owner in the root, classifying through the command owner and preserving failed-upload zeroing.
+  - Keep `render_surface.testing` as the only test facade; do not create a new side-entry test import path.
 - Exact tests:
-  - `zig build test-unit -- test-filter test-render-surface`
-  - `zig build test-unit -- test-filter test-terminal-surface`
+  - `zig build test:unit -- test-filter test-render-surface`
+  - `zig build test:unit -- test-filter test-terminal-surface`
 - Exact non-goals:
-  - No command grammar split.
-  - No movement of `UploadStats`.
-  - No movement into `terminal/surface.zig`, `display/display.zig`, render-side files, ABI headers, or test root wiring.
-  - No generic shared helper file.
+  - No movement into `terminal/surface.zig`, `display/display.zig`, render-side files, ABI headers, or `host_test_root.zig`.
+  - No GL backend redesign.
+  - No command helper bucket outside `render_surface_commands.zig`.
 - Exact stop conditions:
-  - Stop if moving `RenderResourceTextures` requires `terminal/surface.zig` to own GL resource mutation.
-  - Stop if `render_surface.zig` cannot remain the public import path with `render_surface.RenderResourceTextures` preserved.
-  - Stop if a moved resource helper is required by command logic in a way not listed above; the only permitted interim bridge is the named root-local aliases for `rectFitsResource`, `sameResource`, `bytesPerPixel`, and `spanSlice`.
+  - Stop if the root still owns command grammar or draw execution after extraction.
+  - Stop if the split requires a third helper owner to compile.
+  - Stop if the split demands a user override against Alacritty or the C ABI boundary.
 - Receipt fields required on completion:
   - orchestrator `orch-2026-06-13-host-render-surface-01`
   - researcher `research-2026-06-13-host-render-surface-01`
   - reviewer `review-2026-06-13-host-render-surface-01`
-  - coder `coder-2026-06-13-host-render-surface-slice-01`
+  - coder `coder-2026-06-13-host-render-surface-slice-02`
   - commit hash
   - required verification results
 
@@ -188,3 +190,52 @@ Team scratchpad
 - Intended task: close the accepted planning receipt and seed Slice 1 as the active execution contract.
 - How one task went: recorded planning acceptance receipt `455402d` and promoted Slice 1 into the controlling execution contract with exact files, symbols, tests, non-goals, stop conditions, and coder session id `coder-2026-06-13-host-render-surface-slice-01`.
 - Next handoff or blocker: coder may execute Slice 1 only; reviewer remains `review-2026-06-13-host-render-surface-01` for execution gating.
+
+15. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-01`
+- Hello: hi
+- Intended task: execute Slice 1 by extracting the retained host resource owner into `render_surface_resources.zig` while preserving the root import and test facade.
+- How one task went: moved `RenderResourceTextures` and its resource validation/upload helpers into the new resource owner file, kept temporary root helper aliases for command code, and routed the root testing facade through `render_surface_resources.testing`.
+- Next handoff or blocker: run the required host unit tests and then hand the diff to reviewer `review-2026-06-13-host-render-surface-01`.
+
+16. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-01`
+- Hello: hi
+- Intended task: verify Slice 1 against the required host proof roots.
+- How one task went: both proof roots passed with the current build step `zig build test:unit -- test-filter test-render-surface` and `zig build test:unit -- test-filter test-terminal-surface`; the seeded contract spelled the old step name `test-unit`, so the verification command name needs orchestrator correction but the proof roots themselves passed.
+- Next handoff or blocker: hand the Slice 1 diff and verification results to reviewer `review-2026-06-13-host-render-surface-01`.
+
+17. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-01`
+- Hello: hi
+- Intended task: repair the reviewer-rejected Slice 1 drift without broadening scope.
+- How one task went: removed the unauthorized duplicate `panicGlBroken` owner from `render_surface_resources.zig` and kept the resource owner within the approved moved symbol set.
+- Next handoff or blocker: rerun the two proof roots and re-submit the Slice 1 diff to reviewer `review-2026-06-13-host-render-surface-01`.
+
+18. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-01`
+- Hello: hi
+- Intended task: record post-repair verification on the repaired Slice 1 diff.
+- How one task went: reran `zig build test:unit -- test-filter test-render-surface` and `zig build test:unit -- test-filter test-terminal-surface`; both passed on the repaired diff.
+- Next handoff or blocker: reviewer `review-2026-06-13-host-render-surface-01` should re-review the repaired Slice 1 diff against the corrected live contract.
+
+19. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-01`
+- Hello: hi
+- Intended task: resolve the stale verification-command blocker note in the live scratchpad.
+- How one task went: confirmed the active Slice 1 contract already uses `zig build test:unit -- test-filter test-render-surface` and `zig build test:unit -- test-filter test-terminal-surface`, confirmed both passed on the repaired diff, and closed note 16's earlier command-correction statement as stale rather than active.
+- Next handoff or blocker: reviewer `review-2026-06-13-host-render-surface-01` should re-review Slice 1; no implementation changes remain for this repair.
+
+20. Role: reviewer
+- Session id: `review-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: re-review Slice 1 after the accountability-only closure note.
+- How one task went: accepted; the live loop now carries non-contradictory verification truth because note 19 closes note 16's stale command-correction statement, and the current `render_surface.zig` / `render_surface_resources.zig` / `render_surface_test.zig` surface shows no new implementation drift beyond the already repaired Slice 1 scope.
+- Next handoff or blocker: Slice 1 review gate is clear; orchestrator may record acceptance or advance per loop flow.
+
+21. Role: orchestrator
+- Session id: `orch-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: record Slice 1 acceptance and seed Slice 2 as the next active execution contract.
+- How one task went: recorded Slice 1 host implementation receipt `5c7a2a2`, kept its reviewer acceptance in the live loop, and promoted Slice 2 into the controlling execution contract with coder session id `coder-2026-06-13-host-render-surface-slice-02`.
+- Next handoff or blocker: coder may execute Slice 2 only; reviewer remains `review-2026-06-13-host-render-surface-01` for execution gating.
