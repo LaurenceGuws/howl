@@ -300,6 +300,101 @@ Stop conditions:
 - How one task went: reran `zig build test:unit`, `zig build test:abi`, and `zig build simulate:build` in `howl-vt`; committed nested Slice 2 as `da25b16`.
 - Next handoff or blocker: commit the root receipt for Slice 2, then seed Slice 3.
 
+17. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: record Slice 2 root receipt and seed Slice 3.
+- How one task went: committed root Slice 2 receipt as `861d909`.
+- Next handoff or blocker: activate Slice 3 execution contract.
+
+## Slice 3 Execution Contract
+
+Name: Render Root Geometry And Text Classification Flattening.
+
+Status: active.
+
+Coder session id: `coder-2026-06-13-all-src-shallow-structure-slice-3`.
+
+Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-render/src/benchmark_main.zig`
+- `/home/home/personal/projects/howl/howl-render/src/render_session.zig`
+- `/home/home/personal/projects/howl/howl-render/src/submitted_surface.zig`
+- `/home/home/personal/projects/howl/howl-render/src/test/unit/root.zig`
+- `/home/home/personal/projects/howl/howl-render/src/c/surface_geometry.zig`
+- `/home/home/personal/projects/howl/howl-render/src/c/submission.zig`
+- `/home/home/personal/projects/howl/howl-render/src/c/prepare_request.zig`
+- `/home/home/personal/projects/howl/howl-render/src/c/test_support.zig`
+- `/home/home/personal/projects/howl/howl-render/src/vt_publication/prepare_queue.zig`
+- `/home/home/personal/projects/howl/howl-render/src/vt_publication/damage.zig`
+- `/home/home/personal/projects/howl/howl-render/src/surface/handle.zig`
+- `/home/home/personal/projects/howl/howl-render/src/surface/handle_test.zig`
+- `/home/home/personal/projects/howl/howl-render/src/surface/prepared_surface.zig`
+- `/home/home/personal/projects/howl/howl-render/src/surface/emitter.zig`
+- `/home/home/personal/projects/howl/howl-render/src/geometry/geometry.zig`
+- `/home/home/personal/projects/howl/howl-render/src/geometry/grid_geometry.zig`
+- `/home/home/personal/projects/howl/howl-render/src/geometry/geometry_contract.zig`
+- `/home/home/personal/projects/howl/howl-render/src/geometry/tokens.zig`
+- `/home/home/personal/projects/howl/howl-render/src/geometry/geometry_test.zig`
+- `/home/home/personal/projects/howl/howl-render/src/geometry.zig`
+- `/home/home/personal/projects/howl/howl-render/src/grid_geometry.zig`
+- `/home/home/personal/projects/howl/howl-render/src/geometry_contract.zig`
+- `/home/home/personal/projects/howl/howl-render/src/tokens.zig`
+- `/home/home/personal/projects/howl/howl-render/src/geometry_test.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/surface_preparer.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/ft_hb/support.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/shape/cluster.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/shape/grouping.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/resolver.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/raster/special_test.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/raster/special.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/classify/special_glyphs.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/classify/symbol_map.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/classify/lane.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/classify/symbol.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/special_glyphs.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/symbol_map.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/lane.zig`
+- `/home/home/personal/projects/howl/howl-render/src/text/symbol.zig`
+
+Required shape:
+
+- Move render `geometry/` files to render root with the same filenames except `grid_geometry.zig` remains `grid_geometry.zig`; update all imports from `geometry/...` and `../geometry/...` to root-level paths.
+- Move `text/classify/` files to direct `text/` files with same basename; update all imports from `classify/...` and `../classify/...`.
+- Update geometry importers under `vt_publication/`, `surface/`, `c/`, and `text/ft_hb/`, plus classification importers under `text/shape/`, `text/raster/`, and direct `text/` files, so no deleted-folder path remains.
+- Delete `src/geometry/` and `src/text/classify/`.
+- Keep `c/`, `surface/`, `vt_publication/`, `text/ft_hb/`, `text/raster/`, and `text/shape/`.
+
+Exact tests:
+
+- From `/home/home/personal/projects/howl/howl-render`: `zig build test:unit`.
+- From `/home/home/personal/projects/howl/howl-render`: `zig build test:abi`.
+- From `/home/home/personal/projects/howl/howl-render`: `zig build check`.
+
+Non-goals:
+
+- No render ABI symbol/header/export changes.
+- No surface, C ABI translator, vt-publication, ft_hb, raster, or shape reshaping.
+- No font fixture movement.
+
+Stop conditions:
+
+- Stop if `src/geometry/` cannot be deleted without changing render ABI or geometry semantics.
+- Stop if `text/classify/` files need a new replacement folder or wrapper module.
+- Stop if font fixture paths in `build.zig` lines 11-20 are affected.
+
+18. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: seed Slice 3 render geometry and text classification flattening.
+- How one task went: wrote the condensed Slice 3 execution contract from the accepted research artifact.
+- Next handoff or blocker: coder may implement Slice 3 only.
+
 9. Role: coder
 - Session id: `coder-2026-06-13-all-src-shallow-structure-slice-1`
 - Hello: hi
