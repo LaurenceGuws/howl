@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-pty-vt-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
 
-Planning commit-hash receipt: pending.
+Planning commit-hash receipt: root `efbd9ad`.
 
 Question:
 

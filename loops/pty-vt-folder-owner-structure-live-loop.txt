@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-pty-vt-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
 
-Loop commit-hash receipt: pending.
+Loop commit-hash receipt: root `efbd9ad`.
 
 Shared scratchpad rule:
 
@@ -85,3 +85,10 @@ Team scratchpad
 - Intended task: re-gate the repaired PTY+VT folder/file owner structure plan.
 - How one task went: accepted the repaired plan; Slice 1 is bounded to PTY proof-root relocation, and later VT slices now explicitly remove unit proofs from `src` and require direct proof import updates after owner moves.
 - Next handoff or blocker: orchestrator must commit the accepted planning package, record the commit-hash receipt, and only then seed Slice 1.
+
+5. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: record the accepted PTY+VT planning package commit-hash receipt.
+- How one task went: committed the accepted planning package at root `efbd9ad`.
+- Next handoff or blocker: commit this receipt, then seed Slice 1 for PTY proof-root relocation only.
