@@ -268,6 +268,39 @@ Condensed execution contract for coder session `coder-2026-06-13-host-folder-str
 - Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
 - Next handoff or blocker: commit the root Slice 2 receipt and seed Slice 3 from the accepted research plan.
 
+16. Role: coder
+- Session id: `coder-2026-06-13-host-folder-structure-03`
+- Hello: hi
+- Intended task: implement Slice 3, `Terminal Surface Naming Cleanup`, inside the allowed files only.
+- How one task went: renamed `terminal/context.zig` to `terminal/surface.zig`, renamed `terminal/context_test.zig` to `terminal/surface_test.zig`, updated the authorized imports and test references, and preserved the terminal-surface initialization, deinit, geometry, and tab-slot assertion/test surfaces.
+- Next handoff or blocker: reviewer/orchestrator can verify the final Slice 3 diff under the accepted contract.
+
+17. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 3, `Terminal Surface Naming Cleanup`, against allowed-file scope, owner rename, preserved child folders, assertions/tests, and proof receipts.
+- Findings: none.
+- Outcome: accept.
+- Acceptance notes: orchestrator must inspect `git status` and the exact `howl-linux-host` diff to confirm only the accepted Slice 3 file set is included; confirm the recorded `zig build test:unit` and `zig build test:integration` receipts match the final Slice 3 worktree; record the Slice 3 commit hash in the loop/sprint receipts before recording the final nested host commit and sprint-close receipt.
+- Next handoff or blocker: orchestrator may close the host sprint receipt.
+
+18. Role: orchestrator
+- Session id: `orch-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: close Slice 3 after reviewer acceptance and final verification.
+- How one task went: final verification passed for `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:integration`; the terminal owner now reads as `surface.zig`/`surface_test.zig` with `terminal/pty/`, `terminal/render/`, and `terminal/vt/` preserved; accepted implementation is committed in `howl-linux-host` as `e053085` (`Name host terminal surface`).
+- Commit-hash receipt: `slice-3-terminal-surface-naming=e053085`.
+- Final sprint proof hash: nested `howl-linux-host` `e053085`.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit the root final sprint receipt closure.
+
+16. Role: coder
+- Session id: `coder-2026-06-13-host-folder-structure-03`
+- Hello: hi
+- Intended task: execute only Slice 3 by renaming the embedded terminal owner from `terminal/context.zig` to `terminal/surface.zig`, renaming its test file to `terminal/surface_test.zig`, rewiring the authorized imports/test references, and rerunning the required host tests.
+- How one task went: completed the owner rename and rewires in the authorized files. `src/terminal/context.zig` moved to `src/terminal/surface.zig`, `src/terminal/context_test.zig` moved to `src/terminal/surface_test.zig`, the exported owner now reads as `Surface`, `src/event.zig`, `src/display/present.zig`, `src/terminal/tab_slots.zig`, `src/host_test_root.zig`, and `src/integration_test_root.zig` now use `TerminalSurface`/`surface` references, and `build.zig` now names the surface test artifact accordingly. The terminal-surface init/deinit/geometry assertions and existing surface tests were preserved, and the tab-slot bounds/lifecycle assertions remained intact after the rename. Exact verification results: `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:unit` succeeded; `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:integration` succeeded.
+- Next handoff or blocker: reviewer/orchestrator can review Slice 3 against the accepted contract. Commit-hash handoff status: none; git not touched.
+
 Condensed execution contract for coder session `coder-2026-06-13-host-folder-structure-03`:
 
 - Accepted planning input:
@@ -408,6 +441,13 @@ Condensed execution contract for coder session `coder-2026-06-13-host-folder-str
 - Intended task: execute only Slice 2 by moving the display/window/tab-visual owners into `display/` and `terminal/`, rewiring the exact authorized imports, and rerunning the required host tests.
 - How one task went: moved `src/app/present.zig` to `src/display/present.zig`, `src/window_chrome/window.zig` to `src/display/window.zig`, `src/window_chrome/icon.zig` to `src/display/icon.zig`, `src/window_chrome/stb_image.c` to `src/display/stb_image.c`, `src/display/renderer/render_surface.zig` to `src/display/render_surface.zig`, `src/display/renderer/render_surface_test.zig` to `src/display/render_surface_test.zig`, `src/display/renderer/rects.zig` to `src/display/rects.zig`, `src/tab_bar/tab_bar.zig` to `src/display/tab_bar.zig`, and `src/tab_bar/slots.zig` to `src/terminal/tab_slots.zig`; rewired the authorized direct import sites in `src/terminal/context.zig`, `src/terminal/context_test.zig`, `src/terminal/links.zig`, and `src/host_test_root.zig`, plus the owning runtime/build imports in `src/main.zig`, `src/event.zig`, `src/display/display.zig`, `src/display/layout.zig`, `src/display/rects.zig`, and `build.zig`; preserved the present-token assertions, present-reason/pending-terminal assertions, tab-slot bounds assertions, and tab-bar snapshot tests. Exact verification results: `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:unit` succeeded; `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:integration` succeeded. `src/window_chrome/` and `src/tab_bar/` were removed once empty.
 - Next handoff or blocker: reviewer/orchestrator can review Slice 2. Deviation: `src/display/renderer/` still contains `gl_c.h`, so that folder cannot be removed in this slice without violating the explicit no-`gl_c.h`-move rule; commit-hash handoff status: none; git not touched.
+
+15. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 3, `Terminal Surface Naming Cleanup`, against the active condensed contract and accepted planning artifact.
+- How one task went: accepted Slice 3. Finding 1: the worktree stays inside the authorized Slice 3 file set plus the exact required rename targets. In `howl-linux-host`, the product-code changes are limited to `build.zig`, `src/display/present.zig`, `src/event.zig`, `src/host_test_root.zig`, `src/integration_test_root.zig`, `src/main.zig`, `src/terminal/tab_slots.zig`, deletion of `src/terminal/context.zig` and `src/terminal/context_test.zig`, and creation of the required targets `src/terminal/surface.zig` and `src/terminal/surface_test.zig`. Finding 2: the required renames and import/test rewires are complete. `terminal/context.zig` was renamed to `terminal/surface.zig`, `terminal/context_test.zig` was renamed to `terminal/surface_test.zig`, and the authorized import/test references now point at `terminal/surface.zig` or `terminal/surface_test.zig` in `src/event.zig`, `src/display/present.zig`, `src/host_test_root.zig`, `src/integration_test_root.zig`, `src/terminal/tab_slots.zig`, and the renamed test file itself. No lingering `context.zig` or `context_test.zig` references remain in the host tree. Finding 3: the current `terminal/pty/`, `terminal/render/`, and `terminal/vt/` child folders are preserved unchanged as folders, matching the slice contract. Finding 4: the renamed owner now reads as an embedded terminal surface owner rather than a generic context bucket. `src/terminal/surface.zig` exposes `pub const Surface = struct` and the host/runtime call sites now use `TerminalSurface`, while `src/terminal/tab_slots.zig` owns `surfaces` and `*TerminalSurface` references, which sharpens the owner noun without introducing broader lifecycle redesign. Finding 5: the required assertions and tests are preserved. `src/terminal/surface.zig:137-219` still carries the init/deinit/geometry assertions from the former context owner, `src/terminal/surface_test.zig` preserves the prior owner-local proof surface under the new name, and `src/terminal/tab_slots.zig` keeps its bounds and lifecycle assertions after the rename. Finding 6: no PTY, VT, or render behavior changes, and no broader surface lifecycle redesign, surfaced in the Slice 3 diff beyond owner naming and import rewiring. Finding 7: exact verification receipts and loop hygiene are present. The coder recorded `zig build test:unit` and `zig build test:integration` success in the live loop, and the worktree state matches that receipt.
+- Next handoff or blocker: orchestrator should verify the accepted Slice 3 worktree in `howl-linux-host`, confirm the recorded unit/integration test receipts against the final diff, and record the Slice 3 commit hash before the final nested host commit and sprint-close receipt are recorded.
 
 14. Role: reviewer
 - Session id: `review-2026-06-13-host-folder-structure-01`

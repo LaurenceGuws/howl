@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: reviewer-accepted planning committed; Slice 1 seeded for execution.
+Status: execution completed through Slice 3; final root receipt closure pending.
 
 Orchestrator session id: `orch-2026-06-13-host-folder-structure-01`.
 
@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-host-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-host-folder-structure-01`.
 
-Commit-hash receipt: planning package closed in root commit `ff58fa8`.
+Commit-hash receipt: planning package closed in root commit `ff58fa8`; final sprint close receipt pending.
 
 ## Problem Statement
 
