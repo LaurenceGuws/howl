@@ -69,3 +69,53 @@ Team scratchpad
 - Intended task: record the follow-up shallow sprint seed receipt.
 - How one task went: committed the new follow-up sprint seed as root `66927e2`.
 - Next handoff or blocker: commit this receipt update, then delegate fresh research.
+
+3. Role: researcher
+- Session id: `research-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: re-prove current `src/` trees and write the active follow-up shallow owner-structure plan without relying on archived sprint claims.
+- How one task went: current-source proof found two meaningful remaining slices only: flatten `howl-vt/src/parser/main.zig` into a shallow parser owner root and delete the pure render unit-test wrapper chain rooted at `howl-render/src/test/unit/root.zig`; host config/display/input and VT `ffi/main.zig` stayed out of scope because the current references still support those seams.
+- Next handoff or blocker: reviewer should gate `research/2026-06-13-followup-shallow-owner-structure-plan.md`; no implementation is authorized until accepted.
+
+4. Role: reviewer
+- Session id: `review-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: review the follow-up shallow owner-structure plan for exact remaining debt, executable slices, explicit seam non-promotions, and workflow compliance.
+- How one task went: rejected the plan because Slice 1 omits current-source importers that still depend on `howl-vt/src/parser/main.zig`, including `howl-vt/src/screen/style.zig` and multiple VT unit tests, so the allowed-file list and stop conditions force coder escalation instead of execution; Slice 2 also leaves the direct replacement import list implicit even though `howl-render/src/test/unit/root.zig` already names the exact proof files.
+- Next handoff or blocker: researcher must correct `research/2026-06-13-followup-shallow-owner-structure-plan.md` with the full parser importer set and an exact non-invented `test_unit.zig` import list before reviewer can accept planning or allow Slice 1 seeding.
+
+Reviewer verdict for `research/2026-06-13-followup-shallow-owner-structure-plan.md`
+
+- Verdict: `reject`
+- Findings:
+  - `research/2026-06-13-followup-shallow-owner-structure-plan.md:250-281` is not executable as Slice 1 because the allowed-file list and importer proof are incomplete. Current source still imports `howl-vt/src/parser/main.zig` from `howl-vt/src/screen/style.zig:2` and from VT unit tests including `howl-vt/test/unit/csi_mapping_test.zig:4`, `howl-vt/test/unit/terminal_surface_test.zig:2`, `howl-vt/test/unit/screen_test.zig:4`, `howl-vt/test/unit/report_test.zig:3`, `howl-vt/test/unit/route_test.zig:4`, `howl-vt/test/unit/screen/write_test.zig:4`, and parser tests under `howl-vt/test/unit/parser/*.zig`. Deleting `src/parser/main.zig` while requiring `zig build test:unit` and `zig build simulate` cannot succeed under the current slice contract, and the stop condition at `279-281` would force coder escalation rather than execution.
+  - `research/2026-06-13-followup-shallow-owner-structure-plan.md:293-300` leaves Slice 2 under-specified. The plan says to make `src/test_unit.zig` import the exact current unit proof files directly, but it does not record that exact import list even though `howl-render/src/test/unit/root.zig:2-11` already enumerates it. That leaves avoidable coder reconstruction in a planning artifact that is supposed to eliminate invention.
+- Acceptance notes: none.
+- Files edited: `/home/home/personal/projects/howl/loops/followup-shallow-owner-structure-live-loop.txt`
+- Orchestrator may commit planning package and seed Slice 1: no.
+
+5. Role: researcher
+- Session id: `research-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: repair the rejected follow-up plan by re-proving every current `howl-vt/src/parser/main.zig` user and by recording the exact render unit-proof imports Slice 2 must preserve.
+- How one task went: current source proved nineteen direct `parser/main.zig` importers across VT product code and unit tests, including `src/screen/style.zig` and the four `test/unit/parser/*_test.zig` files, and `howl-render/src/test/unit/root.zig` re-proved the exact ten direct imports Slice 2 must copy into `src/test_unit.zig`.
+- Next handoff or blocker: reviewer should re-gate `research/2026-06-13-followup-shallow-owner-structure-plan.md`; no implementation is authorized unless the repaired plan is accepted.
+
+6. Role: reviewer
+- Session id: `review-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: re-review the repaired follow-up shallow owner-structure plan for executable Slice 1 coverage, exact Slice 2 proof imports, and planning-package readiness.
+- How one task went: accepted the repaired plan because `research/2026-06-13-followup-shallow-owner-structure-plan.md` now re-proves all nineteen current `parser/main.zig` importers in the debt section, anchor map, and Slice 1 allowed-file list, and Slice 2 now records the exact ten direct imports already enumerated by `howl-render/src/test/unit/root.zig`.
+- Next handoff or blocker: orchestrator may commit the planning package and seed Slice 1.
+
+Reviewer verdict for repaired `research/2026-06-13-followup-shallow-owner-structure-plan.md`
+
+- Verdict: `accept`
+- Findings:
+  - None. The two prior planning defects are closed by current-source proof. `research/2026-06-13-followup-shallow-owner-structure-plan.md:124-145` and `286-329` now cover all nineteen current `howl-vt/src/parser/main.zig` importers needed for an executable Slice 1, including `howl-vt/src/screen/style.zig:2` and the VT parser/unit test importers re-proved in current source.
+  - `research/2026-06-13-followup-shallow-owner-structure-plan.md:341-351` now records the exact ten direct render unit-test imports already enumerated by `howl-render/src/test/unit/root.zig:2-11`, so Slice 2 no longer leaves coder reconstruction behind.
+- Acceptance notes:
+  - Planning package is executable as written for the two queued slices and preserves the non-promoted seams with source-backed justification.
+  - The artifact receipts remain complete for planning acceptance; the open item is still the future accepted-planning commit-hash closure, which the orchestrator may record when committing the planning package.
+- Files edited: `/home/home/personal/projects/howl/loops/followup-shallow-owner-structure-live-loop.txt`
+- Orchestrator may commit planning package and seed Slice 1: yes.
