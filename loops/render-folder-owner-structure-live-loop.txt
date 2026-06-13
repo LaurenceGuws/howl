@@ -278,6 +278,109 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
 - Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
 - Next handoff or blocker: commit the root Slice 1 receipt and seed Slice 2 from the accepted research plan.
 
+9. Role: coder
+- Session id: `coder-2026-06-13-render-folder-structure-02`
+- Hello: hi
+- Intended task: implement Slice 2, `VT publication ingress consolidation`, inside the allowed files only.
+- How one task went: moved the weak ingress owners from `damage/`, `storage/`, `prepare/`, and `renderable_content/` into `vt_publication/` with the exact Slice 2 file names, rewired `render_session.zig` to use only `vt_publication/*`, `geometry/*`, `surface/*`, and `text/*` for this ingress path, and rewired the named consumers off the old `renderable_content/*` imports to the new `vt_publication/*` owners.
+- Next handoff or blocker: reviewer/orchestrator can verify the Slice 2 diff under the accepted contract.
+
+10. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 2, `VT publication ingress consolidation`, against allowed-file scope, folder removal, owner placement, import rewires, and proof receipts.
+- How one task went: first review rejected only because the legacy `damage/`, `prepare/`, `storage/`, and `renderable_content/` directories were still physically present as empty directories after the owner moves. That narrow issue was fixed by removing the empty directories and rerunning proof, after which the slice met its required shape with no new scope drift.
+- Verdict: accept
+- Findings:
+  1. `howl-render/src/damage`, `howl-render/src/prepare`, `howl-render/src/storage`, and `howl-render/src/renderable_content` are now removed, not merely empty.
+  2. The moved ingress owners live under `vt_publication/` with the exact Slice 2 file names, and the named consumers are rewired off the old `renderable_content/*` imports to the exact new `vt_publication/*` owners.
+  3. Proof rerun receipts are present for `zig build test:unit`, `zig build test:abi`, and `zig build check`.
+- Next handoff or blocker: orchestrator should verify the removed folders stay gone, rerun the three proof commands, record the Slice 2 commit-hash receipt, and seed Slice 3.
+
+11. Role: orchestrator
+- Session id: `orch-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: close Slice 2 after reviewer acceptance and final verification.
+- How one task went: final verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`, `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`, and `cd /home/home/personal/projects/howl/howl-render && zig build check`; `src/` no longer contains `damage/`, `prepare/`, `storage/`, or `renderable_content/`; accepted implementation is committed in `howl-render` as `b12c39f` (`Consolidate VT publication ingress`).
+- Commit-hash receipt: `slice-2-vt-publication-ingress=b12c39f`.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit the root Slice 2 receipt and seed Slice 3 from the accepted research plan.
+
+Condensed execution contract for coder session `coder-2026-06-13-render-folder-structure-03`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-13-render-folder-owner-structure-plan.md`
+- Implement only Slice 3, `Tree cleanup and proof-root closure`.
+- Allowed files:
+  - `howl-render/build.zig`
+  - `howl-render/src/test_unit.zig`
+  - `howl-render/src/test/unit/root.zig`
+  - `howl-render/src/test_abi.zig`
+  - `howl-render/src/libhowl_render.zig`
+  - `howl-render/src/benchmark_main.zig`
+  - `howl-render/src/render_session.zig`
+  - `howl-render/src/submitted_surface.zig`
+  - `howl-render/src/c/text_session.zig`
+  - `howl-render/src/c/text_session_handle.zig`
+  - `howl-render/src/c/surface_geometry.zig`
+  - `howl-render/src/c/prepare_request.zig`
+  - `howl-render/src/c/prepared_surface.zig`
+  - `howl-render/src/c/submission.zig`
+  - `howl-render/src/c/work_state.zig`
+  - `howl-render/src/c/test_support.zig`
+  - `howl-render/src/c/text_session_test.zig`
+  - `howl-render/src/c/surface_geometry_test.zig`
+  - `howl-render/src/c/prepare_request_test.zig`
+  - `howl-render/src/c/prepared_surface_test.zig`
+  - `howl-render/src/c/submission_test.zig`
+  - `howl-render/src/geometry/geometry.zig`
+  - `howl-render/src/geometry/geometry_contract.zig`
+  - `howl-render/src/geometry/grid_geometry.zig`
+  - `howl-render/src/geometry/tokens.zig`
+  - `howl-render/src/surface/compositor.zig`
+  - `howl-render/src/surface/emitter.zig`
+  - `howl-render/src/surface/handle.zig`
+  - `howl-render/src/surface/prepared_surface.zig`
+  - `howl-render/src/surface/realizer.zig`
+  - `howl-render/src/surface/realizer_resource_store.zig`
+  - `howl-render/src/surface/resource_store.zig`
+  - `howl-render/src/vt_publication/abi.zig`
+  - `howl-render/src/vt_publication/publication.zig`
+  - `howl-render/src/vt_publication/damage.zig`
+  - `howl-render/src/vt_publication/source_slot.zig`
+  - `howl-render/src/vt_publication/prepare_queue.zig`
+  - `howl-render/src/vt_publication/theme.zig`
+  - `howl-render/src/vt_publication/cursor.zig`
+  - `howl-render/src/vt_publication/text_input.zig`
+  - deletion of `howl-render/src/session/`
+- Exact required shape:
+  - `src/session/` must be deleted.
+  - build roots must still point at one unit test root, one ABI test root, one library root, and one benchmark root.
+  - no stale imports to deleted paths may remain.
+  - `src/` top level must contain only these files: `benchmark_main.zig`, `libhowl_render.zig`, `render_session.zig`, `submitted_surface.zig`, `test_abi.zig`, and `test_unit.zig`.
+  - `src/` top level must not contain `test_support.zig`, `text_session_test.zig`, `surface_geometry_test.zig`, `prepare_request_test.zig`, `prepared_surface_test.zig`, or `submission_test.zig`.
+  - final location truth is exact: helper and wrapper-test owners live under `src/c/` only.
+  - the only top-level folders that may remain are `c/`, `geometry/`, `surface/`, `text/`, `vt_publication/`, and `test/`.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build check`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
+- Exact non-goals:
+  - no new public roots.
+  - no new test roots.
+  - no behavior changes beyond path/name preservation.
+- Exact stop conditions:
+  - stop if any deleted folder still has live owner content not covered by earlier slices.
+  - stop if any external build path or generated artifact still hardcodes removed source paths.
+  - stop if reviewer sees rename theater rather than a materially cleaner tree.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-render-folder-structure-03`
+  - commit-hash handoff status for orchestrator receipt closure
+
 Condensed execution contract for coder session `coder-2026-06-13-render-folder-structure-02`:
 
 - Accepted planning input:
@@ -328,3 +431,39 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
   - blockers or deviations
   - coder session id `coder-2026-06-13-render-folder-structure-02`
   - commit-hash handoff status for orchestrator receipt closure
+
+9. Role: coder
+- Session id: `coder-2026-06-13-render-folder-structure-02`
+- Hello: hi
+- Intended task: execute Slice 2 by moving the VT publication ingress owners under `src/vt_publication/`, rewiring the exact import consumers named in the contract, and proving the slice with the required unit, ABI, and check builds.
+- How one task went: moved `damage/publication_damage.zig`, `storage/publication_storage.zig`, `prepare/queue.zig`, and `renderable_content/{content,color,cursor}.zig` into `vt_publication/{damage,source_slot,prepare_queue,text_input,theme,cursor}.zig`; rewired `render_session.zig` to import VT ingress owners only from `vt_publication/*`; rewired `benchmark_main.zig`, `text/direct_normal.zig`, `text/surface_preparer.zig`, and `text/shape/cluster.zig` off the old `renderable_content/*` paths; and confirmed `src/damage/`, `src/storage/`, `src/prepare/`, and `src/renderable_content/` are now empty while `src/vt_publication/` contains the full ingress owner set.
+- Verification:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` -> pass.
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi` -> pass.
+  - `cd /home/home/personal/projects/howl/howl-render && zig build check` -> pass.
+- Blockers or deviations: none.
+- Next handoff or blocker: reviewer should inspect the Slice 2 diff and verification receipts. Commit-hash handoff status: none; no git actions taken by coder.
+
+8. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 2 against the active condensed contract and accepted planning artifact.
+- How one task went: confirmed the file moves, rewires, and proof receipts are mostly aligned with Slice 2, but rejected the slice because the old ingress folders still exist as active empty directories instead of being removed.
+- Verdict: reject
+- Findings:
+  1. Slice 2 does not satisfy its exact required shape that `damage/`, `prepare/`, `storage/`, and `renderable_content/` must be removed (`loops/render-folder-owner-structure-live-loop.txt:307-311`, `research/2026-06-13-render-folder-owner-structure-plan.md:361-366`). In the current tree those directories still exist as empty active directories (`howl-render/src` directory listing; `howl-render/src/damage`, `howl-render/src/prepare`, `howl-render/src/storage`, and `howl-render/src/renderable_content` directory listings). Empty is not removed, so the slice is not complete.
+  2. The rest of the Slice 2 contract looks aligned: the nested `howl-render` worktree changes stay within the authorized file set; the moved owners now live under `vt_publication/` with the exact Slice 2 file names (`howl-render/src/vt_publication` directory listing); `render_session.zig` now takes ingress imports from `vt_publication/*` plus existing `geometry/*`, `surface/*`, and `text/*` owners (`howl-render/src/render_session.zig:1-31`); and the named import consumers rewired off the old `renderable_content/*` paths to the exact new `vt_publication/*` owners (`howl-render/src/benchmark_main.zig:1-10`, `howl-render/src/text/direct_normal.zig:1-16`, `howl-render/src/text/surface_preparer.zig:18-21`, `howl-render/src/text/shape/cluster.zig:1-7`).
+  3. Verification receipts and loop hygiene are present. The coder left the required loop note and recorded the exact three proof commands with pass results.
+- Next handoff or blocker: orchestrator must restart Slice 2 from the earliest broken stage and reseed execution only after the old ingress directories are actually removed so the slice can satisfy its exact required shape and active-surface hygiene.
+
+9. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: perform the narrow Slice 2 re-check after the orchestrator removed the legacy ingress directories and reran proof.
+- How one task went: confirmed the only rejected shape defect is now closed because the four legacy ingress directories are gone from `howl-render/src`.
+- Verdict: accept
+- Findings:
+  1. `howl-render/src/damage`, `howl-render/src/prepare`, `howl-render/src/storage`, and `howl-render/src/renderable_content` are now removed, not merely empty. They no longer appear in the `howl-render/src` directory listing, and direct reads for each path return not found.
+  2. This narrow re-check closes the earlier Slice 2 rejection point without introducing any new scope or planning drift. The only reviewed change here is removal of the empty legacy ingress directories after the prior reject.
+  3. Proof rerun receipts are recorded for `zig build test:unit`, `zig build test:abi`, and `zig build check` for this fix pass per the seeded re-check handoff.
+- Next handoff or blocker: orchestrator should verify before commit by re-checking the `howl-render/src` top-level directory no longer contains the four removed ingress folders, rerunning the three Slice 2 proof commands in `/home/home/personal/projects/howl/howl-render`, and then recording the Slice 2 commit-hash receipt for closure.
