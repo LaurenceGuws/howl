@@ -21,7 +21,8 @@ Active restart note:
 
 - The render folder/file owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
 - The active planning package is accepted and committed in root `ff58fa8`.
-- The active step is execution of Slice 1, `Control-Spine Root Cleanup`.
+- Slice 1, `Control-Spine Root Cleanup`, is accepted and committed in `howl-linux-host` `6e77a10` with root receipt pending.
+- The active step is execution of Slice 2, `Display, Window, And Tab-Visual Owner Cleanup`.
 - User direction: the next offender is the host; clean up host file and folder locations and naming with the same discipline pressure.
 - Reference pressure: Alacritty host/runtime/display/window/input organization is primary; Ghostty is secondary only where Alacritty lacks a comparable host shape.
 - Current host tree still shows likely structure debt: broad top-level roots (`app/`, `cli/`, `config/`, `display/`, `input/`, `polling/`, `tab_bar/`, `terminal/`, `window_chrome/`), C headers at `src/` top level, and likely test/root placement debt.

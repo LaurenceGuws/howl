@@ -217,3 +217,102 @@ Condensed execution contract for coder session `coder-2026-06-13-host-folder-str
 - Intended task: reseed Slice 1 after the accepted planning correction for missing `event_loop.zig` import users.
 - How one task went: the live Slice 1 contract now matches the accepted research allowlist and required rewires for `terminal/pty/wait_thread.zig` and `terminal/render/surface_layout.zig`, so execution can resume without forcing out-of-scope edits.
 - Next handoff or blocker: commit the accepted planning correction, then rerun Slice 1 under the refreshed contract.
+
+10. Role: coder
+- Session id: `coder-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: execute Slice 1, `Control-Spine Root Cleanup`, under the refreshed allowlist.
+- How one task went: moved `app/processor.zig` to `event.zig`, `cli/args.zig` to `cli.zig`, and `event_loop.zig` to `polling/event_loop.zig`; rewired every authorized direct `event_loop.zig` import site including `terminal/pty/wait_thread.zig` and `terminal/render/surface_layout.zig`; updated `build.zig` so `cli/` is no longer build-owned and `polling/` now has more than one owner.
+- Next handoff or blocker: reviewer/orchestrator can verify the Slice 1 diff under the accepted contract.
+
+11. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 1, `Control-Spine Root Cleanup`, against allowed-file scope, owner moves, import rewires, preserved assertions, and proof receipts.
+- Findings: none.
+- Outcome: accept.
+- Acceptance notes: orchestrator must inspect `git status` and the exact `howl-linux-host` diff to confirm only the accepted Slice 1 file set is included; confirm the recorded `zig build test:unit` and `zig build test:integration` receipts match the final worktree; record the Slice 1 commit hash in the loop/sprint receipts before seeding Slice 2.
+- Next handoff or blocker: orchestrator may verify, commit the accepted nested host Slice 1 change, record the root receipt, and seed exactly Slice 2.
+
+12. Role: orchestrator
+- Session id: `orch-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: close Slice 1 after reviewer acceptance and final verification.
+- How one task went: final verification passed for `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:integration`; `polling/` now contains `event_loop.zig` and `window_wake.zig`; accepted implementation is committed in `howl-linux-host` as `6e77a10` (`Clean host control spine roots`).
+- Commit-hash receipt: `slice-1-control-spine-root-cleanup=6e77a10`.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit the root Slice 1 receipt and seed Slice 2 from the accepted research plan.
+
+Condensed execution contract for coder session `coder-2026-06-13-host-folder-structure-02`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-13-host-folder-owner-structure-plan.md`
+- Implement only Slice 2, `Display, Window, And Tab-Visual Owner Cleanup`.
+- Allowed files:
+  - `howl-linux-host/src/display/display.zig`
+  - `howl-linux-host/src/display/frame_timer.zig`
+  - `howl-linux-host/src/display/layout.zig`
+  - `howl-linux-host/src/display/renderer/render_surface.zig`
+  - `howl-linux-host/src/display/renderer/render_surface_test.zig`
+  - `howl-linux-host/src/display/renderer/rects.zig`
+  - `howl-linux-host/src/window_chrome/window.zig`
+  - `howl-linux-host/src/window_chrome/icon.zig`
+  - `howl-linux-host/src/window_chrome/stb_image.c`
+  - `howl-linux-host/src/tab_bar/tab_bar.zig`
+  - `howl-linux-host/src/tab_bar/slots.zig`
+  - `howl-linux-host/src/app/present.zig`
+  - `howl-linux-host/src/main.zig`
+  - `howl-linux-host/src/event.zig`
+  - `howl-linux-host/src/terminal/context.zig`
+  - `howl-linux-host/src/terminal/context_test.zig`
+  - `howl-linux-host/src/terminal/links.zig`
+  - `howl-linux-host/src/host_test_root.zig`
+  - `howl-linux-host/src/integration_test_root.zig`
+  - `howl-linux-host/build.zig`
+- Required shape:
+  - move `app/present.zig` to `display/present.zig`.
+  - move `window_chrome/window.zig` to `display/window.zig`.
+  - move `window_chrome/icon.zig` and `window_chrome/stb_image.c` under `display/`.
+  - move `display/renderer/render_surface.zig`, `display/renderer/render_surface_test.zig`, and `display/renderer/rects.zig` directly under `display/`.
+  - move `tab_bar/tab_bar.zig` to `display/tab_bar.zig`.
+  - move `tab_bar/slots.zig` into the terminal package as `terminal/tab_slots.zig`.
+  - rewire every direct import site that currently names `window_chrome/window.zig` or `display/renderer/render_surface.zig`, specifically `src/terminal/context.zig`, `src/terminal/context_test.zig`, `src/terminal/links.zig`, and `src/host_test_root.zig`.
+  - remove the weak `window_chrome/`, `tab_bar/`, and `display/renderer/` folders.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:integration`
+- Required assertions:
+  - preserve display present token assertions from `display/display.zig:122-164`.
+  - preserve present-reason and pending-terminal assertions from `app/present.zig:30-77`.
+  - preserve tab-slot bounds assertions from `tab_bar/slots.zig:47-98`.
+  - preserve tab-bar snapshot tests from `tab_bar/tab_bar.zig:37-58`.
+- Exact non-goals:
+  - no renderer-architecture redesign.
+  - no new top-level `renderer/` root.
+  - no tab feature changes.
+  - no host/render ABI changes.
+  - no `gl_c.h` move in this slice.
+- Exact stop conditions:
+  - stop if the move would create another bucket folder under `display/`.
+  - stop if `tab_slots` cannot be placed without clear terminal-surface ownership.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-host-folder-structure-02`
+  - commit-hash handoff status for orchestrator receipt closure
+
+10. Role: coder
+- Session id: `coder-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: resume Slice 1 on the existing worktree by finishing the newly authorized `event_loop.zig` rewires in `terminal/pty/wait_thread.zig` and `terminal/render/surface_layout.zig`, then rerun the exact Slice 1 tests.
+- How one task went: updated both newly authorized import sites to `polling/event_loop.zig`, re-checked `src/` for any remaining direct `event_loop.zig` imports, and verified the moved control-spine state now builds and tests cleanly. Exact verification results: `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:unit` succeeded; `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:integration` succeeded.
+- Next handoff or blocker: reviewer can now review Slice 1 against the refreshed contract. Commit-hash handoff status: none; git not touched.
+
+11. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 1 against the refreshed condensed contract and accepted planning artifact.
+- How one task went: accepted Slice 1. Finding 1: the worktree stays inside the authorized Slice 1 file set plus the exact required move targets. In `howl-linux-host`, the only product-code changes are `build.zig`, deletions of `src/app/processor.zig`, `src/cli/args.zig`, and `src/event_loop.zig`, modifications to `src/main.zig`, `src/host_test_root.zig`, `src/terminal/context.zig`, `src/terminal/input.zig`, `src/terminal/scrollbar.zig`, `src/terminal/pty/wait_thread.zig`, and `src/terminal/render/surface_layout.zig`, and creation of the required move targets `src/event.zig`, `src/cli.zig`, and `src/polling/event_loop.zig`. Finding 2: the required path moves and rewires are complete: `app/processor.zig` moved to `event.zig`, `cli/args.zig` moved to `cli.zig`, `event_loop.zig` moved to `polling/event_loop.zig`, and the authorized direct import rewires now point to the polling path in `src/main.zig`, `src/terminal/context.zig`, `src/terminal/input.zig`, `src/terminal/scrollbar.zig`, `src/terminal/pty/wait_thread.zig`, `src/terminal/render/surface_layout.zig`, and `src/host_test_root.zig`. Finding 3: `build.zig` now points CLI tests at `src/cli.zig`, `src/cli/` is empty, and `src/polling/` now contains both `event_loop.zig` and `window_wake.zig`, so the slice leaves `polling/` as a real subdomain and does not require `app/` or `cli/` for the moved owners. Finding 4: the key assertions are preserved in the moved files: `src/polling/event_loop.zig` still carries the wake-event assertions and bounded drain assertions from the accepted contract, and `src/event.zig` preserves the control-spine assertions and inline tests. Finding 5: the coder recorded exact verification receipts in the live loop, and the claimed results match the refreshed slice contract: `zig build test:unit` and `zig build test:integration` succeeded. No evidence of tab-model redesign, new runtime abstractions, event-processing behavior changes, or new public host API surfaced in the Slice 1 diff.
+- Next handoff or blocker: orchestrator should verify the worktree against this accepted Slice 1 receipt, inspect the exact host repo diff/status, and only then create the Slice 1 commit with commit-hash receipt closure before seeding Slice 2.
