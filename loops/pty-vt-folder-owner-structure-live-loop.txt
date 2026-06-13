@@ -761,6 +761,13 @@ Stop conditions:
 - How one task went: reran `zig build test` in `howl-pty`, `zig build test` in `howl-vt`, `zig build simulate:build`, and `zig build benchmark:m7_baseline:build`; committed nested Slice 5 as `4e76640`.
 - Next handoff or blocker: commit the root receipt for Slice 5, then close the sprint.
 
+40. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: record Slice 5 root receipt and close the PTY+VT folder owner structure sprint.
+- How one task went: committed root Slice 5 receipt as `d1188ad`; all planned slices are accepted and verified, including the explicit final no-`terminal/` override.
+- Next handoff or blocker: commit final close receipt; no further coding is authorized from this sprint.
+
 32. Role: coder
 - Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-4`
 - Hello: hi
