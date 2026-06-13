@@ -1,3 +1,7 @@
+Historical authority: active sprint artifact for the completed host render-surface ownership sprint.
+Why superseded or done: planning and all seeded execution slices are accepted and closed.
+Must not be used for: live sprint authority after close without re-promotion.
+
 # Sprint: Host Render Surface Ownership
 
 Date: 2026-06-13.

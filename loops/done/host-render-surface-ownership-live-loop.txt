@@ -1,3 +1,7 @@
+Historical authority: active loop scratchpad for the host render-surface ownership sprint at close.
+Why superseded or done: sprint execution is complete and the next sprint scope has not been seeded yet.
+Must not be used for: live execution authority or next-sprint planning authority.
+
 Host render surface ownership live loop scratchpad
 
 Date: 2026-06-13.

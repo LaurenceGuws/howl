@@ -1,3 +1,7 @@
+Historical authority: accepted planning package for the completed host render-surface ownership sprint.
+Why superseded or done: all planned slices were accepted and sprint execution is complete.
+Must not be used for: live sprint authority after close without re-promotion.
+
 # Host Render Surface Ownership Plan
 
 Date: 2026-06-13.

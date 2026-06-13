@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-13-host-render-surface-ownership-sprint.md`
+- No active sprint seeded.
 
 Active research:
 
-- `research/2026-06-13-host-render-surface-ownership-plan.md`
+- No active research seeded.
 
 Active loops:
 
-- `loops/host-render-surface-ownership-live-loop.txt`
+- No active loop seeded.
 
 Active restart note:
 
@@ -39,17 +39,20 @@ Active restart note:
 - New active sprint: host render surface ownership.
 - Primary sprint target: `howl-linux-host/src/display/render_surface.zig`.
 - Planning acceptance receipt: `455402d` `Accept host render-surface planning`.
-- Latest accepted slice: Slice 3 `618d0c5` `Curate host render-surface root`.
-- Active execution sessions:
-   - orchestrator `orch-2026-06-13-host-render-surface-01`
-   - researcher `research-2026-06-13-host-render-surface-01`
-   - reviewer `review-2026-06-13-host-render-surface-01`
-   - coder `coder-2026-06-13-host-render-surface-slice-03`
+- Latest closed sprint: host render-surface ownership.
+- Latest accepted slices from that sprint:
+  - Slice 1 `5c7a2a2` `Extract host render-surface resources`
+  - Slice 2 `2977c3b` `Extract host render-surface commands`
+  - Slice 3 `618d0c5` `Curate host render-surface root`
+- Latest root receipts from that sprint:
+  - `d1d8654` `Accept host render-surface Slice 1`
+  - `afe558e` `Accept host render-surface Slice 2`
+  - `bb28278` `Accept host render-surface Slice 3`
 
 Execution rule:
 
-- No further coding is authorized under this sprint until a new live contract is seeded.
-- The host render-surface sprint execution is complete.
+- No coding is authorized until a new active sprint, loop, and execution contract are seeded.
+- The host render-surface sprint execution is complete and archived.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
