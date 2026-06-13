@@ -2,7 +2,7 @@
 
 Date: 2026-06-13.
 
-Status: researcher-corrected after Slice 3 execution block; ready for reviewer gate.
+Status: researcher-repaired after reviewer rejection of stale proof buckets and broad Slice 4/5 dependency globs; ready for reviewer gate.
 
 Role owner: researcher.
 
@@ -11,6 +11,8 @@ Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 Researcher session id: `research-2026-06-13-pty-vt-folder-structure-01`.
 
 Slice 3 correction researcher session id: `research-2026-06-13-pty-vt-folder-structure-01`.
+
+Slice 4 and Slice 5 repair researcher session id: `research-2026-06-13-pty-vt-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
 
@@ -113,6 +115,25 @@ Question:
     - `/home/home/personal/projects/howl/howl-vt/src/libhowl_vt.zig`
     - `/home/home/personal/projects/howl/howl-vt/src/ffi/main.zig`
     - `/home/home/personal/projects/howl/howl-vt/build.zig`
+18. Slice 4 and Slice 5 repair proof after nested `howl-vt` commit `20fb714` and explicit user override:
+    - Current `howl-vt/src` tree from `Glob("**/*.zig", path="/home/home/personal/projects/howl/howl-vt/src")`
+    - Current `howl-vt/test` tree from `Glob("**/*.zig", path="/home/home/personal/projects/howl/howl-vt/test")`
+    - Current `howl-vt/benchmark` tree from `Glob("**/*.zig", path="/home/home/personal/projects/howl/howl-vt/benchmark")`
+    - Current direct import proof from `Grep("@import\\(", path="/home/home/personal/projects/howl/howl-vt/src", include="*.zig")`
+    - Current direct import proof from `Grep("@import\\(", path="/home/home/personal/projects/howl/howl-vt/test", include="*.zig")`
+    - Current direct import proof from `Grep("@import\\(", path="/home/home/personal/projects/howl/howl-vt/benchmark", include="*.zig")`
+    - `/home/home/personal/projects/howl/howl-vt/src/howl_vt.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/terminal/main.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/terminal/terminal.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/action/route.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/action/vocabulary.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/host/state.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/host/apply.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/control/mode.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/xterm/csi.zig`
+19. Slice 4 and Slice 5 rejection repair proof for exact allowed files:
+    - Current old protocol-bucket import proof from `Grep("src/(action|control|xterm)|\\.\\./(action|control|xterm)/|\\.\\.\\.*/src/(action|control|xterm)|\"(action|control|xterm)/", path="/home/home/personal/projects/howl/howl-vt", include="*.zig")`
+    - Current temporary terminal-wrapper import proof from `Grep("src/terminal|terminal/main\\.zig|\\.\\./terminal/|\"terminal/", path="/home/home/personal/projects/howl/howl-vt", include="*.zig")`
 
 ## Exact Files And Line References
 
@@ -173,6 +194,25 @@ Question:
 - `rg` proof also shows no `howl-vt/src/kitty/**` file directly imports the terminal-core paths moved in Slice 3, so `src/kitty/**` is not required in the Slice 3 allowed file list.
 - Decision: Slice 3 can remain `VT terminal core root establishment` with an expanded allowed file list for direct import-path updates. Splitting or reordering would create an artificial compatibility window or require stale ABI/benchmark/proof imports, both of which violate the no-shim and proof requirements.
 
+### Slice 4 And Slice 5 Override Repair Facts After `howl-vt` `20fb714`
+
+- Current `howl-vt/src` contains temporary terminal-core owners under `src/terminal/`: `main.zig`, `terminal.zig`, `screen.zig`, `screen_set.zig`, `stream_terminal.zig`, `publication.zig`, `parser/**`, `screen/**`, and `selection/**`.
+- Current `howl-vt/src` still contains package-top `action/`, `control/`, `host/`, `kitty/`, and `xterm/` folders after Slice 3.
+- `howl-vt/src/howl_vt.zig:1-8` imports `action/route.zig`, `action/vocabulary.zig`, `input/**`, and `terminal/main.zig`; this root must change once `action/` disappears and again when `terminal/main.zig` is deleted.
+- `howl-vt/src/terminal/main.zig:1-8` is only a temporary curated terminal wrapper exporting parser, screen, selection, stream, and terminal owners; under the user override, Slice 5 must delete this wrapper instead of preserving it.
+- `howl-vt/src/terminal/terminal.zig:2-10` imports `../control/mode.zig`, `../host/state.zig`, `../kitty/state.zig`, and local terminal-core files; this file proves Slice 4 import churn is required before the final Slice 5 wrapper deletion.
+- `howl-vt/src/action/route.zig:1-12` is a routing owner that imports `host`, `kitty`, `control`, terminal parser events, and `xterm` protocol roots; it is not an owner-true final `action/` folder.
+- `howl-vt/src/action/vocabulary.zig:1-5` is a semantic vocabulary owner coupled to parser bounds; it should become a direct `src/vocabulary.zig` owner, not a folder wrapper.
+- `howl-vt/src/host/state.zig:27-44` keeps explicit host consequence bounds and `howl-vt/src/host/apply.zig:16-54` applies host consequences; `host/` remains a true shallow consequence subdomain in the final no-`terminal/` tree.
+- `howl-vt/src/control/mode.zig:11-30` owns terminal mode state and `howl-vt/src/control/mode.zig:32-67` owns mode mutation; it should become direct `src/mode.zig`, not remain in a generic `control/` folder.
+- `howl-vt/src/xterm/csi.zig:1-15` routes CSI handling through helper files under `xterm/csi/`; final layout should move the owner root to direct `src/csi.zig` and retain `src/csi/` only as the true helper subdomain.
+- Current proof imports still name pre-Slice-4 top-level folders in `test/unit/action/route_test.zig:2-3`, `test/unit/control/report_test.zig:2`, `test/unit/xterm/csi_mapping_test.zig:2-3`, `test/unit/terminal_modes_test.zig:2`, `test/unit/screen_test.zig:3`, and `test/unit/screen/{cursor,history,resize,tabs,write}_test.zig`; Slice 4 must update and re-home the stale proof paths to final owner-true proof files without preserving `action/`, `control/`, or `xterm/` proof buckets.
+- Current direct old-bucket import proof also requires exact Slice 4 import edits in `src/host/apply.zig`, `src/host/state.zig`, `src/input/encode.zig`, `src/kitty/apply.zig`, `src/kitty/color.zig`, `src/kitty/protocol.zig`, `src/terminal/terminal.zig`, `src/terminal/stream_terminal.zig`, `src/terminal/screen.zig`, `src/terminal/screen/{apply,cursor,erase,rect}.zig`, and the moving owners under `src/action/**`, `src/control/**`, and `src/xterm/**`; these are import consequences of deleting `action/`, `control/`, and `xterm/`, not behavior authority.
+- Current temporary terminal-wrapper import proof for Slice 5 requires exact dependency edits in `src/ffi/{handle,lifecycle,runtime,surface,selection}.zig`, `src/host/{apply,state}.zig`, final `src/{route,vocabulary,report,osc_color,osc,dcs}.zig`, `src/csi/params.zig`, all unit proof files that currently import `src/terminal/**`, `test/support/{screen_capture,stream_harness}.zig`, and `benchmark/{terminal_benchmark,pty_feed_record}.zig`.
+- Decision: Slice 4 must move directly toward the final no-wrapper layout by deleting `src/action/`, `src/control/`, and `src/xterm/` as package-top buckets and re-homing their owners under `src/` and `src/csi/`. Moving those folders under `src/terminal/` temporarily would create known throwaway depth after an explicit override and would force Slice 5 to undo extra work.
+- Decision: Slice 4 should not move `src/host/` or `src/kitty/` under `src/terminal/`. In the final no-wrapper layout, `host/` and `kitty/` are shallow true subdomains at `src/host/` and `src/kitty/`.
+- Decision: Slice 5 must delete `src/terminal/` entirely by moving terminal-core contents back under `src/`, deleting `src/terminal/main.zig`, and updating all product, proof, support, and benchmark imports to the final direct paths.
+
 ### Reference Facts
 
 - `reference-index.md:71-129` names Ghostty terminal and termio as the first pressure for VT and PTY folder shape.
@@ -203,11 +243,11 @@ Question:
 ## Current-Code Facts
 
 - PTY already has the right product owners at `src/libhowl_pty.zig`, `src/ffi.zig`, `src/pty.zig`, `src/session.zig`, and `src/pty/`; its main debt is proof-root placement inside `src`, not a missing owner concept.
-- VT does not have the right top-level discipline. It spreads terminal-core owners, protocol routing, host consequence plumbing, test helpers, simulation, and benchmark entrypoints across too many `src` roots.
-- VT already has genuine owner seams. The problem is placement, not absence: `terminal.zig`, `screen.zig`, `screen_set.zig`, `stream_terminal.zig`, parser bounds, mode state, host consequence bounds, and protocol routers are all real owners or owner subdomains.
+- VT still does not have the final top-level discipline after Slice 3. It temporarily clusters terminal-core owners under `src/terminal/`, while protocol routing remains split through package-top `action/`, `control/`, and `xterm/` folders.
+- VT already has genuine owner seams. The problem is placement, not absence: `terminal.zig`, `screen.zig`, `screen_set.zig`, `stream_terminal.zig`, parser bounds, mode state, host consequence bounds, kitty state, and protocol routers are all real owners or owner subdomains.
 - The current `src/ffi.zig` plus `src/ffi/` split is structurally weak. It duplicates the same concept across file and folder form.
-- The current VT `src/test/` folder is also structurally weak. It mixes ABI proof entrypoints with reusable capture and replay helpers and benchmark support.
-- Simulation and benchmark code under VT `src/` directly violate the user requirement to keep only curated owner units under `src`.
+- Slice 2 removed VT proof, simulation, and benchmark roots from `src`; remaining proof and benchmark work in Slice 4 and Slice 5 is import-path correction only.
+- The explicit user override makes `src/terminal/` a temporary migration folder only. It must not survive Slice 5.
 
 ## Compact Anchor Map
 
@@ -223,12 +263,12 @@ Question:
 
 - PTY contract owner: `howl-pty/src/pty.zig`.
 - PTY queue and lifecycle owner: `howl-pty/src/session.zig`.
-- VT aggregate owner: `howl-vt/src/terminal.zig`.
-- VT screen owners: `howl-vt/src/screen.zig` and `howl-vt/src/screen_set.zig`.
-- VT parser owner and parser bounds: `howl-vt/src/parser/main.zig`.
-- VT stream mutation owner: `howl-vt/src/stream_terminal.zig`.
-- VT mode owner: `howl-vt/src/control/mode.zig`.
-- VT host consequence owner: `howl-vt/src/host/state.zig`.
+- VT aggregate owner after Slice 3: `howl-vt/src/terminal/terminal.zig`, final Slice 5 target `howl-vt/src/terminal.zig`.
+- VT screen owners after Slice 3: `howl-vt/src/terminal/screen.zig` and `howl-vt/src/terminal/screen_set.zig`, final Slice 5 targets `howl-vt/src/screen.zig` and `howl-vt/src/screen_set.zig`.
+- VT parser owner and parser bounds after Slice 3: `howl-vt/src/terminal/parser/main.zig`, final Slice 5 target `howl-vt/src/parser/main.zig`.
+- VT stream mutation owner after Slice 3: `howl-vt/src/terminal/stream_terminal.zig`, final Slice 5 target `howl-vt/src/stream_terminal.zig`.
+- VT mode owner before Slice 4: `howl-vt/src/control/mode.zig`, final Slice 4 target `howl-vt/src/mode.zig`.
+- VT host consequence owner: `howl-vt/src/host/state.zig`, retained as a shallow true subdomain in the final no-wrapper tree.
 
 ## Owner Roles And Proposed Shape
 
@@ -271,56 +311,52 @@ Rationale:
 
 ### VT
 
-Create one Ghostty-shaped VT-core subdomain under `src/terminal/`, keep only curated top-level roots or true subdomains under `src`, and move non-product proof or simulation surfaces out of `src`.
+Final VT shape must not retain `src/terminal/` because the user explicitly overrode Ghostty's terminal wrapper pressure for this case. Keep curated terminal-core owners directly under `src`, keep shallow child folders only for true subdomains or per-owner definitions, and move non-product proof or simulation surfaces out of `src`.
 
 Target `howl-vt/src/` shape:
 
 - `howl_vt.zig`
 - `libhowl_vt.zig`
+- `terminal.zig`
+- `screen.zig`
+- `screen_set.zig`
+- `stream_terminal.zig`
+- `publication.zig`
+- `route.zig`
+- `vocabulary.zig`
+- `mode.zig`
+- `report.zig`
+- `locator.zig`
+- `osc_color.zig`
+- `c0.zig`
+- `esc.zig`
+- `csi.zig`
+- `osc.zig`
+- `dcs.zig`
 - `ffi/`
   - `main.zig`
   - existing per-ABI translation owners now under `src/ffi/`
 - `input/`
   - existing input encoding owners
-- `terminal/`
-  - `main.zig`
-  - `terminal.zig`
-  - `screen.zig`
-  - `screen_set.zig`
-  - `parser.zig`
-  - `stream_terminal.zig`
-  - `selection.zig`
-  - `point.zig`
-  - `route.zig`
-  - `vocabulary.zig`
-  - `mode.zig`
-  - `report.zig`
-  - `locator.zig`
-  - `osc_color.zig`
-  - `c0.zig`
-  - `esc.zig`
-  - `csi.zig`
-  - `osc.zig`
-  - `dcs.zig`
-  - `publication.zig`
-  - `host/`
-    - `apply.zig`
-    - `state.zig`
-  - `kitty/`
-    - `apply.zig`
-    - `state.zig`
-    - `protocol.zig`
-    - `key.zig`
-    - `color.zig`
-    - `pointer.zig`
-  - `screen/`
-    - existing per-screen definition files
-  - `parser/`
-    - existing parser definition files
-  - `selection/`
-    - `projection.zig`
-  - `csi/`
-    - existing CSI helper files
+- `host/`
+  - `apply.zig`
+  - `state.zig`
+- `kitty/`
+  - `apply.zig`
+  - `state.zig`
+  - `protocol.zig`
+  - `key.zig`
+  - `color.zig`
+  - `pointer.zig`
+- `screen/`
+  - existing per-screen definition files
+- `parser/`
+  - existing parser definition files
+- `selection/`
+  - `projection.zig`
+  - `state.zig`
+- `csi/`
+  - existing CSI helper files
 
 Target VT proof and non-product roots outside `src`:
 
@@ -336,8 +372,8 @@ Target VT proof and non-product roots outside `src`:
 - `test/unit/screen_test.zig`
 - `test/unit/terminal_osc_test.zig`
 - `test/unit/terminal_surface_test.zig`
-- `test/unit/action/route_test.zig`
-- `test/unit/control/report_test.zig`
+- `test/unit/route_test.zig`
+- `test/unit/report_test.zig`
 - `test/unit/screen/cursor_test.zig`
 - `test/unit/screen/history_test.zig`
 - `test/unit/screen/resize_test.zig`
@@ -347,7 +383,7 @@ Target VT proof and non-product roots outside `src`:
 - `test/unit/parser/events_test.zig`
 - `test/unit/parser/main_test.zig`
 - `test/unit/parser/string_control_test.zig`
-- `test/unit/xterm/csi_mapping_test.zig`
+- `test/unit/csi_mapping_test.zig`
 - `test/support/screen_capture.zig`
 - `test/support/stream_harness.zig`
 - `benchmark/terminal_benchmark.zig`
@@ -360,10 +396,10 @@ Target VT proof and non-product roots outside `src`:
 
 Rationale:
 
-- Ghostty pressure says VT core should cluster under one deliberate terminal subdomain, not across many top-level folders.
+- Ghostty pressure says VT core should cluster under one deliberate terminal subdomain, but the explicit user override rejects that extra folder depth for Howl's final tree.
 - TigerBeetle pressure says keep snake_case file names, so Howl should take Ghostty's folder boundary lesson without copying Ghostty's CamelCase file names.
-- `screen/`, `parser/`, `kitty/`, `host/`, and `csi/` qualify as shallow child folders because they are true subdomains or per-owner definition groups.
-- `xterm/`, `action/`, `control/`, `surface/`, and top-level `selection/` are not good top-level package concepts once VT core is clustered under `terminal/`.
+- `screen/`, `parser/`, `selection/`, `kitty/`, `host/`, and `csi/` qualify as shallow child folders because they are true subdomains or per-owner definition groups.
+- `xterm/`, `action/`, `control/`, `surface/`, and the temporary `terminal/` wrapper are not accepted final package concepts under the override; final proof folders must not preserve those deleted owner buckets either.
 - `src/ffi.zig` should become `src/ffi/main.zig` so the `ffi` concept exists in one place only.
 - Zig 0.16 module-boundary enforcement requires package-root build entrypoints for out-of-`src` tests, ABI module exposure, and benchmark roots when those proof files import both `src` owners and sibling proof helpers.
 
@@ -371,10 +407,11 @@ Rationale:
 
 - The sprint must do real owner-boundary cleanup, not rename theater.
 - PTY is small enough to finish in one slice because its structural debt is concentrated in proof-root placement.
-- VT is the larger problem. The real cleanup is not just moving files; it is reducing `src/` to curated roots and moving terminal-internal concepts under one `terminal/` owner cluster.
+- VT is the larger problem. The real cleanup is not just moving files; it is reducing `src/` to curated roots, deleting weak package-top buckets, and deleting the temporary `terminal/` wrapper after the explicit user override.
 - The plan deliberately does not create any new runtime umbrella. PTY remains PTY. VT remains VT. Host runtime remains host-side.
 - No slice may change shipped ABI names or widen product scope.
 - No slice may leave both old and new folder concepts live at the same time after acceptance.
+- After Slice 4, no `action/`, `control/`, or `xterm/` package-top bucket may remain. After Slice 5, no `src/terminal/` directory may remain.
 
 ## Explicit Ordered Slice Plan
 
@@ -539,64 +576,172 @@ Rationale:
 
 ### Slice 4
 
-- Name: VT protocol and consequence subdomain absorption
+- Name: VT protocol bucket removal toward final no-wrapper layout
 - Sessions:
   - Orchestrator: `orch-2026-06-13-pty-vt-folder-structure-01`
   - Researcher: `research-2026-06-13-pty-vt-folder-structure-01`
   - Reviewer: `review-2026-06-13-pty-vt-folder-structure-01`
   - Coder: assigned during execution
 - Commit-hash receipt demand: required on acceptance
+- Explicit override receipt fields:
+  - exact user decision: "ok slice 5 will be deleting terminal anmd moving all its content into src/ terminal makes the fodlers all 1 deeper for no reason. you can delegate until all that is done"
+  - exact reference overridden: Ghostty `src/terminal/` final VT-core subdomain pressure
+  - reason: user rejects the extra folder depth as unjustified in Howl
+  - orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+  - user approval receipt: quoted user message recorded in this active planning artifact
 - Allowed files:
   - `howl-vt/src/howl_vt.zig`
-  - `howl-vt/src/ffi/**`
   - `howl-vt/src/action/**`
   - `howl-vt/src/control/**`
-  - `howl-vt/src/host/**`
-  - `howl-vt/src/kitty/**`
   - `howl-vt/src/xterm/**`
-  - `howl-vt/src/terminal/**`
-  - `howl-vt/test/**`
-  - `howl-vt/benchmark/**`
+  - `howl-vt/src/route.zig`
+  - `howl-vt/src/vocabulary.zig`
+  - `howl-vt/src/mode.zig`
+  - `howl-vt/src/report.zig`
+  - `howl-vt/src/locator.zig`
+  - `howl-vt/src/osc_color.zig`
+  - `howl-vt/src/c0.zig`
+  - `howl-vt/src/esc.zig`
+  - `howl-vt/src/csi.zig`
+  - `howl-vt/src/osc.zig`
+  - `howl-vt/src/dcs.zig`
+  - `howl-vt/src/csi/**`
+  - `howl-vt/src/host/apply.zig`
+  - `howl-vt/src/host/state.zig`
+  - `howl-vt/src/kitty/apply.zig`
+  - `howl-vt/src/kitty/color.zig`
+  - `howl-vt/src/kitty/protocol.zig`
+  - `howl-vt/src/input/encode.zig`
+  - `howl-vt/src/terminal/terminal.zig`
+  - `howl-vt/src/terminal/stream_terminal.zig`
+  - `howl-vt/src/terminal/screen.zig`
+  - `howl-vt/src/terminal/screen/apply.zig`
+  - `howl-vt/src/terminal/screen/cursor.zig`
+  - `howl-vt/src/terminal/screen/erase.zig`
+  - `howl-vt/src/terminal/screen/rect.zig`
+  - `howl-vt/test/unit.zig`
+  - `howl-vt/test/unit/action/route_test.zig`
+  - `howl-vt/test/unit/route_test.zig`
+  - `howl-vt/test/unit/control/report_test.zig`
+  - `howl-vt/test/unit/report_test.zig`
+  - `howl-vt/test/unit/xterm/csi_mapping_test.zig`
+  - `howl-vt/test/unit/csi_mapping_test.zig`
+  - `howl-vt/test/unit/terminal_modes_test.zig`
+  - `howl-vt/test/unit/screen_test.zig`
+  - `howl-vt/test/unit/screen/cursor_test.zig`
+  - `howl-vt/test/unit/screen/history_test.zig`
+  - `howl-vt/test/unit/screen/resize_test.zig`
+  - `howl-vt/test/unit/screen/tabs_test.zig`
+  - `howl-vt/test/unit/screen/write_test.zig`
 - Required shape:
-  - Remove package-top `action/`, `control/`, `host/`, `kitty/`, and `xterm/` folders.
-  - Re-home those owners under `src/terminal/`, using direct terminal-owned file names for protocol roots and shallow child folders only where the owner has multiple definitions.
-  - `xterm/` disappears as an umbrella bucket; protocol roots become `src/terminal/c0.zig`, `esc.zig`, `csi.zig`, `osc.zig`, and `dcs.zig`, with `csi/` retained only as a true subdomain.
-  - `host/` and `kitty/` remain only as `src/terminal/host/` and `src/terminal/kitty/`.
-  - Update `test/unit/`, `test/abi.zig`, and benchmark imports in the same slice; tests and proof helpers must follow the moved owner paths directly and must not rely on package-top compatibility shims.
+  - Do not move protocol or consequence folders under `src/terminal/` temporarily; the override makes that known throwaway work.
+  - Remove package-top `action/`, `control/`, and `xterm/` buckets.
+  - Move `src/action/route.zig` to `src/route.zig` and `src/action/vocabulary.zig` to `src/vocabulary.zig`.
+  - Move `src/control/mode.zig`, `src/control/report.zig`, `src/control/locator.zig`, and `src/control/osc_color.zig` to direct `src/{mode,report,locator,osc_color}.zig` owners.
+  - Move `src/xterm/c0.zig`, `src/xterm/esc.zig`, `src/xterm/csi.zig`, `src/xterm/osc.zig`, and `src/xterm/dcs.zig` to direct `src/{c0,esc,csi,osc,dcs}.zig` owners.
+  - Move `src/xterm/csi/**` to `src/csi/**`; retain `src/csi/` only as the CSI helper subdomain.
+  - Keep `src/host/` and `src/kitty/` as final shallow true subdomains; do not move them under `src/terminal/`.
+  - Keep `src/terminal/**` terminal-core files in place for Slice 4 except for import-path updates required by the moved protocol owners.
+  - Update product and proof imports in the allowed files directly to the new paths.
+  - Rename `test/unit/action/route_test.zig` to `test/unit/route_test.zig`, `test/unit/control/report_test.zig` to `test/unit/report_test.zig`, and `test/unit/xterm/csi_mapping_test.zig` to `test/unit/csi_mapping_test.zig`; final proof folders must not preserve deleted `action/`, `control/`, or `xterm/` buckets.
+  - No package-top compatibility mirrors, re-export shims, or duplicate old/new owner paths may survive acceptance.
 - Exact tests:
   - `zig build test:unit`
   - `zig build test:abi`
   - `zig build benchmark:m7_baseline:build`
   - all in `/home/home/personal/projects/howl/howl-vt`
 - Non-goals:
+  - no deletion of `src/terminal/` in Slice 4
+  - no movement of terminal-core files out of `src/terminal/` in Slice 4
   - no host runtime architecture change
   - no new public Zig API
   - no convenience wrapper layer
+  - no C ABI symbol, enum, struct, or exported-name changes
+  - no proof or benchmark behavior changes beyond import-path updates
 - Stop conditions:
-  - stop if stale top-level VT buckets remain in `src`
+  - stop if any `howl-vt/src/action/`, `howl-vt/src/control/`, or `howl-vt/src/xterm/` path remains after acceptance
+  - stop if any `howl-vt/test/unit/action/`, `howl-vt/test/unit/control/`, or `howl-vt/test/unit/xterm/` proof bucket remains after acceptance
+  - stop if `src/host/` or `src/kitty/` is moved under `src/terminal/`
+  - stop if `src/terminal/**` is deleted or moved in Slice 4 instead of saved for Slice 5
   - stop if imported paths depend on compatibility mirrors
-  - stop if any owner becomes harder to name or harder to test than before
-  - stop if any unit, ABI, or benchmark proof still imports old protocol or consequence source paths after acceptance
+  - stop if any unit proof still imports old `action/`, `control/`, or `xterm/` source paths after acceptance
+  - stop if current-source proof finds a direct old protocol-bucket import in a file not named here; return to research instead of guessing or adding a shim
 
 ### Slice 5
 
-- Name: Final proof wiring and dead-path removal
+- Name: Delete temporary VT terminal wrapper and finalize shallow `src` layout
 - Sessions:
   - Orchestrator: `orch-2026-06-13-pty-vt-folder-structure-01`
   - Researcher: `research-2026-06-13-pty-vt-folder-structure-01`
   - Reviewer: `review-2026-06-13-pty-vt-folder-structure-01`
   - Coder: assigned during execution
 - Commit-hash receipt demand: required on acceptance
+- Explicit override receipt fields:
+  - exact user decision: "ok slice 5 will be deleting terminal anmd moving all its content into src/ terminal makes the fodlers all 1 deeper for no reason. you can delegate until all that is done"
+  - exact reference overridden: Ghostty `src/terminal/` final VT-core subdomain pressure
+  - reason: user rejects the extra folder depth as unjustified in Howl
+  - orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+  - user approval receipt: quoted user message recorded in this active planning artifact
 - Allowed files:
-  - `howl-pty/build.zig`
-  - `howl-vt/build.zig`
-  - moved PTY and VT proof roots created by earlier slices
-  - any now-empty PTY or VT source paths that must be deleted
+  - `howl-vt/src/howl_vt.zig`
+  - `howl-vt/src/terminal/**`
+  - `howl-vt/src/terminal.zig`
+  - `howl-vt/src/screen.zig`
+  - `howl-vt/src/screen_set.zig`
+  - `howl-vt/src/stream_terminal.zig`
+  - `howl-vt/src/publication.zig`
+  - `howl-vt/src/parser/**`
+  - `howl-vt/src/screen/**`
+  - `howl-vt/src/selection/**`
+  - `howl-vt/src/ffi/handle.zig`
+  - `howl-vt/src/ffi/lifecycle.zig`
+  - `howl-vt/src/ffi/runtime.zig`
+  - `howl-vt/src/ffi/surface.zig`
+  - `howl-vt/src/ffi/selection.zig`
+  - `howl-vt/src/route.zig`
+  - `howl-vt/src/vocabulary.zig`
+  - `howl-vt/src/report.zig`
+  - `howl-vt/src/osc_color.zig`
+  - `howl-vt/src/osc.zig`
+  - `howl-vt/src/dcs.zig`
+  - `howl-vt/src/csi/params.zig`
+  - `howl-vt/src/host/apply.zig`
+  - `howl-vt/src/host/state.zig`
+  - `howl-vt/test/unit.zig`
+  - `howl-vt/test/unit/terminal_end_to_end_test.zig`
+  - `howl-vt/test/unit/terminal_snapshot_test.zig`
+  - `howl-vt/test/unit/terminal_osc_test.zig`
+  - `howl-vt/test/unit/terminal_surface_test.zig`
+  - `howl-vt/test/unit/terminal_modes_test.zig`
+  - `howl-vt/test/unit/terminal_test.zig`
+  - `howl-vt/test/unit/screen_test.zig`
+  - `howl-vt/test/unit/route_test.zig`
+  - `howl-vt/test/unit/report_test.zig`
+  - `howl-vt/test/unit/csi_mapping_test.zig`
+  - `howl-vt/test/unit/parser/csi_test.zig`
+  - `howl-vt/test/unit/parser/events_test.zig`
+  - `howl-vt/test/unit/parser/main_test.zig`
+  - `howl-vt/test/unit/parser/string_control_test.zig`
+  - `howl-vt/test/unit/screen/cursor_test.zig`
+  - `howl-vt/test/unit/screen/history_test.zig`
+  - `howl-vt/test/unit/screen/resize_test.zig`
+  - `howl-vt/test/unit/screen/tabs_test.zig`
+  - `howl-vt/test/unit/screen/write_test.zig`
+  - `howl-vt/test/support/screen_capture.zig`
+  - `howl-vt/test/support/stream_harness.zig`
+  - `howl-vt/benchmark/terminal_benchmark.zig`
+  - `howl-vt/benchmark/pty_feed_record.zig`
 - Required shape:
-  - no stale PTY or VT active source paths remain after the re-home
-  - build roots prove only the final locations
-  - `src` trees for both packages contain curated product owners only
-  - no `*_test.zig`, benchmark, simulation, or proof-support file remains under either package `src`
+  - Delete `howl-vt/src/terminal/` completely.
+  - Delete `howl-vt/src/terminal/main.zig` instead of recreating an equivalent wrapper elsewhere.
+  - Move `src/terminal/terminal.zig` to `src/terminal.zig`.
+  - Move `src/terminal/screen.zig` to `src/screen.zig` and `src/terminal/screen_set.zig` to `src/screen_set.zig`.
+  - Move `src/terminal/stream_terminal.zig` to `src/stream_terminal.zig` and `src/terminal/publication.zig` to `src/publication.zig`.
+  - Move `src/terminal/parser/**` to `src/parser/**`, `src/terminal/screen/**` to `src/screen/**`, and `src/terminal/selection/**` to `src/selection/**`.
+  - Update `src/howl_vt.zig` to import the final direct owners and to stop importing `terminal/main.zig`.
+  - Update all allowed product, proof, support, and benchmark imports directly to final paths.
+  - Final `src` may contain direct terminal-core owner files plus shallow true subdomains `ffi/`, `input/`, `host/`, `kitty/`, `screen/`, `parser/`, `selection/`, and `csi/` only.
+  - No `src/terminal/` wrapper, compatibility shim, or duplicate old/new terminal path may survive acceptance.
 - Exact tests:
   - `zig build test` in `/home/home/personal/projects/howl/howl-pty`
   - `zig build test` in `/home/home/personal/projects/howl/howl-vt`
@@ -605,10 +750,17 @@ Rationale:
 - Non-goals:
   - no new cleanup outside PTY or VT
   - no execution-phase redesign
+  - no protocol bucket redesign beyond imports required after Slice 4
+  - no host or kitty movement
+  - no public ABI or behavior changes
+  - no proof, benchmark, or simulation behavior changes beyond import-path updates
 - Stop conditions:
+  - stop if `howl-vt/src/terminal/` exists after acceptance
+  - stop if any source, test, support, benchmark, simulation, or build file imports `src/terminal/` or `terminal/main.zig` after acceptance
   - stop if any stale path survives only because imports still reference it
   - stop if final build roots still mention old locations
   - stop if reviewer cannot diff the final tree without reconstructing hidden moves
+  - stop if current-source proof finds a direct temporary terminal-wrapper import in a file not named here; return to research instead of guessing or adding a shim
 
 ## Slice 3 Split Or Reorder Decision
 
@@ -617,6 +769,23 @@ Rationale:
 - Do not split Slice 3 into a move slice and an import-fix slice: the move slice would necessarily leave deleted package-top terminal-core paths referenced by `src/ffi/**`, and `zig build test:abi:build` would be invalid for that intermediate state.
 - Do not reorder protocol/consequence absorption before terminal-core establishment: `action`, `control`, `host`, `xterm`, and `kitty` owner absorption remains Slice 4, and current-source proof does not require semantic protocol-owner movement to complete Slice 3.
 - Replacement slices are not required. If reviewer rejects the expanded import-update scope, the only safe replacement would be Slice 3A `VT terminal-core move plus all current direct import-path updates` followed by Slice 3B `no-op verification receipt`, which is worse accountability than the repaired single Slice 3 because it creates an artificial boundary with no independent product state.
+
+## Slice 4 And Slice 5 Override Repair Decision
+
+- Slice 4 must not absorb protocol or consequence folders under `src/terminal/` temporarily.
+- Current-source import proof after `howl-vt` `20fb714` shows Slice 4 can move directly toward the final no-wrapper layout by deleting weak `action/`, `control/`, and `xterm/` buckets and updating their direct import consequences.
+- `host/` and `kitty/` are not moved in Slice 4 because, after the user override, they are already shallow final subdomains under `src/`.
+- Slice 5 is the explicit deletion of the temporary `src/terminal/` wrapper. It moves terminal-core owner files and true child subdomains back under `src/` and updates all direct imports.
+- This two-step sequence avoids a known throwaway `src/terminal/{action,control,host,kitty,xterm}` intermediate, preserves buildable checkpoints, and gives the reviewer one exact bucket-removal diff followed by one exact wrapper-deletion diff.
+
+## Explicit User Override For Final VT Folder Shape
+
+- Exact user decision: "ok slice 5 will be deleting terminal anmd moving all its content into src/ terminal makes the fodlers all 1 deeper for no reason. you can delegate until all that is done".
+- Exact reference being overridden: Ghostty's VT folder pressure where `src/lib_vt.zig` delegates into `src/terminal/main.zig`, and terminal-core owners sit under the `terminal/` subdomain.
+- Reason for override: the user explicitly decided that Howl's `src/terminal/` wrapper adds one folder depth for no reason and should not survive the final tree.
+- Accountable orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
+- User approval receipt: the quoted user message above in the active PTY+VT planning artifact.
+- Consequence: remaining Slice 4 and Slice 5 must be replanned before coding. Slice 5 must remove `howl-vt/src/terminal/` and move all retained terminal-core owners back under `howl-vt/src/`, while still preserving shallow true subdomains and no compatibility shims.
 
 ## Required Assertions
 
@@ -628,6 +797,8 @@ Rationale:
 - Assert build roots resolve only through final paths.
 - Assert any deleted folder is actually empty and unreferenced before acceptance.
 - Assert `src` contains no `*_test.zig` files after Slice 2 acceptance.
+- Assert `howl-vt/src/action/`, `howl-vt/src/control/`, and `howl-vt/src/xterm/` do not exist after Slice 4 acceptance.
+- Assert `howl-vt/src/terminal/` does not exist after Slice 5 acceptance.
 
 ## Required Tests
 
@@ -659,10 +830,10 @@ Rationale:
 
 ## Readiness Judgment
 
-- Ready for reviewer gate after Slice 3 correction.
-- Coder correctly blocked because the accepted Slice 3 contract omitted product import owners that must compile under `zig build test:abi:build` after terminal-core paths move.
-- Current-source proof shows Slice 3 remains a terminal-core establishment slice if it also authorizes direct import-path updates in the named dependent FFI, action, host, control, xterm, benchmark, support, and unit proof files.
-- No split or reorder is required. No compatibility shims, protocol-owner absorption, C ABI changes, benchmark behavior changes, or proof semantic changes are authorized.
+- Ready for reviewer gate after Slice 4 and Slice 5 repair.
+- Current-source proof after nested `howl-vt` `20fb714` shows remaining top-level protocol bucket debt is `action/`, `control/`, and `xterm/`; these should move directly to final `src` paths in Slice 4 rather than under temporary `src/terminal/`.
+- Current-source proof shows `src/terminal/main.zig` is now only a temporary wrapper; under the explicit user override, Slice 5 must delete `src/terminal/` and move all retained contents back under `src/`.
+- No compatibility shims, C ABI changes, benchmark behavior changes, proof semantic changes, or final umbrella `terminal/` wrapper are authorized.
 - This artifact remains planning/correction only and does not authorize coding.
 
 ## Coding Authorization

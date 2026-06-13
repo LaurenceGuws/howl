@@ -29,10 +29,10 @@ Active research target:
 
 Current step:
 
-- Slice 3, `VT terminal core root establishment`, was blocked before product edits because the execution contract omitted required import-update owners.
-- No implementation is authorized from this researcher correction.
-- Reviewer must gate the corrected Slice 3 contract before orchestrator may resume or reseed execution.
-- The corrected Slice 3 remains a terminal-core establishment slice with expanded import-path update authorization only.
+- Slice 3, `VT terminal core root establishment`, is accepted and receipted.
+- The remaining Slice 4 and Slice 5 plan is researcher-repaired and reviewer-accepted after the explicit final no-`terminal/` override.
+- Slice 4 may be seeded after the plan repair commit receipt is recorded.
+- User explicitly overrode the final VT folder shape: Slice 5 must delete `src/terminal/` and move all contents back under `src/` because the `terminal/` wrapper adds one folder depth for no reason.
 
 Exact user direction:
 
@@ -41,6 +41,7 @@ Exact user direction:
 - Clean up file and folder locations and naming with discipline and intent.
 - Keep only curated owner units under `src`.
 - Use shallow child folders only for true subdomains or per-owner definitions.
+- Explicit override: final VT shape must not retain `src/terminal/`; move its contents back under `src/` in Slice 5.
 
 Exact non-goals:
 
@@ -441,3 +442,150 @@ Stop conditions:
 - Intended task: gate the corrected Slice 3 VT terminal-core root establishment diff after coder verification.
 - How one task went: accepted the Slice 3 diff; `src/terminal/main.zig` is present, moved VT-core owners are under `src/terminal/`, old package-top moved owner paths are gone, dependent product/proof/support/benchmark changes are import-path churn only, stale moved-path imports outside `src/terminal/**` are clean, and `zig build test:unit`, `zig build test:abi:build`, and `zig build benchmark:m7_baseline:build` passed locally.
 - Next handoff or blocker: orchestrator may commit nested `howl-vt` for Slice 3 and then record the nested/root commit receipts; no product blocker remains from review.
+
+26. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: record explicit user override for the final VT folder shape and stop coding until the remaining plan is repaired.
+- How one task went: recorded the user decision that Slice 5 must delete `src/terminal/` and move all contents back under `src/`, overriding Ghostty's `terminal/` subdomain pressure because the extra folder depth is rejected for Howl.
+- Next handoff or blocker: researcher must repair remaining Slice 4 and Slice 5 from current source and the explicit override; reviewer must gate the repair before coding resumes.
+
+27. Role: researcher
+- Session id: `research-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: repair remaining Slice 4 and Slice 5 after the explicit user override.
+- How one task went: re-proved current post-Slice-3 `howl-vt` shape, preserved the explicit override receipt, repaired Slice 4 to move protocol buckets directly toward final `src/` paths, repaired Slice 5 to delete `src/terminal/` and move contents back under `src/`, then repaired reviewer findings by removing stale final proof buckets and broad dependency globs.
+- Next handoff or blocker: reviewer should gate the repaired remaining plan; no coding is authorized until acceptance.
+
+28. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate repaired remaining Slice 4 and Slice 5 plan after explicit override.
+- How one task went: rejected the first repair because final proof folders still preserved deleted `action/`, `control/`, and `xterm/` buckets and allowed dependency globs were too broad; accepted the second repair after proof paths became owner-true and broad dependency globs were removed.
+- Next handoff or blocker: orchestrator must commit the accepted remaining-plan repair and record the receipt before seeding Slice 4.
+
+## Slice 4 Execution Contract
+
+Name: VT protocol bucket removal toward final no-wrapper layout.
+
+Status: accepted plan; execution waits for plan repair commit receipt.
+
+Coder session id: `coder-2026-06-13-pty-vt-folder-structure-slice-4`.
+
+Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- `howl-vt/src/howl_vt.zig`
+- `howl-vt/src/action/**`
+- `howl-vt/src/control/**`
+- `howl-vt/src/xterm/**`
+- `howl-vt/src/route.zig`
+- `howl-vt/src/vocabulary.zig`
+- `howl-vt/src/mode.zig`
+- `howl-vt/src/report.zig`
+- `howl-vt/src/locator.zig`
+- `howl-vt/src/osc_color.zig`
+- `howl-vt/src/c0.zig`
+- `howl-vt/src/esc.zig`
+- `howl-vt/src/csi.zig`
+- `howl-vt/src/osc.zig`
+- `howl-vt/src/dcs.zig`
+- `howl-vt/src/csi/**`
+- `howl-vt/src/host/apply.zig`
+- `howl-vt/src/host/state.zig`
+- `howl-vt/src/kitty/apply.zig`
+- `howl-vt/src/kitty/color.zig`
+- `howl-vt/src/kitty/protocol.zig`
+- `howl-vt/src/input/encode.zig`
+- `howl-vt/src/terminal/terminal.zig`
+- `howl-vt/src/terminal/stream_terminal.zig`
+- `howl-vt/src/terminal/screen.zig`
+- `howl-vt/src/terminal/screen/apply.zig`
+- `howl-vt/src/terminal/screen/cursor.zig`
+- `howl-vt/src/terminal/screen/erase.zig`
+- `howl-vt/src/terminal/screen/rect.zig`
+- `howl-vt/test/unit.zig`
+- `howl-vt/test/unit/action/route_test.zig`
+- `howl-vt/test/unit/route_test.zig`
+- `howl-vt/test/unit/control/report_test.zig`
+- `howl-vt/test/unit/report_test.zig`
+- `howl-vt/test/unit/xterm/csi_mapping_test.zig`
+- `howl-vt/test/unit/csi_mapping_test.zig`
+- `howl-vt/test/unit/terminal_modes_test.zig`
+- `howl-vt/test/unit/screen_test.zig`
+- `howl-vt/test/unit/screen/cursor_test.zig`
+- `howl-vt/test/unit/screen/history_test.zig`
+- `howl-vt/test/unit/screen/resize_test.zig`
+- `howl-vt/test/unit/screen/tabs_test.zig`
+- `howl-vt/test/unit/screen/write_test.zig`
+
+Required shape:
+
+- Do not move protocol or consequence folders under `src/terminal/` temporarily; the override makes that throwaway work.
+- Remove package-top `action/`, `control/`, and `xterm/` buckets.
+- Move `src/action/route.zig` to `src/route.zig` and `src/action/vocabulary.zig` to `src/vocabulary.zig`.
+- Move `src/control/mode.zig`, `src/control/report.zig`, `src/control/locator.zig`, and `src/control/osc_color.zig` to direct `src/{mode,report,locator,osc_color}.zig` owners.
+- Move `src/xterm/c0.zig`, `src/xterm/esc.zig`, `src/xterm/csi.zig`, `src/xterm/osc.zig`, and `src/xterm/dcs.zig` to direct `src/{c0,esc,csi,osc,dcs}.zig` owners.
+- Move `src/xterm/csi/**` to `src/csi/**`; retain `src/csi/` only as the CSI helper subdomain.
+- Keep `src/host/` and `src/kitty/` as final shallow true subdomains; do not move them under `src/terminal/`.
+- Keep `src/terminal/**` terminal-core files in place for Slice 4 except for import-path updates required by moved protocol owners.
+- Update product and proof imports in the allowed files directly to the new paths.
+- Rename proof files to remove stale proof buckets: `test/unit/action/route_test.zig` to `test/unit/route_test.zig`, `test/unit/control/report_test.zig` to `test/unit/report_test.zig`, and `test/unit/xterm/csi_mapping_test.zig` to `test/unit/csi_mapping_test.zig`.
+- No package-top compatibility mirrors, re-export shims, or duplicate old/new owner paths may survive acceptance.
+
+Exact tests:
+
+- `zig build test:unit` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build test:abi` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build benchmark:m7_baseline:build` in `/home/home/personal/projects/howl/howl-vt`
+
+Non-goals:
+
+- No deletion of `src/terminal/` in Slice 4.
+- No movement of terminal-core files out of `src/terminal/` in Slice 4.
+- No host runtime architecture change.
+- No new public Zig API.
+- No convenience wrapper layer.
+- No C ABI symbol, enum, struct, or exported-name changes.
+- No proof or benchmark behavior changes beyond import-path updates.
+
+Stop conditions:
+
+- Stop if any `howl-vt/src/action/`, `howl-vt/src/control/`, or `howl-vt/src/xterm/` path remains after acceptance.
+- Stop if any `howl-vt/test/unit/action/`, `howl-vt/test/unit/control/`, or `howl-vt/test/unit/xterm/` proof bucket remains after acceptance.
+- Stop if `src/host/` or `src/kitty/` is moved under `src/terminal/`.
+- Stop if `src/terminal/**` is deleted or moved in Slice 4 instead of saved for Slice 5.
+- Stop if imported paths depend on compatibility mirrors.
+- Stop if any unit proof still imports old `action/`, `control/`, or `xterm/` source paths after acceptance.
+- Stop if current-source proof finds a direct old protocol-bucket import in a file not named here; return to research instead of guessing or adding a shim.
+
+27. Role: researcher
+- Session id: `research-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: repair the remaining Slice 4 and Slice 5 plan after the explicit user override and current `howl-vt` source after nested commit `20fb714`.
+- How one task went: re-proved that post-Slice-3 `howl-vt/src` has terminal-core files under temporary `src/terminal/` while `action/`, `control/`, `host/`, `kitty/`, and `xterm/` remain top-level; repaired the plan so Slice 4 moves `action/`, `control/`, and `xterm/` directly to final shallow `src` paths while keeping `host/` and `kitty/` as true shallow subdomains, and Slice 5 deletes `src/terminal/` by moving all retained contents back under `src/`.
+- Next handoff or blocker: reviewer should gate `research/2026-06-13-pty-vt-folder-owner-structure-plan.md`; no coding is authorized until reviewer acceptance and orchestrator seeding.
+
+28. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate the researcher-repaired remaining Slice 4 and Slice 5 plan after the explicit user override.
+- How one task went: rejected the repair because final proof folders still preserve deleted source buckets as `test/unit/action/`, `test/unit/control/`, and `test/unit/xterm/`, and the Slice 4/5 allowed-file lists use broad dependency globs such as `src/ffi/**`, `src/kitty/**`, and `test/unit/**` instead of exact current-source-proved files.
+- Next handoff or blocker: researcher must repair the Slice 4 and Slice 5 plan again before orchestrator may seed Slice 4; no implementation is authorized.
+
+29. Role: researcher
+- Session id: `research-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: repair the reviewer-rejected remaining Slice 4 and Slice 5 plan without implementation by re-proving exact current-source files and removing stale final proof buckets.
+- How one task went: re-proved old `action/`, `control/`, and `xterm/` import users and temporary `src/terminal/` import users from current `howl-vt`; replaced broad dependency globs with exact files except owner folders being moved as units, and changed final proof paths to `test/unit/route_test.zig`, `test/unit/report_test.zig`, and `test/unit/csi_mapping_test.zig`.
+- Next handoff or blocker: reviewer should gate the repaired research artifact; no implementation is authorized until reviewer acceptance and orchestrator seeding.
+
+30. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate the repaired remaining Slice 4 and Slice 5 plan after prior rejection of stale proof buckets and broad dependency globs.
+- How one task went: accepted the repair; final proof shape no longer preserves `test/unit/action/`, `test/unit/control/`, or `test/unit/xterm/`, Slice 4 exact dependency files are current-source-proved, and the only remaining folder globs are owner folders being moved as units.
+- Next handoff or blocker: orchestrator may seed Slice 4 from the repaired research artifact; coder must stop and return to research if current-source proof finds an old protocol-bucket import or temporary terminal-wrapper import in a file not named by the accepted slice contract.
