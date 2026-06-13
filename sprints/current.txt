@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-13-raster-special-ownership-compression-sprint.md`
+- none
 
 Active research:
 
-- `research/2026-06-13-raster-special-ownership-compression-plan.md`
+- none
 
 Active loops:
 
-- `loops/raster-special-ownership-compression-live-loop.txt`
+- none
 
 Active restart note:
 
@@ -29,24 +29,19 @@ Active restart note:
   - `959576d` `Extract scene damage owner`
   - `acb929e` `Extract scene rect owner`
   - `27317db` `Finish scene sprite owner`
-- New active planning sprint: raster special ownership compression.
-- Primary planning target: `howl-render/src/text/raster/special.zig`.
-- Planning package accepted at root `0e53a8e`.
-- Slice 1 `Extract undercurl owner` accepted in `howl-render` `42b68b8`; root `a8c3e50`.
-- Slice 2 `Create generated-special root and extract box owner` accepted in `howl-render` `a542d8a`; root `c52f69d`.
-- Slice 3 `Extract powerline owner` accepted in `howl-render` `24286d6`; root `0a73776`.
-- Slice 4 `Extract the current block-plus-braille dispatch owner` accepted in `howl-render` `1986d89`; root `b9954fb`.
-- Slice 5 `Extract the current legacy-computing owner` accepted in `howl-render` `9270a11`; root receipt pending.
-- No next execution slice seeded yet.
-- Active planning sessions:
-  - orchestrator `orch-2026-06-13-raster-special-01`
-  - researcher `research-2026-06-13-raster-special-01`
-  - reviewer `review-2026-06-13-raster-special-01`
+- Latest closed sprint: raster special ownership compression, planning `0e53a8e`, Slice 1 root `a8c3e50`, Slice 2 root `c52f69d`, Slice 3 root `0a73776`, Slice 4 root `b9954fb`, Slice 5 root `8a072d0`.
+- Latest completed nested render slices:
+  - `42b68b8` `Extract undercurl owner`
+  - `a542d8a` `Extract special box owner`
+  - `24286d6` `Extract special powerline owner`
+  - `1986d89` `Extract special block braille owner`
+  - `9270a11` `Extract special legacy owner`
+- No active sprint is seeded.
 
 Execution rule:
 
 - No coding is authorized without an accepted reviewer-gated execution slice under the active sprint.
-- No implementation is currently authorized until the orchestrator closes or reseeds the sprint.
+- No coding is authorized without a new seeded sprint.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
