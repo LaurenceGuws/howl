@@ -24,8 +24,8 @@ Active restart note:
 - Slice 1, `Control-Spine Root Cleanup`, is accepted and committed in `howl-linux-host` `6e77a10` and root `e9296c9`.
 - Slice 1, `Control-Spine Root Cleanup`, is accepted and committed in `howl-linux-host` `6e77a10` and root `e9296c9`.
 - Slice 2, `Display, Window, And Tab-Visual Owner Cleanup`, is accepted and committed in `howl-linux-host` `5998100` and root `f111300`.
-- Slice 3, `Terminal Surface Naming Cleanup`, is accepted and committed in `howl-linux-host` `e053085` with root close receipt pending.
-- The host folder/file owner structure sprint is in final root receipt closure.
+- Slice 3, `Terminal Surface Naming Cleanup`, is accepted and committed in `howl-linux-host` `e053085` and root `86cc4a0`.
+- The host folder/file owner structure sprint is closed; no further coding is authorized from this sprint.
 - User direction: the next offender is the host; clean up host file and folder locations and naming with the same discipline pressure.
 - Reference pressure: Alacritty host/runtime/display/window/input organization is primary; Ghostty is secondary only where Alacritty lacks a comparable host shape.
 - Current host tree still shows likely structure debt: broad top-level roots (`app/`, `cli/`, `config/`, `display/`, `input/`, `polling/`, `tab_bar/`, `terminal/`, `window_chrome/`), C headers at `src/` top level, and likely test/root placement debt.
