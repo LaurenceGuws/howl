@@ -2,7 +2,7 @@
 
 Date: 2026-06-13.
 
-Status: reviewer-accepted planning; planning commit-hash receipt pending.
+Status: reviewer-accepted planning committed; Slice 1 seeded for execution.
 
 Role owner: researcher.
 
@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-host-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-host-folder-structure-01`.
 
-Planning commit-hash receipt: pending.
+Planning commit-hash receipt: root commit `ff58fa8`.
 
 Question:
 

@@ -20,7 +20,8 @@ Active loops:
 Active restart note:
 
 - The render folder/file owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
-- The active step is host folder/file owner planning, not implementation.
+- The active planning package is accepted and committed in root `ff58fa8`.
+- The active step is execution of Slice 1, `Control-Spine Root Cleanup`.
 - User direction: the next offender is the host; clean up host file and folder locations and naming with the same discipline pressure.
 - Reference pressure: Alacritty host/runtime/display/window/input organization is primary; Ghostty is secondary only where Alacritty lacks a comparable host shape.
 - Current host tree still shows likely structure debt: broad top-level roots (`app/`, `cli/`, `config/`, `display/`, `input/`, `polling/`, `tab_bar/`, `terminal/`, `window_chrome/`), C headers at `src/` top level, and likely test/root placement debt.
@@ -28,11 +29,11 @@ Active restart note:
 - Researcher session id: `research-2026-06-13-host-folder-structure-01`.
 - Reviewer session id: `review-2026-06-13-host-folder-structure-01`.
 - Planning status: reviewer-accepted.
-- Planning commit-hash receipt: pending.
+- Planning commit-hash receipt: root `ff58fa8`.
 
 Execution rule:
 
-- No host product code is authorized until the reviewer-accepted planning package has a commit-hash receipt and orchestrator seeds Slice 1.
+- Coding is authorized only from the condensed Slice 1 execution contract in `loops/host-folder-owner-structure-live-loop.txt`.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical render-owner artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

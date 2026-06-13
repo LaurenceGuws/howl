@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-host-folder-structure-01`.
 
 Reviewer session id: `review-2026-06-13-host-folder-structure-01`.
 
-Loop commit-hash receipt: pending.
+Loop commit-hash receipt: planning package closed in root commit `ff58fa8`.
 
 Shared scratchpad rule:
 
@@ -29,10 +29,9 @@ Active research target:
 
 Current step:
 
-- New host folder/file owner structure sprint is seeded for planning.
-- No implementation is authorized.
-- Researcher must produce the full source-backed slice plan.
-- Reviewer must gate the plan before orchestrator seeds any execution slice.
+- The host folder/file owner structure planning package is accepted and committed in root `ff58fa8`.
+- Slice 1, `Control-Spine Root Cleanup`, is seeded for execution.
+- Coder may execute only the active condensed execution contract below.
 
 Exact user direction:
 
@@ -80,6 +79,58 @@ Team scratchpad
 - Intended task: record reviewer acceptance and stop before execution until the planning commit-hash receipt is closed.
 - How one task went: active sprint, research, and current index now mark the host folder/file owner structure plan as reviewer-accepted with planning commit-hash receipt pending; no coder is authorized because the receipt is not closed.
 - Next handoff or blocker: commit the accepted planning package, then seed only Slice 1.
+
+Condensed execution contract for coder session `coder-2026-06-13-host-folder-structure-01`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-13-host-folder-owner-structure-plan.md`
+- Implement only Slice 1, `Control-Spine Root Cleanup`.
+- Allowed files:
+  - `howl-linux-host/src/main.zig`
+  - `howl-linux-host/src/app/processor.zig`
+  - `howl-linux-host/src/cli/args.zig`
+  - `howl-linux-host/src/event_loop.zig`
+  - `howl-linux-host/src/polling/window_wake.zig`
+  - `howl-linux-host/src/terminal/context.zig`
+  - `howl-linux-host/src/terminal/input.zig`
+  - `howl-linux-host/src/terminal/scrollbar.zig`
+  - `howl-linux-host/src/host_test_root.zig`
+  - `howl-linux-host/src/integration_test_root.zig`
+  - `howl-linux-host/build.zig`
+- Required shape:
+  - move `src/app/processor.zig` to `src/event.zig`.
+  - move `src/cli/args.zig` to `src/cli.zig`.
+  - move `src/event_loop.zig` to `src/polling/event_loop.zig`.
+  - rewire every direct import site that currently names `event_loop.zig`, specifically `src/main.zig`, `src/terminal/context.zig`, `src/terminal/input.zig`, `src/terminal/scrollbar.zig`, and `src/host_test_root.zig`.
+  - update build references so `app/` and `cli/` become removable and `polling/` becomes a real subdomain with more than one owner.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:integration`
+- Required assertions:
+  - preserve the wake-event assertions and event-turn bound from current `event_loop.zig:31-37`, `event_loop.zig:56-64`, and `event_loop.zig:101-105`.
+  - preserve the host control-spine tab bounds and quit-path assertions from `app/processor.zig:134-154`, `app/processor.zig:216-249`, and all existing inline tests that move with the files.
+- Exact non-goals:
+  - no tab-model redesign.
+  - no new runtime abstractions.
+  - no behavior changes to event processing.
+  - no new public host API.
+- Exact stop conditions:
+  - stop if the move cannot be completed without inventing a second event owner.
+  - stop if `polling/` still ends the slice as a one-file folder.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-host-folder-structure-01`
+  - commit-hash handoff status for orchestrator receipt closure
+
+4. Role: orchestrator
+- Session id: `orch-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: close the accepted planning receipt and seed Slice 1 for execution.
+- How one task went: the accepted planning package was committed as root `ff58fa8`, the active sprint/research/current index now record that receipt, and Slice 1 has an exact condensed execution contract with allowed files, required shape, tests, non-goals, stop conditions, and receipt demand.
+- Next handoff or blocker: coder may execute only `coder-2026-06-13-host-folder-structure-01`; no broader slice or product-code work is authorized.
 
 2. Role: researcher
 - Session id: `research-2026-06-13-host-folder-structure-01`
