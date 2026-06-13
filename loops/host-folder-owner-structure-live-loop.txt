@@ -94,6 +94,8 @@ Condensed execution contract for coder session `coder-2026-06-13-host-folder-str
   - `howl-linux-host/src/terminal/context.zig`
   - `howl-linux-host/src/terminal/input.zig`
   - `howl-linux-host/src/terminal/scrollbar.zig`
+  - `howl-linux-host/src/terminal/pty/wait_thread.zig`
+  - `howl-linux-host/src/terminal/render/surface_layout.zig`
   - `howl-linux-host/src/host_test_root.zig`
   - `howl-linux-host/src/integration_test_root.zig`
   - `howl-linux-host/build.zig`
@@ -101,7 +103,7 @@ Condensed execution contract for coder session `coder-2026-06-13-host-folder-str
   - move `src/app/processor.zig` to `src/event.zig`.
   - move `src/cli/args.zig` to `src/cli.zig`.
   - move `src/event_loop.zig` to `src/polling/event_loop.zig`.
-  - rewire every direct import site that currently names `event_loop.zig`, specifically `src/main.zig`, `src/terminal/context.zig`, `src/terminal/input.zig`, `src/terminal/scrollbar.zig`, and `src/host_test_root.zig`.
+  - rewire every direct import site that currently names `event_loop.zig`, specifically `src/main.zig`, `src/terminal/context.zig`, `src/terminal/input.zig`, `src/terminal/scrollbar.zig`, `src/terminal/pty/wait_thread.zig`, `src/terminal/render/surface_layout.zig`, and `src/host_test_root.zig`.
   - update build references so `app/` and `cli/` become removable and `polling/` becomes a real subdomain with more than one owner.
 - Exact tests:
   - `cd /home/home/personal/projects/howl/howl-linux-host && zig build test:unit`
@@ -160,6 +162,13 @@ Condensed execution contract for coder session `coder-2026-06-13-host-folder-str
 - How one task went: re-read the active slice text plus the current `build.zig`, `display/display.zig`, and the known `terminal/context` import sites; rewrote Slice 3 to enumerate the exact terminal owner files and direct rewire sites, and rewrote Slice 4 to enumerate the exact old/new C-header files, old/new test-root files, build file, and direct `gl_c` import sites without any wildcard wording.
 - Next handoff or blocker: reviewer should re-gate the corrected active research artifact; no implementation is authorized.
 
+6. Role: researcher
+- Session id: `research-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: correct the execution-exposed Slice 1 defect by expanding its allowlist to cover every file needed for the `event_loop.zig` move and proof closure.
+- How one task went: re-read `terminal/pty/wait_thread.zig` and `terminal/render/surface_layout.zig`, then re-checked current `event_loop.zig` import users across `src/`; the missing stale users were exactly those two files, so Slice 1 now explicitly allows them and names them in the required event-loop rewire set alongside `main.zig`, `terminal/context.zig`, `terminal/input.zig`, `terminal/scrollbar.zig`, and `host_test_root.zig`.
+- Next handoff or blocker: reviewer should re-gate the corrected active planning artifact; no implementation is authorized.
+
 3. Role: reviewer
 - Session id: `review-2026-06-13-host-folder-structure-01`
 - Hello: hi
@@ -187,3 +196,24 @@ Condensed execution contract for coder session `coder-2026-06-13-host-folder-str
 - Intended task: re-review the corrected Slice 3 and Slice 4 allowlists and re-check the full planning gate one more time.
 - How one task went: accepted the plan. Finding 1: Slice 3 now has a fully explicit allowlist at `research/2026-06-13-host-folder-owner-structure-plan.md:289-298`, replacing the prior wildcard terminal scope with exact files. Finding 2: Slice 4 now has a fully explicit allowlist at `research/2026-06-13-host-folder-owner-structure-plan.md:300-309`, replacing the prior open-ended import-site wording with exact files. Finding 3: the full planning gate is now met: the plan is sequential and each slice names exact allowed files, required shape, required tests, non-goals, stop conditions, session ids, and commit-hash receipt demand at `research/2026-06-13-host-folder-owner-structure-plan.md:267-309`, with sprint-wide assertions, tests, risks, proof gaps, and readiness recorded at `:311-342`.
 - Next handoff or blocker: orchestrator may seed Slice 1 only. The execution contract should preserve the Slice 1 file boundary from `research/2026-06-13-host-folder-owner-structure-plan.md:270-276`, require `zig build test:unit` and `zig build test:integration`, preserve the cited event-loop and control-spine assertions, and demand coder session id plus commit-hash receipt closure.
+
+7. Role: coder
+- Session id: `coder-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: execute only Slice 1 by moving `app/processor.zig` to `event.zig`, `cli/args.zig` to `cli.zig`, `event_loop.zig` to `polling/event_loop.zig`, and rewiring the exact authorized import and build paths.
+- How one task went: completed the authorized file moves and rewires in `src/main.zig`, `src/event.zig`, `src/cli.zig`, `src/polling/event_loop.zig`, `src/terminal/context.zig`, `src/terminal/input.zig`, `src/terminal/scrollbar.zig`, `src/host_test_root.zig`, and `build.zig`; the preserved event-loop assertions and moved inline tests remained in place. Verification then failed at an out-of-scope import still pointing to the removed top-level path: `howl-linux-host/src/terminal/pty/wait_thread.zig:3` imports `../../event_loop.zig`, so `zig build test:unit` and `zig build test:integration` both stop with `src/event_loop.zig:1:1: error: unable to load 'event_loop.zig': FileNotFound`.
+- Next handoff or blocker: blocked on execution-contract scope. Fixing the failing import requires touching `howl-linux-host/src/terminal/pty/wait_thread.zig`, which is outside Slice 1's allowed files. Commit-hash handoff status: none; git not touched.
+
+8. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: review the Slice 1 planning correction after execution exposed missing `event_loop.zig` import users and confirm whether Slice 1 may be reseeded.
+- How one task went: accepted the planning correction. Finding 1: Slice 1 now explicitly allows the additional stale import users `howl-linux-host/src/terminal/pty/wait_thread.zig` and `howl-linux-host/src/terminal/render/surface_layout.zig` at `research/2026-06-13-host-folder-owner-structure-plan.md:270`, and the required shape names both files in the exact `event_loop.zig` rewire set at `:271`. Finding 2: current source proof matches that correction: the remaining stale `event_loop.zig` import users are exactly `howl-linux-host/src/terminal/pty/wait_thread.zig:3` and `howl-linux-host/src/terminal/render/surface_layout.zig:2`, while the other known users already point at `polling/event_loop.zig`. Finding 3: no new planning vagueness or scope drift was introduced. The correction is still Slice 1 only, keeps the exact file list and exact rewire set, and does not authorize broader implementation beyond reseeding Slice 1.
+- Next handoff or blocker: orchestrator may reseed Slice 1 and reuse the current worktree state, with execution limited to the corrected Slice 1 contract and the missing rewires plus re-verification only.
+
+9. Role: orchestrator
+- Session id: `orch-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: reseed Slice 1 after the accepted planning correction for missing `event_loop.zig` import users.
+- How one task went: the live Slice 1 contract now matches the accepted research allowlist and required rewires for `terminal/pty/wait_thread.zig` and `terminal/render/surface_layout.zig`, so execution can resume without forcing out-of-scope edits.
+- Next handoff or blocker: commit the accepted planning correction, then rerun Slice 1 under the refreshed contract.
