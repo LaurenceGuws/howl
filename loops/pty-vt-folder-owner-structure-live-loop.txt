@@ -625,6 +625,142 @@ Stop conditions:
 - How one task went: committed the root Slice 4 receipt as `3a3ea9d`.
 - Next handoff or blocker: commit this receipt update, then seed Slice 5.
 
+## Slice 5 Execution Contract
+
+Name: Delete temporary VT terminal wrapper and finalize shallow `src` layout.
+
+Status: active.
+
+Coder session id: `coder-2026-06-13-pty-vt-folder-structure-slice-5`.
+
+Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Explicit override receipt:
+
+- User decision: "ok slice 5 will be deleting terminal anmd moving all its content into src/ terminal makes the fodlers all 1 deeper for no reason. you can delegate until all that is done"
+- Reference overridden: Ghostty `src/terminal/` final VT-core subdomain pressure.
+- Reason: user rejects the extra folder depth as unjustified in Howl.
+- Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
+
+Allowed files:
+
+- `howl-vt/src/howl_vt.zig`
+- `howl-vt/src/terminal/**`
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/screen.zig`
+- `howl-vt/src/screen_set.zig`
+- `howl-vt/src/stream_terminal.zig`
+- `howl-vt/src/publication.zig`
+- `howl-vt/src/parser/**`
+- `howl-vt/src/screen/**`
+- `howl-vt/src/selection/**`
+- `howl-vt/src/ffi/handle.zig`
+- `howl-vt/src/ffi/lifecycle.zig`
+- `howl-vt/src/ffi/runtime.zig`
+- `howl-vt/src/ffi/surface.zig`
+- `howl-vt/src/ffi/selection.zig`
+- `howl-vt/src/route.zig`
+- `howl-vt/src/vocabulary.zig`
+- `howl-vt/src/report.zig`
+- `howl-vt/src/osc_color.zig`
+- `howl-vt/src/osc.zig`
+- `howl-vt/src/dcs.zig`
+- `howl-vt/src/csi/params.zig`
+- `howl-vt/src/host/apply.zig`
+- `howl-vt/src/host/state.zig`
+- `howl-vt/test/unit.zig`
+- `howl-vt/test/unit/terminal_end_to_end_test.zig`
+- `howl-vt/test/unit/terminal_snapshot_test.zig`
+- `howl-vt/test/unit/terminal_osc_test.zig`
+- `howl-vt/test/unit/terminal_surface_test.zig`
+- `howl-vt/test/unit/terminal_modes_test.zig`
+- `howl-vt/test/unit/terminal_test.zig`
+- `howl-vt/test/unit/screen_test.zig`
+- `howl-vt/test/unit/route_test.zig`
+- `howl-vt/test/unit/report_test.zig`
+- `howl-vt/test/unit/csi_mapping_test.zig`
+- `howl-vt/test/unit/parser/csi_test.zig`
+- `howl-vt/test/unit/parser/events_test.zig`
+- `howl-vt/test/unit/parser/main_test.zig`
+- `howl-vt/test/unit/parser/string_control_test.zig`
+- `howl-vt/test/unit/screen/cursor_test.zig`
+- `howl-vt/test/unit/screen/history_test.zig`
+- `howl-vt/test/unit/screen/resize_test.zig`
+- `howl-vt/test/unit/screen/tabs_test.zig`
+- `howl-vt/test/unit/screen/write_test.zig`
+- `howl-vt/test/support/screen_capture.zig`
+- `howl-vt/test/support/stream_harness.zig`
+- `howl-vt/benchmark/terminal_benchmark.zig`
+- `howl-vt/benchmark/pty_feed_record.zig`
+
+Required shape:
+
+- Delete `howl-vt/src/terminal/` completely.
+- Delete `howl-vt/src/terminal/main.zig` instead of recreating an equivalent wrapper elsewhere.
+- Move `src/terminal/terminal.zig` to `src/terminal.zig`.
+- Move `src/terminal/screen.zig` to `src/screen.zig` and `src/terminal/screen_set.zig` to `src/screen_set.zig`.
+- Move `src/terminal/stream_terminal.zig` to `src/stream_terminal.zig` and `src/terminal/publication.zig` to `src/publication.zig`.
+- Move `src/terminal/parser/**` to `src/parser/**`, `src/terminal/screen/**` to `src/screen/**`, and `src/terminal/selection/**` to `src/selection/**`.
+- Update `src/howl_vt.zig` to import final direct owners and stop importing `terminal/main.zig`.
+- Update all allowed product, proof, support, and benchmark imports directly to final paths.
+- Final `src` may contain direct terminal-core owner files plus shallow true subdomains `ffi/`, `input/`, `host/`, `kitty/`, `screen/`, `parser/`, `selection/`, and `csi/` only.
+- No `src/terminal/` wrapper, compatibility shim, or duplicate old/new terminal path may survive acceptance.
+
+Exact tests:
+
+- `zig build test` in `/home/home/personal/projects/howl/howl-pty`
+- `zig build test` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build simulate:build` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build benchmark:m7_baseline:build` in `/home/home/personal/projects/howl/howl-vt`
+
+Non-goals:
+
+- No new cleanup outside PTY or VT.
+- No execution-phase redesign.
+- No protocol bucket redesign beyond imports required after Slice 4.
+- No host or kitty movement.
+- No public ABI or behavior changes.
+- No proof, benchmark, or simulation behavior changes beyond import-path updates.
+
+Stop conditions:
+
+- Stop if `howl-vt/src/terminal/` exists after acceptance.
+- Stop if any source, test, support, benchmark, simulation, or build file imports `src/terminal/` or `terminal/main.zig` after acceptance.
+- Stop if any stale path survives only because imports still reference it.
+- Stop if final build roots still mention old locations.
+- Stop if reviewer cannot diff the final tree without reconstructing hidden moves.
+- Stop if current-source proof finds a direct temporary terminal-wrapper import in a file not named here; return to research instead of guessing or adding a shim.
+
+36. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: seed Slice 5 to remove the temporary VT terminal wrapper.
+- How one task went: wrote the active execution contract with exact override receipt, allowed files, required final no-wrapper shape, tests, non-goals, stop conditions, session ids, and receipt demand.
+- Next handoff or blocker: coder may implement Slice 5 from this contract only.
+
+37. Role: coder
+- Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-5`
+- Hello: hi
+- Intended task: implement final no-wrapper Slice 5.
+- How one task went: deleted `howl-vt/src/terminal/`, moved terminal-core owners to final shallow `src` paths, updated allowed imports, and passed `zig build test` in `howl-pty`, `zig build test` in `howl-vt`, `zig build simulate:build`, and `zig build benchmark:m7_baseline:build`.
+- Next handoff or blocker: reviewer should gate the Slice 5 diff; no commit was made by coder.
+
+38. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate Slice 5 final no-wrapper implementation.
+- How one task went: accepted Slice 5; `howl-vt/src/terminal/` is absent, no `src/terminal/` or `terminal/main.zig` imports remain, terminal-core owners are at final shallow `src` paths, changes are required import churn only, and required proofs passed.
+- Next handoff or blocker: orchestrator may commit nested `howl-vt` and record receipts.
+
+39. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: verify and commit accepted Slice 5.
+- How one task went: reran `zig build test` in `howl-pty`, `zig build test` in `howl-vt`, `zig build simulate:build`, and `zig build benchmark:m7_baseline:build`; committed nested Slice 5 as `4e76640`.
+- Next handoff or blocker: commit the root receipt for Slice 5, then close the sprint.
+
 32. Role: coder
 - Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-4`
 - Hello: hi
@@ -638,3 +774,17 @@ Stop conditions:
 - Intended task: gate Slice 4 VT protocol bucket removal implementation against the accepted contract and unstaged nested `howl-vt` diff.
 - How one task went: accepted Slice 4; `src/action/`, `src/control/`, `src/xterm/`, `test/unit/action/`, `test/unit/control/`, and `test/unit/xterm/` are absent; moved protocol owners and proof files compare as relocation plus import-path updates only; `src/host/`, `src/kitty/`, and `src/terminal/**` remain in place; no old protocol-bucket imports or compatibility shims were found; `zig build test:unit`, `zig build test:abi`, `zig build benchmark:m7_baseline:build`, and `git diff --check` passed locally.
 - Next handoff or blocker: orchestrator may commit nested `howl-vt` for Slice 4 and then record nested/root receipts; no product blocker remains from review.
+
+37. Role: coder
+- Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-5`
+- Hello: hi
+- Intended task: implement Slice 5 by deleting the temporary VT `src/terminal/` wrapper and finalizing the shallow `src` layout.
+- How one task went: moved terminal-core owners, parser, screen, and selection subdomains back under `howl-vt/src/`, deleted `src/terminal/main.zig`, removed the empty `src/terminal/` directory tree, repointed allowed product/proof/support/benchmark imports to final paths, and proved no Zig imports of `src/terminal/` or `terminal/main.zig` remain.
+- Next handoff or blocker: reviewer should gate the Slice 5 diff; no commit was made, so commit-hash receipt remains pending for orchestrator acceptance closure.
+
+38. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate Slice 5 implementation against the explicit final no-`terminal/` override and unstaged nested `howl-vt` diff.
+- How one task went: accepted Slice 5; `howl-vt/src/terminal/` is absent, `terminal/main.zig` is deleted with no equivalent wrapper, terminal-core owners and `parser/`, `screen/`, and `selection/` are at final shallow `src/` paths, stale `src/terminal/` and `terminal/main.zig` imports are absent, moved owner content only changed required relative imports, dependent allowed files are import-path churn only, and `zig build test` passed in both `howl-pty` and `howl-vt` plus `zig build simulate:build`, `zig build benchmark:m7_baseline:build`, and `git diff --check` passed in `howl-vt`.
+- Next handoff or blocker: orchestrator may commit nested `howl-vt` for Slice 5 and then record nested/root receipts; no product blocker remains from review.

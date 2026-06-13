@@ -26,6 +26,7 @@ Active restart note:
 - Slice 3, `VT terminal core root establishment`, is accepted in `howl-vt` `20fb714` and root `4a4fec4`.
 - Slice 4 and Slice 5 remaining plan is researcher-repaired and reviewer-accepted under the explicit final no-`terminal/` override; plan repair commit receipt root `27bcb75`.
 - Slice 4, `VT protocol bucket removal toward final no-wrapper layout`, is accepted in `howl-vt` `538a96b` and root `3a3ea9d`.
+- Slice 5, `Delete temporary VT terminal wrapper and finalize shallow src layout`, is accepted in `howl-vt` `4e76640`; root receipt pending.
 - User direction: PTY is small, so PTY and VT can be cleaned up together in one sprint.
 - Explicit user override receipt: user said, "ok slice 5 will be deleting terminal anmd moving all its content into src/ terminal makes the fodlers all 1 deeper for no reason. you can delegate until all that is done". This overrides the Ghostty-shaped `src/terminal/` subdomain pressure for the final Howl VT tree because the user rejected the extra folder depth as unjustified for Howl. Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 - Reference pressure: Ghostty terminal and termio structure is primary for VT and PTY owner/folder shape; Alacritty terminal/event_loop/tty pressure is secondary where it sharpens PTY/runtime folder boundaries.
@@ -38,7 +39,7 @@ Active restart note:
 
 Execution rule:
 
-- No further coding is authorized until Slice 4 receipt hash is recorded and Slice 5 is seeded.
+- No further coding is authorized until Slice 5 root receipt is committed and the sprint is closed.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
