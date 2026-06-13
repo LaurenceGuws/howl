@@ -1,3 +1,9 @@
+# Historical Authority
+
+- Historical authority at time: completed runtime debug-noise cleanup sprint contract for `orch-2026-06-14-runtime-debug-noise-01`.
+- Why superseded or done: all planned slices accepted and sprint archived.
+- Must not be used for: active execution authority after archive; use `sprints/current.txt` and any newly seeded active sprint instead.
+
 # Runtime Debug Noise Cleanup Sprint
 
 Status:

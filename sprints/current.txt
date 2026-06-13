@@ -7,46 +7,38 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-14-runtime-debug-noise-cleanup-sprint.md`
+- No active sprint seeded.
 
 Active research:
 
-- No active research seeded. Slice 2 correction is archived at `research/done/2026-06-14-runtime-debug-noise-slice2-handle-correction.md`.
+- No active research seeded.
 
 Active loops:
 
-- `loops/runtime-debug-noise-cleanup-live-loop.txt`
+- No active loop seeded.
 
 Active restart note:
 
-- Active sprint scope: runtime debug-noise cleanup.
+- No active sprint is seeded. Waiting for next scope.
+- Latest closed sprint: runtime debug-noise cleanup.
 - Orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
 - Researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
 - Reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
 - Planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
 - Accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
 - Active sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
-- Latest accepted execution slice: Slice 1 nested render commit `932bd29` `Remove emitter debug timing noise`.
 - Slice 2 correction acceptance receipt: `e94864b` `Accept runtime debug-noise Slice 2 correction`.
-- Latest accepted execution slice: Slice 4 read-only realizer verification, no implementation commit.
-- Runtime debug-noise cleanup sprint execution is complete pending archive/closure.
-- Implementation is authorized only through the active sprint and loop contract.
-- Previous latest closed sprint: host render-surface ownership.
-- Latest closed sprint planning receipt: `455402d` `Accept host render-surface planning`.
-- Latest closed sprint accepted slices:
-  - Slice 1 `5c7a2a2` `Extract host render-surface resources`
-  - Slice 2 `2977c3b` `Extract host render-surface commands`
-  - Slice 3 `618d0c5` `Curate host render-surface root`
-- Latest closed sprint root receipts:
-  - `d1d8654` `Accept host render-surface Slice 1`
-  - `afe558e` `Accept host render-surface Slice 2`
-  - `bb28278` `Accept host render-surface Slice 3`
-  - `cef2b37` `Archive host render-surface sprint`
+- Runtime debug-noise cleanup accepted slices:
+  - Slice 1 nested render commit `932bd29` `Remove emitter debug timing noise`, root receipt `cd00a7e` `Accept runtime debug-noise Slice 1`.
+  - Slice 2 nested render commit `3f54a58` `Remove prepare debug timing noise`, root receipt `69eba22` `Accept runtime debug-noise Slice 2`.
+  - Slice 3 nested host commit `8a2f1d7` `Remove host upload stats noise`, root receipt `9eddb77` `Accept runtime debug-noise Slice 3`.
+  - Slice 4 read-only realizer verification, root receipt `8e42f54` `Accept runtime debug-noise Slice 4`.
+- Runtime debug-noise cleanup sprint execution is complete and archived.
 
 Execution rule:
 
-- No coding is authorized until the active planning package is reviewer-accepted and a slice execution contract is seeded.
-- The host render-surface sprint execution is complete and archived.
+- No coding is authorized until a new active sprint, loop, and execution contract are seeded.
+- The runtime debug-noise cleanup sprint execution is complete and archived.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
