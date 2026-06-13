@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: seeded for research.
+Status: planning accepted; execution not yet seeded.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -46,9 +46,10 @@ Commit-hash receipt: documentation-only seed pending orchestrator commit.
 
 ## Execution Authorization
 
-- No coding is authorized.
-- Only research and reviewer gating are authorized.
-- A coder may not read beyond the future accepted execution contract for a specific slice.
+- No coding is authorized yet.
+- Planning is accepted.
+- Orchestrator may seed Slice 1 next through the live-loop execution contract with coder session id and commit-hash receipt fields.
+- Until that slice is explicitly seeded, a coder may not read beyond the future assigned execution contract.
 
 ## Seed Pressure Anchors
 

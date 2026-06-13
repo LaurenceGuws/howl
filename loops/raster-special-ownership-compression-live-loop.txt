@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: seeded planning loop; researcher pass required.
+Status: planning accepted; Slice 1 not yet seeded.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -29,10 +29,10 @@ Active research target:
 
 Current step:
 
-- The sprint is seeded for planning only.
-- Research must pressure `howl-render/src/text/raster/special.zig` first against Alacritty and TigerBeetle.
-- Research may promote a different ranked fallback seam only if current-source and references prove `special.zig` should not go first.
-- No implementation is authorized.
+- The planning package is accepted.
+- `howl-render/src/text/raster/special.zig` remains the first pressure seam.
+- No execution slice is seeded yet.
+- No implementation is authorized until orchestrator seeds Slice 1 with coder session id and commit-hash receipt fields.
 
 Exact user direction:
 
@@ -61,3 +61,45 @@ Team scratchpad
 - Intended task: seed the next planning sprint around the render raster concentration with `special.zig` as the first pressure target.
 - How one task went: converted the current post-scene-compression pressure ranking into live sprint, research, and loop artifacts; kept execution unauthorized and required reference-first pressure on `howl-render/src/text/raster/special.zig` before any slice plan can be accepted.
 - Next handoff or blocker: researcher must write the full planning package and either prove `special.zig` is the first cut or prove one ranked fallback seam must preempt it.
+
+2. Role: researcher
+- Session id: `research-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: re-prove whether `howl-render/src/text/raster/special.zig` is the first true owner-compression cut and seed exact execution slices.
+- How one task went: current source and Alacritty/TigerBeetle pressure agree that the raster concentration is local to `special.zig`; the first cut is undercurl extraction, then generated-special family owners by coarse raster domains, not host/display fallbacks and not helper shattering.
+- Next handoff or blocker: reviewer should gate the slice package; no reference override is needed from current evidence.
+
+3. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: review the raster special ownership compression planning package for source-backed ranking, exact slice contracts, and accountability.
+- How one task went: the package correctly identifies `special.zig` as the current raster concentration, but I rejected it because fallback ranking evidence is incomplete and slices 4-5 still leave owner/helper decisions and proof obligations to the coder.
+- Next handoff or blocker: researcher must tighten fallback citations, replace invented coarse owners with source-backed boundaries, and rewrite per-slice files/tests/stop conditions so execution requires zero coder invention.
+
+4. Role: researcher
+- Session id: `research-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: repair the raster special planning artifact against the reviewer rejection.
+- How one task went: added exact fallback seam citations for all ranked alternatives, replaced the invented slice-4 and slice-5 owners with current-source boundaries (`rasterizeGeneratedBlockAlpha` for block+braille and `.legacy_computing` for sextant-through-branch), and rewrote every slice with exact proof roots plus explicit include/exclude status for `symbol_map.zig`, `resolver.zig`, `lane.zig`, `grouping.zig`, `glyph_raster.zig`, and `scene.zig`.
+- Next handoff or blocker: reviewer should re-gate the repaired package; from current evidence the plan is `accept-ready`.
+
+5. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: re-gate the repaired raster special ownership compression planning package.
+- How one task went: fallback ranking and slice 4-5 naming are improved, but slice 5 still retains legacy-only helpers inside `generated_special.zig`, and the research artifact still misses required workflow/output-contract elements.
+- Next handoff or blocker: researcher must repair slice 5 retained-owner rules and bring the artifact into exact `loop/researcher.md` contract compliance before re-review.
+
+6. Role: researcher
+- Session id: `research-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: final repair pass on the raster special planning artifact against the remaining reviewer findings.
+- How one task went: fixed the sources-read contract to match `loop/researcher.md`, added accountable compact-anchor-map/sprint-scratchpad/required-tests sections, and tightened slice 5 so legacy-only helpers at `special.zig:317-318,784-866` move into `special_legacy_computing.zig` while `generated_special.zig` retains only truly shared helpers.
+- Next handoff or blocker: reviewer should re-gate the repaired package; from current source and reference evidence it is `accept-ready`.
+
+7. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: final re-gate the repaired raster special ownership compression planning artifact after the read-order fix.
+- How one task went: accepted; the repaired research artifact now follows `reference-index.md` reference order, includes the full `loop/researcher.md` output contract, and resolves the prior slice-5 retained-helper ambiguity.
+- Next handoff or blocker: orchestrator may treat the planning package as accepted and proceed with the loop workflow; no blocker from review.

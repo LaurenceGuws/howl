@@ -31,6 +31,7 @@ Active restart note:
   - `27317db` `Finish scene sprite owner`
 - New active planning sprint: raster special ownership compression.
 - Primary planning target: `howl-render/src/text/raster/special.zig`.
+- Planning package accepted; no execution slice seeded yet.
 - Active planning sessions:
   - orchestrator `orch-2026-06-13-raster-special-01`
   - researcher `research-2026-06-13-raster-special-01`
