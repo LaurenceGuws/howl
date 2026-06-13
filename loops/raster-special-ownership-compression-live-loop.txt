@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: planning accepted; Slice 1 not yet seeded.
+Status: Slice 1 seeded for execution; reviewer-gated implementation pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-raster-special-01`.
 
 Reviewer session id: `review-2026-06-13-raster-special-01`.
 
-Loop commit-hash receipt: documentation-only seed pending orchestrator commit.
+Loop commit-hash receipt: root `0e53a8e`.
 
 Shared scratchpad rule:
 
@@ -29,10 +29,10 @@ Active research target:
 
 Current step:
 
-- The planning package is accepted.
-- `howl-render/src/text/raster/special.zig` remains the first pressure seam.
-- No execution slice is seeded yet.
-- No implementation is authorized until orchestrator seeds Slice 1 with coder session id and commit-hash receipt fields.
+- The planning package is accepted at root `0e53a8e`.
+- Slice 1, `Extract undercurl owner`, is the active execution slice.
+- Only Slice 1 is authorized.
+- Coder session id: `coder-2026-06-13-raster-special-01`.
 
 Exact user direction:
 
@@ -42,16 +42,36 @@ Exact user direction:
 
 Exact non-goals:
 
-- No implementation during planning.
-- No ABI/header churn.
-- No benchmark theater.
-- No render-wide redesign.
+- No generated-special family move.
+- No route-table change.
+- No ABI/header change.
+- No host/display edit.
 
 Exact stop conditions:
 
-- Stop if planning cannot name exact slice boundaries, allowed files, tests, non-goals, and stop conditions.
-- Stop if the references point to a conflicting shape that needs explicit user review.
-- Stop if active accountability files drift from the real live state.
+- Stop if the extraction requires changing `howl-render/src/text/raster/rasterizer.zig:133-136`.
+- Stop if the extraction requires changing any field or enum in `contract.SpriteRasterRequest`.
+
+Slice 1 execution contract:
+
+- Allowed files only:
+  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/raster/undercurl.zig`
+- Required shape:
+  - Move `requestForUndercurl` and `rasterizeUndercurlAlpha` from `howl-render/src/text/raster/special.zig:5-47` into `howl-render/src/text/raster/undercurl.zig`.
+  - Move the undercurl-only helper `addAlpha` from `howl-render/src/text/raster/special.zig:1811-1817` into `howl-render/src/text/raster/undercurl.zig`.
+  - Keep `howl-render/src/text/raster/special.zig` as the curated re-export root so `howl-render/src/text/raster/rasterizer.zig:133-136` stays unchanged.
+  - Do not move any generated-special entrypoint or helper.
+- Required assertions:
+  - preserve `width_px > 0` and `height_px > 0` assertions on the undercurl request path
+  - preserve the undercurl alpha raster bounds assumptions currently enforced by `addAlpha`
+- Required proof roots and runs:
+  - `howl-render/src/text/raster/special_test.zig:10-19`
+  - `howl-render/src/text/scene.zig:768-790`
+  - package-local run: `cd howl-render && zig build test:unit`
+- Verification handoff requirements:
+  - coder must report files changed, concise implementation summary, verification run/results, blockers/deviations, coder session id, and commit-hash handoff status
+  - reviewer verdict plus exact findings is required before acceptance
 
 Team scratchpad
 
@@ -103,3 +123,10 @@ Team scratchpad
 - Intended task: final re-gate the repaired raster special ownership compression planning artifact after the read-order fix.
 - How one task went: accepted; the repaired research artifact now follows `reference-index.md` reference order, includes the full `loop/researcher.md` output contract, and resolves the prior slice-5 retained-helper ambiguity.
 - Next handoff or blocker: orchestrator may treat the planning package as accepted and proceed with the loop workflow; no blocker from review.
+
+8. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: close the accepted planning receipt and seed Slice 1 for execution.
+- How one task went: committed the accepted planning package as root `0e53a8e` and condensed Slice 1 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-01`.
+- Next handoff or blocker: coder should implement Slice 1 only and return verification plus commit-hash handoff status for reviewer gating.

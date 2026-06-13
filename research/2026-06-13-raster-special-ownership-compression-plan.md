@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-raster-special-01`.
 
 Reviewer session id: `review-2026-06-13-raster-special-01`.
 
-Planning commit-hash receipt: documentation-only research repair pending orchestrator commit closure.
+Planning commit-hash receipt: root `0e53a8e`.
 
 Question:
 

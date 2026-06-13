@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: planning accepted; execution not yet seeded.
+Status: Slice 1 seeded for execution; reviewer-gated implementation pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-raster-special-01`.
 
 Reviewer session id: `review-2026-06-13-raster-special-01`.
 
-Commit-hash receipt: documentation-only seed pending orchestrator commit.
+Commit-hash receipt: root `0e53a8e`.
 
 ## Problem Statement
 
@@ -46,10 +46,9 @@ Commit-hash receipt: documentation-only seed pending orchestrator commit.
 
 ## Execution Authorization
 
-- No coding is authorized yet.
-- Planning is accepted.
-- Orchestrator may seed Slice 1 next through the live-loop execution contract with coder session id and commit-hash receipt fields.
-- Until that slice is explicitly seeded, a coder may not read beyond the future assigned execution contract.
+- Slice 1 is authorized through the live-loop execution contract only.
+- The accepted plan is `/home/home/personal/projects/howl/research/2026-06-13-raster-special-ownership-compression-plan.md`.
+- No other slice is authorized.
 
 ## Seed Pressure Anchors
 

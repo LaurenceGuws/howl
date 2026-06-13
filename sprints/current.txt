@@ -31,7 +31,9 @@ Active restart note:
   - `27317db` `Finish scene sprite owner`
 - New active planning sprint: raster special ownership compression.
 - Primary planning target: `howl-render/src/text/raster/special.zig`.
-- Planning package accepted; no execution slice seeded yet.
+- Planning package accepted at root `0e53a8e`.
+- Active execution slice: Slice 1 `Extract undercurl owner`.
+- Active coder session: `coder-2026-06-13-raster-special-01`.
 - Active planning sessions:
   - orchestrator `orch-2026-06-13-raster-special-01`
   - researcher `research-2026-06-13-raster-special-01`
@@ -40,7 +42,7 @@ Active restart note:
 Execution rule:
 
 - No coding is authorized without an accepted reviewer-gated execution slice under the active sprint.
-- This sprint is seeded for research only; no implementation is authorized.
+- Only Slice 1 is authorized, and only through the active loop execution contract.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
