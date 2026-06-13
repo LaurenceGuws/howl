@@ -1,0 +1,91 @@
+Render scene ownership compression live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: planning accepted; Slice 1 not yet seeded.
+
+Orchestrator session id: `orch-2026-06-13-render-scene-01`.
+
+Researcher session id: `research-2026-06-13-render-scene-01`.
+
+Reviewer session id: `review-2026-06-13-render-scene-01`.
+
+Loop commit-hash receipt: documentation-only seed pending orchestrator commit.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, outcome, and handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-render-scene-ownership-compression-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-render-scene-ownership-compression-plan.md`
+
+Current step:
+
+- The planning package is accepted.
+- `howl-render/src/text/scene.zig` remains the first pressure seam.
+- Slice 1 is the next authorized candidate, but no execution contract has been seeded yet.
+- No implementation is authorized until orchestrator seeds Slice 1 with coder session id and commit-hash receipt fields.
+
+Exact user direction:
+
+- Use the next sprint on the render complexity bill.
+- Start with `howl-render/src/text/scene.zig` unless references and current source prove otherwise.
+- Researcher must pressure the target with reference guidance before execution planning is accepted.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No ABI/header churn.
+- No benchmark theater.
+- No render-wide redesign.
+
+Exact stop conditions:
+
+- Stop if planning cannot name exact slice boundaries, allowed files, tests, non-goals, and stop conditions.
+- Stop if the references point to a conflicting shape that needs explicit user review.
+- Stop if active accountability files drift from the real live state.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: seed the next planning sprint around the render complexity bill with `scene.zig` as the first pressure target.
+- How one task went: converted the user-provided ranking into live sprint, research, and loop artifacts; kept execution unauthorized and required reference-first pressure on `howl-render/src/text/scene.zig` before any slice plan can be accepted.
+- Next handoff or blocker: researcher must write the full planning package and either prove `scene.zig` is the first cut or prove one ranked fallback seam must preempt it.
+
+2. Role: researcher
+- Session id: `research-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: re-prove whether `howl-render/src/text/scene.zig` is the first owner-compression cut and write the full source-backed sprint package.
+- How one task went: current source and Alacritty/TigerBeetle pressure both point to `scene.zig` first; the file currently mixes damage/span truth, rect/fill synthesis, and sprite/raster assembly, with real duplication already visible in `cluster.zig` and `direct_scene.zig`.
+- Next handoff or blocker: reviewer should gate the attached three-slice plan; no implementation is authorized until the reviewer accepts and the orchestrator seeds an execution slice with coder session id and commit-hash receipt fields.
+
+3. Role: reviewer
+- Session id: `review-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: review the active render scene ownership compression planning package for executability, source pressure, and workflow completeness.
+- How one task went: rejected the plan because Slice 1 leaves the outward damage-type boundary to coder invention, Slice 2 does not explicitly carve curly underline and undercurl ownership, and the listed test commands are substring filters rather than exact proof obligations.
+- Next handoff or blocker: researcher must tighten the slice contracts and replace the broad test filters with exact named proofs before reviewer acceptance.
+
+4. Role: researcher
+- Session id: `research-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: repair the rejected render scene ownership plan so the slices are executable without coder invention.
+- How one task went: tightened Slice 1 to require caller edits instead of scene-owned damage aliases, proved the exact curly-vs-rect underline split from current source, and replaced broad test filters with exact full proof names including the cluster partial-damage checks.
+- Next handoff or blocker: reviewer should re-gate the repaired three-slice package; no implementation is authorized until reviewer acceptance and orchestrator seeding of an execution slice.
+
+5. Role: reviewer
+- Session id: `review-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: re-gate the repaired render scene ownership compression planning package against the prior rejection points and workflow contract.
+- How one task went: accepted the repaired package; Slice 1 now forbids scene-owned outward damage aliases and requires caller edits, Slice 2 now preserves the exact curly/undercurl sprite carve-out, and the proof obligations are now exact named tests tied to existing owners.
+- Next handoff or blocker: orchestrator may mark the planning package accepted, close or carry the open planning commit-hash receipt, and seed the first execution slice with coder session id and commit-hash receipt fields.
