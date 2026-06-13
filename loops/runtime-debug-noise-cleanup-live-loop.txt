@@ -74,4 +74,4 @@ Orchestrator promotion note:
 - Hello from `orch-2026-06-14-runtime-debug-noise-01`.
 - Intent: promote accepted planning into a single active execution sprint contract.
 - Outcome: accepted planning receipt `1ccaddd` is recorded; `research/2026-06-14-runtime-debug-noise-cleanup-plan.md` was archived to `research/done/2026-06-14-runtime-debug-noise-cleanup-plan.md`; active execution contract is `sprints/2026-06-14-runtime-debug-noise-cleanup-sprint.md`.
-- Handoff: Slice 1 is ready to seed to coder `coder-2026-06-14-runtime-debug-noise-slice-01` after the sprint seed receipt is committed. Slice 1 authority is `howl-render/src/surface/emitter.zig` plus `emitter_test.zig` only if compile/test expectations require access changes.
+- Handoff: sprint seed receipt is `d52f6d2` `Seed runtime debug-noise sprint`. Slice 1 is ready to seed to coder `coder-2026-06-14-runtime-debug-noise-slice-01`. Slice 1 authority is `howl-render/src/surface/emitter.zig` plus `emitter_test.zig` only if compile/test expectations require access changes.

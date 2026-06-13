@@ -8,7 +8,7 @@ Status:
 - Reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
 - Planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
 - Accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
-- Sprint seed receipt: pending orchestrator commit.
+- Sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
 
 Problem:
 

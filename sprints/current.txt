@@ -19,13 +19,13 @@ Active loops:
 
 Active restart note:
 
-- Active planning scope: runtime debug-noise cleanup.
+- Active sprint scope: runtime debug-noise cleanup.
 - Orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
 - Researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
 - Reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
 - Planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
 - Accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
-- Active sprint seed receipt: pending orchestrator commit.
+- Active sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
 - Next execution slice: Slice 1 `howl-render/src/surface/emitter.zig`, coder session `coder-2026-06-14-runtime-debug-noise-slice-01`.
 - Implementation is authorized only through the active sprint and loop contract.
 - Previous latest closed sprint: host render-surface ownership.
