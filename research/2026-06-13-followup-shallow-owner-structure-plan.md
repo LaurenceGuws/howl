@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-followup-shallow-structure-01`.
 
 Reviewer session id: `review-2026-06-13-followup-shallow-structure-01`.
 
-Planning commit-hash receipt: pending.
+Planning seed commit-hash receipt: root `66927e2`.
 
 Question:
 
