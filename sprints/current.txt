@@ -27,7 +27,7 @@ Active restart note:
 - Slice 4 and Slice 5 remaining plan is researcher-repaired and reviewer-accepted under the explicit final no-`terminal/` override; plan repair commit receipt root `27bcb75`.
 - Slice 4, `VT protocol bucket removal toward final no-wrapper layout`, is accepted in `howl-vt` `538a96b` and root `3a3ea9d`.
 - Slice 5, `Delete temporary VT terminal wrapper and finalize shallow src layout`, is accepted in `howl-vt` `4e76640` and root `d1188ad`.
-- The combined PTY+VT folder owner structure sprint is complete and closed; final sprint close root receipt pending.
+- The combined PTY+VT folder owner structure sprint is complete and closed; final sprint close root receipt `610ea74`.
 - User direction: PTY is small, so PTY and VT can be cleaned up together in one sprint.
 - Explicit user override receipt: user said, "ok slice 5 will be deleting terminal anmd moving all its content into src/ terminal makes the fodlers all 1 deeper for no reason. you can delegate until all that is done". This overrides the Ghostty-shaped `src/terminal/` subdomain pressure for the final Howl VT tree because the user rejected the extra folder depth as unjustified for Howl. Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 - Reference pressure: Ghostty terminal and termio structure is primary for VT and PTY owner/folder shape; Alacritty terminal/event_loop/tty pressure is secondary where it sharpens PTY/runtime folder boundaries.

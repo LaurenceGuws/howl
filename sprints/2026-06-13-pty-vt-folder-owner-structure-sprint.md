@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: closed; final close receipt pending.
+Status: closed.
 
 Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 
@@ -58,7 +58,7 @@ Commit-hash receipt: root `efbd9ad`.
 ## Close Status
 
 - Sprint implementation complete.
-- Final close root receipt pending.
+- Final close root receipt: `610ea74`.
 
 ## Planning Repair Receipts
 
