@@ -1,3 +1,9 @@
+Historical authority: sprint artifact for the 2026-06-13 follow-up shallow owner structure sprint.
+
+Why superseded or done: sprint closed with final root receipts `eee6296` and `a185b39`.
+
+Must not be used for: current live authority, execution authorization, or new planning.
+
 # Sprint: Followup Shallow Owner Structure
 
 Date: 2026-06-13.

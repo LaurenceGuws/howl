@@ -1,8 +1,14 @@
+Historical authority: accepted research and repaired execution plan during the 2026-06-13 follow-up shallow owner structure sprint.
+
+Why superseded or done: sprint closed with final root receipts `eee6296` and `a185b39`.
+
+Must not be used for: current live authority, execution authorization, or new planning.
+
 # Followup Shallow Owner Structure Plan
 
 Date: 2026-06-13.
 
-Status: repaired planning artifact; reviewer re-gate required.
+Status: closed historical artifact.
 
 Role owner: researcher.
 
@@ -118,49 +124,17 @@ Question:
 ### Compact package scan
 
 - `howl-pty/src/` is already shallow. The current tree contains only top-level owner files: `unix.zig`, `libhowl_pty.zig`, `pty.zig`, `posix.zig`, `ffi.zig`, and `session.zig`. Its shipped export root stays direct through `src/libhowl_pty.zig:1-19` and does not hide behind an extra source folder wrapper.
-- `howl-vt/src/` no longer has a current parser owner file at `src/parser/main.zig`. The owner body now lives at `src/parser.zig:1-658`, while `src/ffi/main.zig` remains the one still-existing nested `main.zig` seam under current product source.
+- `howl-vt/src/` still carries the broader parser-root move in the current dirty worktree. `git status --short` and `git diff --name-status` in `/home/home/personal/projects/howl/howl-vt` prove one added owner root, one deleted nested owner root, and twenty-two exact importer edits: new `src/parser.zig`, deleted `src/parser/main.zig`, and importer churn in `src/csi_params.zig`, `src/host_state.zig`, `src/howl_vt.zig`, `src/osc.zig`, `src/parser/events.zig`, `src/parser/owned_actions.zig`, `src/parser/string_control.zig`, `src/screen.zig`, `src/screen/style.zig`, `src/stream_terminal.zig`, `src/terminal.zig`, `src/vocabulary.zig`, `test/unit/csi_mapping_test.zig`, `test/unit/parser/csi_test.zig`, `test/unit/parser/events_test.zig`, `test/unit/parser/main_test.zig`, `test/unit/parser/string_control_test.zig`, `test/unit/report_test.zig`, `test/unit/route_test.zig`, `test/unit/screen/write_test.zig`, `test/unit/screen_test.zig`, and `test/unit/terminal_surface_test.zig`.
 - `howl-render/src/` still has one pure unit-test wrapper chain: `build.zig:53-68` points the unit root at `src/test_unit.zig`, and `src/test_unit.zig:1-3` immediately forwards into `src/test/unit/root.zig:1-12`.
 - `howl-linux-host/src/` still contains same-name folder/file seams at `src/config/config.zig`, `src/display/display.zig`, and `src/input/input.zig`, but each one is a substantial owner file rather than a pass-through wrapper: `config/config.zig:13-74`, `display/display.zig:57-225`, and `input/input.zig:68-260`.
 
 ### Remaining debt that is still meaningful
 
-1. The VT parser root flattening is only partially complete in the current tree.
-   - The parser owner body now lives at `howl-vt/src/parser.zig:1-658`.
-   - Current source proves the prior nineteen external importer retargets are already in place at the shallow owner root:
-     - Product-source importers:
-       - `howl-vt/src/vocabulary.zig:1`
-       - `howl-vt/src/stream_terminal.zig:4`
-       - `howl-vt/src/terminal.zig:6`
-       - `howl-vt/src/host_state.zig:6`
-       - `howl-vt/src/osc.zig:3`
-       - `howl-vt/src/howl_vt.zig:8`
-       - `howl-vt/src/csi_params.zig:3`
-       - `howl-vt/src/screen.zig:4`
-       - `howl-vt/src/screen/style.zig:2`
-     - Unit-test importers reached by `howl-vt/test/unit.zig:5-20` through `howl-vt/test_unit.zig:1-4`:
-       - `howl-vt/test/unit/csi_mapping_test.zig:4`
-       - `howl-vt/test/unit/terminal_surface_test.zig:2`
-       - `howl-vt/test/unit/screen_test.zig:4`
-       - `howl-vt/test/unit/report_test.zig:3`
-       - `howl-vt/test/unit/route_test.zig:4`
-       - `howl-vt/test/unit/screen/write_test.zig:4`
-       - `howl-vt/test/unit/parser/csi_test.zig:3`
-       - `howl-vt/test/unit/parser/events_test.zig:3`
-       - `howl-vt/test/unit/parser/main_test.zig:3`
-       - `howl-vt/test/unit/parser/string_control_test.zig:3`
-   - `howl-vt/src/parser/main.zig` is absent in current source, but three internal parser helpers still import the deleted path today:
-     - `howl-vt/src/parser/owned_actions.zig:2`
-     - `howl-vt/src/parser/string_control.zig:2`
-     - `howl-vt/src/parser/events.zig:1`
-   - Those stale helper imports are still live proof roots rather than dead files:
-     - `howl-vt/src/parser.zig:3` imports `parser/string_control.zig`
-     - `howl-vt/src/stream_terminal.zig:2` imports `parser/events.zig`
-     - `howl-vt/src/route.zig:6` imports `parser/events.zig`
-     - `howl-vt/src/dcs.zig:1` imports `parser/events.zig`
-     - `howl-vt/src/howl_vt.zig:9` imports `parser/owned_actions.zig`
-     - `howl-vt/test/unit/parser/main_test.zig:2` imports `parser/owned_actions.zig`
-     - `howl-vt/test/unit/parser/string_control_test.zig:2` and `:4` import `parser/owned_actions.zig` and `parser/string_control.zig`
-     - `howl-vt/test/unit/parser/events_test.zig:2` imports `parser/events.zig`
+1. The VT parser root flattening is already the real current dirty-slice boundary, not a future three-file repair.
+   - The parser owner body now lives at `howl-vt/src/parser.zig:1-658`, and Ghostty-style direct owner naming is visible immediately at the root import lines: `howl-vt/src/howl_vt.zig:8`, `howl-vt/src/vocabulary.zig:1`, `howl-vt/src/terminal.zig:6`, `howl-vt/src/stream_terminal.zig:4`, `howl-vt/src/host_state.zig:6`, `howl-vt/src/osc.zig:3`, `howl-vt/src/csi_params.zig:3`, `howl-vt/src/screen.zig:4`, and `howl-vt/src/screen/style.zig:2` all now import `parser.zig` or `../parser.zig`.
+   - The internal helper seam is also already retargeted in current source: `howl-vt/src/parser/owned_actions.zig:2`, `howl-vt/src/parser/string_control.zig:2`, and `howl-vt/src/parser/events.zig:1` now import `../parser.zig`.
+   - The parser unit and VT unit proof roots are already retargeted too: `howl-vt/test/unit/csi_mapping_test.zig:4`, `howl-vt/test/unit/terminal_surface_test.zig:2`, `howl-vt/test/unit/screen_test.zig:4`, `howl-vt/test/unit/report_test.zig:3`, `howl-vt/test/unit/route_test.zig:4`, `howl-vt/test/unit/screen/write_test.zig:4`, `howl-vt/test/unit/parser/csi_test.zig:3`, `howl-vt/test/unit/parser/events_test.zig:3`, `howl-vt/test/unit/parser/main_test.zig:3`, and `howl-vt/test/unit/parser/string_control_test.zig:3` all import `src/parser.zig` now.
+   - `rg -n '@import\("main\\.zig"\)' src/parser test/unit/parser` in `/home/home/personal/projects/howl/howl-vt` returns no remaining parser self-importers, so the earlier three-file repair contract is stale against the actual worktree rather than the code still being unfinished.
    - The rest of the VT owner roots already use the shallower pattern in the same package, for example `screen.zig:1-320`, `terminal.zig:1-272`, and `publication.zig:1-39` keep the owner file at `src/<owner>.zig` and leave the helper files in `src/<owner>/`.
 
 2. Render unit-test wiring still spends one fake wrapper file plus one fake wrapper folder level on a curated proof root.
@@ -224,20 +198,18 @@ Question:
   - `howl-pty/src/libhowl_pty.zig:1-19`
 - Current Howl remaining debt anchors:
   - `howl-vt/src/parser.zig:1-658`
+  - `howl-vt/src/howl_vt.zig:8-9`
   - `howl-vt/src/parser/owned_actions.zig:2`
   - `howl-vt/src/parser/string_control.zig:2`
   - `howl-vt/src/parser/events.zig:1`
   - `howl-vt/src/vocabulary.zig:1`
-  - `howl-vt/src/stream_terminal.zig:2` and `:4`
+  - `howl-vt/src/stream_terminal.zig:4`
   - `howl-vt/src/terminal.zig:6`
   - `howl-vt/src/host_state.zig:6`
   - `howl-vt/src/osc.zig:3`
-  - `howl-vt/src/howl_vt.zig:8-9`
   - `howl-vt/src/csi_params.zig:3`
   - `howl-vt/src/screen.zig:4`
   - `howl-vt/src/screen/style.zig:2`
-  - `howl-vt/src/route.zig:6`
-  - `howl-vt/src/dcs.zig:1`
   - `howl-vt/test_unit.zig:1-4`
   - `howl-vt/test/unit.zig:5-20`
   - `howl-vt/test/unit/csi_mapping_test.zig:4-5`
@@ -259,12 +231,13 @@ Question:
 ### VT parser owner
 
 - Owner role: parser state machine owner for VT input parsing.
-- Current shape debt: the owner body already lives at `src/parser.zig`, but three internal helper files still import deleted `src/parser/main.zig` while the rest of the package already uses the shallower `src/<owner>.zig` pattern.
+- Current shape debt: the live dirty worktree already performed the broader owner-root move, but the accepted live Slice 1 contract still falsely narrows it to three helper files. Accountability debt is now in the planning boundary, not in the product shape.
 - Required shape:
   - keep `howl-vt/src/parser.zig` as the parser owner file
   - keep helper files under `howl-vt/src/parser/`
   - do not recreate `howl-vt/src/parser/main.zig`
-  - update the three stale internal helper imports to use `@import("../parser.zig")`
+  - keep the exact current importer retarget set that now points at `src/parser.zig` or `../parser.zig`
+  - treat the broader parser-root move as one accountable slice with one exact file list
 - Explicit non-shape: do not flatten helper files like `parse_table.zig`, `owned_actions.zig`, `string_control.zig`, or `utf8.zig` unless the slice proves they are wrappers too. Current source does not prove that.
 
 ### Render unit proof root
@@ -289,11 +262,12 @@ Question:
   - There is still meaningful debt.
   - It is small and exact.
   - The debt is not broad host-folder flattening.
-  - The current active VT debt is no longer the owner move itself. The owner already sits at `src/parser.zig`; the remaining blocker is three stale internal parser helper imports that still target deleted `src/parser/main.zig`.
+  - The current active VT debt is no longer product-code shape. The parser-root move itself is already present in the dirty worktree, and the blocker is that the active Slice 1 contract no longer matches the actual diff.
   - The render debt is still one unit-test wrapper chain under `src/test/unit/root.zig`.
 - Slice-boundary update from fresh current-source proof:
   - The original accepted Slice 1 boundary is no longer the right execution boundary for the live tree.
-  - The executable Slice 1 is now the narrow completion slice that fixes the three remaining internal parser helper imports without reopening the already-completed external importer retargets.
+  - The smallest accountable Slice 1 that matches reality is the full current parser-root move already present in `/home/home/personal/projects/howl/howl-vt`.
+  - The broader parser-root move is still source-backed and acceptable because Ghostty keeps the parser owner at a direct owner file (`Parser.zig:1-10`), Howl already uses the same shallow `src/<owner>.zig` pattern for peer VT owners, and no current reference pressure supports keeping `src/parser/main.zig`.
 - Things explicitly not promoted:
   - `howl-vt/src/ffi/main.zig`
   - `howl-linux-host/src/config/config.zig`
@@ -305,24 +279,66 @@ Question:
 
 ### Slice 1
 
-- Name: Finish VT parser root flattening.
+- Name: Flatten VT parser owner root.
 - Session ids:
   - orchestrator: `orch-2026-06-13-followup-shallow-structure-01`
   - researcher: `research-2026-06-13-followup-shallow-structure-01`
   - reviewer: `review-2026-06-13-followup-shallow-structure-01`
 - Allowed files:
+  - `/home/home/personal/projects/howl/howl-vt/src/parser.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/parser/main.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/csi_params.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/host_state.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/howl_vt.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/osc.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/parser/events.zig`
   - `/home/home/personal/projects/howl/howl-vt/src/parser/owned_actions.zig`
   - `/home/home/personal/projects/howl/howl-vt/src/parser/string_control.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/parser/events.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/screen.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/screen/style.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/stream_terminal.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/terminal.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/vocabulary.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/csi_mapping_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/parser/csi_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/parser/events_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/parser/main_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/parser/string_control_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/report_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/route_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/screen/write_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/screen_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/test/unit/terminal_surface_test.zig`
 - Required shape:
-  - retarget these exact current internal helper imports from `@import("main.zig")` to `@import("../parser.zig")`:
+  - treat the actual current dirty worktree as the slice boundary: add `src/parser.zig`, delete `src/parser/main.zig`, and keep the exact twenty-two importer edits listed above as the only other Slice 1 file changes
+  - keep the parser owner body at `src/parser.zig:1-658`
+  - keep helper files under `src/parser/`
+  - keep these exact product-source imports pointing at the shallow owner root:
+    - `howl-vt/src/csi_params.zig:3`
+    - `howl-vt/src/host_state.zig:6`
+    - `howl-vt/src/howl_vt.zig:8`
+    - `howl-vt/src/osc.zig:3`
+    - `howl-vt/src/screen.zig:4`
+    - `howl-vt/src/screen/style.zig:2`
+    - `howl-vt/src/stream_terminal.zig:4`
+    - `howl-vt/src/terminal.zig:6`
+    - `howl-vt/src/vocabulary.zig:1`
+  - keep these exact internal helper imports pointing at `../parser.zig`:
+    - `howl-vt/src/parser/events.zig:1`
     - `howl-vt/src/parser/owned_actions.zig:2`
     - `howl-vt/src/parser/string_control.zig:2`
-    - `howl-vt/src/parser/events.zig:1`
-  - keep the parser owner at `src/parser.zig`
-  - do not recreate `src/parser/main.zig`
-  - leave the nineteen already-retargeted external `src/parser.zig` imports unchanged
-  - keep exported parser names, behavior, constants, and tests unchanged
+  - keep these exact unit-test imports pointing at `src/parser.zig`:
+    - `howl-vt/test/unit/csi_mapping_test.zig:4`
+    - `howl-vt/test/unit/parser/csi_test.zig:3`
+    - `howl-vt/test/unit/parser/events_test.zig:3`
+    - `howl-vt/test/unit/parser/main_test.zig:3`
+    - `howl-vt/test/unit/parser/string_control_test.zig:3`
+    - `howl-vt/test/unit/report_test.zig:3`
+    - `howl-vt/test/unit/route_test.zig:4`
+    - `howl-vt/test/unit/screen/write_test.zig:4`
+    - `howl-vt/test/unit/screen_test.zig:4`
+    - `howl-vt/test/unit/terminal_surface_test.zig:2`
+  - keep exported parser names, behavior, constants, and proof roots unchanged
 - Required tests:
   - in `/home/home/personal/projects/howl/howl-vt`: `zig build test:unit`
   - in `/home/home/personal/projects/howl/howl-vt`: `zig build simulate`
@@ -333,13 +349,14 @@ Question:
   - no ABI/export renames
   - no parser behavior changes
   - no helper-file flattening under `src/parser/`
-  - no external importer churn outside the three helper files above
+  - no importer churn outside the exact twenty-two importer files listed in this slice
   - no `ffi/main.zig` changes
   - no simulation redesign
 - Stop conditions:
-  - stop if current source reveals any additional importer of deleted `src/parser/main.zig` beyond `howl-vt/src/parser/owned_actions.zig:2`, `howl-vt/src/parser/string_control.zig:2`, and `howl-vt/src/parser/events.zig:1`
+  - stop if the current `howl-vt` dirty tree contains any parser-root-move file outside this exact twenty-four-file boundary
   - stop if any required fix pressures recreating `src/parser/main.zig`
-  - stop if fixing the three helper imports pressures broader parser-helper or module-root redesign
+  - stop if reviewer proof finds parser-body churn in `src/parser.zig` beyond the owner-file relocation and path-local import updates required by the move
+  - stop if any additional test or product importer needs retargeting beyond the exact list above
 
 ### Slice 2
 
@@ -386,18 +403,19 @@ Question:
 
 ## Risks
 
-1. Slice 1 now touches only three files, but they sit on live product and unit-test paths. The risk is no longer missed external importer churn; it is missing one remaining internal self-import and leaving the build blocked.
-2. Slice 1 could still expose another stale `main.zig` dependency outside the three re-proved helper imports. The stop condition above exists for that case.
+1. Slice 1 now touches a much broader exact file set than the stale live contract admitted. The main risk is accountability drift if any receipt or reviewer note still describes the move as a three-file slice.
+2. Slice 1 verification already passed in reviewer notes, but acceptance can still fail if the actual `howl-vt` diff grows beyond the exact twenty-four-file boundary repaired here.
 3. Slice 2 is structurally tiny, but it can silently drop proofs if the direct import list is not copied exactly.
 
 ## Proof Gaps
 
-- No blocker-level proof gap remains for reviewer gate.
+- No blocker-level product-shape gap remains for reviewer gate.
+- The remaining gap is accountability only: reviewer must re-gate this repaired broader Slice 1 boundary against the actual `howl-vt` dirty tree.
 - I did not find current-source proof that more host-folder flattening is reference-safe, so that work is intentionally not promoted.
 - I did not find current-source proof that `howl-vt/src/ffi/main.zig` is fake debt rather than a reference-backed C-surface aggregator, so that work is intentionally not promoted.
 
 ## Readiness Judgment
 
 - Ready for reviewer gate: yes.
-- Research verdict: meaningful shallow-depth debt remains, but the live Slice 1 execution boundary is now the three-file internal-import repair above, followed by the unchanged render wrapper deletion slice.
+- Research verdict: meaningful shallow-depth debt remains, but the live Slice 1 execution boundary is the broader current parser-root move already present in the dirty `howl-vt` tree, followed by the unchanged render wrapper deletion slice.
 - Commit-hash receipt status: this artifact has been repaired after root `04aa1b2`; reviewer re-gate is required before any new execution or receipt closure.

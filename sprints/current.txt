@@ -7,35 +7,28 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-13-followup-shallow-owner-structure-sprint.md`
+- none
 
 Active research:
 
-- `research/2026-06-13-followup-shallow-owner-structure-plan.md`
+- none
 
 Active loops:
 
-- `loops/followup-shallow-owner-structure-live-loop.txt`
+- none
 
 Active restart note:
 
-- The all-src shallow owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
-- The follow-up shallow owner-structure sprint is complete and closed; final close receipt `eee6296`.
-- User direction: continue deleting fake abstractions and keep `src/` trees as shallow as possible, following the same pressure as the deleted terminal wrapper.
-- Scope pressure: inspect current post-sprint package `src/` trees for remaining fake abstraction folders, needless wrapper files, stale prefixed indirections, and avoidable one-extra-depth structures that survived the first pass.
-- Orchestrator session id: `orch-2026-06-13-followup-shallow-structure-01`.
-- Researcher session id: `research-2026-06-13-followup-shallow-structure-01`.
-- Reviewer session id: `review-2026-06-13-followup-shallow-structure-01`.
-- Planning seed commit-hash receipt: root `66927e2`.
-- Planning status: reviewer-accepted after repair.
-- Planning package commit-hash receipt: root `04aa1b2`.
-
-- Slice 1, `Flatten VT parser owner root`, is accepted in `howl-vt` `8d95998`; root `eee6296`.
-- Slice 2, `Delete render unit-test wrapper chain`, is accepted in `howl-render` `dbb8669`; root `eee6296`.
+- The follow-up shallow owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
+- No active shallow-owner sprint is seeded.
+- Latest closed sprint: follow-up shallow owner structure, final close `eee6296`, final receipt `a185b39`.
+- Latest completed slices:
+  - `howl-vt` parser root flatten: `8d95998`
+  - `howl-render` unit wrapper deletion: `dbb8669`
 
 Execution rule:
 
-- No further coding is authorized from this sprint.
+- No coding is authorized without a new seeded sprint.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
