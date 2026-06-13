@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 4 seeded for execution; reviewer-gated implementation pending.
+Status: Slice 5 seeded for execution; reviewer-gated implementation pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -33,9 +33,11 @@ Current step:
 - Slice 1, `Extract undercurl owner`, is accepted in `howl-render` `42b68b8`; root `a8c3e50`.
 - Slice 2, `Create generated-special root and extract box owner`, is accepted in `howl-render` `a542d8a`; root `c52f69d`.
 - Slice 3, `Extract powerline owner`, is accepted in `howl-render` `24286d6`; root `0a73776`.
-- Slice 4, `Extract the current block-plus-braille dispatch owner`, is the active execution slice.
-- Only Slice 4 is authorized.
-- Coder session id: `coder-2026-06-13-raster-special-04`.
+- Slice 4, `Extract the current block-plus-braille dispatch owner`, is accepted in `howl-render` `1986d89`.
+- Root receipt for Slice 4 is pending orchestrator commit.
+- Slice 5, `Extract the current legacy-computing owner`, is the active execution slice.
+- Only Slice 5 is authorized.
+- Coder session id: `coder-2026-06-13-raster-special-05`.
 
 Exact user direction:
 
@@ -45,46 +47,72 @@ Exact user direction:
 
 Exact non-goals:
 
-- No sextant move.
-- No octant move.
-- No branch move.
-- No support-table edit.
+- No route-table expansion.
+- No ABI/header change.
+- No host/display edit.
+- No render-wide redesign.
 
 Exact stop conditions:
 
-- Stop if the move requires changing the current route split between `.block`, `.braille`, and `.legacy_computing` proved by `howl-render/src/text/symbol_map.zig:6-10`.
-- Stop if the move requires changing provider fallback routing proved by `howl-render/src/text/ft_hb/glyph_raster.zig:156-163,239-261`.
+- Stop if the move requires changing the `.legacy_computing` route proved by `howl-render/src/text/symbol_map.zig:10,31-49` and `howl-render/src/text/resolver.zig:307-327,330-341`.
+- Stop if the move requires retaining any legacy-only helper from `howl-render/src/text/raster/special.zig:317-318,784-866` inside `generated_special.zig`.
+- Stop if the move requires introducing any new generic helper bucket outside `generated_special.zig`.
 
-Slice 4 execution contract:
+Slice 5 execution contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/raster/generated_special.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special_block_braille.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special_legacy_computing.zig`
 - Required shape:
-  - Move the current block-plus-braille dispatch owner from `howl-render/src/text/raster/special.zig:178-184,1369-1439,1688-1795` out of `generated_special.zig` and into `howl-render/src/text/raster/special_block_braille.zig`.
-  - `special_block_braille.zig` owns exactly:
-    - `rasterizeGeneratedBlockAlpha`
-    - `rasterizeBlockElementAlpha`
-    - `fillRows`
-    - `fillCols`
-    - `BlockQuadrant`
-    - `fillQuadrants`
-    - `fillQuadrant`
-    - `ShadeDensity`
-    - `fillShade`
-    - `rasterizeBrailleAlpha`
-    - `drawBrailleDotAlpha`
-    - `BrailleLayout`
-    - `brailleLayout`
-    - `BrailleDotCoverageCtx`
-    - `supersampledBrailleDotCoverage`
-    - `brailleDotContains`
-  - `generated_special.zig` keeps the exact shared helpers already used outside this owner:
-    - `Range`
-    - `eighthPartitionRange`
+  - Move the current legacy-computing raster owner from `howl-render/src/text/raster/special.zig:186-239,261-866,1255-1367` out of `generated_special.zig` and into `howl-render/src/text/raster/special_legacy_computing.zig`.
+  - `special_legacy_computing.zig` owns exactly:
+    - `rasterizeGeneratedEightBarAlpha`
+    - `rasterizeGeneratedSextantAlpha`
+    - `rasterizeEightBarAlpha`
+    - `rasterizeGeneratedOctantAlpha`
+    - `generatedOctantPattern`
+    - `rasterizeGeneratedSmoothMosaicAlpha`
+    - `smoothMosaicPoints`
+    - `drawSmoothMosaic`
+    - `SpriteEdge`
+    - `AlphaCorner`
+    - `rasterizeGeneratedHalfTriangleAlpha`
+    - `drawHalfTriangle`
+    - `rasterizeGeneratedEightBarCompositeAlpha`
+    - `SpriteShade`
+    - `rasterizeGeneratedShadeCornerCrossAlpha`
+    - `drawCheckerShade`
+    - `drawCrossShade`
+    - `applyCornerMask`
+    - `rasterizeGeneratedMidLineAlpha`
+    - `drawMidLine`
+    - `rasterizeGeneratedBranchAlpha`
+    - `BranchNode`
+    - `BranchEdge`
+    - `drawBranchNode`
+    - `drawBranchLine`
+    - `drawBranchArc`
+    - `fillTriangleAlpha`
+    - `pointInTriangle`
+    - `triangleEdge`
+    - `drawSegmentStrokeAlpha`
+    - `distanceToSegment`
+    - `fillCircleAlpha`
+    - `drawCircleArcAlpha`
+    - `rasterizeOctantAlpha`
+    - `fillOctantSegment`
+    - `fourthRange`
+    - `octantMask`
+    - `rasterizeSextantAlpha`
+    - `drawSextantRow`
+    - `fillSextantCell`
+  - `generated_special.zig` keeps only the helpers that are still truly shared after slices 1 through 4:
+    - public generated-special entrypoints and family dispatch
     - `PointF`
     - `lineY`
     - `drawLineAlpha`
+    - `Range`
+    - `eighthPartitionRange`
     - `supersampledCoverage`
     - `fillRectAlpha`
     - `saturatingSubU16`
@@ -92,10 +120,11 @@ Slice 4 execution contract:
     - `pixelOffset`
     - `pixelCount`
     - `count32`
+  - Legacy-only helpers from `howl-render/src/text/raster/special.zig:317-318,784-866` must not remain in `generated_special.zig`.
 - Required proof roots and runs:
-  - `howl-render/src/text/raster/special_test.zig:113-171,216-301`
+  - `howl-render/src/text/raster/special_test.zig:60-111,302-310,312-378,628-679`
   - `howl-render/src/text/ft_hb/glyph_raster.zig:239-261`
-  - `howl-render/src/text/symbol_map.zig:22-24,44-51`
+  - `howl-render/src/text/symbol_map.zig:31-41,44-51`
   - `howl-render/src/text/resolver.zig:294-342`
   - `howl-render/src/text/lane.zig:449-465`
   - `howl-render/src/text/shape/grouping.zig:259-275`
@@ -259,3 +288,31 @@ Team scratchpad
 - Intended task: close the Slice 3 root receipt and seed Slice 4 for execution.
 - How one task went: recorded Slice 3 root receipt `0a73776` and condensed Slice 4 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-04`.
 - Next handoff or blocker: coder should implement Slice 4 only and return verification plus commit-hash handoff status for reviewer gating.
+
+23. Role: coder
+- Session id: `coder-2026-06-13-raster-special-04`
+- Hello: hi
+- Intended task: implement Slice 4 only inside the allowed raster files.
+- How one task went: moved the block-plus-braille dispatch owner into `special_block_braille.zig`, retained the contract-required shared helper surface in `generated_special.zig`, and passed `zig fmt` plus `cd howl-render && zig build test:unit`.
+- Next handoff or blocker: reviewer should gate the Slice 4 diff; no commit hash exists yet because git was intentionally untouched.
+
+24. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: gate the executed Slice 4 diff for block-plus-braille owner extraction against the accepted execution contract.
+- How one task went: accepted; `special_block_braille.zig` now owns the exact block-plus-braille dispatch surface, `generated_special.zig` retains the contract-required shared helper surface, and the recorded verification receipt shows `zig fmt` plus `cd howl-render && zig build test:unit` passed.
+- Next handoff or blocker: orchestrator may verify receipts and commit Slice 4 for commit-hash closure.
+
+25. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: commit the accepted Slice 4 render work and close the root receipt.
+- How one task went: committed the nested `howl-render` Slice 4 diff as `1986d89` `Extract special block braille owner` after reviewer acceptance.
+- Next handoff or blocker: commit the root receipt for Slice 4, then seed Slice 5 if continuing.
+
+26. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: close the Slice 4 root receipt and seed Slice 5 for execution.
+- How one task went: recorded Slice 4 root receipt pending in this active state and condensed Slice 5 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-05`.
+- Next handoff or blocker: coder should implement Slice 5 only and return verification plus commit-hash handoff status for reviewer gating.
