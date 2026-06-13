@@ -135,6 +135,13 @@ Team scratchpad
 - How one task went: rechecked the active render plan against `howl-render/build.zig:85-90` and `:121-150`, removed the invalid `-Dskip-host=true` flag from every render proof command, and made the required cwd exact: `/home/home/personal/projects/howl/howl-render` for `zig build test:unit`, `zig build test:abi`, and `zig build check`.
 - Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should re-gate the planning correction before further execution continues.
 
+10. Role: researcher
+- Session id: `research-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: correct the Slice 3 planning defect after execution exposed remaining `tv_surface` import users outside the seeded allowed-file list.
+- How one task went: reread the remaining import users in `storage/publication_storage.zig`, `renderable_content/content.zig`, `renderable_content/color.zig`, `renderable_content/cursor.zig`, `vt_publication/abi.zig`, `vt_publication/publication.zig`, and `session/text.zig`; updated Slice 3 so its exact allowed files cover every remaining live `tv_surface` import that must change before the deletion stop condition can pass.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should re-gate the planning correction before Slice 3 execution continues.
+
 Condensed execution contract for coder session `coder-2026-06-13-render-api-owner-surgery-01`:
 
 - Accepted planning input:
@@ -237,6 +244,13 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 14. Role: reviewer
 - Session id: `review-2026-06-13-render-api-owner-surgery-01`
 - Hello: hi
+
+19. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-03`
+- Hello: hi
+- Intended task: implement Slice 3, `Prepare Queue Cutover And tv_surface Deletion`, inside the allowed files only.
+- How one task went: stopped before product-code edits because the seeded Slice 3 contract is not executable as written. Current live imports to `tv_surface/` still exist in non-allowed files: `howl-render/src/storage/publication_storage.zig:2-3`, `howl-render/src/renderable_content/content.zig:2`, `howl-render/src/renderable_content/color.zig:2`, `howl-render/src/renderable_content/cursor.zig:2`, `howl-render/src/vt_publication/abi.zig:3`, `howl-render/src/vt_publication/publication.zig:249`, and `howl-render/src/session/text.zig:10,13`. Deleting the seven `tv_surface` files would violate the slice stop condition because imports would still contain `tv_surface/`, but correcting them would require edits outside the allowed Slice 3 file list.
+- Next handoff or blocker: orchestrator/reviewer need to reseed Slice 3 with an exact allowed-file list that includes every remaining `tv_surface` import user, or else adjust the stop condition; no git was touched and no product-code files were changed.
 - Intended task: review execution Slice 1, `VT Publication Boundary And Storage`, against allowed-file scope, owner shape, temporary compatibility boundaries, assertions/tests, and claimed proof.
 - Findings: none.
 - Outcome: accept.
@@ -323,6 +337,14 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 - Acceptance notes: orchestrator must verify passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`; verify nested `howl-render` status still stages only the Slice 2 allowed files; record the commit hash as `slice-2-renderable-content-damage=<hash>` before seeding Slice 3.
 - Next handoff or blocker: orchestrator may verify, commit the accepted nested render Slice 2 change, record the root receipt, and seed exactly Slice 3.
 
+18. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review the planning-only correction after Slice 3 exposed missing allowed-file coverage for remaining `tv_surface` import users, without implementing product code.
+- Findings: the active research plan corrects Slice 3 exactly. `research/2026-06-13-render-api-owner-surgery-plan.md:157-158` now includes the remaining live `tv_surface` import users needed to satisfy the deletion stop condition: `storage/publication_storage.zig`, `renderable_content/content.zig`, `renderable_content/color.zig`, `renderable_content/cursor.zig`, `vt_publication/abi.zig`, `vt_publication/publication.zig`, and `session/text.zig`, matching the current source grep hits in those files plus the remaining benchmark `tv_surface/cell.zig` import. No new wildcard file language, scope drift, or user-scope narrowing was introduced in the research artifact. This is a planning correction only and does not authorize broader implementation beyond reseeding Slice 3 with a refreshed condensed execution contract.
+- Outcome: accept.
+- Next handoff or blocker: orchestrator may reseed Slice 3 and reuse the current no-product-change worktree state, but must first refresh the live condensed Slice 3 contract in this loop to match the corrected research allowlist before coder execution resumes.
+
 18. Role: orchestrator
 - Session id: `orch-2026-06-13-render-api-owner-surgery-01`
 - Hello: hi
@@ -348,6 +370,12 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
   - `howl-render/src/prepare/queue.zig`
   - `howl-render/src/prepare_request.zig`
   - `howl-render/src/benchmark_main.zig`
+  - `howl-render/src/storage/publication_storage.zig`
+  - `howl-render/src/renderable_content/content.zig`
+  - `howl-render/src/renderable_content/color.zig`
+  - `howl-render/src/renderable_content/cursor.zig`
+  - `howl-render/src/vt_publication/abi.zig`
+  - `howl-render/src/vt_publication/publication.zig`
   - `howl-render/src/session/text.zig`
   - `howl-render/src/session/text_test.zig`
   - `howl-render/src/text/direct_normal.zig`
@@ -359,7 +387,7 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 - Required shape:
   - create `prepare/queue.zig` for active prepare admission/take/consume/retry/retire and blink refresh.
   - prepare queue may depend on `vt_publication`, `storage/publication_storage.zig`, `damage/publication_damage.zig`, `geometry/tokens.zig`, and `geometry/geometry_contract.zig` only.
-  - migrate every remaining live import away from all seven `tv_surface` files and then delete `tv_surface/prepare_request.zig`, `tv_surface/vt.zig`, `tv_surface/cell.zig`, `tv_surface/slot.zig`, `tv_surface/publication_cell_map.zig`, `tv_surface/damage.zig`, and `tv_surface/text_input.zig`.
+  - migrate every remaining live import away from all seven `tv_surface` files, including the remaining users in `storage/publication_storage.zig`, `renderable_content/content.zig`, `renderable_content/color.zig`, `renderable_content/cursor.zig`, `vt_publication/abi.zig`, `vt_publication/publication.zig`, and `session/text.zig`, and then delete `tv_surface/prepare_request.zig`, `tv_surface/vt.zig`, `tv_surface/cell.zig`, `tv_surface/slot.zig`, `tv_surface/publication_cell_map.zig`, `tv_surface/damage.zig`, and `tv_surface/text_input.zig`.
 - Required assertions:
   - active source is present before consuming.
   - token equality is asserted before returning prepare consume.
@@ -387,6 +415,35 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
   - blockers or deviations
   - coder session id `coder-2026-06-13-render-api-owner-surgery-03`
   - commit-hash handoff status for orchestrator receipt closure
+
+19. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-03`
+- Hello: hi
+- Intended task: implement Slice 3, `Prepare Queue Cutover And tv_surface Deletion`, inside the allowed files only.
+- How one task went: stopped before product-code edits because the seeded Slice 3 contract was not executable as written. Current live imports to `tv_surface/` still existed in non-allowed files: `howl-render/src/storage/publication_storage.zig:2-3`, `howl-render/src/renderable_content/content.zig:2`, `howl-render/src/renderable_content/color.zig:2`, `howl-render/src/renderable_content/cursor.zig:2`, `howl-render/src/vt_publication/abi.zig:3`, `howl-render/src/vt_publication/publication.zig:249`, and `howl-render/src/session/text.zig:10,13`. Deleting the seven `tv_surface` files would have violated the slice stop condition because imports would still contain `tv_surface/`, but correcting them required edits outside the seeded allowlist.
+- Next handoff or blocker: orchestrator/reviewer must refresh Slice 3 with an exact allowed-file list that includes every remaining `tv_surface` import user before coding resumes; no git was touched and no product code changed.
+
+20. Role: researcher
+- Session id: `research-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: correct the Slice 3 planning defect exposed by the blocked coder pass.
+- How one task went: re-read the cited remaining import users and expanded Slice 3's exact allowlist to include `storage/publication_storage.zig`, `renderable_content/content.zig`, `renderable_content/color.zig`, `renderable_content/cursor.zig`, `vt_publication/abi.zig`, `vt_publication/publication.zig`, and `session/text.zig`, with the required shape now calling those remaining users out explicitly.
+- Next handoff or blocker: reviewer must re-gate the Slice 3 planning correction before execution resumes.
+
+21. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review the Slice 3 planning correction after the blocked coder pass, without implementing product code.
+- Findings: the active research plan now fixes Slice 3 allowed-file coverage exactly by including the missing remaining `tv_surface` import users `storage/publication_storage.zig`, `renderable_content/content.zig`, `renderable_content/color.zig`, `renderable_content/cursor.zig`, `vt_publication/abi.zig`, `vt_publication/publication.zig`, and `session/text.zig`, matching the current remaining `tv_surface/` import users in source. No new planning vagueness, wildcard scope, or user-scope narrowing was introduced. This is a planning correction only and does not authorize broader implementation. The live loop's condensed Slice 3 contract must be refreshed to match the corrected research allowlist before coding resumes.
+- Outcome: accept.
+- Next handoff or blocker: orchestrator may reseed Slice 3 and reuse the current no-product-change worktree state, but must first refresh the live condensed Slice 3 contract to match the corrected research allowlist.
+
+22. Role: orchestrator
+- Session id: `orch-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: reseed Slice 3 after the accepted planning correction for missing `tv_surface` import users.
+- How one task went: the live Slice 3 contract now matches the accepted research allowlist and required shape, so execution can resume without forcing out-of-scope edits.
+- Next handoff or blocker: commit the accepted planning correction, then rerun Slice 3 under the refreshed contract.
 
 13. Role: coder
 - Session id: `coder-2026-06-13-render-api-owner-surgery-01`
