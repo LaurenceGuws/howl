@@ -1,0 +1,64 @@
+Followup shallow owner structure live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: active planning loop.
+
+Orchestrator session id: `orch-2026-06-13-followup-shallow-structure-01`.
+
+Researcher session id: `research-2026-06-13-followup-shallow-structure-01`.
+
+Reviewer session id: `review-2026-06-13-followup-shallow-structure-01`.
+
+Loop commit-hash receipt: pending.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, outcome, and handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-followup-shallow-owner-structure-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-followup-shallow-owner-structure-plan.md`
+
+Current step:
+
+- New follow-up shallow owner-structure sprint is seeded for planning.
+- No implementation is authorized.
+- Researcher must produce the full source-backed follow-up plan.
+- Reviewer must gate the plan before orchestrator seeds any execution slice.
+
+Exact user direction:
+
+- Continue.
+- Keep deleting fake abstractions.
+- Keep `src/` directories as shallow as possible.
+- Use the deleted terminal wrapper as the model.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No compatibility shims.
+- No fake wrapper folders.
+- No ABI/export renames.
+
+Exact stop conditions:
+
+- Stop if active research cannot prove exact remaining debt with exact files, tests, non-goals, stop conditions, and receipts.
+- Stop if active `loops/`, `research/`, or `sprints/` contain stale non-archive artifacts.
+- Stop if the plan invents new cleanup without current-source proof.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: archive the closed all-src shallow sprint and seed a follow-up planning sprint for any remaining fake abstractions or needless depth.
+- How one task went: treated the closed all-src sprint artifacts as historical receipts only and created new current sprint/research/loop artifacts for a fresh source-backed inspection pass.
+- Next handoff or blocker: researcher must produce the full follow-up plan; reviewer gates before coding.

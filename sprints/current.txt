@@ -7,39 +7,32 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-13-all-src-shallow-owner-structure-sprint.md`
+- `sprints/2026-06-13-followup-shallow-owner-structure-sprint.md`
 
 Active research:
 
-- `research/2026-06-13-all-src-shallow-owner-structure-plan.md`
+- `research/2026-06-13-followup-shallow-owner-structure-plan.md`
 
 Active loops:
 
-- `loops/all-src-shallow-owner-structure-live-loop.txt`
+- `loops/followup-shallow-owner-structure-live-loop.txt`
 
 Active restart note:
 
-- The PTY+VT folder owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
-- The all-`src/` shallow directory sprint is complete and closed; final close receipt `5b7b48d`.
-- User direction: restart the sprint; make dirs in all `src/` dirs as shallow as possible; delete fake abstractions; treat the just-deleted `terminal/` folder as the model.
-- Scope pressure: inspect every package `src/` tree in the workspace, identify fake abstraction directories and needless depth, then plan owner-true shallow cuts with exact slices.
-- Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
-- Researcher session id: `research-2026-06-13-all-src-shallow-structure-01`.
-- Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
-- Planning status: reviewer-accepted after repair.
-- Planning seed commit-hash receipt: root `16a877d`.
-- Planning package commit-hash receipt: root `c69e039`.
-- Slice 1, `PTY src/pty/ Depth Deletion`, is accepted in `howl-pty` `714d41c` and root `3e0b50e`.
-- Slice 2, `VT Fake Folder Deletion`, is accepted in `howl-vt` `da25b16` and root `861d909`.
-- Slice 3, `Render Root Geometry And Text Classification Flattening`, is accepted in `howl-render` `d4445e3` and root `100be01`.
-- Slice 4, `Host One-Extra-Depth Deletion`, is accepted in `howl-linux-host` `4b0b995` and root `5bc58e4`.
-- Slice 5, `Workspace Aggregate Verification And Empty-Directory Audit`, is accepted and closed in root `5b7b48d`.
+- The all-src shallow owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
+- The active step is follow-up planning for remaining shallow-depth and fake-abstraction debt after the completed all-src flattening pass.
+- User direction: continue deleting fake abstractions and keep `src/` trees as shallow as possible, following the same pressure as the deleted terminal wrapper.
+- Scope pressure: inspect current post-sprint package `src/` trees for remaining fake abstraction folders, needless wrapper files, stale prefixed indirections, and avoidable one-extra-depth structures that survived the first pass.
+- Orchestrator session id: `orch-2026-06-13-followup-shallow-structure-01`.
+- Researcher session id: `research-2026-06-13-followup-shallow-structure-01`.
+- Reviewer session id: `review-2026-06-13-followup-shallow-structure-01`.
+- Planning commit-hash receipt: pending.
 
 Execution rule:
 
-- No further coding is authorized from this sprint.
+- No coding is authorized until researcher writes the follow-up plan and reviewer accepts it.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
-- Historical host/render/PTY/VT artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
+- Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
 Rule:
 

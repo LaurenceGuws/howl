@@ -1,3 +1,9 @@
+Historical authority: accepted research and execution plan during the 2026-06-13 all-src shallow owner structure sprint.
+
+Why superseded or done: sprint closed with final root receipts `5b7b48d` and `8fadea6`.
+
+Must not be used for: current follow-up shallow-depth cleanup authority, execution authorization, or live planning.
+
 # All Src Shallow Owner Structure Plan
 
 Date: 2026-06-13.
