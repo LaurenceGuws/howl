@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: planning accepted; Slice 1 not yet seeded.
+Status: Slice 1 seeded for execution; reviewer-gated implementation pending.
 
 Orchestrator session id: `orch-2026-06-13-render-scene-01`.
 
@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-render-scene-01`.
 
 Reviewer session id: `review-2026-06-13-render-scene-01`.
 
-Loop commit-hash receipt: documentation-only seed pending orchestrator commit.
+Loop commit-hash receipt: root `2fde3dd`.
 
 Shared scratchpad rule:
 
@@ -29,10 +29,10 @@ Active research target:
 
 Current step:
 
-- The planning package is accepted.
-- `howl-render/src/text/scene.zig` remains the first pressure seam.
-- Slice 1 is the next authorized candidate, but no execution contract has been seeded yet.
-- No implementation is authorized until orchestrator seeds Slice 1 with coder session id and commit-hash receipt fields.
+- The planning package is accepted at root `2fde3dd`.
+- Slice 1, `Extract scene damage/span ownership and move callers to it`, is the active execution slice.
+- Only Slice 1 is authorized.
+- Coder session id: `coder-2026-06-13-render-scene-01`.
 
 Exact user direction:
 
@@ -42,16 +42,48 @@ Exact user direction:
 
 Exact non-goals:
 
-- No implementation during planning.
-- No ABI/header churn.
-- No benchmark theater.
-- No render-wide redesign.
+- No rect/fill extraction yet.
+- No cursor owner move.
+- No sprite/raster logic changes.
+- No emitter, host, benchmark, or ABI changes.
 
 Exact stop conditions:
 
-- Stop if planning cannot name exact slice boundaries, allowed files, tests, non-goals, and stop conditions.
-- Stop if the references point to a conflicting shape that needs explicit user review.
-- Stop if active accountability files drift from the real live state.
+- Stop if any scene-owned outward alias for the moved damage owner survives.
+- Stop if `cluster.zig` still carries duplicate damage-validity or span-inclusion logic.
+- Stop if the move requires a new test root.
+- Stop if ABI/header-facing truth changes.
+
+Slice 1 execution contract:
+
+- Allowed files only:
+  - `/home/home/personal/projects/howl/howl-render/src/text/scene.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/scene_damage.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_scene.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/direct_normal.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/surface_preparer.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/shape/cluster.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/vt_publication/text_input.zig`
+- Required shape:
+  - Create `scene_damage.zig` as the only owner of `DamageInput`, `NormalizedDamage`, `normalizeDamage`, row-length assertions, dirty-row-span derivation, and span-inclusion logic now split between `scene.zig` and `cluster.zig`.
+  - `cluster.zig` must stop owning `DamageFilter`; the duplicated validity and inclusion logic must disappear from `cluster.zig`.
+  - `scene.zig` must consume `scene_damage.zig` and must not retain outward aliases for `DamageInput`, `NormalizedDamage`, or `normalizeDamage`.
+  - `direct_scene.zig`, `direct_normal.zig`, `surface_preparer.zig`, and `vt_publication/text_input.zig` must import and name `scene_damage` directly anywhere they currently name scene-owned damage types.
+  - `scene.BuildOptions` stays scene-owned, but its `.damage` field must bind to the new damage owner type.
+- Required assertions:
+  - preserve and pair dirty-row array length assertions before normalization and at consumers
+  - preserve explicit cursor draw-count assertions on both retained and unmanaged paths
+  - preserve sorted-by-`first_cell` assertions at merged scene boundaries
+- Required tests by exact full name filters:
+  - `zig build test:unit -- "scene damage filters clean rows"`
+  - `zig build test:unit -- "partial damage filters clean clusters before shaping"`
+  - `zig build test:unit -- "sparse cells keep only damaged base cells"`
+  - `zig build test:unit -- "renderable content publication mapping threads partial damage"`
+  - `zig build test:unit -- "renderable content maps only dirty ranges for partial damage"`
+  - `zig build test:unit -- "text preparation partial damage clears use empty default background truth"`
+- Verification handoff requirements:
+  - coder must report files changed, concise implementation summary, verification run/results, blockers/deviations, coder session id, and commit-hash handoff status
+  - reviewer verdict plus exact findings is required before acceptance
 
 Team scratchpad
 
@@ -89,3 +121,10 @@ Team scratchpad
 - Intended task: re-gate the repaired render scene ownership compression planning package against the prior rejection points and workflow contract.
 - How one task went: accepted the repaired package; Slice 1 now forbids scene-owned outward damage aliases and requires caller edits, Slice 2 now preserves the exact curly/undercurl sprite carve-out, and the proof obligations are now exact named tests tied to existing owners.
 - Next handoff or blocker: orchestrator may mark the planning package accepted, close or carry the open planning commit-hash receipt, and seed the first execution slice with coder session id and commit-hash receipt fields.
+
+6. Role: orchestrator
+- Session id: `orch-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: close the accepted planning receipt and seed Slice 1 for execution.
+- How one task went: committed the accepted planning package as root `2fde3dd` and condensed Slice 1 into this live-loop execution contract with coder session id `coder-2026-06-13-render-scene-01`.
+- Next handoff or blocker: coder should implement Slice 1 only and return verification plus commit-hash handoff status for reviewer gating.

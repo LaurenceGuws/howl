@@ -26,7 +26,9 @@ Active restart note:
   - `howl-render` unit wrapper deletion: `dbb8669`
 - New active planning sprint: render scene ownership compression.
 - Primary planning target: `howl-render/src/text/scene.zig`.
-- Planning package accepted; no execution slice seeded yet.
+- Planning package accepted at root `2fde3dd`.
+- Active execution slice: Slice 1 `Extract scene damage/span ownership and move callers to it`.
+- Active coder session: `coder-2026-06-13-render-scene-01`.
 - Active planning sessions:
   - orchestrator `orch-2026-06-13-render-scene-01`
   - researcher `research-2026-06-13-render-scene-01`
@@ -36,6 +38,7 @@ Execution rule:
 
 - No coding is authorized without an accepted reviewer-gated execution slice under the active sprint.
 - This sprint is seeded for research only; no implementation is authorized.
+- Only Slice 1 is authorized, and only through the active loop execution contract.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

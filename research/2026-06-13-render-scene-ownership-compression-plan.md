@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-render-scene-01`.
 
 Reviewer session id: `review-2026-06-13-render-scene-01`.
 
-Planning commit-hash receipt: documentation-only planning artifact; no dedicated accepted planning commit exists yet. Orchestrator must close this receipt on acceptance or record it as still open.
+Planning commit-hash receipt: root `2fde3dd`.
 
 Question:
 
