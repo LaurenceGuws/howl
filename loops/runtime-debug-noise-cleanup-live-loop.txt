@@ -139,3 +139,17 @@ Orchestrator Slice 2 correction seed:
 - Intent: restart from the earliest broken stage for the missed `surface/handle.zig` timing owner.
 - Outcome: active correction research artifact is `research/2026-06-14-runtime-debug-noise-slice2-handle-correction.md`; Slice 2 remains unaccepted and the existing implementation diff remains uncommitted.
 - Handoff: researcher must classify the exact handle timing blocks, choose delete/retain, name exact allowed files/tests/non-goals/stop conditions/receipt fields, and update the sprint/loop only after reviewer acceptance.
+
+Researcher Slice 2 correction note:
+
+- Hello from `research-2026-06-14-runtime-debug-noise-01`.
+- Intent: classify the missed `surface/handle.zig` prepare-handle timing blocks and produce a precise reseed package for the rejected Slice 2.
+- Outcome: wrote `research/2026-06-14-runtime-debug-noise-slice2-handle-correction.md`; it classifies `monotonicNs`, `DebugPreparedHandleCreateTiming`, `HOWL_RENDER_DEBUG_TIMING`, debug timing global, timing aggregates, timing locals, and timing print/record calls in `handle.zig` as stale migration residue to delete while retaining handle allocation, prepared-surface ownership transfer, registration, payload emission, emission-failure mapping, and lifecycle cleanup.
+- Handoff: reviewer `review-2026-06-14-runtime-debug-noise-01` should review the correction. Slice 2 remains blocked until reviewer acceptance and orchestrator reseeding add `howl-render/src/surface/handle.zig` to the exact allowed files.
+
+Reviewer Slice 2 correction acceptance note:
+
+- Hello from `review-2026-06-14-runtime-debug-noise-01`.
+- Intent: review the focused Slice 2 handle correction package.
+- Outcome: accepted with no findings. The correction adds `howl-render/src/surface/handle.zig` to Slice 2, classifies the missed timing blocks exactly, preserves prepared-handle lifecycle/runtime truth, and names exact tests and stop conditions.
+- Handoff: orchestrator may promote the correction into the active sprint contract and reseed Slice 2 repair.
