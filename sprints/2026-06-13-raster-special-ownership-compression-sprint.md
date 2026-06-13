@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: Slice 1 seeded for execution; reviewer-gated implementation pending.
+Status: Slice 1 accepted; Slice 2 not yet seeded.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -46,9 +46,9 @@ Commit-hash receipt: root `0e53a8e`.
 
 ## Execution Authorization
 
-- Slice 1 is authorized through the live-loop execution contract only.
+- Slice 1 is accepted in `howl-render` `42b68b8`; root receipt pending orchestrator commit.
 - The accepted plan is `/home/home/personal/projects/howl/research/2026-06-13-raster-special-ownership-compression-plan.md`.
-- No other slice is authorized.
+- No other slice is authorized yet.
 
 ## Seed Pressure Anchors
 
