@@ -18,7 +18,7 @@ Slice 1 acceptance receipt: `5c7a2a2` `Extract host render-surface resources`.
 
 Slice 2 acceptance receipt: `2977c3b` `Extract host render-surface commands`.
 
-Execution seed commit-hash receipt: pending orchestrator commit.
+Execution seed commit-hash receipt: `afe558e` `Accept host render-surface Slice 2`.
 
 Coder session id: `coder-2026-06-13-host-render-surface-slice-03`.
 

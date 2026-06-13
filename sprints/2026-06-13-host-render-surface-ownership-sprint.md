@@ -21,7 +21,7 @@ Active execution slice:
 - Slice 3: root curation and proof-root cleanup after both owner extractions.
 - Coder session id: `coder-2026-06-13-host-render-surface-slice-03`.
 - Reviewer session id for execution: `review-2026-06-13-host-render-surface-01`.
-- Execution seed commit-hash receipt: pending orchestrator commit.
+- Execution seed commit-hash receipt: `afe558e` `Accept host render-surface Slice 2`.
 
 ## Problem Statement
 
