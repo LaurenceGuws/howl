@@ -1,0 +1,49 @@
+# Runtime Debug Noise Cleanup Live Loop
+
+Authority:
+
+- Live planning scratchpad for the runtime debug-noise cleanup sprint.
+- Orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
+- User handoff supplied 2026-06-14.
+- No implementation is authorized until research planning is accepted by reviewer and exact slices are seeded.
+
+Problem statement:
+
+- Remove debugging-shaped noise from active runtime paths while preserving runtime truth, assertions, bounds, ABI behavior, and proof.
+- Debugging-shaped noise includes timing structs, env-var-gated profiling branches, measurement counters, diagnostic result wrappers, and helper surfaces whose only job is observation rather than runtime truth.
+- Prefer deletion over relocation. If measurement is benchmark-needed, benchmark/proof roots must own it outside runtime ownership.
+
+Primary target order:
+
+1. `howl-render/src/surface/emitter.zig`
+2. `howl-render/src/render_session.zig`
+3. `howl-linux-host/src/terminal/surface.zig`
+4. `howl-render/src/surface/realizer.zig`
+
+Planning contract:
+
+- Researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
+- Reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
+- Active research output path: `research/2026-06-14-runtime-debug-noise-cleanup-plan.md`.
+- Research must produce exact block-level inventory for the four target files.
+- Each candidate block must be classified as runtime truth, proof-only scaffolding, benchmark-only scaffolding, or stale migration residue.
+- Each candidate block must receive an action: delete, move to proof/benchmark root, or retain as runtime truth.
+- Planning must identify exact proof roots for each touched owner.
+- Planning must produce ordered execution slices with exact allowed files, required shape, tests, non-goals, stop conditions, session ids, and receipt fields.
+
+Hard rules:
+
+- Keep assertions.
+- Keep owner-true state.
+- Keep proof roots passing.
+- Do not invent `debug.zig`, `metrics.zig`, `instrumentation.zig`, `helpers.zig`, `types.zig`, or bucket files.
+- Do not broaden into architecture redesign unless research proves debug posture hides a deeper false owner.
+- Do not touch ABI headers unless explicitly required and re-approved.
+- Do not move debug code sideways into another runtime owner.
+
+Orchestrator note:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: seed a clean planning-only contract from the user handoff.
+- Outcome: live loop now captures problem, target order, hard rules, research output, and planning gate.
+- Handoff: researcher must read required workflow docs, `sprints/current.txt`, this loop, `reference-index.md`, TigerBeetle readings, current target files, and current proof roots before writing the active research package.

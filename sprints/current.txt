@@ -7,20 +7,24 @@ Purpose:
 
 Sprint:
 
-- No active sprint seeded.
+- No accepted execution sprint seeded. Planning is active for runtime debug-noise cleanup.
 
 Active research:
 
-- No active research seeded.
+- `research/2026-06-14-runtime-debug-noise-cleanup-plan.md`
 
 Active loops:
 
-- No active loop seeded.
+- `loops/runtime-debug-noise-cleanup-live-loop.txt`
 
 Active restart note:
 
-- No active sprint is seeded. Waiting for next scope.
-- Latest closed sprint: host render-surface ownership.
+- Active planning scope: runtime debug-noise cleanup.
+- Orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
+- Researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
+- Reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
+- No implementation is authorized until planning is accepted and execution slices are seeded.
+- Previous latest closed sprint: host render-surface ownership.
 - Latest closed sprint planning receipt: `455402d` `Accept host render-surface planning`.
 - Latest closed sprint accepted slices:
   - Slice 1 `5c7a2a2` `Extract host render-surface resources`
@@ -34,7 +38,7 @@ Active restart note:
 
 Execution rule:
 
-- No coding is authorized until a new active sprint, loop, and execution contract are seeded.
+- No coding is authorized until the active planning package is reviewer-accepted and a slice execution contract is seeded.
 - The host render-surface sprint execution is complete and archived.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
