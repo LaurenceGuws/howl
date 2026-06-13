@@ -21,7 +21,7 @@ Active restart note:
 
 - The host folder/file owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
 - The active combined PTY+VT folder/file owner planning package is reviewer-accepted; implementation is authorized only through explicit seeded slices.
-- Slice 1, `PTY proof-root relocation out of src`, is accepted in `howl-pty` `13b7fbd`; root receipt pending.
+- Slice 1, `PTY proof-root relocation out of src`, is accepted in `howl-pty` `13b7fbd` and root `2718455`.
 - User direction: PTY is small, so PTY and VT can be cleaned up together in one sprint.
 - Reference pressure: Ghostty terminal and termio structure is primary for VT and PTY owner/folder shape; Alacritty terminal/event_loop/tty pressure is secondary where it sharpens PTY/runtime folder boundaries.
 - Current PTY and VT trees still show likely folder/location discipline debt: mixed top-level files and child folders, likely weak test-root placement, and unresolved owner pressure across VT parser/control/host-facing folders plus PTY session/transport/test surfaces.
