@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: closed; final close receipt pending.
+Status: closed.
 
 Orchestrator session id: `orch-2026-06-13-followup-shallow-structure-01`.
 
@@ -42,13 +42,13 @@ Commit-hash receipt: root `66927e2`.
 
 ## Slice Receipts
 
-- Slice 1, `Flatten VT parser owner root`: `howl-vt` `8d95998`; root receipt pending.
-- Slice 2, `Delete render unit-test wrapper chain`: `howl-render` `dbb8669`; root receipt pending.
+- Slice 1, `Flatten VT parser owner root`: `howl-vt` `8d95998`; root `eee6296`.
+- Slice 2, `Delete render unit-test wrapper chain`: `howl-render` `dbb8669`; root `eee6296`.
 
 ## Close Status
 
 - Sprint implementation complete.
-- Final close receipt pending.
+- Final close receipt: `eee6296`.
 
 ## Planning Receipts
 
