@@ -227,3 +227,24 @@ Slice 4 execution seed:
 - Required tests from `howl-render`: `zig build test:unit -- realizer`; prior `zig build test:unit` remains supporting proof.
 - Stop conditions: if coder or reviewer finds a real debug-only block missed by research, stop with no edits and reseed exact block action before any `realizer.zig` change; if any proposed deletion is an invariant or ABI validation, stop.
 - Required handoff fields: inspection result, verification commands/results, blockers/deviations, coder session id, explicit no-code-change handoff status.
+
+Coder Slice 4 note:
+
+- Hello from `coder-2026-06-14-runtime-debug-noise-slice-04`.
+- Intent: perform the read-only `realizer.zig` verification and prove no debug-noise cleanup edit is needed.
+- Outcome: inspected `howl-render/src/surface/realizer.zig`; no timing structs, env-var profiling, measurement counters, diagnostic wrappers, or observation-only helpers remain. `zig build test:unit -- realizer` passed from `howl-render`.
+- Handoff: no implementation files changed; ready for reviewer/orchestrator no-code-change handoff.
+
+Reviewer Slice 4 acceptance note:
+
+- Hello from `review-2026-06-14-runtime-debug-noise-01`.
+- Intent: review Slice 4 read-only realizer verification.
+- Outcome: accepted with no findings. No implementation files changed; `realizer.zig` is runtime realization, validation, drawing, bounds, resource, upload, geometry, and pixel helper logic with no debug-shaped timing or observation scaffolding found.
+- Handoff: orchestrator should rerun `zig build test:unit -- realizer` and record no-code-change acceptance.
+
+Orchestrator Slice 4 acceptance note:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: verify and accept Slice 4 after reviewer acceptance.
+- Outcome: `zig build test:unit -- realizer` passed from `howl-render`. No implementation files changed for Slice 4.
+- Handoff: root no-code-change acceptance receipt is pending this commit; sprint execution is complete after receipt closure.
