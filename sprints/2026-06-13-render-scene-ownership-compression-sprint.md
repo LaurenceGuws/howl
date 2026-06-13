@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: planning accepted; execution not yet seeded.
+Status: Slice 1 accepted; Slice 2 not yet seeded.
 
 Orchestrator session id: `orch-2026-06-13-render-scene-01`.
 
@@ -46,9 +46,9 @@ Commit-hash receipt: root `2fde3dd`.
 
 ## Execution Authorization
 
-- Slice 1 is authorized through the live-loop execution contract only.
+- Slice 1 is accepted in `howl-render` `959576d`; root receipt pending orchestrator commit.
 - The accepted plan is `/home/home/personal/projects/howl/research/2026-06-13-render-scene-ownership-compression-plan.md`.
-- No other slice is authorized.
+- No other slice is authorized yet.
 
 ## Seed Pressure Anchors
 
