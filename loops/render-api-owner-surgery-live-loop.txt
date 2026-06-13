@@ -128,6 +128,13 @@ Team scratchpad
 - How one task went: active sprint, research, and current index now mark the render API owner surgery plan as reviewer-accepted with planning commit-hash receipt pending; no coder is authorized because the receipt is not closed.
 - Next handoff or blocker: planning receipt is now closed; orchestrator may seed Slice 1 and start autonomous execution under the accepted sprint.
 
+9. Role: researcher
+- Session id: `research-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: correct the accepted planning package after Slice 1 execution exposed invalid render proof commands.
+- How one task went: rechecked the active render plan against `howl-render/build.zig:85-90` and `:121-150`, removed the invalid `-Dskip-host=true` flag from every render proof command, and made the required cwd exact: `/home/home/personal/projects/howl/howl-render` for `zig build test:unit`, `zig build test:abi`, and `zig build check`.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should re-gate the planning correction before further execution continues.
+
 Condensed execution contract for coder session `coder-2026-06-13-render-api-owner-surgery-01`:
 
 - Accepted planning input:
@@ -163,8 +170,8 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
   - underline style is in range.
   - retained storage sources are never freed as owned duplicates.
 - Exact tests:
-  - `cd /home/home/personal/projects/howl/howl-render && zig build -Dskip-host=true test:unit`
-  - `cd /home/home/personal/projects/howl/howl-render && zig build -Dskip-host=true check`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build check`
   - keep or move existing prepare-request and publication validation tests through the existing unit root.
   - add or keep owner-local tests for invalid color kind, invalid combining length, dirty span length mismatch, retained source deinit not freeing slot storage, and copy-in preserving snapshot/dirty metadata.
 - Non-goals:
@@ -190,3 +197,32 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 - Intended task: close the accepted planning receipt and seed Slice 1 for execution.
 - How one task went: the accepted planning package was committed as root `e5f7e4b`, the active sprint/research/current index now record that receipt, and Slice 1 has an exact condensed execution contract with allowed files, assertions, tests, non-goals, stop conditions, and receipt demand.
 - Next handoff or blocker: coder may execute only `coder-2026-06-13-render-api-owner-surgery-01`; no broader slice or product-code work is authorized.
+
+10. Role: orchestrator
+- Session id: `orch-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: reseed Slice 1 after accepted planning correction for stale render proof commands.
+- How one task went: the accepted research correction proved `howl-render/build.zig` exposes `zig build test:unit`, `zig build test:abi`, and `zig build check` directly, so the live Slice 1 contract now uses exact current commands and exact cwd instead of the invalid `-Dskip-host=true` flags.
+- Next handoff or blocker: commit the accepted planning correction, then rerun Slice 1 proof and send the existing working-tree diff to reviewer under the refreshed contract.
+
+10. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: implement Slice 1 VT publication boundary/storage owner cuts inside the allowed files only, then run the exact unit and check proofs.
+- How one task went: created `vt_publication/abi.zig`, `vt_publication/publication.zig`, and `storage/publication_storage.zig`; turned `tv_surface/vt.zig` and `tv_surface/slot.zig` into compatibility re-export seams; updated allowed import users to point at the new publication/storage owners where this slice permits imports only.
+- Next handoff or blocker: run `zig build -Dskip-host=true test:unit` and `zig build -Dskip-host=true check`, then hand results to reviewer/orchestrator with the slice 1 receipt status.
+
+11. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: finish Slice 1 proof by running the exact required verification commands and record the accountable handoff.
+- How one task went: `zig fmt` succeeded for all edited Zig files, but both required proof commands failed before any build work because this workspace no longer accepts `-Dskip-host`: `zig build -Dskip-host=true test:unit` -> `error: invalid option: -Dskip-host`; `zig build -Dskip-host=true check` -> `error: invalid option: -Dskip-host`. Per the sprint contract I did not substitute different proof commands after that exact command failure.
+- Next handoff or blocker: reviewer/orchestrator need to decide whether the active slice contract must be refreshed with the current build option spelling before proof can continue; commit-hash handoff status is pending reviewer acceptance and no git was touched.
+
+12. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review the planning-only correction after Slice 1 exposed invalid render proof commands, without implementing product code.
+- Findings: the active research plan is corrected to current render build entrypoints from `howl-render/build.zig:85-90` and `:121-150`: it now requires `zig build test:unit`, `zig build test:abi`, and `zig build check` in exact cwd `/home/home/personal/projects/howl/howl-render` at `research/2026-06-13-render-api-owner-surgery-plan.md:124`, with the same exact command/cwd language carried into slice proofs at `:136`, `:148`, `:160`, `:172`, `:184`, `:196`, `:208`, and `:220`. No new planning vagueness, wildcard file scope, or user-scope narrowing was introduced in the research artifact. This is a planning correction only and does not authorize broader implementation beyond reseeding the active Slice 1 execution contract. The live loop still contains the stale condensed Slice 1 proof commands with `-Dskip-host=true` at `loops/render-api-owner-surgery-live-loop.txt:173-174`, so orchestrator must refresh that condensed execution contract before execution resumes.
+- Outcome: accept.
+- Next handoff or blocker: orchestrator may reseed Slice 1 with the corrected proof commands and exact cwd, then the current uncommitted Slice 1 diff may be reused for normal slice review after rerunning proof under the refreshed contract; no broader slice is authorized.
