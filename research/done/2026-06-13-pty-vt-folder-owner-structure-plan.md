@@ -1,3 +1,9 @@
+Historical authority: accepted research and repaired planning artifact during the 2026-06-13 PTY+VT folder/file owner structure sprint.
+
+Why superseded or done: sprint closed with final root receipts `610ea74` and `2ec1f24`.
+
+Must not be used for: current all-src shallow directory sprint authority, execution authorization, or live planning.
+
 # PTY VT Folder Owner Structure Plan
 
 Date: 2026-06-13.

@@ -1,0 +1,65 @@
+All src shallow owner structure live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: active planning loop.
+
+Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
+
+Researcher session id: `research-2026-06-13-all-src-shallow-structure-01`.
+
+Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
+
+Loop commit-hash receipt: pending.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, outcome, and handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-all-src-shallow-owner-structure-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-all-src-shallow-owner-structure-plan.md`
+
+Current step:
+
+- New all-`src/` shallow directory sprint is seeded for planning.
+- No implementation is authorized.
+- Researcher must produce the full source-backed slice plan.
+- Reviewer must gate the plan before orchestrator seeds any execution slice.
+
+Exact user direction:
+
+- Restart the sprint.
+- Make dirs in all `src/` dirs as shallow as possible.
+- Delete fake abstractions.
+- Use the just-completed deletion of the `terminal/` folder as the model.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No compatibility shims.
+- No fake wrapper folders.
+- No C ABI symbol, enum, struct, or exported-name changes.
+
+Exact stop conditions:
+
+- Stop if active research cannot name exact allowed files, required shape, tests, non-goals, stop conditions, and receipt fields for each slice.
+- Stop if current source and references conflict in a way that needs explicit user override.
+- Stop if active `loops/`, `research/`, or `sprints/` contain stale non-archive artifacts.
+- Stop if the plan preserves fake depth for convenience or creates new wrapper folders.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: archive closed PTY+VT artifacts and seed a new all-`src/` shallow owner-structure planning sprint.
+- How one task went: moved the closed PTY+VT sprint artifacts to `done/`, created current sprint/research/loop artifacts, and recorded the user direction to delete fake abstractions and make all `src/` directories as shallow as possible.
+- Next handoff or blocker: researcher must produce the full source-backed plan; reviewer gates before coding.
