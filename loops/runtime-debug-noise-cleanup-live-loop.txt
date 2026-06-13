@@ -215,4 +215,15 @@ Orchestrator Slice 3 acceptance note:
 - Hello from `orch-2026-06-14-runtime-debug-noise-01`.
 - Intent: verify and accept Slice 3 after reviewer acceptance.
 - Outcome: `zig build test:unit -- terminal surface`, `zig build test:unit -- render surface`, `zig build test:unit`, `zig build test:integration`, and `zig build check` all passed from `howl-linux-host`. Nested host commit is `8a2f1d7` `Remove host upload stats noise`.
-- Handoff: root acceptance receipt is pending this commit; Slice 4 read-only realizer verification is next after root receipt closure.
+- Handoff: root acceptance receipt is `9eddb77` `Accept runtime debug-noise Slice 3`; Slice 4 read-only realizer verification is next.
+
+Slice 4 execution seed:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: seed Slice 4 exactly from the accepted sprint contract after Slice 3 root acceptance.
+- Outcome: Slice 4 is authorized for coder `coder-2026-06-14-runtime-debug-noise-slice-04` only.
+- Allowed files: none for editing. Read-only inspection of `howl-render/src/surface/realizer.zig` is allowed. Required loop note is allowed.
+- Required shape: no-op verification only. Confirm no timing structs, env-var profiling, measurement counters, diagnostic wrappers, or observation-only helpers remain. Assertions, validation, retained resource checks, and drawing helpers remain untouched.
+- Required tests from `howl-render`: `zig build test:unit -- realizer`; prior `zig build test:unit` remains supporting proof.
+- Stop conditions: if coder or reviewer finds a real debug-only block missed by research, stop with no edits and reseed exact block action before any `realizer.zig` change; if any proposed deletion is an invariant or ABI validation, stop.
+- Required handoff fields: inspection result, verification commands/results, blockers/deviations, coder session id, explicit no-code-change handoff status.
