@@ -86,3 +86,24 @@ Slice 1 execution seed:
 - Required tests from `howl-render`: `zig build test:unit -- surface/emitter`, `zig build test:unit`, and `zig build test:abi` if public compile shape changes indirectly affect ABI tests.
 - Stop conditions: if removing timing requires changing render-surface ABI structs, stop; if a test only proves deleted timing, delete/rewrite that test in the allowed test file rather than preserving timing; if unrelated formatter churn touches other render files, stop and ask orchestrator.
 - Required handoff fields: changed files, summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
+Coder Slice 1 note:
+
+- Hello from `coder-2026-06-14-runtime-debug-noise-slice-01`.
+- Intent: remove emitter runtime timing/debug noise while preserving direct emission transformations and assertions.
+- Outcome: `howl-render/src/surface/emitter.zig` no longer contains `monotonicNs`, `DebugEmitPreparedTiming`, env-var timing gates, timing totals, debug globals, timing parameters, or timing result wrappers; targeted and full `howl-render` unit tests passed.
+- Handoff: ready for reviewer `review-2026-06-14-runtime-debug-noise-01`; no blocker, no ABI test run because no public ABI/header shape changed.
+
+Reviewer Slice 1 acceptance note:
+
+- Hello from `review-2026-06-14-runtime-debug-noise-01`.
+- Intent: review Slice 1 emitter cleanup against accepted sprint contract.
+- Outcome: accepted with no blocking findings. Scope was clean, no residual emitter timing/debug surfaces remained, assertions and bounds stayed in publish/admission paths, and reported tests were sufficient.
+- Handoff: orchestrator should verify `zig build test:unit -- surface/emitter` and `zig build test:unit`, then record nested commit and root acceptance receipts.
+
+Orchestrator Slice 1 acceptance note:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: verify and accept Slice 1 after reviewer acceptance.
+- Outcome: `zig build test:unit -- surface/emitter` passed from `howl-render`; `zig build test:unit` passed from `howl-render`; `zig build test:abi` was not required because no public ABI/header shape changed. Nested render commit is `932bd29` `Remove emitter debug timing noise`.
+- Handoff: root acceptance receipt is pending this commit; Slice 2 is next after root receipt closure.
