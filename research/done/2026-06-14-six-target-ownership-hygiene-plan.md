@@ -1,3 +1,9 @@
+# Historical Authority
+
+- Historical authority at time: accepted six-target ownership and hygiene planning package for `orch-2026-06-14-six-target-ownership-01`.
+- Why superseded or done: promoted into active sprint contract `sprints/2026-06-14-six-target-ownership-hygiene-sprint.md`.
+- Must not be used for: direct execution authority after sprint promotion; use the active sprint and loop contract instead.
+
 # Six-Target Ownership Hygiene Plan
 
 Status:
@@ -8,7 +14,7 @@ Status:
 - Reviewer session id: `review-2026-06-14-six-target-ownership-01`.
 - Reviewer accepted planning.
 - No implementation is authorized from this file until the orchestrator seeds execution slices.
-- Acceptance receipt: pending orchestrator commit.
+- Acceptance receipt: `16591b9` `Accept six-target ownership planning`.
 
 Planning receipt:
 

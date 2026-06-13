@@ -7,11 +7,11 @@ Purpose:
 
 Sprint:
 
-- No accepted execution sprint seeded. Planning is active for six-target ownership hygiene.
+- `sprints/2026-06-14-six-target-ownership-hygiene-sprint.md`
 
 Active research:
 
-- `research/2026-06-14-six-target-ownership-hygiene-plan.md`
+- No active research seeded. Accepted planning is archived at `research/done/2026-06-14-six-target-ownership-hygiene-plan.md`.
 
 Active loops:
 
@@ -23,7 +23,11 @@ Active restart note:
 - Orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
 - Researcher session id: `research-2026-06-14-six-target-ownership-01`.
 - Reviewer session id: `review-2026-06-14-six-target-ownership-01`.
-- No implementation is authorized until planning is accepted and execution slices are seeded.
+- Planning seed receipt: `bbf5ca7` `Seed six-target ownership planning`.
+- Accepted planning receipt: `16591b9` `Accept six-target ownership planning`.
+- Active sprint seed receipt: pending orchestrator commit.
+- Next execution slice: Slice 1 `ft_hb` loaded-face owner cut, coder session `coder-2026-06-14-six-target-ownership-slice-01`.
+- Implementation is authorized only through the active sprint and loop contract.
 - Previous latest closed sprint: runtime debug-noise cleanup.
 - Latest closed sprint orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
 - Latest closed sprint researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
@@ -44,7 +48,7 @@ Active restart note:
 
 Execution rule:
 
-- No coding is authorized until the active planning package is reviewer-accepted and a slice execution contract is seeded.
+- No coding is authorized until the active sprint and slice execution contract are seeded.
 - The runtime debug-noise cleanup sprint is historical and archived.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
