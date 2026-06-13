@@ -14,6 +14,8 @@ Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
 
 Planning seed commit-hash receipt: root `16a877d`.
 
+Planning package commit-hash receipt: root `c69e039`.
+
 Question:
 
 - What full source-backed sprint plan makes every current package `src/` tree in the workspace as shallow as possible, deletes fake abstraction directories, preserves only true owner subdomains, and proves each cut with owner truth, tests, and receipt-ready slices?

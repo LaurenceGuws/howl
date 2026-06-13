@@ -29,10 +29,9 @@ Active research target:
 
 Current step:
 
-- New all-`src/` shallow directory sprint is seeded for planning.
-- No implementation is authorized.
-- Researcher must produce the full source-backed slice plan.
-- Reviewer must gate the plan before orchestrator seeds any execution slice.
+- The all-`src/` shallow directory planning package is accepted and committed.
+- Slice 1 is active.
+- No other implementation is authorized.
 
 Exact user direction:
 
@@ -98,3 +97,65 @@ Team scratchpad
 - Intended task: re-validate the repaired Slice 2, Slice 3, and Slice 4 allowed-file lists against all live importer and build users and decide whether planning is now executable without coder invention.
 - How one task went: re-grepped current VT `host/`, `selection/`, and `csi/` users, render `geometry/` and `text/classify/` users, and host `polling/`, `display/renderer/`, `terminal/pty/`, `terminal/vt/`, and `terminal/render/` users; the repaired research artifact now covers the live importer/build users I found, including VT test users, render `text/ft_hb/support.zig` and text classification users, and host `build.zig`, `links.zig`, `scrollbar.zig`, `selection.zig`, `surface.zig`, `surface_test.zig`, `term.zig`, `input.zig`, `pty/pump.zig`, `pty/wait_thread.zig`, `vt/input.zig`, and `render/surface_layout.zig`.
 - Next handoff or blocker: planning accepted; orchestrator may commit the planning package and seed Slice 1 execution.
+
+7. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: record planning package acceptance and seed Slice 1.
+- How one task went: committed the accepted planning package as root `c69e039`.
+- Next handoff or blocker: commit this receipt update and seed Slice 1 execution contract.
+
+## Slice 1 Execution Contract
+
+Name: PTY `src/pty/` Depth Deletion.
+
+Status: active.
+
+Coder session id: `coder-2026-06-13-all-src-shallow-structure-slice-1`.
+
+Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-pty/src/pty.zig`
+- `/home/home/personal/projects/howl/howl-pty/src/pty/unix.zig`
+- `/home/home/personal/projects/howl/howl-pty/src/pty/posix.zig`
+- `/home/home/personal/projects/howl/howl-pty/src/unix.zig`
+- `/home/home/personal/projects/howl/howl-pty/src/posix.zig`
+- `/home/home/personal/projects/howl/howl-pty/test/integration/pty_integration_test.zig`
+- `/home/home/personal/projects/howl/howl-pty/test/unit/pty/posix_test.zig`
+
+Required shape:
+
+- Move `src/pty/unix.zig` to `src/unix.zig`.
+- Move `src/pty/posix.zig` to `src/posix.zig`.
+- Update `src/pty.zig` from `pty/unix.zig` to `unix.zig`.
+- Update moved file imports from `../pty.zig` to `pty.zig` and local `posix.zig` imports as needed.
+- Update PTY tests importing `src/pty/posix.zig` to `src/posix.zig`.
+- Delete now-empty `src/pty/`.
+
+Exact tests:
+
+- From `/home/home/personal/projects/howl/howl-pty`: `zig build test:unit`.
+- From `/home/home/personal/projects/howl/howl-pty`: `zig build test:abi`.
+- From `/home/home/personal/projects/howl/howl-pty`: `zig build test:integration`.
+
+Non-goals:
+
+- No PTY API behavior change.
+- No C ABI header/export change.
+- No test root restructuring beyond import path updates.
+
+Stop conditions:
+
+- Stop if `src/pty/` cannot be deleted without changing public PTY ABI or behavior.
+- Stop if any old-path shim file is proposed.
+
+8. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: seed Slice 1 PTY `src/pty/` depth deletion.
+- How one task went: wrote the condensed Slice 1 execution contract from the accepted research artifact.
+- Next handoff or blocker: coder may implement Slice 1 only.
