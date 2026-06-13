@@ -19,35 +19,18 @@ Active loops:
 
 Active restart note:
 
-- The follow-up shallow owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
-- Latest closed sprint: follow-up shallow owner structure, final close `eee6296`, final receipt `a185b39`.
-- Latest completed slices from that sprint:
-  - `howl-vt` parser root flatten: `8d95998`
-  - `howl-render` unit wrapper deletion: `dbb8669`
-- Latest closed sprint: render scene ownership compression, planning `2fde3dd`, Slice 1 root `5bbe0ec`, Slice 2 root `007a0ee`, Slice 3 root `701accc`.
-- Latest completed nested render slices:
-  - `959576d` `Extract scene damage owner`
-  - `acb929e` `Extract scene rect owner`
-  - `27317db` `Finish scene sprite owner`
-- Latest closed sprint: raster special ownership compression, planning `0e53a8e`, Slice 1 root `a8c3e50`, Slice 2 root `c52f69d`, Slice 3 root `0a73776`, Slice 4 root `b9954fb`, Slice 5 root `8a072d0`.
-- Latest completed nested render slices:
-  - `42b68b8` `Extract undercurl owner`
-  - `a542d8a` `Extract special box owner`
-  - `24286d6` `Extract special powerline owner`
-  - `1986d89` `Extract special block braille owner`
-  - `9270a11` `Extract special legacy owner`
-- New active sprint: host render surface ownership.
-- Primary sprint target: `howl-linux-host/src/display/render_surface.zig`.
-- Planning acceptance receipt: `455402d` `Accept host render-surface planning`.
+- No active sprint is seeded. Waiting for next scope.
 - Latest closed sprint: host render-surface ownership.
-- Latest accepted slices from that sprint:
+- Latest closed sprint planning receipt: `455402d` `Accept host render-surface planning`.
+- Latest closed sprint accepted slices:
   - Slice 1 `5c7a2a2` `Extract host render-surface resources`
   - Slice 2 `2977c3b` `Extract host render-surface commands`
   - Slice 3 `618d0c5` `Curate host render-surface root`
-- Latest root receipts from that sprint:
+- Latest closed sprint root receipts:
   - `d1d8654` `Accept host render-surface Slice 1`
   - `afe558e` `Accept host render-surface Slice 2`
   - `bb28278` `Accept host render-surface Slice 3`
+  - `cef2b37` `Archive host render-surface sprint`
 
 Execution rule:
 
