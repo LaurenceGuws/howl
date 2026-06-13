@@ -243,3 +243,88 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
 - Intended task: reseed Slice 1 after the accepted planning correction for missing `test_support.zig` import users.
 - How one task went: the live Slice 1 contract now matches the accepted research allowlist and required rewires for `render_session.zig`, `surface/handle_test.zig`, and `surface/emitter_test.zig`, so execution can resume without forcing out-of-scope edits.
 - Next handoff or blocker: commit the accepted planning correction, then rerun Slice 1 under the refreshed contract.
+
+8. Role: coder
+- Session id: `coder-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: execute the refreshed Slice 1 contract by quarantining all top-level render C shims and wrapper tests under `src/c/`, rewiring the curated roots plus the newly allowed `test_support.zig` consumers, and proving the slice with the exact required ABI and unit test targets.
+- How one task went: moved the top-level C wrappers into `howl-render/src/c/` (`text_session.zig`, `text_session_handle.zig`, `surface_geometry.zig`, `prepare_request.zig`, `prepared_surface.zig`, `submission.zig`, `work_state.zig`), moved `test_support.zig` plus the five wrapper-test owners into sibling `src/c/` files, rewired `libhowl_render.zig`, `test_abi.zig`, and `test/unit/root.zig` to import only `src/c/` shim/test paths, rewired the newly allowed `test_support.zig` users in `render_session.zig`, `surface/handle_test.zig`, and `surface/emitter_test.zig`, and deleted the old top-level shim/helper/wrapper-test files including the generic `handle.zig`.
+- Verification:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi` -> pass.
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` -> pass.
+- Next handoff or blocker: reviewer should inspect the Slice 1 diff and verification results. Commit-hash handoff status: none; no git actions taken by coder.
+
+7. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: review execution Slice 1 against the refreshed condensed contract and accepted planning artifact.
+- How one task went: confirmed the diff stays inside the allowed Slice 1 surface, moves the C boundary under `src/c/`, preserves the export block, and leaves only the permitted non-owner rewires in `render_session.zig` and surface tests.
+- Verdict: accept
+- Findings:
+  1. Allowed-file scope holds. The nested `howl-render` worktree shows changes only in the authorized Slice 1 files: top-level shim/helper/test deletions, `src/c/` additions, `libhowl_render.zig`, `render_session.zig`, `surface/handle_test.zig`, `surface/emitter_test.zig`, `test_abi.zig`, and `test/unit/root.zig`.
+  2. `libhowl_render.zig` now imports C shims only from `src/c/`, and the export block still publishes the same ABI entrypoint names byte-for-byte (`howl-render/src/libhowl_render.zig:1-28`).
+  3. The old top-level C shim files are gone, the old generic top-level `handle.zig` is gone, and `test_support.zig` plus the five wrapper-test owners now live under `src/c/` only (`howl-render/src` directory listing; `howl-render/src/c` directory listing).
+  4. `test_abi.zig` and `test/unit/root.zig` now import the wrapper-test owners from `src/c/` only (`howl-render/src/test_abi.zig:4-11`, `howl-render/src/test/unit/root.zig:1-12`).
+  5. Non-goal discipline holds. `render_session.zig` changed only for the allowed `test_support` import rewire (`howl-render/src/render_session.zig:889-896`), and the only `surface/` edits are the allowed test import rewires in `surface/handle_test.zig` and `surface/emitter_test.zig` (`howl-render/src/surface/handle_test.zig:1-12`, `howl-render/src/surface/emitter_test.zig:1-13`). No `text/`, `geometry/`, or `vt_publication/` owner files moved.
+  6. Verification receipts and loop hygiene are present. The coder left the required loop note with exact proof commands and pass results, and the active accountability surface remains current-only.
+- Next handoff or blocker: orchestrator should verify before commit by re-checking `git status --short` in `/home/home/personal/projects/howl/howl-render`, rerunning `zig build test:abi` and `zig build test:unit` in that repo, confirming `src/` no longer contains the quarantined top-level shim/helper/test files and that `src/c/` contains their replacements, then record the commit-hash receipt for Slice 1 closure.
+
+8. Role: orchestrator
+- Session id: `orch-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: close Slice 1 after reviewer acceptance and final verification.
+- How one task went: final verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test:abi` and `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`; `src/` no longer contains the quarantined top-level shim/helper/test files; `src/c/` contains their replacements; accepted implementation is committed in `howl-render` as `b659e2f` (`Quarantine render C shims`).
+- Commit-hash receipt: `slice-1-c-boundary-quarantine=b659e2f`.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit the root Slice 1 receipt and seed Slice 2 from the accepted research plan.
+
+Condensed execution contract for coder session `coder-2026-06-13-render-folder-structure-02`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-13-render-folder-owner-structure-plan.md`
+- Implement only Slice 2, `VT publication ingress consolidation`.
+- Allowed files:
+  - `howl-render/src/render_session.zig`
+  - `howl-render/src/benchmark_main.zig`
+  - `howl-render/src/damage/publication_damage.zig`
+  - `howl-render/src/storage/publication_storage.zig`
+  - `howl-render/src/prepare/queue.zig`
+  - `howl-render/src/renderable_content/content.zig`
+  - `howl-render/src/renderable_content/color.zig`
+  - `howl-render/src/renderable_content/cursor.zig`
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/surface_preparer.zig`
+  - `howl-render/src/text/shape/cluster.zig`
+  - `howl-render/src/vt_publication/abi.zig`
+  - `howl-render/src/vt_publication/publication.zig`
+  - `howl-render/src/vt_publication/damage.zig`
+  - `howl-render/src/vt_publication/source_slot.zig`
+  - `howl-render/src/vt_publication/prepare_queue.zig`
+  - `howl-render/src/vt_publication/theme.zig`
+  - `howl-render/src/vt_publication/cursor.zig`
+  - `howl-render/src/vt_publication/text_input.zig`
+- Exact required shape:
+  - `damage/`, `prepare/`, `storage/`, and `renderable_content/` must be removed.
+  - their owners must live under `vt_publication/` with the exact file names listed above.
+  - `render_session.zig` imports must point only at `vt_publication/*`, `geometry/*`, `surface/*`, and `text/*` for this ingress path.
+  - `benchmark_main.zig`, `text/direct_normal.zig`, `text/surface_preparer.zig`, and `text/shape/cluster.zig` must rewire their old `renderable_content/*` imports to the exact `vt_publication/*` owners named in this slice.
+  - no new generic folder may replace the removed ones.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build check`
+- Exact non-goals:
+  - no changes to exported C symbol names.
+  - no changes to `surface/` or `text/` internal folder shape.
+  - no owner extraction from `render_session.zig`.
+- Exact stop conditions:
+  - stop if any moved file reveals that `vt_publication/` is not the true owner seam.
+  - stop if the rename from `renderable_content` to explicit ingress owner names forces semantic behavior changes rather than path-only rewiring.
+  - stop if reviewer finds remaining generic or duplicate naming debt inside the new `vt_publication/` shape.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-render-folder-structure-02`
+  - commit-hash handoff status for orchestrator receipt closure
