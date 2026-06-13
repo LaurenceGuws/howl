@@ -26,7 +26,8 @@ Active restart note:
 - Planning seed receipt: `bbf5ca7` `Seed six-target ownership planning`.
 - Accepted planning receipt: `16591b9` `Accept six-target ownership planning`.
 - Active sprint seed receipt: `bf0da6e` `Seed six-target ownership sprint`.
-- Next execution slice: Slice 1 `ft_hb` loaded-face owner cut, coder session `coder-2026-06-14-six-target-ownership-slice-01`.
+- Latest accepted execution slice: Slice 1 nested render commit `e952bf1` `Extract loaded face owner`.
+- Next execution slice: Slice 2 cluster run-planning cut into existing `shape/run.zig`, coder session `coder-2026-06-14-six-target-ownership-slice-02`.
 - Implementation is authorized only through the active sprint and loop contract.
 - Previous latest closed sprint: runtime debug-noise cleanup.
 - Latest closed sprint orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.

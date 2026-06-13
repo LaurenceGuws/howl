@@ -110,3 +110,18 @@ Orchestrator note:
 - Required tests from `howl-render`: `zig build test:unit`.
 - Stop conditions: stop if the cut requires touching files outside the allowed set; stop if the new owner cannot stay limited to face lifecycle and face lookup without pulling policy with it; stop if preserving behavior would require public render-session or ABI churn.
 - Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
+- Coder `coder-2026-06-14-six-target-ownership-slice-01`: hello.
+- Intent: cut FT/HB loaded-face lifecycle and lookup into `loaded_faces.zig` while leaving metrics/cache/resolve policy inside `FtHbSupport`.
+- Outcome: extracted primary and fallback face state plus lifecycle/lookup methods into a dedicated child owner and rewired `support.zig` to delegate without changing fallback behavior or metrics derivation inputs.
+- Handoff: run `zig build test:unit` in `howl-render`, then hand the diff and verification result to reviewer `review-2026-06-14-six-target-ownership-01`.
+
+- Reviewer `review-2026-06-14-six-target-ownership-01`: hello.
+- Intent: review Slice 1 loaded-face owner cut against the accepted sprint contract.
+- Outcome: accepted with no findings. `support.zig` kept resolve state, caches, shaping-input scratch, and cached metrics policy, while `loaded_faces.zig` stayed narrow to FT library state, primary/fallback face lifecycle, and face lookup only.
+- Handoff: orchestrator should verify `zig build test:unit` in `howl-render`, then record nested and root Slice 1 acceptance receipts.
+
+- Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: verify and accept Slice 1 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `e952bf1` `Extract loaded face owner`.
+- Handoff: root acceptance receipt is pending this commit; Slice 2 is next after root receipt closure.
