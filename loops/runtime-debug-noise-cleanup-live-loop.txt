@@ -47,3 +47,24 @@ Orchestrator note:
 - Intent: seed a clean planning-only contract from the user handoff.
 - Outcome: live loop now captures problem, target order, hard rules, research output, and planning gate.
 - Handoff: researcher must read required workflow docs, `sprints/current.txt`, this loop, `reference-index.md`, TigerBeetle readings, current target files, and current proof roots before writing the active research package.
+
+Researcher note:
+
+- Hello from `research-2026-06-14-runtime-debug-noise-01`.
+- Intent: produce the runtime debug-noise cleanup research package with exact target inventory, proof roots, and ordered execution slices.
+- Outcome: wrote `research/2026-06-14-runtime-debug-noise-cleanup-plan.md`; inventory found heavy stale timing/debug residue in `emitter.zig`, `render_session.zig`, and host `terminal/surface.zig`, while `surface/realizer.zig` is currently runtime validation/drawing truth with no debug-shaped candidate blocks.
+- Handoff: reviewer `review-2026-06-14-runtime-debug-noise-01` should review the plan hard, especially the required adjacent allowed files for `surface_preparer.zig`, benchmark timing, and host upload stats; blocker if planning is constrained to only the four primary files because that would leave renamed/sideways runtime noise.
+
+Researcher repair note:
+
+- Hello from `research-2026-06-14-runtime-debug-noise-01`.
+- Intent: repair the reviewer rejection by adding the missed upstream direct-normal timing producer, tightening Slice 2 file/test scope, and making Slice 4 no-op only.
+- Outcome: updated `research/2026-06-14-runtime-debug-noise-cleanup-plan.md` with `howl-render/src/text/direct_normal.zig` block inventory, explicit deletion of `direct_normal.Timings` from runtime rather than sideways relocation, exact Slice 2 allowed files, direct-normal proof roots, and no-edit realizer verification.
+- Handoff: reviewer `review-2026-06-14-runtime-debug-noise-01` should re-review repaired Slice 2 and Slice 4; blocker remains if benchmark detailed phase timings are required without allowing a benchmark-owned redesign that does not preserve runtime timing payloads.
+
+Reviewer acceptance note:
+
+- Hello from `review-2026-06-14-runtime-debug-noise-01`.
+- Intent: re-review repaired runtime debug-noise cleanup planning package.
+- Outcome: accepted planning with no blocking findings. The repaired plan inventories `direct_normal.zig`, deletes runtime timing payloads instead of relocating them, tightens Slice 2 exact-file authority, adds direct-normal proof roots, and makes Slice 4 read-only/no-op verification.
+- Handoff: orchestrator may record the accepted planning receipt and promote the plan into an execution sprint contract. No implementation is authorized until that execution contract is seeded with exact slice/coder receipt fields.
