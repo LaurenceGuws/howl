@@ -35,9 +35,9 @@ Active restart note:
 - Slice 1 `Extract undercurl owner` accepted in `howl-render` `42b68b8`; root `a8c3e50`.
 - Slice 2 `Create generated-special root and extract box owner` accepted in `howl-render` `a542d8a`; root `c52f69d`.
 - Slice 3 `Extract powerline owner` accepted in `howl-render` `24286d6`; root `0a73776`.
-- Slice 4 `Extract the current block-plus-braille dispatch owner` accepted in `howl-render` `1986d89`; root receipt pending.
-- Active execution slice: Slice 5 `Extract the current legacy-computing owner`.
-- Active coder session: `coder-2026-06-13-raster-special-05`.
+- Slice 4 `Extract the current block-plus-braille dispatch owner` accepted in `howl-render` `1986d89`; root `b9954fb`.
+- Slice 5 `Extract the current legacy-computing owner` accepted in `howl-render` `9270a11`; root receipt pending.
+- No next execution slice seeded yet.
 - Active planning sessions:
   - orchestrator `orch-2026-06-13-raster-special-01`
   - researcher `research-2026-06-13-raster-special-01`
@@ -46,7 +46,7 @@ Active restart note:
 Execution rule:
 
 - No coding is authorized without an accepted reviewer-gated execution slice under the active sprint.
-- Only Slice 5 is authorized, and only through the active loop execution contract.
+- No implementation is currently authorized until the orchestrator closes or reseeds the sprint.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

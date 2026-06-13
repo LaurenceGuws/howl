@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 5 seeded for execution; reviewer-gated implementation pending.
+Status: Slice 5 accepted in nested render repo; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -33,11 +33,10 @@ Current step:
 - Slice 1, `Extract undercurl owner`, is accepted in `howl-render` `42b68b8`; root `a8c3e50`.
 - Slice 2, `Create generated-special root and extract box owner`, is accepted in `howl-render` `a542d8a`; root `c52f69d`.
 - Slice 3, `Extract powerline owner`, is accepted in `howl-render` `24286d6`; root `0a73776`.
-- Slice 4, `Extract the current block-plus-braille dispatch owner`, is accepted in `howl-render` `1986d89`.
-- Root receipt for Slice 4 is pending orchestrator commit.
-- Slice 5, `Extract the current legacy-computing owner`, is the active execution slice.
-- Only Slice 5 is authorized.
-- Coder session id: `coder-2026-06-13-raster-special-05`.
+- Slice 4, `Extract the current block-plus-braille dispatch owner`, is accepted in `howl-render` `1986d89`; root `b9954fb`.
+- Slice 5, `Extract the current legacy-computing owner`, is accepted in `howl-render` `9270a11`.
+- Root receipt for Slice 5 is pending orchestrator commit.
+- No next execution slice is seeded yet.
 
 Exact user direction:
 
@@ -58,7 +57,7 @@ Exact stop conditions:
 - Stop if the move requires retaining any legacy-only helper from `howl-render/src/text/raster/special.zig:317-318,784-866` inside `generated_special.zig`.
 - Stop if the move requires introducing any new generic helper bucket outside `generated_special.zig`.
 
-Slice 5 execution contract:
+Latest executed slice contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/raster/generated_special.zig`
@@ -330,3 +329,31 @@ Team scratchpad
 - Intended task: gate the executed Slice 5 diff for legacy-computing owner extraction against the accepted execution contract.
 - How one task went: rejected; the code move is close, but Slice 5 was executed before the live artifacts showed Slice 4 root receipt closure, and `generated_special.zig` still retains non-contract helpers `generatedSpecialMetrics` and `boxDrawingRasterMetrics` outside the exact retained helper surface.
 - Next handoff or blocker: orchestrator must close the Slice 4 root receipt and reseed Slice 5 under guidance that matches real state; coder must then remove or inline the extra retained helpers in `generated_special.zig` and return the slice for re-review.
+
+29. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: repair the active accountability surface after the reviewer found Slice 4 receipt drift during Slice 5 review.
+- How one task went: re-proved that the Slice 4 root pointer already landed in root `b9954fb` and updated the active sprint/current/loop/research artifacts to show Slice 5 was authorized when executed.
+- Next handoff or blocker: coder must make the narrow Slice 5 helper-surface repair in `generated_special.zig` and return for re-review.
+
+30. Role: coder
+- Session id: `coder-2026-06-13-raster-special-05`
+- Hello: hi
+- Intended task: repair Slice 5 by removing the extra retained helpers `generatedSpecialMetrics` and `boxDrawingRasterMetrics` from `generated_special.zig`.
+- How one task went: inlined the default box-drawing metrics construction into `rasterizeGeneratedSpecialAlpha`, removed the two extra helpers from `generated_special.zig`, and passed `cd howl-render && zig fmt src/text/raster/generated_special.zig src/text/raster/special_legacy_computing.zig && zig build test:unit`.
+- Next handoff or blocker: reviewer should re-gate the repaired Slice 5 diff; no commit hash exists yet because git was intentionally untouched.
+
+31. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: re-gate repaired Slice 5 after the Slice 4 receipt-drift and retained-helper rejection points.
+- How one task went: accepted; active sprint/current/loop artifacts now consistently show Slice 4 root `b9954fb` closed and Slice 5 authorized, `generated_special.zig` no longer retains `generatedSpecialMetrics` or `boxDrawingRasterMetrics`, and the legacy-only raster/helper surface is owned by `special_legacy_computing.zig` with required route/proof seams still aligned.
+- Next handoff or blocker: orchestrator may verify the coder proof receipt and commit Slice 5 for commit-hash closure.
+
+32. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: commit the accepted Slice 5 render work and close the root receipt.
+- How one task went: committed the nested `howl-render` Slice 5 diff as `9270a11` `Extract special legacy owner` after reviewer acceptance.
+- Next handoff or blocker: commit the root receipt for Slice 5, then close the sprint if no further slice is needed.

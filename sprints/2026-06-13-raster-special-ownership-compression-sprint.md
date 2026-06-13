@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: Slice 1, Slice 2, Slice 3, and Slice 4 accepted; Slice 5 seeded for execution.
+Status: implementation complete; Slice 5 accepted and sprint ready to close.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -49,9 +49,10 @@ Commit-hash receipt: root `0e53a8e`.
 - Slice 1 is accepted in `howl-render` `42b68b8`; root `a8c3e50`.
 - Slice 2 is accepted in `howl-render` `a542d8a`; root `c52f69d`.
 - Slice 3 is accepted in `howl-render` `24286d6`; root `0a73776`.
-- Slice 4 is accepted in `howl-render` `1986d89`; root receipt pending orchestrator commit.
+- Slice 4 is accepted in `howl-render` `1986d89`; root `b9954fb`.
+- Slice 5 is accepted in `howl-render` `9270a11`; root receipt pending orchestrator commit.
 - The accepted plan is `/home/home/personal/projects/howl/research/2026-06-13-raster-special-ownership-compression-plan.md`.
-- Slice 5 is authorized through the live-loop execution contract only after the Slice 4 root receipt lands.
+- No further slice is authorized until the orchestrator closes or reseeds the sprint.
 
 ## Seed Pressure Anchors
 
