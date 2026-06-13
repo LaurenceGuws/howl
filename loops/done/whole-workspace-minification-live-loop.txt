@@ -1,3 +1,9 @@
+Historical authority: active loop during the 2026-06-12 whole-workspace minification sprint.
+
+Why superseded or done: sprint closed with final receipt root commit `22454e3` recording Slice 13 root close `d19a88c`.
+
+Must not be used for: current sprint authority, new render API ownership planning, or execution authorization.
+
 Whole workspace minification live loop scratchpad
 
 Date: 2026-06-12.

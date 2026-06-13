@@ -7,43 +7,34 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-12-whole-workspace-minification-sprint.md`
+- `sprints/2026-06-13-render-api-owner-surgery-sprint.md`
 
 Active research:
 
-- `research/2026-06-12-whole-workspace-minification-plan.md`
+- `research/2026-06-13-render-api-owner-surgery-plan.md`
 
 Active loops:
 
-- `loops/whole-workspace-minification-live-loop.txt`
+- `loops/render-api-owner-surgery-live-loop.txt`
 
 Active restart note:
 
-- Prior render API pragmatic shape artifacts are archived as done and are navigation only.
-- The active whole-workspace minification planning package is reviewer-accepted.
-- Slice 1, `render-emitter-duplicate-pass-collapse`, is accepted and committed in `howl-render` `49dfaf9` and root `33fecd5`.
-- Slice 2, `render-generated-special-routing-parity-proof`, is accepted and committed in `howl-render` `c91ac5c` and root `2ffd424`.
-- Slice 3, `render-generated-special-raster-owner-deletion`, is accepted and committed in `howl-render` `2452fb6` and root `14ecbf9`.
-- Slice 4, `benchmark-helper-deduplication`, is accepted and committed in `howl-render` `57f2557`, `howl-vt` `2bd2d79`, and root `0c9e060`.
-- Slice 5, `host-terminal-render-result-collapse`, is accepted and committed in `howl-linux-host` `4005d43` and root `14a8bf0`.
-- Slice 6, `vt-report-bucket-removal`, is accepted and committed in `howl-vt` `5fddd04` and root `5107c90`.
-- Slice 7, `host-gl-render-surface-classification-spine`, is accepted and committed in `howl-linux-host` `c17cebe` and root `9cb766d`.
-- Slice 8, `pty-posix-lifecycle-spine-split`, is accepted and committed in `howl-pty` `e5a8203` and root `051a1b0`.
-- Slice 9, `host-input-literal-table-collapse`, is accepted and committed in `howl-linux-host` `1eb35f8` and root `2419eb5`.
-- Slice 10, `render-text-prepare-pipeline-split`, is accepted and committed in `howl-render` `fc9de8d` and root `95928f3`.
-- Slice 11, `bucket-struct-naming-and-legitimacy-pass`, is accepted and committed in `howl-pty` `dd124dd`, `howl-vt` `c23a267`, and root `c250535`.
-- Slice 12, `anytype-usize-and-cast-boundary-pass`, is accepted and committed in `howl-linux-host` `c509c4e`, `howl-vt` `681bc28`, `howl-render` `84ea714`, and root `0b47d48`.
-- Rain-bench linked-library wrapper fix is committed in root `3830f81`.
-- Slice 13, `root-tooling-and-active-surface-hygiene`, is accepted and committed in root `d19a88c`.
-- The whole-workspace minification sprint is closed; no further coding is authorized from this sprint.
+- The whole-workspace minification sprint is closed and archived as done; its artifacts are historical receipts only.
+- The active step is render API ownership planning, not implementation.
+- User direction: cut `howl-render` into real idiomatic owners; `tv_surface` is fake; `tv_surface/vt.zig` wrongly uses renderer C imports and redefines VT structs; `session` is fake and must be checked against Alacritty cache/store naming pressure; `prepared` is a broad fake bucket; file names and mixed text/effects/geometry ownership are unacceptable; current render API structure is presumed wrong.
+- Orchestrator session id: `orch-2026-06-13-render-api-owner-surgery-01`.
+- Researcher session id: `research-2026-06-13-render-api-owner-surgery-01`.
+- Reviewer session id: `review-2026-06-13-render-api-owner-surgery-01`.
+- Planning status: reviewer-accepted.
+- Planning commit-hash receipt: pending.
 
 Execution rule:
 
+- No render product code is authorized until the reviewer-accepted planning package has a commit-hash receipt and orchestrator seeds Slice 1.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
-- The accepted research artifact is authoritative for the ordered minification slice plan.
-- Deferred or done planning artifacts are navigation only until fresh current-source proof re-promotes a fact into the active research artifact.
+- Historical minification artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
 Rule:
 
 - If a sprint or loop is not active, it must not be treated as authoritative.
-- If no sprint is active, execution is not authorized.
+- If no accepted reviewer-gated slice exists, implementation is not authorized.

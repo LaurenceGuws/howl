@@ -1,0 +1,130 @@
+Render API owner surgery live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: active planning loop.
+
+Orchestrator session id: `orch-2026-06-13-render-api-owner-surgery-01`.
+
+Researcher session id: `research-2026-06-13-render-api-owner-surgery-01`.
+
+Reviewer session id: `review-2026-06-13-render-api-owner-surgery-01`.
+
+Loop commit-hash receipt: pending.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, one outcome, and next handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-render-api-owner-surgery-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-render-api-owner-surgery-plan.md`
+
+Current step:
+
+- New render API ownership sprint is seeded for planning.
+- No render implementation is authorized.
+- Researcher must produce the full source-backed slice plan.
+- Reviewer must gate the plan before orchestrator seeds any execution slice.
+
+Exact user direction:
+
+- New sprint focus: cut render into real idiomatic owners.
+- `howl-render/src/tv_surface` is fake.
+- `howl-render/src/tv_surface/vt.zig` is using renderer C imports and redefining VT structs.
+- `howl-render/src/session` is fake and may need to move toward cache or store naming after checking Alacritty.
+- `howl-render/src/prepared` is a big fake bucket.
+- File names are unacceptable.
+- `text`, effects, geometry, and related render API structure are mixed together and must be recut.
+- Nothing about the current render API structure is accepted as authority without reference proof.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No sprint narrowing, v1 language, or partial cleanup unless the user explicitly narrows scope.
+- No Howl-only owner inventions while Alacritty, Ghostty, TigerBeetle, Kitty, or official docs provide source-backed pressure.
+- No compatibility aliases or wrapper preservation without a concrete ABI/downstream need.
+- No host/VT Zig-shaped convenience imports across the C ABI boundary.
+
+Exact stop conditions:
+
+- Stop if the active research cannot name exact allowed files, required shapes, tests, non-goals, stop conditions, and receipt fields for each slice.
+- Stop if current source and references conflict in a way that needs explicit user override.
+- Stop if proposed changes would bypass the C ABI boundary between `howl-render`, `howl-vt`, and hosts.
+- Stop if active `loops/`, `research/`, or `sprints/` contain stale non-archive artifacts.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: seed the new render API owner surgery sprint with reviewer-gated planning and no implementation authority.
+- How one task went: closed minification artifacts were archived as done with historical-authority headers; `sprints/current.txt` now points only at the render owner surgery sprint, loop, and research target; the sprint contract records the user-specified fake owner seams and requires researcher output plus reviewer acceptance before coding.
+- Next handoff or blocker: researcher must produce the full source-backed render owner plan; reviewer gates it before any execution slice.
+
+2. Role: researcher
+- Session id: `research-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: produce the full source-backed render API owner surgery sprint plan with exact slices and no implementation.
+- How one task went: wrote `/home/home/personal/projects/howl/research/2026-06-13-render-api-owner-surgery-plan.md` with current-source facts, Alacritty/Ghostty/TigerBeetle anchors, proposed owner shape, seven ordered execution slices, tests, assertions, stop conditions, and commit-hash receipt demands.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` must gate the plan before orchestrator seeds any coder slice; planning commit-hash receipt is still pending.
+
+3. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review the render API owner surgery planning package only, gate acceptance, and append the required loop note without implementing product code.
+- How one task went: reviewed the workflow, role docs, active sprint, active loop, active research plan, active artifact hygiene, and current source spot checks; active top-level `loops/`, `research/`, and `sprints/` contain only the expected live artifacts, but the plan is not executable without coder invention.
+- Outcome: reject. Findings: `research/2026-06-13-render-api-owner-surgery-plan.md:87-99`, `:117`, `:141`, and `:153` conflict or leave conditional owner choices (`vt_publication/storage` versus `src/storage`, and `render_session.zig` versus `text/renderer.zig`) instead of one required shape; `:116`, `:128`, `:140`, `:152`, `:164`, `:176`, and `:188` do not provide exact enough allowed-file coverage for current live import users such as `howl-render/src/prepare_request.zig:5`, `src/benchmark_main.zig:3-5`, `src/submission.zig:3-4`, `src/handle.zig:2-3`, `src/work_state.zig:3`, `src/text/shape/cluster.zig:5-6`, `src/text/surface_preparer.zig:19-20`, `src/text/direct_normal.zig:14-15`, and `src/test_support.zig:10-17`; `build.zig:124-150` makes the benchmark part of `check`, so deleting `tv_surface` without an exact benchmark migration slice will break required proof; `:188` uses the non-exact bucket `any render source file touched by slices 1-6` and loose documentation files, which violates the exact-files gate.
+- Next handoff or blocker: researcher must revise the planning package before implementation is authorized; the corrected plan must name one owner shape per slice, reconcile storage ownership, enumerate all live source/test/benchmark/FFI import users in exact allowed files, and keep commit-hash receipt demands intact for reviewer re-gate.
+
+4. Role: researcher
+- Session id: `research-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: correct the rejected render API owner surgery research plan without implementing product code.
+- How one task went: revised `/home/home/personal/projects/howl/research/2026-06-13-render-api-owner-surgery-plan.md` to fix one exact owner shape (`storage/publication_storage.zig`, `render_session.zig`, existing `text/raster/cache.zig`), enumerate live import users and benchmark/check migration files by exact path, require `check` where benchmark imports are affected, and remove the non-exact final-sweep file bucket.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should re-review the corrected plan; planning commit-hash receipt remains pending.
+
+5. Role: researcher
+- Session id: `research-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: correct the second reviewer rejection by resolving cache/store/session proof, text/effects/geometry recut coverage, and geometry/resource ownership conflict.
+- How one task went: reread `text/contract.zig`, `text/ft_hb/cache.zig`, `text/raster/cache.zig`, `text/surface_preparer.zig`, `text/direct_normal.zig`, `geometry/render_surface_realizer.zig`, and resource/caller tests; updated the plan with exact text owner files, final FT/HB cache and raster atlas ownership, and separate emit-time versus realizer resource stores under `surface`.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should re-review; no implementation is authorized and planning commit-hash receipt remains pending.
+
+5. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: re-review the corrected render API owner surgery planning package against the prior findings and full planning gate, without implementing product code.
+- How one task went: verified active artifact hygiene is clean and the prior mechanical defects are mostly corrected: storage now has one owner, the long-lived owner is fixed to `render_session.zig`, the prior live import users and benchmark/check migration paths are enumerated, benchmark-triggered `check` proof is required, and the former non-exact final-sweep `any render source file touched by slices 1-6` language is gone.
+- Outcome: reject. Findings: `research/2026-06-13-render-api-owner-surgery-plan.md:93` and `:225` keep `text/raster/cache.zig` as the cache owner while admitting all `text/` cache/raster files were not fully inspected and deferring glyph-cache naming to a later sprint; that is weak evidence and narrows the user-directed session/cache/store naming pressure in `sprints/2026-06-13-render-api-owner-surgery-sprint.md:22`, `:25`, and `loops/render-api-owner-surgery-live-loop.txt:42`, `:45`. The corrected slice plan still does not explicitly scope the full text/effects/geometry recut: current `howl-render/src/text/contract.zig:10-27`, `:67-90`, and `:92-112` mix semantic colors/effects, decoration/cursor geometry, grid/cell metrics, and cell input in one text contract, but no slice gives an exact required shape, tests, or stop condition for splitting those owners. Current `howl-render/src/geometry/render_surface_realizer.zig:17-34` owns a C render-surface `ResourceStore` inside geometry while the plan creates `surface/resource_store.zig` in `research/2026-06-13-render-api-owner-surgery-plan.md:98` and slice 5 without listing or resolving `geometry/render_surface_realizer.zig`; that leaves a geometry/resource owner conflict outside the slice queue. Because planning must cover the full user problem and cannot defer a source-backed owner decision to a later sprint without explicit user narrowing, implementation remains unauthorized.
+- Next handoff or blocker: researcher must revise the plan again to either source-prove that `text/contract.zig`, `text/raster/cache.zig`, and `geometry/render_surface_realizer.zig` are already acceptable owners or add exact ordered slices with allowed files, required shapes, tests, non-goals, stop conditions, session ids, and commit-hash receipt demands for those owner cuts.
+
+6. Role: researcher
+- Session id: `research-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: correct the second reviewer rejection after rereading the cited cache, text contract, and realizer resource sources.
+- How one task went: updated the active plan so cache ownership is final (`text/ft_hb/cache.zig` and `text/raster/atlas.zig`), added an exact text color/effects/metrics/cell-input/scene-contract recut slice, and resolved the geometry/resource conflict by moving CPU realization and realized resource state to `surface/realizer.zig` and `surface/realizer_resource_store.zig` while keeping emit-time allocation in `surface/resource_store.zig`.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should re-review; no implementation is authorized and planning commit-hash receipt remains pending.
+
+7. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: re-review the corrected active research plan against the prior remaining blockers and full planning gate, without implementing product code.
+- Findings: no blocking findings. The plan now fixes cache/store/session ownership with final owners `text/ft_hb/cache.zig`, `text/raster/atlas.zig`, and `render_session.zig`; adds an exact text color/effects/metrics/cell-input/scene-contract recut slice with exact allowed files, tests, non-goals, stop conditions, session id, and commit receipt; and resolves the `geometry/render_surface_realizer.zig` resource conflict by moving CPU realization to `surface/realizer.zig`, realized C-resource state to `surface/realizer_resource_store.zig`, and emit-time allocation to `surface/resource_store.zig`. Active artifact hygiene remains clean: only the expected active loop, research plan, sprint, and current index are present. The plan keeps implementation unauthorized until reviewer acceptance and orchestrator planning receipt closure.
+- Outcome: accept.
+- First executable slice expectations: orchestrator may seed Slice 1 only after recording/closing the planning commit-hash receipt. Slice 1 worker id is `coder-2026-06-13-render-api-owner-surgery-01`; allowed files are exactly those in `research/2026-06-13-render-api-owner-surgery-plan.md:133`; required shape is `vt_publication/publication.zig`, `vt_publication/abi.zig`, and `storage/publication_storage.zig` with no `vt_publication/storage.zig`; required proof is `zig build -Dskip-host=true test:unit` and `zig build -Dskip-host=true check` from repo root; commit receipt demand is `slice-1-vt-publication-boundary=<hash>`.
+- Next handoff or blocker: orchestrator should record planning acceptance/commit receipt, then seed exactly Slice 1; no broader implementation is authorized.
+
+8. Role: orchestrator
+- Session id: `orch-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: record reviewer acceptance and stop before execution until the planning commit-hash receipt is closed.
+- How one task went: active sprint, research, and current index now mark the render API owner surgery plan as reviewer-accepted with planning commit-hash receipt pending; no coder is authorized because the receipt is not closed.
+- Next handoff or blocker: user approval is needed before committing the planning package; after that, orchestrator can record the receipt and seed only Slice 1.
