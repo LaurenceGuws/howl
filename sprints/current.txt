@@ -29,6 +29,7 @@ Active restart note:
 - Planning status: reviewer-accepted after repair.
 - Planning seed commit-hash receipt: root `16a877d`.
 - Planning package commit-hash receipt: root `c69e039`.
+- Slice 1, `PTY src/pty/ Depth Deletion`, is accepted in `howl-pty` `714d41c`; root receipt pending.
 
 Execution rule:
 

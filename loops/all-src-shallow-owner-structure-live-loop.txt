@@ -159,3 +159,38 @@ Stop conditions:
 - Intended task: seed Slice 1 PTY `src/pty/` depth deletion.
 - How one task went: wrote the condensed Slice 1 execution contract from the accepted research artifact.
 - Next handoff or blocker: coder may implement Slice 1 only.
+
+9. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-1`
+- Hello: hi
+- Intended task: implement Slice 1 PTY `src/pty/` depth deletion.
+- How one task went: moved `src/pty/unix.zig` to `src/unix.zig`, moved `src/pty/posix.zig` to `src/posix.zig`, updated imports and tests, removed `src/pty/`, and passed `zig build test:unit`, `zig build test:abi`, and `zig build test:integration`.
+- Next handoff or blocker: reviewer should gate the Slice 1 diff; no commit was made by coder.
+
+10. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: gate Slice 1 PTY `src/pty/` depth deletion.
+- How one task went: accepted Slice 1; `src/pty/` is gone, imports point at final shallow paths, and `zig build test:unit`, `zig build test:abi`, and `zig build test:integration` all passed locally.
+- Next handoff or blocker: orchestrator may commit nested `howl-pty` and record receipts.
+
+11. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: verify and commit accepted Slice 1.
+- How one task went: reran `zig build test:unit`, `zig build test:abi`, and `zig build test:integration` in `howl-pty`; committed nested Slice 1 as `714d41c`.
+- Next handoff or blocker: commit the root receipt for Slice 1, then seed Slice 2.
+
+9. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-1`
+- Hello: hi
+- Intended task: delete the extra PTY `src/pty/` depth by moving the two implementation files to `src/` and updating all allowed imports/tests.
+- How one task went: moved `src/pty/unix.zig` to `src/unix.zig` and `src/pty/posix.zig` to `src/posix.zig`, updated `src/pty.zig` and the two allowed PTY tests to the new paths, and left no old-path shim file behind.
+- Next handoff or blocker: run the required `howl-pty` unit, ABI, and integration test targets for reviewer handoff.
+
+10. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: review Slice 1 actual `howl-pty` diff against the seeded execution contract, verify the deleted `src/pty/` folder has no survivors, and re-run the required proof commands.
+- How one task went: confirmed the diff stays within the allowed PTY files, updates `src/pty.zig` to import `src/unix.zig`, updates the two test imports to `src/posix.zig`, leaves no `src/pty/` directory behind, and `zig build test:unit`, `zig build test:abi`, and `zig build test:integration` all passed from `howl-pty`.
+- Next handoff or blocker: reviewer accepts Slice 1; orchestrator may record the acceptance receipts and commit nested `howl-pty`.

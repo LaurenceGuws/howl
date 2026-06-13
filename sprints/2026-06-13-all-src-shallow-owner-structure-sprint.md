@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: Slice 1 active.
+Status: Slice 1 accepted in `howl-pty`; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
 
