@@ -118,3 +118,24 @@ Slice 2 execution seed:
 - Required tests from `howl-render`: `zig build test:unit -- render session`, `zig build test:unit -- direct normal`, `zig build test:unit`, `zig build benchmark:render:build`, and `zig build check`.
 - Stop conditions: if any file outside the four allowed files needs content changes, stop and reseed exact scope; if benchmark requirements require runtime timing payloads, stop for reviewer/user decision; if prepared ownership/mutex assertions are at risk, stop.
 - Required handoff fields: changed files, benchmark timing ownership decision, summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
+Coder Slice 2 note:
+
+- Hello from `coder-2026-06-14-runtime-debug-noise-slice-02`.
+- Intent: remove render-session and text runtime prepare timing payloads while preserving prepared ownership, mutex discipline, counters, lane reports, and benchmark-owned observations.
+- Outcome: deleted scoped runtime timing structs, timing fields, timing clocks, timing mutations, and benchmark detailed phase output; required render unit, benchmark build, and check commands passed.
+- Handoff: ready for reviewer `review-2026-06-14-runtime-debug-noise-01`; no blocker, no commit touched by coder.
+
+Reviewer Slice 2 rejection note:
+
+- Hello from `review-2026-06-14-runtime-debug-noise-01`.
+- Intent: review Slice 2 prepare timing cleanup against the accepted sprint contract and stop conditions.
+- Outcome: rejected. `howl-render/src/surface/handle.zig:10-60` and `handle.zig:73-94` still contain adjacent prepare-handle runtime timing/debug noise called from `render_session.zig:474`, outside the Slice 2 allowed files. The Slice 2 stop condition required reseeding exact file scope.
+- Handoff: orchestrator must stop Slice 2 acceptance and reseed exact scope for `surface/handle.zig`, or record an explicit reviewed deferral with receipt fields.
+
+Orchestrator Slice 2 correction seed:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: restart from the earliest broken stage for the missed `surface/handle.zig` timing owner.
+- Outcome: active correction research artifact is `research/2026-06-14-runtime-debug-noise-slice2-handle-correction.md`; Slice 2 remains unaccepted and the existing implementation diff remains uncommitted.
+- Handoff: researcher must classify the exact handle timing blocks, choose delete/retain, name exact allowed files/tests/non-goals/stop conditions/receipt fields, and update the sprint/loop only after reviewer acceptance.

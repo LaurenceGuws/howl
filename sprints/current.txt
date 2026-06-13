@@ -11,7 +11,7 @@ Sprint:
 
 Active research:
 
-- No active research seeded. Accepted planning is archived at `research/done/2026-06-14-runtime-debug-noise-cleanup-plan.md`.
+- `research/2026-06-14-runtime-debug-noise-slice2-handle-correction.md`
 
 Active loops:
 
@@ -27,7 +27,8 @@ Active restart note:
 - Accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
 - Active sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
 - Latest accepted execution slice: Slice 1 nested render commit `932bd29` `Remove emitter debug timing noise`.
-- Next execution slice: Slice 2 `howl-render/src/render_session.zig` and runtime prepare timing plumbing, coder session `coder-2026-06-14-runtime-debug-noise-slice-02`.
+- Slice 2 status: rejected pending focused planning correction for missed `howl-render/src/surface/handle.zig` prepare-handle timing.
+- Active correction research: `research/2026-06-14-runtime-debug-noise-slice2-handle-correction.md`.
 - Implementation is authorized only through the active sprint and loop contract.
 - Previous latest closed sprint: host render-surface ownership.
 - Latest closed sprint planning receipt: `455402d` `Accept host render-surface planning`.
