@@ -20,7 +20,7 @@ Active loops:
 Active restart note:
 
 - The all-src shallow owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
-- The active step is Slice 1 execution under the follow-up shallow owner-structure sprint.
+- The active step is Slice 2 execution under the follow-up shallow owner-structure sprint.
 - User direction: continue deleting fake abstractions and keep `src/` trees as shallow as possible, following the same pressure as the deleted terminal wrapper.
 - Scope pressure: inspect current post-sprint package `src/` trees for remaining fake abstraction folders, needless wrapper files, stale prefixed indirections, and avoidable one-extra-depth structures that survived the first pass.
 - Orchestrator session id: `orch-2026-06-13-followup-shallow-structure-01`.
@@ -30,11 +30,12 @@ Active restart note:
 - Planning status: reviewer-accepted after repair.
 - Planning package commit-hash receipt: root `04aa1b2`.
 
-- Slice 1, `Flatten VT parser owner root`, is active and uncommitted.
+- Slice 1, `Flatten VT parser owner root`, is accepted in `howl-vt` `8d95998`; root receipt pending.
+- Slice 2, `Delete render unit-test wrapper chain`, is active and uncommitted.
 
 Execution rule:
 
-- Coding is authorized only from the condensed Slice 1 execution contract in `loops/followup-shallow-owner-structure-live-loop.txt`.
+- Coding is authorized only from the condensed Slice 2 execution contract in `loops/followup-shallow-owner-structure-live-loop.txt`.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

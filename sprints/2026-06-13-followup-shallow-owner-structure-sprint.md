@@ -36,9 +36,13 @@ Commit-hash receipt: root `66927e2`.
 
 ## Execution Authorization
 
-- Slice 1 is authorized through the live-loop execution contract only.
+- Slice 2 is authorized through the live-loop execution contract only.
 - The accepted plan is `/home/home/personal/projects/howl/research/2026-06-13-followup-shallow-owner-structure-plan.md`.
 - No other slice is authorized.
+
+## Slice Receipts
+
+- Slice 1, `Flatten VT parser owner root`: `howl-vt` `8d95998`; root receipt pending.
 
 ## Planning Receipts
 
