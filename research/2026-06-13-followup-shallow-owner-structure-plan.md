@@ -2,7 +2,7 @@
 
 Date: 2026-06-13.
 
-Status: reviewer-accepted planning artifact.
+Status: repaired planning artifact; reviewer re-gate required.
 
 Role owner: researcher.
 
@@ -79,7 +79,10 @@ Question:
    - `/home/home/personal/projects/howl/howl-pty/src/libhowl_pty.zig`
    - `/home/home/personal/projects/howl/howl-vt/src/libhowl_vt.zig`
    - `/home/home/personal/projects/howl/howl-vt/src/howl_vt.zig`
-   - `/home/home/personal/projects/howl/howl-vt/src/parser/main.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/parser.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/parser/owned_actions.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/parser/string_control.zig`
+    - `/home/home/personal/projects/howl/howl-vt/src/parser/events.zig`
    - `/home/home/personal/projects/howl/howl-vt/src/ffi/main.zig`
    - `/home/home/personal/projects/howl/howl-vt/src/screen.zig`
    - `/home/home/personal/projects/howl/howl-vt/src/terminal.zig`
@@ -115,15 +118,15 @@ Question:
 ### Compact package scan
 
 - `howl-pty/src/` is already shallow. The current tree contains only top-level owner files: `unix.zig`, `libhowl_pty.zig`, `pty.zig`, `posix.zig`, `ffi.zig`, and `session.zig`. Its shipped export root stays direct through `src/libhowl_pty.zig:1-19` and does not hide behind an extra source folder wrapper.
-- `howl-vt/src/` still has exactly two nested `main.zig` seams under current product source: `src/parser/main.zig` and `src/ffi/main.zig`.
+- `howl-vt/src/` no longer has a current parser owner file at `src/parser/main.zig`. The owner body now lives at `src/parser.zig:1-658`, while `src/ffi/main.zig` remains the one still-existing nested `main.zig` seam under current product source.
 - `howl-render/src/` still has one pure unit-test wrapper chain: `build.zig:53-68` points the unit root at `src/test_unit.zig`, and `src/test_unit.zig:1-3` immediately forwards into `src/test/unit/root.zig:1-12`.
 - `howl-linux-host/src/` still contains same-name folder/file seams at `src/config/config.zig`, `src/display/display.zig`, and `src/input/input.zig`, but each one is a substantial owner file rather than a pass-through wrapper: `config/config.zig:13-74`, `display/display.zig:57-225`, and `input/input.zig:68-260`.
 
 ### Remaining debt that is still meaningful
 
-1. VT parser owner is still one needless level deeper than the rest of the VT core.
-   - The parser owner body lives in `howl-vt/src/parser/main.zig:1-260` and continues through the rest of that file.
-   - Current source proves nineteen direct imports of that deep path today:
+1. The VT parser root flattening is only partially complete in the current tree.
+   - The parser owner body now lives at `howl-vt/src/parser.zig:1-658`.
+   - Current source proves the prior nineteen external importer retargets are already in place at the shallow owner root:
      - Product-source importers:
        - `howl-vt/src/vocabulary.zig:1`
        - `howl-vt/src/stream_terminal.zig:4`
@@ -145,6 +148,19 @@ Question:
        - `howl-vt/test/unit/parser/events_test.zig:3`
        - `howl-vt/test/unit/parser/main_test.zig:3`
        - `howl-vt/test/unit/parser/string_control_test.zig:3`
+   - `howl-vt/src/parser/main.zig` is absent in current source, but three internal parser helpers still import the deleted path today:
+     - `howl-vt/src/parser/owned_actions.zig:2`
+     - `howl-vt/src/parser/string_control.zig:2`
+     - `howl-vt/src/parser/events.zig:1`
+   - Those stale helper imports are still live proof roots rather than dead files:
+     - `howl-vt/src/parser.zig:3` imports `parser/string_control.zig`
+     - `howl-vt/src/stream_terminal.zig:2` imports `parser/events.zig`
+     - `howl-vt/src/route.zig:6` imports `parser/events.zig`
+     - `howl-vt/src/dcs.zig:1` imports `parser/events.zig`
+     - `howl-vt/src/howl_vt.zig:9` imports `parser/owned_actions.zig`
+     - `howl-vt/test/unit/parser/main_test.zig:2` imports `parser/owned_actions.zig`
+     - `howl-vt/test/unit/parser/string_control_test.zig:2` and `:4` import `parser/owned_actions.zig` and `parser/string_control.zig`
+     - `howl-vt/test/unit/parser/events_test.zig:2` imports `parser/events.zig`
    - The rest of the VT owner roots already use the shallower pattern in the same package, for example `screen.zig:1-320`, `terminal.zig:1-272`, and `publication.zig:1-39` keep the owner file at `src/<owner>.zig` and leave the helper files in `src/<owner>/`.
 
 2. Render unit-test wiring still spends one fake wrapper file plus one fake wrapper folder level on a curated proof root.
@@ -207,28 +223,33 @@ Question:
   - `howl-vt/src/publication.zig:1-39`
   - `howl-pty/src/libhowl_pty.zig:1-19`
 - Current Howl remaining debt anchors:
-  - `howl-vt/src/parser/main.zig:1-260`
+  - `howl-vt/src/parser.zig:1-658`
+  - `howl-vt/src/parser/owned_actions.zig:2`
+  - `howl-vt/src/parser/string_control.zig:2`
+  - `howl-vt/src/parser/events.zig:1`
   - `howl-vt/src/vocabulary.zig:1`
-  - `howl-vt/src/stream_terminal.zig:4`
+  - `howl-vt/src/stream_terminal.zig:2` and `:4`
   - `howl-vt/src/terminal.zig:6`
   - `howl-vt/src/host_state.zig:6`
   - `howl-vt/src/osc.zig:3`
-  - `howl-vt/src/howl_vt.zig:8`
+  - `howl-vt/src/howl_vt.zig:8-9`
   - `howl-vt/src/csi_params.zig:3`
   - `howl-vt/src/screen.zig:4`
   - `howl-vt/src/screen/style.zig:2`
+  - `howl-vt/src/route.zig:6`
+  - `howl-vt/src/dcs.zig:1`
   - `howl-vt/test_unit.zig:1-4`
   - `howl-vt/test/unit.zig:5-20`
-  - `howl-vt/test/unit/csi_mapping_test.zig:4`
+  - `howl-vt/test/unit/csi_mapping_test.zig:4-5`
   - `howl-vt/test/unit/terminal_surface_test.zig:2`
   - `howl-vt/test/unit/screen_test.zig:4`
-  - `howl-vt/test/unit/report_test.zig:3`
-  - `howl-vt/test/unit/route_test.zig:4`
+  - `howl-vt/test/unit/report_test.zig:3-4`
+  - `howl-vt/test/unit/route_test.zig:4-5`
   - `howl-vt/test/unit/screen/write_test.zig:4`
-  - `howl-vt/test/unit/parser/csi_test.zig:3`
-  - `howl-vt/test/unit/parser/events_test.zig:3`
-  - `howl-vt/test/unit/parser/main_test.zig:3`
-  - `howl-vt/test/unit/parser/string_control_test.zig:3`
+  - `howl-vt/test/unit/parser/csi_test.zig:2-3`
+  - `howl-vt/test/unit/parser/events_test.zig:2-3`
+  - `howl-vt/test/unit/parser/main_test.zig:2-3`
+  - `howl-vt/test/unit/parser/string_control_test.zig:2-4`
   - `howl-render/build.zig:53-68`
   - `howl-render/src/test_unit.zig:1-3`
   - `howl-render/src/test/unit/root.zig:1-12`
@@ -238,12 +259,12 @@ Question:
 ### VT parser owner
 
 - Owner role: parser state machine owner for VT input parsing.
-- Current shape debt: owner body lives at `src/parser/main.zig` while the rest of the package already keeps primary owners at `src/<owner>.zig`.
+- Current shape debt: the owner body already lives at `src/parser.zig`, but three internal helper files still import deleted `src/parser/main.zig` while the rest of the package already uses the shallower `src/<owner>.zig` pattern.
 - Required shape:
-  - create `howl-vt/src/parser.zig` as the parser owner file by moving the current owner body there unchanged in behavior
+  - keep `howl-vt/src/parser.zig` as the parser owner file
   - keep helper files under `howl-vt/src/parser/`
-  - delete `howl-vt/src/parser/main.zig`
-  - update every current importer to use `@import("parser.zig")`
+  - do not recreate `howl-vt/src/parser/main.zig`
+  - update the three stale internal helper imports to use `@import("../parser.zig")`
 - Explicit non-shape: do not flatten helper files like `parse_table.zig`, `owned_actions.zig`, `string_control.zig`, or `utf8.zig` unless the slice proves they are wrappers too. Current source does not prove that.
 
 ### Render unit proof root
@@ -268,7 +289,11 @@ Question:
   - There is still meaningful debt.
   - It is small and exact.
   - The debt is not broad host-folder flattening.
-  - The debt is one VT owner file still stranded at `src/parser/main.zig` and one render unit-test wrapper chain under `src/test/unit/root.zig`.
+  - The current active VT debt is no longer the owner move itself. The owner already sits at `src/parser.zig`; the remaining blocker is three stale internal parser helper imports that still target deleted `src/parser/main.zig`.
+  - The render debt is still one unit-test wrapper chain under `src/test/unit/root.zig`.
+- Slice-boundary update from fresh current-source proof:
+  - The original accepted Slice 1 boundary is no longer the right execution boundary for the live tree.
+  - The executable Slice 1 is now the narrow completion slice that fixes the three remaining internal parser helper imports without reopening the already-completed external importer retargets.
 - Things explicitly not promoted:
   - `howl-vt/src/ffi/main.zig`
   - `howl-linux-host/src/config/config.zig`
@@ -280,37 +305,23 @@ Question:
 
 ### Slice 1
 
-- Name: Flatten VT parser owner root.
+- Name: Finish VT parser root flattening.
 - Session ids:
   - orchestrator: `orch-2026-06-13-followup-shallow-structure-01`
   - researcher: `research-2026-06-13-followup-shallow-structure-01`
   - reviewer: `review-2026-06-13-followup-shallow-structure-01`
 - Allowed files:
-  - `/home/home/personal/projects/howl/howl-vt/src/parser.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/parser/main.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/vocabulary.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/stream_terminal.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/terminal.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/host_state.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/osc.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/howl_vt.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/csi_params.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/screen.zig`
-  - `/home/home/personal/projects/howl/howl-vt/src/screen/style.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/csi_mapping_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/terminal_surface_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/screen_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/report_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/route_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/screen/write_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/parser/csi_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/parser/events_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/parser/main_test.zig`
-  - `/home/home/personal/projects/howl/howl-vt/test/unit/parser/string_control_test.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/parser/owned_actions.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/parser/string_control.zig`
+  - `/home/home/personal/projects/howl/howl-vt/src/parser/events.zig`
 - Required shape:
-  - move the current parser owner implementation from `src/parser/main.zig` to `src/parser.zig`
-  - delete `src/parser/main.zig`
-  - retarget all nineteen current direct imports listed in this plan from `parser/main.zig` to `parser.zig`
+  - retarget these exact current internal helper imports from `@import("main.zig")` to `@import("../parser.zig")`:
+    - `howl-vt/src/parser/owned_actions.zig:2`
+    - `howl-vt/src/parser/string_control.zig:2`
+    - `howl-vt/src/parser/events.zig:1`
+  - keep the parser owner at `src/parser.zig`
+  - do not recreate `src/parser/main.zig`
+  - leave the nineteen already-retargeted external `src/parser.zig` imports unchanged
   - keep exported parser names, behavior, constants, and tests unchanged
 - Required tests:
   - in `/home/home/personal/projects/howl/howl-vt`: `zig build test:unit`
@@ -322,12 +333,13 @@ Question:
   - no ABI/export renames
   - no parser behavior changes
   - no helper-file flattening under `src/parser/`
+  - no external importer churn outside the three helper files above
   - no `ffi/main.zig` changes
   - no simulation redesign
 - Stop conditions:
-  - stop if current source reveals any additional `parser/main.zig` importer beyond the nineteen files re-proved in this plan
-  - stop if any ABI test root or header path starts depending on the parser file path
-  - stop if flattening parser root pressures broader module-root redesign around `src/howl_vt.zig`
+  - stop if current source reveals any additional importer of deleted `src/parser/main.zig` beyond `howl-vt/src/parser/owned_actions.zig:2`, `howl-vt/src/parser/string_control.zig:2`, and `howl-vt/src/parser/events.zig:1`
+  - stop if any required fix pressures recreating `src/parser/main.zig`
+  - stop if fixing the three helper imports pressures broader parser-helper or module-root redesign
 
 ### Slice 2
 
@@ -374,8 +386,8 @@ Question:
 
 ## Risks
 
-1. Slice 1 touches a heavily imported path. The risk is accidental missed imports across the nineteen re-proved source and unit-test users, not behavior drift.
-2. Slice 1 could still expose a non-import dependency on the `parser/main.zig` path outside the nineteen re-proved direct importers. The stop condition above exists for that case.
+1. Slice 1 now touches only three files, but they sit on live product and unit-test paths. The risk is no longer missed external importer churn; it is missing one remaining internal self-import and leaving the build blocked.
+2. Slice 1 could still expose another stale `main.zig` dependency outside the three re-proved helper imports. The stop condition above exists for that case.
 3. Slice 2 is structurally tiny, but it can silently drop proofs if the direct import list is not copied exactly.
 
 ## Proof Gaps
@@ -387,5 +399,5 @@ Question:
 ## Readiness Judgment
 
 - Ready for reviewer gate: yes.
-- Research verdict: meaningful shallow-depth debt remains, but it is only the two exact slices above.
-- Commit-hash receipt status: planning artifact only; seed receipt recorded as root `66927e2`; no dedicated accepted-planning commit exists yet.
+- Research verdict: meaningful shallow-depth debt remains, but the live Slice 1 execution boundary is now the three-file internal-import repair above, followed by the unchanged render wrapper deletion slice.
+- Commit-hash receipt status: this artifact has been repaired after root `04aa1b2`; reviewer re-gate is required before any new execution or receipt closure.

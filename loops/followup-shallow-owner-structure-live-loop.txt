@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: active execution loop.
+Status: active repair loop; Slice 1 blocked pending reviewer re-gate.
 
 Orchestrator session id: `orch-2026-06-13-followup-shallow-structure-01`.
 
@@ -30,8 +30,8 @@ Active research target:
 Current step:
 
 - The follow-up shallow owner-structure planning package is accepted and committed.
-- Slice 1 is active.
-- No other implementation is authorized.
+- The previously seeded Slice 1 execution contract is stale against current source because `howl-vt/src/parser/main.zig` is already gone while three internal helper imports still target it.
+- No implementation is authorized until the repaired Slice 1 contract below is reviewer-gated.
 
 Exact user direction:
 
@@ -116,9 +116,9 @@ Reviewer verdict for `research/2026-06-13-followup-shallow-owner-structure-plan.
 
 ## Slice 1 Execution Contract
 
-Name: Flatten VT parser owner root.
+Name: Finish VT parser root flattening.
 
-Status: active.
+Status: blocked pending repaired-plan reviewer gate.
 
 Coder session id: `coder-2026-06-13-followup-shallow-structure-slice-1`.
 
@@ -128,33 +128,16 @@ Commit-hash receipt demand: required on acceptance.
 
 Allowed files:
 
-- `/home/home/personal/projects/howl/howl-vt/src/parser.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/parser/main.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/vocabulary.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/stream_terminal.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/terminal.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/host_state.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/osc.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/howl_vt.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/csi_params.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/screen.zig`
-- `/home/home/personal/projects/howl/howl-vt/src/screen/style.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/csi_mapping_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/terminal_surface_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/screen_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/report_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/route_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/screen/write_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/parser/csi_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/parser/events_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/parser/main_test.zig`
-- `/home/home/personal/projects/howl/howl-vt/test/unit/parser/string_control_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/parser/owned_actions.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/parser/string_control.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/parser/events.zig`
 
 Required shape:
 
-- Move the current parser owner implementation from `src/parser/main.zig` to `src/parser.zig`.
-- Delete `src/parser/main.zig`.
-- Retarget all nineteen current direct imports listed in this contract from `parser/main.zig` to `parser.zig`.
+- Retarget `howl-vt/src/parser/owned_actions.zig:2`, `howl-vt/src/parser/string_control.zig:2`, and `howl-vt/src/parser/events.zig:1` from `@import("main.zig")` to `@import("../parser.zig")`.
+- Keep the parser owner at `src/parser.zig`.
+- Do not recreate `src/parser/main.zig`.
+- Leave the nineteen already-retargeted external `src/parser.zig` imports unchanged.
 - Keep exported parser names, behavior, constants, and tests unchanged.
 
 Exact tests:
@@ -167,14 +150,15 @@ Non-goals:
 - No ABI/export renames.
 - No parser behavior changes.
 - No helper-file flattening under `src/parser/`.
+- No external importer churn outside the three helper files above.
 - No `ffi/main.zig` changes.
 - No simulation redesign.
 
 Stop conditions:
 
-- Stop if current source reveals any additional `parser/main.zig` importer beyond the nineteen files named here.
-- Stop if any ABI test root or header path starts depending on the parser file path.
-- Stop if flattening parser root pressures broader module-root redesign around `src/howl_vt.zig`.
+- Stop if current source reveals any additional importer of deleted `src/parser/main.zig` beyond `howl-vt/src/parser/owned_actions.zig:2`, `howl-vt/src/parser/string_control.zig:2`, and `howl-vt/src/parser/events.zig:1`.
+- Stop if any required fix pressures recreating `src/parser/main.zig`.
+- Stop if fixing the three helper imports pressures broader parser-helper or module-root redesign.
 
 8. Role: orchestrator
 - Session id: `orch-2026-06-13-followup-shallow-structure-01`
@@ -182,6 +166,20 @@ Stop conditions:
 - Intended task: seed Slice 1 follow-up VT parser-root flattening.
 - How one task went: wrote the condensed Slice 1 execution contract from the accepted follow-up research artifact.
 - Next handoff or blocker: coder may implement Slice 1 only.
+
+9. Role: coder
+- Session id: `coder-2026-06-13-followup-shallow-structure-slice-1`
+- Hello: hi
+- Intended task: flatten the VT parser owner root from `src/parser/main.zig` to `src/parser.zig` without changing parser behavior or exports.
+- How one task went: moved the parser owner file to `src/parser.zig`, updated all nineteen current direct imports, and kept the helper files under `src/parser/` unchanged.
+- Next handoff or blocker: run `zig build test:unit` and `zig build simulate` in `howl-vt`, then hand off for reviewer gating with commit-hash receipt still open.
+
+10. Role: researcher
+- Session id: `research-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: repair Slice 1 planning after coder current-source proof showed the old contract still omitted internal parser helper imports of deleted `src/parser/main.zig`.
+- How one task went: re-proved the live importer set and found the boundary changed in current source: the nineteen external imports already point at `src/parser.zig`, `src/parser/main.zig` is already absent, and only `howl-vt/src/parser/owned_actions.zig:2`, `howl-vt/src/parser/string_control.zig:2`, and `howl-vt/src/parser/events.zig:1` still import `main.zig`.
+- Next handoff or blocker: reviewer must re-gate the repaired research artifact and repaired Slice 1 execution contract before any further coding.
 
 Reviewer verdict for repaired `research/2026-06-13-followup-shallow-owner-structure-plan.md`
 
@@ -194,3 +192,23 @@ Reviewer verdict for repaired `research/2026-06-13-followup-shallow-owner-struct
   - The artifact receipts remain complete for planning acceptance; the open item is still the future accepted-planning commit-hash closure, which the orchestrator may record when committing the planning package.
 - Files edited: `/home/home/personal/projects/howl/loops/followup-shallow-owner-structure-live-loop.txt`
 - Orchestrator may commit planning package and seed Slice 1: yes.
+
+11. Role: reviewer
+- Session id: `review-2026-06-13-followup-shallow-structure-01`
+- Hello: hi
+- Intended task: re-gate the repaired Slice 1 contract after the coder block by re-proving the live parser importer set and checking that no stale old Slice 1 authority remains active.
+- How one task went: current source re-proved that `howl-vt/src/parser/main.zig` is absent and that only `howl-vt/src/parser/owned_actions.zig:2`, `howl-vt/src/parser/string_control.zig:2`, and `howl-vt/src/parser/events.zig:1` still import `main.zig`; the repaired research artifact and condensed Slice 1 contract already match that three-file boundary exactly.
+- Next handoff or blocker: orchestrator may reseed the repaired Slice 1, using this note as the controlling reviewer gate; the older pre-block acceptance text about the nineteen external importer retargets is superseded and must not be treated as the current Slice 1 authority.
+
+Reviewer verdict for repaired Slice 1 after coder block
+
+- Verdict: `accept`
+- Findings:
+  - No blocking findings. Fresh current-source proof matches the repaired live contract: `howl-vt/src/parser/main.zig` is absent, and the only remaining `main.zig` importers are `howl-vt/src/parser/owned_actions.zig:2`, `howl-vt/src/parser/string_control.zig:2`, and `howl-vt/src/parser/events.zig:1`.
+  - `research/2026-06-13-followup-shallow-owner-structure-plan.md:121`, `151-163`, `292-296`, and `313-342` acknowledge the live state change and define the repaired three-file Slice 1 boundary without coder invention.
+  - `loops/followup-shallow-owner-structure-live-loop.txt:121-161` now matches that repaired boundary; the older pre-block acceptance language earlier in this live loop is superseded by this reviewer note and is not current authority.
+- Acceptance notes:
+  - The repaired Slice 1 is executable as a narrow three-file import retarget with the existing `zig build test:unit` and `zig build simulate` proof obligations unchanged.
+  - No stale old Slice 1 contract remains active as authority once this reviewer note is treated as the controlling gate for the live loop.
+- Files edited: `/home/home/personal/projects/howl/loops/followup-shallow-owner-structure-live-loop.txt`
+- Orchestrator may reseed the repaired Slice 1: yes.
