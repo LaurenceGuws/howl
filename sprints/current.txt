@@ -7,28 +7,31 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-14-six-target-ownership-hygiene-sprint.md`
+- No active sprint seeded.
 
 Active research:
 
-- No active research seeded. Accepted planning is archived at `research/done/2026-06-14-six-target-ownership-hygiene-plan.md`.
+- No active research seeded.
 
 Active loops:
 
-- `loops/six-target-ownership-hygiene-live-loop.txt`
+- No active loop seeded.
 
 Active restart note:
 
-- Active planning scope: six-target ownership hygiene.
+- No active sprint is seeded. Waiting for next scope.
+- Latest closed sprint: six-target ownership hygiene.
 - Orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
 - Researcher session id: `research-2026-06-14-six-target-ownership-01`.
 - Reviewer session id: `review-2026-06-14-six-target-ownership-01`.
 - Planning seed receipt: `bbf5ca7` `Seed six-target ownership planning`.
 - Accepted planning receipt: `16591b9` `Accept six-target ownership planning`.
-- Active sprint seed receipt: `bf0da6e` `Seed six-target ownership sprint`.
-- Latest accepted execution slice: Slice 3 nested VT commit `05e4c69` `Add parser control spine proof`.
-- Six-target ownership hygiene sprint execution is complete pending archive/closure.
-- Implementation is authorized only through the active sprint and loop contract.
+- Sprint seed receipt: `bf0da6e` `Seed six-target ownership sprint`.
+- Accepted slices:
+  - Slice 1 nested render commit `e952bf1` `Extract loaded face owner`, root receipt `eab184d` `Accept six-target ownership Slice 1`.
+  - Slice 2 nested render commit `927f032` `Move provisional runs into run owner`, root receipt `4c59cdd` `Accept six-target ownership Slice 2`.
+  - Slice 3 nested VT commit `05e4c69` `Add parser control spine proof`, root receipt `41eb058` `Accept six-target ownership Slice 3`.
+- Six-target ownership hygiene sprint execution is complete and archived.
 - Previous latest closed sprint: runtime debug-noise cleanup.
 - Latest closed sprint orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
 - Latest closed sprint researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
@@ -49,8 +52,8 @@ Active restart note:
 
 Execution rule:
 
-- No coding is authorized until the active sprint and slice execution contract are seeded.
-- The runtime debug-noise cleanup sprint is historical and archived.
+- No coding is authorized until a new active sprint, loop, and execution contract are seeded.
+- The six-target ownership hygiene sprint execution is complete and archived.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
