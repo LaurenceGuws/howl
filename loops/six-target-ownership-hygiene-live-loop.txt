@@ -160,3 +160,18 @@ Orchestrator note:
 - Minimum proof coverage: exit/transition/entry phase ordering; active-control exclusivity; CSI parameter and separator assembly; DCS hook boundary behavior.
 - Stop conditions: stop if direct parser-owner-local proof cannot be added within `parser.zig`; stop if the slice requires touching files outside the allowed set; stop if the work drifts from proof into parser architecture redesign.
 - Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
+- Coder `coder-2026-06-14-six-target-ownership-slice-03`: hello.
+- Intent: add parser-owner-local inline proof in `howl-vt/src/parser.zig` for the control spine while keeping the parser structurally large and unchanged in ownership.
+- Outcome: added inline parser tests covering ordered multi-phase control-spine output, active string-control exclusivity, CSI parameter and separator assembly, and DCS hook boundary data.
+- Handoff: run `zig build test:unit` in `howl-vt`, then hand the diff and verification result to reviewer `review-2026-06-14-six-target-ownership-01`.
+
+- Reviewer `review-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: review Slice 3 parser keep-large proof hygiene.
+- Outcome: accepted with no findings. The Slice 3 coder note is in correct chronological position, `parser.zig` now proves ordered multi-phase control-spine output through a real `next` path, and the remaining inline tests stay proof-only and owner-local.
+- Handoff: orchestrator should verify `zig build test:unit` in `howl-vt`, then record nested and root Slice 3 acceptance receipts.
+
+- Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: verify and accept Slice 3 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-vt`. Nested VT commit is `05e4c69` `Add parser control spine proof`.
+- Handoff: root acceptance receipt is pending this commit; planned sprint execution stops after Slice 3.
