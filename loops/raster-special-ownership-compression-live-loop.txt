@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 2 accepted in nested render repo; root receipt pending.
+Status: Slice 3 seeded for execution; reviewer-gated implementation pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -31,9 +31,10 @@ Current step:
 
 - The planning package is accepted at root `0e53a8e`.
 - Slice 1, `Extract undercurl owner`, is accepted in `howl-render` `42b68b8`; root `a8c3e50`.
-- Slice 2, `Create generated-special root and extract box owner`, is accepted in `howl-render` `a542d8a`.
-- Root receipt for Slice 2 is pending orchestrator commit.
-- No next execution slice is seeded yet.
+- Slice 2, `Create generated-special root and extract box owner`, is accepted in `howl-render` `a542d8a`; root `c52f69d`.
+- Slice 3, `Extract powerline owner`, is the active execution slice.
+- Only Slice 3 is authorized.
+- Coder session id: `coder-2026-06-13-raster-special-03`.
 
 Exact user direction:
 
@@ -43,54 +44,66 @@ Exact user direction:
 
 Exact non-goals:
 
-- No powerline extraction.
-- No block or braille extraction.
-- No legacy-computing extraction.
-- No support-table edit.
+- No box move.
+- No block or braille move.
+- No legacy-computing move.
+- No sprite-key semantic change.
 
 Exact stop conditions:
 
-- Stop if box extraction requires changing route classification in `symbol_map.zig`, `resolver.zig`, `lane.zig`, or `grouping.zig`.
-- Stop if box extraction requires changing provider dispatch in `howl-render/src/text/ft_hb/glyph_raster.zig:156-163`.
+- Stop if the move changes powerline spacer absorption proved by `howl-render/src/text/shape/grouping.zig:277-298`.
+- Stop if the move changes route classification proved by `howl-render/src/text/symbol_map.zig:26-29,44-51` and `howl-render/src/text/resolver.zig:294-342`.
 
-Latest executed slice contract:
+Slice 3 execution contract:
 
 - Allowed files only:
-  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special.zig`
   - `/home/home/personal/projects/howl/howl-render/src/text/raster/generated_special.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special_box.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special_powerline.zig`
 - Required shape:
-  - Move generated-special public entrypoints and family dispatch from `howl-render/src/text/raster/special.zig:49-127` into `howl-render/src/text/raster/generated_special.zig`.
-  - Move the box owner surface from `howl-render/src/text/raster/special.zig:129-156,872-1246` into `howl-render/src/text/raster/special_box.zig`.
-  - `special_box.zig` owns exactly:
-    - `rasterizeGeneratedBoxAlpha`
-    - `RoundedCorner`
-    - `BoxLineStyle`
-    - `BoxLines`
-    - `lineSpec`
-    - `lineSpecLight`
-    - `lineSpecHeavy`
-    - `lineSpecDouble`
-    - `lineSpecHalf`
-    - `rasterizeBoxLines`
-    - `drawBoxVerticalArm`
-    - `drawBoxHorizontalArm`
-    - `fillRectRange`
-    - `BoxLineAxis`
-    - `rasterizeDashedBoxLine`
-    - `rasterizeRoundedCorner`
-    - `snapRoundedCornerConnections`
-    - `rasterizeCrossLine`
-    - `centeredRange`
-    - `smoothStep`
-  - `generated_special.zig` keeps the generated-special dispatcher and only helpers still needed outside the box owner.
+  - Move the powerline owner surface from `howl-render/src/text/raster/special.zig:158-176,253-259,1442-1687` out of the generated-special owner and into `howl-render/src/text/raster/special_powerline.zig`.
+  - `special_powerline.zig` owns exactly:
+    - `rasterizeGeneratedPowerlineAlpha`
+    - `rasterizeGeneratedPowerlineTriangleAlpha`
+    - `rasterizePowerlineTriangle`
+    - `rasterizePowerlineHalfDiagonal`
+    - `rasterizePowerlineD`
+    - `CubicBezier`
+    - `rasterizePowerlineFilledD`
+    - `TriangleCoverageCtx`
+    - `FilledDCoverageCtx`
+    - `supersampledTriangleCoverage`
+    - `supersampledFilledDCoverage`
+    - `triangleContains`
+    - `filledDContains`
+    - `rasterizePowerlineRoundedD`
+    - `findBezierControlX`
+    - `findBezierTForX`
+    - `drawCubicStrokeAlpha`
+    - `bezierX`
+    - `bezierY`
+    - `bezierValue`
+    - `PowerlineCorner`
+    - `rasterizePowerlineCornerTriangle`
+  - `generated_special.zig` keeps the exact helper surface still required by the remaining owners and by the extracted powerline owner:
+    - `PointF`
+    - `lineY`
+    - `drawLineAlpha`
+    - `Range`
+    - `eighthPartitionRange`
+    - `supersampledCoverage`
+    - `fillRectAlpha`
+    - `saturatingSubU16`
+    - `pixelRowOffset`
+    - `pixelOffset`
+    - `pixelCount`
+    - `count32`
 - Required proof roots and runs:
-  - `howl-render/src/text/raster/special_test.zig:21-58,399-617`
+  - `howl-render/src/text/raster/special_test.zig:173-214,618-626`
   - `howl-render/src/text/ft_hb/glyph_raster.zig:239-261`
-  - `howl-render/src/text/symbol_map.zig:22-24,44-51`
+  - `howl-render/src/text/symbol_map.zig:26-29,44-51`
   - `howl-render/src/text/resolver.zig:294-342`
   - `howl-render/src/text/lane.zig:449-465`
-  - `howl-render/src/text/shape/grouping.zig:259-275`
+  - `howl-render/src/text/shape/grouping.zig:277-298`
   - package-local run: `cd howl-render && zig build test:unit`
 - Verification handoff requirements:
   - coder must report files changed, concise implementation summary, verification run/results, blockers/deviations, coder session id, and commit-hash handoff status
@@ -202,3 +215,10 @@ Team scratchpad
 - Intended task: commit the accepted Slice 2 render work and close the root receipt.
 - How one task went: committed the nested `howl-render` Slice 2 diff as `a542d8a` `Extract special box owner` after reviewer acceptance.
 - Next handoff or blocker: commit the root receipt for Slice 2, then seed Slice 3 if continuing.
+
+16. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: close the Slice 2 root receipt and seed Slice 3 for execution.
+- How one task went: recorded Slice 2 root receipt `c52f69d` and condensed Slice 3 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-03`.
+- Next handoff or blocker: coder should implement Slice 3 only and return verification plus commit-hash handoff status for reviewer gating.
