@@ -1,3 +1,9 @@
+Historical authority: accepted research plan during the 2026-06-13 render API owner surgery sprint.
+
+Why superseded or done: sprint closed with final root receipts `8aa8327` and `57bba4b`.
+
+Must not be used for: current sprint authority, new render folder/file owner planning, or execution authorization.
+
 # Render API Owner Surgery Plan
 
 Date: 2026-06-13.

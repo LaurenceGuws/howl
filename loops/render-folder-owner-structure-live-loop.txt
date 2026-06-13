@@ -1,0 +1,138 @@
+Render folder owner structure live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: active planning loop.
+
+Orchestrator session id: `orch-2026-06-13-render-folder-structure-01`.
+
+Researcher session id: `research-2026-06-13-render-folder-structure-01`.
+
+Reviewer session id: `review-2026-06-13-render-folder-structure-01`.
+
+Loop commit-hash receipt: pending.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, one outcome, and next handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-render-folder-owner-structure-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-render-folder-owner-structure-plan.md`
+
+Current step:
+
+- New render folder/file owner structure sprint is seeded for planning.
+- No implementation is authorized.
+- Researcher must produce the full source-backed slice plan.
+- Reviewer must gate the plan before orchestrator seeds any execution slice.
+
+Exact user direction:
+
+- Clean up file and folder locations and naming.
+- Keep only curated owner units in `src`.
+- Use shallow child folders only for per-owner definitions or true subdomains.
+- Take pressure from `utils/dev_references/terminals/ghostty/src/terminal` and its child folders for intentional structure.
+- Current render API still looks undisciplined compared to a project with real discipline and intent.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No sprint narrowing, v1 language, or partial cleanup unless the user explicitly narrows scope.
+- No Howl-only folder inventions while Ghostty, Alacritty, TigerBeetle, Kitty, or official docs provide source-backed pressure.
+- No fake compatibility wrappers or preserving dead directories for comfort.
+
+Exact stop conditions:
+
+- Stop if the active research cannot name exact allowed files, required shapes, tests, non-goals, stop conditions, and receipt fields for each slice.
+- Stop if current source and references conflict in a way that needs explicit user override.
+- Stop if active `loops/`, `research/`, or `sprints/` contain stale non-archive artifacts.
+- Stop if the plan collapses into rename theater instead of accountable owner/folder boundary work.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: seed the new render folder/file owner structure sprint with reviewer-gated planning and no implementation authority.
+- How one task went: confirmed the prior render owner sprint is closed; Ghostty terminal structure shows a deliberate top-level owner list with only a few narrow child folders like `c/`, `kitty/`, `osc/`, and `search/`; current `howl-render/src` still carries structure debt such as an empty `session/` directory and top-level/file placement that is not yet disciplined enough.
+- Next handoff or blocker: researcher must produce the full source-backed folder/file structure plan; reviewer gates it before any coding.
+
+2. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: gate the render folder/file owner structure planning package.
+- How one task went: after two narrow planning corrections for exact allowlists and final top-level closure, the reviewer accepted the full planning package. Slice 2 and Slice 3 now have fully explicit allowlists, the final `src/` top-level truth is explicit, the work is real owner/folder-boundary restructuring rather than rename theater, and active artifacts remain current-only.
+- Outcome: accept.
+- First executable slice expectations: orchestrator may seed only Slice 1 from `research/2026-06-13-render-folder-owner-structure-plan.md:267-325` after closing the planning commit-hash receipt; Slice 1 must keep the coder inside the exact allowlist, require `zig build test:abi` and `zig build test:unit`, preserve ABI exports byte-for-byte, and close a commit-hash receipt before Slice 2 starts.
+- Next handoff or blocker: orchestrator should record reviewer acceptance and stop before execution until the planning commit-hash receipt is closed.
+
+3. Role: orchestrator
+- Session id: `orch-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: record reviewer acceptance and stop before execution until the planning commit-hash receipt is closed.
+- How one task went: active sprint, research, and current index now mark the render folder/file owner structure plan as reviewer-accepted with planning commit-hash receipt pending; no coder is authorized because the receipt is not closed.
+- Next handoff or blocker: commit the accepted planning package, then seed only Slice 1.
+
+2. Role: researcher
+- Session id: `research-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: map the current `howl-render/src` owner tree against Ghostty terminal and Alacritty renderer pressure, then write the active folder/file planning artifact with exact slices, tests, stop conditions, and receipt demands.
+- How one task went: proved that the top-level tree is mixing real owners with C shims, that `session/` is empty, and that `damage/`, `prepare/`, `storage/`, and `renderable_content/` are the weak folder boundaries; wrote the active plan requiring a Ghostty-style `c/` folder, keeping only `geometry/`, `surface/`, `text/`, and `vt_publication/` as render subdomains, and deleting the dead/weak folders.
+- Next handoff or blocker: reviewer should gate `research/2026-06-13-render-folder-owner-structure-plan.md`; no implementation is authorized until that review accepts the full slice plan.
+
+3. Role: researcher
+- Session id: `research-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: correct the reviewer rejection by re-reading the proof roots and top-level helper/wrapper-test files, then tighten Slice 1 and close final top-level tree truth with no coder invention.
+- How one task went: confirmed that `test_abi.zig`, `test/unit/root.zig`, and `test_support.zig` all still depend on the top-level C-wrapper files; updated the active plan so Slice 1 explicitly covers moving `test_support.zig` plus all five wrapper-test owners into `src/c/`, and the final tree now names their exact end locations.
+- Next handoff or blocker: reviewer should re-gate `research/2026-06-13-render-folder-owner-structure-plan.md`; implementation is still not authorized.
+
+4. Role: researcher
+- Session id: `research-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: correct the second reviewer rejection by replacing the remaining Slice 2 and Slice 3 wildcard/conditional allowlists with exact file lists only.
+- How one task went: re-proved the Slice 2 import consumers of the moved VT-ingress owners (`render_session.zig`, `benchmark_main.zig`, `text/direct_normal.zig`, `text/surface_preparer.zig`, and `text/shape/cluster.zig`) and replaced the prior wildcard language; also replaced the Slice 3 conditional closure language with an explicit final-closure file list.
+- Next handoff or blocker: reviewer should re-gate `research/2026-06-13-render-folder-owner-structure-plan.md`; implementation remains unauthorized.
+
+3. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: review the active render folder/file owner-structure plan against the workflow contract, current source, and the seeded sprint direction.
+- How one task went: rejected the plan because it does not fully close the current top-level test-owner and tree-closure consequences, so a coder would still have to invent file moves and final `src/` contents.
+- Verdict: reject
+- Findings:
+  1. `research/2026-06-13-render-folder-owner-structure-plan.md:268-285` under-specifies Slice 1 allowed files. The plan moves every top-level C shim into `src/c/`, but current ABI and unit proof roots still import the wrapper-test owners `text_session_test.zig`, `surface_geometry_test.zig`, `prepare_request_test.zig`, `prepared_surface_test.zig`, and `submission_test.zig` from the top level (`howl-render/src/test_abi.zig:4-11`, `howl-render/src/test/unit/root.zig:1-12`). Those test owners are not listed for Slice 1 even though the move necessarily forces them to move or be rewritten. This violates `loop/flow.md:25-30` because the slice does not give exact allowed files or exact required shape for the consequences it triggers.
+  2. `research/2026-06-13-render-folder-owner-structure-plan.md:366-370` claims the final top-level `src/` set is only curated roots plus `c/`, `geometry/`, `surface/`, `text/`, `vt_publication/`, and `test/`, but current top-level also contains `test_support.zig` and the five wrapper-test owners (`howl-render/src` directory listing; `howl-render/src/test_abi.zig:4-11`; `howl-render/src/test/unit/root.zig:1-12`). The slices never specify whether those files remain top-level, move under `c/`, move under `test/`, or are deleted after import rewiring. That leaves final tree closure to coder invention and breaks the planning completion gate in `loop/flow.md:24-41`.
+- Next handoff or blocker: researcher must correct the plan so every existing top-level wrapper-test and support owner has an exact slice, allowed-file list, final location, and proof-root rewiring path before review can accept planning.
+
+4. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: re-review the corrected active render folder/file owner-structure plan against the prior findings and the full planning gate.
+- How one task went: confirmed the prior two findings are corrected, but the plan still leaves later-slice allowed-file sets open-ended enough that a coder would have to reconstruct scope during execution.
+- Verdict: reject
+- Findings:
+  1. `research/2026-06-13-render-folder-owner-structure-plan.md:336-354` still leaves Slice 2 without an exact allowed-file list. The line `any tests whose imports must be rewired because of those moves only` is not an exact file contract. `loop/flow.md:25-30` requires exact allowed files, and this wording leaves the coder to discover and choose the touched proof roots during execution.
+  2. `research/2026-06-13-render-folder-owner-structure-plan.md:382-389` still leaves Slice 3 without an exact allowed-file list. The line `any files from Slices 1-2 only if import-root closure still requires them` is open-ended scope reconstruction, not a bounded execution contract. That fails the planning completion gate in `loop/flow.md:24-41` and the reviewer standard in `loop/reviewer.md:37-43`.
+  3. The earlier rejection points are now closed: Slice 1 explicitly covers `test_support.zig`, the five wrapper-test owners, `test_abi.zig`, and `test/unit/root.zig` (`research/2026-06-13-render-folder-owner-structure-plan.md:276-314`), and the final top-level tree truth now explicitly says those helper/test owners leave the top level and live under `src/c/` (`research/2026-06-13-render-folder-owner-structure-plan.md:390-403`). Those fixes are good, but the plan is still not acceptable until Slices 2 and 3 stop using open-ended file allowances.
+- Next handoff or blocker: researcher must replace the open-ended Slice 2 and Slice 3 file allowances with exact file lists, including every proof root or moved owner that may still be touched for import closure, before planning can be accepted and seeded for coding.
+
+5. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: re-review the corrected active render folder/file owner-structure plan for the remaining explicit-allowlist blockers and the full planning gate.
+- How one task went: confirmed the remaining Slice 2 and Slice 3 blockers are corrected and the active planning package is now explicit enough to seed execution without coder invention.
+- Verdict: accept
+- Findings:
+  1. Slice 2 now has a fully explicit allowlist and import-closure contract. The moved owner files plus each proven import consumer are named directly, with no wildcard or conditional wording left (`research/2026-06-13-render-folder-owner-structure-plan.md:336-361`).
+  2. Slice 3 now has a fully explicit allowlist and final top-level closure contract. The plan names the exact surviving top-level files, exact surviving top-level folders, the exact `src/c/` destinations for `test_support.zig` and all five wrapper-test owners, and the exact files allowed for final closure (`research/2026-06-13-render-folder-owner-structure-plan.md:384-451`).
+  3. The full planning gate now passes: the active artifacts are current-only (`loops/`, `research/`, and `sprints/` each contain one active artifact plus archive folders), the plan remains planning-only with no coding authorization before acceptance (`sprints/current.txt:31-40`, `loops/render-folder-owner-structure-live-loop.txt:32-35`), the slices stay focused on owner/folder boundary work rather than rename theater (`research/2026-06-13-render-folder-owner-structure-plan.md:356-361`, `research/2026-06-13-render-folder-owner-structure-plan.md:426-439`), and each slice carries exact allowed files, required shape, tests, non-goals, stop conditions, session ids, and commit-hash receipt demands (`research/2026-06-13-render-folder-owner-structure-plan.md:267-451`).
+- Next handoff or blocker: orchestrator may seed Slice 1 only. First executable slice expectations: use the Slice 1 contract exactly as written in `research/2026-06-13-render-folder-owner-structure-plan.md:267-325`, keep work inside that allowlist, require `zig build test:abi` and `zig build test:unit`, preserve ABI exports byte-for-byte, and require a commit-hash receipt before Slice 2 starts.

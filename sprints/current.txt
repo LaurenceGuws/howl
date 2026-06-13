@@ -7,41 +7,33 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-13-render-api-owner-surgery-sprint.md`
+- `sprints/2026-06-13-render-folder-owner-structure-sprint.md`
 
 Active research:
 
-- `research/2026-06-13-render-api-owner-surgery-plan.md`
+- `research/2026-06-13-render-folder-owner-structure-plan.md`
 
 Active loops:
 
-- `loops/render-api-owner-surgery-live-loop.txt`
+- `loops/render-folder-owner-structure-live-loop.txt`
 
 Active restart note:
 
-- The whole-workspace minification sprint is closed and archived as done; its artifacts are historical receipts only.
-- The active planning package is accepted and committed in root `e5f7e4b`.
-- Slice 1, `VT Publication Boundary And Storage`, is accepted and committed in `howl-render` `3d9ff6b` and root `41f4300`.
-- Slice 2, `Renderable Content And Damage Owners`, is accepted and committed in `howl-render` `d1bfa57` and root `af483b0`.
-- Slice 3, `Prepare Queue Cutover And tv_surface Deletion`, is accepted and committed in `howl-render` `0f4fdb1` and root `56b14cd`.
-- Slice 4, `Text Effects Geometry Contract Recut`, is accepted and committed in `howl-render` `3ce570f` and root `b81be69`.
-- Slice 5, `Render Session Owner`, is accepted and committed in `howl-render` `81bc7ca` and root `bbebf33`.
-- Slice 6, `Prepared Surface And Surface Resource Split`, is accepted and committed in `howl-render` `09c6770` and root `785022e`.
-- Slice 7, `FFI And ABI Owner Sweep`, is accepted and committed in `howl-render` `c0675c8` and root `a0214a0`.
-- Slice 8, `Final Source Order, Deletion, And Proof Sweep`, is accepted and committed in `howl-render` `82a3e72` and root `8aa8327`.
-- The render API owner surgery sprint is closed; no further coding is authorized from this sprint.
-- User direction: cut `howl-render` into real idiomatic owners; `tv_surface` is fake; `tv_surface/vt.zig` wrongly uses renderer C imports and redefines VT structs; `session` is fake and must be checked against Alacritty cache/store naming pressure; `prepared` is a broad fake bucket; file names and mixed text/effects/geometry ownership are unacceptable; current render API structure is presumed wrong.
-- Orchestrator session id: `orch-2026-06-13-render-api-owner-surgery-01`.
-- Researcher session id: `research-2026-06-13-render-api-owner-surgery-01`.
-- Reviewer session id: `review-2026-06-13-render-api-owner-surgery-01`.
+- The render API owner surgery sprint is closed and archived as done; its artifacts are historical receipts only.
+- The active step is render folder/file owner planning, not implementation.
+- User direction: clean up file and folder locations and naming; keep only curated owner units directly under `src`; use shallow child folders only for true subdomains and per-owner definitions; take explicit pressure from `utils/dev_references/terminals/ghostty/src/terminal` and its child folders for intentional structure.
+- Current render shape still has folder/location discipline debt: empty `src/session/`, mixed top-level and folder owners, and folder boundaries that are not yet obviously owner-true.
+- Orchestrator session id: `orch-2026-06-13-render-folder-structure-01`.
+- Researcher session id: `research-2026-06-13-render-folder-structure-01`.
+- Reviewer session id: `review-2026-06-13-render-folder-structure-01`.
 - Planning status: reviewer-accepted.
-- Planning commit-hash receipt: root `e5f7e4b`.
+- Planning commit-hash receipt: pending.
 
 Execution rule:
 
-- Coding is authorized only from the condensed Slice 1 execution contract in `loops/render-api-owner-surgery-live-loop.txt`.
+- No render product code is authorized until the reviewer-accepted planning package has a commit-hash receipt and orchestrator seeds Slice 1.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
-- Historical minification artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
+- Historical render-owner artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
 Rule:
 
