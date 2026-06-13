@@ -275,6 +275,7 @@ Naming decisions that are required, not optional:
 - Commit-hash receipt demand: required before Slice 2 can start.
 - Allowed files:
   - `howl-render/src/libhowl_render.zig`
+  - `howl-render/src/render_session.zig`
   - `howl-render/src/text_session.zig` to move/delete
   - `howl-render/src/handle.zig` to move/delete
   - `howl-render/src/surface_geometry.zig` to move/delete
@@ -288,6 +289,8 @@ Naming decisions that are required, not optional:
   - `howl-render/src/prepare_request_test.zig` to move/delete
   - `howl-render/src/prepared_surface_test.zig` to move/delete
   - `howl-render/src/submission_test.zig` to move/delete
+  - `howl-render/src/surface/handle_test.zig`
+  - `howl-render/src/surface/emitter_test.zig`
   - `howl-render/src/c/text_session.zig`
   - `howl-render/src/c/text_session_handle.zig`
   - `howl-render/src/c/surface_geometry.zig`
@@ -309,6 +312,8 @@ Naming decisions that are required, not optional:
   - The old generic top-level `handle.zig` must be gone.
   - `test_support.zig` must move to `src/c/test_support.zig`.
   - The five top-level wrapper-test files must move to sibling files under `src/c/`.
+  - `render_session.zig` must rewire its current `@import("test_support.zig")` test use to `@import("c/test_support.zig")`.
+  - `surface/handle_test.zig` and `surface/emitter_test.zig` must rewire their current `../test_support.zig` imports to `../c/test_support.zig`.
   - `test_abi.zig` must import the wrapper-test files from `src/c/` paths only.
   - `test/unit/root.zig` must import `text_session_test.zig` and `submission_test.zig` from `src/c/` paths only.
   - Function names and ABI exports must stay byte-for-byte identical.
@@ -316,7 +321,7 @@ Naming decisions that are required, not optional:
   - `zig build test:abi`
   - `zig build test:unit`
 - Exact non-goals:
-  - no movement of `render_session.zig`
+  - no owner redesign inside `render_session.zig`
   - no movement of `surface/`, `text/`, `geometry/`, or `vt_publication/` owners yet
   - no ABI symbol additions or removals
 - Exact stop conditions:

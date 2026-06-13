@@ -100,6 +100,9 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
   - `howl-render/src/prepare_request_test.zig`
   - `howl-render/src/prepared_surface_test.zig`
   - `howl-render/src/submission_test.zig`
+  - `howl-render/src/render_session.zig`
+  - `howl-render/src/surface/handle_test.zig`
+  - `howl-render/src/surface/emitter_test.zig`
   - `howl-render/src/c/text_session.zig`
   - `howl-render/src/c/text_session_handle.zig`
   - `howl-render/src/c/surface_geometry.zig`
@@ -121,6 +124,7 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
   - the old generic top-level `handle.zig` must be gone.
   - `test_support.zig` must move to `src/c/test_support.zig`.
   - the five top-level wrapper-test files must move to sibling files under `src/c/`.
+  - `render_session.zig`, `surface/handle_test.zig`, and `surface/emitter_test.zig` must rewire their `test_support.zig` imports to `src/c/test_support.zig`.
   - `test_abi.zig` must import the wrapper-test files from `src/c/` paths only.
   - `test/unit/root.zig` must import `text_session_test.zig` and `submission_test.zig` from `src/c/` paths only.
   - function names and ABI exports must stay byte-for-byte identical.
@@ -171,6 +175,13 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
 - How one task went: re-proved the Slice 2 import consumers of the moved VT-ingress owners (`render_session.zig`, `benchmark_main.zig`, `text/direct_normal.zig`, `text/surface_preparer.zig`, and `text/shape/cluster.zig`) and replaced the prior wildcard language; also replaced the Slice 3 conditional closure language with an explicit final-closure file list.
 - Next handoff or blocker: reviewer should re-gate `research/2026-06-13-render-folder-owner-structure-plan.md`; implementation remains unauthorized.
 
+5. Role: researcher
+- Session id: `research-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: correct the execution-exposed Slice 1 planning defect by re-proving every current `test_support.zig` import user and expanding the Slice 1 allowlist only where relocation forces rewires.
+- How one task went: confirmed the previously planned wrapper tests were not the whole set because `render_session.zig`, `surface/handle_test.zig`, and `surface/emitter_test.zig` also import `test_support.zig`; updated Slice 1 so those files are now explicitly allowed and their required import rewires are stated directly.
+- Next handoff or blocker: reviewer should re-gate `research/2026-06-13-render-folder-owner-structure-plan.md`; implementation remains unauthorized.
+
 3. Role: reviewer
 - Session id: `review-2026-06-13-render-folder-structure-01`
 - Hello: hi
@@ -205,3 +216,30 @@ Condensed execution contract for coder session `coder-2026-06-13-render-folder-s
   2. Slice 3 now has a fully explicit allowlist and final top-level closure contract. The plan names the exact surviving top-level files, exact surviving top-level folders, the exact `src/c/` destinations for `test_support.zig` and all five wrapper-test owners, and the exact files allowed for final closure (`research/2026-06-13-render-folder-owner-structure-plan.md:384-451`).
   3. The full planning gate now passes: the active artifacts are current-only (`loops/`, `research/`, and `sprints/` each contain one active artifact plus archive folders), the plan remains planning-only with no coding authorization before acceptance (`sprints/current.txt:31-40`, `loops/render-folder-owner-structure-live-loop.txt:32-35`), the slices stay focused on owner/folder boundary work rather than rename theater (`research/2026-06-13-render-folder-owner-structure-plan.md:356-361`, `research/2026-06-13-render-folder-owner-structure-plan.md:426-439`), and each slice carries exact allowed files, required shape, tests, non-goals, stop conditions, session ids, and commit-hash receipt demands (`research/2026-06-13-render-folder-owner-structure-plan.md:267-451`).
 - Next handoff or blocker: orchestrator may seed Slice 1 only. First executable slice expectations: use the Slice 1 contract exactly as written in `research/2026-06-13-render-folder-owner-structure-plan.md:267-325`, keep work inside that allowlist, require `zig build test:abi` and `zig build test:unit`, preserve ABI exports byte-for-byte, and require a commit-hash receipt before Slice 2 starts.
+
+6. Role: coder
+- Session id: `coder-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: execute Slice 1 exactly as seeded by moving the top-level C shim and wrapper-test owners under `src/c/`, rewiring the curated roots, and proving the slice with `zig build test:abi` plus `zig build test:unit`.
+- How one task went: before editing, I re-proved the explicit stop surface and found the Slice 1 allowlist is incomplete for the required move of `test_support.zig`. Current unit-proof consumers outside the allowlist still import the top-level helper directly: `howl-render/src/render_session.zig:892` imports `@import("test_support.zig")`, `howl-render/src/surface/handle_test.zig:11` imports `@import("../test_support.zig")`, and `howl-render/src/surface/emitter_test.zig:12` imports `@import("../test_support.zig")`. Deleting or moving `howl-render/src/test_support.zig` without updating those files would break `zig build test:unit`, but those files are not authorized in the Slice 1 allowlist.
+- Verification: not run. No code edit was made because the seeded Slice 1 contract cannot satisfy both the required shape and the required test targets without touching non-allowed files.
+- Next handoff or blocker: orchestrator must reseed or escalate. The minimal accountable fix is to amend Slice 1 to include every remaining `test_support.zig` import consumer that must be rewired for `test:unit` closure before coding resumes. Commit-hash handoff status: none; no commit requested and no compliant implementation diff exists.
+
+6. Role: reviewer
+- Session id: `review-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: review the Slice 1 planning correction exposed by execution, focusing on exact `test_support.zig` import-user coverage and guarding against new planning drift.
+- How one task went: confirmed the corrected Slice 1 allowlist now names every current `test_support.zig` import user that must change for relocation and keeps the correction bounded to reseeding Slice 1 only.
+- Verdict: accept
+- Findings:
+  1. Slice 1 now exactly covers every current `test_support.zig` import user that relocation forces to change. Current users are `text_session_test.zig`, `surface_geometry_test.zig`, `prepare_request_test.zig`, `prepared_surface_test.zig`, `submission_test.zig`, `render_session.zig`, `surface/handle_test.zig`, and `surface/emitter_test.zig` (`howl-render/src/text_session_test.zig:2`, `howl-render/src/surface_geometry_test.zig:2`, `howl-render/src/prepare_request_test.zig:2`, `howl-render/src/prepared_surface_test.zig:2`, `howl-render/src/submission_test.zig:2`, `howl-render/src/render_session.zig:892`, `howl-render/src/surface/handle_test.zig:11`, `howl-render/src/surface/emitter_test.zig:12`). The corrected allowlist now includes the previously missing import users `render_session.zig`, `surface/handle_test.zig`, and `surface/emitter_test.zig`, alongside the already-listed wrapper-test owners (`research/2026-06-13-render-folder-owner-structure-plan.md:276-318`).
+  2. No new planning vagueness or scope drift was introduced. The correction stays inside Slice 1, adds exact files plus exact rewiring requirements for those files, and does not broaden authorization into unrelated owner moves or later slices (`research/2026-06-13-render-folder-owner-structure-plan.md:276-330`).
+  3. This remains a planning correction only. The artifact still frames the change as Slice 1 repair for reseeding, not as broader implementation authorization; later slices and broader product work remain unchanged and unauthorized until orchestrator reseeds the corrected Slice 1 contract.
+- Next handoff or blocker: orchestrator may reseed Slice 1 and may reuse the current no-product-change worktree state because the coder reported no code edits, no verification run, and no commit handoff.
+
+7. Role: orchestrator
+- Session id: `orch-2026-06-13-render-folder-structure-01`
+- Hello: hi
+- Intended task: reseed Slice 1 after the accepted planning correction for missing `test_support.zig` import users.
+- How one task went: the live Slice 1 contract now matches the accepted research allowlist and required rewires for `render_session.zig`, `surface/handle_test.zig`, and `surface/emitter_test.zig`, so execution can resume without forcing out-of-scope edits.
+- Next handoff or blocker: commit the accepted planning correction, then rerun Slice 1 under the refreshed contract.
