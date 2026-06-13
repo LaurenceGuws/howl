@@ -1,3 +1,9 @@
+Historical authority: accepted research plan during the 2026-06-13 host folder/file owner structure sprint.
+
+Why superseded or done: sprint closed with final root receipts `86cc4a0` and `39e0e82`.
+
+Must not be used for: current sprint authority, combined PTY+VT folder/file owner planning, or execution authorization.
+
 # Host Folder Owner Structure Plan
 
 Date: 2026-06-13.

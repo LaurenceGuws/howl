@@ -1,0 +1,87 @@
+PTY VT folder owner structure live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: active planning loop.
+
+Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
+
+Researcher session id: `research-2026-06-13-pty-vt-folder-structure-01`.
+
+Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
+
+Loop commit-hash receipt: pending.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, one outcome, and next handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-pty-vt-folder-owner-structure-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-pty-vt-folder-owner-structure-plan.md`
+
+Current step:
+
+- New combined PTY+VT folder/file owner structure sprint is seeded for planning.
+- No implementation is authorized.
+- Researcher must produce the full source-backed slice plan.
+- Reviewer must gate the plan before orchestrator seeds any execution slice.
+
+Exact user direction:
+
+- PTY and VT are the next cleanup target, together.
+- PTY is small enough to combine with VT in one sprint.
+- Clean up file and folder locations and naming with discipline and intent.
+- Keep only curated owner units under `src`.
+- Use shallow child folders only for true subdomains or per-owner definitions.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No sprint narrowing, v1 language, or partial cleanup unless the user explicitly narrows scope.
+- No Howl-only folder inventions while Ghostty, Alacritty, TigerBeetle, Kitty, or official docs provide source-backed pressure.
+- No fake compatibility wrappers or preserving dead directories for comfort.
+
+Exact stop conditions:
+
+- Stop if the active research cannot name exact allowed files, required shapes, tests, non-goals, stop conditions, and receipt fields for each slice.
+- Stop if current source and references conflict in a way that needs explicit user override.
+- Stop if active `loops/`, `research/`, or `sprints/` contain stale non-archive artifacts.
+- Stop if the plan collapses into rename theater instead of accountable owner/folder boundary work.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: seed the new combined PTY+VT folder/file owner structure sprint with reviewer-gated planning and no implementation authority.
+- How one task went: confirmed the host folder sprint is closed; current `howl-pty/src` and `howl-vt/src` still show likely folder/file placement debt compared to Ghostty's deliberate `terminal/` and `termio/` structure; PTY is small enough that planning PTY and VT together is accountable and still source-backed.
+- Next handoff or blocker: researcher must produce the full source-backed PTY+VT folder/file structure plan; reviewer gates it before any coding.
+
+2. Role: researcher
+- Session id: `research-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: write the active PTY+VT folder-owner planning artifact from current source plus Ghostty, Alacritty, and TigerBeetle pressure.
+- How one task went: completed the active research artifact with a compact anchor map, target PTY and VT shapes, and five sequential slices covering PTY test-root relocation, VT proof-root relocation, VT `src/terminal/` consolidation, and final dead-path cleanup.
+- Next handoff or blocker: reviewer should gate `research/2026-06-13-pty-vt-folder-owner-structure-plan.md`; no coding is authorized until the reviewer accepts the slice plan.
+
+3. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate the active PTY+VT folder/file owner structure plan before any implementation authorization.
+- How one task went: rejected the first draft because VT unit proof files under `src/**/*_test.zig` would have survived the curated-product-owner rule and later slices did not explicitly allow proof import updates after terminal-core and protocol moves; repaired the plan to move all VT unit proof roots to `test/unit/` in Slice 2 and require later test import updates directly against moved owner paths.
+- Next handoff or blocker: repaired plan is ready for acceptance review; if accepted, orchestrator may commit the planning package and seed Slice 1 only.
+
+4. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: re-gate the repaired PTY+VT folder/file owner structure plan.
+- How one task went: accepted the repaired plan; Slice 1 is bounded to PTY proof-root relocation, and later VT slices now explicitly remove unit proofs from `src` and require direct proof import updates after owner moves.
+- Next handoff or blocker: orchestrator must commit the accepted planning package, record the commit-hash receipt, and only then seed Slice 1.
