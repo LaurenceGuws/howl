@@ -163,3 +163,24 @@ Orchestrator Slice 2 repair seed:
 - Required additional shape: `handle.zig` must have no `monotonicNs`, no `DebugPreparedHandleCreateTiming`, no `HOWL_RENDER_DEBUG_TIMING`, no debug timing global, no aggregate timing fields, no timing locals in `PreparedHandle.create`, and no timing `std.debug.print`. Preserve handle allocation, prepared-surface ownership transfer, registration, payload emission, emission-failure mapping, lifecycle cleanup, and assertions.
 - Required tests from `howl-render`: `zig build test:unit -- render session`, `zig build test:unit -- direct normal`, `zig build test:unit -- prepared handle`, `zig build test:unit`, `zig build benchmark:render:build`, and `zig build check`.
 - Handoff: coder `coder-2026-06-14-runtime-debug-noise-slice-02` may repair the existing unaccepted Slice 2 diff only inside the five allowed files and then return normal handoff fields.
+
+Coder Slice 2 repair note:
+
+- Hello from `coder-2026-06-14-runtime-debug-noise-slice-02`.
+- Intent: repair rejected Slice 2 by deleting the missed `surface/handle.zig` prepared-handle creation timing noise inside the corrected five-file scope.
+- Outcome: `handle.zig` no longer has `monotonicNs`, `DebugPreparedHandleCreateTiming`, `HOWL_RENDER_DEBUG_TIMING`, debug timing globals, aggregate timing fields, timing locals, or timing prints; corrected render unit, prepared-handle, benchmark build, and check commands passed.
+- Handoff: ready for reviewer `review-2026-06-14-runtime-debug-noise-01`; no blocker, no commit touched by coder.
+
+Reviewer Slice 2 acceptance note:
+
+- Hello from `review-2026-06-14-runtime-debug-noise-01`.
+- Intent: review corrected Slice 2 prepare timing cleanup with `surface/handle.zig` included.
+- Outcome: accepted with no findings. Scope was clean, forbidden timing/debug symbols were absent from corrected Slice 2 runtime owners, runtime ownership paths and benchmark-owned observations were preserved, and required loop handoff was present.
+- Handoff: orchestrator should verify the corrected Slice 2 test set and record nested/root acceptance receipts.
+
+Orchestrator Slice 2 acceptance note:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: verify and accept corrected Slice 2 after reviewer acceptance.
+- Outcome: `zig build test:unit -- render session`, `zig build test:unit -- direct normal`, `zig build test:unit -- prepared handle`, `zig build test:unit`, `zig build benchmark:render:build`, and `zig build check` all passed from `howl-render`. Nested render commit is `3f54a58` `Remove prepare debug timing noise`.
+- Handoff: root acceptance receipt is pending this commit; Slice 3 is next after root receipt closure.
