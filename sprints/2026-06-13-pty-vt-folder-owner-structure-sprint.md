@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: Slice 2 accepted in `howl-vt`; root receipt pending.
+Status: Slice 2 accepted.
 
 Orchestrator session id: `orch-2026-06-13-pty-vt-folder-structure-01`.
 
@@ -50,4 +50,4 @@ Commit-hash receipt: root `efbd9ad`.
 ## Slice Receipts
 
 - Slice 1, `PTY proof-root relocation out of src`: `howl-pty` `13b7fbd`; root `2718455`.
-- Slice 2, `VT proof and non-product roots out of src`: `howl-vt` `556ab69`; root receipt pending.
+- Slice 2, `VT proof and non-product roots out of src`: `howl-vt` `556ab69`; root `921f630`.

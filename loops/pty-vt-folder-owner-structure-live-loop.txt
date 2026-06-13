@@ -282,6 +282,13 @@ Stop conditions:
 - How one task went: committed `howl-vt` Slice 2 as `556ab69`.
 - Next handoff or blocker: commit the root receipt for Slice 2 before seeding Slice 3.
 
+16. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: record Slice 2 root commit receipt.
+- How one task went: committed the root Slice 2 receipt as `921f630`.
+- Next handoff or blocker: commit this receipt update, then seed Slice 3 if continuing.
+
 6. Role: orchestrator
 - Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
 - Hello: hi
