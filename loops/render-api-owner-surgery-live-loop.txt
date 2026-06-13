@@ -307,6 +307,87 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
   - coder session id `coder-2026-06-13-render-api-owner-surgery-02`
   - commit-hash handoff status for orchestrator receipt closure
 
+16. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-02`
+- Hello: hi
+- Intended task: implement Slice 2, `Renderable Content And Damage Owners`, inside the allowed files only.
+- How one task went: moved publication-to-text input mapping into `renderable_content/content.zig`, theme/palette and semantic color styling into `renderable_content/color.zig`, cursor mapping into `renderable_content/cursor.zig`, dirty metadata validation/canonicalization into `damage/publication_damage.zig`, and reduced the old `tv_surface` files to temporary compatibility seams only.
+- Next handoff or blocker: reviewer/orchestrator can verify the Slice 2 diff under the accepted contract.
+
+17. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review execution Slice 2, `Renderable Content And Damage Owners`, against allowed-file scope, owner shape, temporary compatibility seams, assertions/tests, and claimed proof.
+- Findings: none.
+- Outcome: accept.
+- Acceptance notes: orchestrator must verify passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`; verify nested `howl-render` status still stages only the Slice 2 allowed files; record the commit hash as `slice-2-renderable-content-damage=<hash>` before seeding Slice 3.
+- Next handoff or blocker: orchestrator may verify, commit the accepted nested render Slice 2 change, record the root receipt, and seed exactly Slice 3.
+
+18. Role: orchestrator
+- Session id: `orch-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: close Slice 2 after reviewer acceptance and final verification.
+- How one task went: final verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`; nested `howl-render` status matched the Slice 2 allowed files; accepted implementation committed as `howl-render` `d1bfa57` (`Cut renderable content owners`).
+- Commit-hash receipt: `slice-2-renderable-content-damage=d1bfa57`.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit the root Slice 2 receipt and seed Slice 3 from the accepted research plan.
+
+Condensed execution contract for coder session `coder-2026-06-13-render-api-owner-surgery-03`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-13-render-api-owner-surgery-plan.md`
+- Implement only Slice 3, `Prepare Queue Cutover And tv_surface Deletion`.
+- Allowed files:
+  - `howl-render/src/tv_surface/prepare_request.zig`
+  - `howl-render/src/tv_surface/vt.zig`
+  - `howl-render/src/tv_surface/cell.zig`
+  - `howl-render/src/tv_surface/slot.zig`
+  - `howl-render/src/tv_surface/publication_cell_map.zig`
+  - `howl-render/src/tv_surface/damage.zig`
+  - `howl-render/src/tv_surface/text_input.zig`
+  - `howl-render/src/prepare/queue.zig`
+  - `howl-render/src/prepare_request.zig`
+  - `howl-render/src/benchmark_main.zig`
+  - `howl-render/src/session/text.zig`
+  - `howl-render/src/session/text_test.zig`
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/surface_preparer.zig`
+  - `howl-render/src/text/shape/cluster.zig`
+  - `howl-render/src/test_support.zig`
+  - `howl-render/src/prepare_request_test.zig`
+  - `howl-render/src/test_unit.zig`
+- Required shape:
+  - create `prepare/queue.zig` for active prepare admission/take/consume/retry/retire and blink refresh.
+  - prepare queue may depend on `vt_publication`, `storage/publication_storage.zig`, `damage/publication_damage.zig`, `geometry/tokens.zig`, and `geometry/geometry_contract.zig` only.
+  - migrate every remaining live import away from all seven `tv_surface` files and then delete `tv_surface/prepare_request.zig`, `tv_surface/vt.zig`, `tv_surface/cell.zig`, `tv_surface/slot.zig`, `tv_surface/publication_cell_map.zig`, `tv_surface/damage.zig`, and `tv_surface/text_input.zig`.
+- Required assertions:
+  - active source is present before consuming.
+  - token equality is asserted before returning prepare consume.
+  - retry only flips taken state for the same token.
+  - geometry epoch changes force full damage.
+  - retained source clone/deinit ownership is explicit.
+  - blink refresh cannot fabricate a source.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build check`
+  - preserve and relocate all prepare request tests.
+  - add tests for no-op duplicate source admission, geometry change forcing full, stale base forcing full for partial damage, blink refresh after taken prepare, retry taken prepare token mismatch, and retire at or before submitted token.
+- Non-goals:
+  - no text session rename yet.
+  - no prepared/surface changes.
+  - no host changes.
+- Stop conditions:
+  - stop if any import path still contains `tv_surface/` after this slice.
+  - stop if a live concept remains in `tv_surface` without an owner named above.
+  - stop if prepare queue needs text or font imports.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-render-api-owner-surgery-03`
+  - commit-hash handoff status for orchestrator receipt closure
+
 13. Role: coder
 - Session id: `coder-2026-06-13-render-api-owner-surgery-01`
 - Hello: hi
@@ -321,3 +402,23 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 - Findings: no blocking findings. Changed render files stay within the Slice 1 allowed set: `src/benchmark_main.zig`, `src/prepare_request.zig`, `src/session/text.zig`, `src/session/text_test.zig`, `src/test_support.zig`, `src/tv_surface/cell.zig`, `src/tv_surface/damage.zig`, `src/tv_surface/slot.zig`, `src/tv_surface/vt.zig`, plus new `src/vt_publication/abi.zig`, `src/vt_publication/publication.zig`, and `src/storage/publication_storage.zig`; no `vt_publication/storage.zig` exists. `src/vt_publication/abi.zig` owns shipped VT C aliases and publication validation; `src/vt_publication/publication.zig` owns `PublicationSource`, `VtSnapshot`, copy-in, clone/deinit, and owner-local validation tests; `src/storage/publication_storage.zig` owns retained publication slot/storage truth. `src/tv_surface/vt.zig:1-24` and `src/tv_surface/slot.zig:1-7` are thin temporary import seams only, and `src/tv_surface/cell.zig:1-93` remains an explicitly temporary compatibility input, not VT ABI or storage truth. No render file imports VT Zig internals. Slice 1 assertions and tests are present and meaningful, including invalid color kind, invalid combining length, dirty span length mismatch, retained-storage deinit safety, and copy-in metadata preservation in `src/vt_publication/publication.zig:294-384`, plus retained-slot ownership/reuse tests in `src/storage/publication_storage.zig:260-438`. The slice does not change text-scene mapping, prepare queue design beyond imports, the C ABI header, or host code.
 - Outcome: accept.
 - Next handoff or blocker: orchestrator should verify the passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`, confirm the slice still stages only the allowed render files and not unrelated workspace files such as root `devtools_options.yaml`, then record the commit hash as `slice-1-vt-publication-boundary=<hash>` before seeding Slice 2.
+
+16. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-02`
+- Hello: hi
+- Intended task: implement Slice 2 `Renderable Content And Damage Owners` only inside the allowed files, move the owner logic out of `tv_surface`, run the exact unit/check proofs, and leave the required receipt note.
+- How one task went: moved VT publication cell-input mapping into `src/renderable_content/content.zig`, moved palette/theme and semantic color mapping plus inverse/selection/empty truth into `src/renderable_content/color.zig`, moved cursor visibility/shape mapping into `src/renderable_content/cursor.zig`, moved dirty metadata validation/canonicalization and snapshot damage classification into `src/damage/publication_damage.zig`, updated the allowed import users to point at the new owners, and reduced `src/tv_surface/text_input.zig`, `src/tv_surface/publication_cell_map.zig`, and `src/tv_surface/damage.zig` to temporary compatibility seams only.
+- Files changed: `howl-render/src/tv_surface/text_input.zig`, `howl-render/src/tv_surface/publication_cell_map.zig`, `howl-render/src/tv_surface/damage.zig`, `howl-render/src/benchmark_main.zig`, `howl-render/src/session/text.zig`, `howl-render/src/text/direct_normal.zig`, `howl-render/src/text/surface_preparer.zig`, `howl-render/src/text/shape/cluster.zig`, `howl-render/src/renderable_content/content.zig`, `howl-render/src/renderable_content/color.zig`, `howl-render/src/renderable_content/cursor.zig`, `howl-render/src/damage/publication_damage.zig`.
+- Concise implementation summary: the slice now has real renderable-content owners for publication-to-text mapping, theme/color truth, and cursor mapping, plus a dedicated damage owner for dirty metadata and full/partial classification; the old `tv_surface` files no longer own live mapping or damage behavior.
+- Exact verification results: `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` passed; `cd /home/home/personal/projects/howl/howl-render && zig build check` passed.
+- Blockers or deviations: no blockers; one owner-local test initially expected selection colors from the static fallback theme instead of the active VT theme, and one semantic-empty gap for invisible cells was fixed during proof.
+- Commit-hash handoff status: pending reviewer acceptance and orchestrator receipt closure; no git was touched.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should review the current Slice 2 diff against the accepted contract and exact proof receipts.
+
+17. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review execution Slice 2 `Renderable Content And Damage Owners` against the active condensed contract and accepted planning artifact, without implementing product code.
+- Findings: no blocking findings. Changed render files stay within the Slice 2 allowlist: `src/tv_surface/text_input.zig`, `src/tv_surface/publication_cell_map.zig`, `src/tv_surface/damage.zig`, `src/benchmark_main.zig`, `src/session/text.zig`, `src/text/direct_normal.zig`, `src/text/surface_preparer.zig`, `src/text/shape/cluster.zig`, plus new `src/renderable_content/content.zig`, `src/renderable_content/color.zig`, `src/renderable_content/cursor.zig`, and `src/damage/publication_damage.zig`. `src/renderable_content/content.zig` owns VT/publication-to-text input mapping and borrowed/owned scene-input construction; `src/renderable_content/color.zig` owns theme, palette, semantic color truth, inverse/selection consequences, and empty classification; `src/renderable_content/cursor.zig` owns cursor visibility/shape mapping; `src/damage/publication_damage.zig` owns dirty metadata validation/canonicalization and full/partial damage classification. The old `tv_surface/text_input.zig:1-20`, `tv_surface/publication_cell_map.zig:1-15`, and `tv_surface/damage.zig:1-10` are temporary compatibility seams only. `renderable_content` does not own VT storage or prepare queue state, and `damage/publication_damage.zig` imports no text raster or font owners. Required assertions and tests are present and meaningful, including default background opacity, inverse style, selected style, continuation/invisible-not-empty truth, cursor blink hidden/visible mapping, partial dirty-row canonicalization, and full-vs-partial damage classification across `src/renderable_content/content.zig:260-482`, `src/renderable_content/color.zig:213-270`, `src/renderable_content/cursor.zig:51-95`, and `src/damage/publication_damage.zig:134-175`. The consumer changes in `benchmark_main.zig`, `session/text.zig`, `text/direct_normal.zig`, `text/surface_preparer.zig`, and `text/shape/cluster.zig` are import rewires only; no text shaping/raster redesign, resource-store changes, or C ABI header changes are in this slice.
+- Outcome: accept.
+- Next handoff or blocker: orchestrator should verify the passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`, confirm the nested `howl-render` status still stages only the Slice 2 allowed files, then record the commit hash as `slice-2-renderable-content-damage=<hash>` before seeding Slice 3.
