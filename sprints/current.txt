@@ -20,7 +20,7 @@ Active loops:
 Active restart note:
 
 - The PTY+VT folder owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
-- The all-`src/` shallow directory sprint is complete and awaiting final close receipt.
+- The all-`src/` shallow directory sprint is complete and closed; final close receipt `5b7b48d`.
 - User direction: restart the sprint; make dirs in all `src/` dirs as shallow as possible; delete fake abstractions; treat the just-deleted `terminal/` folder as the model.
 - Scope pressure: inspect every package `src/` tree in the workspace, identify fake abstraction directories and needless depth, then plan owner-true shallow cuts with exact slices.
 - Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
@@ -33,7 +33,7 @@ Active restart note:
 - Slice 2, `VT Fake Folder Deletion`, is accepted in `howl-vt` `da25b16` and root `861d909`.
 - Slice 3, `Render Root Geometry And Text Classification Flattening`, is accepted in `howl-render` `d4445e3` and root `100be01`.
 - Slice 4, `Host One-Extra-Depth Deletion`, is accepted in `howl-linux-host` `4b0b995` and root `5bc58e4`.
-- Slice 5, `Workspace Aggregate Verification And Empty-Directory Audit`, is accepted by review and orchestrator verification; root acceptance pending.
+- Slice 5, `Workspace Aggregate Verification And Empty-Directory Audit`, is accepted and closed in root `5b7b48d`.
 
 Execution rule:
 

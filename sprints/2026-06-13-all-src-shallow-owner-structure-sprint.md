@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: closed; final close receipt pending.
+Status: closed.
 
 ## Slice Receipts
 
@@ -12,12 +12,12 @@ Status: closed; final close receipt pending.
 - Slice 2, `VT Fake Folder Deletion`: `howl-vt` `da25b16`; root `861d909`.
 - Slice 3, `Render Root Geometry And Text Classification Flattening`: `howl-render` `d4445e3`; root `100be01`.
 - Slice 4, `Host One-Extra-Depth Deletion`: `howl-linux-host` `4b0b995`; root `5bc58e4`.
-- Slice 5, `Workspace Aggregate Verification And Empty-Directory Audit`: root acceptance pending.
+- Slice 5, `Workspace Aggregate Verification And Empty-Directory Audit`: root `5b7b48d`.
 
 ## Close Status
 
 - Sprint implementation complete.
-- Final close receipt pending.
+- Final close receipt: `5b7b48d`.
 
 Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
 
