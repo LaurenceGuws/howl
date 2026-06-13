@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 2 seeded for execution; reviewer-gated implementation pending.
+Status: Slice 2 accepted in nested render repo; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-render-scene-01`.
 
@@ -31,9 +31,9 @@ Current step:
 
 - The planning package is accepted at root `2fde3dd`.
 - Slice 1, `Extract scene damage/span ownership and move callers to it`, is accepted in `howl-render` `959576d`; root `5bbe0ec`.
-- Slice 2, `Extract scene rect/fill ownership with explicit undercurl carve-out`, is the active execution slice.
-- Only Slice 2 is authorized.
-- Coder session id: `coder-2026-06-13-render-scene-02`.
+- Slice 2, `Extract scene rect/fill ownership with explicit undercurl carve-out`, is accepted in `howl-render` `acb929e`.
+- Root receipt for Slice 2 is pending orchestrator commit.
+- No next execution slice is seeded yet.
 
 Exact user direction:
 
@@ -55,7 +55,7 @@ Exact stop conditions:
 - Stop if draw ordering by `first_cell` is no longer explicit and asserted.
 - Stop if proof is weakened to make the move land.
 
-Slice 2 execution contract:
+Latest executed slice contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/scene.zig`
@@ -179,3 +179,24 @@ Team scratchpad
 - Intended task: close the Slice 1 root receipt and seed Slice 2 for execution.
 - How one task went: recorded Slice 1 root receipt `5bbe0ec` and condensed Slice 2 into this live-loop execution contract with coder session id `coder-2026-06-13-render-scene-02`.
 - Next handoff or blocker: coder should implement Slice 2 only and return verification plus commit-hash handoff status for reviewer gating.
+
+13. Role: coder
+- Session id: `coder-2026-06-13-render-scene-02`
+- Hello: hi
+- Intended task: implement Slice 2 only inside the allowed render files.
+- How one task went: added `scene_rects.zig` as the rect owner, kept curly underline and undercurl in `scene.zig`, rebound `direct_scene.zig` and `surface_preparer.zig` to the rect owner, and passed all fifteen required exact-name proofs.
+- Next handoff or blocker: reviewer should gate the Slice 2 diff; no commit hash exists yet because git was intentionally untouched.
+
+14. Role: reviewer
+- Session id: `review-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: gate the executed Slice 2 diff against the live loop contract, accepted plan, and exact proof obligations.
+- How one task went: accepted Slice 2; `scene_rects.zig` now owns rect/fill/cursor/non-curly decoration synthesis, curly underline stayed in `scene.zig`, direct callers were rebound to the rect owner, and all fifteen required exact-name unit proofs passed on rerun.
+- Next handoff or blocker: orchestrator may commit Slice 2 and record the commit-hash receipt.
+
+15. Role: orchestrator
+- Session id: `orch-2026-06-13-render-scene-01`
+- Hello: hi
+- Intended task: commit the accepted Slice 2 render work and close the root receipt.
+- How one task went: committed the nested `howl-render` Slice 2 diff as `acb929e` `Extract scene rect owner` after reviewer acceptance.
+- Next handoff or blocker: commit the root receipt for Slice 2, then seed Slice 3 if continuing.

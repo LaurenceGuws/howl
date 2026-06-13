@@ -2,7 +2,7 @@
 
 Date: 2026-06-13.
 
-Status: accepted planning package; Slice 1 accepted and Slice 2 seeded for execution.
+Status: accepted planning package; Slice 1 and Slice 2 accepted, and Slice 3 is the next execution target.
 
 Role owner: researcher.
 
