@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: seeded planning loop; researcher pass required.
+Status: planning accepted; Slice 1 execution contract seeded.
 
 Orchestrator session id: `orch-2026-06-13-host-render-surface-01`.
 
@@ -12,7 +12,11 @@ Researcher session id: `research-2026-06-13-host-render-surface-01`.
 
 Reviewer session id: `review-2026-06-13-host-render-surface-01`.
 
-Loop commit-hash receipt: documentation-only seed pending orchestrator commit.
+Planning acceptance commit-hash receipt: `455402d` `Accept host render-surface planning`.
+
+Execution seed commit-hash receipt: pending orchestrator commit.
+
+Coder session id: `coder-2026-06-13-host-render-surface-slice-01`.
 
 Shared scratchpad rule:
 
@@ -29,10 +33,42 @@ Active research target:
 
 Current step:
 
-- The sprint is seeded for planning only.
-- Research must pressure `howl-linux-host/src/display/render_surface.zig` first against Alacritty and TigerBeetle.
-- Research may promote a different ranked fallback seam only if current-source and references prove `render_surface.zig` should not go first.
-- No implementation is authorized.
+- Planning is accepted.
+- Slice 1 is seeded for execution.
+- Only Slice 1 is authorized.
+
+Slice 1 execution contract:
+
+- Name: extract retained host resource owner from `howl-linux-host/src/display/render_surface.zig`.
+- Allowed files:
+  - `howl-linux-host/src/display/render_surface.zig`
+  - `howl-linux-host/src/display/render_surface_resources.zig`
+  - `howl-linux-host/src/display/render_surface_test.zig`
+- Exact shape:
+  - Move `RenderResourceTextures`, nested `Slot`, nested `Slot.State`, and methods `deinit`, `realizeSurface`, `realizeSurfaceLocked`, `glErrorOk`, `validateSurface`, `validateSurfaceTransition`, `noteCreate`, `noteUpload`, `noteRetire`, `createTexture`, `uploadTexture`, `commitUploadMetadata`, `retireTexture`, `find`, `textureSlotFor`, `findEmpty`, `findValue`, `deleteSlot`, and `retireSlot` into `render_surface_resources.zig`.
+  - Move `resourceFormatValid`, `uploadValidForSlot`, `rectFitsResource`, `sameResource`, `glFormat`, `bytesPerPixel`, and `spanSlice` into `render_surface_resources.zig`.
+  - In `render_surface_resources.zig`, expose `pub const Slot` inside `RenderResourceTextures`, `pub fn textureSlotFor`, `pub` helper exports for `rectFitsResource`, `sameResource`, `bytesPerPixel`, and `spanSlice`, and `testing` exports only for `TextureSlot`, `commitUploadMetadata`, and `validateSurface`.
+  - In `render_surface.zig`, keep the public import path by re-exporting `pub const RenderResourceTextures`, keep `UploadStats`, `ensureSurface`, `uploadRenderSurface`, command grammar/draw logic, and keep `render_surface.testing` as the only test facade by delegating resource test hooks through `render_surface_resources.testing`.
+  - In `render_surface.zig`, keep only temporary root-local aliases for `rectFitsResource`, `sameResource`, `bytesPerPixel`, and `spanSlice` so the still-rooted command code compiles until Slice 2.
+- Exact tests:
+  - `zig build test-unit -- test-filter test-render-surface`
+  - `zig build test-unit -- test-filter test-terminal-surface`
+- Exact non-goals:
+  - No command grammar split.
+  - No movement of `UploadStats`.
+  - No movement into `terminal/surface.zig`, `display/display.zig`, render-side files, ABI headers, or test root wiring.
+  - No generic shared helper file.
+- Exact stop conditions:
+  - Stop if moving `RenderResourceTextures` requires `terminal/surface.zig` to own GL resource mutation.
+  - Stop if `render_surface.zig` cannot remain the public import path with `render_surface.RenderResourceTextures` preserved.
+  - Stop if a moved resource helper is required by command logic in a way not listed above; the only permitted interim bridge is the named root-local aliases for `rectFitsResource`, `sameResource`, `bytesPerPixel`, and `spanSlice`.
+- Receipt fields required on completion:
+  - orchestrator `orch-2026-06-13-host-render-surface-01`
+  - researcher `research-2026-06-13-host-render-surface-01`
+  - reviewer `review-2026-06-13-host-render-surface-01`
+  - coder `coder-2026-06-13-host-render-surface-slice-01`
+  - commit hash
+  - required verification results
 
 Exact user direction:
 
@@ -145,3 +181,10 @@ Team scratchpad
 - Intended task: re-gate the Slice 3 allowed-file repair for the host render-surface ownership planning package.
 - How one task went: accepted the repaired package; fallback ranking, exact Slice 1/Slice 2 symbol moves, Slice 1 helper ownership, resource testing facade routing, allowed-file authority, readiness claim, and active loop state now satisfy the planning gate.
 - Next handoff or blocker: orchestrator may promote the accepted planning package into execution seeding; no implementation is authorized until the next accepted execution slice is seeded.
+
+14. Role: orchestrator
+- Session id: `orch-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: close the accepted planning receipt and seed Slice 1 as the active execution contract.
+- How one task went: recorded planning acceptance receipt `455402d` and promoted Slice 1 into the controlling execution contract with exact files, symbols, tests, non-goals, stop conditions, and coder session id `coder-2026-06-13-host-render-surface-slice-01`.
+- Next handoff or blocker: coder may execute Slice 1 only; reviewer remains `review-2026-06-13-host-render-surface-01` for execution gating.

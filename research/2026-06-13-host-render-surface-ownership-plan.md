@@ -2,7 +2,7 @@
 
 Date: 2026-06-13.
 
-Status: repaired researcher pass complete; reviewer gate required.
+Status: accepted planning package; Slice 1 ready for execution seeding.
 
 Role owner: researcher.
 
@@ -12,7 +12,7 @@ Researcher session id: `research-2026-06-13-host-render-surface-01`.
 
 Reviewer session id: `review-2026-06-13-host-render-surface-01`.
 
-Planning seed commit-hash receipt: documentation-only seed pending orchestrator commit.
+Planning acceptance commit-hash receipt: `455402d` `Accept host render-surface planning`.
 
 Question:
 
