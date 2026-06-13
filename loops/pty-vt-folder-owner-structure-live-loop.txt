@@ -596,3 +596,38 @@ Stop conditions:
 - Intended task: record accepted remaining-plan repair receipt and activate Slice 4.
 - How one task went: committed the accepted remaining-plan repair at root `27bcb75` and marked Slice 4 active.
 - Next handoff or blocker: coder may implement Slice 4 from this live-loop contract only.
+
+32. Role: coder
+- Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-4`
+- Hello: hi
+- Intended task: implement Slice 4 protocol bucket removal toward final no-wrapper layout.
+- How one task went: moved `action/`, `control/`, and `xterm/` owners to direct `src/` paths and `src/csi/`, removed stale proof buckets, kept `src/terminal/**`, `src/host/`, and `src/kitty/` in place, and passed `zig build test:unit`, `zig build test:abi`, and `zig build benchmark:m7_baseline:build` in `howl-vt`.
+- Next handoff or blocker: reviewer should gate the Slice 4 diff; no commit was made by coder.
+
+33. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate Slice 4 implementation after coder verification.
+- How one task went: accepted Slice 4; old source/proof buckets are removed, new direct owners and `src/csi/` helper subdomain are present, `src/host/`, `src/kitty/`, and `src/terminal/**` remain in place, changes are relocation plus import-path updates only, and required proofs passed.
+- Next handoff or blocker: orchestrator may commit nested `howl-vt` and record receipts.
+
+34. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: verify and commit accepted Slice 4.
+- How one task went: reran `zig build test:unit`, `zig build test:abi`, and `zig build benchmark:m7_baseline:build` in `howl-vt`; committed nested Slice 4 as `538a96b`.
+- Next handoff or blocker: commit the root receipt for Slice 4 before seeding Slice 5.
+
+32. Role: coder
+- Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-4`
+- Hello: hi
+- Intended task: implement Slice 4 VT protocol bucket removal toward the final no-wrapper layout without moving `src/terminal/**`.
+- How one task went: moved `action/`, `control/`, and `xterm/` owners to direct `src/` and `src/csi/` paths, renamed stale proof bucket files to direct unit proof files, removed the empty old source and proof bucket directories, confirmed no old protocol-bucket imports remain, and passed the required unit, ABI, and benchmark build checks.
+- Next handoff or blocker: reviewer should gate the Slice 4 diff; no commit was made, so commit-hash receipt remains pending for orchestrator acceptance closure.
+
+33. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate Slice 4 VT protocol bucket removal implementation against the accepted contract and unstaged nested `howl-vt` diff.
+- How one task went: accepted Slice 4; `src/action/`, `src/control/`, `src/xterm/`, `test/unit/action/`, `test/unit/control/`, and `test/unit/xterm/` are absent; moved protocol owners and proof files compare as relocation plus import-path updates only; `src/host/`, `src/kitty/`, and `src/terminal/**` remain in place; no old protocol-bucket imports or compatibility shims were found; `zig build test:unit`, `zig build test:abi`, `zig build benchmark:m7_baseline:build`, and `git diff --check` passed locally.
+- Next handoff or blocker: orchestrator may commit nested `howl-vt` for Slice 4 and then record nested/root receipts; no product blocker remains from review.
