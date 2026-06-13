@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 2 seeded for execution; reviewer-gated implementation pending.
+Status: Slice 2 accepted in nested render repo; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -31,9 +31,9 @@ Current step:
 
 - The planning package is accepted at root `0e53a8e`.
 - Slice 1, `Extract undercurl owner`, is accepted in `howl-render` `42b68b8`; root `a8c3e50`.
-- Slice 2, `Create generated-special root and extract box owner`, is the active execution slice.
-- Only Slice 2 is authorized.
-- Coder session id: `coder-2026-06-13-raster-special-02`.
+- Slice 2, `Create generated-special root and extract box owner`, is accepted in `howl-render` `a542d8a`.
+- Root receipt for Slice 2 is pending orchestrator commit.
+- No next execution slice is seeded yet.
 
 Exact user direction:
 
@@ -53,7 +53,7 @@ Exact stop conditions:
 - Stop if box extraction requires changing route classification in `symbol_map.zig`, `resolver.zig`, `lane.zig`, or `grouping.zig`.
 - Stop if box extraction requires changing provider dispatch in `howl-render/src/text/ft_hb/glyph_raster.zig:156-163`.
 
-Slice 2 execution contract:
+Latest executed slice contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/raster/special.zig`
@@ -181,3 +181,24 @@ Team scratchpad
 - Intended task: close the Slice 1 root receipt and seed Slice 2 for execution.
 - How one task went: recorded Slice 1 root receipt `a8c3e50` and condensed Slice 2 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-02`.
 - Next handoff or blocker: coder should implement Slice 2 only and return verification plus commit-hash handoff status for reviewer gating.
+
+13. Role: coder
+- Session id: `coder-2026-06-13-raster-special-02`
+- Hello: hi
+- Intended task: implement Slice 2 only inside the allowed raster files.
+- How one task went: reduced `special.zig` to the curated public root, moved generated-special public entrypoints and family dispatch into `generated_special.zig`, extracted the full box owner surface into `special_box.zig`, and passed `cd howl-render && zig build test:unit`.
+- Next handoff or blocker: reviewer should gate the Slice 2 diff; no commit hash exists yet because git was intentionally untouched.
+
+14. Role: reviewer
+- Session id: `review-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: gate the executed Slice 2 diff for generated-special root extraction and box owner extraction against the accepted execution contract.
+- How one task went: reviewed the live contract, accepted planning artifact, proof seams, and the current `special.zig`, `generated_special.zig`, and `special_box.zig` sources; the slice keeps `special.zig` as the curated root, moves generated-special entrypoints and dispatch into `generated_special.zig`, moves the full box owner surface into `special_box.zig`, preserves provider and route behavior, and passes `zig fmt --check` plus `cd howl-render && zig build test:unit`.
+- Next handoff or blocker: verdict is `accept`; orchestrator may verify receipts and commit Slice 2 for commit-hash closure.
+
+15. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: commit the accepted Slice 2 render work and close the root receipt.
+- How one task went: committed the nested `howl-render` Slice 2 diff as `a542d8a` `Extract special box owner` after reviewer acceptance.
+- Next handoff or blocker: commit the root receipt for Slice 2, then seed Slice 3 if continuing.
