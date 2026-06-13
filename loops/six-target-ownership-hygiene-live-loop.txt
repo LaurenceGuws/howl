@@ -124,4 +124,14 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
 - Intent: verify and accept Slice 1 after reviewer acceptance.
 - Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `e952bf1` `Extract loaded face owner`.
-- Handoff: root acceptance receipt is pending this commit; Slice 2 is next after root receipt closure.
+- Handoff: root acceptance receipt is `eab184d` `Accept six-target ownership Slice 1`; Slice 2 is next.
+
+- Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: seed Slice 2 exactly from the accepted sprint contract.
+- Outcome: Slice 2 is authorized for coder `coder-2026-06-14-six-target-ownership-slice-02` only.
+- Allowed files: `howl-render/src/text/shape/cluster.zig`, `howl-render/src/text/shape/run.zig`.
+- Required shape: do not create a new owner file; move provisional run planning from `cluster.zig` into `run.zig`; rename `OwnedRuns` to `OwnedProvisionalRuns`; move `buildProvisionalRuns`, `buildProvisionalRunsScratch`, and `resolvedRun` into `run.zig`; add run-local scratch ownership in `run.zig` as `RetainedProvisionalRunScratch` and remove run scratch storage from `cluster.RetainedScratch`; leave `cluster.zig` owning text-cache assembly, renderable assembly, cluster extraction, and complex selection only; no C ABI change, no package-root export change, no render-session policy change.
+- Required tests from `howl-render`: `zig build test:unit`.
+- Additional proof obligations: preserve or relocate the current run proofs from `cluster.zig:867-892` and `cluster.zig:913-946` into owner-true inline tests after the move; preserve or add run-scratch overflow proof under the new run-local scratch owner.
+- Stop conditions: stop if the slice cannot remove `ResolvedRun` scratch ownership from `cluster.RetainedScratch` cleanly; stop if the move requires touching files outside the allowed set; stop if the only viable outcome is inventing a new file instead of using `run.zig`; stop if moved tests cannot remain reachable through the existing render unit root without adding a new test root.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
