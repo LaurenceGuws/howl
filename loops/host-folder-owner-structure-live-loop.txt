@@ -1,0 +1,138 @@
+Host folder owner structure live loop scratchpad
+
+Date: 2026-06-13.
+
+Role owner: orchestrator.
+
+Status: active planning loop.
+
+Orchestrator session id: `orch-2026-06-13-host-folder-structure-01`.
+
+Researcher session id: `research-2026-06-13-host-folder-structure-01`.
+
+Reviewer session id: `review-2026-06-13-host-folder-structure-01`.
+
+Loop commit-hash receipt: pending.
+
+Shared scratchpad rule:
+
+- This file is the live team scratchpad for the current step.
+- Every non-trivial orchestrator, researcher, reviewer, or coder pass must append a short note with role/session id, hello, intent, one outcome, and next handoff or blocker.
+
+Controlling sprint:
+
+- `/home/home/personal/projects/howl/sprints/2026-06-13-host-folder-owner-structure-sprint.md`
+
+Active research target:
+
+- `/home/home/personal/projects/howl/research/2026-06-13-host-folder-owner-structure-plan.md`
+
+Current step:
+
+- New host folder/file owner structure sprint is seeded for planning.
+- No implementation is authorized.
+- Researcher must produce the full source-backed slice plan.
+- Reviewer must gate the plan before orchestrator seeds any execution slice.
+
+Exact user direction:
+
+- The next offender for the same cleanup is the host.
+- Clean up host file and folder locations and naming with discipline and intent.
+- Keep only curated owner units in `src`.
+- Use shallow child folders only for true subdomains or per-owner definitions.
+- Take primary pressure from Alacritty host/runtime/display/window/input structure.
+
+Exact non-goals:
+
+- No implementation during planning.
+- No sprint narrowing, v1 language, or partial cleanup unless the user explicitly narrows scope.
+- No Howl-only folder inventions while Alacritty, Ghostty, TigerBeetle, Kitty, or official docs provide source-backed pressure.
+- No fake compatibility wrappers or preserving dead directories for comfort.
+
+Exact stop conditions:
+
+- Stop if the active research cannot name exact allowed files, required shapes, tests, non-goals, stop conditions, and receipt fields for each slice.
+- Stop if current source and references conflict in a way that needs explicit user override.
+- Stop if active `loops/`, `research/`, or `sprints/` contain stale non-archive artifacts.
+- Stop if the plan collapses into rename theater instead of accountable owner/folder boundary work.
+
+Team scratchpad
+
+1. Role: orchestrator
+- Session id: `orch-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: seed the new host folder/file owner structure sprint with reviewer-gated planning and no implementation authority.
+- How one task went: confirmed the render folder sprint is closed; current `howl-linux-host/src` top-level tree looks broader and less intentional than Alacritty's host tree, with multiple likely weak roots and top-level C headers; the next step is a source-backed host folder/file structure plan, not ad hoc movement.
+- Next handoff or blocker: researcher must produce the full source-backed host folder/file structure plan; reviewer gates it before any coding.
+
+2. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: gate the host folder/file owner structure planning package.
+- How one task went: after several narrow planning corrections for exact import-rewire allowlists, internal target-tree consistency, and exact later-slice file lists, the reviewer accepted the full planning package. The slices are now fully explicit, the `gl_c.h` target path is singular, the target tree is internally consistent, and the work is real host owner/folder-boundary restructuring rather than rename theater.
+- Outcome: accept.
+- First executable slice expectations: orchestrator may seed only Slice 1 from `research/2026-06-13-host-folder-owner-structure-plan.md:267-276` after closing the planning commit-hash receipt; Slice 1 must keep the coder inside that exact allowlist, require `zig build test:unit` and `zig build test:integration`, preserve the cited event-loop and control-spine assertions, and demand coder session id plus commit-hash receipt closure.
+- Next handoff or blocker: orchestrator should record reviewer acceptance and stop before execution until the planning commit-hash receipt is closed.
+
+3. Role: orchestrator
+- Session id: `orch-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: record reviewer acceptance and stop before execution until the planning commit-hash receipt is closed.
+- How one task went: active sprint, research, and current index now mark the host folder/file owner structure plan as reviewer-accepted with planning commit-hash receipt pending; no coder is authorized because the receipt is not closed.
+- Next handoff or blocker: commit the accepted planning package, then seed only Slice 1.
+
+2. Role: researcher
+- Session id: `research-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: produce the active host folder/file owner structure research artifact with source-backed slices, exact allowed files, required shapes, tests, non-goals, stop conditions, and receipt demands.
+- How one task went: re-proved the current host offenders from `main.zig`, `build.zig`, the current test roots, and the host subtrees; the strongest plan is to collapse weak roots toward Alacritty-style `event`, `display`, `input`, `config`, and `polling` owners, use Ghostty pressure to rename `terminal/context.zig` to a surface owner, and finish by moving translated C headers and curated test roots out of `src` top level.
+- Next handoff or blocker: reviewer should gate `research/2026-06-13-host-folder-owner-structure-plan.md`; no implementation is authorized unless the reviewer accepts the full slice plan.
+
+3. Role: researcher
+- Session id: `research-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: correct the rejected plan by expanding Slice 1 and Slice 2 to include all direct import rewires and by resolving `gl_c.h` to one exact final path and one exact slice.
+- How one task went: re-read the cited host files and confirmed the missing rewires at `terminal/context.zig`, `terminal/input.zig`, `terminal/scrollbar.zig`, `terminal/context_test.zig`, `terminal/links.zig`, and `host_test_root.zig`; corrected the slice allowlists and required-shape text so those import sites are explicitly in-scope, and locked `gl_c.h` to final path `src/c/gl_c.h` moved only in Slice 4.
+- Next handoff or blocker: reviewer should re-gate the corrected active research artifact; no implementation is authorized.
+
+4. Role: researcher
+- Session id: `research-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: correct the second rejection by making the final target tree internally consistent and resolving `gl_c.h` ownership to one truth everywhere in the plan.
+- How one task went: removed the duplicate second `src/c/` block from the target tree and corrected the owner-role prose so `display/` no longer claims the GL helper header; `gl_c.h` now belongs only to the translated-C seam at final path `src/c/gl_c.h`, consistent with the slice contracts.
+- Next handoff or blocker: reviewer should re-gate the corrected active research artifact; no implementation is authorized.
+
+5. Role: researcher
+- Session id: `research-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: correct the third rejection by replacing the remaining wildcard allowlist language in Slice 3 and Slice 4 with exact file lists.
+- How one task went: re-read the active slice text plus the current `build.zig`, `display/display.zig`, and the known `terminal/context` import sites; rewrote Slice 3 to enumerate the exact terminal owner files and direct rewire sites, and rewrote Slice 4 to enumerate the exact old/new C-header files, old/new test-root files, build file, and direct `gl_c` import sites without any wildcard wording.
+- Next handoff or blocker: reviewer should re-gate the corrected active research artifact; no implementation is authorized.
+
+3. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: review the active host folder/file owner structure plan against the planning contract and reject any slice that still leaves coder invention on file moves, imports, tests, or stop conditions.
+- How one task went: rejected the plan. Finding 1: Slice 1 is under-scoped on exact allowed files. `research/2026-06-13-host-folder-owner-structure-plan.md:269-275` requires moving `src/event_loop.zig` to `src/polling/event_loop.zig`, but current import rewiring also has to touch `howl-linux-host/src/terminal/context.zig:2`, `howl-linux-host/src/terminal/input.zig:2`, and `howl-linux-host/src/terminal/scrollbar.zig:2`, which are outside the Slice 1 allowlist. Finding 2: Slice 2 is also under-scoped on exact allowed files. `research/2026-06-13-host-folder-owner-structure-plan.md:280-286` moves `window_chrome/window.zig`, `display/renderer/*`, and `tab_bar/slots.zig`, but required import rewiring also reaches `howl-linux-host/src/terminal/context.zig:3,5`, `howl-linux-host/src/terminal/context_test.zig:7`, `howl-linux-host/src/terminal/links.zig:6`, and `howl-linux-host/src/host_test_root.zig:7,12-13`, which are not all authorized there. Finding 3: the GL header path contract is not exact enough for execution. The proposed final tree puts `gl_c.h` under `src/c/` at `research/2026-06-13-host-folder-owner-structure-plan.md:183-188`, but Slice 2 still moves it under `display/` at `:280-281` and Slice 4 allows `src/display/gl_c.h or the equivalent moved file from Slice 2` at `:302-303`, leaving the worker without one exact path contract.
+- Next handoff or blocker: researcher must correct the slice contracts so every required import site and moved path is explicitly authorized, with one exact `gl_c.h` relocation story across slices, then return for reviewer re-gate.
+
+4. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: re-review the corrected plan against the prior allowlist and `gl_c.h` findings and re-check the full planning gate.
+- How one task went: rejected the corrected plan. Finding 1: the prior slice-contract defects are fixed. Slice 1 now explicitly authorizes the real `event_loop.zig` import rewires at `research/2026-06-13-host-folder-owner-structure-plan.md:276-277`, and Slice 2 now explicitly authorizes the real window/render-surface rewires at `:287-288`, while `gl_c.h` is locked to Slice 4 at `:309-310` and `:341`. Finding 2: the active target tree is still internally inconsistent, so the plan is not yet an exact execution contract. `research/2026-06-13-host-folder-owner-structure-plan.md:179-247` lists `src/c/` twice, with a second duplicate `c/` block at `:241-246`. That leaves the authoritative target shape wrong on its face. Finding 3: owner truth for `gl_c.h` is still contradictory inside the same plan. `research/2026-06-13-host-folder-owner-structure-plan.md:168` says `display/` owns the GL helper header, but `:174`, `:184-189`, `:309-310`, and `:341` say `c/` is the single translated-C seam and `gl_c.h` ends at `src/c/gl_c.h`. The researcher must resolve that owner statement so the final owner/package boundary is singular.
+- Next handoff or blocker: researcher must correct the active research artifact so the required target tree appears exactly once and the owner-role prose matches the one exact `gl_c.h` final home at `src/c/gl_c.h`, then return for reviewer re-gate.
+
+5. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: re-review the corrected plan for final internal consistency and re-check the full planning gate.
+- How one task went: rejected the plan. Finding 1: the remaining internal consistency blockers are fixed. The target tree now has one `src/c/` block at `research/2026-06-13-host-folder-owner-structure-plan.md:177-241`, and `gl_c.h` ownership/location is now singular at `:168-175`, `:303-305`, and `:335`. Finding 2: the full planning gate is still not met because Slice 3 does not name exact allowed files. `research/2026-06-13-host-folder-owner-structure-plan.md:292` allows `every file in howl-linux-host/src/terminal/`, which violates the workflow requirement for exact allowed files per slice from `loop/flow.md:24-31`. Finding 3: Slice 4 also fails the exact-allowlist requirement. `research/2026-06-13-host-folder-owner-structure-plan.md:303` ends with `and any direct import sites`, which leaves file scope open-ended and forces coder reconstruction instead of an exact execution contract.
+- Next handoff or blocker: researcher must replace the wildcard Slice 3 terminal allowlist and the Slice 4 `any direct import sites` allowance with exact file lists, then return for reviewer re-gate.
+
+6. Role: reviewer
+- Session id: `review-2026-06-13-host-folder-structure-01`
+- Hello: hi
+- Intended task: re-review the corrected Slice 3 and Slice 4 allowlists and re-check the full planning gate one more time.
+- How one task went: accepted the plan. Finding 1: Slice 3 now has a fully explicit allowlist at `research/2026-06-13-host-folder-owner-structure-plan.md:289-298`, replacing the prior wildcard terminal scope with exact files. Finding 2: Slice 4 now has a fully explicit allowlist at `research/2026-06-13-host-folder-owner-structure-plan.md:300-309`, replacing the prior open-ended import-site wording with exact files. Finding 3: the full planning gate is now met: the plan is sequential and each slice names exact allowed files, required shape, required tests, non-goals, stop conditions, session ids, and commit-hash receipt demand at `research/2026-06-13-host-folder-owner-structure-plan.md:267-309`, with sprint-wide assertions, tests, risks, proof gaps, and readiness recorded at `:311-342`.
+- Next handoff or blocker: orchestrator may seed Slice 1 only. The execution contract should preserve the Slice 1 file boundary from `research/2026-06-13-host-folder-owner-structure-plan.md:270-276`, require `zig build test:unit` and `zig build test:integration`, preserve the cited event-loop and control-spine assertions, and demand coder session id plus commit-hash receipt closure.

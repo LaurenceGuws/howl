@@ -1,3 +1,9 @@
+Historical authority: sprint artifact for the 2026-06-13 render folder/file owner structure sprint.
+
+Why superseded or done: sprint closed with final root receipts `5cfc1d9` and `52418d9`.
+
+Must not be used for: current sprint authority, host folder/file owner planning, or execution authorization.
+
 # Sprint: Render Folder Owner Structure
 
 Date: 2026-06-13.

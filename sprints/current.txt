@@ -7,35 +7,32 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-13-render-folder-owner-structure-sprint.md`
+- `sprints/2026-06-13-host-folder-owner-structure-sprint.md`
 
 Active research:
 
-- `research/2026-06-13-render-folder-owner-structure-plan.md`
+- `research/2026-06-13-host-folder-owner-structure-plan.md`
 
 Active loops:
 
-- `loops/render-folder-owner-structure-live-loop.txt`
+- `loops/host-folder-owner-structure-live-loop.txt`
 
 Active restart note:
 
-- The render API owner surgery sprint is closed and archived as done; its artifacts are historical receipts only.
-- The active planning package is accepted and committed in root `ca6f1c4`.
-- Slice 1, `C boundary quarantine`, is accepted and committed in `howl-render` `b659e2f` and root `2cef6f3`.
-- Slice 2, `VT publication ingress consolidation`, is accepted and committed in `howl-render` `b12c39f` and root `c2edc8e`.
-- Slice 3, `Tree cleanup and proof-root closure`, is accepted with final nested `howl-render` `b12c39f` and root `5cfc1d9`.
-- The render folder/file owner structure sprint is closed; no further coding is authorized from this sprint.
-- User direction: clean up file and folder locations and naming; keep only curated owner units directly under `src`; use shallow child folders only for true subdomains and per-owner definitions; take explicit pressure from `utils/dev_references/terminals/ghostty/src/terminal` and its child folders for intentional structure.
-- Current render shape still has folder/location discipline debt: empty `src/session/`, mixed top-level and folder owners, and folder boundaries that are not yet obviously owner-true.
-- Orchestrator session id: `orch-2026-06-13-render-folder-structure-01`.
-- Researcher session id: `research-2026-06-13-render-folder-structure-01`.
-- Reviewer session id: `review-2026-06-13-render-folder-structure-01`.
+- The render folder/file owner structure sprint is closed and archived as done; its artifacts are historical receipts only.
+- The active step is host folder/file owner planning, not implementation.
+- User direction: the next offender is the host; clean up host file and folder locations and naming with the same discipline pressure.
+- Reference pressure: Alacritty host/runtime/display/window/input organization is primary; Ghostty is secondary only where Alacritty lacks a comparable host shape.
+- Current host tree still shows likely structure debt: broad top-level roots (`app/`, `cli/`, `config/`, `display/`, `input/`, `polling/`, `tab_bar/`, `terminal/`, `window_chrome/`), C headers at `src/` top level, and likely test/root placement debt.
+- Orchestrator session id: `orch-2026-06-13-host-folder-structure-01`.
+- Researcher session id: `research-2026-06-13-host-folder-structure-01`.
+- Reviewer session id: `review-2026-06-13-host-folder-structure-01`.
 - Planning status: reviewer-accepted.
-- Planning commit-hash receipt: root `ca6f1c4`.
+- Planning commit-hash receipt: pending.
 
 Execution rule:
 
-- Coding is authorized only from the condensed Slice 1 execution contract in `loops/render-folder-owner-structure-live-loop.txt`.
+- No host product code is authorized until the reviewer-accepted planning package has a commit-hash receipt and orchestrator seeds Slice 1.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical render-owner artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
