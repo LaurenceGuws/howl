@@ -20,7 +20,7 @@ Active execution slice:
 - Slice 2: extract render-surface command grammar and draw owner from `howl-linux-host/src/display/render_surface.zig`.
 - Coder session id: `coder-2026-06-13-host-render-surface-slice-02`.
 - Reviewer session id for execution: `review-2026-06-13-host-render-surface-01`.
-- Execution seed commit-hash receipt: pending orchestrator commit.
+- Execution seed commit-hash receipt: `d1d8654` `Accept host render-surface Slice 1`.
 
 ## Problem Statement
 

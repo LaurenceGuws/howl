@@ -16,7 +16,7 @@ Planning acceptance commit-hash receipt: `455402d` `Accept host render-surface p
 
 Slice 1 acceptance receipt: `5c7a2a2` `Extract host render-surface resources`.
 
-Execution seed commit-hash receipt: pending orchestrator commit.
+Execution seed commit-hash receipt: `d1d8654` `Accept host render-surface Slice 1`.
 
 Coder session id: `coder-2026-06-13-host-render-surface-slice-02`.
 
