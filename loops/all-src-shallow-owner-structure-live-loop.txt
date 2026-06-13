@@ -417,6 +417,102 @@ Stop conditions:
 - How one task went: reran `zig build test:unit`, `zig build test:abi`, and `zig build check` in `howl-render`; committed nested Slice 3 as `d4445e3`.
 - Next handoff or blocker: commit the root receipt for Slice 3, then seed Slice 4.
 
+23. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: record Slice 3 root receipt and seed Slice 4.
+- How one task went: committed root Slice 3 receipt as `100be01`.
+- Next handoff or blocker: activate Slice 4 execution contract.
+
+## Slice 4 Execution Contract
+
+Name: Host One-Extra-Depth Deletion.
+
+Status: active.
+
+Coder session id: `coder-2026-06-13-all-src-shallow-structure-slice-4`.
+
+Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-linux-host/build.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/main.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/event.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/host_test_root.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/polling/event_loop.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/polling/window_wake.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/event_loop.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/window_wake.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/display/display.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/display/render_surface.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/display/render_surface_test.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/display/renderer/gl_c.h`
+- `/home/home/personal/projects/howl/howl-linux-host/src/display/gl_c.h`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/links.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/scrollbar.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/surface.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/input.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/selection.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/surface_test.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/term.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/pump.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/session.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty/wait_thread.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty_pump.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty_session.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/pty_wait_thread.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/vt/input.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/vt/retained.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/vt/surface.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/vt_input.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/vt_retained.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/vt_surface.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render/font_size.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render/fonts_linux.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render/retained.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render/surface_layout.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render_font_size.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render_fonts_linux.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render_retained.zig`
+- `/home/home/personal/projects/howl/howl-linux-host/src/terminal/render_surface_layout.zig`
+
+Required shape:
+
+- Move `polling/event_loop.zig` to `event_loop.zig` and `polling/window_wake.zig` to `window_wake.zig`; update imports in `main.zig`, `event.zig`, `host_test_root.zig`, and moved files.
+- Move `display/renderer/gl_c.h` to `display/gl_c.h`; update `build.zig` to translate from `src/display/gl_c.h`.
+- Move terminal nested files to direct `terminal/` prefixed files: `pty_*`, `vt_*`, and `render_*`; update imports in terminal files, host roots, build test modules, and event/main files.
+- Update terminal dependents such as `links.zig`, `scrollbar.zig`, `selection.zig`, `term.zig`, `surface.zig`, `surface_test.zig`, and `build.zig` so no `polling/`, `terminal/pty/`, `terminal/vt/`, `terminal/render/`, or `display/renderer/` path survives.
+- Delete `src/polling/`, `src/display/renderer/`, `src/terminal/pty/`, `src/terminal/vt/`, and `src/terminal/render/`.
+- Keep `config/`, `display/`, `input/`, and `terminal/` as true first-level host owners.
+
+Exact tests:
+
+- From `/home/home/personal/projects/howl/howl-linux-host`: `zig build test:unit`.
+- From `/home/home/personal/projects/howl/howl-linux-host`: `zig build test:integration`.
+- From `/home/home/personal/projects/howl/howl-linux-host`: `zig build check`.
+
+Non-goals:
+
+- No host runtime behavior changes.
+- No C ABI import/header content changes except `build.zig` path to the moved host-local `gl_c.h`.
+- No deletion of true first-level owners `config/`, `display/`, `input/`, or `terminal/`.
+
+Stop conditions:
+
+- Stop if moving terminal nested files exposes a semantic owner split that cannot be expressed with direct prefixed file names.
+- Stop if `gl_c.h` movement changes include resolution or generated C bindings beyond the path.
+- Stop if host tests require compatibility shims at old nested paths.
+
+24. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: seed Slice 4 host one-extra-depth deletion.
+- How one task went: wrote the condensed Slice 4 execution contract from the accepted research artifact.
+- Next handoff or blocker: coder may implement Slice 4 only.
+
 19. Role: orchestrator
 - Session id: `orch-2026-06-13-all-src-shallow-structure-01`
 - Hello: hi

@@ -31,7 +31,7 @@ Active restart note:
 - Planning package commit-hash receipt: root `c69e039`.
 - Slice 1, `PTY src/pty/ Depth Deletion`, is accepted in `howl-pty` `714d41c` and root `3e0b50e`.
 - Slice 2, `VT Fake Folder Deletion`, is accepted in `howl-vt` `da25b16` and root `861d909`.
-- Slice 3, `Render Root Geometry And Text Classification Flattening`, is accepted in `howl-render` `d4445e3`; root receipt pending.
+- Slice 3, `Render Root Geometry And Text Classification Flattening`, is accepted in `howl-render` `d4445e3` and root `100be01`.
 
 - Slice 4, `Host One-Extra-Depth Deletion`, is active and uncommitted.
 
