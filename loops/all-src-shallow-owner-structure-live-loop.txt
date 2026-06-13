@@ -181,6 +181,103 @@ Stop conditions:
 - How one task went: reran `zig build test:unit`, `zig build test:abi`, and `zig build test:integration` in `howl-pty`; committed nested Slice 1 as `714d41c`.
 - Next handoff or blocker: commit the root receipt for Slice 1, then seed Slice 2.
 
+12. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: record Slice 1 root receipt and seed Slice 2.
+- How one task went: committed root Slice 1 receipt as `3e0b50e`.
+- Next handoff or blocker: activate Slice 2 execution contract.
+
+## Slice 2 Execution Contract
+
+Name: VT Fake Folder Deletion.
+
+Status: active.
+
+Coder session id: `coder-2026-06-13-all-src-shallow-structure-slice-2`.
+
+Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- `/home/home/personal/projects/howl/howl-vt/src/csi.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/report.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/locator.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/route.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/osc.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/osc_color.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/screen_set.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/terminal.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/howl_vt.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/ffi/main.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/ffi/surface.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/ffi/selection.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/ffi/runtime.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/ffi/host_output.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/kitty/apply.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/kitty/color.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/kitty/key.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/kitty/pointer.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/host/apply.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/host/state.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/host_apply.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/host_state.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/selection/state.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/selection/projection.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/selection.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/selection_projection.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi/plain.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi/private.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi/params.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi/intermediate.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi/leader.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi_plain.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi_private.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi_params.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi_intermediate.zig`
+- `/home/home/personal/projects/howl/howl-vt/src/csi_leader.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/support/screen_capture.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/terminal_snapshot_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/terminal_modes_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/terminal_surface_test.zig`
+- `/home/home/personal/projects/howl/howl-vt/test/unit/terminal_osc_test.zig`
+
+Required shape:
+
+- Move `host/apply.zig` to `host_apply.zig` and `host/state.zig` to `host_state.zig`; update all `host/...` imports.
+- Move `selection/state.zig` to `selection.zig` and `selection/projection.zig` to `selection_projection.zig`; update all imports.
+- Move `csi/plain.zig`, `csi/private.zig`, `csi/params.zig`, `csi/intermediate.zig`, and `csi/leader.zig` to root-level prefixed files and update `csi.zig` plus internal CSI imports.
+- Update root files, ABI translator files, and Kitty protocol files that still import `host/`, `selection/`, or `csi/` paths so the deleted folders have zero live users.
+- Delete `src/host/`, `src/selection/`, and `src/csi/`.
+- Keep `ffi/`, `input/`, `kitty/`, `parser/`, and `screen/` unchanged as folders.
+
+Exact tests:
+
+- From `/home/home/personal/projects/howl/howl-vt`: `zig build test:unit`.
+- From `/home/home/personal/projects/howl/howl-vt`: `zig build test:abi`.
+- From `/home/home/personal/projects/howl/howl-vt`: `zig build simulate -- --iterations 1` if accepted by the existing CLI; otherwise `zig build simulate:build`.
+
+Non-goals:
+
+- No C ABI symbol/header/export changes.
+- No parser/screen/input/kitty/ffi folder reshaping in this slice.
+- No compatibility old-path shims.
+
+Stop conditions:
+
+- Stop if any moved VT file requires semantic changes beyond import paths due to hidden owner coupling.
+- Stop if a test root demands a new wrapper file to keep old imports alive.
+- Stop if current source proves `host/`, `selection/`, or `csi/` has a lifecycle owner not captured by direct root files.
+
+13. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: seed Slice 2 VT fake folder deletion.
+- How one task went: wrote the condensed Slice 2 execution contract from the accepted research artifact.
+- Next handoff or blocker: coder may implement Slice 2 only.
+
 9. Role: coder
 - Session id: `coder-2026-06-13-all-src-shallow-structure-slice-1`
 - Hello: hi
