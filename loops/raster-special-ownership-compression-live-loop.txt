@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 1 accepted in nested render repo; root receipt pending.
+Status: Slice 2 seeded for execution; reviewer-gated implementation pending.
 
 Orchestrator session id: `orch-2026-06-13-raster-special-01`.
 
@@ -30,9 +30,10 @@ Active research target:
 Current step:
 
 - The planning package is accepted at root `0e53a8e`.
-- Slice 1, `Extract undercurl owner`, is accepted in `howl-render` `42b68b8`.
-- Root receipt for Slice 1 is pending orchestrator commit.
-- No next execution slice is seeded yet.
+- Slice 1, `Extract undercurl owner`, is accepted in `howl-render` `42b68b8`; root `a8c3e50`.
+- Slice 2, `Create generated-special root and extract box owner`, is the active execution slice.
+- Only Slice 2 is authorized.
+- Coder session id: `coder-2026-06-13-raster-special-02`.
 
 Exact user direction:
 
@@ -42,32 +43,54 @@ Exact user direction:
 
 Exact non-goals:
 
-- No generated-special family move.
-- No route-table change.
-- No ABI/header change.
-- No host/display edit.
+- No powerline extraction.
+- No block or braille extraction.
+- No legacy-computing extraction.
+- No support-table edit.
 
 Exact stop conditions:
 
-- Stop if the extraction requires changing `howl-render/src/text/raster/rasterizer.zig:133-136`.
-- Stop if the extraction requires changing any field or enum in `contract.SpriteRasterRequest`.
+- Stop if box extraction requires changing route classification in `symbol_map.zig`, `resolver.zig`, `lane.zig`, or `grouping.zig`.
+- Stop if box extraction requires changing provider dispatch in `howl-render/src/text/ft_hb/glyph_raster.zig:156-163`.
 
-Latest executed slice contract:
+Slice 2 execution contract:
 
 - Allowed files only:
   - `/home/home/personal/projects/howl/howl-render/src/text/raster/special.zig`
-  - `/home/home/personal/projects/howl/howl-render/src/text/raster/undercurl.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/raster/generated_special.zig`
+  - `/home/home/personal/projects/howl/howl-render/src/text/raster/special_box.zig`
 - Required shape:
-  - Move `requestForUndercurl` and `rasterizeUndercurlAlpha` from `howl-render/src/text/raster/special.zig:5-47` into `howl-render/src/text/raster/undercurl.zig`.
-  - Move the undercurl-only helper `addAlpha` from `howl-render/src/text/raster/special.zig:1811-1817` into `howl-render/src/text/raster/undercurl.zig`.
-  - Keep `howl-render/src/text/raster/special.zig` as the curated re-export root so `howl-render/src/text/raster/rasterizer.zig:133-136` stays unchanged.
-  - Do not move any generated-special entrypoint or helper.
-- Required assertions:
-  - preserve `width_px > 0` and `height_px > 0` assertions on the undercurl request path
-  - preserve the undercurl alpha raster bounds assumptions currently enforced by `addAlpha`
+  - Move generated-special public entrypoints and family dispatch from `howl-render/src/text/raster/special.zig:49-127` into `howl-render/src/text/raster/generated_special.zig`.
+  - Move the box owner surface from `howl-render/src/text/raster/special.zig:129-156,872-1246` into `howl-render/src/text/raster/special_box.zig`.
+  - `special_box.zig` owns exactly:
+    - `rasterizeGeneratedBoxAlpha`
+    - `RoundedCorner`
+    - `BoxLineStyle`
+    - `BoxLines`
+    - `lineSpec`
+    - `lineSpecLight`
+    - `lineSpecHeavy`
+    - `lineSpecDouble`
+    - `lineSpecHalf`
+    - `rasterizeBoxLines`
+    - `drawBoxVerticalArm`
+    - `drawBoxHorizontalArm`
+    - `fillRectRange`
+    - `BoxLineAxis`
+    - `rasterizeDashedBoxLine`
+    - `rasterizeRoundedCorner`
+    - `snapRoundedCornerConnections`
+    - `rasterizeCrossLine`
+    - `centeredRange`
+    - `smoothStep`
+  - `generated_special.zig` keeps the generated-special dispatcher and only helpers still needed outside the box owner.
 - Required proof roots and runs:
-  - `howl-render/src/text/raster/special_test.zig:10-19`
-  - `howl-render/src/text/scene.zig:768-790`
+  - `howl-render/src/text/raster/special_test.zig:21-58,399-617`
+  - `howl-render/src/text/ft_hb/glyph_raster.zig:239-261`
+  - `howl-render/src/text/symbol_map.zig:22-24,44-51`
+  - `howl-render/src/text/resolver.zig:294-342`
+  - `howl-render/src/text/lane.zig:449-465`
+  - `howl-render/src/text/shape/grouping.zig:259-275`
   - package-local run: `cd howl-render && zig build test:unit`
 - Verification handoff requirements:
   - coder must report files changed, concise implementation summary, verification run/results, blockers/deviations, coder session id, and commit-hash handoff status
@@ -151,3 +174,10 @@ Team scratchpad
 - Intended task: commit the accepted Slice 1 render work and close the root receipt.
 - How one task went: committed the nested `howl-render` Slice 1 diff as `42b68b8` `Extract undercurl owner` after reviewer acceptance.
 - Next handoff or blocker: commit the root receipt for Slice 1, then seed Slice 2 if continuing.
+
+12. Role: orchestrator
+- Session id: `orch-2026-06-13-raster-special-01`
+- Hello: hi
+- Intended task: close the Slice 1 root receipt and seed Slice 2 for execution.
+- How one task went: recorded Slice 1 root receipt `a8c3e50` and condensed Slice 2 into this live-loop execution contract with coder session id `coder-2026-06-13-raster-special-02`.
+- Next handoff or blocker: coder should implement Slice 2 only and return verification plus commit-hash handoff status for reviewer gating.

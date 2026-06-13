@@ -2,7 +2,7 @@
 
 Date: 2026-06-13.
 
-Status: accepted planning package; Slice 1 accepted in nested render history and next slice not yet seeded.
+Status: accepted planning package; Slice 1 accepted and Slice 2 seeded for execution.
 
 Role owner: researcher.
 
