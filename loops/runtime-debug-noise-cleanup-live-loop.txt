@@ -153,3 +153,13 @@ Reviewer Slice 2 correction acceptance note:
 - Intent: review the focused Slice 2 handle correction package.
 - Outcome: accepted with no findings. The correction adds `howl-render/src/surface/handle.zig` to Slice 2, classifies the missed timing blocks exactly, preserves prepared-handle lifecycle/runtime truth, and names exact tests and stop conditions.
 - Handoff: orchestrator may promote the correction into the active sprint contract and reseed Slice 2 repair.
+
+Orchestrator Slice 2 repair seed:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: promote correction acceptance `e94864b` into the active sprint contract and reseed Slice 2 repair.
+- Outcome: Slice 2 allowed files now include `howl-render/src/surface/handle.zig`; correction research moved to `research/done/2026-06-14-runtime-debug-noise-slice2-handle-correction.md`.
+- Allowed files: `howl-render/src/render_session.zig`, `howl-render/src/text/surface_preparer.zig`, `howl-render/src/text/direct_normal.zig`, `howl-render/src/benchmark_main.zig`, `howl-render/src/surface/handle.zig`.
+- Required additional shape: `handle.zig` must have no `monotonicNs`, no `DebugPreparedHandleCreateTiming`, no `HOWL_RENDER_DEBUG_TIMING`, no debug timing global, no aggregate timing fields, no timing locals in `PreparedHandle.create`, and no timing `std.debug.print`. Preserve handle allocation, prepared-surface ownership transfer, registration, payload emission, emission-failure mapping, lifecycle cleanup, and assertions.
+- Required tests from `howl-render`: `zig build test:unit -- render session`, `zig build test:unit -- direct normal`, `zig build test:unit -- prepared handle`, `zig build test:unit`, `zig build benchmark:render:build`, and `zig build check`.
+- Handoff: coder `coder-2026-06-14-runtime-debug-noise-slice-02` may repair the existing unaccepted Slice 2 diff only inside the five allowed files and then return normal handoff fields.

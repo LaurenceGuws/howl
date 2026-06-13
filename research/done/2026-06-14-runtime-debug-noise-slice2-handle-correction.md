@@ -1,3 +1,9 @@
+# Historical Authority
+
+- Historical authority at time: accepted Slice 2 correction package for `orch-2026-06-14-runtime-debug-noise-01`, accepted by `review-2026-06-14-runtime-debug-noise-01`.
+- Why superseded or done: promoted into active sprint contract `sprints/2026-06-14-runtime-debug-noise-cleanup-sprint.md` for reseeded Slice 2 execution.
+- Must not be used for: direct execution authority after sprint promotion; use the active sprint and loop contract instead.
+
 # Runtime Debug Noise Slice 2 Handle Correction
 
 Status:
@@ -14,7 +20,7 @@ Status:
 - Trigger: reviewer rejection of Slice 2 due to missed adjacent prepare-handle timing in `howl-render/src/surface/handle.zig`.
 - Reviewer accepted correction.
 - No Slice 2 acceptance is authorized until this correction is promoted into the execution scope and the scope is reseeded.
-- Correction acceptance receipt: pending orchestrator commit.
+- Correction acceptance receipt: `e94864b` `Accept runtime debug-noise Slice 2 correction`.
 
 ## Sources Read In Order
 
