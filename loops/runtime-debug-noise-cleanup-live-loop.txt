@@ -106,4 +106,15 @@ Orchestrator Slice 1 acceptance note:
 - Hello from `orch-2026-06-14-runtime-debug-noise-01`.
 - Intent: verify and accept Slice 1 after reviewer acceptance.
 - Outcome: `zig build test:unit -- surface/emitter` passed from `howl-render`; `zig build test:unit` passed from `howl-render`; `zig build test:abi` was not required because no public ABI/header shape changed. Nested render commit is `932bd29` `Remove emitter debug timing noise`.
-- Handoff: root acceptance receipt is pending this commit; Slice 2 is next after root receipt closure.
+- Handoff: root acceptance receipt is `cd00a7e` `Accept runtime debug-noise Slice 1`; Slice 2 is next.
+
+Slice 2 execution seed:
+
+- Hello from `orch-2026-06-14-runtime-debug-noise-01`.
+- Intent: seed Slice 2 exactly from the accepted sprint contract after Slice 1 root acceptance.
+- Outcome: Slice 2 is authorized for coder `coder-2026-06-14-runtime-debug-noise-slice-02` only.
+- Allowed files: `howl-render/src/render_session.zig`, `howl-render/src/text/surface_preparer.zig`, `howl-render/src/text/direct_normal.zig`, `howl-render/src/benchmark_main.zig`.
+- Required shape: delete `DebugPrepareTiming`, `monotonicNs`, debug global, `prepareHandle` timing, `prepareSurface` timing, timing mutations, `surface_preparer.PrepareTimings`, and `direct_normal.Timings` runtime payloads. Benchmark may retain only benchmark-owned outer duration, allocation, fill/glyph/upload counts, and throughput.
+- Required tests from `howl-render`: `zig build test:unit -- render session`, `zig build test:unit -- direct normal`, `zig build test:unit`, `zig build benchmark:render:build`, and `zig build check`.
+- Stop conditions: if any file outside the four allowed files needs content changes, stop and reseed exact scope; if benchmark requirements require runtime timing payloads, stop for reviewer/user decision; if prepared ownership/mutex assertions are at risk, stop.
+- Required handoff fields: changed files, benchmark timing ownership decision, summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
