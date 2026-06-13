@@ -76,3 +76,23 @@ Orchestrator note:
 - Intent: seed a planning-only sprint around the six current ownership/hygiene pressure points.
 - Outcome: live loop now captures the target set, research outputs, reference order, likely ranking bias, and hard non-goals/stops.
 - Handoff: researcher must read required workflow docs, `sprints/current.txt`, this loop, `reference-index.md`, TigerBeetle readings, the six target files, and the governing reference seams before writing the active research package.
+
+- Researcher `research-2026-06-14-six-target-ownership-01`: hello.
+- Intent: evaluate the six targets against Ghostty, Alacritty, and TigerBeetle pressure and finish the active research plan with exact slice contracts.
+- Outcome: completed the research artifact; judged `howl-render/src/text/ft_hb/support.zig` and `howl-render/src/text/shape/cluster.zig` as real cut targets, and judged `howl-linux-host/src/terminal/surface.zig`, `howl-render/src/surface/emitter.zig`, `howl-render/src/surface/realizer.zig`, and `howl-vt/src/parser.zig` as keep-large owner-true files for this sprint.
+- Handoff: reviewer should pressure the proposed Slice 1 `ft_hb/loaded_faces.zig` cut and the Slice 2 `shape/provisional_run.zig` cut against the cited references and stop the sprint if either child owner name or boundary is not source-backed enough.
+
+- Researcher `research-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: repair the rejected planning package by tightening Slice 2 into a full contract, narrowing the `loaded_faces` seam to true lifecycle ownership, and closing the parser proof gap without inventing a fake cut.
+- Outcome: repaired the plan so Slice 2 now lands in existing `howl-render/src/text/shape/run.zig` with run-local scratch, Slice 1 now limits `loaded_faces.zig` to face lifecycle and face lookup only, and `howl-vt/src/parser.zig` stays keep-large but now has an explicit proof-only Slice 3 for parser-owner-local tests.
+- Handoff: reviewer should re-check whether `loaded_faces.zig` is now narrow enough, whether the `run.zig` landing zone removes all coder guesswork about run scratch ownership, and whether the new parser proof slice is sufficient to close the keep-large judgment.
+
+- Reviewer `review-2026-06-14-six-target-ownership-01`: hello.
+- Intent: re-review the repaired six-target planning package and gate acceptance only if the repaired seams and full slice contracts survive exact scrutiny.
+- Outcome: the prior substantive planning defects are repaired; the only blocker from this pass was the missing reviewer loop note itself.
+- Handoff: re-run reviewer gate after this accountability repair. No additional research-plan content changes are required from the previous rejection.
+
+- Reviewer `review-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: confirm final planning acceptance after the accountability-only repair.
+- Outcome: accepted with no findings. The planning package now has a full execution queue, narrow owner-true cut seams, and a proof-only keep-large parser slice instead of an invented structural cut.
+- Handoff: orchestrator may record accepted planning receipt and promote the package into the active sprint contract.
