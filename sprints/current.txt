@@ -32,6 +32,7 @@ Active restart note:
   - Slice 2 nested render commit `927f032` `Move provisional runs into run owner`, root receipt `4c59cdd` `Accept six-target ownership Slice 2`.
   - Slice 3 nested VT commit `05e4c69` `Add parser control spine proof`, root receipt `41eb058` `Accept six-target ownership Slice 3`.
 - Archive receipt: `c308757` `Archive six-target ownership sprint`.
+- Closure review accepted by `review-2026-06-14-six-target-ownership-01` after ledger fix `7f4913c` `Record six-target ownership archive receipt`.
 - Six-target ownership hygiene sprint execution is complete and archived.
 - Previous latest closed sprint: runtime debug-noise cleanup.
 - Latest closed sprint orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
