@@ -34,6 +34,7 @@ Active restart note:
   - Slice 3 nested host commit `8a2f1d7` `Remove host upload stats noise`, root receipt `9eddb77` `Accept runtime debug-noise Slice 3`.
   - Slice 4 read-only realizer verification, root receipt `8e42f54` `Accept runtime debug-noise Slice 4`.
 - Archive receipt: `2f62673` `Archive runtime debug-noise sprint`.
+- Closure review accepted by `review-2026-06-14-runtime-debug-noise-01` after ledger fix `ac0fbd1` `Record runtime debug-noise archive receipt`.
 - Runtime debug-noise cleanup sprint execution is complete and archived.
 
 Execution rule:
