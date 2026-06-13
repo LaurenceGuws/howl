@@ -135,3 +135,18 @@ Orchestrator note:
 - Additional proof obligations: preserve or relocate the current run proofs from `cluster.zig:867-892` and `cluster.zig:913-946` into owner-true inline tests after the move; preserve or add run-scratch overflow proof under the new run-local scratch owner.
 - Stop conditions: stop if the slice cannot remove `ResolvedRun` scratch ownership from `cluster.RetainedScratch` cleanly; stop if the move requires touching files outside the allowed set; stop if the only viable outcome is inventing a new file instead of using `run.zig`; stop if moved tests cannot remain reachable through the existing render unit root without adding a new test root.
 - Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
+- Coder `coder-2026-06-14-six-target-ownership-slice-02`: hello.
+- Intent: move provisional run planning and run scratch ownership out of `cluster.zig` and into the existing run owner `run.zig` without changing shaping behavior.
+- Outcome: provisional run planning now lives in `run.zig` under `OwnedProvisionalRuns` and `RetainedProvisionalRunScratch`; `cluster.RetainedScratch` no longer stores resolved-run scratch; the run behavior proofs moved to run-owner-local inline tests.
+- Handoff: run `zig build test:unit` in `howl-render`, then hand the diff and verification result to reviewer `review-2026-06-14-six-target-ownership-01`.
+
+- Reviewer `review-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: review Slice 2 cluster run-planning move into the existing run owner.
+- Outcome: accepted with no findings. The seam lands in `run.zig`, `cluster.RetainedScratch` no longer owns run scratch truth, and the moved run proofs remain owner-true inline tests under `run.zig`.
+- Handoff: orchestrator should verify `zig build test:unit` in `howl-render`, then record nested and root Slice 2 acceptance receipts.
+
+- Orchestrator `orch-2026-06-14-six-target-ownership-01`: hello again.
+- Intent: verify and accept Slice 2 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `927f032` `Move provisional runs into run owner`.
+- Handoff: root acceptance receipt is pending this commit; Slice 3 is next after root receipt closure.
