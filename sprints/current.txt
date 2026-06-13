@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-13-render-scene-ownership-compression-sprint.md`
+- none
 
 Active research:
 
-- `research/2026-06-13-render-scene-ownership-compression-plan.md`
+- none
 
 Active loops:
 
-- `loops/render-scene-ownership-compression-live-loop.txt`
+- none
 
 Active restart note:
 
@@ -24,22 +24,17 @@ Active restart note:
 - Latest completed slices from that sprint:
   - `howl-vt` parser root flatten: `8d95998`
   - `howl-render` unit wrapper deletion: `dbb8669`
-- New active planning sprint: render scene ownership compression.
-- Primary planning target: `howl-render/src/text/scene.zig`.
-- Planning package accepted at root `2fde3dd`.
-- Slice 1 `Extract scene damage/span ownership and move callers to it` accepted in `howl-render` `959576d`; root `5bbe0ec`.
-- Slice 2 `Extract scene rect/fill ownership with explicit undercurl carve-out` accepted in `howl-render` `acb929e`; root `007a0ee`.
-- Slice 3 `Finish scene.zig as the sprite/raster scene root only` accepted in `howl-render` `27317db`; root receipt pending.
-- No next execution slice seeded yet.
-- Active planning sessions:
-  - orchestrator `orch-2026-06-13-render-scene-01`
-  - researcher `research-2026-06-13-render-scene-01`
-  - reviewer `review-2026-06-13-render-scene-01`
+- Latest closed sprint: render scene ownership compression, planning `2fde3dd`, Slice 1 root `5bbe0ec`, Slice 2 root `007a0ee`, Slice 3 root `701accc`.
+- Latest completed nested render slices:
+  - `959576d` `Extract scene damage owner`
+  - `acb929e` `Extract scene rect owner`
+  - `27317db` `Finish scene sprite owner`
+- No active sprint is seeded.
 
 Execution rule:
 
 - No coding is authorized without an accepted reviewer-gated execution slice under the active sprint.
-- No implementation is currently authorized until the orchestrator closes or reseeds the sprint.
+- No coding is authorized without a new seeded sprint.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
