@@ -70,3 +70,31 @@ Team scratchpad
 - Intended task: record the all-`src` shallow sprint seed receipt.
 - How one task went: committed the new sprint seed as root `16a877d`.
 - Next handoff or blocker: commit this receipt update, then delegate researcher planning.
+
+3. Role: researcher
+- Session id: `research-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: inspect every current package `src/` tree, apply reference-first folder-depth pressure, and write the active all-`src/` shallow owner-structure plan.
+- How one task went: inventoried `howl-pty`, `howl-vt`, `howl-render`, and `howl-linux-host` source trees, read the active build/test roots and reference anchors, and wrote the full sequential slice plan into the active research artifact.
+- Next handoff or blocker: ready for reviewer gate; no user-level reference conflict blocker found.
+
+4. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: verify the active all-`src/` shallow owner-structure plan against the workflow contract and current package `src/` trees.
+- How one task went: confirmed the four-package `src/` scope, then found that Slice 2, Slice 3, and Slice 4 omit files that currently import the paths those slices plan to delete, which leaves coder invention in the allowed-file contract.
+- Next handoff or blocker: researcher must correct the slice file lists and required-shape coverage before reviewer can accept planning or allow orchestrator to seed execution.
+
+5. Role: researcher
+- Session id: `research-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-prove the rejected Slice 2, Slice 3, and Slice 4 deletion users from current source and repair the active research artifact so the allowed-file lists are executable without coder invention.
+- How one task went: re-grepped every current `host/`, `selection/`, `csi/`, `geometry/`, `classify/`, `polling/`, `display/renderer/`, `terminal/pty/`, `terminal/vt/`, and `terminal/render/` importer/build use in the affected packages, then expanded the Slice 2, Slice 3, and Slice 4 file lists to include all live users I found, including additional `howl-render/src/text/ft_hb/support.zig`, `howl-linux-host/src/terminal/links.zig`, and `howl-linux-host/src/terminal/scrollbar.zig` coverage beyond the reviewer’s cited omissions.
+- Next handoff or blocker: ready for reviewer re-gate; no new user-level reference conflict found.
+
+6. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-validate the repaired Slice 2, Slice 3, and Slice 4 allowed-file lists against all live importer and build users and decide whether planning is now executable without coder invention.
+- How one task went: re-grepped current VT `host/`, `selection/`, and `csi/` users, render `geometry/` and `text/classify/` users, and host `polling/`, `display/renderer/`, `terminal/pty/`, `terminal/vt/`, and `terminal/render/` users; the repaired research artifact now covers the live importer/build users I found, including VT test users, render `text/ft_hb/support.zig` and text classification users, and host `build.zig`, `links.zig`, `scrollbar.zig`, `selection.zig`, `surface.zig`, `surface_test.zig`, `term.zig`, `input.zig`, `pty/pump.zig`, `pty/wait_thread.zig`, `vt/input.zig`, and `render/surface_layout.zig`.
+- Next handoff or blocker: planning accepted; orchestrator may commit the planning package and seed Slice 1 execution.
