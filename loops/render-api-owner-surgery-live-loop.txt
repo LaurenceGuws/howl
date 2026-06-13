@@ -495,6 +495,104 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 - Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
 - Next handoff or blocker: commit the root Slice 4 receipt and seed Slice 5 from the accepted research plan.
 
+29. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-05`
+- Hello: hi
+- Intended task: implement Slice 5, `Render Session Owner`, inside the allowed files only.
+- How one task went: replaced the long-lived `session/text.zig` owner with `render_session.zig`, moved submitted-token ownership to `submitted_surface.zig`, rewired the allowed import users off the old `session/*` paths, preserved existing C export names, and migrated the owner-local session tests into the new owner files plus the existing unit root.
+- Next handoff or blocker: reviewer/orchestrator can verify the Slice 5 diff under the accepted contract.
+
+30. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review execution Slice 5, `Render Session Owner`, against allowed-file scope, owner replacement, session-file deletion, assertions/tests, and proof receipts.
+- Findings: none.
+- Outcome: accept.
+- Acceptance notes: orchestrator must verify passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`, `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`, and `cd /home/home/personal/projects/howl/howl-render && zig build check`; verify final grep for `session/text.zig|session/submitted.zig` under `howl-render/src` returned no matches; verify final globs for `howl-render/src/session/text.zig` and `howl-render/src/session/submitted.zig` returned no files; confirm nested `howl-render` status stages only the Slice 5 allowed files; record the commit hash as `slice-5-render-session-owner=<hash>` before seeding Slice 6.
+- Next handoff or blocker: orchestrator may verify, commit the accepted nested render Slice 5 change, record the root receipt, and seed exactly Slice 6.
+
+31. Role: orchestrator
+- Session id: `orch-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: close Slice 5 after reviewer acceptance and final verification.
+- How one task went: final verification passed for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`, `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`, `cd /home/home/personal/projects/howl/howl-render && zig build check`, `rg "session/text.zig|session/submitted.zig" src`, and globs for the deleted session files; nested `howl-render` status matched the Slice 5 allowed files; accepted implementation committed as `howl-render` `81bc7ca` (`Name render session owner`).
+- Commit-hash receipt: `slice-5-render-session-owner=81bc7ca`.
+- Blockers or deviations: unrelated untracked root `devtools_options.yaml` remains unstaged and untouched.
+- Next handoff or blocker: commit the root Slice 5 receipt and seed Slice 6 from the accepted research plan.
+
+Condensed execution contract for coder session `coder-2026-06-13-render-api-owner-surgery-06`:
+
+- Accepted planning input:
+  - `/home/home/personal/projects/howl/research/2026-06-13-render-api-owner-surgery-plan.md`
+- Implement only Slice 6, `Prepared Surface And Surface Resource Split`.
+- Allowed files:
+  - `howl-render/src/prepared/surface.zig`
+  - `howl-render/src/prepared/buffer.zig`
+  - `howl-render/src/prepared/handle.zig`
+  - `howl-render/src/prepared/render_surface_emitter.zig`
+  - `howl-render/src/prepared/sprite_resource_store.zig`
+  - `howl-render/src/prepared/handle_test.zig`
+  - `howl-render/src/prepared/render_surface_emitter_test.zig`
+  - `howl-render/src/prepared_surface.zig`
+  - `howl-render/src/submission.zig`
+  - `howl-render/src/handle.zig`
+  - `howl-render/src/render_session.zig`
+  - `howl-render/src/test_support.zig`
+  - `howl-render/src/prepared_surface_test.zig`
+  - `howl-render/src/submission_test.zig`
+  - `howl-render/src/test/unit/root.zig`
+  - `howl-render/src/geometry/render_surface_realizer.zig`
+  - `howl-render/src/geometry/render_surface_realizer_test.zig`
+  - `howl-render/src/surface/prepared_surface.zig`
+  - `howl-render/src/surface/compositor.zig`
+  - `howl-render/src/surface/handle.zig`
+  - `howl-render/src/surface/emitter.zig`
+  - `howl-render/src/surface/resource_store.zig`
+  - `howl-render/src/surface/realizer.zig`
+  - `howl-render/src/surface/realizer_resource_store.zig`
+  - `howl-render/src/surface/handle_test.zig`
+  - `howl-render/src/surface/emitter_test.zig`
+  - `howl-render/src/surface/realizer_test.zig`
+- Required shape:
+  - move prepared identity to `surface/prepared_surface.zig`.
+  - move CPU composition to `surface/compositor.zig`.
+  - move C handle lifetime to `surface/handle.zig`.
+  - move C surface emission to `surface/emitter.zig`.
+  - move emit-time sprite/glyph resource allocation from `prepared/sprite_resource_store.zig` to `surface/resource_store.zig`.
+  - move CPU realization from `geometry/render_surface_realizer.zig` to `surface/realizer.zig`.
+  - move the nested realizer `ResourceStore` to `surface/realizer_resource_store.zig`.
+  - delete `prepared/` after imports are cut over and leave geometry owning only geometry.
+- Required assertions:
+  - prepared token required base seq rules.
+  - surface dimensions nonzero.
+  - CPU pixel buffer length equals `width * height * 4` with overflow checks.
+  - base pixels length matches output length for partial composition.
+  - handle state transitions are valid.
+  - `render_surface_payload` is null before emission and null after free.
+  - resource and atlas counts stay within C ABI maxima.
+  - rollback restore exactly matches saved state.
+- Exact tests:
+  - `cd /home/home/personal/projects/howl/howl-render && zig build check`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`
+  - `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`
+- Non-goals:
+  - no VT or renderable-content changes.
+  - no text shaping changes.
+  - no C ABI header changes.
+- Stop conditions:
+  - stop if any import path still contains `prepared/` after this slice.
+  - stop if `prepared` remains as a live directory after this slice.
+  - stop if `geometry/render_surface_realizer.zig` remains live.
+  - stop if emitter imports `render_session.zig` for anything except owner-approved cache or resource lookup.
+  - stop if emit-time resource store and realizer resource store are merged.
+- Required handoff:
+  - files changed
+  - concise implementation summary
+  - exact verification run and results
+  - blockers or deviations
+  - coder session id `coder-2026-06-13-render-api-owner-surgery-06`
+  - commit-hash handoff status for orchestrator receipt closure
+
 Condensed execution contract for coder session `coder-2026-06-13-render-api-owner-surgery-05`:
 
 - Accepted planning input:
@@ -706,3 +804,23 @@ Condensed execution contract for coder session `coder-2026-06-13-render-api-owne
 - Findings: no blocking findings. The nested render worktree stays within the Slice 4 allowlist: modified `src/session/text.zig`, `src/text/contract.zig`, `src/text/direct_normal.zig`, `src/text/ft_hb/cache.zig`, `src/text/raster/atlas.zig`, `src/text/scene.zig`, `src/text/surface_preparer.zig`, added `src/text/color.zig`, `src/text/effects.zig`, `src/text/metrics.zig`, `src/text/cell_input.zig`, `src/text/scene_contract.zig`, and deleted `src/text/raster/cache.zig`. The new owner files match the required shape: `src/text/color.zig` owns `Rgba8`, `SemanticColorKind`, and `SemanticColor`; `src/text/effects.zig` owns underline/style/presentation/effect enums plus backend caps; `src/text/metrics.zig` owns font/face/decoration/cursor/cell/grid metrics; `src/text/cell_input.zig` owns `CellInput` and its combining-bounds assertion; `src/text/scene_contract.zig` owns text scene, draw, sprite, cluster, and missing-glyph contract facts. `src/text/contract.zig` is reduced to a curated re-export root plus a root re-export test only, with no owner state or mutation. `src/text/raster/cache.zig` is deleted and `src/text/raster/atlas.zig` is the live atlas owner, while `src/text/ft_hb/cache.zig` remains the FT/HB cache owner with capacity-error tests intact. Required assertions and tests are present and meaningful, including color defaults, effect enum stability, nonzero metrics fixtures, `CellInput.combining_len <= combining.len`, scene draw span retention, atlas reserve/store bounds, and FT/HB cache capacity errors. No VT publication files changed, no render session move occurred, no prepared surface split occurred, no C ABI header changed, no features were added, and no geometry owner file received text metrics or render effects.
 - Outcome: accept.
 - Next handoff or blocker: orchestrator should verify the passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` and `cd /home/home/personal/projects/howl/howl-render && zig build check`, confirm nested `howl-render` status stages only the Slice 4 allowed files, verify `howl-render/src/text/raster/cache.zig` is absent and `howl-render/src/text/raster/atlas.zig` is the live atlas file, then record the commit hash as `slice-4-text-effects-geometry-contract-recut=<hash>` before seeding Slice 5.
+
+27. Role: coder
+- Session id: `coder-2026-06-13-render-api-owner-surgery-05`
+- Hello: hi
+- Intended task: implement Slice 5 `Render Session Owner` by replacing `session/text.zig` with `render_session.zig`, moving submitted-token tracking to `submitted_surface.zig`, migrating imports/tests, and running the exact unit/abi/check proofs.
+- How one task went: moved the long-lived owner into `src/render_session.zig`, moved submitted-token state/tests into `src/submitted_surface.zig`, deleted `src/session/text.zig`, `src/session/submitted.zig`, and `src/session/text_test.zig`, rewired every allowed import user to the new owner paths, added owner-local assertions for nonzero derived layout, bounded fallback count, exact scratch slice length, unlocked handle registration, and monotonic submitted tokens, and moved the old session-owner tests into the new owner files plus the existing unit root.
+- Files changed: `howl-render/src/render_session.zig`, `howl-render/src/submitted_surface.zig`, `howl-render/src/text_session.zig`, `howl-render/src/handle.zig`, `howl-render/src/work_state.zig`, `howl-render/src/submission.zig`, `howl-render/src/text/ft_hb/support.zig`, `howl-render/src/text/ft_hb/glyph_raster.zig`, `howl-render/src/text/ft_hb/support_test.zig`, `howl-render/src/prepared/buffer.zig`, `howl-render/src/prepared/handle.zig`, `howl-render/src/prepared/render_surface_emitter.zig`, `howl-render/src/prepared/handle_test.zig`, `howl-render/src/prepared/render_surface_emitter_test.zig`, `howl-render/src/test_support.zig`, `howl-render/src/text_session_test.zig`, `howl-render/src/test/unit/root.zig`, and this active loop file; deleted `howl-render/src/session/text.zig`, `howl-render/src/session/submitted.zig`, `howl-render/src/session/text_test.zig`.
+- Concise implementation summary: Slice 5 now has `render_session.zig` as the single long-lived render session owner, `submitted_surface.zig` as the submitted-token owner, stable C export names through the existing FFI entry files, migrated unit coverage for layout/font/scratch/submitted behavior, and no remaining `session/text.zig` or `session/submitted.zig` imports under `howl-render/src`.
+- Exact verification results: `cd /home/home/personal/projects/howl/howl-render && zig build test:unit` passed; `cd /home/home/personal/projects/howl/howl-render && zig build test:abi` passed; `cd /home/home/personal/projects/howl/howl-render && zig build check` passed; final grep for `session/text.zig|session/submitted.zig` under `/home/home/personal/projects/howl/howl-render/src` returned no matches; final globs for `/home/home/personal/projects/howl/howl-render/src/session/text.zig` and `/home/home/personal/projects/howl/howl-render/src/session/submitted.zig` returned no files.
+- Blockers or deviations: no blockers; one initial root-relative import break after moving `session/text.zig` to `src/render_session.zig` and one incorrect new font-path test expectation were fixed during proof; no out-of-scope files were touched and no git commands were used.
+- Commit-hash handoff status: pending reviewer acceptance and orchestrator receipt closure; no git was touched.
+- Next handoff or blocker: reviewer `review-2026-06-13-render-api-owner-surgery-01` should review the current Slice 5 diff against the accepted contract and proof receipts.
+
+28. Role: reviewer
+- Session id: `review-2026-06-13-render-api-owner-surgery-01`
+- Hello: hi
+- Intended task: review execution Slice 5 `Render Session Owner` against the active condensed contract and accepted planning artifact, without implementing product code.
+- Findings: no blocking findings. The nested render worktree stays within the Slice 5 allowlist: modified `src/text_session.zig`, `src/handle.zig`, `src/work_state.zig`, `src/submission.zig`, `src/text/ft_hb/support.zig`, `src/text/ft_hb/glyph_raster.zig`, `src/text/ft_hb/support_test.zig`, `src/prepared/buffer.zig`, `src/prepared/handle.zig`, `src/prepared/render_surface_emitter.zig`, `src/prepared/handle_test.zig`, `src/prepared/render_surface_emitter_test.zig`, `src/test_support.zig`, `src/text_session_test.zig`, `src/test/unit/root.zig`, added `src/render_session.zig` and `src/submitted_surface.zig`, and deleted `src/session/text.zig`, `src/session/submitted.zig`, and `src/session/text_test.zig`. `src/render_session.zig` is the single long-lived render session owner and `src/submitted_surface.zig` is the submitted-token owner, with required assertions and tests for nonzero derived layout, bounded fallback count, exact scratch length reuse, unlocked handle registration, stale/needs-prepare behavior, and submitted-token monotonicity. Existing text/raster owners are preserved: imports point at `text/ft_hb/cache.zig` and `text/raster/atlas.zig`, and no `text/renderer.zig` or `text/glyph_cache.zig` exists. The final grep for `session/text.zig|session/submitted.zig` under `howl-render/src` returned no matches and the final globs for `src/session/text.zig` and `src/session/submitted.zig` returned no files. No C render-surface emission behavior change, no resource-store ownership move, and no ABI header change are in this slice; exported C ABI symbol rename was not required because the FFI export entry files stayed stable.
+- Outcome: accept.
+- Next handoff or blocker: orchestrator should verify the passed receipts for `cd /home/home/personal/projects/howl/howl-render && zig build test:unit`, `cd /home/home/personal/projects/howl/howl-render && zig build test:abi`, and `cd /home/home/personal/projects/howl/howl-render && zig build check`, verify the final grep for `session/text.zig|session/submitted.zig` under `howl-render/src` returned no matches and the final globs for `howl-render/src/session/text.zig` and `howl-render/src/session/submitted.zig` returned no files, confirm nested `howl-render` status stages only the Slice 5 allowed files, then record the commit hash as `slice-5-render-session-owner=<hash>` before seeding Slice 6.
