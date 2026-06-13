@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: reviewer-accepted planning committed; Slice 1 seeded for execution.
+Status: execution completed through Slice 8; final root receipt closure pending.
 
 Orchestrator session id: `orch-2026-06-13-render-api-owner-surgery-01`.
 
