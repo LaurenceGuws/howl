@@ -32,7 +32,8 @@ Current step:
 - The all-`src/` shallow directory planning package is accepted and committed.
 - Slice 1 is accepted and receipted.
 - Slice 2 is accepted and receipted.
-- Slice 3 is active.
+- Slice 3 is accepted and receipted.
+- Slice 4 is active.
 - No other implementation is authorized.
 
 Exact user direction:
@@ -513,6 +514,84 @@ Stop conditions:
 - How one task went: wrote the condensed Slice 4 execution contract from the accepted research artifact.
 - Next handoff or blocker: coder may implement Slice 4 only.
 
+25. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-4`
+- Hello: hi
+- Intended task: implement Slice 4 host one-extra-depth deletion.
+- How one task went: flattened `polling/`, `display/renderer/gl_c.h`, and terminal nested PTY/VT/render leaves into shallow direct files, updated all allowed imports and build paths, removed deleted wrapper directories, and passed `zig build test:unit`, `zig build test:integration`, and `zig build check`.
+- Next handoff or blocker: reviewer should gate Slice 4; no commit was made by coder.
+
+26. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-gate Slice 4 after orchestrator corrected the active guidance mismatch.
+- How one task went: accepted Slice 4; the diff stays within the seeded files, deleted wrapper directories are absent, old deleted-path imports are gone, and `zig build test:unit`, `zig build test:integration`, and `zig build check` passed.
+- Next handoff or blocker: orchestrator may commit nested `howl-linux-host` and record receipts.
+
+27. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: verify and commit accepted Slice 4.
+- How one task went: reran `zig build test:unit`, `zig build test:integration`, and `zig build check` in `howl-linux-host`; committed nested Slice 4 as `4b0b995`.
+- Next handoff or blocker: commit the root receipt for Slice 4, then seed Slice 5.
+
+## Slice 5 Execution Contract
+
+Name: Workspace Aggregate Verification And Empty-Directory Audit.
+
+Status: active.
+
+Coder session id: `coder-2026-06-13-all-src-shallow-structure-slice-5`.
+
+Reviewer session id: `review-2026-06-13-all-src-shallow-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- No product source edits allowed by default.
+- If and only if a prior slice missed a path update, allowed files are limited to files already listed in the failed prior slice and must be returned to that slice for reviewer correction.
+
+Required shape:
+
+- Verify deleted fake folders are absent: `howl-pty/src/pty/`, `howl-vt/src/host/`, `howl-vt/src/selection/`, `howl-vt/src/csi/`, `howl-render/src/geometry/`, `howl-render/src/text/classify/`, `howl-linux-host/src/polling/`, `howl-linux-host/src/display/renderer/`, `howl-linux-host/src/terminal/pty/`, `howl-linux-host/src/terminal/vt/`, and `howl-linux-host/src/terminal/render/`.
+- Verify no source, test, build, benchmark, or support file still imports those deleted paths.
+- Verify package test/check gates still pass from final shallow trees.
+- Do not change product files unless a missed path update is proved; if one is found, stop and route it back to the owning prior slice instead of inventing a new cleanup edit here.
+
+Exact tests:
+
+- From `/home/home/personal/projects/howl/howl-pty`: `zig build test`.
+- From `/home/home/personal/projects/howl/howl-vt`: `zig build test`.
+- From `/home/home/personal/projects/howl/howl-vt`: `zig build simulate:build`.
+- From `/home/home/personal/projects/howl/howl-vt`: `zig build benchmark:m7_baseline:build`.
+- From `/home/home/personal/projects/howl/howl-render`: `zig build test:unit`.
+- From `/home/home/personal/projects/howl/howl-render`: `zig build test:abi`.
+- From `/home/home/personal/projects/howl/howl-render`: `zig build check`.
+- From `/home/home/personal/projects/howl/howl-linux-host`: `zig build test:unit`.
+- From `/home/home/personal/projects/howl/howl-linux-host`: `zig build test:integration`.
+- From `/home/home/personal/projects/howl/howl-linux-host`: `zig build check`.
+
+Non-goals:
+
+- No new product edits by default.
+- No opportunistic cleanup beyond proving the final shallow-tree result.
+- No ABI, behavior, or test semantic changes.
+
+Stop conditions:
+
+- Stop if any deleted folder still exists.
+- Stop if any source/build/test/support file still imports a deleted path.
+- Stop if any verification gate fails.
+- Stop if fixing a discovered issue would require editing a file not already covered by the owning prior slice; return to that slice instead of patching here.
+
+28. Role: orchestrator
+- Session id: `orch-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: seed final audit Slice 5.
+- How one task went: wrote the condensed final verification and empty-directory audit contract from the accepted research artifact.
+- Next handoff or blocker: coder may implement Slice 5 only.
+
 19. Role: orchestrator
 - Session id: `orch-2026-06-13-all-src-shallow-structure-01`
 - Hello: hi
@@ -582,3 +661,31 @@ Stop conditions:
 - Intended task: re-gate Slice 3 after orchestrator removed the two leftover empty render directories and reran the required render proof commands.
 - How one task went: confirmed `howl-render/src/geometry/` and `howl-render/src/text/classify/` are now absent, the live `howl-render` diff still stays within the seeded allowed files for Slice 3, no `geometry/` or `classify/` imports survive under `howl-render/src`, and the orchestrator-reported `zig build test:unit`, `zig build test:abi`, and `zig build check` reruns match the slice contract.
 - Next handoff or blocker: reviewer accepts Slice 3; orchestrator may commit nested `howl-render` and record the required receipts.
+
+25. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-4`
+- Hello: hi
+- Intended task: flatten the extra host `src/` depth by moving polling, the host-local GL header, and nested terminal PTY/VT/render leaf owners to shallow paths and updating every allowed importer/build reference.
+- How one task went: moved the polling files to host root, moved `display/renderer/gl_c.h` to `display/gl_c.h`, moved the nested terminal PTY/VT/render files to direct `terminal/*` prefixed owners, and updated the allowed imports/build paths without adding shims.
+- Next handoff or blocker: run `howl-linux-host` unit, integration, and check targets and confirm the deleted wrapper directories are absent for reviewer handoff.
+
+26. Role: coder
+- Session id: `coder-2026-06-13-all-src-shallow-structure-slice-4`
+- Hello: hi
+- Intended task: finish Slice 4 verification and confirm the deleted host wrapper directories are actually gone on disk.
+- How one task went: `zig build test:unit`, `zig build test:integration`, and `zig build check` all passed in `howl-linux-host`; grep found no surviving deleted-path imports, and the empty `src/polling/`, `src/display/renderer/`, `src/terminal/pty/`, `src/terminal/vt/`, and `src/terminal/render/` directories were removed.
+- Next handoff or blocker: reviewer should gate Slice 4; coder made no commit.
+
+27. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: gate Slice 4 host one-extra-depth deletion against the active execution contract, live accountability surface, and required proof commands.
+- How one task went: confirmed the `howl-linux-host` diff stays within the seeded allowed files, the moved host paths and deleted wrapper directories match the Slice 4 shape, and `zig build test:unit`, `zig build test:integration`, and `zig build check` all passed locally; however, the live loop `Current step` block still says Slice 3 is active and no other implementation is authorized, so the active accountability surface does not match the real state of Slice 4 execution.
+- Next handoff or blocker: reject Slice 4 for workflow accountability until orchestrator repairs the stale live loop guidance, then reviewer can re-gate the same host diff without reopening slice scope.
+
+28. Role: reviewer
+- Session id: `review-2026-06-13-all-src-shallow-structure-01`
+- Hello: hi
+- Intended task: re-gate Slice 4 after orchestrator corrected the live accountability surface mismatch and verify the live `howl-linux-host` diff plus required proof commands.
+- How one task went: confirmed the active sprint and live loop now both authorize Slice 4 execution, the `howl-linux-host` diff stays within the seeded allowed files, no `polling/`, `display/renderer/`, `terminal/pty/`, `terminal/vt/`, or `terminal/render/` path survives under `build.zig` or `src/`, the deleted wrapper directories are absent, and `zig build test:unit`, `zig build test:integration`, and `zig build check` all passed locally.
+- Next handoff or blocker: reviewer accepts Slice 4; orchestrator may commit nested `howl-linux-host` and record the required receipts.

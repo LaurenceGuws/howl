@@ -4,13 +4,14 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: Slice 4 active.
+Status: Slice 5 active.
 
 ## Slice Receipts
 
 - Slice 1, `PTY src/pty/ Depth Deletion`: `howl-pty` `714d41c`; root `3e0b50e`.
 - Slice 2, `VT Fake Folder Deletion`: `howl-vt` `da25b16`; root `861d909`.
 - Slice 3, `Render Root Geometry And Text Classification Flattening`: `howl-render` `d4445e3`; root `100be01`.
+- Slice 4, `Host One-Extra-Depth Deletion`: `howl-linux-host` `4b0b995`; root receipt pending.
 
 Orchestrator session id: `orch-2026-06-13-all-src-shallow-structure-01`.
 
