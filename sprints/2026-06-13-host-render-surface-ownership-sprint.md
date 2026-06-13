@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Owner: orchestrator.
 
-Status: Slice 2 accepted; Slice 3 seeded for execution.
+Status: Slice 3 accepted; sprint execution complete.
 
 Orchestrator session id: `orch-2026-06-13-host-render-surface-01`.
 
@@ -18,8 +18,8 @@ Active execution slice:
 
 - Slice 1 acceptance receipt: `5c7a2a2` `Extract host render-surface resources`.
 - Slice 2 acceptance receipt: `2977c3b` `Extract host render-surface commands`.
-- Slice 3: root curation and proof-root cleanup after both owner extractions.
-- Coder session id: `coder-2026-06-13-host-render-surface-slice-03`.
+- Slice 3 acceptance receipt: `618d0c5` `Curate host render-surface root`.
+- Last coder session id: `coder-2026-06-13-host-render-surface-slice-03`.
 - Reviewer session id for execution: `review-2026-06-13-host-render-surface-01`.
 - Execution seed commit-hash receipt: `afe558e` `Accept host render-surface Slice 2`.
 
@@ -54,9 +54,8 @@ Active execution slice:
 
 ## Execution Authorization
 
-- Only Slice 3 execution is authorized.
-- The active execution contract is the current top section of `loops/host-render-surface-ownership-live-loop.txt`.
-- No work beyond Slice 3 is authorized.
+- Slice execution is complete.
+- No further implementation is authorized under this sprint.
 
 ## Seed Pressure Anchors
 

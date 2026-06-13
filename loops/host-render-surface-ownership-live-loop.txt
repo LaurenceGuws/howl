@@ -4,7 +4,7 @@ Date: 2026-06-13.
 
 Role owner: orchestrator.
 
-Status: Slice 2 accepted; Slice 3 execution contract seeded.
+Status: Slice 3 accepted; sprint execution complete.
 
 Orchestrator session id: `orch-2026-06-13-host-render-surface-01`.
 
@@ -17,6 +17,8 @@ Planning acceptance commit-hash receipt: `455402d` `Accept host render-surface p
 Slice 1 acceptance receipt: `5c7a2a2` `Extract host render-surface resources`.
 
 Slice 2 acceptance receipt: `2977c3b` `Extract host render-surface commands`.
+
+Slice 3 acceptance receipt: `618d0c5` `Curate host render-surface root`.
 
 Execution seed commit-hash receipt: `afe558e` `Accept host render-surface Slice 2`.
 
@@ -38,8 +40,9 @@ Active research target:
 Current step:
 
 - Planning is accepted.
-- Slice 3 is seeded for execution.
-- Only Slice 3 is authorized.
+- Slice 3 is accepted.
+- Sprint execution is complete.
+- No further implementation is authorized under this sprint.
 
 Slice 3 execution contract:
 
@@ -275,3 +278,38 @@ Team scratchpad
 - Intended task: record Slice 2 acceptance and seed Slice 3 as the next active execution contract.
 - How one task went: recorded Slice 2 host implementation receipt `2977c3b`, kept its reviewer acceptance in the live loop, and promoted Slice 3 into the controlling execution contract with coder session id `coder-2026-06-13-host-render-surface-slice-03`.
 - Next handoff or blocker: coder may execute Slice 3 only; reviewer remains `review-2026-06-13-host-render-surface-01` for execution gating.
+
+27. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-03`
+- Hello: hi
+- Intended task: execute Slice 3 root curation and proof-root cleanup after both owner extractions.
+- How one task went: reduced `render_surface.zig` to the upload spine plus public aliases to the real command owner, kept `render_surface.testing` routed through the real owners, and left the resource and command owner files as the only behavior owners.
+- Next handoff or blocker: rerun the required proof roots and then hand the final Slice 3 diff to reviewer `review-2026-06-13-host-render-surface-01`.
+
+28. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-03`
+- Hello: hi
+- Intended task: verify Slice 3 after the root curation cleanup.
+- How one task went: `zig build test:unit -- test-filter test-render-surface` and `zig build test:unit -- test-filter test-terminal-surface` both passed after the Slice 3 cleanup pass.
+- Next handoff or blocker: reviewer `review-2026-06-13-host-render-surface-01` should re-review the final Slice 3 diff.
+
+29. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-03`
+- Hello: hi
+- Intended task: repair the remaining Slice 3 root source-order rejection.
+- How one task went: reordered `render_surface.zig` so the file now reads imports, public re-exports, orchestration entrypoint, then root-local helpers and testing facade.
+- Next handoff or blocker: rerun the two required proof roots and return the cleaned Slice 3 surface to reviewer `review-2026-06-13-host-render-surface-01`.
+
+30. Role: coder
+- Session id: `coder-2026-06-13-host-render-surface-slice-03`
+- Hello: hi
+- Intended task: close the final Slice 3 note-truth mismatch.
+- How one task went: moved `UploadStats` into the public type section ahead of `uploadRenderSurface`, and the accurate owner statement is now: `render_surface_resources.zig` owns retained resources, `render_surface_commands.zig` owns command grammar and draw behavior, and `render_surface.zig` still owns the public upload spine plus root-local host-surface helpers.
+- Next handoff or blocker: rerun the two required proof roots and return the corrected Slice 3 surface to reviewer `review-2026-06-13-host-render-surface-01`.
+
+31. Role: reviewer
+- Session id: `review-2026-06-13-host-render-surface-01`
+- Hello: hi
+- Intended task: final re-review Slice 3 after the UploadStats reorder and loop note-truth repair.
+- How one task went: accepted; the prior note-truth mismatch is fixed, the root source order now matches the seeded Slice 3 contract, and `render_surface.zig` remains the public upload spine with only owner-true host-surface helpers plus the centralized testing facade.
+- Next handoff or blocker: Slice 3 review gate is clear; orchestrator may record acceptance.
