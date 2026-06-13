@@ -290,7 +290,11 @@ Target `howl-vt/src/` shape:
 Target VT proof and non-product roots outside `src`:
 
 - `test/abi.zig`
+- `test_unit.zig`
+- `test_abi.zig`
+- `test_ffi.zig`
 - `test/unit.zig`
+- `benchmark_m7_baseline.zig`
 - `test/unit/terminal_end_to_end_test.zig`
 - `test/unit/terminal_snapshot_test.zig`
 - `test/unit/terminal_modes_test.zig`
@@ -326,6 +330,7 @@ Rationale:
 - `screen/`, `parser/`, `kitty/`, `host/`, and `csi/` qualify as shallow child folders because they are true subdomains or per-owner definition groups.
 - `xterm/`, `action/`, `control/`, `surface/`, and top-level `selection/` are not good top-level package concepts once VT core is clustered under `terminal/`.
 - `src/ffi.zig` should become `src/ffi/main.zig` so the `ffi` concept exists in one place only.
+- Zig 0.16 module-boundary enforcement requires package-root build entrypoints for out-of-`src` tests, ABI module exposure, and benchmark roots when those proof files import both `src` owners and sibling proof helpers.
 
 ## Sprint Scratchpad
 

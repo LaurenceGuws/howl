@@ -185,6 +185,103 @@ Stop conditions:
 - How one task went: committed the root Slice 1 receipt as `2718455`.
 - Next handoff or blocker: commit this receipt update, then seed Slice 2 if continuing.
 
+## Slice 2 Execution Contract
+
+Name: VT proof and non-product roots out of `src`.
+
+Status: active.
+
+Coder session id: `coder-2026-06-13-pty-vt-folder-structure-slice-2`.
+
+Reviewer session id: `review-2026-06-13-pty-vt-folder-structure-01`.
+
+Commit-hash receipt demand: required on acceptance.
+
+Allowed files:
+
+- `howl-vt/build.zig`
+- `howl-vt/src/ffi.zig`
+- `howl-vt/src/libhowl_vt.zig`
+- `howl-vt/src/howl_vt.zig`
+- `howl-vt/src/terminal.zig`
+- `howl-vt/src/test/abi.zig`
+- `howl-vt/src/test/screen_capture.zig`
+- `howl-vt/src/test/stream_harness.zig`
+- `howl-vt/src/test/pty_feed_record.zig`
+- `howl-vt/src/test/terminal_benchmark.zig`
+- `howl-vt/src/terminal_benchmark_main.zig`
+- `howl-vt/src/simulation/**`
+- `howl-vt/src/ffi/**`
+- `howl-vt/src/**/*_test.zig`
+- `howl-vt/test_unit.zig`
+- `howl-vt/test_abi.zig`
+- `howl-vt/test_ffi.zig`
+- `howl-vt/benchmark_m7_baseline.zig`
+- `howl-vt/test/**`
+- `howl-vt/benchmark/**`
+- `howl-vt/simulation/**`
+
+Required shape:
+
+- `src/ffi.zig` becomes `src/ffi/main.zig`; `ffi` exists in one place only.
+- VT unit test root moves from `src/howl_vt.zig` to a proof root outside `src`; `src/howl_vt.zig` stops importing unit proof files.
+- Inline terminal tests move from `src/terminal.zig` to `test/unit/terminal_test.zig`, because source files cannot import proof helpers outside the source module path.
+- All VT unit proof files move from `src/**/*_test.zig` to `test/unit/` with owner-shaped subfolders preserved.
+- VT ABI test root moves to `test/abi.zig`.
+- Benchmark entrypoint and helpers move to `benchmark/`.
+- Simulation entrypoint and assets move to `simulation/`.
+- Package-root `test_unit.zig`, `test_abi.zig`, `test_ffi.zig`, and `benchmark_m7_baseline.zig` are build entrypoints required by Zig 0.16 module-boundary enforcement; the actual proof, benchmark, and simulation bodies stay under their owner folders.
+- `src` no longer contains proof, benchmark, or simulation-only roots.
+
+Exact tests:
+
+- `zig build test:abi` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build test:unit:build` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build simulate:build` in `/home/home/personal/projects/howl/howl-vt`
+- `zig build benchmark:m7_baseline:build` in `/home/home/personal/projects/howl/howl-vt`
+
+Non-goals:
+
+- No VT semantic changes.
+- No terminal-core folder moves yet beyond `ffi` root cleanup.
+- No new benchmark features or simulation features.
+- No PTY changes.
+
+Stop conditions:
+
+- Stop if any VT `*_test.zig` file remains under `src`.
+- Stop if any benchmark or simulation file remains under `src`.
+- Stop if both `src/ffi.zig` and `src/ffi/main.zig` survive together.
+- Stop if build step names or shipped library outputs change.
+
+12. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: seed Slice 2 for VT proof and non-product roots out of `src`.
+- How one task went: wrote the active execution contract with exact files, required shape, tests, non-goals, stop conditions, session ids, and receipt demand.
+- Next handoff or blocker: coder may implement Slice 2 only.
+
+13. Role: coder
+- Session id: `coder-2026-06-13-pty-vt-folder-structure-slice-2`
+- Hello: hi
+- Intended task: implement and verify Slice 2 VT proof and non-product relocation.
+- How one task went: moved VT unit proofs, ABI proof, support helpers, benchmark, simulation, and `ffi` root out of weak `src` locations; collapsed `src/ffi.zig` to `src/ffi/main.zig`; moved inline terminal tests to `test/unit/terminal_test.zig`; added package-root build entrypoints required by Zig module boundaries; passed `zig build test:abi`, `zig build test:unit:build`, `zig build simulate:build`, and `zig build benchmark:m7_baseline:build` in `howl-vt`.
+- Next handoff or blocker: reviewer should gate the Slice 2 diff; if accepted, commit `howl-vt` and record nested/root receipts.
+
+14. Role: reviewer
+- Session id: `review-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: gate Slice 2 VT proof and non-product relocation after verification.
+- How one task went: accepted Slice 2; the diff is proof, benchmark, simulation, and FFI-root relocation plus required package-root build entrypoints, stale `src` proof paths are gone, and all required VT gates passed.
+- Next handoff or blocker: nested `howl-vt` commit is `556ab69`; orchestrator must commit the root receipt.
+
+15. Role: orchestrator
+- Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
+- Hello: hi
+- Intended task: record Slice 2 nested commit receipt.
+- How one task went: committed `howl-vt` Slice 2 as `556ab69`.
+- Next handoff or blocker: commit the root receipt for Slice 2 before seeding Slice 3.
+
 6. Role: orchestrator
 - Session id: `orch-2026-06-13-pty-vt-folder-structure-01`
 - Hello: hi
