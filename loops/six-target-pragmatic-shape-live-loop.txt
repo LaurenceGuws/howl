@@ -289,4 +289,14 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
 - Intent: verify and accept Slice 4 after reviewer acceptance.
 - Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `788ca2e` `Simplify legacy computing raster owner`.
-- Handoff: root acceptance receipt is pending this commit; Slice 5 is next after root receipt closure.
+- Handoff: root acceptance receipt is `fdeb7f2` `Accept six-target pragmatic-shape Slice 4`; Slice 5 is next.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: seed Slice 5 exactly from the accepted sprint contract.
+- Outcome: Slice 5 is authorized for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-05` only.
+- Allowed files: `howl-render/src/surface/emitter.zig`, `howl-render/src/surface/emitter_test.zig`, `howl-render/src/surface/handle_test.zig`.
+- Required shape: re-verify during execution that `emitter.zig` is still owner-true and direct; if no clearer reference-backed cleanup survives, record an explicit no-op acceptance for this slice; if a cleanup is still justified, limit it to collapsing the four identical fill-pass wrappers or removing tiny testing pass-through wrappers; keep `Emitter(comptime limits)` and all explicit bounded arrays/counters.
+- Required tests from `howl-render`: `zig build test:unit`.
+- Required exact proof names in `howl-render/src/surface/emitter_test.zig` and `howl-render/src/surface/handle_test.zig`: `render surface surface emitter coalesces adjacent prepared fill commands`, `render surface surface emitter does not coalesce distinct prepared fills`, `render surface surface emitter rejects command bound overflow`, `render surface surface emitter rejects upload bound overflow`, `render surface surface emitter rejects retire bound overflow`, `render surface surface emitter rejects upload byte total overflow`, `render surface surface emitter emits transient sprite beyond persistent budget`, `render surface surface emitter reports exact transient retire bound`, `prepared handle reports missing surface when render_surface emission overflows`.
+- Stop conditions: stop and convert to explicit no-op if cleanup is metric-only; stop if a replacement abstraction is less direct than current explicit arrays/counters; stop if tests would need widening just to justify a cosmetic rewrite.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
