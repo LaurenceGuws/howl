@@ -132,3 +132,18 @@ Current handoff:
 - Intent: close Cut 6 and promote the next section.
 - Outcome: Cut 6 committed in `howl-linux-host` as `5af42d9` `Unify loop wait admission`. Cut 7, end-to-end latest-snapshot proof cleanup, is now the active coder section.
 - Handoff: coder must implement only Cut 7 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-gpt-5.4-cut7-01`: hello.
+- Intent: implement only Cut 7, end-to-end latest-snapshot proof cleanup.
+- Outcome: added latest-snapshot and cursor-visibility end-to-end proofs at the existing owner seams in `display/present.zig` and `terminal/surface_test.zig`; `timeout 300s zig build test:unit` passed.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should perform final Cut 7 acceptance.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 7 after the bounded full-suite gate.
+- Outcome: accepted. Latest-snapshot truth is proved, stale tokens do not become current truth, cursor visibility change is included in the proof surface, and the bounded full unit suite passes.
+- Handoff: orchestrator should commit the accepted host change and stop implementation until benchmark/live-behavior reassessment names the next section.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 7 and complete the planned section.
+- Outcome: Cut 7 committed in `howl-linux-host` as `3e15ab4` `Prove latest snapshot truth`. The planned 7-cut host/runtime present-cadence and cursor-truth section is complete.
+- Handoff: benchmark and live-behavior reassessment must decide the next section before more coder work is seeded.
