@@ -32,3 +32,13 @@ Current handoff:
 - Intent: plan the host/runtime present-cadence and cursor-truth section into worker-ready big cuts on the real owner boundary.
 - Outcome: completed a 7-cut plan covering present lifecycle, frame cadence, runtime admission/drive separation, retained state machine truth, cursor cadence ownership, unified wait admission, and end-to-end latest-state tests.
 - Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should gate the active research artifact and either accept the section plan or reject it with exact planning defects.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: gate the refocused active sprint surface and the new 7-cut section plan.
+- Outcome: accepted. The benchmark sprint remains intact, the host/runtime present-cadence and cursor-truth section is now live, micro-optimization and fake narrow cuts are banned, the old `direct_normal` path is demoted to history, and the active research artifact is worker-ready.
+- Handoff: orchestrator should record acceptance, close the planning receipt, and seed Cut 1 for coder execution.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the accepted refocus/planning loop and seed the first implementation section.
+- Outcome: acceptance recorded after root commit `9b2b4b0`. Cut 1, present lifecycle explicit single-owner cleanup, is now the active coder section.
+- Handoff: coder must implement only Cut 1 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.

@@ -6,9 +6,9 @@ Status:
 - Orchestrator session id: `orch-2026-06-14-ascii-rain-performance-01`.
 - Researcher session id: `research-2026-06-14-ascii-rain-performance-01`.
 - Reviewer session id: `review-2026-06-14-ascii-rain-performance-01`.
-- Planning seed receipt: pending.
-- Accepted planning receipt: pending.
-- Sprint seed receipt: pending.
+- Planning seed receipt: root commit `9b2b4b0`.
+- Accepted planning receipt: reviewer `review-2026-06-14-ascii-rain-performance-01` accepted the active refocus and 7-cut section plan after commit `9b2b4b0`.
+- Sprint seed receipt: Cut 1 is now authorized for coder execution.
 
 Goal:
 
@@ -31,5 +31,5 @@ Active constraints:
 
 Current authorized step:
 
-- Researcher and reviewer must turn this section into 5-10 worker-ready big cuts inside the same sprint.
-- No coder implementation is authorized until that plan is accepted.
+- Coder may implement Cut 1: make the present lifecycle explicit and single-owned.
+- Cut 1 remains inside this sprint section and is the only authorized coder work right now.
