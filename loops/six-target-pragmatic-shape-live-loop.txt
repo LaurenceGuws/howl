@@ -314,4 +314,14 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
 - Intent: verify and accept Slice 5 after reviewer acceptance.
 - Outcome: `zig build test:unit` passed from `howl-render`. Slice 5 is an explicit no-code acceptance.
-- Handoff: root no-op acceptance receipt is pending this commit; Slice 6 is next after root receipt closure.
+- Handoff: root no-op acceptance receipt is `b05d0d0` `Accept six-target pragmatic-shape Slice 5`; Slice 6 is next.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: seed Slice 6 exactly from the accepted sprint contract.
+- Outcome: Slice 6 is authorized for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-06` only.
+- Allowed files: `howl-vt/src/parser.zig`.
+- Required shape: keep parser control flow centralized in `next`, `nextActive`, `buildPhases`, `exitPhase`, `entryPhase`, and `doAction`; remove `bufferedPut(anytype)` if exact inline control handling is clearer; remove transitional `CsiActionData` if publishing `CsiAction` directly remains readable; do not split parser ownership or string-control protocol handling into extra files.
+- Required tests from `howl-vt`: `zig build test:unit`.
+- Required exact proof names in `howl-vt/src/parser.zig`: `parser control spine orders populated phase slots in one next call`, `parser keeps active string controls exclusive`, `parser assembles CSI params and separators`, `parser DCS hook stays on the hook boundary`.
+- Stop conditions: stop if any change threatens the centralized control spine; stop if cleanup broadens into protocol redesign; stop if generic removal does not make the file clearer on direct reading.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
