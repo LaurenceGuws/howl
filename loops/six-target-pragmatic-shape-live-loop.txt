@@ -264,4 +264,14 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
 - Intent: verify and accept Slice 3 after reviewer acceptance.
 - Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `06b16f1` `Simplify cluster assembly owner`.
-- Handoff: root acceptance receipt is pending this commit; Slice 4 is next after root receipt closure.
+- Handoff: root acceptance receipt is `d531a48` `Accept six-target pragmatic-shape Slice 3`; Slice 4 is next.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: seed Slice 4 exactly from the accepted sprint contract.
+- Outcome: Slice 4 is authorized for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-04` only.
+- Allowed files: `howl-render/src/text/raster/special_legacy_computing.zig`, `howl-render/src/text/raster/special_test.zig`.
+- Required shape: keep `special_legacy_computing.zig` as one special-raster owner; remove `SpriteShade` and `BranchNode` option buckets; replace them with exact draw verbs or exact argument lists; add explicit degenerate-size assertions where width/height math assumes positive sizes.
+- Required tests from `howl-render`: `zig build test:unit`.
+- Required exact proof names in `howl-render/src/text/raster/special_test.zig`: preserved `generated shade preserves fallback intensity levels`, preserved `generated branch nodes preserve filled and unfilled variants`, and added `generated legacy computing raster guards degenerate size bounds`.
+- Stop conditions: stop if cleanup cannot be proved with bounded tests; stop if the replacement requires a new generic options bucket elsewhere; stop if the required test root cannot stay owner-true and single-purpose.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
