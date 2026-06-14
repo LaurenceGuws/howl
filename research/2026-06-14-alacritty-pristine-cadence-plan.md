@@ -270,6 +270,7 @@ Stop conditions:
 
 2. Slice 2: Widen the VT/render ABI and publication seam for full cursor truth.
 Allowed files:
+- `howl-vt/include/howl_vt.h`
 - `howl-vt/src/ffi/surface.zig`
 - `howl-render/src/vt_publication/abi.zig`
 - `howl-render/src/vt_publication/publication.zig`
@@ -280,6 +281,7 @@ Allowed files:
 - `howl-linux-host/src/terminal/surface_test.zig`
 Required shape:
 - `howl-vt/src/ffi/surface.zig` exports primary cursor row, col, visible, shape, blink intent, cursor color, cursor text color, and `position_changed_by_client_at` from the VT semantic cursor owner.
+- `howl-vt/include/howl_vt.h` mirrors the widened shipped C ABI surface exactly; render and host builds must compile against that installed header without local ABI drift.
 - Exact ABI/publication constants: `HOWL_VT_MAX_EXTRA_CURSORS = 256` for VT export and render publication, and `HOWL_RENDER_MAX_CURSOR_TRAIL_RECTS = 16` for render publication only.
 - Exact ABI color representation stays the existing `FfiColor { kind: u8, value: u32 }` and `FfiRgb8 { r: u8, g: u8, b: u8 }`; new cursor colors use those existing ABI color types, not new color buckets.
 - Exact VT primary cursor ABI shape: `FfiCursor { row: u16, col: u16, visible: u8, shape: u8, blink: u8, reserved0: u8, position_changed_by_client_at_ms: u64, cell_cols: u16, cell_rows: u16 }`.

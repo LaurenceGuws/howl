@@ -222,3 +222,8 @@ Current handoff:
 - Intent: implement Slice 2 as originally seeded.
 - Outcome: stopped correctly. The Slice 2 contract required extra-cursor export and cursor-trail publication facts whose real owners still live in later slices outside the Slice 2 allowlist.
 - Handoff: orchestrator must correct Slice 2 so this slice owns only widened ABI/publication seams and empty aggregate preservation, while Slice 5 remains the trail source owner and Slice 7 remains the extra-cursor state/export owner.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: implement corrected Slice 2 seam widening.
+- Outcome: widened the allowed ABI/publication files but stopped correctly because render and host verification compile against the shipped `howl-vt/include/howl_vt.h`, which still had the old cursor ABI shape and was not in the Slice 2 allowlist.
+- Handoff: orchestrator must add the shipped VT C header to the Slice 2 allowlist, then coder should finish the widened ABI seam and remaining allowed-file compile fixes.
