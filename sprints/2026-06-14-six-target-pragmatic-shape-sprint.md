@@ -8,7 +8,7 @@ Status:
 - Reviewer session id: `review-2026-06-14-six-target-pragmatic-shape-01`.
 - Planning seed receipt: `117b860` `Seed six-target pragmatic-shape planning`.
 - Accepted planning receipt: `9f20f26` `Accept six-target pragmatic-shape planning`.
-- Sprint seed receipt: pending orchestrator commit.
+- Sprint seed receipt: `1f2c1cc` `Seed six-target pragmatic-shape sprint`.
 
 Problem:
 

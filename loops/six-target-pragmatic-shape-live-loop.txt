@@ -114,7 +114,7 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
 - Intent: promote accepted planning into the active execution sprint contract without starting coder work yet.
 - Outcome: accepted planning receipt `9f20f26` is recorded; `research/2026-06-14-six-target-pragmatic-shape-plan.md` moved to `research/done/2026-06-14-six-target-pragmatic-shape-plan.md`; active sprint contract is `sprints/2026-06-14-six-target-pragmatic-shape-sprint.md`.
-- Handoff: Slice 1 is next to seed for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01` once the sprint seed receipt is committed.
+- Handoff: sprint seed receipt is `1f2c1cc` `Seed six-target pragmatic-shape sprint`. Slice 1 is next to seed for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01` when execution is authorized.
 
 - Researcher note from `research-2026-06-14-six-target-pragmatic-shape-01`.
 - Hello. Intent: prove keep-large vs cut for all six targets against Alacritty, Ghostty, and TigerBeetle pressure, then seed an exact first execution slice.
