@@ -322,6 +322,21 @@ Orchestrator note:
 - Allowed files: `howl-vt/src/parser.zig`.
 - Required shape: keep parser control flow centralized in `next`, `nextActive`, `buildPhases`, `exitPhase`, `entryPhase`, and `doAction`; remove `bufferedPut(anytype)` if exact inline control handling is clearer; remove transitional `CsiActionData` if publishing `CsiAction` directly remains readable; do not split parser ownership or string-control protocol handling into extra files.
 - Required tests from `howl-vt`: `zig build test:unit`.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-06`: hello.
+- Intent: remove the parser's small transitional CSI/passthrough scaffolding while keeping the centralized `next`/phase/action spine intact.
+- Outcome: `parser.zig` now publishes `CsiAction` directly and inlines the DCS/APC/PM buffered put handling at the exact action sites, with no control-spine reshaping.
+- Handoff: run `zig build test:unit` in `howl-vt`, then hand the slice to reviewer/orchestrator if the required parser proofs stay green.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: review Slice 6 parser minor directness cleanup.
+- Outcome: accepted with no findings. The transitional `CsiActionData` layer is gone, `bufferedPut(anytype)` is gone, and the centralized parser control spine remains intact.
+- Handoff: orchestrator should verify `zig build test:unit` in `howl-vt`, then record nested and root Slice 6 acceptance receipts.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: verify and accept Slice 6 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-vt`. Nested VT commit is `4f396b1` `Simplify parser action seams`.
+- Handoff: root acceptance receipt is pending this commit; all six planned slices are complete after receipt closure.
 - Required exact proof names in `howl-vt/src/parser.zig`: `parser control spine orders populated phase slots in one next call`, `parser keeps active string controls exclusive`, `parser assembles CSI params and separators`, `parser DCS hook stays on the hook boundary`.
 - Stop conditions: stop if any change threatens the centralized control spine; stop if cleanup broadens into protocol redesign; stop if generic removal does not make the file clearer on direct reading.
 - Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
