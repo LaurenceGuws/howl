@@ -1,3 +1,9 @@
+# Historical Authority
+
+- Historical authority at time: completed six-target pragmatic low-level shape live loop for `orch-2026-06-14-six-target-pragmatic-shape-01`.
+- Why superseded or done: all planned slices accepted; sprint moved to closure/archive.
+- Must not be used for: active execution authority after archive; use `sprints/current.txt` and any newly seeded active sprint instead.
+
 # Six-Target Pragmatic Shape Live Loop
 
 Authority:

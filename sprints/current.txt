@@ -7,28 +7,35 @@ Purpose:
 
 Sprint:
 
-- `sprints/2026-06-14-six-target-pragmatic-shape-sprint.md`
+- No active sprint seeded.
 
 Active research:
 
-- No active research seeded. Slice 1 correction is archived at `research/done/2026-06-14-pragmatic-shape-slice1-correction.md`.
+- No active research seeded.
 
 Active loops:
 
-- `loops/six-target-pragmatic-shape-live-loop.txt`
+- No active loop seeded.
 
 Active restart note:
 
-- Active sprint scope: six-target pragmatic shape.
+- No active sprint is seeded. Waiting for next scope.
+- Latest closed sprint: six-target pragmatic shape.
 - Orchestrator session id: `orch-2026-06-14-six-target-pragmatic-shape-01`.
 - Researcher session id: `research-2026-06-14-six-target-pragmatic-shape-01`.
 - Reviewer session id: `review-2026-06-14-six-target-pragmatic-shape-01`.
 - Planning seed receipt: `117b860` `Seed six-target pragmatic-shape planning`.
 - Accepted planning receipt: `9f20f26` `Accept six-target pragmatic-shape planning`.
-- Active sprint seed receipt: `1f2c1cc` `Seed six-target pragmatic-shape sprint`.
+- Sprint seed receipt: `1f2c1cc` `Seed six-target pragmatic-shape sprint`.
 - Slice 1 correction accepted; corrected scope included `howl-render/src/text/ft_hb/glyph_raster.zig`.
-- Latest accepted execution slice: Slice 6 nested VT commit `4f396b1` `Simplify parser action seams`.
-- Six-target pragmatic-shape sprint execution is complete pending archive/closure.
+- Accepted slices:
+  - Slice 1 nested render commit `34cad2c` `Remove support probing wrappers`, root receipt `378a186` `Accept six-target pragmatic-shape Slice 1`.
+  - Slice 2 nested host commit `9f12d7e` `Simplify terminal surface owner`, root receipt `76f9bb0` `Accept six-target pragmatic-shape Slice 2`.
+  - Slice 3 nested render commit `06b16f1` `Simplify cluster assembly owner`, root receipt `d531a48` `Accept six-target pragmatic-shape Slice 3`.
+  - Slice 4 nested render commit `788ca2e` `Simplify legacy computing raster owner`, root receipt `fdeb7f2` `Accept six-target pragmatic-shape Slice 4`.
+  - Slice 5 no-code acceptance, root receipt `b05d0d0` `Accept six-target pragmatic-shape Slice 5`.
+  - Slice 6 nested VT commit `4f396b1` `Simplify parser action seams`, root receipt `356e981` `Accept six-target pragmatic-shape Slice 6`.
+- Six-target pragmatic-shape sprint execution is complete and archived.
 - Previous latest closed sprint: six-target ownership hygiene.
 - Latest closed sprint orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
 - Latest closed sprint researcher session id: `research-2026-06-14-six-target-ownership-01`.
@@ -44,28 +51,11 @@ Active restart note:
 - Latest closed sprint closure ledger fix: `7f4913c` `Record six-target ownership archive receipt`.
 - Latest closed sprint closure acceptance: `0fd760b` `Accept six-target ownership sprint closure`.
 - Six-target ownership hygiene sprint execution is complete and archived.
-- Previous latest closed sprint: runtime debug-noise cleanup.
-- Latest closed sprint orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
-- Latest closed sprint researcher session id: `research-2026-06-14-runtime-debug-noise-01`.
-- Latest closed sprint reviewer session id: `review-2026-06-14-runtime-debug-noise-01`.
-- Latest closed sprint planning seed receipt: `e7a90db` `Seed runtime debug-noise planning`.
-- Latest closed sprint accepted planning receipt: `1ccaddd` `Accept runtime debug-noise planning`.
-- Latest closed sprint sprint seed receipt: `d52f6d2` `Seed runtime debug-noise sprint`.
-- Latest closed sprint correction receipt: `e94864b` `Accept runtime debug-noise Slice 2 correction`.
-- Latest closed sprint accepted slices:
-  - Slice 1 nested render commit `932bd29` `Remove emitter debug timing noise`, root receipt `cd00a7e` `Accept runtime debug-noise Slice 1`.
-  - Slice 2 nested render commit `3f54a58` `Remove prepare debug timing noise`, root receipt `69eba22` `Accept runtime debug-noise Slice 2`.
-  - Slice 3 nested host commit `8a2f1d7` `Remove host upload stats noise`, root receipt `9eddb77` `Accept runtime debug-noise Slice 3`.
-  - Slice 4 read-only realizer verification, root receipt `8e42f54` `Accept runtime debug-noise Slice 4`.
-- Latest closed sprint archive receipt: `2f62673` `Archive runtime debug-noise sprint`.
-- Latest closed sprint closure ledger fix: `ac0fbd1` `Record runtime debug-noise archive receipt`.
-- Latest closed sprint closure acceptance: `d44da95` `Accept runtime debug-noise sprint closure`.
-- Runtime debug-noise cleanup sprint execution is complete and archived.
 
 Execution rule:
 
-- No coding is authorized until the active sprint and slice execution contract are seeded.
-- The six-target ownership hygiene sprint is historical and archived.
+- No coding is authorized until a new active sprint, loop, and execution contract are seeded.
+- The six-target pragmatic-shape sprint execution is complete and archived.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 
