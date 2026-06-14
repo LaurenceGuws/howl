@@ -235,6 +235,19 @@ Allowed files:
 - `howl-vt/src/report.zig`
 - `howl-vt/src/ffi/surface.zig`
 - `howl-vt/src/ffi/lifecycle.zig`
+- `howl-vt/test/abi.zig`
+- `howl-vt/test/support/screen_capture.zig`
+- `howl-vt/test/unit/csi_mapping_test.zig`
+- `howl-vt/test/unit/terminal_end_to_end_test.zig`
+- `howl-vt/test/unit/terminal_snapshot_test.zig`
+- `howl-vt/test/unit/terminal_modes_test.zig`
+- `howl-vt/test/unit/terminal_surface_test.zig`
+- `howl-vt/test/unit/screen_test.zig`
+- `howl-vt/test/unit/screen/cursor_test.zig`
+- `howl-vt/test/unit/screen/history_test.zig`
+- `howl-vt/test/unit/screen/resize_test.zig`
+- `howl-vt/test/unit/screen/tabs_test.zig`
+- `howl-vt/test/unit/screen/write_test.zig`
 Required shape:
 - Introduce a dedicated VT semantic cursor shape in `howl-vt/src/screen/cursor.zig` carrying row, col, visible, effective shape, blink intent, default style, program override style, cursor color, cursor text color, and `position_changed_by_client_at`.
 - `howl-vt/src/screen.zig` stores exactly one primary semantic cursor owner and does not duplicate cursor style/color fields outside that owner.
@@ -246,6 +259,7 @@ Exact tests:
 - Extend `howl-vt/src/ffi/lifecycle.zig` tests for default style restore and DECSCUSR behavior.
 - Add cursor color and cursor-text color mutation tests through `howl-vt/src/osc_color.zig` and `howl-vt/src/screen/apply.zig`.
 - Add report tests in `howl-vt/src/report.zig` for cursor position/style payloads.
+- Update existing VT unit/support tests listed in the allowlist so proofs assert through the semantic cursor owner instead of the removed duplicate `Screen` cursor fields.
 Non-goals:
 - No render code changes.
 - No host cadence changes.

@@ -197,3 +197,8 @@ Current handoff:
 - Intent: implement Slice 1 as originally seeded.
 - Outcome: stopped correctly. The accepted Slice 1 allowlist omitted current VT cursor mutation/read owner files, so removing duplicate `Screen` cursor fields would necessarily break files outside the allowlist or preserve duplicate cursor truth.
 - Handoff: orchestrator corrected Slice 1's allowlist to include the existing VT cursor helpers and `ffi/surface.zig` for compile-preserving reads only. No ABI widening or render/host work is authorized in Slice 1.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: implement corrected Slice 1.
+- Outcome: production cursor-owner move is contained to the corrected VT allowlist, but verification exposed exact existing VT tests/support still pinned to removed duplicate cursor fields.
+- Handoff: orchestrator corrected Slice 1 again with exact affected test/support files only. Coder should finish proof updates and rerun bounded VT verification without changing render, host, or ABI-widening scope.
