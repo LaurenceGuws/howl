@@ -1,0 +1,34 @@
+# Alacritty Pristine Cadence Live Loop
+
+Authority:
+
+- Live loop for the active benchmark sprint.
+- Orchestrator session id: `orch-2026-06-14-ascii-rain-performance-01`.
+- User handoff supplied 2026-06-14.
+- The previous live sprint contract was rejected and moved to history.
+
+Problem statement:
+
+- Beat Alacritty on the benchmark.
+- Do it by making Howl pristine, pragmatic, and idiomatic.
+- The current live section is host/runtime present cadence and cursor truth.
+- The defect to prove is whether Howl replays stale intermediate content/cursor states instead of presenting the latest state under redraw pressure.
+
+Current sprint law:
+
+- Micro-optimization is banned until the codebase is much more pragmatic and idiomatic than Alacritty.
+- Fake narrow cuts are banned.
+- The old ASCII-rain `direct_normal` proof chain is history only.
+- The current planning target is one real owner boundary across wake, runtime drive, retained submit, present completion, and cursor truth.
+
+Current handoff:
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: reset the rejected live sprint surface, preserve the benchmark goal, and promote host/runtime present cadence and cursor truth as the active section.
+- Outcome: previous active sprint, loop, and research artifacts were demoted to history; a fresh active sprint surface now points at the current section and bans micro-optimization and fake narrow cuts.
+- Handoff: researcher must plan the next 5-10 big cuts for this section; reviewer must gate that plan before coder work begins.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: plan the host/runtime present-cadence and cursor-truth section into worker-ready big cuts on the real owner boundary.
+- Outcome: completed a 7-cut plan covering present lifecycle, frame cadence, runtime admission/drive separation, retained state machine truth, cursor cadence ownership, unified wait admission, and end-to-end latest-state tests.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should gate the active research artifact and either accept the section plan or reject it with exact planning defects.

@@ -1,3 +1,9 @@
+Historical authority: rejected former active research artifact moved out of the live surface.
+
+Why superseded or done: the live sprint surface was rejected and replaced by `research/2026-06-14-alacritty-pristine-cadence-plan.md`.
+
+Must not be used for: current research authority, current authorized slice, or any live `direct_normal` next-step decision.
+
 # ASCII Rain Performance Plan
 
 Status:

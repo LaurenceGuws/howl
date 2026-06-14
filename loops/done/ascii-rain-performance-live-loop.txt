@@ -1,3 +1,9 @@
+Historical authority: rejected former active live loop moved out of the live surface.
+
+Why superseded or done: the live sprint surface was rejected and replaced by `loops/alacritty-pristine-cadence-live-loop.txt`.
+
+Must not be used for: current loop authority, current authorized slice, or any live `direct_normal` next-step decision.
+
 # ASCII Rain Performance Live Loop
 
 Authority:

@@ -1,3 +1,9 @@
+Historical authority: rejected former active sprint contract moved out of the live surface.
+
+Why superseded or done: the live sprint surface was rejected and replaced by `sprints/2026-06-14-alacritty-pristine-cadence-sprint.md`.
+
+Must not be used for: current sprint authority, current authorized slice, or any live `direct_normal` next-step decision.
+
 # ASCII Rain Performance Sprint
 
 Status:
