@@ -224,7 +224,17 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
 - Intent: verify and accept repaired Slice 2 after reviewer acceptance.
 - Outcome: `zig build test:unit` passed from `howl-linux-host`. Nested host commit is `9f12d7e` `Simplify terminal surface owner`.
-- Handoff: root acceptance receipt is pending this commit; Slice 3 is next after root receipt closure.
+- Handoff: root acceptance receipt is `76f9bb0` `Accept six-target pragmatic-shape Slice 2`; Slice 3 is next.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: seed Slice 3 exactly from the accepted sprint contract.
+- Outcome: Slice 3 is authorized for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-03` only.
+- Allowed files: `howl-render/src/text/shape/cluster.zig`.
+- Required shape: keep `cluster.zig` as one cluster/text-cache assembly owner; delete `InputRenderableAssembly` and `CellLineTextCacheAssembly`; keep `RetainedScratch` as the explicit bounded retained owner; rewrite direct build paths through scratch/local slices without moving ownership into a new helper file.
+- Required tests from `howl-render`: `zig build test:unit`.
+- Required exact proof names in `howl-render/src/text/shape/cluster.zig`: `cell inputs build text cache renderable cells and clusters`, `cell inputs retain combining sequences in text cache`, `cell inputs preserve style and presentation into renderables and clusters`, `partial damage filters clean clusters before shaping`, `sparse cells keep only damaged base cells`, `sparse cells intern repeated codepoints`, `sparse cells keep empty background witnesses for scene ownership`, `rich cell text interning deduplicates codepoint sequences`, `rich cell text renderables resolve exact interned text ids`, `retained scratch bounds sparse cell assembly`, `retained scratch bounds rich input codepoint assembly`.
+- Stop conditions: stop if a replacement helper just moves the same narration sideways; stop if `RetainedScratch` is targeted without new reference proof; stop if proof requires weakening current inline tests.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
 
 - Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-02`: hello again.
 - Intent: repair Slice 2 by deleting the remaining fake proof seams from `surface.zig` and keeping the production direct-owner cleanup intact.
