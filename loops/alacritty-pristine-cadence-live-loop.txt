@@ -87,3 +87,18 @@ Current handoff:
 - Intent: close Cut 3 and promote the next section.
 - Outcome: Cut 3 committed in `howl-linux-host` as `3aa9621` `Separate runtime admission from drive`. Cut 4, retained render/present state-machine cleanup, is now the active coder section.
 - Handoff: coder must implement only Cut 4 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-gpt-5.4-cut4-01`: hello.
+- Intent: implement only Cut 4, make the retained render/present state machine explicit.
+- Outcome: the first pass exposed a real terminal-surface blocker and an untruthful `failed` state path; the narrowed follow-up fixed retained owner truth and cleaned the isolated blocker path; the bounded closure gate `timeout 300s zig build test:unit` then passed cleanly.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should perform final Cut 4 acceptance.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 4 after the bounded full-suite gate.
+- Outcome: accepted. The retained state machine is explicit and truthful, the render/present transition reads from one owner path, the required tests are present, and the bounded full unit suite passes.
+- Handoff: orchestrator should commit the accepted host change and seed Cut 5.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 4 and promote the next section.
+- Outcome: Cut 4 committed in `howl-linux-host` as `667fb1a` `Name retained render state machine`. Cut 5, cursor-truth cadence cleanup, is now the active coder section.
+- Handoff: coder must implement only Cut 5 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.

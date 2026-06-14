@@ -8,7 +8,7 @@ Status:
 - Reviewer session id: `review-2026-06-14-ascii-rain-performance-01`.
 - Planning seed receipt: root commit `9b2b4b0`.
 - Accepted planning receipt: reviewer `review-2026-06-14-ascii-rain-performance-01` accepted the active refocus and 7-cut section plan after commit `9b2b4b0`.
-- Sprint seed receipt: Cut 1 committed as `c925170`; Cut 2 committed as `93e9224`; Cut 3 committed as `3aa9621`, all accepted by reviewer `review-2026-06-14-ascii-rain-performance-01`.
+- Sprint seed receipt: Cut 1 committed as `c925170`; Cut 2 committed as `93e9224`; Cut 3 committed as `3aa9621`; Cut 4 committed as `667fb1a`, all accepted by reviewer `review-2026-06-14-ascii-rain-performance-01`.
 
 Goal:
 
@@ -31,5 +31,5 @@ Active constraints:
 
 Current authorized step:
 
-- Coder may implement Cut 4: make the retained render/present state machine explicit.
-- Cut 4 remains inside this sprint section and is the only authorized coder work right now.
+- Coder may implement Cut 5: restore cursor truth as a cadence concern.
+- Cut 5 remains inside this sprint section and is the only authorized coder work right now.
