@@ -27,8 +27,8 @@ Active restart note:
 - Accepted planning receipt: `9f20f26` `Accept six-target pragmatic-shape planning`.
 - Active sprint seed receipt: `1f2c1cc` `Seed six-target pragmatic-shape sprint`.
 - Slice 1 correction accepted; corrected scope included `howl-render/src/text/ft_hb/glyph_raster.zig`.
-- Latest accepted execution slice: Slice 4 nested render commit `788ca2e` `Simplify legacy computing raster owner`.
-- Next execution slice: Slice 5 emitter pragmatic no-op or micro-cleanup, coder session `coder-2026-06-14-six-target-pragmatic-shape-slice-05`.
+- Latest accepted execution slice: Slice 5 emitter verification, no implementation commit.
+- Next execution slice: Slice 6 parser minor directness cleanup, coder session `coder-2026-06-14-six-target-pragmatic-shape-slice-06`.
 - Previous latest closed sprint: six-target ownership hygiene.
 - Latest closed sprint orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
 - Latest closed sprint researcher session id: `research-2026-06-14-six-target-ownership-01`.

@@ -300,3 +300,18 @@ Orchestrator note:
 - Required exact proof names in `howl-render/src/surface/emitter_test.zig` and `howl-render/src/surface/handle_test.zig`: `render surface surface emitter coalesces adjacent prepared fill commands`, `render surface surface emitter does not coalesce distinct prepared fills`, `render surface surface emitter rejects command bound overflow`, `render surface surface emitter rejects upload bound overflow`, `render surface surface emitter rejects retire bound overflow`, `render surface surface emitter rejects upload byte total overflow`, `render surface surface emitter emits transient sprite beyond persistent budget`, `render surface surface emitter reports exact transient retire bound`, `prepared handle reports missing surface when render_surface emission overflows`.
 - Stop conditions: stop and convert to explicit no-op if cleanup is metric-only; stop if a replacement abstraction is less direct than current explicit arrays/counters; stop if tests would need widening just to justify a cosmetic rewrite.
 - Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-05`: hello.
+- Intent: re-verify whether `howl-render/src/surface/emitter.zig` still needs a pragmatic directness cleanup, and stop at an explicit no-op if the remaining wrappers are already the smallest owner-true shape.
+- Outcome: re-verified that `Emitter(comptime limits)` remains the direct bounded owner with explicit arrays/counters intact; the four fill-pass wrappers are only type-specific loops into one fill command path, and removing the tiny test pass-through wrappers would require widening the emitter method surface just to serve tests, so this slice stays an explicit no-op.
+- Handoff: run `zig build test:unit` in `howl-render`, then hand the verified no-op slice to reviewer/orchestrator for receipt closure. No implementation blocker.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: review Slice 5 emitter no-op verification.
+- Outcome: accepted with no findings. The no-op judgment is source-backed, the coder note is now in the correct live position, and no further emitter changes are required under the current stop conditions.
+- Handoff: orchestrator should rerun `zig build test:unit` in `howl-render` and record Slice 5 as a no-code acceptance.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: verify and accept Slice 5 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-render`. Slice 5 is an explicit no-code acceptance.
+- Handoff: root no-op acceptance receipt is pending this commit; Slice 6 is next after root receipt closure.
