@@ -171,7 +171,27 @@ Orchestrator note:
 - Outcome: corrected Slice 1 scope now includes `howl-render/src/text/ft_hb/glyph_raster.zig`; correction research moved to `research/done/2026-06-14-pragmatic-shape-slice1-correction.md`.
 - Handoff: coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01` may repair the existing unaccepted Slice 1 diff only inside the corrected file scope and then return standard handoff fields.
 
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01`: hello again.
+- Intent: repair Slice 1 by deleting the remaining probing wrappers and routing `glyph_raster.zig` through explicit support state/config seams.
+- Outcome: `support.zig` now exposes only explicit support-state entry points, `glyph_raster.zig` no longer depends on support-side context recovery, `render_session.zig` remains the sole context-extraction boundary, and `zig build test:unit` passed in `howl-render`.
+- Handoff: ready for reviewer inspection and orchestrator receipt closure once the repaired diff is reviewed.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: review the repaired Slice 1 direct-owner cleanup after scope correction.
+- Outcome: accepted with no findings. The remaining public probing wrappers are gone, `glyph_raster.zig` uses explicit support state/config, render-session is the only extraction boundary, and the required proof tests remain present.
+- Handoff: orchestrator should verify `zig build test:unit` in `howl-render`, then record nested and root Slice 1 acceptance receipts.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: verify and accept corrected Slice 1 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `34cad2c` `Remove support probing wrappers`.
+- Handoff: root acceptance receipt is pending this commit; Slice 2 is next after root receipt closure.
+
 - Researcher `research-2026-06-14-six-target-pragmatic-shape-01`: hello again.
 - Intent: map the remaining public probing wrappers in `support.zig`, prove their exact caller graph, and decide whether Slice 1 needs a narrow reseed or a stop.
 - Outcome: `research/2026-06-14-pragmatic-shape-slice1-correction.md` now shows that only `glyph_raster.zig` still depends on the remaining support wrappers; all other remaining wrapper exports are dead shim surface, so Slice 1 should be repaired in place with exact scope expansion to `howl-render/src/text/ft_hb/glyph_raster.zig` and its existing inline tests.
 - Handoff: reviewer should check the exact wrapper inventory and the corrected Slice 1 allowed-file expansion; orchestrator can reseed if accepted.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01`: hello again.
+- Intent: finish the Slice 1 repair by deleting the remaining public support wrappers and routing glyph-raster callers through explicit support state/config seams.
+- Outcome: `support.zig` now exposes only explicit `WithConfig` support entry points for this slice, `render_session.zig` remains the only session/context extraction boundary, `glyph_raster.zig` now calls support with explicit `FtHbSupport` plus `TextSessionConfig`, and `zig build test:unit` passed in `howl-render`.
+- Handoff: ready for reviewer inspection; no blocker from implementation.
