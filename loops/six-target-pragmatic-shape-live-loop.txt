@@ -275,3 +275,18 @@ Orchestrator note:
 - Required exact proof names in `howl-render/src/text/raster/special_test.zig`: preserved `generated shade preserves fallback intensity levels`, preserved `generated branch nodes preserve filled and unfilled variants`, and added `generated legacy computing raster guards degenerate size bounds`.
 - Stop conditions: stop if cleanup cannot be proved with bounded tests; stop if the replacement requires a new generic options bucket elsewhere; stop if the required test root cannot stay owner-true and single-purpose.
 - Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-04`: hello.
+- Intent: remove the legacy computing shade and branch option buckets, replace them with direct draw arguments, and add bounded proof for degenerate size guards in the owner-true raster tests.
+- Outcome: `special_legacy_computing.zig` now draws shade and branch variants through explicit arguments, positive-size assertions now guard the `width - 1` and `height - 1` geometry paths, and `special_test.zig` adds the required degenerate-size bounds proof.
+- Handoff: run `zig build test:unit` in `howl-render`, then hand the slice to reviewer if the proof set stays green.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: review Slice 4 special legacy raster bucket cleanup.
+- Outcome: accepted with no findings. The option buckets are gone, the degenerate-size proof is present, and the corrected loop chronology now keeps the Slice 4 pass at the live end.
+- Handoff: orchestrator should verify `zig build test:unit` in `howl-render`, then record nested and root Slice 4 acceptance receipts.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: verify and accept Slice 4 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `788ca2e` `Simplify legacy computing raster owner`.
+- Handoff: root acceptance receipt is pending this commit; Slice 5 is next after root receipt closure.
