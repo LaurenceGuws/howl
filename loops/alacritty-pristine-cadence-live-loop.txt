@@ -227,3 +227,18 @@ Current handoff:
 - Intent: implement corrected Slice 2 seam widening.
 - Outcome: widened the allowed ABI/publication files but stopped correctly because render and host verification compile against the shipped `howl-vt/include/howl_vt.h`, which still had the old cursor ABI shape and was not in the Slice 2 allowlist.
 - Handoff: orchestrator must add the shipped VT C header to the Slice 2 allowlist, then coder should finish the widened ABI seam and remaining allowed-file compile fixes.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: finish corrected Slice 2 widened ABI/publication seam.
+- Outcome: completed the widened primary cursor ABI, shipped C header, zeroed extra-cursor aggregate preservation, zeroed trail aggregate preservation, validation/source-slot/publication/damage seam updates, and the inactive-tail decode fix; reran `zig build test:abi` in `howl-vt`, `zig build test` in `howl-render`, `zig build test:unit:build` in `howl-linux-host`, and `timeout 300s zig build test:unit` in `howl-linux-host` successfully.
+- Handoff: reviewer should gate the corrected Slice 2 seam against the accepted contract.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review corrected Slice 2 widened ABI/publication seam.
+- Outcome: accepted. No findings remain. Reviewer confirmed exact widened shapes/constants, active-prefix extra-cursor decoding, zeroed extra-cursor aggregate until Slice 7, zeroed trail aggregate until Slice 5, and no invented later-slice owners.
+- Handoff: orchestrator should commit the accepted Slice 2 diffs and seed Slice 3.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close accepted Slice 2 and advance the Kitty cursor parity sprint.
+- Outcome: committed accepted Slice 2 in `howl-vt` as `82addbf` `Widen VT cursor ABI`, in `howl-render` as `ec49cb2` `Widen cursor publication seam`, and in `howl-linux-host` as `7805b98` `Preserve widened cursor publication`. Slice 3 is now the active implementation section.
+- Handoff: coder must implement only Slice 3 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
