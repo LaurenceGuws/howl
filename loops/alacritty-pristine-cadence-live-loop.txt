@@ -202,3 +202,18 @@ Current handoff:
 - Intent: implement corrected Slice 1.
 - Outcome: production cursor-owner move is contained to the corrected VT allowlist, but verification exposed exact existing VT tests/support still pinned to removed duplicate cursor fields.
 - Handoff: orchestrator corrected Slice 1 again with exact affected test/support files only. Coder should finish proof updates and rerun bounded VT verification without changing render, host, or ABI-widening scope.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: finish Slice 1 proof and address reviewer rejection on semantic cursor truth.
+- Outcome: completed the VT semantic cursor owner move, restored correct DECSCUSR `0/1` semantics, split client cursor movement from structural cursor restoration for `position_changed_by_client_at`, moved cursor-color routing into first-class semantic event flow, and reran `zig build test:unit:build`, `timeout 300s zig build test:unit`, and `zig build test:abi` successfully.
+- Handoff: reviewer should gate the corrected Slice 1 VT diff against the accepted Slice 1 contract.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review corrected Slice 1 VT semantic cursor truth.
+- Outcome: accepted. No findings remain. Reviewer confirmed corrected DECSCUSR behavior, client-only `position_changed_by_client_at`, first-class cursor-color semantic routing, one semantic cursor owner, report reads from that owner, and no VT/render ABI widening in this slice.
+- Handoff: orchestrator should commit the accepted `howl-vt` Slice 1 diff and seed Slice 2.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close accepted Slice 1 and advance the Kitty cursor parity sprint.
+- Outcome: committed accepted Slice 1 in `howl-vt` as `15caf66` `Rebuild VT semantic cursor truth`. Slice 2 is now the active implementation section.
+- Handoff: coder must implement only Slice 2 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.

@@ -33,5 +33,6 @@ Active constraints:
 Current authorized step:
 
 - The Kitty cursor parity worker-ready sprint document is accepted under the explicit user override to use Kitty pressure.
-- Coder may implement Slice 1: rebuild VT semantic cursor truth and protocol vocabulary.
-- Slice 1 is the only authorized coder work right now.
+- Slice 1, rebuild VT semantic cursor truth and protocol vocabulary, is accepted and committed in `howl-vt` commit `15caf66` after reviewer acceptance.
+- Coder may implement Slice 2: widen the VT/render ABI and publication seam for full cursor truth.
+- Slice 2 is the only authorized coder work right now.
