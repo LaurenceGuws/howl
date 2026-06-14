@@ -12,6 +12,9 @@
 
 ## Required Reads
 
+- Read the full list below at session start.
+- On later iterations in the same live context, reread only the artifact under review plus any active accountability artifact that changed materially since the last pass.
+
 1. `loop/flow.md`
 2. all role docs under `loop/`:
    - `loop/orcestrator.md`

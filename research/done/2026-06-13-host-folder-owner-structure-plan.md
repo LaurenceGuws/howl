@@ -152,19 +152,19 @@ Question:
 
 ## Compact Anchor Map
 
-| Anchor | Governing pressure for this sprint |
-| --- | --- |
-| `howl-linux-host/src/main.zig:2-11` | Current top-level root sprawl that the sprint must remove. |
-| `howl-linux-host/src/app/processor.zig:20-33` | Real host control spine owner that should move toward an Alacritty-style `event` root. |
-| `howl-linux-host/src/terminal/context.zig:52-125` | Current vague terminal-surface owner that needs a surface-true name. |
-| `howl-linux-host/build.zig:111-118` | Current inconsistent C-header/C-source placement that needs one explicit translation seam. |
-| `howl-linux-host/build.zig:312-365` | Current curated but misplaced test roots that need a real `src/test/` home. |
-| `alacritty/src/main.rs:30-49` | Top-level host root model for runtime/config/display/input/polling layout. |
-| `alacritty/src/event.rs:83-145` | Event processor as the main runtime owner. |
-| `alacritty/src/display/mod.rs:60-68` | Shallow display child folders only for true display subdomains. |
-| `alacritty/src/polling/mod.rs:19-29` | Polling folder justified only when it holds multiple real polling owners. |
-| `ghostty/src/Surface.zig:1-12` | Best available naming/model pressure for embedded tabbed terminal owners. |
-| `tigerbeetle/docs/TIGER_STYLE.md:90-149` | Owner truth, bounds, assertions, and anti-bucket law. |
+| Anchor                                            | Governing pressure for this sprint                                                         |
+|---------------------------------------------------|--------------------------------------------------------------------------------------------|
+| `howl-linux-host/src/main.zig:2-11`               | Current top-level root sprawl that the sprint must remove.                                 |
+| `howl-linux-host/src/app/processor.zig:20-33`     | Real host control spine owner that should move toward an Alacritty-style `event` root.     |
+| `howl-linux-host/src/terminal/context.zig:52-125` | Current vague terminal-surface owner that needs a surface-true name.                       |
+| `howl-linux-host/build.zig:111-118`               | Current inconsistent C-header/C-source placement that needs one explicit translation seam. |
+| `howl-linux-host/build.zig:312-365`               | Current curated but misplaced test roots that need a real `src/test/` home.                |
+| `alacritty/src/main.rs:30-49`                     | Top-level host root model for runtime/config/display/input/polling layout.                 |
+| `alacritty/src/event.rs:83-145`                   | Event processor as the main runtime owner.                                                 |
+| `alacritty/src/display/mod.rs:60-68`              | Shallow display child folders only for true display subdomains.                            |
+| `alacritty/src/polling/mod.rs:19-29`              | Polling folder justified only when it holds multiple real polling owners.                  |
+| `ghostty/src/Surface.zig:1-12`                    | Best available naming/model pressure for embedded tabbed terminal owners.                  |
+| `tigerbeetle/docs/TIGER_STYLE.md:90-149`          | Owner truth, bounds, assertions, and anti-bucket law.                                      |
 
 ## Owner Roles And Proposed Shape
 

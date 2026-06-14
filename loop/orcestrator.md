@@ -10,6 +10,10 @@
 
 ## Required Reads
 
+- Read the full list below at session start.
+- Do not instruct researchers, reviewers, or coders to reread already-read unchanged files every iteration.
+- Require targeted rereads only when the controlling active artifacts, role contract, or user direction changed materially.
+
 1. `loop/flow.md`
 2. all role docs under `loop/`:
    - `loop/orcestrator.md`
@@ -51,6 +55,7 @@
 - do not let researcher, coder, or reviewer hide behind tone, habit, or momentum; require explicit accountable state from all of them
 - if more than one active artifact is trying to explain the same current step, collapse it to one controlling artifact and demote the others to seeded inputs or history
 - require every non-trivial teammate pass to leave a short note in the active loop scratchpad with hello, intent, outcome, and handoff or blocker
+- do not create fake diligence by ordering full-loop rereads on routine iterations when the active context is unchanged
 
 ## Orchestrator Hints
 

@@ -7,42 +7,33 @@ Purpose:
 
 Sprint:
 
-- No active sprint seeded.
+- Active sprint contract: `sprints/2026-06-14-ascii-rain-performance-sprint.md`.
 
 Active research:
 
-- No active research seeded.
+- Active research artifact: `research/2026-06-14-ascii-rain-performance-plan.md`.
 
 Active loops:
 
-- No active loop seeded.
+- Active loop artifact: `loops/ascii-rain-performance-live-loop.txt`.
 
 Active restart note:
 
-- No active sprint is seeded. Waiting for next scope.
+- Active sprint: ASCII rain runtime-proof-first performance sprint.
+- Orchestrator session id: `orch-2026-06-14-ascii-rain-performance-01`.
+- Researcher session id: `research-2026-06-14-ascii-rain-performance-01`.
+- Reviewer session id: `review-2026-06-14-ascii-rain-performance-01`.
+- User override: this sprint starts with coder hotspot proof before researcher hotspot planning.
+- Sprint purpose for the current bucket: pressure fake owners out of the hot path and clean bad style before any further optimization claim.
+- Current stage: proof slice 29 corrected rerun is complete on the accepted `direct_normal.appendResolvedGlyph(...)` owner shape; the next authorized step is to interpret that receipt before any new optimization slice.
 - Latest closed sprint: six-target pragmatic shape.
-- Orchestrator session id: `orch-2026-06-14-six-target-pragmatic-shape-01`.
-- Researcher session id: `research-2026-06-14-six-target-pragmatic-shape-01`.
-- Reviewer session id: `review-2026-06-14-six-target-pragmatic-shape-01`.
-- Planning seed receipt: `117b860` `Seed six-target pragmatic-shape planning`.
-- Accepted planning receipt: `9f20f26` `Accept six-target pragmatic-shape planning`.
-- Sprint seed receipt: `1f2c1cc` `Seed six-target pragmatic-shape sprint`.
-- Slice 1 correction accepted; corrected scope included `howl-render/src/text/ft_hb/glyph_raster.zig`.
-- Accepted slices:
-  - Slice 1 nested render commit `34cad2c` `Remove support probing wrappers`, root receipt `378a186` `Accept six-target pragmatic-shape Slice 1`.
-  - Slice 2 nested host commit `9f12d7e` `Simplify terminal surface owner`, root receipt `76f9bb0` `Accept six-target pragmatic-shape Slice 2`.
-  - Slice 3 nested render commit `06b16f1` `Simplify cluster assembly owner`, root receipt `d531a48` `Accept six-target pragmatic-shape Slice 3`.
-  - Slice 4 nested render commit `788ca2e` `Simplify legacy computing raster owner`, root receipt `fdeb7f2` `Accept six-target pragmatic-shape Slice 4`.
-  - Slice 5 no-code acceptance, root receipt `b05d0d0` `Accept six-target pragmatic-shape Slice 5`.
-  - Slice 6 nested VT commit `4f396b1` `Simplify parser action seams`, root receipt `356e981` `Accept six-target pragmatic-shape Slice 6`.
-- Archive receipt: `8ade41d` `Archive six-target pragmatic-shape sprint`.
-- Closure review accepted by `review-2026-06-14-six-target-pragmatic-shape-01` after ledger fix `489d1dd` `Record pragmatic-shape archive receipt`.
-- Six-target pragmatic-shape sprint execution is complete and archived.
+- Latest closed sprint closure acceptance: `2fd3c54` `Accept six-target pragmatic-shape sprint closure`.
+- Historical details for the latest closed sprint remain below only in archived artifacts.
 
 Execution rule:
 
-- No coding is authorized until a new active sprint, loop, and execution contract are seeded.
-- The six-target pragmatic-shape sprint execution is complete and archived.
+- Authorized next step: interpret proof slice 29 and authorize only the next exact local move supported by that receipt.
+- No optimization slice is authorized while a proved hot mixed owner remains unresolved.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

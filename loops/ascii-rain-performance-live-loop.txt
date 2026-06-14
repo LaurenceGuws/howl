@@ -1,0 +1,2288 @@
+# ASCII Rain Performance Live Loop
+
+Authority:
+
+- Live sprint loop for the ASCII rain runtime-proof-first performance sprint.
+- Orchestrator session id: `orch-2026-06-14-ascii-rain-performance-01`.
+- User handoff supplied 2026-06-14.
+- No optimization implementation is authorized until the active proof slice is completed and the resulting hotspot is planned through researcher/reviewer review.
+
+Problem statement:
+
+- Get Howl as close to Alacritty as possible on the current ASCII rain benchmark.
+- Stop only when Howl matches or beats Alacritty, or the next dominant loss is proved to be a real structural debt wall or intentional product-feature cost.
+- Treat every optimization pass as temporary until the next bottleneck is re-proved.
+- This is a runtime-proof-first sprint, not a generic cleanup sprint and not a reference-first shape sprint.
+
+Authoritative benchmark:
+
+- Command: `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+- Primary comparison target: Alacritty FPS on the same ASCII rain workload.
+
+Explicit user override:
+
+- Normal planning order is overridden by explicit user direction for this sprint.
+- Overridden order for each iteration:
+  1. coder proves the current bottleneck with temporary local runtime logs
+  2. researcher and reviewer use the proof plus Alacritty source to identify the best reference-backed improvement
+  3. coder implements the planned fix
+  4. reviewer verifies correctness and benchmark effect
+  5. coder removes temporary logging/probing noise
+  6. coder re-proves the next bottleneck
+  7. repeat until stop condition
+- This override is valid for this sprint only and does not change the default workflow outside this sprint.
+
+Sprint method:
+
+- Proof comes before optimization.
+- Temporary logs must be narrow, local, disposable, and slice-scoped.
+- No broad observability framework, profiler layer, helper bucket, or permanent metrics surface is allowed.
+- Each accepted improvement must tie benchmark movement back to a specific owner path.
+
+Likely hotspot candidates only, not authority:
+
+1. `howl-linux-host/src/terminal/surface.zig`
+2. `howl-render/src/surface/emitter.zig`
+3. `howl-render/src/text/shape/cluster.zig`
+4. `howl-render/src/text/ft_hb/glyph_raster.zig`
+5. `howl-render/src/text/ft_hb/support.zig`
+6. `howl-render/src/text/raster/special_legacy_computing.zig`
+7. `howl-pty/`
+
+Proof slice 1 contract:
+
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-01`.
+- Purpose: prove the current hottest path on the ASCII rain benchmark before any optimization planning begins.
+- Allowed files:
+  - `howl-linux-host/src/terminal/surface.zig`
+  - `howl-render/src/surface/emitter.zig`
+  - `howl-render/src/text/shape/cluster.zig`
+  - `howl-render/src/text/ft_hb/glyph_raster.zig`
+  - `howl-render/src/text/ft_hb/support.zig`
+  - `howl-render/src/text/raster/special_legacy_computing.zig`
+  - files under `howl-pty/` only if the proof shows the likely bottleneck is there before edits are made
+- Required shape:
+  - add temporary runtime logging only at one suspected hot owner path at a time
+  - log per-iteration, per-frame, or per-phase timing tightly enough to prove where time is going
+  - keep instrumentation local to the chosen owner path; do not build shared profiling helpers
+  - produce a benchmark artifact and exact proof location that researcher/reviewer can inspect
+  - do not optimize the path in this slice
+- Required runs:
+  - run `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - if the proof requires a second confirmation run after narrowing instrumentation placement, record both runs
+- Required handoff fields:
+  - benchmark command
+  - benchmark artifact path
+  - bottleneck proof location
+  - exact temporary instrumentation files and line references
+  - measured before summary
+  - coder session id
+  - commit-hash handoff status for orchestrator receipt closure
+- Non-goals:
+  - no optimization yet
+  - no benchmark harness redesign
+  - no permanent debug or metrics code
+  - no widening into nearby cleanup
+- Stop conditions:
+  - stop if the logs stop being local and disposable
+  - stop if the coder cannot prove the hot path before changing behavior
+  - stop if the likely hotspot appears to be outside the allowed file set before any edit is made
+  - stop if benchmark movement appears dominated by workload mismatch or measurement distortion
+
+Iteration receipt requirements:
+
+- benchmark command
+- benchmark artifact path
+- bottleneck proof location
+- exact temporary instrumentation files and lines
+- measured before
+- measured after
+- cleanup receipt removing the instrumentation
+- next bottleneck hypothesis
+- next bottleneck proof receipt
+
+Sprint stop conditions:
+
+- Howl matches or beats Alacritty on the benchmark
+- the next dominant bottleneck is proved to be a real structural debt wall requiring a separate sprint
+- the remaining gap is dominated by intentional feature/product differences we do not want to delete
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: seed the runtime-proof-first ASCII rain sprint with the user-approved workflow override and authorize only the first proof slice.
+- Outcome: active sprint, active loop, and active research placeholder are seeded; no optimization work is authorized yet; coder may only prove the first hotspot and return exact benchmark and instrumentation receipts.
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-01` must run the benchmark, instrument one likely hot owner path locally, and return proof artifacts without optimizing anything.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-01`: hello.
+- Intent: run the required ASCII rain benchmark, place only temporary local timing probes, and prove the current hottest runtime path before any optimization work.
+- Outcome: baseline and instrumented benchmark runs completed; direct surface-turn proof shows `self.term.render.prepare(...)` dominating render-turn time, while temporary deeper probes in `support.zig` and `cluster.zig` stayed cold enough to produce no workload artifact on this benchmark path.
+- Handoff: researcher/reviewer should use `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` plus the baseline and proof summaries to plan the first optimization slice; no optimization was implemented.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: re-prove the measured `self.term.render.prepare(...)` hotspot from current source, compare the matching Alacritty path, and write the exact next fix slice into the active research artifact.
+- Outcome: current source proves the first local avoidable cost is the second full-surface ownership copy and heap duplication in `howl-render/src/c/prepare_request.zig` -> `howl-render/src/vt_publication/publication.zig`, while Alacritty borrows terminal render content directly into its draw iterator; the active research plan now constrains iteration 1 to a retained-slot-backed prepare ingress fix.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review `research/2026-06-14-ascii-rain-performance-plan.md`; no implementation is authorized outside that exact slice.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: pressure the proof-backed iteration 1 fix slice for exact owner truth, file scope, tests, and stop conditions before any optimization implementation starts.
+- Outcome: rejected. The current plan under-scopes the real owner seam because `prepare_queue.zig` still clones retained sources on admission, and the test contract is too vague to prove ownership and allocation behavior after admission.
+- Handoff: researcher must repair the plan so the allowed files, ownership model, exact tests, and stop conditions match the real queue/source-slot seam before any coder optimization slice is seeded.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: repair the rejected iteration 1 plan by re-proving the `prepare_queue` and `source_slot` ownership seam, then tightening the allowed files, tests, and stop conditions.
+- Outcome: current source proves the previous ingress-only slice was false-small; `prepare_queue.zig` clones retained sources today, and `source_slot.zig` exposes only one retained publication slot, so a retained queue fix must cover the queue/source-slot lifecycle together or stop.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the repaired `research/2026-06-14-ascii-rain-performance-plan.md`; no implementation is authorized outside the broadened queue/source-slot slice described there.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-check whether the repaired iteration 1 plan is now exact enough for coder execution.
+- Outcome: rejected again. The plan now includes the real queue/source-slot seam, but it still leaves the coder to choose the retained prior/current lifetime design and still leaves proof ownership slightly open-ended.
+- Handoff: researcher must lock one exact retained ownership design, one exact proof owner for that design, and one exact geometry-refresh proof requirement before the optimization slice can be seeded.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: repair the second rejection by locking one exact retained prior/current design, one exact proof owner, and one exact geometry-refresh proof file.
+- Outcome: the active research artifact now requires a two-slot `SourceSlot` design with `staged_slot` for ingress and `active_slot` for stable prior classification, names `howl-render/src/vt_publication/source_slot.zig` as the exact owner-local seam proof, and keeps geometry-refresh proof in `source_slot.zig` only.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the tightened plan; coder discretion over retained lifetime design has been removed.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the tightened iteration 1 fix plan after the retained lifetime design and proof roots were locked.
+- Outcome: accepted with no blocking findings. The active research artifact now gives an exact execution contract for iteration 1.
+- Handoff: orchestrator may seed the iteration 1 optimization slice for coder execution.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: promote the accepted iteration 1 plan into one exact coder execution slice.
+- Outcome: iteration 1 optimization slice is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-fix-01`.
+- Allowed files:
+  - `howl-render/src/c/prepare_request.zig`
+  - `howl-render/src/render_session.zig`
+  - `howl-render/src/vt_publication/source_slot.zig`
+  - `howl-render/src/vt_publication/prepare_queue.zig`
+  - `howl-render/src/c/prepare_request_test.zig`
+  - owner-local tests in `howl-render/src/vt_publication/source_slot.zig`
+  - owner-local tests in `howl-render/src/vt_publication/prepare_queue.zig`
+- Required shape:
+  - replace `ownedSourceFromSurfaceResult` prepare ingress in `howl-render/src/c/prepare_request.zig` with `SourceSlot.copyPublishedSource(...)` so visible ingress lands in `staged_slot`
+  - change `SourceSlot` to own exactly two retained slots: `staged_slot` and `active_slot`
+  - add one exact `SourceSlot` promotion operation that copies the current staged publication into `active_slot` and retargets one `PublicationSource` wrapper to `active_slot`
+  - change `PrepareRequests.admitSource(...)` to accept `slot_owner: *publication_storage.SourceSlot` and use that exact promotion operation after classification and before replacing `self.active_source`
+  - delete the retained-to-owned clone path in `takeOwnedActiveSource(...)`; retained sources must remain retained-backed under the two-slot design
+  - keep `render_session.zig` as the owner that wires geometry refresh into both source-slot and prepare-queue retained views
+  - keep all current C ABI entrypoints and structs unchanged
+  - no alternate retained lifetime design is allowed
+- Required tests and reruns:
+  - from `howl-render`, run `zig build test-abi`
+  - from `howl-render`, run `zig build test-unit`
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - re-run narrow hotspot proof at `howl-linux-host/src/terminal/surface.zig:575-603` and record a fresh proof log artifact
+  - keep exact existing tests green:
+    - `howl-render/src/vt_publication/source_slot.zig`: `test "source slot copy in preserves snapshot and dirty metadata"`
+    - `howl-render/src/vt_publication/source_slot.zig`: `test "source slot refresh preserves snapshot and dirty metadata"`
+    - `howl-render/src/vt_publication/prepare_queue.zig`: `test "prepare requests ignore duplicate admitted source"`
+    - `howl-render/src/vt_publication/prepare_queue.zig`: `test "prepare requests admit full retained-safe source when geometry changes"`
+    - `howl-render/src/vt_publication/prepare_queue.zig`: `test "prepare requests force full when partial source has stale submitted base"`
+  - add exact tests:
+    - `howl-render/src/vt_publication/source_slot.zig`: add one owner-local test proving the two-slot seam by staging publication A into `staged_slot`, promoting A into `active_slot`, staging publication B into `staged_slot`, proving `active_slot` still contains A while `staged_slot` contains B, and proving the two retained publications do not alias the same cell/dirty buffers
+    - `howl-render/src/vt_publication/source_slot.zig`: extend `test "source slot refresh preserves snapshot and dirty metadata"` to cover both `staged_slot` and `active_slot` pointer refresh after capacity growth
+    - `howl-render/src/vt_publication/prepare_queue.zig`: add a test proving retained admission stays retained after `admitSource(slot_owner, ...)` by checking `requests.active_source.?.retained_storage` and `active_slot`-backed pointers after admission
+    - `howl-render/src/vt_publication/prepare_queue.zig`: add a test proving the second retained admission classifies against stable prior contents by staging A, admitting A, staging B, and verifying duplicate/full/partial classification before rotation overwrites the active source
+    - `howl-render/src/vt_publication/prepare_queue.zig`: add a test proving duplicate/rejected staged sources do not disturb `active_slot` contents
+    - `howl-render/src/c/prepare_request_test.zig`: add a test proving `takePrepareRequest(...)` leaves the admitted active source retained-backed rather than heap-owned, while preserving shipped prepare-request token semantics
+- Non-goals:
+  - no cleanup/removal of temporary instrumentation yet
+  - no render-surface emitter redesign
+  - no shaping/cluster/FreeType/HarfBuzz work
+  - no ABI expansion
+  - no benchmark harness changes
+  - no renderer architecture redesign
+- Stop conditions:
+  - stop if removing the extra publication allocation requires changing the C ABI or host/render boundary
+  - stop if queue ownership cannot remain retained without a broader lifecycle change than `SourceSlot` + `PrepareRequests` can truthfully own inside this slice
+  - stop if keeping a stable prior source requires adding a third cross-owner runtime concept, host-side state, or any manager/helper abstraction outside `SourceSlot`, `PrepareRequests`, and `TextSessionOwner`
+  - stop if the two-slot staged/active design cannot satisfy `PrepareRequests.classify(...)` without another retained lifetime beyond `staged_slot` and `active_slot`
+  - stop if fresh source proof shows the copied publication storage is not materially affecting `prepare_ms` after the local fix
+  - stop if the change broadens beyond the allowed files
+- Required handoff fields:
+  - changed files and exact line references
+  - concise implementation summary
+  - benchmark command
+  - benchmark artifact path
+  - hotspot proof location
+  - exact proof log artifact path
+  - measured before
+  - measured after
+  - verification command list and results
+  - blockers or deviations
+  - coder session id
+  - commit-hash handoff status for orchestrator receipt closure
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-fix-01` may now implement only this slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-fix-01`: hello.
+- Intent: implement only the seeded two-slot retained ingress/admission fix and rerun the required tests, benchmark, and hotspot proof.
+- Outcome: staged visible ingress now lands in `staged_slot`, retained admissions promote into `active_slot` without queue heap cloning, and the required owner-local tests were added to prove the two-slot seam and retained admission behavior.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify the diff, benchmark artifact, and fresh proof log; temporary instrumentation cleanup remains open for the later cleanup slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: record the exact execution receipts for iteration 1 before review acceptance or rejection.
+- Outcome:
+  - Changed files and line references:
+    - `howl-render/src/c/prepare_request.zig:6-17`
+    - `howl-render/src/render_session.zig:522-529`
+    - `howl-render/src/render_session.zig:742-764`
+    - `howl-render/src/vt_publication/source_slot.zig:68-132`
+    - `howl-render/src/vt_publication/source_slot.zig:134-224`
+    - `howl-render/src/vt_publication/source_slot.zig:252-282`
+    - `howl-render/src/vt_publication/source_slot.zig:424-538`
+    - `howl-render/src/vt_publication/prepare_queue.zig:38-80`
+    - `howl-render/src/vt_publication/prepare_queue.zig:150-153`
+    - `howl-render/src/vt_publication/prepare_queue.zig:211-213`
+    - `howl-render/src/vt_publication/prepare_queue.zig:222-408`
+    - `howl-render/src/c/prepare_request_test.zig:48-75`
+  - Verification commands and results:
+    - requested `zig build test-abi` in `howl-render`: failed because that exact step does not exist in this workspace
+    - requested `zig build test-unit` in `howl-render`: failed because that exact step does not exist in this workspace
+    - executed `zig build test:abi` in `howl-render`: passed
+    - executed `zig build test:unit` in `howl-render`: passed
+  - Benchmark command: `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - Benchmark artifact path: `utils/tools/rain-bench/artifacts/stress/20260614-042656-ascii/summary.json`
+  - Fresh proof log path: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log`
+  - Hotspot proof location: `howl-linux-host/src/terminal/surface.zig:575-603`
+  - Measured before:
+    - benchmark `utils/tools/rain-bench/artifacts/stress/20260614-035834-ascii/summary.json`
+    - Howl `181.02 fps`, `p50 5038 us`, `p95 7512 us`
+    - proof `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:74`
+    - `prepare_calls=2368`, `capture_ms=258.969`, `prepare_ms=2054.274`, `submit_ms=1038.582`
+  - Measured after:
+    - benchmark `utils/tools/rain-bench/artifacts/stress/20260614-042656-ascii/summary.json`
+    - Howl `175.28 fps`, `p50 5104 us`, `p95 7681 us`
+    - proof `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:148`
+    - `prepare_calls=2368`, `capture_ms=260.329`, `prepare_ms=2245.974`, `submit_ms=1060.747`
+  - Deviations:
+    - fresh proof reused the existing log path and appended the new run instead of writing a unique new file
+    - the exact requested build step names were stale; local authoritative steps are `zig build test:abi` and `zig build test:unit`
+  - Commit-hash handoff status: no commit created
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should judge correctness and stop-condition outcome from the exact receipts above.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review iteration 1 implementation correctness, benchmark movement, proof movement, and slice accountability receipts.
+- Outcome: rejected. The slice hit its own stop condition because both FPS and `prepare_ms` regressed, so the local retained-slot fix did not prove a beneficial move in the hotspot.
+- Handoff: orchestrator must restart from post-fix research interpretation before any new optimization slice is seeded; instrumentation cleanup remains open because this sprint uses cleanup only after accepted optimization slices.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: interpret the rejected iteration 1 measurement honestly and decide whether the sprint should continue locally or stop on a real blocker.
+- Outcome: the rejected two-slot fix was the wrong local target for full-frame ASCII rain because it traded one render-side copy for two, making the same `prepare(...)` hotspot worse; this is still a local sprint, but the next honest move is proof-only subphase measurement inside `prepare(...)`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the post-iteration interpretation and the proposed proof-only next slice.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the post-iteration interpretation and decide whether the sprint remains local and whether the next slice is exact enough.
+- Outcome: accepted with no blocking findings after the active research artifact top-level state was corrected.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted post-iteration proof-only slice before any further optimization work.
+- Outcome: proof-only slice 2 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-02`.
+- Allowed files:
+  - `howl-linux-host/src/terminal/render_retained.zig`
+  - `howl-render/src/c/prepare_request.zig`
+  - `howl-render/src/render_session.zig`
+  - `howl-render/src/surface/handle.zig`
+- Exact required shape:
+  - add temporary narrow timing logs that split `render_retained.State.prepare(...)` into `take_prepare_request_ns` and `prepare_handle_ns`
+  - add temporary narrow timing logs in `TextSessionOwner.prepareHandle(...)` that split `prepare_handle_ns` into `prepare_surface_ns` and `prepared_handle_create_ns`
+  - add temporary narrow timing logs in `PreparedHandle.create(...)` that split `prepared_handle_create_ns` into registration/allocation overhead and `emit_render_surface_payload_ns`
+  - reuse the existing proof-log workflow and keep all probes local, disposable, and owner-scoped
+  - do not change behavior
+- Exact proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh post-iteration proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - the proof output must identify which current-code subphase dominates total `prepare_ns` on the ASCII rain workload:
+    - `take_prepare_request`
+    - `prepare_surface`
+    - `prepared_handle_create`
+    - `emit_render_surface_payload`
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact non-goals:
+  - no optimization yet
+  - no cleanup/removal of existing instrumentation yet
+  - no render-surface emitter redesign yet
+  - no text shaping changes yet
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if the probes stop being local and disposable
+  - stop if proving the subphases requires broad instrumentation across unrelated owners
+  - stop if the new proof shows no single dominant subphase inside `prepare(...)`
+  - stop if the dominant subphase lies outside the allowed file set before any edit is made
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - exact temporary instrumentation files and lines
+  - measured before
+  - measured after
+  - next dominant hotspot verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-02` may now implement only this proof-only slice.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the rejected iteration 1 measurement honestly from current source and measured proof, then decide whether the sprint continues locally or hits a structural blocker.
+- Outcome: current source plus the benchmark/proof receipts show the two-slot retained ingress/queue fix was the wrong local optimization target for ASCII rain because it added a second render-side full publication copy and made `prepare(...)` slower; the next honest move is a local proof-only slice that splits `prepare(...)` into ingress/admission, `prepareSurface`, and prepared-handle emission subphases.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-iteration interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no new optimization is authorized yet.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-02`: hello.
+- Intent: add only temporary local prepare subphase timing probes, rerun the required render proofs and ASCII rain benchmark, and record the next dominant current-code subphase without optimizing anything.
+- Outcome: local timing probes were added in `render_retained.zig`, `render_session.zig`, and `surface/handle.zig`; render ABI/unit proofs and a fresh benchmark/proof run were completed; the new proof isolates one dominant subphase inside `prepare(...)` for the next handoff.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the fresh appended proof section in `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` and judge the next hotspot verdict; no optimization was implemented.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the accepted proof-only slice 2 receipts and decide whether `prepare_surface` is now optimization-ready or still needs one more local proof split.
+- Outcome: the new proof isolates `prepare_surface` as the dominant current subphase inside `prepare(...)`, but `prepare_surface` itself still spans multiple materially different owners and branches; the active research artifact now requires one more proof-only split across `render_session.zig`, `text/surface_preparer.zig`, and `text/direct_normal.zig` before any optimization is honest.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-2 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no optimization is authorized yet.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether the `prepare_surface` interpretation is exact enough and whether one more proof-only slice is the right next step.
+- Outcome: accepted with no blocking findings after the active top-level state was corrected.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted branch-level proof-only slice inside `prepare_surface` before any new optimization work.
+- Outcome: proof-only slice 3 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-03`.
+- Allowed files:
+  - `howl-render/src/render_session.zig`
+  - `howl-render/src/text/surface_preparer.zig`
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - add temporary narrow timing logs in `TextSession.prepareSurface(...)` that split `prepare_surface_ns` into `prepare_publication_fast_path_ns`, `fallback_publication_map_ns`, and `fallback_prepare_cells_ns`
+  - add temporary narrow timing logs in `TextSurfacePreparer.preparePublicationWithSessionOptions(...)` that split `prepare_publication_fast_path_ns` into `prepare_direct_normal_attempt_ns` and `prepare_publication_complex_fallback_ns`
+  - add temporary narrow timing logs in `direct_normal.prepare(...)` that record total `direct_normal_prepare_ns`, the count of visible cells scanned, the count of included normal cells, and whether the path returned direct success or rejected into fallback
+  - keep the probes local, disposable, and owner-scoped
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - the proof output must identify which current-code subphase dominates `prepare_surface_ns` on ASCII rain:
+    - `prepare_publication_fast_path`
+    - `fallback_publication_map`
+    - `fallback_prepare_cells`
+  - and, if the fast path dominates, whether that time is mostly:
+    - `prepare_direct_normal_attempt`
+    - or `prepare_publication_complex_fallback`
+- Exact non-goals:
+  - no optimization yet
+  - no instrumentation cleanup yet
+  - no work in `cluster.zig`, `surface/handle.zig`, or `surface/emitter.zig` for this slice
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if the probes stop being local and disposable
+  - stop if proving `prepare_surface` requires instrumenting files outside the allowed set before any edit is made
+  - stop if the proof shows `prepare_surface` time is already cleanly dominated by the fallback complex path and that path conflicts with the earlier cold-cluster proof; escalate that contradiction instead of guessing
+  - stop if the proof still fails to isolate one dominant branch inside `prepare_surface`
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - exact temporary instrumentation files and lines
+  - measured before
+  - measured after
+  - dominant `prepare_surface` branch verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-03` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-03`: hello.
+- Intent: add only local disposable `prepare_surface(...)` branch probes inside the three authorized render owners, rerun render tests and the ASCII rain benchmark, and return one dominant branch verdict without optimizing anything.
+- Outcome: temporary branch-level timers and direct-normal counters were added only in `render_session.zig`, `surface_preparer.zig`, and `direct_normal.zig`; benchmark and proof reruns are next.
+- Handoff: pending verification and benchmark receipts for reviewer `review-2026-06-14-ascii-rain-performance-01`.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-03`: hello again.
+- Intent: finish the slice receipts by running the required render tests, rerunning the ASCII rain benchmark, and extracting one dominant `prepare_surface(...)` branch verdict from the appended proof lines.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-110424-ascii/summary.json` and appended proof lines `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:883-888` show `prepare_surface` is dominated by the publication fast path, and that fast path is dominated by direct-normal attempt time with zero complex fallback or fallback-map/cell time on this workload.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify the exact probe diffs and the appended proof receipts; no optimization was implemented.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the accepted proof-only slice 3 receipts and decide whether `direct_normal.prepare(...)` is optimization-ready or still needs one more proof split.
+- Outcome: the new proof closes fallback ambiguity and proves the workload is fully on the direct-normal fast path with zero fallback rejects, but the current receipts still mix real direct-normal work with proof-only recount overhead and with `finishScene(...)`; the active research artifact now requires one more proof-only split inside `howl-render/src/text/direct_normal.zig` before any optimization is honest.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-3 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no optimization is authorized yet.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether `direct_normal.prepare(...)` is now the exact workload owner and whether one more proof-only slice is still required.
+- Outcome: accepted with no blocking findings after the active top-level state was corrected.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted proof-only slice inside `direct_normal.prepare(...)` before any optimization work.
+- Outcome: proof-only slice 4 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-04`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep the proof local to `direct_normal.zig` only
+  - replace the current proof recount dependence on `visibleCellsScanned(...)` with in-loop counters recorded during the real `appendVisible(...)` pass so no second scan is needed for the proof
+  - add temporary narrow timing logs in `direct_normal.prepare(...)` that split the real work into:
+    - `append_visible_ns`
+    - `append_scene_rects_ns`
+    - `finish_scene_ns`
+  - keep separate counters for:
+    - `visible_cells_scanned`
+    - `included_normal_cells`
+    - `direct_success_calls`
+    - `fallback_reject_calls`
+    - `raster_req_count_total`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - the proof output must identify which of these dominates real direct-normal cost on ASCII rain:
+    - `append_visible`
+    - `append_scene_rects`
+    - `finish_scene`
+  - and must report `raster_req_count_total` so the next slice can tell whether `finishScene(...)` is materially active or mostly a scan-side problem
+- Exact non-goals:
+  - no optimization yet
+  - no instrumentation cleanup yet
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if isolating real direct-normal subphases requires editing files outside `howl-render/src/text/direct_normal.zig`
+  - stop if the proof still depends on a second recount pass over the source to produce its main verdict
+  - stop if the new proof fails to isolate one dominant subphase inside `direct_normal.prepare(...)`
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - exact temporary instrumentation files and lines
+  - measured before
+  - measured after
+  - dominant direct-normal subphase verdict
+  - `raster_req_count_total`
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-04` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-04`: hello.
+- Intent: keep proof local to `howl-render/src/text/direct_normal.zig`, remove the second-pass recount distortion, and split real direct-normal work into measured subphases.
+- Outcome: `zig fmt src/text/direct_normal.zig`, `zig build test:abi`, and `zig build test:unit` passed; benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-111512-ascii/summary.json` and appended proof lines `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:1327-1332` show `append_visible` dominates real `direct_normal.prepare(...)` cost, with `append_scene_rects` and `finish_scene` far smaller; counters remained fully on the direct-normal fast path with `visible_cells_scanned=29429556`, `included_normal_cells=29429556`, `direct_success_calls=2368`, `fallback_reject_calls=0`, and `raster_req_count_total=1216`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify the direct-normal-only proof diff and appended proof receipts; no optimization was implemented.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the accepted proof-only slice 4 receipts and decide whether `append_visible` is optimization-ready or still needs one more local proof split.
+- Outcome: the new proof isolates `append_visible` as the dominant real-work subphase inside `direct_normal.prepare(...)`, but that owner still combines publication candidate/classification work with append/renderable glyph-cache work; the active research artifact now requires one more proof-only split inside `howl-render/src/text/direct_normal.zig` before any optimization is honest.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-4 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no optimization is authorized yet.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether `append_visible` is now the exact local bottleneck and whether one more proof-only slice is still required.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted proof-only slice inside `append_visible(...)` before any optimization work.
+- Outcome: proof-only slice 5 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-05`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep the proof local to `direct_normal.zig` only
+  - add temporary narrow timing logs that split `append_visible_ns` into:
+    - `source_candidate_ns`
+    - `append_renderable_ns`
+  - keep the existing counters for:
+    - `visible_cells_scanned`
+    - `included_normal_cells`
+    - `direct_success_calls`
+    - `fallback_reject_calls`
+    - `raster_req_count_total`
+  - add one more exact count field:
+    - `append_renderable_calls`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - the proof output must identify which of these dominates `append_visible` on ASCII rain:
+    - `source_candidate`
+    - `append_renderable`
+  - and must report `append_renderable_calls` and `raster_req_count_total`
+- Exact non-goals:
+  - no optimization yet
+  - no instrumentation cleanup yet
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if splitting `append_visible` requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the new proof fails to isolate one dominant `append_visible` subphase
+  - stop if the counters cease to describe the same workload path, for example if `fallback_reject_calls` stops being zero on the ASCII rain run
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - exact temporary instrumentation files and lines
+  - measured before
+  - measured after
+  - dominant `append_visible` subphase verdict
+  - `append_renderable_calls`
+  - `raster_req_count_total`
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-05` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-05`: hello.
+- Intent: keep proof local to `howl-render/src/text/direct_normal.zig` and split `append_visible(...)` into candidate/classification versus append-renderable measured subphases.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-113347-ascii/summary.json` and appended proof lines `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:1771-1775` show `source_candidate` dominates `append_visible`, with `append_renderable` smaller and the workload still fully on the direct-normal fast path; `append_renderable_calls=29424087` and `raster_req_count_total=1197` were recorded.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify the direct-normal-only proof diff and appended proof receipts; no optimization was implemented.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the accepted proof-only slice 5 receipts and decide whether `source_candidate(...)` is finally optimization-ready.
+- Outcome: the new proof isolates `source_candidate(...)` / publication candidate work as the dominant named `append_visible(...)` subphase on the direct-normal fast path; the active research artifact now seeds one exact local optimization slice in `howl-render/src/text/direct_normal.zig` to bypass avoidable publication candidate wrapper work while preserving unsupported-cell fallback behavior.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-5 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; this is the first newly authorized optimization slice since the rejected retained-ingress attempt.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether `source_candidate(...)` is now optimization-ready and whether the proposed local slice is exact enough.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the local optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the first optimization-ready direct-normal slice.
+- Outcome: optimization slice 6 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-fix-06`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep all changes inside `direct_normal.zig`
+  - add one publication-specific hot-path branch inside `appendVisible(...)` for `source == .publication` with `policy == .require_all_normal`
+  - that branch must:
+    - read the publication cell directly
+    - preserve the current unsupported/reject behavior from `publicationCellSupported(...)`
+    - preserve current damage filtering semantics
+    - append directly into the existing direct-normal scratch/output path without constructing `PublicationCandidate` / `Candidate` wrapper values for supported cells
+    - keep the current fallback/reject semantics unchanged for unsupported cells
+    - keep `appendRenderable(...)` as the actual draw-append owner for now
+  - do not change ABI, renderer contracts, or non-publication sources
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+  - keep existing direct-normal owner tests green:
+    - `howl-render/src/text/direct_normal.zig`: `test "direct normal publication zero codepoint is a fast candidate"`
+    - `howl-render/src/text/direct_normal.zig`: `test "direct normal publication keeps unsupported non-printables on generic fallback"`
+  - keep existing publication direct-path tests green:
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication ascii stays on direct normal path"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication styled indexed ascii stays on direct normal path"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication non inverse indexed ascii stays on direct normal path"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication zero codepoint stays on direct normal path without sprite draw"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication unsupported space and rgb keep fallback scratch clean"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication tab stays on generic fallback without partial direct scratch"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication other control stays on generic fallback without partial direct scratch"`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - rerun the current proof-only receipts sufficiently to compare before/after at the same owner path
+  - required measured outputs:
+    - `source_candidate_ms`
+    - `append_visible_ms`
+    - total `prepare_ms`
+    - Howl FPS / p50 / p95
+- Exact non-goals:
+  - no changes outside `direct_normal.zig`
+  - no glyph lookup optimization yet
+  - no atlas/raster optimization yet
+  - no fallback/publication ABI expansion
+  - no instrumentation cleanup yet
+- Exact stop conditions:
+  - stop if preserving unsupported publication fallback semantics requires edits outside `direct_normal.zig`
+  - stop if the specialization weakens current negative-space behavior for unsupported publication cells
+  - stop if benchmark and proof both fail to improve the proved `source_candidate` / `append_visible` hot path
+- Required handoff fields:
+  - exact changed files and line references
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - verdict on `source_candidate_ms`, `append_visible_ms`, and total `prepare_ms`
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-fix-06` may now implement only this optimization slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-fix-06`: hello.
+- Intent: specialize the publication direct-normal hot path inside `appendVisible(...)` without changing unsupported fallback behavior or any non-publication owner path.
+- Outcome: the `direct_normal.zig` publication fast path now bypasses `PublicationCandidate` / `Candidate` wrapper construction for supported cells while preserving generic fallback for unsupported cells; `zig build test:abi`, `zig build test:unit`, and the required ASCII rain benchmark/proof rerun completed.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the direct-normal-only diff plus benchmark/proof movement at the existing owner path.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: record the user-supplied confirmatory benchmark receipt before execution review so the benchmark-effect judgment uses the full active evidence set.
+- Outcome: additional benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-114801-ascii/summary.json` shows Howl `125.66 fps`, `p50 7890 us`, `p95 11568 us`; user direction is to not panic or abandon a reference-backed slice after one miss, but to let reviewer pressure correctness and measured effect honestly.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should judge slice 6 against both the coder rerun receipt and the user confirmatory rerun, plus the improved proof-path receipts.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: repair the missing slice-6 execution receipts before final review judgment.
+- Outcome:
+  - Exact changed files and line references:
+    - `howl-render/src/text/direct_normal.zig:307-368`
+    - `howl-render/src/text/direct_normal.zig:413-417`
+  - Verification command list and results:
+    - `zig build test:abi` in `howl-render`: passed
+    - `zig build test:unit` in `howl-render`: passed
+    - `python3 utils/tools/rain-bench/benchmark_terminals.py --build`: completed, artifact written
+  - Benchmark command: `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - Coder benchmark artifact path: `utils/tools/rain-bench/artifacts/stress/20260614-114538-ascii/summary.json`
+  - User confirmatory benchmark artifact path: `utils/tools/rain-bench/artifacts/stress/20260614-114801-ascii/summary.json`
+  - Proof log artifact path: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log`
+  - Exact proof location lines:
+    - before: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:1771,1775-1776`
+    - after: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:2149,2153-2154`
+  - Measured before:
+    - `source_candidate_ms=1403.958`
+    - `append_visible_ms=3498.274`
+    - `prepare_ms=4677.847`
+    - Howl benchmark baseline for this slice: `92.48 fps`, `p50 9019 us`, `p95 16948 us`
+  - Measured after:
+    - proof-path:
+      - `source_candidate_ms=1231.174`
+      - `append_visible_ms=3139.054`
+      - `prepare_ms=4054.540`
+    - coder after-run benchmark: `106.7 fps`, `p50 8399 us`, `p95 19943 us`
+    - user confirmatory after-run benchmark: `125.66 fps`, `p50 7890 us`, `p95 11568 us`
+  - Verdict on measured outputs:
+    - `source_candidate_ms`: improved materially
+    - `append_visible_ms`: improved materially
+    - `prepare_ms`: improved materially
+    - benchmark effect: mixed across the two after-runs; coder rerun improved FPS/p50 but regressed p95, while user confirmatory rerun improved FPS/p50/p95 versus the pre-slice-6 baseline
+  - Blockers or deviations:
+    - no code blocker
+    - benchmark story is mixed and must be judged alongside the strong proof-path win
+  - Commit-hash receipt status: no commit created
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should re-check slice 6 now that the active receipt surface is complete.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-check optimization slice 6 after the missing execution receipts were added.
+- Outcome: accepted with no blocking findings. The direct-normal publication fast-path specialization improved the proved hot owner path materially; benchmark evidence remains mixed but not a stop-condition failure.
+- Handoff: orchestrator may seed the mandatory cleanup slice before any further proof or optimization work.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the mandatory cleanup slice so temporary proof instrumentation does not remain in product code after slice 6 closure.
+- Outcome: cleanup slice 7 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-cleanup-07`.
+- Allowed files:
+  - `howl-linux-host/src/terminal/surface.zig`
+  - `howl-linux-host/src/terminal/render_retained.zig`
+  - `howl-render/src/render_session.zig`
+  - `howl-render/src/surface/handle.zig`
+  - `howl-render/src/text/surface_preparer.zig`
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/ft_hb/support.zig`
+  - `howl-render/src/text/shape/cluster.zig`
+- Exact required shape:
+  - remove all temporary ASCII-rain proof logging, counters, helper structs, helper functions, and timing code introduced during this sprint from the allowed files
+  - preserve accepted slice-6 product behavior
+  - do not remove real product assertions, bounds, or owner logic
+  - do not perform any new optimization in this cleanup slice
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+  - from `howl-linux-host`, run `zig build test:unit`
+- Exact non-goals:
+  - no new proof yet
+  - no new optimization yet
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if removing proof scaffolding would also remove accepted product logic from slice 6
+  - stop if any remaining proof helper cannot be removed without immediately needing the next proof slice to land first
+- Required handoff fields:
+  - exact changed files and line references
+  - concise cleanup summary
+  - verification command list and results
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-cleanup-07` may now implement only this cleanup slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-cleanup-07`: hello.
+- Intent: remove only the temporary ASCII-rain proof scaffolding from the authorized host/render files, keep accepted slice-6 behavior intact, and rerun the required tests.
+- Outcome: temporary proof logging, counters, helper structs, helper functions, and timing branches were removed from the seeded files; accepted product logic remains in place and the required render/host test suites passed.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify the cleanup diff and test receipts; no commit was created.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: repair the missing cleanup-slice-7 execution receipts before final cleanup review judgment.
+- Outcome:
+  - Exact changed files and line references:
+    - `howl-linux-host/src/terminal/surface.zig:1-51`
+    - `howl-linux-host/src/terminal/surface.zig:525-540`
+    - `howl-linux-host/src/terminal/render_retained.zig:1-4`
+    - `howl-linux-host/src/terminal/render_retained.zig:148-176`
+    - `howl-render/src/render_session.zig:1-40`
+    - `howl-render/src/render_session.zig:180-205`
+    - `howl-render/src/render_session.zig:522-529`
+    - `howl-render/src/surface/handle.zig:1-38`
+    - `howl-render/src/text/surface_preparer.zig:1-25`
+    - `howl-render/src/text/surface_preparer.zig:123-143`
+    - `howl-render/src/text/direct_normal.zig:1-18`
+    - `howl-render/src/text/direct_normal.zig:101-133`
+    - `howl-render/src/text/direct_normal.zig:177-274`
+    - `howl-render/src/text/ft_hb/support.zig:123-128`
+    - `howl-render/src/text/ft_hb/support.zig:172-207`
+    - `howl-render/src/text/shape/cluster.zig:156-175`
+    - `howl-render/src/text/shape/cluster.zig:261-309`
+  - Verification command list and results:
+    - `howl-render`: `zig build test:abi` -> passed
+    - `howl-render`: `zig build test:unit` -> passed
+    - `howl-linux-host`: `zig build test:unit` -> passed
+  - Blockers or deviations:
+    - no blockers
+    - transient compile failures came from accidentally removing `std` imports in `surface/handle.zig` and `terminal/render_retained.zig`; both were restored before final verification
+  - Commit-hash receipt status: no commit created
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should re-check cleanup slice 7 now that the active receipt surface is complete.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-check cleanup slice 7 after the missing receipts and research-state fixes were added.
+- Outcome: accepted with no blocking findings. Temporary ASCII-rain proof scaffolding is no longer present in `*.zig` files, and accepted slice-6 product behavior remains intact.
+- Handoff: orchestrator may seed the next bottleneck proof slice on the cleaned code.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the next bottleneck proof slice after accepted cleanup.
+- Outcome: proof-only slice 8 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-08`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep proof local to `direct_normal.zig` only
+  - add temporary narrow timing logs sufficient to re-prove the current dominant direct-normal subphase on cleaned code
+  - measure at least:
+    - `source_candidate_ms`
+    - `append_renderable_ms`
+    - `append_visible_ms`
+    - `append_scene_rects_ms`
+    - `finish_scene_ms`
+  - record counters for:
+    - `visible_cells_scanned`
+    - `included_normal_cells`
+    - `direct_success_calls`
+    - `fallback_reject_calls`
+    - `append_renderable_calls`
+    - `raster_req_count_total`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - identify the current dominant direct-normal subphase on cleaned code
+- Exact non-goals:
+  - no optimization yet
+  - no cleanup beyond this temporary proof slice
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if proving the current direct-normal bottleneck requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the cleaned-code proof fails to isolate one dominant current subphase
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - current dominant direct-normal subphase verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-08` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-08`: hello.
+- Intent: re-prove the current direct-normal bottleneck on cleaned code with local instrumentation in `howl-render/src/text/direct_normal.zig` only.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-121754-ascii/summary.json` and appended proof lines `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:2599-2672` show `append_visible` remains the dominant direct-normal subphase on cleaned code, and `source_candidate` remains the largest named inner cost with `fallback_reject_calls=0`.
+- Handoff: reviewer/research should interpret the cleaned-code proof and decide whether the next local move stays on `source_candidate(...)` or needs different pressure.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the cleaned-code re-proof after accepted slice 6 and accepted cleanup, then decide whether `source_candidate(...)` remains the right next local target or whether accountability should change.
+- Outcome: the cleaned-code re-proof confirms `source_candidate(...)` remains the dominant named `append_visible(...)` subphase on the direct-normal fast path, so benchmark variance does not change the accountable next move; however, `source_candidate(...)` still mixes support checks, renderable construction, and damage include work, so the active research artifact now requires one more proof-only split inside `howl-render/src/text/direct_normal.zig` before another optimization is honest.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new cleaned-code interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no new optimization is authorized yet.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether the cleaned-code `source_candidate(...)` interpretation is exact enough and whether one more proof-only slice is still required.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted cleaned-code proof-only slice inside `source_candidate(...)`.
+- Outcome: proof-only slice 9 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-09`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep the proof local to `direct_normal.zig` only
+  - add temporary narrow timing logs on the supported publication hot path inside `appendVisible(...)` that split current `source_candidate_ns` into:
+    - `publication_cell_supported_ns`
+    - `publication_renderable_text_ns`
+    - `publication_damage_include_ns`
+  - keep the existing counters for:
+    - `visible_cells_scanned`
+    - `included_normal_cells`
+    - `direct_success_calls`
+    - `fallback_reject_calls`
+    - `append_renderable_calls`
+    - `raster_req_count_total`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - the proof output must identify which of these dominates current cleaned-code `source_candidate` work on ASCII rain:
+    - `publication_cell_supported`
+    - `publication_renderable_text`
+    - `publication_damage_include`
+- Exact non-goals:
+  - no optimization yet
+  - no instrumentation cleanup yet
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if splitting cleaned-code `source_candidate` requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the new proof fails to isolate one dominant `source_candidate` subphase
+  - stop if the counters cease to describe the same workload path, for example if `fallback_reject_calls` stops being zero on the cleaned-code run
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - dominant cleaned-code `source_candidate` subphase verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-09` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-09`: hello.
+- Intent: keep proof local to `howl-render/src/text/direct_normal.zig`, split cleaned-code `source_candidate(...)` into the three publication hot-path subphases, and re-run the required tests and ASCII rain benchmark.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-123522-ascii/summary.json` and appended proof lines `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:2673-2745` isolate `publication_renderable_text` as the dominant cleaned-code `source_candidate` subphase while `fallback_reject_calls` remained zero on the same direct-normal workload path.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify the temporary proof split in `howl-render/src/text/direct_normal.zig`, the new benchmark artifact, and the appended proof section before any optimization slice is seeded.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the accepted proof-only slice 9 receipt and decide whether `publication_renderable_text(...)` is now optimization-ready.
+- Outcome: the new proof isolates `publication_renderable_text(...)` as the dominant cleaned-code inner cost inside `source_candidate(...)`, so the active research artifact now seeds one exact local optimization slice in `howl-render/src/text/direct_normal.zig` targeting that constructor path while preserving supported output bytes and unsupported fallback behavior.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-9 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; this next move remains local and proof-backed.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: interpret the cleaned post-slice-10 re-proof and decide whether `append_renderable(...)` is now the right next local target.
+- Outcome: the new proof shows `append_renderable(...)` is now the largest named cleaned-code inner cost on the same direct-normal workload path; the active research artifact now requires one more proof-only split inside `howl-render/src/text/direct_normal.zig` before another optimization is honest.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-12 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: interpret proof-only slice 13 and decide whether `lookup_glyph(...)` is now optimization-ready or whether `append_renderable(...)` still needs one more proof split.
+- Outcome: the new proof shows `lookup_glyph(...)` is only the largest named measured `append_renderable(...)` subphase and most of the owner cost remains unattributed, so the active research artifact now requires one more proof-only split inside `howl-render/src/text/direct_normal.zig` before another optimization is honest.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the post-proof-slice-13 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether `append_renderable(...)` still needs one more proof-only split and whether the proposed next slice is exact enough.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted proof-only slice that fully accounts for cleaned-code `append_renderable(...)` time.
+- Outcome: proof-only slice 14 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-14`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep the proof local to `direct_normal.zig` only
+  - extend the current `append_renderable(...)` proof split to measure the missing unattributed work explicitly:
+    - `renderable_append_ns`
+    - `raster_enqueue_ns`
+  - keep existing measured fields:
+    - `resolve_face_ns`
+    - `lookup_glyph_ns`
+    - `atlas_reserve_ns`
+    - `sprite_append_ns`
+  - keep existing counters:
+    - `append_renderable_calls`
+    - `raster_req_count_total`
+    - `visible_cells_scanned`
+    - `included_normal_cells`
+    - `direct_success_calls`
+    - `fallback_reject_calls`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - the proof output must identify which of these dominates current cleaned-code `append_renderable` work on ASCII rain:
+    - `renderable_append`
+    - `resolve_face`
+    - `lookup_glyph`
+    - `atlas_reserve`
+    - `raster_enqueue`
+    - `sprite_append`
+- Exact non-goals:
+  - no optimization yet
+  - no instrumentation cleanup yet
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if splitting cleaned-code `append_renderable` requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the new proof fails to isolate one dominant `append_renderable` subphase
+  - stop if the counters cease to describe the same workload path, for example if `fallback_reject_calls` stops being zero on the cleaned-code run
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - dominant cleaned-code `append_renderable` subphase verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-14` may now implement only this proof-only slice.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether `append_renderable(...)` is now the exact next local target and whether one more proof-only slice is required.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted proof-only slice inside cleaned-code `append_renderable(...)`.
+- Outcome: proof-only slice 13 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-13`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep the proof local to `direct_normal.zig` only
+  - add temporary narrow timing logs that split `append_renderable_ns` into:
+    - `resolve_face_ns`
+    - `lookup_glyph_ns`
+    - `atlas_reserve_ns`
+    - `sprite_append_ns`
+  - keep the existing counters for:
+    - `append_renderable_calls`
+    - `raster_req_count_total`
+    - `visible_cells_scanned`
+    - `included_normal_cells`
+    - `direct_success_calls`
+    - `fallback_reject_calls`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - the proof output must identify which of these dominates current cleaned-code `append_renderable` work on ASCII rain:
+    - `resolve_face`
+    - `lookup_glyph`
+    - `atlas_reserve`
+    - `sprite_append`
+- Exact non-goals:
+  - no optimization yet
+  - no instrumentation cleanup yet
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if splitting cleaned-code `append_renderable` requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the new proof fails to isolate one dominant `append_renderable` subphase
+  - stop if the counters cease to describe the same workload path, for example if `fallback_reject_calls` stops being zero on the cleaned-code run
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - dominant cleaned-code `append_renderable` subphase verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-13` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-13`: hello.
+- Intent: keep the proof local to `howl-render/src/text/direct_normal.zig`, split cleaned-code `append_renderable(...)` into the four required subphases, and rerun the required tests and ASCII rain benchmark.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-132443-ascii/summary.json` and appended proof lines `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:2854-2856` isolate `lookup_glyph` as the dominant cleaned-code `append_renderable(...)` subphase while `fallback_reject_calls` remained zero on the same workload path.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the temporary `direct_normal.zig` proof split, the fresh benchmark artifact, and the appended proof receipt before any optimization slice is seeded.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether `publication_renderable_text(...)` is now optimization-ready and whether the proposed local slice is exact enough.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the local optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the next local optimization slice at `publication_renderable_text(...)`.
+- Outcome: optimization slice 10 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-fix-10`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep all changes inside `direct_normal.zig`
+  - optimize the supported publication hot path by specializing `publicationRenderableText(...)`
+  - reduce repeated per-cell construction/conversion work there
+  - keep supported output bytes and semantics identical
+  - preserve unsupported-cell fallback behavior exactly
+  - do not change `appendRenderable(...)`, glyph lookup, atlas reserve, damage filtering, or non-publication paths
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+  - keep existing direct-normal owner tests green:
+    - `howl-render/src/text/direct_normal.zig`: `test "direct normal publication zero codepoint is a fast candidate"`
+    - `howl-render/src/text/direct_normal.zig`: `test "direct normal publication keeps unsupported non-printables on generic fallback"`
+  - keep existing publication direct-path tests green:
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication ascii stays on direct normal path"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication styled indexed ascii stays on direct normal path"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication non inverse indexed ascii stays on direct normal path"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication zero codepoint stays on direct normal path without sprite draw"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication unsupported space and rgb keep fallback scratch clean"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication tab stays on generic fallback without partial direct scratch"`
+    - `howl-render/src/text/surface_preparer.zig`: `test "text preparation publication other control stays on generic fallback without partial direct scratch"`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - rerun the current direct-normal proof receipts sufficiently to compare before/after at the same owner path
+  - required measured outputs:
+    - `publication_renderable_text_ms`
+    - `source_candidate_ms`
+    - `append_visible_ms`
+    - total `prepare_ms`
+    - Howl FPS / p50 / p95
+- Exact non-goals:
+  - no changes outside `direct_normal.zig`
+  - no support-check optimization yet
+  - no damage-include optimization yet
+  - no `appendRenderable(...)` / glyph / atlas optimization yet
+  - no ABI changes
+  - no instrumentation cleanup yet
+- Exact stop conditions:
+  - stop if preserving supported publication output bytes and fallback semantics requires edits outside `direct_normal.zig`
+  - stop if benchmark and proof both fail to improve the proved `publication_renderable_text` / `source_candidate` hot path
+- Required handoff fields:
+  - exact changed files and line references
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - verdict on `publication_renderable_text_ms`, `source_candidate_ms`, `append_visible_ms`, and total `prepare_ms`
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-fix-10` may now implement only this optimization slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-fix-10`: hello.
+- Intent: specialize `publicationRenderableText(...)` inside `howl-render/src/text/direct_normal.zig` only, preserve supported output bytes and unsupported fallback behavior, and rerun the required proof and benchmark receipts.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-125114-ascii/summary.json` and appended proof line `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:2774` show large improvement in `publication_renderable_text_ms`, `source_candidate_ms`, and `append_visible_ms`; no unsupported fallback behavior was changed.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the direct-normal-only diff plus benchmark/proof movement; the current direct-normal proof rerun did not include a fresh matching surface-level `prepare_ms` receipt.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: record the exact slice-10 execution receipts before review.
+- Outcome:
+  - Exact changed files and line references:
+    - `howl-render/src/text/direct_normal.zig:472-563`
+  - Verification command list and results:
+    - `zig build test:abi` in `howl-render`: passed
+    - `zig build test:unit` in `howl-render`: passed
+    - `python3 utils/tools/rain-bench/benchmark_terminals.py --build`: completed
+  - Benchmark command: `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - Benchmark artifact path: `utils/tools/rain-bench/artifacts/stress/20260614-125114-ascii/summary.json`
+  - Proof log artifact path: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log`
+  - Exact proof location lines:
+    - before direct-normal proof: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:2745`
+    - after direct-normal proof: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:2774`
+    - before surface `prepare_ms` proof: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log:74`
+    - after surface `prepare_ms` proof: unavailable from the current rerun log append
+  - Measured before:
+    - benchmark `utils/tools/rain-bench/artifacts/stress/20260614-123522-ascii/summary.json`
+    - Howl `13.62 fps`, `p50 69425 us`, `p95 123925 us`
+    - proof line `2745`: `publication_renderable_text_ms=1663.237`, `source_candidate_ms=4994.438`, `append_visible_ms=7156.743`
+    - earlier surface proof line `74`: `prepare_ms=2054.274`
+  - Measured after:
+    - benchmark `utils/tools/rain-bench/artifacts/stress/20260614-125114-ascii/summary.json`
+    - Howl `177.72 fps`, `p50 3856 us`, `p95 7697 us`
+    - proof line `2774`: `publication_renderable_text_ms=384.292`, `source_candidate_ms=1561.866`, `append_visible_ms=2323.517`
+    - surface `prepare_ms`: unavailable from the current rerun proof append
+  - Verdict on measured outputs:
+    - `publication_renderable_text_ms`: improved materially
+    - `source_candidate_ms`: improved materially
+    - `append_visible_ms`: improved materially
+    - total `prepare_ms`: no honest after-verdict available from the current allowed-file proof rerun
+  - Blockers or deviations:
+    - no code blocker
+    - slice allowlist and loop-note requirement conflicted; orchestrator recorded the required loop receipt directly
+    - current rerun did not yield a fresh matching surface-level `prepare_ms` receipt because the slice stayed inside `direct_normal.zig`
+  - Commit-hash receipt status: no commit created
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should judge slice 10 with the complete active receipts above.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review optimization slice 10 for correctness and measured effect.
+- Outcome: accepted with no blocking findings. The direct-normal `publicationRenderableText(...)` specialization materially improved the proved hot owner path and produced a strong benchmark win on the available rerun.
+- Handoff: orchestrator may seed the mandatory cleanup slice before any further proof or optimization work.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the mandatory cleanup slice after accepted optimization slice 10.
+- Outcome: cleanup slice 11 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-cleanup-11`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - remove the temporary proof instrumentation added for proof-only slices 8 and 9 from `direct_normal.zig`
+  - preserve accepted slice-10 product behavior
+  - do not remove real product assertions, bounds, or owner logic
+  - do not perform any new optimization in this cleanup slice
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact non-goals:
+  - no new proof yet
+  - no new optimization yet
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if removing proof scaffolding would also remove accepted slice-10 product logic
+  - stop if any remaining proof helper cannot be removed without immediately needing the next proof slice to land first
+- Required handoff fields:
+  - exact changed files and line references
+  - concise cleanup summary
+  - verification command list and results
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-cleanup-11` may now implement only this cleanup slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-cleanup-11`: hello.
+- Intent: remove only the temporary slice-8/9 proof instrumentation from `howl-render/src/text/direct_normal.zig` while preserving the accepted slice-10 product behavior.
+- Outcome: the temporary direct-normal proof timers, counters, and log-writing scaffolding were removed; the slice-10 `publicationRenderableText(...)` product path remains intact.
+- Handoff: run the required `howl-render` ABI and unit tests, then hand the cleanup diff and results back to reviewer `review-2026-06-14-ascii-rain-performance-01`.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: record the exact cleanup-slice-11 execution receipts before review.
+- Outcome:
+  - Exact changed files and line references:
+    - `howl-render/src/text/direct_normal.zig:1`
+    - `howl-render/src/text/direct_normal.zig:101-133`
+    - `howl-render/src/text/direct_normal.zig:177-268`
+  - Concise cleanup summary:
+    - removed the temporary slice-8/9 direct-normal proof imports, helpers, state, and per-call instrumentation while preserving the accepted slice-10 publication-renderable specialization
+  - Verification command list and results:
+    - `zig fmt src/text/direct_normal.zig` in `howl-render`: passed
+    - `zig build test:abi` in `howl-render`: passed
+    - `zig build test:unit` in `howl-render`: passed
+  - Blockers or deviations:
+    - no blockers
+  - Commit-hash receipt status: no commit created
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify cleanup slice 11 with the complete active receipts above.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-check cleanup slice 11 after the receipt and research-state fixes.
+- Outcome: accepted with no blocking findings. Temporary direct-normal proof scaffolding is gone and accepted slice-10 behavior remains intact.
+- Handoff: orchestrator may seed the next cleaned-code bottleneck proof.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the next bottleneck proof slice after accepted optimization slice 10 and accepted cleanup slice 11.
+- Outcome: proof-only slice 12 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-12`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep proof local to `direct_normal.zig` only
+  - add temporary narrow timing logs sufficient to re-prove the current dominant direct-normal inner costs on cleaned post-slice-10 code
+  - measure at least:
+    - `publication_renderable_text_ms`
+    - `publication_cell_supported_ms`
+    - `publication_damage_include_ms`
+    - `source_candidate_ms`
+    - `append_renderable_ms`
+    - `append_visible_ms`
+    - `append_scene_rects_ms`
+    - `finish_scene_ms`
+  - record counters for:
+    - `visible_cells_scanned`
+    - `included_normal_cells`
+    - `direct_success_calls`
+    - `fallback_reject_calls`
+    - `append_renderable_calls`
+    - `raster_req_count_total`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - identify the current dominant cleaned-code direct-normal inner cost after slice 10
+- Exact non-goals:
+  - no optimization yet
+  - no cleanup beyond this temporary proof slice
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if proving the current cleaned-code bottleneck requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the proof fails to isolate one dominant current inner cost
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - current dominant cleaned-code inner-cost verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-12` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-12`: hello.
+- Intent: re-add only narrow temporary direct-normal timing proof on cleaned post-slice-10 code, rerun the exact tests and benchmark, and identify the current dominant inner cost without optimizing.
+- Outcome: local proof probes were added in `howl-render/src/text/direct_normal.zig`, the required render tests and ASCII rain benchmark/proof pass were rerun, and one fresh proof section was appended for reviewer/researcher inspection.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the fresh direct-normal proof receipt and decide the next dominant inner-cost interpretation; no optimization was implemented.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the cleaned-code re-proof after accepted slice 10 and accepted cleanup, then decide whether `append_renderable(...)` or another local owner is now the right next target.
+- Outcome: the cleaned-code proof shifts the accountable next move from aggregate `source_candidate(...)` to `append_renderable(...)`, since the supported publication inner costs are now smaller than the append/renderable owner; however, `append_renderable(...)` still mixes face resolution, glyph lookup, atlas reserve, and sprite append work, so the active research artifact now requires one more proof-only split inside `howl-render/src/text/direct_normal.zig` before another optimization is honest.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-slice-10 cleaned re-proof interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no new optimization is authorized yet.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: interpret the accepted slice-13 proof and decide whether `lookup_glyph` is optimization-ready or whether accountability still requires one more local proof split inside `append_renderable(...)`.
+- Outcome: the new proof isolates `lookup_glyph` as the largest named measured `append_renderable(...)` subphase, but most of `append_renderable_ms` remains unattributed, so the active research artifact now requires one more proof-only split for local append and raster-enqueue work before any `lookup_glyph` optimization is honest.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-13 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no new optimization is authorized yet.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-14`: hello.
+- Intent: extend the local `append_renderable(...)` proof split in `direct_normal.zig`, rerun the exact render tests and ASCII rain benchmark, and isolate the dominant cleaned-code subphase without optimizing.
+- Outcome: added only local `renderable_append_ns` and `raster_enqueue_ns` timing to `direct_normal.zig`, reran `zig build test:abi`, `zig build test:unit`, and the benchmark, and appended a fresh proof section showing `renderable_append` dominates the current cleaned-code `append_renderable(...)` work while `fallback_reject_calls` stayed zero.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` for the fresh slice-14 proof receipt; no optimization was implemented.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-fix-17`: hello.
+- Intent: remove the hot retained renderable publication append on the direct-normal fast path without changing backgrounds, clears, decorations, cursor draws, sprite draws, or fallback behavior.
+- Outcome: direct-normal now derives background, clear-color, and decoration rect facts inline per accepted cell, finalizes only clears and cursor after the scan, and the focused `renderable_append` proof plus required `howl-render` tests completed with `fallback_reject_calls=0`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the slice-17 diff, `utils/tools/rain-bench/artifacts/stress/20260614-145245-ascii/summary.json`, and the fresh focused proof section in the benchmark output receipt.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether the slice-14 proof is exact enough and whether one more proof-only split is still required.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted proof-only slice that fully attributes the remaining cleaned-code `append_renderable(...)` time.
+- Outcome: proof-only slice 15 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-15`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep the proof local to `direct_normal.zig` only
+  - extend the current `appendRenderable(...)` proof to account for the remaining unattributed work explicitly by adding:
+    - `blank_fast_return_ns`
+    - `key_derivation_ns`
+    - `lane_report_update_ns`
+  - keep existing measured fields:
+    - `renderable_append_ns`
+    - `resolve_face_ns`
+    - `lookup_glyph_ns`
+    - `atlas_reserve_ns`
+    - `raster_enqueue_ns`
+    - `sprite_append_ns`
+  - keep existing counters:
+    - `append_renderable_calls`
+    - `raster_req_count_total`
+    - `visible_cells_scanned`
+    - `included_normal_cells`
+    - `direct_success_calls`
+    - `fallback_reject_calls`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - append one fresh proof section to `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-01-surface.log` or write one exact new proof log path and record it
+  - the proof output must identify which of these dominates current cleaned-code `append_renderable` work on ASCII rain:
+    - `renderable_append`
+    - `blank_fast_return`
+    - `resolve_face`
+    - `lookup_glyph`
+    - `key_derivation`
+    - `atlas_reserve`
+    - `raster_enqueue`
+    - `sprite_append`
+    - `lane_report_update`
+- Exact non-goals:
+  - no optimization yet
+  - no instrumentation cleanup yet
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if splitting cleaned-code `append_renderable` requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the new proof still leaves a large unattributed remainder inside `append_renderable_ms`
+  - stop if the new proof fails to isolate one dominant cleaned-code `append_renderable` subphase
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - dominant cleaned-code `append_renderable` subphase verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-15` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-15`: hello.
+- Intent: extend the local `appendRenderable(...)` proof split in `direct_normal.zig`, rerun the required render tests and ASCII rain benchmark, and fully attribute the remaining cleaned-code `append_renderable_ms`.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; benchmark receipt `utils/tools/rain-bench/artifacts/stress/20260614-140305-ascii/summary.json` and fresh proof receipt `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-15.log:63` show `renderable_append` is still the largest named measured subphase, `blank_fast_return` is close behind, and a large unattributed remainder still remains inside `append_renderable_ms`.
+- Handoff: researcher/reviewer should treat slice 15 as a stop-condition hit and decide whether the next move remains a local proof slice or whether this is now a real structural wall.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether the slice-15 stop-condition hit is real and whether the next move should be a local proof-method change.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the proof-method-change slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the accepted proof-method-change slice for cleaned-code `appendRenderable(...)`.
+- Outcome: proof-only slice 16 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-16`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep proof local to `direct_normal.zig` only
+  - replace the current simultaneous inner-subphase proof with one exact local proof mode selector inside `appendRenderable(...)`
+  - the selector must support exactly these modes:
+    - `renderable_append`
+    - `blank_fast_return`
+    - `resolve_face`
+    - `lookup_glyph`
+    - `key_derivation`
+    - `atlas_reserve`
+    - `raster_enqueue`
+    - `sprite_append`
+    - `lane_report_update`
+  - in any single proof run, time only one selected subphase plus the outer `append_renderable_ns` and keep existing counters
+  - use separate reruns to cover the different modes
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build` once per proof mode actually used
+  - record one exact proof artifact path per mode, or one exact shared proof log with clearly separated mode sections
+  - the proof package must end with one comparison table or section that identifies the dominant cleaned-code `appendRenderable(...)` subphase across those one-at-a-time runs
+- Exact non-goals:
+  - no optimization yet
+  - no instrumentation cleanup yet
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if one-at-a-time local proof still cannot reduce the unattributed `append_renderable_ms` remainder enough to name one dominant subphase
+  - stop if proving the remaining cost requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the workload path changes, for example `fallback_reject_calls` becomes non-zero during the proof runs
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command(s)
+  - benchmark artifact path(s)
+  - proof artifact path(s)
+  - exact proof location lines
+  - measured before
+  - measured after
+  - dominant cleaned-code `appendRenderable(...)` subphase verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-16` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-16`: hello.
+- Intent: replace stacked inner timers with a one-at-a-time proof mode selector inside `appendRenderable(...)`, rerun the required render tests and ASCII rain benchmark per mode, and identify the dominant cleaned-code subphase without changing behavior.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; nine mode-specific benchmark/proof runs were completed and show `renderable_append` is the dominant named cleaned-code `appendRenderable(...)` subphase when normalized by `append_renderable_calls`, while `fallback_reject_calls` stayed zero in every run.
+- Handoff: researcher/reviewer should use the mode-specific proof artifacts under `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-16-*.log` and the matching benchmark artifacts to decide whether `renderable_append` is now optimization-ready.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the slice-15 stop-condition hit honestly and decide whether the remaining `append_renderable_ms` remainder is still locally sliceable or now a structural blocker.
+- Outcome: the stop condition was hit honestly, but the remainder still lives inside one current local owner in `direct_normal.zig`; this is a proof-method blocker, not yet a product structural wall, so the active research artifact now requires one more local proof-only slice using one-at-a-time inner-subphase measurement instead of another stacked timing layer.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-15 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no new optimization is authorized yet.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-16`: hello.
+- Intent: replace the stacked local `appendRenderable(...)` subphase timers with one selected proof mode at a time, then rerun the required ASCII rain proof once per mode to name the dominant cleaned-code subphase without optimizing anything.
+- Outcome: `direct_normal.zig` now selects exactly one timed `appendRenderable(...)` inner subphase per run via `HOWL_APPEND_RENDERABLE_PROOF_MODE`; render tests passed; all nine required proof modes were rerun with `fallback_reject_calls=0`, and the one-at-a-time receipts name `renderable_append` as the largest measured cleaned-code subphase after normalizing by `append_renderable_calls`, while the outer remainder still stays larger than any single named inner timer.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the per-mode proof logs under `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-16-*.log` and the matching benchmark summaries under `utils/tools/rain-bench/artifacts/stress/20260614-142311-ascii` through `20260614-142800-ascii`.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the slice-16 one-at-a-time proof runs and decide whether `renderable_append` is now optimization-ready or whether another proof split is still required.
+- Outcome: the active research artifact now records that slice 16 removed the slice-15 accountability gap, `renderable_append` is the largest normalized named `appendRenderable(...)` subphase, and the next honest move is an optimization slice targeting retained `scratch.renderable` publication and its downstream direct-scene consumers instead of another proof split.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-16 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; a new optimization slice is now the recommended next step.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether `renderable_append` is now optimization-ready and whether the broader local slice is exact enough.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the local optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the broader local optimization slice at the retained renderable append seam.
+- Outcome: optimization slice 17 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-fix-17`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/direct_scene.zig`
+  - `howl-render/src/text/scene_rects.zig`
+- Exact required shape:
+  - remove or materially reduce the hot per-cell retained `scratch.renderable.appendAssumeCapacity(renderable)` cost on the direct-normal fast path
+  - do this by moving background/clear/decoration rect derivation closer to the direct-normal owner so the hot path no longer retains a second full `RenderableCell` publication list solely for later batch rect synthesis
+  - preserve current output semantics for backgrounds, clears, decorations, cursor draws, and sprite draws
+  - preserve damage semantics and row/column span behavior currently enforced by `scene_rects.zig`
+  - keep glyph lookup, raster enqueue, and atlas behavior unchanged unless strictly required by the retained-list removal
+  - keep `fallback_reject_calls == 0` on the ASCII rain proof workload
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - rerun one focused proof pass with `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append`
+  - record one exact fresh proof log path or append one clearly separated fresh proof section
+  - the proof package must report:
+    - `append_renderable_ms`
+    - `renderable_append_ms`
+    - `append_scene_rects_ms`
+    - total `direct_normal_prepare_ms`
+    - `append_renderable_calls`
+    - `fallback_reject_calls`
+  - acceptance requires a real drop in normalized `renderable_append` cost and no proof-path regression to a new unmeasured owner
+- Exact non-goals:
+  - no ABI changes
+  - no benchmark harness changes
+  - no host/runtime changes
+  - no glyph-lookup optimization
+  - no atlas/raster optimization
+  - no fallback/publication policy changes
+- Exact stop conditions:
+  - stop if removing the retained renderable publication cost honestly requires edits outside `howl-render/src/text/direct_normal.zig`, `howl-render/src/text/direct_scene.zig`, and `howl-render/src/text/scene_rects.zig`
+  - stop if preserving current background/clear/decoration semantics requires reintroducing an equivalent full retained-cell owner elsewhere in the same path
+  - stop if the optimization changes the proved workload path, for example `fallback_reject_calls` becomes non-zero
+  - stop if the proof after the optimization merely shifts the same retained publication cost under a new name without reducing normalized per-call work
+- Required handoff fields:
+  - exact changed files and line references
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - verdict on `append_renderable_ms`, `renderable_append_ms`, `append_scene_rects_ms`, and total `direct_normal_prepare_ms`
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-fix-17` may now implement only this optimization slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-fix-17`: hello.
+- Intent: remove or materially reduce the retained per-cell `RenderableCell` publication cost on the direct-normal fast path while preserving current background/clear/decoration/cursor/sprite semantics and fallback behavior.
+- Outcome: retained per-cell renderable publication is removed from the hot path; background merge, clear-color capture, and decoration derivation now happen inline during `appendRenderable(...)`; `zig build test:abi`, `zig build test:unit`, and the focused proof+benchmark rerun completed.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the broader local diff plus the mixed proof result, especially the drop in total `direct_normal_prepare_ms` and `append_scene_rects_ms` versus the regression in normalized `renderable_append` cost.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: record the exact slice-17 execution receipts before review.
+- Outcome:
+  - Exact changed files and line references:
+    - `howl-render/src/text/direct_normal.zig:51-101`
+    - `howl-render/src/text/direct_normal.zig:123-153`
+    - `howl-render/src/text/direct_normal.zig:314-322`
+    - `howl-render/src/text/direct_normal.zig:341-358`
+    - `howl-render/src/text/direct_normal.zig:369-405`
+    - `howl-render/src/text/direct_normal.zig:677-793`
+    - `howl-render/src/text/direct_scene.zig:37-76`
+    - `howl-render/src/text/scene_rects.zig:164-204`
+    - `howl-render/src/text/scene_rects.zig:248-283`
+    - `howl-render/src/text/scene_rects.zig:345-356`
+  - Verification command list and results:
+    - `zig fmt src/text/direct_normal.zig src/text/direct_scene.zig src/text/scene_rects.zig`: passed
+    - `zig build test:abi` in `howl-render`: passed
+    - `zig build test:unit` in `howl-render`: passed
+  - Benchmark command: `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - Benchmark artifact path: `utils/tools/rain-bench/artifacts/stress/20260614-145245-ascii/summary.json`
+  - Proof log artifact path: `/home/home/.local/share/opencode/tool-output/tool_ec6313575001MnisJb35u39Ym5`
+  - Exact proof location lines:
+    - before: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-16-renderable_append.log:65`
+    - after: `/home/home/.local/share/opencode/tool-output/tool_ec6313575001MnisJb35u39Ym5:66`
+  - Measured before:
+    - benchmark `utils/tools/rain-bench/artifacts/stress/20260614-142311-ascii/summary.json`
+    - Howl `19.97 fps`, `p50 25881 us`, `p95 158819 us`
+    - proof: `append_renderable_ms=2223.079`, `renderable_append_ms=426.781`, `append_scene_rects_ms=172.766`, `direct_normal_prepare_ms=5948.548`, `append_renderable_calls=20225637`, `fallback_reject_calls=0`
+  - Measured after:
+    - benchmark `utils/tools/rain-bench/artifacts/stress/20260614-145245-ascii/summary.json`
+    - Howl `109.64 fps`, `p50 8383 us`, `p95 13572 us`
+    - proof: `append_renderable_ms=1460.719`, `renderable_append_ms=338.106`, `append_scene_rects_ms=0.397`, `direct_normal_prepare_ms=3613.184`, `append_renderable_calls=13050266`, `fallback_reject_calls=0`
+  - Verdict on requested metrics:
+    - `append_renderable_ms`: down materially
+    - `renderable_append_ms`: down in absolute time, but normalized cost regressed
+    - `append_scene_rects_ms`: down sharply
+    - `direct_normal_prepare_ms`: down sharply
+    - normalized `renderable_append`: before `21.10 ns/call`, after `25.91 ns/call`
+  - Blockers or deviations:
+    - slice stop condition hit after proof because normalized `renderable_append` cost increased instead of dropping
+    - `fallback_reject_calls` stayed `0`
+    - no ABI, benchmark harness, host/runtime, glyph lookup, or atlas/raster changes were made
+  - Commit-hash receipt status: no commit created
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should judge whether the accepted total-path win can still stand given the failed focused acceptance metric.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the slice-17 mixed result honestly and decide whether the retained-list removal was wrong, whether the seam needs a corrective follow-up, or whether the next move changes path.
+- Outcome: the active research artifact now records slice 17 as directionally right with a real total-path win, but also records that the focused normalized `renderable_append` target became non-comparable after inline background/clear/decoration work moved under the timed owner, so the next accountable move is one corrective proof-only slice inside `direct_normal.zig`, not another optimization yet.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-slice-17 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no new coder optimization slice is authorized yet.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether the post-slice-17 interpretation is exact enough and whether one corrective proof-only slice is the right next move.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the corrective proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the corrective proof-only slice that re-accounts the new mixed `appendRenderable(...)` owner after slice 17.
+- Outcome: proof-only slice 18 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-18`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep proof local to `direct_normal.zig` only
+  - keep `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append` as the outer focused mode
+  - add temporary narrow inner proof accounting for the new moved work inside `appendRenderable(...)` with exactly these subphases:
+    - `inline_background_ns`
+    - `inline_clear_note_ns`
+    - `inline_decoration_ns`
+  - keep the existing post-move inner phases:
+    - `blank_fast_return_ns`
+    - `resolve_face_ns`
+    - `lookup_glyph_ns`
+    - `key_derivation_ns`
+    - `atlas_reserve_ns`
+    - `raster_enqueue_ns`
+    - `sprite_append_ns`
+    - `lane_report_update_ns`
+  - do not change behavior
+  - do not reintroduce any retained full-cell list
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - record one exact fresh proof log path or one clearly separated fresh section
+  - the proof package must end with one verdict that names which current post-slice-17 `appendRenderable(...)` subphase now dominates
+  - the proof package must report:
+    - `append_renderable_ms`
+    - `append_scene_rects_ms`
+    - `direct_normal_prepare_ms`
+    - `append_renderable_calls`
+    - `fallback_reject_calls`
+    - the new inline subphase timers listed above
+- Exact non-goals:
+  - no optimization yet
+  - no ABI changes
+  - no benchmark harness changes
+  - no host/runtime changes
+  - no glyph/atlas/raster changes
+  - no reintroduction of retained `RenderableCell` publication
+- Exact stop conditions:
+  - stop if re-accounting the new mixed owner requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the proof cannot isolate whether moved inline rect work or remaining sprite-path work dominates the new `appendRenderable(...)` owner
+  - stop if `fallback_reject_calls` becomes non-zero
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - verdict on which post-slice-17 `appendRenderable(...)` subphase dominates
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-18` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-18`: hello.
+- Intent: add only temporary local proof accounting inside `direct_normal.zig`, rerun the required tests and ASCII rain proof benchmark, and identify which mixed post-slice-17 `appendRenderable(...)` subphase now dominates.
+- Outcome: `renderable_append` proof mode now reports the moved inline rect timers plus the existing remaining sprite-path timers in one fresh proof artifact; tests passed; the proof shows moved inline rect work dominates overall and `inline_decoration_ns` is the single largest named subphase with `fallback_reject_calls=0` preserved.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-18-renderable_append-v2.log` and the fresh benchmark summary before any new optimization slice is considered.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the slice-18 proof and decide whether moved inline rect work is now optimization-ready or whether one more proof split is still required.
+- Outcome: the active research artifact now records that moved inline rect work is the right local path and `inline_decoration` is the largest named current subphase, but that `inline_decoration` is still a mixed helper owner, so the next honest move is one more proof-only split inside the decoration seam rather than an optimization slice.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-18 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no new coder optimization slice is authorized yet.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether the moved inline-decoration work still needs one more proof split and whether the proposed next slice is exact enough.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the next proof-only slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the next proof-only slice into the moved inline decoration seam.
+- Outcome: proof-only slice 19 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-19`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/scene_rects.zig`
+- Exact required shape:
+  - keep proof local to `direct_normal.zig` and `scene_rects.zig` only
+  - keep `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append`
+  - keep current post-slice-17 inline timers
+  - add narrow timing for:
+    - `decoration_classify_ns`
+    - `decoration_geometry_ns`
+    - `decoration_underline_ns`
+    - `decoration_strikethrough_ns`
+  - split underline one level further only if still mixed and only inside `scene_rects.zig`
+  - do not change behavior
+  - do not reintroduce retained full-cell publication
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - record one exact fresh proof log path or one clearly separated fresh section
+  - the proof package must end with one verdict naming which moved inline-decoration subphase dominates the post-slice-17 owner
+  - the proof package must report:
+    - `append_renderable_ms`
+    - `inline_background_ns`
+    - `inline_clear_note_ns`
+    - `inline_decoration_ns`
+    - `decoration_classify_ns`
+    - `decoration_geometry_ns`
+    - `decoration_underline_ns`
+    - `decoration_strikethrough_ns`
+    - `fallback_reject_calls`
+- Exact non-goals:
+  - no optimization yet
+  - no ABI changes
+  - no benchmark harness changes
+  - no host/runtime changes
+  - no glyph/atlas/raster changes
+  - no reintroduction of retained `RenderableCell` publication
+- Exact stop conditions:
+  - stop if decoration re-accounting requires edits outside `howl-render/src/text/direct_normal.zig` and `howl-render/src/text/scene_rects.zig`
+  - stop if the proof still fails to isolate one dominant moved inline-decoration subphase
+  - stop if `fallback_reject_calls` becomes non-zero
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - verdict on which moved inline-decoration subphase dominates
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-19` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-19`: hello.
+- Intent: add only temporary local timing inside the moved inline-decoration seam, rerun the required render proofs and focused ASCII rain benchmark, and return one verdict naming the dominant decoration subphase without optimizing anything.
+- Outcome: decoration timing is now split into classify, geometry, underline, and strikethrough inside `scene_rects.zig`, with `direct_normal.zig` logging those counters alongside the existing post-slice-17 inline timers.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the fresh slice-19 proof artifact and benchmark receipt after verification completes; no optimization was implemented.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the slice-19 proof and decide whether `decoration_geometry` is now optimization-ready or whether one more proof split is still required.
+- Outcome: the active research artifact now records that `decoration_geometry` is the dominant named moved inline-decoration subphase and is optimization-ready, so the next honest move is a local optimization slice on geometry recomputation rather than another proof-only split.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-proof-slice-19 interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; a local optimization slice is now the recommended next step.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review whether `decoration_geometry` is now optimization-ready and whether the proposed local slice is exact enough.
+- Outcome: accepted with no blocking findings.
+- Handoff: orchestrator may seed the local optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the local optimization slice at the moved decoration-geometry seam.
+- Outcome: optimization slice 20 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-fix-20`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/direct_scene.zig`
+  - `howl-render/src/text/scene_rects.zig`
+- Exact required shape:
+  - reduce the proved `decoration_geometry` cost in the moved inline-decoration path
+  - prefer hoisting stable geometry facts out of the per-cell decoration helper, especially values derived only from `cell_metrics` and `grid_metrics`
+  - keep underline and strikethrough behavior unchanged
+  - keep damage gating unchanged
+  - keep `fallback_reject_calls == 0`
+  - do not reintroduce retained `RenderableCell` publication
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - record one exact fresh proof log path or one clearly separated fresh proof section
+  - the proof package must report:
+    - `append_renderable_ms`
+    - `inline_decoration_ns`
+    - `decoration_classify_ns`
+    - `decoration_geometry_ns`
+    - `decoration_underline_ns`
+    - `decoration_strikethrough_ns`
+    - `append_scene_rects_ms`
+    - `direct_normal_prepare_ms`
+    - `fallback_reject_calls`
+  - acceptance requires a real drop in `decoration_geometry_ns` and no proof-path regression to a new unmeasured owner
+- Exact non-goals:
+  - no ABI changes
+  - no benchmark harness changes
+  - no host/runtime changes
+  - no glyph/atlas/raster changes
+  - no reintroduction of retained `RenderableCell` publication
+- Exact stop conditions:
+  - stop if reducing `decoration_geometry` honestly requires edits outside `howl-render/src/text/direct_normal.zig`, `howl-render/src/text/direct_scene.zig`, and `howl-render/src/text/scene_rects.zig`
+  - stop if preserving decoration semantics requires reintroducing a broad retained per-cell owner
+  - stop if `fallback_reject_calls` becomes non-zero
+  - stop if the proof after the optimization merely shifts `decoration_geometry` under a new name without reducing it materially
+- Required handoff fields:
+  - exact changed files and line references
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - verdict on `decoration_geometry_ns`, `inline_decoration_ns`, `append_scene_rects_ms`, and `direct_normal_prepare_ms`
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-fix-20` may now implement only this optimization slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-fix-20`: hello.
+- Intent: reduce moved inline-decoration geometry cost by hoisting stable decoration layout facts out of the per-cell helper while preserving decoration semantics, damage gating, and fallback behavior.
+- Outcome: `direct_normal.zig`, `direct_scene.zig`, and `scene_rects.zig` now share one per-prepare `RectDecorationLayout`; `zig build test:abi` and `zig build test:unit` passed; focused proof+benchmark rerun completed with normalized improvement in `decoration_geometry`, `inline_decoration`, `append_scene_rects`, and `direct_normal_prepare`, while `fallback_reject_calls` stayed `0`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the broader local diff plus the normalized proof comparison in `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-fix-20-renderable_append.log`.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: record the exact slice-20 execution receipts before review.
+- Outcome:
+  - Exact changed files and line references:
+    - `howl-render/src/text/direct_normal.zig:124-131`
+    - `howl-render/src/text/direct_normal.zig:352-357`
+    - `howl-render/src/text/direct_normal.zig:387-400`
+    - `howl-render/src/text/direct_normal.zig:434`
+    - `howl-render/src/text/direct_normal.zig:706-729`
+    - `howl-render/src/text/direct_scene.zig:68-74`
+    - `howl-render/src/text/scene_rects.zig:55-71`
+    - `howl-render/src/text/scene_rects.zig:95-97`
+    - `howl-render/src/text/scene_rects.zig:396-425`
+  - Verification command list and results:
+    - `zig build test:abi` in `howl-render`: passed
+    - `zig build test:unit` in `howl-render`: passed
+  - Benchmark command: `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - Benchmark artifact path: `utils/tools/rain-bench/artifacts/stress/20260614-154427-ascii/summary.json`
+  - Proof log artifact path: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-fix-20-renderable_append.log`
+  - Exact proof location lines:
+    - before: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-19-renderable_append.log:79-80`
+    - after: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-fix-20-renderable_append.log:87-88`
+  - Measured before:
+    - benchmark `utils/tools/rain-bench/artifacts/stress/20260614-153152-ascii/summary.json`
+    - Howl `4.56 fps`, `p50 219304 us`, `p95 243587 us`
+    - proof: `append_renderable_ms=5447.832`, `inline_decoration_ms=1837.585`, `decoration_classify_ms=301.430`, `decoration_geometry_ms=913.653`, `decoration_underline_ms=156.731`, `decoration_strikethrough_ms=0.000`, `append_scene_rects_ms=0.390`, `direct_normal_prepare_ms=8314.062`, `fallback_reject_calls=0`
+  - Measured after:
+    - benchmark `utils/tools/rain-bench/artifacts/stress/20260614-154427-ascii/summary.json`
+    - Howl `4.95 fps`, `p50 204000 us`, `p95 225529 us`
+    - proof: `append_renderable_ms=5850.547`, `inline_decoration_ms=1972.716`, `decoration_classify_ms=326.222`, `decoration_geometry_ms=976.225`, `decoration_underline_ms=164.420`, `decoration_strikethrough_ms=0.000`, `append_scene_rects_ms=0.329`, `direct_normal_prepare_ms=8550.024`, `fallback_reject_calls=0`
+  - Verdict on requested metrics:
+    - `decoration_geometry_ns`: improved on normalized cost per append call (`57.79 ns/call -> 55.99 ns/call`)
+    - `inline_decoration_ns`: improved on normalized cost per append call (`116.23 ns/call -> 113.33 ns/call`)
+    - `append_scene_rects_ms`: improved on normalized cost per prepare (`304.69 ns/prepare -> 232.56 ns/prepare`)
+    - `direct_normal_prepare_ms`: improved on normalized cost per prepare (`6495.36 us/prepare -> 6076.52 us/prepare`)
+    - `fallback_reject_calls`: stayed `0`
+    - raw accumulated totals increased because the after run processed more append/renderable calls and prepares than the before run, so normalized comparisons are the authoritative acceptance signal
+  - Blockers or deviations:
+    - no blockers
+    - no semantic deviations found
+  - Commit-hash receipt status: no commit created
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should judge slice 20 on the normalized proof movement and preserved workload path.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review optimization slice 20 for correctness and measured effect.
+- Outcome: accepted with no blocking findings. The moved decoration-geometry seam improved on its normalized proof-path metrics while preserving the proved workload path.
+- Handoff: orchestrator may seed the mandatory cleanup slice before any further proof or optimization work.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the mandatory cleanup slice after accepted optimization slice 20.
+- Outcome: cleanup slice 21 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-cleanup-21`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+  - `howl-render/src/text/scene_rects.zig`
+- Exact required shape:
+  - remove the temporary moved-decoration proof instrumentation added for proof-only slice 19 from `direct_normal.zig` and `scene_rects.zig`
+  - preserve accepted slice-20 product behavior
+  - do not remove real product assertions, bounds, or owner logic
+  - do not perform any new optimization in this cleanup slice
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact non-goals:
+  - no new proof yet
+  - no new optimization yet
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if removing proof scaffolding would also remove accepted slice-20 product logic
+  - stop if any remaining proof helper cannot be removed without immediately needing the next proof slice to land first
+- Required handoff fields:
+  - exact changed files and line references
+  - concise cleanup summary
+  - verification command list and results
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-cleanup-21` may now implement only this cleanup slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-fix-20`: hello.
+- Intent: hoist stable moved-decoration geometry facts out of the per-cell helper, rerun the required render proofs, and return exact before/after receipts without changing decoration semantics.
+- Outcome: `direct_normal.prepare(...)` now computes one `RectDecorationLayout` per prepare and threads it through the moved inline-decoration path, so `scene_rects.appendRectDecorationCellDrawsWithLayoutUnmanaged(...)` reuses precomputed geometry, cols, and cell pixel sizes while keeping underline/strikethrough logic and fallback behavior unchanged; ABI/unit tests and a fresh proof-heavy benchmark completed with `fallback_reject_calls=0`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-fix-20-renderable_append.log` plus `utils/tools/rain-bench/artifacts/stress/20260614-154427-ascii/summary.json` and judge the measured decoration-geometry movement.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-cleanup-21`: hello.
+- Intent: remove only the temporary slice-19 moved-decoration proof scaffolding from `direct_normal.zig` and `scene_rects.zig` while preserving accepted slice-20 behavior.
+- Outcome: slice-19 decoration split counters and snapshot plumbing were removed; the per-prepare `RectDecorationLayout` product path remains intact; `zig build test:abi` and `zig build test:unit` passed.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify the cleanup-only diff and receipt closure fields.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: record the exact cleanup-slice-21 execution receipts before review.
+- Outcome:
+  - Exact changed files and line references:
+    - `howl-render/src/text/direct_normal.zig:213-242`
+    - `howl-render/src/text/direct_normal.zig:289-330`
+    - `howl-render/src/text/direct_normal.zig:718-721`
+    - `howl-render/src/text/scene_rects.zig:48-68`
+    - `howl-render/src/text/scene_rects.zig:372-381`
+  - Concise cleanup summary:
+    - removed the slice-19 moved-decoration split-proof instrumentation while preserving the accepted slice-20 geometry-hoist product path
+  - Verification command list and results:
+    - `zig build test:abi` in `howl-render`: passed
+    - `zig build test:unit` in `howl-render`: passed
+  - Blockers or deviations:
+    - no blockers
+    - the `HOWL_APPEND_RENDERABLE_PROOF_MODE` selector remains in `direct_normal.zig` because it belongs to the still-live post-slice-15 proof method and was not part of the slice-19-specific cleanup target
+  - Commit-hash receipt status: no commit created
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should verify cleanup slice 21 with the complete active receipts above.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review cleanup slice 21 for receipt completeness and proof-scaffolding removal.
+- Outcome: accepted with no blocking findings. Slice-19-specific moved-decoration proof scaffolding is removed and accepted slice-20 behavior remains intact.
+- Handoff: orchestrator may seed the next cleaned-code bottleneck proof.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: seed the next cleaned-code bottleneck proof after accepted optimization slice 20 and accepted cleanup slice 21.
+- Outcome: proof-only slice 22 is now the only authorized coder work.
+- Coder session id: `coder-2026-06-14-ascii-rain-performance-proof-22`.
+- Allowed files:
+  - `howl-render/src/text/direct_normal.zig`
+- Exact required shape:
+  - keep proof local to `direct_normal.zig` only
+  - re-prove the current dominant cleaned-code direct-normal inner costs after accepted slice 20 and accepted cleanup slice 21
+  - measure at least:
+    - `append_renderable_ms`
+    - `renderable_append_ms`
+    - `inline_background_ns`
+    - `inline_clear_note_ns`
+    - `inline_decoration_ns`
+    - `append_scene_rects_ms`
+    - `direct_normal_prepare_ms`
+  - record counters for:
+    - `append_renderable_calls`
+    - `fallback_reject_calls`
+  - do not change behavior
+- Exact tests:
+  - from `howl-render`, run `zig build test:abi`
+  - from `howl-render`, run `zig build test:unit`
+- Exact benchmark/proof requirements:
+  - rerun `HOWL_APPEND_RENDERABLE_PROOF_MODE=renderable_append python3 utils/tools/rain-bench/benchmark_terminals.py --build`
+  - record one exact fresh proof log path or one clearly separated fresh section
+  - identify the current dominant cleaned-code post-slice-20 inner cost
+- Exact non-goals:
+  - no optimization yet
+  - no cleanup beyond this temporary proof slice
+  - no edits outside `howl-render/src/text/direct_normal.zig`
+  - no ABI changes
+  - no benchmark harness changes
+- Exact stop conditions:
+  - stop if proving the current post-slice-20 bottleneck requires edits outside `howl-render/src/text/direct_normal.zig`
+  - stop if the cleaned-code proof fails to isolate one dominant current inner cost
+- Required handoff fields:
+  - exact changed files and line references
+  - concise implementation summary
+  - verification command list and results
+  - benchmark command
+  - benchmark artifact path
+  - proof log artifact path
+  - exact proof location lines
+  - measured before
+  - measured after
+  - current dominant cleaned-code inner-cost verdict
+  - blockers or deviations
+  - coder session id
+  - commit-hash receipt status
+- Handoff: coder `coder-2026-06-14-ascii-rain-performance-proof-22` may now implement only this proof-only slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-22`: hello.
+- Intent: re-prove the cleaned post-slice-20 `direct_normal.zig` inner costs with only local temporary instrumentation and record one fresh proof section for the reviewer.
+- Outcome: local proof labels were tightened in `direct_normal.zig` to emit the exact required slice-22 measures and counters without changing behavior; required tests and fresh `renderable_append` benchmark proof are in progress.
+- Handoff: return the fresh proof lines, benchmark artifact, and current dominant cleaned-code inner-cost verdict for reviewer inspection; no optimization is implemented.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-22`: hello again.
+- Intent: close the slice-22 proof receipts after the fresh `renderable_append` benchmark run.
+- Outcome: `zig build test:abi` and `zig build test:unit` passed; fresh proof log `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-22-renderable_append.log:146-147` shows cleaned-code `append_renderable_ms=4862.156` with `renderable_append_ms=2718.942`, `inline_background_ns=426760228`, `inline_clear_note_ns=378686568`, `inline_decoration_ns=425972365`, `append_scene_rects_ms=0.526`, `direct_normal_prepare_ms=7941.276`, `append_renderable_calls=19417936`, and `fallback_reject_calls=0`; the dominant cleaned-code inner cost remains `append_renderable`, specifically its inlined background/clear-note/decoration work inside `renderable_append` mode.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should inspect the fresh slice-22 proof log and benchmark artifact; no optimization or cleanup beyond this temporary proof slice was implemented.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret the post-slice-20 cleaned-code re-proof and decide whether the next honest move is an optimization on broad `renderable_append`, on moved inline background work, or one more proof split.
+- Outcome: the active research artifact now records that cleaned-code `renderable_append` is still too mixed for direct optimization and that moved inline background, clear-note, and decoration work remain too close to choose honestly, so the next accountable move is one more proof-only split on the moved inline background/clear-note side rather than a new optimization slice.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new post-slice-20 cleaned-code re-proof interpretation in `research/2026-06-14-ascii-rain-performance-plan.md`; no new coder optimization slice is authorized yet.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: correct drift against the user's original sprint instruction for this bucket.
+- Outcome: correction recorded. For this bucket, once the hot owner is proved, mixed ownership inside that hot owner is debt to cut directly, not a reason to keep demanding narrower proof splits first. The next step is style-first cleanup of the mixed `appendRenderable(...)` owner before more optimization.
+- Handoff: researcher must replace the current proof-only recommendation with one exact style-first cleanup slice for the mixed `appendRenderable(...)` owner.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: replace the proof-only next-step recommendation for the mixed `appendRenderable(...)` bucket with one exact style-first cleanup slice that resolves the mixed owner structurally.
+- Outcome: the active research artifact now records the user-directed style-first reset, treats the mixed `appendRenderable(...)` owner itself as the debt, and recommends one exact local cleanup/restructure slice in `direct_normal.zig`, `direct_scene.zig`, and `scene_rects.zig` before any further optimization targeting.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new style-first cleanup recommendation in `research/2026-06-14-ascii-rain-performance-plan.md`; no coder slice is authorized until that cleanup slice is accepted.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: restate the sprint purpose exactly and keep the team focused on fake-owner pressure.
+- Outcome: user direction recorded. The point of this performance sprint is to pressure fake owners in the hot path, not optimize through bad style. When proof exposes a mixed hot owner, that owner is the debt to clean before any further optimization claim. The current active debt remains the mixed `appendRenderable(...)` owner.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should accept or reject the exact cleanup slice already recorded in `research/2026-06-14-ascii-rain-performance-plan.md`; if accepted, orchestrator seeds coder execution immediately with no new proof-only detour.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: decide whether the style-first cleanup slice is exact enough to authorize coder execution.
+- Outcome: rejected. The cleanup slice still left the owner map, post-cleanup proof seam, and behavior-preservation proof obligations too loose for coder execution. Exact fixes required: lock the parent and child owner symbols, lock the proof seam at `direct_normal.appendRenderable(...)`, and list exact behavior-preservation tests.
+- Handoff: researcher `research-2026-06-14-ascii-rain-performance-01` must patch the active research artifact with one exact owner map and exact proof/test obligations before review is retried.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: remove the remaining coder guesswork from the fake-owner cleanup slice.
+- Outcome: active research refined locally. The exact owner map now keeps `direct_normal.appendRenderable(...)` as the hot parent seam, adds `direct_scene.appendRenderableRects(...)` as the sole rect-side child owner, adds `direct_normal.renderableAppend(...)` as the sprite/text child owner, and records exact test obligations plus the explicit post-cleanup proof seam.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should re-review the refined cleanup slice for coder authorization.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review the refined fake-owner cleanup slice after the owner map and proof/test obligations were locked.
+- Outcome: accepted. The slice is now exact enough for coder execution with no invention: keep `direct_normal.appendRenderable(...)` as the hot parent seam, add `direct_scene.appendRenderableRects(...)` as the sole rect-side child owner, add `direct_normal.renderableAppend(...)` as the sprite/text child owner, preserve behavior, and keep the slice local to the allowed files.
+- Handoff: orchestrator should seed coder execution immediately; no new proof-only detour or optimization slice is authorized before this cleanup lands.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: authorize coder execution on the accepted fake-owner cleanup slice.
+- Outcome: active sprint surfaces updated. Coder execution is authorized for the reviewer-accepted style-first cleanup slice on the mixed `appendRenderable(...)` owner, with no optimization claim and no proof-only detour.
+- Handoff: coder must implement only the accepted cleanup slice in `direct_normal.zig`, `direct_scene.zig`, and `scene_rects.zig`, run the required tests, and return exact changed lines plus explicit note that no benchmark verdict is part of the slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-cleanup-23`: hello.
+- Intent: implement only the accepted fake-owner cleanup slice for the mixed `appendRenderable(...)` owner.
+- Outcome: completed the local cleanup split without widening scope. Changed `howl-render/src/text/direct_normal.zig:720-822` and `howl-render/src/text/direct_scene.zig:77-129`; `howl-render/src/text/scene_rects.zig` remained unchanged. `appendRenderable(...)` now calls exactly one rect-side child owner `direct_scene.appendRenderableRects(...)` and one sprite/text child owner `renderableAppend(...)`. Verification passed: from `howl-render`, `zig build test:abi`; from `howl-render`, `zig build test:unit`. No benchmark verdict and no new optimization claim are part of this slice. No blockers or deviations. Commit-hash handoff status: no commit created, no git actions taken.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the cleanup implementation diff and verification results for acceptance or rejection.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the implemented fake-owner cleanup slice after the accountability fixes and verification rerun.
+- Outcome: accepted. The cleanup slice keeps `direct_normal.appendRenderable(...)` as the accountable hot parent seam, reduces it to one rect-side child owner plus one sprite/text child owner, preserves behavior, and stays within the allowed files. Verification remained green with `zig build test:abi` and `zig build test:unit`.
+- Handoff: orchestrator should record slice acceptance and move the sprint to one fresh cleaned-code proof pass at `direct_normal.appendRenderable(...)` before any new optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the fake-owner cleanup slice and set the next accountable step.
+- Outcome: cleanup slice accepted. The mixed `appendRenderable(...)` owner debt was cut into explicit rect-side and sprite/text child owners without widening scope or claiming an optimization result. The next authorized step is one fresh cleaned-code proof pass at `direct_normal.appendRenderable(...)` on this accepted owner shape.
+- Handoff: coder should next run the cleaned-code proof slice at `direct_normal.appendRenderable(...)`; no optimization slice is authorized until that proof names the next target.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-24`: hello.
+- Intent: run one fresh cleaned-code proof pass at `direct_normal.appendRenderable(...)` on the accepted owner shape.
+- Outcome: no code edits were required for the proof pass. Verification passed with `zig build test:abi` and `zig build test:unit`. Fresh proof receipt `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-24-renderable_append.log:128-130` named `renderable_append_ms=1521.764` above `inline_background_ns=349357730`, `inline_clear_note_ns=312920448`, and `inline_decoration_ns=350040931`, with `append_renderable_ms=4096.690`, `append_renderable_calls=16642635`, and `fallback_reject_calls=0`. Fresh benchmark artifact: `utils/tools/rain-bench/artifacts/stress/20260614-170000-ascii/summary.json`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should decide whether the fresh proof is accountable enough to authorize the next planning target; no optimization was implemented.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: pressure the fresh post-cleanup proof receipt before any next-target planning.
+- Outcome: rejected for accountability, not direction. `renderableAppend(...)` still looks like the honest next local child target, but the active research top-state was stale, the proof header still named cleanup slice 23, and the large slice-22 to slice-24 benchmark delta was not explicit about comparability.
+- Handoff: orchestrator must repair the active planning surface, fix the proof session identity, and re-receipt proof slice 24 as a ranking-only proof unless comparability can be proved honestly.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: repair the proof-24 accountability surface so the next planning decision can be reviewed honestly.
+- Outcome: repaired the active research top-state, updated the proof session label in `direct_normal.zig` to proof slice 24, and re-ran the benchmark/proof as a ranking-only receipt rather than a before/after performance comparison. Fresh rerun receipt: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-24-rerun.log:128-130` with `renderable_append_ms=1529.283`, `inline_background_ns=352278726`, `inline_clear_note_ns=316654070`, `inline_decoration_ns=349642361`, `append_renderable_ms=4131.736`, `append_renderable_calls=17017713`, and `fallback_reject_calls=0`. Fresh benchmark summary: `utils/tools/rain-bench/artifacts/stress/20260614-170555-ascii/summary.json`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should accept or reject proof slice 24 as a ranking-only receipt for next-target planning.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: decide whether repaired proof slice 24 is accountable enough to authorize the next planning decision.
+- Outcome: accepted as ranking-only. Comparability versus slice 22 remains unproved and must not be inferred, but the repaired receipt is sufficient to name `direct_normal.renderableAppend(...)` as the honest next local target on the accepted owner shape.
+- Handoff: researcher `research-2026-06-14-ascii-rain-performance-01` should define the next exact local slice at `direct_normal.renderableAppend(...)` under the fake-owner-first sprint rule.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: decide whether `renderableAppend(...)` needs more proof splitting or another owner cleanup before optimization.
+- Outcome: `direct_normal.renderableAppend(...)` is still a mixed hot child owner. The next accountable move is a style-first local cleanup slice in `howl-render/src/text/direct_normal.zig`, not another proof-only split. Exact target shape: keep `renderableAppend(...)` as the hot child seam, split it into one glyph/raster admission child and one sprite/lane child, preserve blank-route and missing-face behavior exactly, and do not touch files outside `direct_normal.zig`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the exact next-slice recommendation for coder authorization.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: remove the remaining coder invention from the next `renderableAppend(...)` cleanup slice.
+- Outcome: exact local contract defined. The next slice stays inside `howl-render/src/text/direct_normal.zig`, keeps `renderableAppend(...)` as the accountable parent seam, introduces exactly two child owners `blankFastReturn(...)` and `spriteAppend(...)`, keeps the admission/raster body in the parent, preserves the zero/tab no-sprite path, missing-face handling, raster enqueue, sprite emission, lane-report mutation, and existing proof accounting, and records exact tests, non-goals, and stop conditions.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should re-review this exact `renderableAppend(...)` cleanup slice for coder authorization.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the last accountability gaps in the `renderableAppend(...)` cleanup contract.
+- Outcome: active research promoted the `renderableAppend(...)` cleanup slice to the current step and recorded that no exact existing tests prove the missing-face early return or `lane_report.direct_normal_draws` mutation. The contract now requires two new owner-local tests in `howl-render/src/text/direct_normal.zig`: `test "direct normal renderable append missing face appends no fallback glyph and returns early"` and `test "direct normal renderable append updates direct normal draws only on sprite append"`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should re-review the patched `renderableAppend(...)` cleanup slice for coder authorization.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the last test-specific accountability gap in the `renderableAppend(...)` cleanup contract.
+- Outcome: the active research artifact now requires one exact tab fast-return owner-local test plus tightened assertions for missing-face and draw-count tests so non-sprite paths cannot regress silently during the split.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should perform one final authorization review on the `renderableAppend(...)` cleanup slice.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: perform the final authorization review on the local `renderableAppend(...)` cleanup slice.
+- Outcome: accepted. The slice is exact enough for coder execution: `renderableAppend(...)` remains the accountable parent seam, the split is limited to exactly `blankFastReturn(...)` and `spriteAppend(...)`, the behavior fences are explicit, the required tests are exact, and the slice stays local to `direct_normal.zig`.
+- Handoff: orchestrator should authorize coder execution immediately; no optimization slice is authorized before this cleanup lands.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: authorize coder execution on the accepted `renderableAppend(...)` fake-owner cleanup slice.
+- Outcome: active sprint surfaces updated. Coder execution is authorized for the reviewer-accepted style-first cleanup slice local to `howl-render/src/text/direct_normal.zig`.
+- Handoff: coder must implement only the accepted `renderableAppend(...)` cleanup slice, add the required owner-local tests, run the required test targets, and return exact changed lines plus explicit note that no benchmark verdict or optimization claim is part of the slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-cleanup-25`: hello.
+- Intent: implement only the accepted fake-owner cleanup slice at `direct_normal.renderableAppend(...)`.
+- Outcome: completed the local cleanup in `howl-render/src/text/direct_normal.zig`. `renderableAppend(...)` remains the accountable parent seam, `blankFastReturn(...)` and `spriteAppend(...)` were added as the exact child owners, the middle admission body stayed in the parent, and the required owner-local tests were added. Verification passed: from `howl-render`, `zig build test:abi`; from `howl-render`, `zig build test:unit`. No benchmark verdict and no new optimization claim are part of this slice. No blockers or deviations. No commit created.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the cleanup implementation and verification results for acceptance or rejection.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the implemented `renderableAppend(...)` cleanup slice.
+- Outcome: accepted. The slice keeps `renderableAppend(...)` as the accountable parent seam, introduces exactly `blankFastReturn(...)` and `spriteAppend(...)` as the required child owners, preserves the required behavior and proof accounting, and includes the required owner-local tests. Verification remained green with `zig build test:abi` and `zig build test:unit`.
+- Handoff: orchestrator should record slice acceptance and move the sprint to one fresh cleaned-code proof pass at `direct_normal.renderableAppend(...)` before any new optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the local `renderableAppend(...)` fake-owner cleanup slice and set the next accountable step.
+- Outcome: cleanup slice accepted. The next authorized step is one fresh cleaned-code proof pass at `direct_normal.renderableAppend(...)` on the accepted owner shape. No optimization slice is authorized until that proof names the next target.
+- Handoff: coder should next run the cleaned-code proof slice at `direct_normal.renderableAppend(...)`.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-27`: hello.
+- Intent: run one fresh cleaned-code proof pass at `direct_normal.renderableAppend(...)` on the newly cleaned owner shape.
+- Outcome: completed the proof pass with no optimization and no widening. The only code edit was updating the local proof session id string in `howl-render/src/text/direct_normal.zig:198` so the receipt is attributable to this pass. Verification passed with `zig build test:abi` and `zig build test:unit`. Fresh proof receipt: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-27-renderable_append.log:134-157`. Fresh benchmark summary: `utils/tools/rain-bench/artifacts/stress/20260614-182546-ascii/summary.json:47-80`. This run is ranking-only/current-shape proof, not a before/after performance comparison.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should decide whether proof slice 27 is accountable enough to authorize the next planning decision.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: pressure proof slice 27 before any next-target planning.
+- Outcome: rejected for accountability and over-claiming. The active sprint/research/loop surfaces must record slice 27, and planning must not authorize any named child target from the current receipt because `renderable_append_ms` still materially dominates every named inner timer.
+- Handoff: orchestrator must repair the live accountability surface, then researcher should interpret slice 27 honestly before any next slice is authorized.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: repair the slice-28 planning interpretation and replace the stale cross-run remainder rule.
+- Outcome: the active research artifact now uses the honest same-run normalized child-owner comparison at the `renderableAppend(...)` seam. Substantively, `appendResolvedGlyph(...)` is now the largest measured child owner on the slice-28 receipt, but that result still needs one local rerun because the current slice-28 proof header is mislabeled with the slice-27 session id.
+- Handoff: orchestrator should fix the local proof session id and rerun the same `append_resolved_glyph` proof slice for accountable promotion.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the slice-28 accountability gap by rerunning the same proof with the correct local session id.
+- Outcome: corrected the local proof session id in `howl-render/src/text/direct_normal.zig:198`, reran the same `append_resolved_glyph` proof, and preserved the same-run child-owner comparison rule. Corrected rerun receipt: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-28-rerun.log:155-157`. Fresh benchmark summary: `utils/tools/rain-bench/artifacts/stress/20260614-185451-ascii/summary.json:47-80`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should decide whether the corrected slice-28 rerun is now accountable enough to authorize the next planning decision.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: re-review the corrected slice-28 rerun under the accepted same-run normalized child-owner rule.
+- Outcome: the rerun is substantively sufficient. `appendResolvedGlyph(...)` is now the honest next local target because its same-run normalized per-call cost is greater than both `blankFastReturn(...)` and `resolveFaceOrAppendMissing(...)`. The only remaining task was recording that acceptance into the active accountability artifacts.
+- Handoff: orchestrator should promote `direct_normal.appendResolvedGlyph(...)` as the next local target and move planning there.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: define the next exact local slice from the accepted slice-28 rerun receipt.
+- Outcome: `lookupGlyphAndDeriveKey(...)` is the next mixed hot child owner inside `appendResolvedGlyph(...)`. The active research artifact now defines one exact local cleanup slice that splits it into `lookupGlyph(...)` and `deriveResolvedGlyphKey(...)` while keeping `appendResolvedGlyph(...)`, `reserveAtlasOrAppendPendingRaster(...)`, and `spriteAppend(...)` otherwise unchanged.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new exact cleanup slice for coder authorization.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the `lookupGlyphAndDeriveKey(...)` cleanup slice.
+- Outcome: accepted. The split is exact enough for coder execution and preserves the widened-span proof fence.
+- Handoff: orchestrator should record slice acceptance and move the sprint to one fresh cleaned-code proof pass at `direct_normal.appendResolvedGlyph(...)` before any new optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the `lookupGlyphAndDeriveKey(...)` cleanup slice and set the next accountable step.
+- Outcome: cleanup slice accepted. The next authorized step is one fresh cleaned-code proof pass at `direct_normal.appendResolvedGlyph(...)` on the accepted owner shape.
+- Handoff: coder should next run the cleaned-code proof slice at `direct_normal.appendResolvedGlyph(...)`.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the exact local cleanup slice at `direct_normal.lookupGlyphAndDeriveKey(...)` for coder authorization.
+- Outcome: accepted. The slice is exact enough for coder execution: `lookupGlyphAndDeriveKey(...)` is the remaining mixed hot child owner, the split into `lookupGlyph(...)` and `deriveResolvedGlyphKey(...)` is bounded and local, and the `ResolvedGlyphKey` ownership plus widened-span test fence the behavior.
+- Handoff: orchestrator should authorize coder execution immediately; no optimization slice is authorized before this cleanup lands.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: authorize coder execution on the accepted local `lookupGlyphAndDeriveKey(...)` cleanup slice.
+- Outcome: active sprint surfaces updated. Coder execution is authorized for the reviewer-accepted local cleanup slice in `howl-render/src/text/direct_normal.zig`.
+- Handoff: coder must implement only the accepted cleanup slice, add the required owner-local test, run the required test targets, and return exact changed lines plus explicit note that no benchmark verdict or optimization claim is part of the slice.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret proof slice 27 honestly without authorizing a named child target by inference.
+- Outcome: no named child target is honest yet. `renderable_append_ms` still materially dominates every named inner timer on the current owner shape, so the next accountable move is one more local proof step at `direct_normal.renderableAppend(...)`, not cleanup and not optimization.
+- Handoff: researcher should now define one exact local proof slice that can attribute the remaining `renderable_append_ms` remainder without widening beyond `direct_normal.zig`.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: define one exact local proof slice that can attribute the remaining `renderable_append_ms` remainder on the current owner shape.
+- Outcome: exact proof slice defined in `research/2026-06-14-ascii-rain-performance-plan.md`. The next proof adds exactly one local proof mode and one field for whole-owner `appendResolvedGlyph(...)`, keeps all existing child timers unchanged, stays local to `direct_normal.zig`, and succeeds only if the new `append_resolved_glyph_ms` explains the majority of the previously unattributed `renderable_append_ms`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new exact proof slice for coder authorization.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: repair the exact proof mechanics for the next `appendResolvedGlyph(...)` whole-owner proof slice.
+- Outcome: the active research artifact now authorizes the exact proof-gate rule change needed so `append_resolved_glyph` mode still records `renderable_append_ns` and the existing child timers on the same receipt, and it replaces the vague success criterion with one normalized per-call comparison rule against slice 27.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should re-review the exact proof slice for coder authorization.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review the exact `append_resolved_glyph` proof slice after the proof-mechanics repair.
+- Outcome: accepted. The proof slice is exact enough for coder execution: one file, one new proof mode, one new proof field, one bounded proof-gate rule change, normalized per-call success criteria against the accepted slice-27 baseline, and explicit proof-method stop conditions.
+- Handoff: orchestrator should authorize coder execution immediately; no cleanup or optimization slice is authorized before this proof lands.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: authorize coder execution on the accepted local `append_resolved_glyph` proof slice.
+- Outcome: active sprint surfaces updated. Coder execution is authorized for the reviewer-accepted proof slice in `howl-render/src/text/direct_normal.zig`.
+- Handoff: coder must implement only the bounded proof mechanics change, run the required proof pass and tests, and return exact receipt lines plus explicit note that no optimization or cleanup landed.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-26`: hello.
+- Intent: run one fresh cleaned-code proof pass at `direct_normal.renderableAppend(...)` on the newly cleaned owner shape.
+- Outcome: completed the proof pass with no optimization and no widening. The only code edit was updating the local proof session id string in `howl-render/src/text/direct_normal.zig:198` so the receipt is attributable to this pass. Verification passed with `zig build test:abi` and `zig build test:unit`. Fresh proof receipts include `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-26-renderable_append.log:134-139` and the one-at-a-time sibling logs for `blank_fast_return`, `resolve_face`, `lookup_glyph`, `key_derivation`, `atlas_reserve`, `raster_enqueue`, `sprite_append`, and `lane_report_update`. This run is ranking-only/current-shape proof, not a before/after performance comparison.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should decide whether proof slice 26 is accountable enough to authorize the next planning decision.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: pressure proof slice 26 before any next-target planning.
+- Outcome: rejected for accountability and over-claiming. The active sprint/research/loop surfaces must be updated to record slice 26, and planning must not over-claim `blank_fast_return` as the next target because the current receipt still shows `renderable_append_ms` materially above `blank_fast_return_ms`.
+- Handoff: orchestrator must repair the live accountability surface, then researcher should interpret slice 26 honestly before any next slice is authorized.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret proof slice 26 honestly without over-claiming `blank_fast_return` as the next target.
+- Outcome: the next accountable seam is `direct_normal.appendResolvedGlyph(...)`. `renderableAppend(...)` is now orchestration-only, while `appendResolvedGlyph(...)` still mixes glyph lookup, key derivation, atlas reserve, pending raster enqueue, and sprite/lane pressure in one hot owner. The next move is a local cleanup slice there, not another proof split and not optimization.
+- Handoff: researcher should now refine one exact local cleanup slice for `direct_normal.appendResolvedGlyph(...)`.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: turn `appendResolvedGlyph(...)` into one exact local cleanup slice with no coder invention.
+- Outcome: exact local cleanup contract defined in `research/2026-06-14-ascii-rain-performance-plan.md`. `appendResolvedGlyph(...)` becomes orchestration-only over exactly `lookupGlyphAndDeriveKey(...)`, `reserveAtlasOrAppendPendingRaster(...)`, and existing `spriteAppend(...)`, with exact statement ownership, preserved behavior, one new rendered-atlas-hit owner-local test, and local-only stop conditions.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new exact cleanup slice for coder authorization.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the exact local cleanup slice at `direct_normal.appendResolvedGlyph(...)` for coder authorization.
+- Outcome: accepted. The slice is exact enough for coder execution: `renderableAppend(...)` stays the accountable parent seam, `appendResolvedGlyph(...)` becomes the local orchestration seam, exactly `lookupGlyphAndDeriveKey(...)` and `reserveAtlasOrAppendPendingRaster(...)` are authorized as the new children, and the single owner-local `ResolvedGlyphKey` value shape is explicit and bounded.
+- Handoff: orchestrator should authorize coder execution immediately; no optimization slice is authorized before this cleanup lands.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: authorize coder execution on the accepted `appendResolvedGlyph(...)` fake-owner cleanup slice.
+- Outcome: active sprint surfaces updated. Coder execution is authorized for the reviewer-accepted local cleanup slice in `howl-render/src/text/direct_normal.zig`.
+- Handoff: coder must implement only the accepted cleanup slice, add the required owner-local test, run the required test targets, and return exact changed lines plus explicit note that no benchmark verdict or optimization claim is part of the slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-cleanup-01`: hello.
+- Intent: implement only the accepted `appendResolvedGlyph(...)` fake-owner cleanup slice.
+- Outcome: completed the local cleanup in `howl-render/src/text/direct_normal.zig`. `appendResolvedGlyph(...)` is now orchestration-only over `lookupGlyphAndDeriveKey(...)`, `reserveAtlasOrAppendPendingRaster(...)`, and existing `spriteAppend(...)`. The exact owner-local `ResolvedGlyphKey` value shape was added, and the required rendered-atlas-hit owner-local test was added. Verification passed: from `howl-render`, `zig fmt "src/text/direct_normal.zig"`, `zig build test:abi`, and `zig build test:unit`. No benchmark verdict and no new optimization claim are part of this slice. No blockers or deviations. No commit created.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the cleanup implementation and verification results for acceptance or rejection.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the implemented `appendResolvedGlyph(...)` cleanup slice.
+- Outcome: accepted. `renderableAppend(...)` remains the accountable parent seam, `appendResolvedGlyph(...)` is orchestration-only, the exact owner-local `ResolvedGlyphKey` and the two new child owners landed with the contracted ownership split, `spriteAppend(...)` stayed unchanged, and the required atlas-hit owner-local test is present. Verification remained green.
+- Handoff: orchestrator should record slice acceptance and move the sprint to one fresh cleaned-code proof pass at `direct_normal.renderableAppend(...)` before any new optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the `appendResolvedGlyph(...)` cleanup slice and set the next accountable step.
+- Outcome: the cleanup slice remains accepted, and the corrected proof slice 29 rerun is now recorded on the accepted owner shape. The next step is interpretation of that receipt, not a new optimization claim.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should interpret proof slice 29 before any next target is authorized.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-29`: hello.
+- Intent: rerun the accepted `appendResolvedGlyph(...)` proof with the corrected local session id.
+- Outcome: completed the rerun and corrected the lineage. Fresh proof receipt: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-29-rerun.log:121-157`. Fresh benchmark summary: `utils/tools/rain-bench/artifacts/stress/20260614-191455-ascii/summary.json`.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should interpret the proof receipt before any next target is authorized.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-proof-25`: hello.
+- Intent: run one fresh cleaned-code proof pass at `direct_normal.renderableAppend(...)` on the accepted owner shape.
+- Outcome: completed the proof pass with no optimization and no widening. The only code edit was updating the local proof session id string in `howl-render/src/text/direct_normal.zig:198` so the receipt is attributable to this pass. Verification passed with `zig build test:abi` and `zig build test:unit`. Fresh proof receipt: `/tmp/opencode/coder-2026-06-14-ascii-rain-performance-proof-25-renderable_append.log:152-154`. Fresh benchmark summary: `utils/tools/rain-bench/artifacts/stress/20260614-173032-ascii/summary.json`. This run is ranking-only/current-shape proof, not a before/after performance comparison.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should decide whether proof slice 25 is accountable enough to authorize the next planning decision.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: pressure proof slice 25 before any next-target planning.
+- Outcome: rejected for accountability and over-claiming. The proof must be recorded in the live artifacts as ranking-only, the active research top-state must be updated to the post-cleanup proof step, and planning must not over-claim `blank_fast_return` as the next target from the current receipt because `renderable_append_ms` remains materially larger than any named inner subphase.
+- Handoff: orchestrator must repair the live accountability surface, then researcher should interpret the current proof honestly before any next slice is authorized.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello.
+- Intent: interpret proof slice 25 honestly without over-claiming `blank_fast_return` as the next target.
+- Outcome: proof slice 25 only authorizes a local cleanup decision on the remaining mixed parent body inside `direct_normal.renderableAppend(...)`. `blank_fast_return` is not authorized as the next target because `renderable_append_ms` still materially dominates any named inner subphase on the accepted owner shape.
+- Handoff: researcher should now refine one exact local cleanup slice for the remaining mixed admission body inside `direct_normal.renderableAppend(...)`.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: turn the remaining mixed parent body inside `renderableAppend(...)` into one exact local cleanup slice with no coder invention.
+- Outcome: exact local cleanup contract defined in `research/2026-06-14-ascii-rain-performance-plan.md`. `renderableAppend(...)` remains the accountable parent seam; `blankFastReturn(...)` and `spriteAppend(...)` stay in place; the remaining mixed parent body is split into exactly `resolveFaceOrAppendMissing(...)` and `appendResolvedGlyph(...)`, with exact statement ownership, behavior fences, one new raster-enqueue owner-local test, and local-only stop conditions.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the new exact cleanup slice for coder authorization.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the last test-precision gaps in the remaining `renderableAppend(...)` cleanup contract.
+- Outcome: the active research artifact now requires one exact zero-codepoint owner-local fast-return test and narrows the pending-reserve raster test to observable retained semantics instead of claiming internal sequencing it does not prove.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should perform one final authorization review on the remaining `renderableAppend(...)` cleanup slice.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: perform the final authorization review on the remaining mixed-parent cleanup slice inside `renderableAppend(...)`.
+- Outcome: accepted. The slice is exact enough for coder execution: `renderableAppend(...)` remains the accountable parent seam, exactly `resolveFaceOrAppendMissing(...)` and `appendResolvedGlyph(...)` are authorized as the new local children, preserved behavior fences are explicit, required tests are exact, and the slice stays local to `direct_normal.zig`.
+- Handoff: orchestrator should authorize coder execution immediately; no optimization slice is authorized before this cleanup lands.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: authorize coder execution on the accepted remaining mixed-parent cleanup slice inside `renderableAppend(...)`.
+- Outcome: active sprint surfaces updated. Coder execution is authorized for the reviewer-accepted local cleanup slice in `howl-render/src/text/direct_normal.zig`.
+- Handoff: coder must implement only the accepted cleanup slice, add the required owner-local tests, run the required test targets, and return exact changed lines plus explicit note that no benchmark verdict or optimization claim is part of the slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-cleanup-07`: hello.
+- Intent: implement only the accepted remaining mixed-parent cleanup slice inside `direct_normal.renderableAppend(...)`.
+- Outcome: completed the local cleanup in `howl-render/src/text/direct_normal.zig`. `renderableAppend(...)` remains the accountable parent seam, `resolveFaceOrAppendMissing(...)` and `appendResolvedGlyph(...)` were added as the exact new child owners, and the required zero-codepoint and pending-raster owner-local tests were added. Verification passed: from `howl-render`, `zig fmt "src/text/direct_normal.zig"`, `zig build test:abi`, and `zig build test:unit`. No benchmark verdict and no new optimization claim are part of this slice. No blockers or deviations. No commit created.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should review the cleanup implementation and verification results for acceptance or rejection.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the implemented remaining mixed-parent cleanup slice inside `renderableAppend(...)`.
+- Outcome: accepted. `renderableAppend(...)` stays the accountable parent seam, the two required new child owners landed with the contracted split, behavior and proof accounting remain preserved, and the required owner-local tests are present. Verification remained green.
+- Handoff: orchestrator should record slice acceptance and move the sprint to one fresh cleaned-code proof pass at `direct_normal.renderableAppend(...)` before any new optimization slice.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the remaining mixed-parent cleanup slice and set the next accountable step.
+- Outcome: cleanup slice accepted. The next authorized step is one fresh cleaned-code proof pass at `direct_normal.renderableAppend(...)` on the accepted owner shape. No optimization slice is authorized until that proof names the next target.
+- Handoff: coder should next run the cleaned-code proof slice at `direct_normal.renderableAppend(...)`.

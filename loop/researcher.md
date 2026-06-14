@@ -14,6 +14,9 @@
 
 ## Required Reads
 
+- Read the full list below at session start.
+- On later iterations in the same live context, reread only the active artifacts that changed materially or are directly needed for the next decision.
+
 1. `loop/flow.md`
 2. all role docs under `loop/`:
    - `loop/orcestrator.md`

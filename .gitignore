@@ -5,3 +5,7 @@ utils/official_docs/
 vendor/
 zig16-release-notes.txt
 .vscode/
+.zigversion
+/.idea/
+/.venv/
+!/artifacts/

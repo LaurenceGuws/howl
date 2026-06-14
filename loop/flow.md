@@ -121,7 +121,14 @@ When this stop is triggered:
 
 ## Read Order
 
-Before any non-trivial work, read in this order:
+Session-start read rule:
+
+- The full read order below is mandatory at the start of a role session.
+- Do not force the team to reread the full stack on every iteration when the same active artifacts were already read and have not materially changed.
+- Reread the relevant active artifacts when the controlling loop file, active research artifact, sprint state, role assignment, or user direction changes materially.
+- If there is doubt about whether the live accountability surface changed materially, reread the affected active artifacts before continuing.
+
+Required session-start order:
 
 1. `loop/flow.md`
 2. all role docs under `loop/`:
