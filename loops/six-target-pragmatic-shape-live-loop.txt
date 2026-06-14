@@ -140,3 +140,18 @@ Orchestrator note:
 - Hello. Intent: close the remaining exactness defects by fixing Slice 4 allowed/test paths, tightening Slice 5 to exact no-op verification tests, and rechecking Slice 2, Slice 3, and Slice 6 test contracts to the same bar.
 - Outcome: the active research plan now names exact file paths for Slice 4, exact preserved/added raster test names, exact emitter no-op verification tests for Slice 5, and exact test-name lists for the remaining slices that were previously broader.
 - Handoff: reviewer should re-check only the execution-contract exactness bar and confirm that Slice 4's added test name is acceptable as the explicit proof obligation for the degenerate-size gap.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01`: hello.
+- Intent: remove the ownership-probing support helpers, move session context extraction to `render_session.zig`, and keep `FtHbSupport` as the direct state owner without changing fallback behavior.
+- Outcome: `support.zig` now routes real work through explicit `FtHbSupport` plus `TextSessionConfig` functions, `render_session.zig` extracts that state/config at the boundary before calling into support, the probing helpers are deleted, and `zig build test:unit` passed in `howl-render`.
+- Handoff: ready for reviewer inspection and orchestrator receipt closure once the slice diff is reviewed; no blocker from implementation.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello.
+- Intent: review Slice 1 support direct-owner cleanup against the accepted sprint contract.
+- Outcome: rejected. `support.zig` still keeps ownership-probing `anytype` and context-extracting public wrappers, so render-session is not yet the sole explicit extraction boundary and the direct-owner cleanup is incomplete.
+- Handoff: orchestrator must restart Slice 1 at correction/reseed stage and prove the exact additional caller scope needed to delete the remaining wrappers instead of preserving compatibility shims.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: restart Slice 1 from the earliest broken stage after reviewer rejection.
+- Outcome: active correction research artifact is `research/2026-06-14-pragmatic-shape-slice1-correction.md`; Slice 1 remains unaccepted and the current render diff stays uncommitted.
+- Handoff: researcher must inventory the remaining `support.zig` wrappers, identify exact caller files still depending on them, and reseed corrected file scope with exact tests/non-goals/stop conditions/receipt fields.

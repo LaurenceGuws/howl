@@ -11,7 +11,7 @@ Sprint:
 
 Active research:
 
-- No active research seeded. Accepted planning is archived at `research/done/2026-06-14-six-target-pragmatic-shape-plan.md`.
+- `research/2026-06-14-pragmatic-shape-slice1-correction.md`
 
 Active loops:
 
@@ -26,8 +26,8 @@ Active restart note:
 - Planning seed receipt: `117b860` `Seed six-target pragmatic-shape planning`.
 - Accepted planning receipt: `9f20f26` `Accept six-target pragmatic-shape planning`.
 - Active sprint seed receipt: `1f2c1cc` `Seed six-target pragmatic-shape sprint`.
-- Next execution slice: Slice 1 support direct-owner cleanup, coder session `coder-2026-06-14-six-target-pragmatic-shape-slice-01`.
-- Implementation is authorized only through the active sprint and loop contract.
+- Slice 1 status: rejected pending focused correction for remaining ownership-probing support wrappers.
+- Active correction research: `research/2026-06-14-pragmatic-shape-slice1-correction.md`.
 - Previous latest closed sprint: six-target ownership hygiene.
 - Latest closed sprint orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
 - Latest closed sprint researcher session id: `research-2026-06-14-six-target-ownership-01`.
