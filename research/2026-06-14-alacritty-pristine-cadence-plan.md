@@ -216,7 +216,16 @@ Allowed files:
 - `howl-vt/src/screen.zig`
 - `howl-vt/src/screen/cursor.zig`
 - `howl-vt/src/screen/apply.zig`
+- `howl-vt/src/screen/write.zig`
+- `howl-vt/src/screen/edit.zig`
+- `howl-vt/src/screen/erase.zig`
+- `howl-vt/src/screen/history.zig`
+- `howl-vt/src/screen/margins.zig`
+- `howl-vt/src/screen/resize.zig`
+- `howl-vt/src/screen/scroll.zig`
+- `howl-vt/src/screen/tabs.zig`
 - `howl-vt/src/screen_set.zig`
+- `howl-vt/src/mode.zig`
 - `howl-vt/src/csi_params.zig`
 - `howl-vt/src/csi_intermediate.zig`
 - `howl-vt/src/csi_private.zig`
@@ -224,11 +233,13 @@ Allowed files:
 - `howl-vt/src/vocabulary.zig`
 - `howl-vt/src/osc_color.zig`
 - `howl-vt/src/report.zig`
+- `howl-vt/src/ffi/surface.zig`
 - `howl-vt/src/ffi/lifecycle.zig`
 Required shape:
 - Introduce a dedicated VT semantic cursor shape in `howl-vt/src/screen/cursor.zig` carrying row, col, visible, effective shape, blink intent, default style, program override style, cursor color, cursor text color, and `position_changed_by_client_at`.
 - `howl-vt/src/screen.zig` stores exactly one primary semantic cursor owner and does not duplicate cursor style/color fields outside that owner.
 - `howl-vt/src/screen/apply.zig` is the only owner that mutates the semantic cursor from parsed semantic events.
+- Existing screen helpers that move, read, save, restore, wrap, resize, scroll, erase, tab, or write at the cursor must route through the semantic cursor owner instead of preserving duplicate `Screen` cursor fields.
 - `howl-vt/src/osc_color.zig` emits explicit cursor-color and cursor-text-color semantic events; `howl-vt/src/vocabulary.zig` names those events directly.
 - `howl-vt/src/report.zig` reports cursor position/style from the semantic cursor owner.
 Exact tests:
@@ -238,6 +249,7 @@ Exact tests:
 Non-goals:
 - No render code changes.
 - No host cadence changes.
+- No VT/render ABI widening; `howl-vt/src/ffi/surface.zig` is allowed only for compile-preserving reads of the existing published cursor fields, not for exporting the new cursor color/style facts.
 Stop conditions:
 - No semantic cursor fact required by Kitty parity remains implicit or host-invented.
 - VT semantic cursor truth is not exported in this slice; export is owned by Slice 2.

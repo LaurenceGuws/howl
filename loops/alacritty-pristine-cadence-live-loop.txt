@@ -192,3 +192,8 @@ Current handoff:
 - Intent: close the accepted Kitty cursor parity planning loop and seed the first implementation section.
 - Outcome: Slice 1, rebuild VT semantic cursor truth and protocol vocabulary, is now the active coder section.
 - Handoff: coder must implement only Slice 1 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: implement Slice 1 as originally seeded.
+- Outcome: stopped correctly. The accepted Slice 1 allowlist omitted current VT cursor mutation/read owner files, so removing duplicate `Screen` cursor fields would necessarily break files outside the allowlist or preserve duplicate cursor truth.
+- Handoff: orchestrator corrected Slice 1's allowlist to include the existing VT cursor helpers and `ffi/surface.zig` for compile-preserving reads only. No ABI widening or render/host work is authorized in Slice 1.
