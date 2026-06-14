@@ -8,7 +8,7 @@ Status:
 - Reviewer session id: `review-2026-06-14-ascii-rain-performance-01`.
 - Planning seed receipt: root commit `9b2b4b0`.
 - Accepted planning receipt: reviewer `review-2026-06-14-ascii-rain-performance-01` accepted the active refocus and 7-cut section plan after commit `9b2b4b0`.
-- Sprint seed receipt: Cut 1 committed as `c925170`; Cut 2 committed as `93e9224`; Cut 3 committed as `3aa9621`; Cut 4 committed as `667fb1a`; Cut 5 committed as `16dc836`, all accepted by reviewer `review-2026-06-14-ascii-rain-performance-01`.
+- Sprint seed receipt: Cut 1 committed as `c925170`; Cut 2 committed as `93e9224`; Cut 3 committed as `3aa9621`; Cut 4 committed as `667fb1a`; Cut 5 committed as `16dc836`; Cut 6 committed as `5af42d9`, all accepted by reviewer `review-2026-06-14-ascii-rain-performance-01`.
 
 Goal:
 
@@ -31,5 +31,5 @@ Active constraints:
 
 Current authorized step:
 
-- Coder may implement Cut 6: unify loop wait admission over explicit owner facts.
-- Cut 6 remains inside this sprint section and is the only authorized coder work right now.
+- Coder may implement Cut 7: add end-to-end stale-state latest-snapshot proofs.
+- Cut 7 remains inside this sprint section and is the only authorized coder work right now.

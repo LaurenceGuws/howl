@@ -117,3 +117,18 @@ Current handoff:
 - Intent: close Cut 5 and promote the next section.
 - Outcome: Cut 5 committed in `howl-linux-host` as `16dc836` `Own cursor cadence facts`. Cut 6, loop wait-admission unification, is now the active coder section.
 - Handoff: coder must implement only Cut 6 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-gpt-5.4-cut6-01`: hello.
+- Intent: implement only Cut 6, unify loop wait admission over explicit owner facts.
+- Outcome: completed the allowed-file implementation in `event.zig` and `display/frame_timer.zig`; the loop wait policy now reads from one explicit admission struct and one function family; `timeout 300s zig build test:unit` passed.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should perform final Cut 6 acceptance.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 6 after the bounded full-suite gate.
+- Outcome: accepted. Loop wait admission is now unified through one owner-shaped struct and one function family, the required tests are present, and the bounded full unit suite passes.
+- Handoff: orchestrator should commit the accepted host change and seed Cut 7.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 6 and promote the next section.
+- Outcome: Cut 6 committed in `howl-linux-host` as `5af42d9` `Unify loop wait admission`. Cut 7, end-to-end latest-snapshot proof cleanup, is now the active coder section.
+- Handoff: coder must implement only Cut 7 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
