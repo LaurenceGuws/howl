@@ -72,3 +72,18 @@ Current handoff:
 - Intent: close Cut 2 and promote the next section.
 - Outcome: Cut 2 committed in `howl-linux-host` as `93e9224` `Own frame cadence policy`. Cut 3, runtime admission/drive separation, is now the active coder section.
 - Handoff: coder must implement only Cut 3 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-gpt-5.4-cut3-01`: hello.
+- Intent: implement only Cut 3, separate runtime admission from runtime drive for terminal surfaces.
+- Outcome: completed the allowed-file implementation in `event.zig` and `terminal/surface.zig`; the exact required Cut 3 tests passed via filtered unit runs, and `zig build test:unit:build` succeeded; the full `zig build test:unit` timed out but did not block the slice contract.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should gate Cut 3 for acceptance or rejection.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review Cut 3 against the accepted section contract.
+- Outcome: accepted. `surface.zig` now exposes explicit runtime facts, separates bounded drive from post-drive consequences, and `event.zig` consumes explicit surface facts instead of re-deriving mixed admission booleans.
+- Handoff: orchestrator should commit the accepted host change and seed Cut 4.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 3 and promote the next section.
+- Outcome: Cut 3 committed in `howl-linux-host` as `3aa9621` `Separate runtime admission from drive`. Cut 4, retained render/present state-machine cleanup, is now the active coder section.
+- Handoff: coder must implement only Cut 4 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.

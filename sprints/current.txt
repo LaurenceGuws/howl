@@ -25,14 +25,14 @@ Active restart note:
 - Reviewer session id: `review-2026-06-14-ascii-rain-performance-01`.
 - User override: micro-optimization and fake narrow cuts are banned until the codebase is pristine and much more pragmatic and idiomatic than Alacritty.
 - Sprint purpose for the current section: fix host/runtime present cadence and cursor truth as one real owner boundary inside the main benchmark sprint.
-- Current stage: Cut 2 is accepted and committed in `howl-linux-host`; Cut 3 is the active implementation section.
+- Current stage: Cut 3 is accepted and committed in `howl-linux-host`; Cut 4 is the active implementation section.
 - Latest closed sprint: six-target pragmatic shape.
 - Latest closed sprint closure acceptance: `2fd3c54` `Accept six-target pragmatic-shape sprint closure`.
 - Historical details for the latest closed sprint remain below only in archived artifacts.
 
 Execution rule:
 
-- Authorized next step: coder may implement Cut 3, the runtime admission/drive separation cleanup, on the accepted section contract.
+- Authorized next step: coder may implement Cut 4, the retained render/present state-machine cleanup, on the accepted section contract.
 - No micro-optimization or fake narrow-cut work is authorized in the current sprint state.
 - The rejected ASCII-rain direct-normal artifacts are historical navigation only and are not live authority.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
