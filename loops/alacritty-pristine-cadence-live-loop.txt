@@ -42,3 +42,18 @@ Current handoff:
 - Intent: close the accepted refocus/planning loop and seed the first implementation section.
 - Outcome: acceptance recorded after root commit `9b2b4b0`. Cut 1, present lifecycle explicit single-owner cleanup, is now the active coder section.
 - Handoff: coder must implement only Cut 1 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-gpt-5.4-cut1-01`: hello.
+- Intent: implement only Cut 1, make present lifecycle explicit and single-owned.
+- Outcome: completed the allowed-file implementation in `display/present.zig`, `display/frame_timer.zig`, `event.zig`, and `display/display.zig`; verification passed with `zig build test:unit` in `howl-linux-host`; no blockers or deviations.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should gate Cut 1 for acceptance or rejection.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review Cut 1 against the accepted section contract.
+- Outcome: accepted. Present lifecycle is now explicit and single-owned, SDL synchronous completion truth is named honestly, event-loop present-token branching was removed, and the required tests are present and green.
+- Handoff: orchestrator should commit the accepted host change and seed Cut 2.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 1 and promote the next section.
+- Outcome: Cut 1 committed in `howl-linux-host` as `c925170` `Own synchronous present lifecycle`. Cut 2, frame cadence explicit single-owner cleanup, is now the active coder section.
+- Handoff: coder must implement only Cut 2 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
