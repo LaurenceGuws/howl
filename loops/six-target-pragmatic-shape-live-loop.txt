@@ -116,6 +116,16 @@ Orchestrator note:
 - Outcome: accepted planning receipt `9f20f26` is recorded; `research/2026-06-14-six-target-pragmatic-shape-plan.md` moved to `research/done/2026-06-14-six-target-pragmatic-shape-plan.md`; active sprint contract is `sprints/2026-06-14-six-target-pragmatic-shape-sprint.md`.
 - Handoff: sprint seed receipt is `1f2c1cc` `Seed six-target pragmatic-shape sprint`. Slice 1 is next to seed for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01` when execution is authorized.
 
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: seed Slice 1 exactly from the accepted sprint contract.
+- Outcome: Slice 1 is authorized for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01` only.
+- Allowed files: `howl-render/src/text/ft_hb/support.zig`, `howl-render/src/render_session.zig`, `howl-render/src/text/ft_hb/support_test.zig`.
+- Required shape: keep `FtHbSupport` as the sole state owner in `support.zig`; move context extraction to the render-session boundary; delete ownership-probing helpers `textState`, `configView`, `lockFt`, and `unlockFt`; change support internals to take explicit state/config inputs instead of `anytype`; do not add a vague replacement bucket; keep external behavior and fallback order unchanged.
+- Required tests from `howl-render`: `zig build test:unit`.
+- Required exact proof names in `howl-render/src/text/ft_hb/support_test.zig`: `provider loads fallback face for symbol glyph with primary present`, `ft hb state configures explicit retained cache and input capacities`, `shape run input assembly reuses retained bounded buffers`.
+- Stop conditions: stop if generic removal requires inventing a weaker ownership bucket; stop if the change spreads into non-target render files outside the allowed list; stop if fallback behavior changes.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
+
 - Researcher note from `research-2026-06-14-six-target-pragmatic-shape-01`.
 - Hello. Intent: prove keep-large vs cut for all six targets against Alacritty, Ghostty, and TigerBeetle pressure, then seed an exact first execution slice.
 - Outcome: all six targets are now judged in `research/2026-06-14-six-target-pragmatic-shape-plan.md`; five stay large with specific ugliness removals, and `support.zig` is ranked first because its ownership-probing `anytype` seam is the clearest directness violation with existing proof.
