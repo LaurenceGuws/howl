@@ -102,3 +102,18 @@ Current handoff:
 - Intent: close Cut 4 and promote the next section.
 - Outcome: Cut 4 committed in `howl-linux-host` as `667fb1a` `Name retained render state machine`. Cut 5, cursor-truth cadence cleanup, is now the active coder section.
 - Handoff: coder must implement only Cut 5 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-gpt-5.4-cut5-01`: hello.
+- Intent: implement only Cut 5, restore cursor truth as a cadence concern.
+- Outcome: the first pass was rejected because the surface-level activity-reset proof was too weak and the loop still split cursor cadence across separate calls; the follow-up fixed both defects and the bounded full suite `timeout 300s zig build test:unit` passed.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should perform final Cut 5 acceptance.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 5 after the rejection fix and bounded full-suite gate.
+- Outcome: accepted. The loop now consumes one coherent cursor owner seam, surface-level cursor truth is explicit and tested, and the bounded full unit suite passes.
+- Handoff: orchestrator should commit the accepted host change and seed Cut 6.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 5 and promote the next section.
+- Outcome: Cut 5 committed in `howl-linux-host` as `16dc836` `Own cursor cadence facts`. Cut 6, loop wait-admission unification, is now the active coder section.
+- Handoff: coder must implement only Cut 6 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
