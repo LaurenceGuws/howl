@@ -35,22 +35,8 @@ Active restart note:
   - Slice 4 nested render commit `788ca2e` `Simplify legacy computing raster owner`, root receipt `fdeb7f2` `Accept six-target pragmatic-shape Slice 4`.
   - Slice 5 no-code acceptance, root receipt `b05d0d0` `Accept six-target pragmatic-shape Slice 5`.
   - Slice 6 nested VT commit `4f396b1` `Simplify parser action seams`, root receipt `356e981` `Accept six-target pragmatic-shape Slice 6`.
+- Archive receipt: `8ade41d` `Archive six-target pragmatic-shape sprint`.
 - Six-target pragmatic-shape sprint execution is complete and archived.
-- Previous latest closed sprint: six-target ownership hygiene.
-- Latest closed sprint orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
-- Latest closed sprint researcher session id: `research-2026-06-14-six-target-ownership-01`.
-- Latest closed sprint reviewer session id: `review-2026-06-14-six-target-ownership-01`.
-- Latest closed sprint planning seed receipt: `bbf5ca7` `Seed six-target ownership planning`.
-- Latest closed sprint accepted planning receipt: `16591b9` `Accept six-target ownership planning`.
-- Latest closed sprint sprint seed receipt: `bf0da6e` `Seed six-target ownership sprint`.
-- Latest closed sprint accepted slices:
-  - Slice 1 nested render commit `e952bf1` `Extract loaded face owner`, root receipt `eab184d` `Accept six-target ownership Slice 1`.
-  - Slice 2 nested render commit `927f032` `Move provisional runs into run owner`, root receipt `4c59cdd` `Accept six-target ownership Slice 2`.
-  - Slice 3 nested VT commit `05e4c69` `Add parser control spine proof`, root receipt `41eb058` `Accept six-target ownership Slice 3`.
-- Latest closed sprint archive receipt: `c308757` `Archive six-target ownership sprint`.
-- Latest closed sprint closure ledger fix: `7f4913c` `Record six-target ownership archive receipt`.
-- Latest closed sprint closure acceptance: `0fd760b` `Accept six-target ownership sprint closure`.
-- Six-target ownership hygiene sprint execution is complete and archived.
 
 Execution rule:
 
