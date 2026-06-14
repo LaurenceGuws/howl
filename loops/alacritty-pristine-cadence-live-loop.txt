@@ -177,3 +177,18 @@ Current handoff:
 - Intent: close the unsolicited `terminal_frame` RCA section and pause for reassessment.
 - Outcome: the accepted fix committed in `howl-linux-host` as `05a3324` `Classify autonomous cursor redraws`. Further implementation is paused pending live-behavior reassessment.
 - Handoff: reassessment must determine whether any autonomous `terminal_frame` submits remain before another section is seeded.
+
+- Researcher `research-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: replace reassessment-only guidance with a worker-ready sliced sprint plan for the user-directed Kitty cursor parity rewrite.
+- Outcome: wrote the active research artifact as a full worker-ready sprint document covering VT, render, host, config, ABI, tests, and multiple cursors under the explicit Kitty override; updated the active sprint surface so reviewer gating is now the authorized next step.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should gate the Kitty cursor parity sprint document and either accept it or reject it with exact planning defects.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: gate the worker-ready Kitty cursor parity sprint document against full parity, no deferrals, exact worker slices, and no coder-invented architecture.
+- Outcome: rejected twice for deferrals, wildcard allowlists, ambiguous coverage ownership, incomplete ABI/data-shape/protocol contracts, and under-specified algorithms. The researcher corrected the artifact after each rejection. Final verdict accepted: the active research artifact now contains worker-ready slices for full Kitty cursor parity.
+- Handoff: orchestrator should commit the accepted planning artifact and seed Slice 1.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the accepted Kitty cursor parity planning loop and seed the first implementation section.
+- Outcome: Slice 1, rebuild VT semantic cursor truth and protocol vocabulary, is now the active coder section.
+- Handoff: coder must implement only Slice 1 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.

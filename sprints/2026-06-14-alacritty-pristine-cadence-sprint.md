@@ -14,13 +14,13 @@ Goal:
 
 - Beat Alacritty on the benchmark.
 - Get there by making Howl pristine, pragmatic, and idiomatic rather than by chasing bucket slop.
-- Remove bolted-on ownership, stale wake/present cadence, and fake narrow-cut progress before any micro-optimization is allowed.
+- Remove bolted-on ownership, stale wake/present cadence, fake narrow-cut progress, and untruthful cursor behavior before any micro-optimization is allowed.
 
 Current section:
 
-- Host/runtime present cadence and cursor truth.
-- Prove whether Howl is replaying stale intermediate content/cursor states instead of presenting the latest current state under redraw pressure.
-- Treat wake admission, runtime drive, retained submit, present completion, and cursor state as one real owner boundary.
+- Kitty cursor parity rewrite.
+- Rewrite Howl cursor truth, rendering, cadence, protocol, config, and ABI to full Kitty cursor feature parity.
+- Treat VT semantic cursor truth, render cursor presentation, host cadence, config, ABI seams, and multiple-cursor protocol/rendering as one real owner boundary.
 
 Active constraints:
 
@@ -28,10 +28,10 @@ Active constraints:
 - Fake narrow cuts and fake small cuts are banned.
 - The rejected ASCII-rain `direct_normal` next-step is not live authority.
 - Proof remains required, but proof exists to name the real owner boundary, not to justify bucket tuning.
+- Kitty cursor parity is the target with no default deferrals.
 
 Current authorized step:
 
-- The planned 7-cut host/runtime present-cadence and cursor-truth section is complete.
-- The next section is RCA-first reproduction and fix of autonomous unsolicited `terminal_frame` production.
-- The failing-test reproduction and the behavior fix are now complete and accepted.
-- No further coder work is authorized until live-behavior reassessment decides whether another autonomous frame source still exists.
+- The Kitty cursor parity worker-ready sprint document is accepted under the explicit user override to use Kitty pressure.
+- Coder may implement Slice 1: rebuild VT semantic cursor truth and protocol vocabulary.
+- Slice 1 is the only authorized coder work right now.
