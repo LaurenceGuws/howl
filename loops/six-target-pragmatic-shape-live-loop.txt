@@ -250,3 +250,18 @@ Orchestrator note:
 - Intent: repair the remaining Slice 2 rejection by moving the drive-progress and submit-path proofs onto the real `Surface` owner code.
 - Outcome: `surface.zig` now exposes only narrow test hooks for injected environment facts and submit/upload observation, while `surface_test.zig` exercises `Surface.driveProgress` and the real submit path directly instead of reconstructing the runtime spine.
 - Handoff: `zig build test:unit` passed in `howl-linux-host`; ready for reviewer inspection.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-03`: hello.
+- Intent: remove `InputRenderableAssembly` and `CellLineTextCacheAssembly` from `cluster.zig` while keeping the file as the direct cluster/text-cache assembly owner and preserving retained-scratch bounds/tests.
+- Outcome: `cluster.zig` now builds cell text caches and renderable arrays directly through local allocation plus existing scratch slices, with both deleted assembly structs removed and no ownership moved into a new helper file.
+- Handoff: run `zig build test:unit` in `howl-render`, then hand the slice to reviewer if the inline proof set stays green.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: review Slice 3 cluster assembly cleanup.
+- Outcome: accepted with no findings. The bucket structs are deleted rather than moved sideways, `RetainedScratch` remains the explicit bounded owner, and required proof coverage remains intact inside `cluster.zig`.
+- Handoff: orchestrator should verify `zig build test:unit` in `howl-render`, then record nested and root Slice 3 acceptance receipts.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: verify and accept Slice 3 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `06b16f1` `Simplify cluster assembly owner`.
+- Handoff: root acceptance receipt is pending this commit; Slice 4 is next after root receipt closure.
