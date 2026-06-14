@@ -1,0 +1,7 @@
+ok. now act like the orcestrator instead of telling me what oyur buddies said. I am not the reciever. you orcestrate the team not me.
+you ahve to do 
+orcestrator <-> review loop until the refocus is accepted. then commit because accepted changes require you to commit, do not wonder about if you should, this is your mnain job
+then you have to orcestrate research <-> review loop to plan out the next 5 - 10 big cuts to scope into a sprint, and get it planned out into worker ready state. again, accept/commit
+then you do coder <-> reviewer untill the sprint is complete, again accept/commit
+these are subsprints.
+the main sprint is beating alacritty with the benchmark. Not by micro optimising bucket slop, by getting our code prestine, pragmatic and idiomatic.
