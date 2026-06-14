@@ -184,7 +184,17 @@ Orchestrator note:
 - Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
 - Intent: verify and accept corrected Slice 1 after reviewer acceptance.
 - Outcome: `zig build test:unit` passed from `howl-render`. Nested render commit is `34cad2c` `Remove support probing wrappers`.
-- Handoff: root acceptance receipt is pending this commit; Slice 2 is next after root receipt closure.
+- Handoff: root acceptance receipt is `378a186` `Accept six-target pragmatic-shape Slice 1`; Slice 2 is next.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: seed Slice 2 exactly from the accepted sprint contract.
+- Outcome: Slice 2 is authorized for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-02` only.
+- Allowed files: `howl-linux-host/src/terminal/surface.zig`, `howl-linux-host/src/terminal/surface_test.zig`.
+- Required shape: keep `Surface` as the one host-surface owner; remove internal `anytype`/`Ops` narration where the real owner is already `Surface` or `HowlTerm`; prefer direct owner code over `ContextDriveOps`, `ContextSubmitBackend`, and local generic present/clipboard helpers; inline or delete local request/result buckets that survive only as scaffolding after helper removal; preserve the centralized render/progress and submit/present spine.
+- Required tests from `howl-linux-host`: `zig build test:unit`.
+- Required exact proof names in `howl-linux-host/src/terminal/surface_test.zig`: `pending VT clipboard write follows OSC 52 policy`, `drive progress keeps per-terminal continuation admission until a later non-keep turn`, `inactive tab continuation re-enters from per-terminal continuation admission`, `present pending blocks submit path until host present ack`, `submit path runs once no host present is in flight`, `submit backend upload observes terminal mutex unlocked`, `render submit runs under terminal mutex after backend upload`, `host upload failure returns failed submit without render submit`, `prepared handle mutation after upload does not submit`, `resize success path submits full surface and acks matching present token`, `resize upload failure zeros host dimensions and retry submits same full frame`, `resize while present pending waits for matching ack before resized submit`, `complete present acks matching host-owned token once and clears`, `mismatched complete present does not ack or clear`.
+- Stop conditions: stop if direct helper removal forces a weaker test seam than the current proof; stop if mutex or submit/present control flow becomes less centralized; stop if the change spreads outside the allowed files.
+- Required handoff fields: changed files, concise implementation summary, verification commands/results, blockers/deviations, coder session id, commit-hash handoff status for orchestrator receipt closure.
 
 - Researcher `research-2026-06-14-six-target-pragmatic-shape-01`: hello again.
 - Intent: map the remaining public probing wrappers in `support.zig`, prove their exact caller graph, and decide whether Slice 1 needs a narrow reseed or a stop.
