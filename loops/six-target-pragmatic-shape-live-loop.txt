@@ -155,3 +155,23 @@ Orchestrator note:
 - Intent: restart Slice 1 from the earliest broken stage after reviewer rejection.
 - Outcome: active correction research artifact is `research/2026-06-14-pragmatic-shape-slice1-correction.md`; Slice 1 remains unaccepted and the current render diff stays uncommitted.
 - Handoff: researcher must inventory the remaining `support.zig` wrappers, identify exact caller files still depending on them, and reseed corrected file scope with exact tests/non-goals/stop conditions/receipt fields.
+
+- Researcher `research-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: identify the exact remaining caller scope needed to finish Slice 1 without compatibility shims.
+- Outcome: the only remaining caller outside current Slice 1 scope is `howl-render/src/text/ft_hb/glyph_raster.zig`; the correction keeps the slice in place and expands scope just enough to delete the remaining probing wrappers cleanly.
+- Handoff: reviewer should verify the corrected Slice 1 contract and exact file expansion before reseed.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: review the focused Slice 1 correction package.
+- Outcome: accepted with no findings. The correction inventories the remaining wrappers exactly, proves the minimal `glyph_raster.zig` expansion, and supplies a corrected execution contract with exact files, tests, non-goals, stop conditions, and receipt fields.
+- Handoff: orchestrator may promote the correction into the active sprint contract and reseed Slice 1 repair.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: promote the accepted Slice 1 correction into the active sprint contract and reseed Slice 1 repair.
+- Outcome: corrected Slice 1 scope now includes `howl-render/src/text/ft_hb/glyph_raster.zig`; correction research moved to `research/done/2026-06-14-pragmatic-shape-slice1-correction.md`.
+- Handoff: coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01` may repair the existing unaccepted Slice 1 diff only inside the corrected file scope and then return standard handoff fields.
+
+- Researcher `research-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: map the remaining public probing wrappers in `support.zig`, prove their exact caller graph, and decide whether Slice 1 needs a narrow reseed or a stop.
+- Outcome: `research/2026-06-14-pragmatic-shape-slice1-correction.md` now shows that only `glyph_raster.zig` still depends on the remaining support wrappers; all other remaining wrapper exports are dead shim surface, so Slice 1 should be repaired in place with exact scope expansion to `howl-render/src/text/ft_hb/glyph_raster.zig` and its existing inline tests.
+- Handoff: reviewer should check the exact wrapper inventory and the corrected Slice 1 allowed-file expansion; orchestrator can reseed if accepted.

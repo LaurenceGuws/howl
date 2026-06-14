@@ -22,30 +22,39 @@ Problem:
 - Allowed files:
   - `howl-render/src/text/ft_hb/support.zig`
   - `howl-render/src/render_session.zig`
+  - `howl-render/src/text/ft_hb/glyph_raster.zig`
   - `howl-render/src/text/ft_hb/support_test.zig`
 - Required shape:
   - Keep `FtHbSupport` as the sole state owner in `support.zig`.
   - Move context extraction to the render-session boundary.
-  - Delete ownership-probing helpers `textState`, `configView`, `lockFt`, and `unlockFt`.
-  - Change support internals to take explicit state/config inputs instead of `anytype`.
+  - Delete all remaining public probing wrappers from `support.zig`: `providerHasCodepoint`, `providerHasCellText`, `providerShapeRun`, `providerGlyphId`, `providerGlyphAdvance`, `providerLookupGlyph`, `ensurePrimaryFont`, `ensureFont`, `resizeLoadedFaces`, `ensureFallbackFace`, `deriveCellMetrics`, and `acquireShapingFaceLocked`.
+  - Change support internals and `glyph_raster.zig` callers to take explicit state/config inputs instead of probing `anytype` wrappers.
   - Do not add a new vague `Context`, `State`, `Options`, or `Info` bucket to replace the removed generics.
   - Keep external behavior and fallback order unchanged.
 - Exact tests:
   - from `howl-render`, run `zig build test:unit`
-  - required test file: `howl-render/src/text/ft_hb/support_test.zig`
-  - required test names:
+  - required test files:
+    - `howl-render/src/text/ft_hb/support_test.zig`
+    - `howl-render/src/text/ft_hb/glyph_raster.zig`
+  - required test names in `support_test.zig`:
     - `provider loads fallback face for symbol glyph with primary present`
     - `ft hb state configures explicit retained cache and input capacities`
     - `shape run input assembly reuses retained bounded buffers`
+  - required test names in `glyph_raster.zig`:
+    - `provider decodes packed monochrome bitmap alpha`
+    - `provider box fallback draws routed generated special families`
+    - `provider deterministic fallback matches fallback raster for glyph and sprite entry points`
 - Non-goals:
   - No `glyph_raster.zig` redesign.
   - No cache policy change.
   - No font-session API redesign beyond what direct support ownership requires.
+  - No compatibility shims or alias wrappers.
 - Stop conditions:
   - Stop if generic removal requires inventing a replacement bucket with weaker ownership truth.
   - Stop if the change spreads into non-target render files outside the allowed list.
   - Stop if fallback behavior changes.
-- Required receipt fields: planning seed receipt `117b860`, accepted planning receipt `9f20f26`, orchestrator session id, researcher session id, reviewer session id, coder session id, verification result `zig build test:unit` in `howl-render`, commit-hash handoff required on slice acceptance.
+  - Stop if another caller file outside the allowed list depends on the removed wrappers.
+- Required receipt fields: planning seed receipt `117b860`, accepted planning receipt `9f20f26`, slice 1 correction acceptance receipt pending, orchestrator session id, researcher session id, reviewer session id, coder session id, verification result `zig build test:unit` in `howl-render`, commit-hash handoff required on slice acceptance.
 
 ## Slice 2 surface direct-owner cleanup
 
