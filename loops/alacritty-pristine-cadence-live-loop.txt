@@ -217,3 +217,8 @@ Current handoff:
 - Intent: close accepted Slice 1 and advance the Kitty cursor parity sprint.
 - Outcome: committed accepted Slice 1 in `howl-vt` as `15caf66` `Rebuild VT semantic cursor truth`. Slice 2 is now the active implementation section.
 - Handoff: coder must implement only Slice 2 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: implement Slice 2 as originally seeded.
+- Outcome: stopped correctly. The Slice 2 contract required extra-cursor export and cursor-trail publication facts whose real owners still live in later slices outside the Slice 2 allowlist.
+- Handoff: orchestrator must correct Slice 2 so this slice owns only widened ABI/publication seams and empty aggregate preservation, while Slice 5 remains the trail source owner and Slice 7 remains the extra-cursor state/export owner.

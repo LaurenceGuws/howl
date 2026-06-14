@@ -286,22 +286,23 @@ Required shape:
 - Exact extra cursor ABI shape: `FfiExtraCursor { row: u16, col: u16, rows: u16, cols: u16, shape: u8, mode: u8, shape_follows_main: u8, color_follows_main: u8, cursor_color: FfiColor, text_color: FfiColor }`.
 - Extra cursor `mode` values: `0` point, `1` rectangle. Extra cursor `shape` values: `0` none, `1` block, `2` beam, `3` underline, `4` hollow. `shape_follows_main=1` means use the main effective shape and ignore `shape`. `color_follows_main=1` means use main cursor color/text-color resolution and ignore `cursor_color` and `text_color`.
 - Exact cursor aggregate ABI fields in `FfiSurface`: `extra_cursor_count: u16` and `extra_cursors: [HOWL_VT_MAX_EXTRA_CURSORS]FfiExtraCursor`. Cursor trail records are not VT ABI data because VT does not own cursor trail animation.
-- Bounds behavior: VT clips point and rectangle extra cursors to the visible screen before export; out-of-screen points produce no exported record; off-screen rectangle portions are intersected with the screen; malformed trailing coordinate groups are ignored before state storage; records beyond `HOWL_VT_MAX_EXTRA_CURSORS` are dropped after preserving the first 256 screen-clipped records in parse order.
+- Slice 2 ownership boundary: `howl-vt/src/ffi/surface.zig` defines the exact extra-cursor ABI shape and exports `extra_cursor_count=0` with zeroed `extra_cursors` until Slice 7 adds bounded extra-cursor state storage and export. Slice 2 must not invent placeholder extra-cursor state outside the later Slice 7 owners.
 - Exact render publication cursor presentation shape adds host-owned fields not present in VT ABI: `cursor_opacity: u8`, `text_blink_opacity: u8`, `focused: bool`, and `effective_shape: u8`; opacity fields are 0..255 where 0 is transparent and 255 is opaque.
 - Exact cursor trail publication shape: `SourceCursorTrailRect { row: u16, col: u16, rows: u16, cols: u16, opacity: u8, reserved0: u8, reserved1: u16, color: FfiRgb8 }` plus `cursor_trail_count: u16` and `cursor_trail_rects: [HOWL_RENDER_MAX_CURSOR_TRAIL_RECTS]SourceCursorTrailRect` in the render publication source.
 - Cursor trail source ownership: host cadence owns trail timing and trail rectangle source data, writes at most `HOWL_RENDER_MAX_CURSOR_TRAIL_RECTS` trail records into the publication input, and render publication owns copying and damage comparison of those records; VT does not own cursor trail animation data.
-- Trail overflow behavior: host writes the newest 16 trail rectangles in visual draw order and drops older rectangles before publication.
+- Slice 2 ownership boundary: the widened render publication source must carry exact trail fields with zero trail records until Slice 5 adds host-owned trail source plumbing. Slice 2 must not invent cursor trail timing or source owners outside the later Slice 5 files.
 - `howl-render/src/vt_publication/abi.zig` mirrors these VT ABI and render-publication shapes exactly with Zig source types, validates every enum value and opacity <= 255, and rejects invalid publication sources with `error.InvalidSurfaceSource`.
 - `howl-render/src/vt_publication/publication.zig` removes `cursor_phase_visible` as boundary truth and stores the widened cursor publication as source truth.
 - `howl-render/src/vt_publication/damage.zig` classifies changes to primary cursor fields, extra cursor count/records, cursor colors, cursor trail count/records, and `position_changed_by_client_at_ms` as cursor damage.
 Exact tests:
 - Publication boundary validation tests for every widened cursor field, both maximum constants, every enum value, opacity bounds, and invalid enum rejection.
-- Source-slot copy/promote tests covering cursor presentation preservation.
-- Overflow tests proving extra cursor records above 256 are dropped after the first 256 clipped records and trail records above 16 drop older records.
-- Retained-source tests proving cursor visibility/presentation/trail changes classify as cursor damage and not terminal content changes.
+- Source-slot copy/promote tests covering primary cursor presentation preservation and zero-preservation of empty extra-cursor/trail aggregates.
+- Retained-source tests proving primary cursor visibility/presentation changes and widened empty aggregate fields classify as cursor damage and not terminal content changes.
 Non-goals:
 - No scene draw implementation.
 - No host timing changes.
+- No extra-cursor state storage or clipping; that owner work remains in Slice 7.
+- No cursor-trail source production or overflow behavior; that owner work remains in Slice 5.
 Stop conditions:
 - Render no longer relies on a single `cursor_phase_visible` boolean to express cursor presentation truth.
 - Workers must not change cursor capacities, field names, integer widths, enum values, overflow behavior, or trail ownership from this Slice 2 contract without reviewer rejection and a new planning artifact.
