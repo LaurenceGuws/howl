@@ -57,3 +57,18 @@ Current handoff:
 - Intent: close Cut 1 and promote the next section.
 - Outcome: Cut 1 committed in `howl-linux-host` as `c925170` `Own synchronous present lifecycle`. Cut 2, frame cadence explicit single-owner cleanup, is now the active coder section.
 - Handoff: coder must implement only Cut 2 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-gpt-5.4-cut2-01`: hello.
+- Intent: implement only Cut 2, rebuild frame cadence around one explicit frame owner.
+- Outcome: initial Cut 2 implementation passed tests but was rejected because `event.zig` still carried post-complete pacing policy; the same slice was corrected, re-verified with `zig build test:unit`, and returned with no blockers.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should gate the corrected Cut 2 state.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review the corrected Cut 2 implementation against the accepted contract.
+- Outcome: accepted. `FrameTimer` now owns wait, render permission, present admission, post-submit, and post-complete semantics, and `event.zig` no longer carries the rejected post-complete pacing branch.
+- Handoff: orchestrator should commit the accepted host change and seed Cut 3.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close Cut 2 and promote the next section.
+- Outcome: Cut 2 committed in `howl-linux-host` as `93e9224` `Own frame cadence policy`. Cut 3, runtime admission/drive separation, is now the active coder section.
+- Handoff: coder must implement only Cut 3 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
