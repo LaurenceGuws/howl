@@ -90,3 +90,38 @@ Orchestrator note:
 - Intent: seed a planning-only sprint around the six remaining pragmatic low-level shape pressure points.
 - Outcome: live loop now captures the target set, ugliness criteria, research questions, output contract, ranking bias, and hard non-goals/stops.
 - Handoff: researcher must read required workflow docs, `sprints/current.txt`, this loop, `reference-index.md`, TigerBeetle readings, the six target files, and the governing reference seams before writing the active research package.
+
+- Researcher `research-2026-06-14-six-target-pragmatic-shape-01`: hello.
+- Intent: evaluate the six remaining pragmatic-shape targets against Alacritty directness and TigerBeetle anti-bucket pressure, then write a fully sliceable research package.
+- Outcome: completed the planning package with keep-large or cut judgments for all six targets, a full six-slice execution queue, and an initial Slice 1 focused on `howl-render/src/text/ft_hb/support.zig` directness cleanup.
+- Handoff: reviewer should pressure exactness, keep-large proof quality, and whether any slice still leaves coder guesswork.
+
+- Researcher `research-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: repair the rejected planning package by adding the missing researcher sections, full slice contracts, stronger emitter proof, and explicit keep-large cleanup answers.
+- Outcome: repaired the package with explicit current/reference facts, owner roles, sprint scratchpad, six full slice contracts, and stronger emitter/no-op proof.
+- Handoff: reviewer should re-check slice exactness and keep-large proof quality, especially for later slices.
+
+- Researcher `research-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: repair the remaining exactness defects in later slices.
+- Outcome: Slice 4 now names exact files and exact raster proof tests, Slice 5 is an exact verification-only or micro-cleanup path, and the package now uses exact test names consistently across slices.
+- Handoff: reviewer should perform final exactness re-check. No additional planning content is expected beyond acceptance or a new defect.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello.
+- Intent: perform final planning review after the last exactness repair.
+- Outcome: accepted with no findings. The package is now execution-ready, slices 1-6 meet the exactness bar, and no further planning changes are required before seeding execution.
+- Handoff: orchestrator may record accepted planning receipt and promote the package into the active sprint contract.
+
+- Researcher note from `research-2026-06-14-six-target-pragmatic-shape-01`.
+- Hello. Intent: prove keep-large vs cut for all six targets against Alacritty, Ghostty, and TigerBeetle pressure, then seed an exact first execution slice.
+- Outcome: all six targets are now judged in `research/2026-06-14-six-target-pragmatic-shape-plan.md`; five stay large with specific ugliness removals, and `support.zig` is ranked first because its ownership-probing `anytype` seam is the clearest directness violation with existing proof.
+- Handoff: reviewer should pressure the per-target stop conditions, especially the no-split verdicts for `surface.zig`, `emitter.zig`, and `parser.zig`, and the new-test requirement for `special_legacy_computing.zig`.
+
+- Researcher repair note from `research-2026-06-14-six-target-pragmatic-shape-01`.
+- Hello. Intent: repair the rejected planning package by adding the missing research sections, full slice contracts for all six slices, and tighter keep-large proof for `emitter.zig` plus naming/readability answers for every target.
+- Outcome: `research/2026-06-14-six-target-pragmatic-shape-plan.md` now includes explicit current-code facts, reference facts, owner roles and proposed shape, a sprint scratchpad, full execution contracts for Slices 1-6, tighter `emitter.zig` proof with current tests, and explicit transitional-name/readability answers for every keep-large target.
+- Handoff: reviewer should now check completion of the six-slice execution package and decide whether the `special_legacy_computing.zig` test-root wording is acceptable as the single remaining proof-risk note.
+
+- Researcher repair note from `research-2026-06-14-six-target-pragmatic-shape-01`.
+- Hello. Intent: close the remaining exactness defects by fixing Slice 4 allowed/test paths, tightening Slice 5 to exact no-op verification tests, and rechecking Slice 2, Slice 3, and Slice 6 test contracts to the same bar.
+- Outcome: the active research plan now names exact file paths for Slice 4, exact preserved/added raster test names, exact emitter no-op verification tests for Slice 5, and exact test-name lists for the remaining slices that were previously broader.
+- Handoff: reviewer should re-check only the execution-contract exactness bar and confirm that Slice 4's added test name is acceptable as the explicit proof obligation for the degenerate-size gap.
