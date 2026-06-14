@@ -2,6 +2,13 @@
 
 ## Sprint Planning
 
+Slice definition:
+
+- A slice is an accountable section of a sprint.
+- A slice is sized by the real owner boundary, proof boundary, and product problem under change.
+- A slice is not required to be tiny, minimal, or the smallest possible code change.
+- Fake progress by arbitrarily shrinking a real fix into cosmetic or partial cuts is rejected unless the user explicitly wants that shape.
+
 - Researcher and reviewer do the sprint planning work ahead of execution.
 - Planning stops only when the full problem statement is fully and explicitly scoped into slices for the coder.
 - No coding starts while scope, slice boundaries, ownership, tests, non-goals, or stop conditions are unsettled.
@@ -21,7 +28,7 @@ Planning order:
 
 Planning completion gate:
 
-- Planning is complete only when the sprint is fully and explicitly scoped into sequential worker slices.
+- Planning is complete only when the sprint is fully and explicitly scoped into sequential worker slices sized to the real problem and owner boundaries.
 - Every slice must have:
   - exact allowed files
   - exact required shape

@@ -39,7 +39,7 @@
 - exact file or line references when possible
 - reject vague ownership
 - reject weak evidence
-- reject fake small cuts
+- reject fake narrow cuts that split real work only to simulate progress
 - reject missing tests
 - reject missing receipts
 - reject accepted work that lacks contributor session ids or commit-hash receipt closure

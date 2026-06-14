@@ -29,7 +29,7 @@
 ## Procedure
 
 - define the problem plainly
-- choose the smallest accountable role sequence
+- choose the accountable role sequence that matches the real problem boundary
 - seed researchers, coders, and reviewers with exact scope
 - compress each live handoff to one controlling active artifact whenever possible
 - keep the active loop usable as the shared team scratchpad, not just a silent contract
