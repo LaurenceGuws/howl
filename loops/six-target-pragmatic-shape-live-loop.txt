@@ -205,3 +205,38 @@ Orchestrator note:
 - Intent: finish the Slice 1 repair by deleting the remaining public support wrappers and routing glyph-raster callers through explicit support state/config seams.
 - Outcome: `support.zig` now exposes only explicit `WithConfig` support entry points for this slice, `render_session.zig` remains the only session/context extraction boundary, `glyph_raster.zig` now calls support with explicit `FtHbSupport` plus `TextSessionConfig`, and `zig build test:unit` passed in `howl-render`.
 - Handoff: ready for reviewer inspection; no blocker from implementation.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-02`: hello.
+- Intent: remove `surface.zig` owner-probing `Ops` scaffolding while keeping `Surface` as the centralized submit/present owner and preserving the current proof seams.
+- Outcome: `Surface` now drives progress, clipboard application, present completion, and submit directly in production code; remaining generic seams are confined to test-only helpers in `surface.zig`, and `surface_test.zig` was updated to call those explicit test helpers.
+- Handoff: run `zig build test:unit` in `howl-linux-host`, then hand the diff to reviewer if the proof set stays green.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-02`: hello again.
+- Intent: finish Slice 2 by removing the remaining duplicated runtime spine from the host tests.
+- Outcome: drive-progress proofs now call `Surface.driveProgress` directly, submit-path proofs now call the real submit path through narrow owner-true hooks, and the duplicated helper/control-path reconstruction is gone from `surface_test.zig`.
+- Handoff: ready for reviewer inspection and orchestrator receipt closure once the repaired host diff is reviewed.
+
+- Reviewer `review-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: review the repaired Slice 2 host direct-owner cleanup after the proof-seam fixes.
+- Outcome: accepted with no findings. Drive-progress proofs call `Surface.driveProgress` directly, submit-path proofs call the real submit path, and the remaining hooks in `surface.zig` are narrow owner-true setup/observation seams rather than alternate control paths.
+- Handoff: orchestrator should verify `zig build test:unit` in `howl-linux-host`, then record nested and root Slice 2 acceptance receipts.
+
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: verify and accept repaired Slice 2 after reviewer acceptance.
+- Outcome: `zig build test:unit` passed from `howl-linux-host`. Nested host commit is `9f12d7e` `Simplify terminal surface owner`.
+- Handoff: root acceptance receipt is pending this commit; Slice 3 is next after root receipt closure.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-02`: hello again.
+- Intent: repair Slice 2 by deleting the remaining fake proof seams from `surface.zig` and keeping the production direct-owner cleanup intact.
+- Outcome: the rejected `surface.zig` test seams are gone; `surface_test.zig` now carries only concrete local proof setup for the remaining host-surface behaviors without any `surface.zig` generic protocol layer.
+- Handoff: rerun `zig build test:unit` in `howl-linux-host`, then return the repaired diff for reviewer inspection.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-02`: hello again.
+- Intent: remove the last duplicated control-path helpers from `surface_test.zig` without disturbing the current production cleanup in `surface.zig`.
+- Outcome: `driveProgressForTest` and `submitPreparedLockedForTest` are deleted; the affected proofs now perform direct local setup in each test and keep only narrow setup/observation helpers such as execution construction and present completion.
+- Handoff: rerun `zig build test:unit` in `howl-linux-host`, then hand the repair back for reviewer inspection.
+
+- Coder `coder-2026-06-14-six-target-pragmatic-shape-slice-02`: hello again.
+- Intent: repair the remaining Slice 2 rejection by moving the drive-progress and submit-path proofs onto the real `Surface` owner code.
+- Outcome: `surface.zig` now exposes only narrow test hooks for injected environment facts and submit/upload observation, while `surface_test.zig` exercises `Surface.driveProgress` and the real submit path directly instead of reconstructing the runtime spine.
+- Handoff: `zig build test:unit` passed in `howl-linux-host`; ready for reviewer inspection.
