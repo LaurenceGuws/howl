@@ -147,3 +147,33 @@ Current handoff:
 - Intent: close Cut 7 and complete the planned section.
 - Outcome: Cut 7 committed in `howl-linux-host` as `3e15ab4` `Prove latest snapshot truth`. The planned 7-cut host/runtime present-cadence and cursor-truth section is complete.
 - Handoff: benchmark and live-behavior reassessment must decide the next section before more coder work is seeded.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: gate the next section after reassessment.
+- Outcome: accepted the next section as RCA-first reproduction and fix of autonomous unsolicited `terminal_frame` production. The first slice must pin the defect in one failing deterministic test before any behavior fix is seeded.
+- Handoff: orchestrator should seed the failing-test reproduction slice with an exact owner seam and no fix work yet.
+
+- Coder `coder-2026-06-14-gpt-5.4-rca-01`: hello.
+- Intent: pin unsolicited `terminal_frame` production in one deterministic failing test before any fix.
+- Outcome: the first helper-only reproduction was rejected; the replacement failing test now enters through the real `event.zig` present-planning seam and proves that autonomous cursor-only redraw is currently planned as `.terminal_frame` just like keydown-driven runtime redraw.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should gate the corrected failing-test RCA slice.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review the failing-test RCA slice after the rejection fix.
+- Outcome: accepted. The failing test now pins one real owner gap: present planning lacks a redraw-source discriminator separating runtime/key-input terminal progress from autonomous cursor-only redraw.
+- Handoff: orchestrator should seed the fix slice on that exact failing test seam.
+
+- Coder `coder-2026-06-14-gpt-5.4-rca-01`: hello again.
+- Intent: fix the accepted owner gap at the unsolicited `terminal_frame` seam and make the failing RCA test pass.
+- Outcome: completed the fix in `event.zig` and `display/present.zig`, the accepted failing test now passes, `timeout 300s zig build test:unit` passes, and the temporary user-requested host timing logs remain available in `event_loop.zig` and `display/present.zig` for reassessment.
+- Handoff: reviewer `review-2026-06-14-ascii-rain-performance-01` should perform final acceptance on the unsolicited `terminal_frame` fix slice.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: review the unsolicited `terminal_frame` fix slice.
+- Outcome: accepted. Cursor-only autonomous redraw no longer claims `terminal_frame` ownership, the accepted failing seam test passes, and the bounded full unit suite passes.
+- Handoff: orchestrator should commit the accepted host change and stop implementation until reassessment decides whether another autonomous frame source remains.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close the unsolicited `terminal_frame` RCA section and pause for reassessment.
+- Outcome: the accepted fix committed in `howl-linux-host` as `05a3324` `Classify autonomous cursor redraws`. Further implementation is paused pending live-behavior reassessment.
+- Handoff: reassessment must determine whether any autonomous `terminal_frame` submits remain before another section is seeded.

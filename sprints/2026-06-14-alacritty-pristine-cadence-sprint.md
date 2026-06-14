@@ -32,4 +32,6 @@ Active constraints:
 Current authorized step:
 
 - The planned 7-cut host/runtime present-cadence and cursor-truth section is complete.
-- No further coder work is authorized until benchmark and live-behavior reassessment names the next section.
+- The next section is RCA-first reproduction and fix of autonomous unsolicited `terminal_frame` production.
+- The failing-test reproduction and the behavior fix are now complete and accepted.
+- No further coder work is authorized until live-behavior reassessment decides whether another autonomous frame source still exists.
