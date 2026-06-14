@@ -7,32 +7,37 @@ Purpose:
 
 Sprint:
 
-- No active sprint seeded.
+- No accepted execution sprint seeded. Planning is active for six-target pragmatic shape.
 
 Active research:
 
-- No active research seeded.
+- `research/2026-06-14-six-target-pragmatic-shape-plan.md`
 
 Active loops:
 
-- No active loop seeded.
+- `loops/six-target-pragmatic-shape-live-loop.txt`
 
 Active restart note:
 
-- No active sprint is seeded. Waiting for next scope.
-- Latest closed sprint: six-target ownership hygiene.
-- Orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
-- Researcher session id: `research-2026-06-14-six-target-ownership-01`.
-- Reviewer session id: `review-2026-06-14-six-target-ownership-01`.
-- Planning seed receipt: `bbf5ca7` `Seed six-target ownership planning`.
-- Accepted planning receipt: `16591b9` `Accept six-target ownership planning`.
-- Sprint seed receipt: `bf0da6e` `Seed six-target ownership sprint`.
-- Accepted slices:
+- Active planning scope: six-target pragmatic shape.
+- Orchestrator session id: `orch-2026-06-14-six-target-pragmatic-shape-01`.
+- Researcher session id: `research-2026-06-14-six-target-pragmatic-shape-01`.
+- Reviewer session id: `review-2026-06-14-six-target-pragmatic-shape-01`.
+- No implementation is authorized until planning is accepted and execution slices are seeded.
+- Previous latest closed sprint: six-target ownership hygiene.
+- Latest closed sprint orchestrator session id: `orch-2026-06-14-six-target-ownership-01`.
+- Latest closed sprint researcher session id: `research-2026-06-14-six-target-ownership-01`.
+- Latest closed sprint reviewer session id: `review-2026-06-14-six-target-ownership-01`.
+- Latest closed sprint planning seed receipt: `bbf5ca7` `Seed six-target ownership planning`.
+- Latest closed sprint accepted planning receipt: `16591b9` `Accept six-target ownership planning`.
+- Latest closed sprint sprint seed receipt: `bf0da6e` `Seed six-target ownership sprint`.
+- Latest closed sprint accepted slices:
   - Slice 1 nested render commit `e952bf1` `Extract loaded face owner`, root receipt `eab184d` `Accept six-target ownership Slice 1`.
   - Slice 2 nested render commit `927f032` `Move provisional runs into run owner`, root receipt `4c59cdd` `Accept six-target ownership Slice 2`.
   - Slice 3 nested VT commit `05e4c69` `Add parser control spine proof`, root receipt `41eb058` `Accept six-target ownership Slice 3`.
-- Archive receipt: `c308757` `Archive six-target ownership sprint`.
-- Closure review accepted by `review-2026-06-14-six-target-ownership-01` after ledger fix `7f4913c` `Record six-target ownership archive receipt`.
+- Latest closed sprint archive receipt: `c308757` `Archive six-target ownership sprint`.
+- Latest closed sprint closure ledger fix: `7f4913c` `Record six-target ownership archive receipt`.
+- Latest closed sprint closure acceptance: `0fd760b` `Accept six-target ownership sprint closure`.
 - Six-target ownership hygiene sprint execution is complete and archived.
 - Previous latest closed sprint: runtime debug-noise cleanup.
 - Latest closed sprint orchestrator session id: `orch-2026-06-14-runtime-debug-noise-01`.
@@ -54,8 +59,8 @@ Active restart note:
 
 Execution rule:
 
-- No coding is authorized until a new active sprint, loop, and execution contract are seeded.
-- The six-target ownership hygiene sprint execution is complete and archived.
+- No coding is authorized until the active planning package is reviewer-accepted and a slice execution contract is seeded.
+- The six-target ownership hygiene sprint is historical and archived.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.
 - Historical host/render/PTY/VT/all-src artifacts are navigation only until fresh current-source and reference proof re-promotes a fact into the active research artifact.
 

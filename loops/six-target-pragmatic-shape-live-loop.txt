@@ -1,0 +1,92 @@
+# Six-Target Pragmatic Shape Live Loop
+
+Authority:
+
+- Live planning scratchpad for the six-target pragmatic low-level code-shape sprint.
+- Orchestrator session id: `orch-2026-06-14-six-target-pragmatic-shape-01`.
+- User handoff supplied 2026-06-14.
+- No implementation is authorized until research planning is accepted by reviewer and exact slices are seeded.
+
+Problem statement:
+
+- Close the remaining gap between Howl and Alacritty on pragmatic low-level code shape.
+- This sprint is not about size reduction by itself.
+- Remove the remaining forms of ugliness:
+  - support buckets
+  - ownership-probing generics
+  - excess local protocol/result nouns
+  - transitional names
+  - narrated runtime code where direct owner code would be clearer
+- The target is to make the code read more like a settled runtime and less like a system still explaining its own structure.
+
+Target set:
+
+1. `projects/howl/howl-linux-host/src/terminal/surface.zig`
+2. `projects/howl/howl-render/src/text/ft_hb/support.zig`
+3. `projects/howl/howl-render/src/text/shape/cluster.zig`
+4. `projects/howl/howl-render/src/surface/emitter.zig`
+5. `projects/howl/howl-render/src/text/raster/special_legacy_computing.zig`
+6. `projects/howl/howl-vt/src/parser.zig`
+
+Research contract:
+
+- Researcher session id: `research-2026-06-14-six-target-pragmatic-shape-01`.
+- Reviewer session id: `review-2026-06-14-six-target-pragmatic-shape-01`.
+- Active research output path: `research/2026-06-14-six-target-pragmatic-shape-plan.md`.
+- For each target, research must answer:
+  1. Is this file large because it is the true owner?
+  2. Which local concepts are real domain concepts, and which are scaffolding?
+  3. Which named result/request/assembly/helper types can be deleted or inlined without making control flow worse?
+  4. Which `anytype` helpers are hiding unsettled ownership?
+  5. Which names still sound transitional or over-explanatory?
+  6. If the file stays large, how do we make it read like one thing faster?
+- Required output per target:
+  - exact file and line references
+  - exact reference comparison
+  - keep-large or cut verdict
+  - if cut: exact child owner and exact symbols to move/delete/inline/rename
+  - if keep-large: exact ugly/fake concepts to remove without splitting the owner
+  - required assertions
+  - required tests
+  - non-goals
+  - stop conditions
+
+Reference order and pressure:
+
+- Use Alacritty first for host runtime owner shape, render/text owner directness, pragmatic naming, and tolerated concept surface.
+- Use TigerBeetle for anti-bucket pressure, directness, rejection of ambient genericity, and compression after understanding.
+- Do not use current Howl shape as authority.
+
+Initial ranking bias only, not authorization:
+
+1. `howl-render/src/text/ft_hb/support.zig`
+2. `howl-linux-host/src/terminal/surface.zig`
+3. `howl-render/src/text/shape/cluster.zig`
+4. `howl-render/src/surface/emitter.zig`
+5. `howl-render/src/text/raster/special_legacy_computing.zig`
+6. `howl-vt/src/parser.zig`
+
+Hard non-goals:
+
+- No split-because-big reasoning.
+- No generic helper buckets.
+- No new `types.zig`, `helpers.zig`, `manager`, `engine`, or `controller`.
+- No benchmark theater.
+- No ABI churn unless explicitly forced.
+- No parser fragmentation unless reference-backed and unavoidable.
+
+Hard stop conditions:
+
+- Stop if a file is ugly only by metric but owner-true in source.
+- Stop if a proposed split just moves narration sideways.
+- Stop if a proposed helper uses `anytype` to dodge ownership clarity.
+- Stop if a rename is prettier but less direct.
+- Stop if parser work threatens the control spine.
+- Stop if research cannot prove a better reference-backed shape.
+
+Orchestrator note:
+
+- Hello from `orch-2026-06-14-six-target-pragmatic-shape-01`.
+- Intent: seed a planning-only sprint around the six remaining pragmatic low-level shape pressure points.
+- Outcome: live loop now captures the target set, ugliness criteria, research questions, output contract, ranking bias, and hard non-goals/stops.
+- Handoff: researcher must read required workflow docs, `sprints/current.txt`, this loop, `reference-index.md`, TigerBeetle readings, the six target files, and the governing reference seams before writing the active research package.
