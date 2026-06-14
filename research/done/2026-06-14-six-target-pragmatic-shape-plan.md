@@ -1,3 +1,9 @@
+# Historical Authority
+
+- Historical authority at time: accepted six-target pragmatic low-level code-shape planning package for `orch-2026-06-14-six-target-pragmatic-shape-01`.
+- Why superseded or done: promoted into active sprint contract `sprints/2026-06-14-six-target-pragmatic-shape-sprint.md`.
+- Must not be used for: direct execution authority after sprint promotion; use the active sprint and loop contract instead.
+
 # Six-Target Pragmatic Shape Plan
 
 Status:
@@ -8,7 +14,7 @@ Status:
 - Reviewer session id: `review-2026-06-14-six-target-pragmatic-shape-01`.
 - Reviewer accepted planning.
 - No implementation is authorized from this file until the orchestrator seeds execution slices.
-- Acceptance receipt: pending orchestrator commit.
+- Acceptance receipt: `9f20f26` `Accept six-target pragmatic-shape planning`.
 
 Sources read in order:
 

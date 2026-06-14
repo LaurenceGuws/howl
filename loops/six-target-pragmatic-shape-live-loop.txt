@@ -111,6 +111,11 @@ Orchestrator note:
 - Outcome: accepted with no findings. The package is now execution-ready, slices 1-6 meet the exactness bar, and no further planning changes are required before seeding execution.
 - Handoff: orchestrator may record accepted planning receipt and promote the package into the active sprint contract.
 
+- Orchestrator `orch-2026-06-14-six-target-pragmatic-shape-01`: hello again.
+- Intent: promote accepted planning into the active execution sprint contract without starting coder work yet.
+- Outcome: accepted planning receipt `9f20f26` is recorded; `research/2026-06-14-six-target-pragmatic-shape-plan.md` moved to `research/done/2026-06-14-six-target-pragmatic-shape-plan.md`; active sprint contract is `sprints/2026-06-14-six-target-pragmatic-shape-sprint.md`.
+- Handoff: Slice 1 is next to seed for coder `coder-2026-06-14-six-target-pragmatic-shape-slice-01` once the sprint seed receipt is committed.
+
 - Researcher note from `research-2026-06-14-six-target-pragmatic-shape-01`.
 - Hello. Intent: prove keep-large vs cut for all six targets against Alacritty, Ghostty, and TigerBeetle pressure, then seed an exact first execution slice.
 - Outcome: all six targets are now judged in `research/2026-06-14-six-target-pragmatic-shape-plan.md`; five stay large with specific ugliness removals, and `support.zig` is ranked first because its ownership-probing `anytype` seam is the clearest directness violation with existing proof.
