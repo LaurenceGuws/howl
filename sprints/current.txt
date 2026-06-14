@@ -36,6 +36,7 @@ Active restart note:
   - Slice 5 no-code acceptance, root receipt `b05d0d0` `Accept six-target pragmatic-shape Slice 5`.
   - Slice 6 nested VT commit `4f396b1` `Simplify parser action seams`, root receipt `356e981` `Accept six-target pragmatic-shape Slice 6`.
 - Archive receipt: `8ade41d` `Archive six-target pragmatic-shape sprint`.
+- Closure review accepted by `review-2026-06-14-six-target-pragmatic-shape-01` after ledger fix `489d1dd` `Record pragmatic-shape archive receipt`.
 - Six-target pragmatic-shape sprint execution is complete and archived.
 
 Execution rule:
