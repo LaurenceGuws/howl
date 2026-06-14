@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -59,7 +60,141 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ghostty-bin", default="ghostty")
     parser.add_argument("--alacritty-bin", default="alacritty")
     parser.add_argument("--wezterm-bin", default="wezterm")
+    parser.add_argument(
+        "--target-output",
+        default="DP-1",
+        help="KDE/KWin output name to place benchmark windows on; default targets the DP display",
+    )
+    parser.add_argument(
+        "--no-fullscreen",
+        action="store_true",
+        help="do not force launched benchmark windows fullscreen",
+    )
     return parser.parse_args()
+
+
+class KWinWindowController:
+    def __init__(self, title_match: str, output_name: str, fullscreen: bool) -> None:
+        self.title_match = title_match
+        self.output_name = output_name
+        self.fullscreen = fullscreen
+        self.script_path: Path | None = None
+        self.plugin_name = f"howl-rain-bench-{int(time.time() * 1_000_000)}-{os.getpid()}"
+        self.loaded = False
+
+    @staticmethod
+    def supported() -> bool:
+        return os.environ.get("XDG_SESSION_TYPE") == "wayland" and shutil.which("qdbus") is not None
+
+    @staticmethod
+    def active_output_name() -> str | None:
+        if not KWinWindowController.supported():
+            return None
+        proc = subprocess.run(
+            ["qdbus", "org.kde.KWin", "/KWin", "org.kde.KWin.activeOutputName"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return None
+        value = proc.stdout.strip()
+        return value or None
+
+    def start(self) -> None:
+        if not self.supported():
+            return
+        script = self._script_source()
+        with tempfile.NamedTemporaryFile("w", prefix="howl-rain-bench-", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write(script)
+            self.script_path = Path(fh.name)
+        load = subprocess.run(
+            [
+                "qdbus",
+                "org.kde.KWin",
+                "/Scripting",
+                "org.kde.kwin.Scripting.loadScript",
+                str(self.script_path),
+                self.plugin_name,
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if load.returncode != 0:
+            return
+        start = subprocess.run(
+            ["qdbus", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        if start.returncode == 0:
+            self.loaded = True
+
+    def stop(self) -> None:
+        if self.loaded:
+            subprocess.run(
+                [
+                    "qdbus",
+                    "org.kde.KWin",
+                    "/Scripting",
+                    "org.kde.kwin.Scripting.unloadScript",
+                    self.plugin_name,
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            self.loaded = False
+        if self.script_path is not None:
+            self.script_path.unlink(missing_ok=True)
+            self.script_path = None
+
+    def _script_source(self) -> str:
+        title_match = json.dumps(self.title_match)
+        output_name = json.dumps(self.output_name)
+        fullscreen = "true" if self.fullscreen else "false"
+        return f"""\
+const targetCaption = {title_match};
+const targetOutputName = {output_name};
+const forceFullscreen = {fullscreen};
+const trackedWindows = new Set();
+
+function targetOutput() {{
+    for (const output of workspace.screens) {{
+        if (output && output.name === targetOutputName) return output;
+    }}
+    return null;
+}}
+
+function applyWindow(window) {{
+    if (!window || !window.managed || !window.normalWindow) return;
+    if (!window.caption || window.caption.indexOf(targetCaption) === -1) return;
+    const output = targetOutput();
+    if (output) workspace.sendClientToScreen(window, output);
+    if (forceFullscreen && window.fullScreenable) window.fullScreen = true;
+    workspace.activeWindow = window;
+}}
+
+function trackWindow(window) {{
+    if (!window || trackedWindows.has(window)) return;
+    trackedWindows.add(window);
+    window.captionChanged.connect(function() {{
+        applyWindow(window);
+    }});
+    applyWindow(window);
+}}
+
+workspace.windowAdded.connect(trackWindow);
+for (const window of workspace.stackingOrder) {{
+    trackWindow(window);
+}}
+"""
 
 
 def read_proc_stat(pid: int) -> dict[str, object] | None:
@@ -486,6 +621,7 @@ def tooling_snapshot() -> dict[str, object]:
     return {
         "available": {name: (path is not None) for name, path in tools.items()},
         "paths": {name: path for name, path in tools.items() if path is not None},
+        "active_kwin_output": KWinWindowController.active_output_name(),
     }
 
 
@@ -510,14 +646,13 @@ def stress_command(args: argparse.Namespace, metrics_path: Path) -> str:
 def launch_command(name: str, args: argparse.Namespace, command: str, trace_path: Path) -> tuple[list[str], dict[str, str]] | None:
     env = os.environ.copy()
     title = f"howl-stress-{name}-{args.mode}"
-    titled_command = f"printf '\\033]0;{title}\\007'; exec {command}"
     if name == "howl":
         if not args.howl_bin.exists():
             print(f"skip howl: missing {args.howl_bin}", file=sys.stderr)
             return None
         if args.trace_howl:
             env["HOWL_TRACE_PATH"] = str(trace_path)
-        return ([str(args.howl_bin), "--command", titled_command], env)
+        return ([str(args.howl_bin), "--command", command], env)
     if name == "kitty":
         kitty = shutil.which(args.kitty_bin)
         if kitty is None:
@@ -543,6 +678,12 @@ def launch_command(name: str, args: argparse.Namespace, command: str, trace_path
             return None
         return ([wezterm, "start", "--always-new-process", "--", "sh", "-lc", command], env)
     raise ValueError(name)
+
+
+def window_title_match(name: str, args: argparse.Namespace) -> str:
+    if name == "howl":
+        return args.stress_bin.name
+    return f"howl-stress-{name}-{args.mode}"
 
 
 def terminate(proc: subprocess.Popen[bytes]) -> None:
@@ -637,7 +778,13 @@ def run_terminal(name: str, args: argparse.Namespace, run_dir: Path) -> dict[str
     resources_path = run_dir / f"{name}-{args.mode}.resources.ndjson"
     resource_summary: dict[str, object] | None = None
     proc_cwd = HOST_ROOT if name == "howl" else REPO_ROOT
-    proc = subprocess.Popen(argv, cwd=proc_cwd, env=env)
+    window_control = KWinWindowController(window_title_match(name, args), args.target_output, not args.no_fullscreen)
+    window_control.start()
+    try:
+        proc = subprocess.Popen(argv, cwd=proc_cwd, env=env)
+    except Exception:
+        window_control.stop()
+        raise
     sampler: ResourceSampler | None = None
     if not args.no_resources:
         sampler = ResourceSampler(proc.pid, resources_path, args.resource_interval, args.gpu_resource_interval)
@@ -646,6 +793,7 @@ def run_terminal(name: str, args: argparse.Namespace, run_dir: Path) -> dict[str
             sampler.sample(time.monotonic())
         proc.wait()
     finally:
+        window_control.stop()
         if sampler is not None:
             sampler.sample(time.monotonic())
             resource_summary = sampler.summary()
@@ -676,6 +824,10 @@ def run_terminal(name: str, args: argparse.Namespace, run_dir: Path) -> dict[str
 
 def main() -> int:
     args = parse_args()
+    if args.target_output.casefold() == "active":
+        active_output = KWinWindowController.active_output_name()
+        if active_output is not None:
+            args.target_output = active_output
     if args.build:
         run_build()
     if not args.stress_bin.exists():
@@ -711,6 +863,8 @@ def main() -> int:
             "resource_interval_s": args.resource_interval,
             "gpu_resource_interval_s": args.gpu_resource_interval,
             "resources_enabled": not args.no_resources,
+            "target_output": args.target_output,
+            "fullscreen": not args.no_fullscreen,
         },
         "results": results,
     }
