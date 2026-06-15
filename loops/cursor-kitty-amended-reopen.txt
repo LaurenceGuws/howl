@@ -30,3 +30,25 @@ Loop notes:
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: reopened the cursor sprint after false completion. The accepted line-map and amended slices are now the live authority.
 - Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted amended slice 1 once top-spine-only semantic interpretation was enforced and owner-local/test-local seam reuse was removed.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: closed amended slice 1 in `howl-vt` as `72e5253` and promoted amended slice 2.
+- Researcher `no-internal-session-id-exposed`: hello.
+- Intent: revise amended slice 2 into a worker-ready retained-render owner-boundary slice after the coder's honest stop on the too-small cursor-only cut.
+- Outcome: updated `research/2026-06-15-cursor-kitty-amended-slices.md` so slice 2 now spans the full retained render source/prepare/submit spine, names the structurally required added files, and records why the old boundary was not executable.
+- Handoff: orchestrator should promote the revised slice-2 contract before any further coder pass.
+- Researcher `no-internal-session-id-exposed`: hello again.
+- Intent: make slice 2 executable by defining the exact surviving retained owner, ABI, and host/render seam after deleting the current unbacked spine.
+- Outcome: updated `research/2026-06-15-cursor-kitty-amended-slices.md` with the replacement owner map, surviving ABI calls, disappearing calls/types, and concrete prepare/submit/work-state behavior.
+- Handoff: orchestrator and reviewer should gate the active slice against this exact replacement shape before handing it back to the coder.
+- Researcher `no-internal-session-id-exposed`: hello once more.
+- Intent: remove remaining ambiguity from slice 2 by naming the exact surviving owner fields, exact retained handoff methods, and exact host-to-render API usage.
+- Outcome: rewrote the slice-2 contract in `research/2026-06-15-cursor-kitty-amended-slices.md` so `source_slot.zig` is delete-only, `render_session.zig` owns the retained latest source/prepare/prepared flow directly, and proof roots are exact.
+- Handoff: reviewer should re-gate slice 2 against this stricter owner/method contract before the coder resumes.
+- User `2026-06-15`: removed the allowed change list from amended slice 2 and instructed the coder to fill the gaps it needs.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: updated `sprints/current.txt` and `research/2026-06-15-cursor-kitty-amended-slices.md` so slice 2 authorizes any structurally coupled files needed to land the accepted retained-render replacement and proof surface, while still forbidding unrelated renderer architecture, host UX, or later cursor-slice work.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: implemented amended slice 2 with the allowed-file restriction removed. Deleted `howl-render/src/vt_publication/prepare_queue.zig` and `howl-render/src/vt_publication/source_slot.zig`, replaced the retained render source/prepare/submit spine under `render_session.TextSessionOwner`, removed the deleted render ABI calls/type, and updated structurally coupled C-boundary tests and host seam usage.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: rejected the first slice-2 diff because `prepareHandle` did not consume `prepare_request`, no-damage ingestion leaked the copied publication source, and a host cursor-trail dwell-policy change broadened into a later slice.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: repaired slice 2 by consuming `prepare_request` after successful prepare-handle creation, deinitializing copied no-damage sources not stored in `latest_source`, adding work-state/no-damage proofs, and restoring the host cursor-trail dwell gate/test.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted amended slice 2 after repair. Acceptance reasons: `prepareHandle` consumes `prepare_request`, work-state proof covers prepare-to-submit handoff, no-damage ingestion deinitializes copied source, duplicate/no-damage proof covers retained latest-source ownership, host cursor-trail dwell behavior/test is restored, and remaining host change is limited to the accepted `setHostCursorCadence` seam.
+- Verification receipt: `zig build test` in `howl-render` passed after reviewer acceptance.
+- Verification receipt: `timeout 300s zig build test:unit` in `howl-linux-host` passed after reviewer acceptance.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: committed accepted amended slice 2 as `howl-render` `1760cbd` `Replace retained cursor render spine` and `howl-linux-host` `81152bb` `Route host blink through cursor cadence`.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: promoted amended slice 3 as the live slice in `sprints/current.txt`.
