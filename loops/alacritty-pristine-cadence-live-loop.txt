@@ -317,3 +317,18 @@ Current handoff:
 - Intent: implement corrected Slice 6.
 - Outcome: stopped correctly again. The config slice still omitted the host render-wrapper/export seam needed to thread configured cursor colors and thicknesses into the live render path, so required Kitty cursor fields would remain hard-coded.
 - Handoff: orchestrator must add only `howl-linux-host/src/terminal/render_retained.zig`, `howl-render/src/c/text_session.zig`, and `howl-render/src/libhowl_render.zig` to Slice 6, then coder should continue without broadening into unrelated API work.
+
+- Coder `coder-2026-06-15-gpt-5.4-slice6-01`: hello again.
+- Intent: finish corrected Slice 6 Kitty cursor config parity and threading.
+- Outcome: implemented parsed cursor config ownership, top-level propagation, configured cadence/timing inputs, configured cursor/theme threading into render, and geometry/trail consumption of configured thickness/color; fixed reviewer rejection by validating beam and underline thickness at config load time; reran `zig build test` in `howl-render` and `timeout 300s zig build test:unit` in `howl-linux-host` successfully.
+- Handoff: reviewer should gate the corrected Slice 6 host/render config diff against the accepted contract.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review corrected Slice 6 Kitty cursor config parity and threading.
+- Outcome: accepted. No findings remain. Reviewer confirmed host-owned config validation and propagation, configured cadence inputs, and mechanical render-side config threading without unrelated seam reshaping.
+- Handoff: orchestrator should commit the accepted Slice 6 diffs and seed Slice 7.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close accepted Slice 6 and advance the Kitty cursor parity sprint.
+- Outcome: committed accepted Slice 6 in `howl-linux-host` as `bf52a3a` `Thread cursor config into host cadence` and in `howl-render` as `44ccb9f` `Thread cursor config into render`. Slice 7 is now the active implementation section.
+- Handoff: coder must implement only Slice 7 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.

@@ -38,5 +38,6 @@ Current authorized step:
 - Slice 3, introduce render-owned cursor presentation data, is accepted and committed in `howl-render` commit `9f48e1d` after reviewer acceptance.
 - Slice 4, rebuild cursor primitive emission for main cursor and cursor trail, is accepted and committed in `howl-render` commit `b04de62` after reviewer acceptance.
 - Slice 5, rebuild host cadence, focus policy, inactivity stop, and cursor trail timing, is accepted and committed in `howl-linux-host` commit `8da1886` and `howl-render` commit `a13e92c` after reviewer acceptance.
-- Coder may implement Slice 6: add Kitty cursor config parity and thread it through owners.
-- Slice 6 is the only authorized coder work right now.
+- Slice 6, add Kitty cursor config parity and thread it through owners, is accepted and committed in `howl-linux-host` commit `bf52a3a` and `howl-render` commit `44ccb9f` after reviewer acceptance.
+- Coder may implement Slice 7: complete multiple-cursor export, render mapping, and drawing parity.
+- Slice 7 is the only authorized coder work right now.
