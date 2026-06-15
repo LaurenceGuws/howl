@@ -23,100 +23,83 @@ Active sprint note:
 - Active sprint reviewer session id: `ses_1344417eaffeA2DD2YSHiMCisr`.
 - Active sprint coder session id: `ses_1344417c5ffehYHsYH3lQQog67`.
 - User execution-team decision: start this sprint with one fresh teammate per role and reuse those task ids for the live sprint.
+- User slice-acceptance decision: when a planned slice comes due, preexisting tree state for that slice may be reviewed for acceptance or required changes instead of being discarded automatically for predating this loop.
 - Cursor-scoped rule: Kitty parity is primary; Ghostty may only be consulted if full Kitty cursor behavior cannot be modeled without ownership blurring.
-- Current stage: slice 1 is the active slice and the corrected artifact model is reviewer-accepted.
+- Last accepted slice: slice 1 accepted with reviewer `ses_1344417eaffeA2DD2YSHiMCisr`, coder `ses_1344417c5ffehYHsYH3lQQog67`, and `howl-vt` commit `76c179d`.
+- Current stage: slice 2 is the active slice.
 
 Active slice:
 
-- Slice name: `cursor-kitty-slice-1-vt-savepoint-and-alt-screen`.
-- Slice class: execution slice 1 of 4.
+- Slice name: `cursor-kitty-slice-2-vt-abi-and-render-publication`.
+- Slice class: execution slice 2 of 4.
 - Slice source: `loops/cursor-kitty-full-sprint.txt` queue plus `research/2026-06-15-cursor-kitty-full-sprint-plan.md` evidence.
 - Authorized next step: coder may implement only this active slice.
 
 Exact goal:
 
-- Replace stale screen-local and screen-set-local cursor save and restore owners with terminal-owned Kitty-like savepoints.
-- Port Kitty behavior for `ESC 7/8`, `CSI s/u`, `47`, `1047`, `1049`, restore-without-save, and DECRQSS `" q"` at the VT owner boundary.
-- Make no-shape first-class VT truth even before ABI widening reaches render and host consumers.
+- Carry explicit Kitty no-shape through the shipped VT C ABI and across all active render publication owners without reinterpretation.
+- Preserve cursor-only damage and preparation semantics through the active render publication path.
 
 Exact files allowed:
 
-- `howl-vt/src/vocabulary.zig`
-- `howl-vt/src/csi_intermediate.zig`
-- `howl-vt/src/csi_plain.zig`
-- `howl-vt/src/csi_private.zig`
-- `howl-vt/src/esc.zig`
-- `howl-vt/src/route.zig`
-- `howl-vt/src/mode.zig`
-- `howl-vt/src/screen/cursor.zig`
-- `howl-vt/src/screen.zig`
-- `howl-vt/src/screen/apply.zig`
-- `howl-vt/src/screen_set.zig`
-- `howl-vt/src/terminal.zig`
-- `howl-vt/src/terminal/savepoint.zig`
-- `howl-vt/src/report.zig`
-- `howl-vt/test/unit/csi_mapping_test.zig`
-- `howl-vt/test/unit/screen/cursor_test.zig`
-- `howl-vt/test/unit/terminal_cursor_test.zig`
-- `howl-vt/test/unit/terminal_surface_test.zig`
-- `howl-vt/test/unit/terminal_modes_test.zig`
-- `howl-vt/test/unit/terminal_snapshot_test.zig`
-- `howl-vt/test/support/screen_capture.zig`
-- `howl-vt/test/unit/terminal_end_to_end_test.zig`
+- `howl-vt/src/ffi/lifecycle.zig`
+- `howl-vt/src/ffi/surface.zig`
+- `howl-vt/include/howl_vt.h`
+- `howl-vt/test/abi.zig`
+- `howl-render/src/vt_publication/abi.zig`
+- `howl-render/src/vt_publication/publication.zig`
+- `howl-render/src/vt_publication/source_slot.zig`
+- `howl-render/src/vt_publication/cursor.zig`
+- `howl-render/src/vt_publication/text_input.zig`
+- `howl-render/src/vt_publication/damage.zig`
+- `howl-render/src/vt_publication/prepare_queue.zig`
 
 Exact required shape:
 
-- Delete `Screen.saved_cursor`.
-- Delete `screen_set.Set.CursorSnapshot`.
-- Delete `screen_set.Set.saved_primary_cursor`.
-- Add terminal-owned Kitty-like savepoints.
-- Keep savepoint payload Kitty-like: cursor position, cursor shape including no-shape, blink or steady bit, pen or current display attrs, origin mode, auto-wrap mode, charset state, valid bit, and distinct savepoint per main and alt bank.
-- Keep cursor visibility out of the savepoint payload.
-- Keep cursor colors out of the savepoint payload.
-- Keep public C ABI widening out of this slice.
-- Keep render and host consumers untouched in this slice.
+- Widen the shipped VT cursor ABI to represent Kitty no-shape exactly.
+- Widen the render publication ABI and all direct publication consumers to preserve no-shape without reinterpretation.
+- Keep render publication consumer-only: no VT policy invention in render.
+- Preserve cursor-only damage and preparation semantics through the publication path.
 
 Slice invariants:
 
-- Save and restore is terminal-owned, not screen-owned.
-- Alt-screen cursor consequences follow Kitty semantics, not copied-primary semantics.
-- No-shape is explicit VT shape truth, not collapsed hidden visibility.
-- `47` switches only.
-- `1047` clears alt on enter and does not save or restore.
-- `1049` clears alt on enter and uses the Kitty-like savepoint.
+- No-shape is explicit shape truth, not collapsed hidden visibility.
+- ABI widening must include both Zig translation and `howl-vt/include/howl_vt.h`.
+- Render publication remains consumer-only and preserves VT truth unchanged.
+- Cursor-only damage handling must remain proved, not silently widened into full-scene fallback.
 
 Exact proof roots:
 
-- `howl-vt/test/unit/csi_mapping_test.zig`
-- `howl-vt/test/unit/screen/cursor_test.zig`
-- `howl-vt/test/unit/terminal_cursor_test.zig`
-- `howl-vt/test/unit/terminal_surface_test.zig`
-- `howl-vt/test/unit/terminal_modes_test.zig`
-- `howl-vt/test/unit/terminal_snapshot_test.zig`
-- `howl-vt/test/support/screen_capture.zig`
-- `howl-vt/test/unit/terminal_end_to_end_test.zig`
-- `howl-vt/src/report.zig` inline tests
+- `howl-vt/test/abi.zig`
+- `howl-vt/src/ffi/lifecycle.zig` inline tests
+- `howl-vt/src/ffi/surface.zig` inline tests
+- `howl-render/src/vt_publication/abi.zig` inline tests
+- `howl-render/src/vt_publication/publication.zig` inline tests
+- `howl-render/src/vt_publication/source_slot.zig` inline tests
+- `howl-render/src/vt_publication/cursor.zig` inline tests
+- `howl-render/src/vt_publication/text_input.zig` inline tests
+- `howl-render/src/vt_publication/damage.zig` inline tests
+- `howl-render/src/vt_publication/prepare_queue.zig` inline tests
 
 Verification command:
 
-- `zig build test:unit` in `howl-vt`
+- `zig build test:abi` in `howl-vt`
+- `zig build test` in `howl-render`
 
 Exact non-goals:
 
-- Public C ABI widening.
-- Render publication wiring.
+- Rewriting VT savepoint ownership again.
 - Host cadence consumption changes.
+- Render draw primitive changes.
 - Multiple cursors.
 - Pointer cursor shape.
-- Cursor trail redesign.
 
 Exact stop conditions:
 
-- Stop if implementation preserves current copied-primary alt-screen semantics.
-- Stop if savepoint truth remains screen-owned instead of terminal-owned.
-- Stop if restore-without-save does not match Kitty behavior.
-- Stop if visibility or cursor colors enter the savepoint payload.
-- Stop if DECRQSS `" q"` remains xterm-like instead of Kitty-like.
+- Stop if no-shape is collapsed into hidden visibility or inferred block style.
+- Stop if ABI widening is done in Zig only and not in `howl-vt/include/howl_vt.h`.
+- Stop if render publication adds policy instead of preserving VT truth.
+- Stop if cursor-only damage handling regresses into full-scene fallback without proof.
 
 Artifact rule:
 

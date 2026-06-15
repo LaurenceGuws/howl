@@ -19,6 +19,7 @@ User Team Assignment Receipt:
 
 - User direction for this sprint start: create one teammate per role, reuse those task ids, and avoid unnecessary preload rereads.
 - Live role assignment for execution from this point: researcher `ses_134441825ffenA2u9ugDoVS07f`, reviewer `ses_1344417eaffeA2DD2YSHiMCisr`, coder `ses_1344417c5ffehYHsYH3lQQog67`.
+- User execution receipt: when a planned slice comes due, the team may review preexisting tree state for that slice and either accept it or require changes; prior work is not thrown away automatically just because it predates the current execution loop.
 
 Current handoff:
 
@@ -100,3 +101,27 @@ Loop Notes Log:
 - Intent: review the corrected artifact model after the user rejected the earlier slice-only loop orchestration.
 - Outcome: accepted. `loops/` now carries the whole sprint scratchpad and slice queue, `sprints/current.txt` carries the active slice only, and `research/` remains evidence and planning authority.
 - Handoff: coder `ses_1344417c5ffehYHsYH3lQQog67` may start slice 1 from `sprints/current.txt` with this loop artifact as the live whole-sprint context.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello.
+- Intent: execute slice 1 within the VT-only cursor savepoint and alt-screen contract and verify it with `zig build test:unit`.
+- Outcome: inspected the active slice owners and proof roots, confirmed the current tree already carries the slice-1 VT rewrite shape, and `zig build test:unit` passed without additional source edits.
+- Handoff: reviewer or orchestrator can treat slice 1 as implementation-complete in the current tree; commit-hash receipt closure is still pending because I did not touch git.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: hello again.
+- Intent: correct the execution rule after the user decided that already-done slice work may be reviewed for acceptance when that slice comes due.
+- Outcome: recorded the user receipt that preexisting tree state may be accepted or changed slice-by-slice instead of being discarded automatically for predating this execution loop.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should re-evaluate slice 1 against the current tree under that corrected rule.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: re-evaluate slice 1 against the current tree under the user-approved rule that preexisting slice work may be accepted or changed when the slice comes due.
+- Outcome: rejected slice 1 on a real Kitty parity gap: `DECSCNM` is missing from terminal savepoint storage, restore-without-save does not reset `DECSCNM`, and the terminal cursor proof does not cover that consequence.
+- Handoff: coder `ses_1344417c5ffehYHsYH3lQQog67` should repair only the `DECSCNM` savepoint and proof gap within slice 1, then return for re-review.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello again.
+- Intent: repair the slice-1 `DECSCNM` savepoint gap, reset it on restore-without-save, and extend the terminal cursor proof without broadening beyond VT.
+- Outcome: added `DECSCNM` as terminal-owned VT mode truth, stored and restored it through the terminal savepoint, reset it on invalid restore, and extended the terminal cursor proof. `zig build test:unit` passed in `howl-vt`.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should re-review slice 1 for the repaired `DECSCNM` parity gap.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: re-review slice 1 after the targeted `DECSCNM` parity repair.
+- Outcome: accepted. The current tree now satisfies the slice-1 VT contract, including terminal-owned `DECSCNM` savepoint truth and proof coverage.
+- Handoff: orchestrator should close the acceptance receipts, record the `howl-vt` code commit, and advance the sprint to slice 2.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: hello again.
+- Intent: close slice 1 acceptance receipts after reviewer approval and move the live sprint forward.
+- Outcome: committed and pushed the accepted slice-1 VT code in `howl-vt` as `76c179d` `Close cursor savepoint reverse-screen gap` after verification and reviewer acceptance.
+- Handoff: root receipts should now close slice 1 and promote slice 2 as the active slice.

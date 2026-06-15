@@ -7,9 +7,9 @@
 - Researcher session id: `ses_135074a6bffeuLKDxy30qK2cAL`
 - Reviewer session id: `ses_13508b5e7ffe0XZUyUcJd4EPEs`
 - Source loop artifact: `loops/cursor-kitty-port-pre-research.txt`
-- Artifact status: full remaining sprint planning package from blank-state restart
-- Commit-hash receipt status: no planning commit recorded in this artifact
-- Live authority note: prior coder work is unauthorized debt and not live planning authority for this artifact
+- Artifact status: active planning authority for the full remaining cursor sprint
+- Commit-hash receipt status: planning artifact entered accepted root history in `bd9bd7b`
+- Live authority note: prior coder work was not live planning authority when this artifact was created. User later decided that when an execution slice comes due, preexisting tree state for that slice may be reviewed for acceptance or required changes instead of being discarded automatically.
 
 ## Primary User Instruction
 
@@ -38,6 +38,7 @@
 - Decision 3: restore without prior save follows Kitty behavior.
 - Decision 4: `DECSCUSR >= 7` follows Kitty behavior.
 - Decision 5: ownership shape preserves full Kitty parity first; Ghostty may only be consulted as fallback advice if needed to keep ownership clean without losing Kitty parity.
+- Decision 6: when a planned slice comes due, preexisting tree state for that slice may be reviewed and either accepted or changed; it is not discarded automatically solely because it predates the current execution loop.
 
 ## Current-State Owner Map
 
