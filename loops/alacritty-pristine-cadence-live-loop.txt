@@ -262,3 +262,18 @@ Current handoff:
 - Intent: close accepted Slice 3 and advance the Kitty cursor parity sprint.
 - Outcome: committed accepted Slice 3 in `howl-render` as `9f48e1d` `Introduce cursor presentation owner`. Slice 4 is now the active implementation section.
 - Handoff: coder must implement only Slice 4 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: implement and then correct Slice 4 cursor primitive emission.
+- Outcome: rebuilt cursor primitive emission around explicit scene-owned cursor fill, text recolor, and trail primitives; fixed reviewer findings on grid-width `first_cell` ownership, multicell `cell_span` truth, `u32` first-cell overflow/truncation, and hidden-main-cursor suppression while preserving independent trail emission; reran `zig build test` in `howl-render` successfully after each correction.
+- Handoff: reviewer should gate the corrected Slice 4 render diff against the accepted contract.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review corrected Slice 4 cursor primitive emission.
+- Outcome: accepted. No findings remain. Reviewer confirmed correct primitive ownership metadata, multicell coverage, hidden-main-cursor suppression across all draw entrypoints, and independent trail emission.
+- Handoff: orchestrator should commit the accepted `howl-render` Slice 4 diff and seed Slice 5.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close accepted Slice 4 and advance the Kitty cursor parity sprint.
+- Outcome: committed accepted Slice 4 in `howl-render` as `b04de62` `Rebuild cursor primitive emission`. Slice 5 is now the active implementation section.
+- Handoff: coder must implement only Slice 5 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
