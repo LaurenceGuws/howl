@@ -292,3 +292,18 @@ Current handoff:
 - Intent: continue corrected Slice 5.
 - Outcome: stopped correctly again. Even with the prepare seam allowed, the host still has no allowed setter/export path to pass the new cadence and trail inputs into render; the missing seam lives in the render C text-session exports and the host render wrapper.
 - Handoff: orchestrator must add only `howl-render/src/c/text_session.zig`, `howl-render/src/libhowl_render.zig`, and `howl-linux-host/src/terminal/render_retained.zig` to Slice 5, then coder should continue without broadening into unrelated API work.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: finish corrected Slice 5 host cadence, focus policy, inactivity stop, and cursor trail timing.
+- Outcome: implemented the host-owned cadence/trail setter path into render, fixed reviewer findings on inactivity-stop authority, valid-versus-invalid animation branching, initial focused blinking, and text-blink synchronization, and reran `zig build test` in `howl-render` plus `timeout 300s zig build test:unit` in `howl-linux-host` successfully.
+- Handoff: reviewer should gate the corrected Slice 5 host/render cadence seam against the accepted contract.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review corrected Slice 5 host cadence, focus policy, inactivity stop, and cursor trail timing.
+- Outcome: accepted. No findings remain. Reviewer confirmed authoritative inactivity timing, runtime-owned animation-validity branching, shared text blink opacity cadence, and a mechanical host-to-render cadence/trail seam only.
+- Handoff: orchestrator should commit the accepted Slice 5 diffs and seed Slice 6.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close accepted Slice 5 and advance the Kitty cursor parity sprint.
+- Outcome: committed accepted Slice 5 in `howl-linux-host` as `8da1886` `Own cursor cadence and trail timing` and in `howl-render` as `a13e92c` `Carry host cursor cadence into render`. Slice 6 is now the active implementation section.
+- Handoff: coder must implement only Slice 6 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
