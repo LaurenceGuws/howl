@@ -23,16 +23,17 @@ Active restart note:
 - Orchestrator session id: `orch-2026-06-14-ascii-rain-performance-01`.
 - Researcher session id: `research-2026-06-14-ascii-rain-performance-01`.
 - Reviewer session id: `review-2026-06-14-ascii-rain-performance-01`.
-- User override: micro-optimization and fake narrow cuts are banned until the codebase is pristine and much more pragmatic and idiomatic than Alacritty.
+- User instruction: micro-optimization and fake narrow cuts are banned until the codebase is pristine and much more pragmatic and idiomatic than Alacritty.
+- User instruction: rip out the existing Howl cursor code and port Kitty's cursor code to Zig.
 - Sprint purpose for the current section: rewrite cursor truth/rendering/cadence/protocol/ABI to full Kitty cursor parity inside the main benchmark sprint.
-- Current stage: Slice 6 is accepted and committed across host/render; Slice 7 is the active implementation section.
+- Current stage: prior cursor slices 1 through 6 are historical receipts only; the active cursor authority must be rewritten around ripping out existing Howl cursor code and porting Kitty cursor code to Zig.
 - Latest closed sprint: six-target pragmatic shape.
 - Latest closed sprint closure acceptance: `2fd3c54` `Accept six-target pragmatic-shape sprint closure`.
 - Historical details for the latest closed sprint remain below only in archived artifacts.
 
 Execution rule:
 
-- Authorized next step: coder may implement Slice 7, complete multiple-cursor export, render mapping, and drawing parity, on the accepted worker-ready contract.
+- Authorized next step: stop using the stale host-bolted cursor/cadence slice sequence as live authority and re-plan the active cursor rewrite directly from the user instruction to rip out existing Howl cursor code and port Kitty cursor code to Zig.
 - No micro-optimization or fake narrow-cut work is authorized in the current sprint state.
 - The rejected ASCII-rain direct-normal artifacts are historical navigation only and are not live authority.
 - Only the active sprint, active loop, and active research artifact listed above are authoritative for the current step.

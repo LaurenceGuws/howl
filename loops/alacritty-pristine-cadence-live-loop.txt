@@ -332,3 +332,8 @@ Current handoff:
 - Intent: close accepted Slice 6 and advance the Kitty cursor parity sprint.
 - Outcome: committed accepted Slice 6 in `howl-linux-host` as `bf52a3a` `Thread cursor config into host cadence` and in `howl-render` as `44ccb9f` `Thread cursor config into render`. Slice 7 is now the active implementation section.
 - Handoff: coder must implement only Slice 7 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: correction.
+- Intent: record orchestration failure plainly and revoke stale cursor authority.
+- Outcome: treating the user's primary instruction, rip out existing Howl cursor code and port Kitty cursor code to Zig, as an override was wrong. The Slice 5 and Slice 6 host-bolted cursor path is therefore stale forward authority even though the receipts remain historical facts.
+- Handoff: no further cursor implementation should proceed from the current slice sequence until the active plan is rewritten around replacing the existing Howl cursor stack with Kitty-derived ownership.

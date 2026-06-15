@@ -20,7 +20,7 @@ Current section:
 
 - Kitty cursor parity rewrite.
 - Rewrite Howl cursor truth, rendering, cadence, protocol, config, and ABI to full Kitty cursor feature parity.
-- Treat VT semantic cursor truth, render cursor presentation, host cadence, config, ABI seams, and multiple-cursor protocol/rendering as one real owner boundary.
+- Treat the existing Howl cursor stack as replacement work: rip out current Howl cursor code and port Kitty cursor code to Zig.
 
 Active constraints:
 
@@ -32,12 +32,12 @@ Active constraints:
 
 Current authorized step:
 
-- The Kitty cursor parity worker-ready sprint document is accepted under the explicit user override to use Kitty pressure.
+- The Kitty cursor parity sprint exists because the user instruction from the start was to rip out existing Howl cursor code and port Kitty cursor code to Zig.
 - Slice 1, rebuild VT semantic cursor truth and protocol vocabulary, is accepted and committed in `howl-vt` commit `15caf66` after reviewer acceptance.
 - Slice 2, widen the VT/render ABI and publication seam for full cursor truth, is accepted and committed in `howl-vt` commit `82addbf`, `howl-render` commit `ec49cb2`, and `howl-linux-host` commit `7805b98` after reviewer acceptance.
 - Slice 3, introduce render-owned cursor presentation data, is accepted and committed in `howl-render` commit `9f48e1d` after reviewer acceptance.
 - Slice 4, rebuild cursor primitive emission for main cursor and cursor trail, is accepted and committed in `howl-render` commit `b04de62` after reviewer acceptance.
 - Slice 5, rebuild host cadence, focus policy, inactivity stop, and cursor trail timing, is accepted and committed in `howl-linux-host` commit `8da1886` and `howl-render` commit `a13e92c` after reviewer acceptance.
 - Slice 6, add Kitty cursor config parity and thread it through owners, is accepted and committed in `howl-linux-host` commit `bf52a3a` and `howl-render` commit `44ccb9f` after reviewer acceptance.
-- Coder may implement Slice 7: complete multiple-cursor export, render mapping, and drawing parity.
-- Slice 7 is the only authorized coder work right now.
+- Those accepted receipts are historical only. They are not sufficient live authority for forward cursor work because they preserved stale host-bolted cursor ownership against the user's actual instruction.
+- No further cursor implementation is authorized from the current slice sequence until the active plan is rewritten around replacing the existing Howl cursor stack with Kitty-derived ownership.
