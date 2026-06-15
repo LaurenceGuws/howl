@@ -435,15 +435,20 @@ Stop conditions:
 Allowed files:
 - `howl-linux-host/src/config/terminal.zig`
 - `howl-linux-host/src/config/config.zig`
+- `howl-linux-host/src/terminal/cursor_blink.zig`
 - `howl-linux-host/src/terminal/surface.zig`
+- `howl-render/src/render_session.zig`
 - `howl-render/src/vt_publication/theme.zig`
 - `howl-render/src/vt_publication/cursor.zig`
+- `howl-render/src/vt_publication/text_input.zig`
 - `howl-render/src/text/metrics.zig`
 - `howl-render/src/text/scene_rects.zig`
 Required shape:
 - `howl-linux-host/src/config/terminal.zig` owns parsed Kitty cursor config fields: `cursor`, `cursor_text_color`, `cursor_shape`, `cursor_shape_unfocused`, `cursor_beam_thickness`, `cursor_underline_thickness`, `cursor_blink_interval`, `cursor_stop_blinking_after`, `cursor_trail`, `cursor_trail_decay_fast`, `cursor_trail_decay_slow`, `cursor_trail_start_threshold`, and `cursor_trail_color`.
 - `howl-linux-host/src/config/config.zig` owns top-level propagation of those parsed fields to terminal creation.
+- `howl-linux-host/src/terminal/cursor_blink.zig` consumes configured blink interval, stop interval, and trail decay timing instead of hard-coded cadence constants.
 - `howl-linux-host/src/terminal/surface.zig` owns applying host config to cursor presentation and trail timing inputs.
+- `howl-render/src/render_session.zig` and `howl-render/src/vt_publication/text_input.zig` are part of the Slice 6 config-threading seam and may only be updated to carry configured cursor/theme inputs into the already-defined render presentation path.
 - `howl-render/src/vt_publication/theme.zig` owns cursor and cursor-text color theme propagation.
 - `howl-render/src/text/metrics.zig` owns beam and underline thickness metrics.
 - `howl-render/src/text/scene_rects.zig` consumes the configured thickness and trail color without hard-coded cursor constants.
@@ -456,6 +461,7 @@ Exact tests:
 Non-goals:
 - No benchmark tuning.
 - No shell prompt integration policy beyond config needed for parity.
+- No unrelated render-session or publication reshaping beyond the config-threading seam.
 Stop conditions:
 - No Kitty cursor config field listed above remains hard-coded.
 

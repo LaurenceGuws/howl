@@ -307,3 +307,8 @@ Current handoff:
 - Intent: close accepted Slice 5 and advance the Kitty cursor parity sprint.
 - Outcome: committed accepted Slice 5 in `howl-linux-host` as `8da1886` `Own cursor cadence and trail timing` and in `howl-render` as `a13e92c` `Carry host cursor cadence into render`. Slice 6 is now the active implementation section.
 - Handoff: coder must implement only Slice 6 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-15-gpt-5.4-slice6-01`: hello again.
+- Intent: implement Slice 6 as originally seeded.
+- Outcome: stopped correctly. The Slice 6 allowlist omitted the actual cadence owner and the real render config-threading seams, so several required cursor config fields would remain hard-coded or unthreaded.
+- Handoff: orchestrator must add only `howl-linux-host/src/terminal/cursor_blink.zig`, `howl-render/src/render_session.zig`, and `howl-render/src/vt_publication/text_input.zig` to Slice 6, then coder should continue without broadening into unrelated runtime or render work.
