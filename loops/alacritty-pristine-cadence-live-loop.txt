@@ -287,3 +287,8 @@ Current handoff:
 - Intent: implement corrected Slice 5.
 - Outcome: stopped correctly again. Even with `render_session.zig` and `source_slot.zig` allowed, the real host-to-render prepare entrypoint in `howl-render/src/c/prepare_request.zig` still blocks host-owned cursor cadence and trail inputs from entering publication truth.
 - Handoff: orchestrator must add only that exact render C prepare seam file to Slice 5, then coder should continue without broadening into unrelated render API work.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: continue corrected Slice 5.
+- Outcome: stopped correctly again. Even with the prepare seam allowed, the host still has no allowed setter/export path to pass the new cadence and trail inputs into render; the missing seam lives in the render C text-session exports and the host render wrapper.
+- Handoff: orchestrator must add only `howl-render/src/c/text_session.zig`, `howl-render/src/libhowl_render.zig`, and `howl-linux-host/src/terminal/render_retained.zig` to Slice 5, then coder should continue without broadening into unrelated API work.
