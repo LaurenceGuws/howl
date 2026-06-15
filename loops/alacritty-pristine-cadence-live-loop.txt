@@ -277,3 +277,8 @@ Current handoff:
 - Intent: close accepted Slice 4 and advance the Kitty cursor parity sprint.
 - Outcome: committed accepted Slice 4 in `howl-render` as `b04de62` `Rebuild cursor primitive emission`. Slice 5 is now the active implementation section.
 - Handoff: coder must implement only Slice 5 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: implement Slice 5 as originally seeded.
+- Outcome: stopped correctly. Host-owned cursor cadence and trail facts cannot enter the widened publication seam through the current allowlist because the actual prepare-path owners in `howl-render/src/render_session.zig` and `howl-render/src/vt_publication/source_slot.zig` were omitted.
+- Handoff: orchestrator must add only those exact host-to-render seam files to Slice 5, then coder should continue without broadening into unrelated render-session work.
