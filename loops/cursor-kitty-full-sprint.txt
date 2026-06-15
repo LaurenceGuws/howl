@@ -137,3 +137,43 @@ Loop Notes Log:
 - Intent: close slice 2 acceptance receipts after reviewer approval and move the live sprint forward.
 - Outcome: committed and pushed the accepted slice-2 proof update in `howl-vt` as `81ae424` `Prove cursor ABI no-shape contract` and the accepted render publication update in `howl-render` as `2274aec` `Preserve explicit cursor no-shape`.
 - Handoff: root receipts should now close slice 2 and promote slice 3 as the active slice.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello again.
+- Intent: execute slice 3 by closing draw-owner and host-consumer cursor parity for explicit no-shape and host-side consumption of VT cursor truth without revisiting ABI or savepoint owners.
+- Outcome: fixed the draw owner so visible no-shape emits no cursor draws while preserving trail behavior, kept host cursor cadence on explicit no-shape instead of collapsing it into hidden visibility, and added targeted render and host proofs. Both required slice-3 verification commands passed.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should review slice 3 against the active draw-owner and host-consumer contract.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: review slice 3 against the active draw-owner and host-consumer contract.
+- Outcome: rejected. The host unfocused hollow path now aliases to the no-shape enum value, which collapses distinct shape truth and is not covered by the new host proof.
+- Handoff: coder `ses_1344417c5ffehYHsYH3lQQog67` should repair only the unfocused hollow host-consumer regression and add the missing proof.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello again.
+- Intent: repair the slice-3 host unfocused hollow regression without revisiting ABI, publication, or savepoint work.
+- Outcome: fixed the host consumer so unfocused hollow maps to its distinct host shape value instead of aliasing to no-shape, and added host proofs that unfocused hollow stays distinct from explicit no-shape. `zig build test` in `howl-render` and `timeout 300s zig build test:unit` in `howl-linux-host` both passed.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should re-review slice 3 for the repaired unfocused hollow host-consumer path.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: re-review slice 3 after the targeted host hollow fix.
+- Outcome: rejected again. The host now emits hollow `4`, but the host-to-render cadence seam in `howl-render/src/c/text_session.zig` still rejects any `effective_shape > 3`, so the slice contract was incomplete and the consequence path is still broken.
+- Handoff: orchestrator should correct the slice-3 contract to include the active host-to-render cadence seam before sending the coder back in.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: hello again.
+- Intent: correct the slice-3 contract after execution revealed the active host-to-render cadence seam was missing from the allowed file set.
+- Outcome: added `howl-render/src/c/text_session.zig` to slice 3 in the planning artifact and active slice contract so the narrow seam repair could proceed accountably.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should gate the contract correction before the coder touches the seam.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: review the slice-3 contract correction.
+- Outcome: accepted. The correction stays narrow and adds only the missing host-to-render cadence seam required by the actual consequence path.
+- Handoff: coder `ses_1344417c5ffehYHsYH3lQQog67` may repair the cadence seam within slice 3.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello again.
+- Intent: repair the slice-3 host-to-render cadence seam so host-emitted hollow `4` is consumed correctly without revisiting unrelated owners.
+- Outcome: fixed `howl-render/src/c/text_session.zig` to accept hollow `4`, added an inline seam proof for accept-`4` and reject-`5`, and both slice-3 verification commands passed again.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should re-review slice 3 with the full corrected consequence path.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: re-review slice 3 after the cadence seam fix.
+- Outcome: accepted. The full slice-3 consequence path is now covered, including distinct hollow truth across the host-to-render seam.
+- Handoff: orchestrator should close slice 3 receipts, record the accepted code commits, and promote slice 4.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: hello again.
+- Intent: close slice 3 acceptance receipts after reviewer approval and move the live sprint into whole-proof closeout.
+- Outcome: committed and pushed the accepted slice-3 render changes in `howl-render` as `1ba7727` `Preserve distinct cursor draw shapes` and the accepted host changes in `howl-linux-host` as `ff37cbd` `Preserve host cursor shape truth`.
+- Handoff: root receipts should now close slice 3 and promote slice 4 as the active slice.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello again.
+- Intent: repair the newly authorized slice-3 host-to-render cadence seam so hollow `4` survives host consumption into render without collapsing shape truth.
+- Outcome: widened `howl-render/src/c/text_session.zig` cadence validation to accept hollow `4` while still rejecting out-of-range values, and added an inline proof for accept-4 reject-5 behavior. `zig build test` in `howl-render` and `timeout 300s zig build test:unit` in `howl-linux-host` both passed.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should re-review slice 3 with the corrected cadence seam included.

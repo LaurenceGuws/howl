@@ -322,6 +322,7 @@
 ### Exact files
 
 - `howl-render/src/text/scene_rects.zig`
+- `howl-render/src/c/text_session.zig`
 - `howl-linux-host/src/terminal/vt_surface.zig`
 - `howl-linux-host/src/terminal/surface.zig`
 - `howl-linux-host/src/terminal/surface_test.zig`
@@ -358,7 +359,7 @@
 
 - `research/2026-06-15-cursor-kitty-full-sprint-plan.md`
 - `sprints/current.txt`
-- `loops/cursor-kitty-slice-1-vt-savepoint-and-alt-screen.txt`
+- `loops/cursor-kitty-full-sprint.txt`
 
 ### Exact proof roots
 
@@ -375,7 +376,7 @@
 
 ### Exact stop conditions
 
-- Stop if any slice still depends on unauthorized prior coder work rather than the accepted slice receipts from this full sprint.
+- Stop if any slice still depends on preexisting tree state that was neither accepted nor corrected through the accountable slice receipts from this full sprint.
 - Stop if any active artifact still authorizes coding before full reviewer acceptance of the sprint package.
 - Stop if any proof root remains vague, conditional, or category-only.
 
