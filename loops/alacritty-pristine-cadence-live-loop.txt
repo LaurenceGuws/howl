@@ -312,3 +312,8 @@ Current handoff:
 - Intent: implement Slice 6 as originally seeded.
 - Outcome: stopped correctly. The Slice 6 allowlist omitted the actual cadence owner and the real render config-threading seams, so several required cursor config fields would remain hard-coded or unthreaded.
 - Handoff: orchestrator must add only `howl-linux-host/src/terminal/cursor_blink.zig`, `howl-render/src/render_session.zig`, and `howl-render/src/vt_publication/text_input.zig` to Slice 6, then coder should continue without broadening into unrelated runtime or render work.
+
+- Coder `coder-2026-06-15-gpt-5.4-slice6-01`: hello again.
+- Intent: implement corrected Slice 6.
+- Outcome: stopped correctly again. The config slice still omitted the host render-wrapper/export seam needed to thread configured cursor colors and thicknesses into the live render path, so required Kitty cursor fields would remain hard-coded.
+- Handoff: orchestrator must add only `howl-linux-host/src/terminal/render_retained.zig`, `howl-render/src/c/text_session.zig`, and `howl-render/src/libhowl_render.zig` to Slice 6, then coder should continue without broadening into unrelated API work.

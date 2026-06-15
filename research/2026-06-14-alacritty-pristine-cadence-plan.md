@@ -436,7 +436,10 @@ Allowed files:
 - `howl-linux-host/src/config/terminal.zig`
 - `howl-linux-host/src/config/config.zig`
 - `howl-linux-host/src/terminal/cursor_blink.zig`
+- `howl-linux-host/src/terminal/render_retained.zig`
 - `howl-linux-host/src/terminal/surface.zig`
+- `howl-render/src/c/text_session.zig`
+- `howl-render/src/libhowl_render.zig`
 - `howl-render/src/render_session.zig`
 - `howl-render/src/vt_publication/theme.zig`
 - `howl-render/src/vt_publication/cursor.zig`
@@ -448,6 +451,7 @@ Required shape:
 - `howl-linux-host/src/config/config.zig` owns top-level propagation of those parsed fields to terminal creation.
 - `howl-linux-host/src/terminal/cursor_blink.zig` consumes configured blink interval, stop interval, and trail decay timing instead of hard-coded cadence constants.
 - `howl-linux-host/src/terminal/surface.zig` owns applying host config to cursor presentation and trail timing inputs.
+- `howl-linux-host/src/terminal/render_retained.zig`, `howl-render/src/c/text_session.zig`, and `howl-render/src/libhowl_render.zig` are part of the Slice 6 config-threading seam and may only be updated to pass configured cursor/theme inputs into the existing render session path.
 - `howl-render/src/render_session.zig` and `howl-render/src/vt_publication/text_input.zig` are part of the Slice 6 config-threading seam and may only be updated to carry configured cursor/theme inputs into the already-defined render presentation path.
 - `howl-render/src/vt_publication/theme.zig` owns cursor and cursor-text color theme propagation.
 - `howl-render/src/text/metrics.zig` owns beam and underline thickness metrics.
@@ -462,6 +466,7 @@ Non-goals:
 - No benchmark tuning.
 - No shell prompt integration policy beyond config needed for parity.
 - No unrelated render-session or publication reshaping beyond the config-threading seam.
+- No unrelated host render-wrapper or render export reshaping beyond the config-threading seam.
 Stop conditions:
 - No Kitty cursor config field listed above remains hard-coded.
 
