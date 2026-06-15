@@ -35,5 +35,6 @@ Current authorized step:
 - The Kitty cursor parity worker-ready sprint document is accepted under the explicit user override to use Kitty pressure.
 - Slice 1, rebuild VT semantic cursor truth and protocol vocabulary, is accepted and committed in `howl-vt` commit `15caf66` after reviewer acceptance.
 - Slice 2, widen the VT/render ABI and publication seam for full cursor truth, is accepted and committed in `howl-vt` commit `82addbf`, `howl-render` commit `ec49cb2`, and `howl-linux-host` commit `7805b98` after reviewer acceptance.
-- Coder may implement Slice 3: introduce render-owned cursor presentation data.
-- Slice 3 is the only authorized coder work right now.
+- Slice 3, introduce render-owned cursor presentation data, is accepted and committed in `howl-render` commit `9f48e1d` after reviewer acceptance.
+- Coder may implement Slice 4: rebuild cursor primitive emission for main cursor and cursor trail.
+- Slice 4 is the only authorized coder work right now.

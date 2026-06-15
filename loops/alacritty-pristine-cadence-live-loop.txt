@@ -247,3 +247,18 @@ Current handoff:
 - Intent: fix the reviewer rejection on Slice 3.
 - Outcome: stopped correctly. Removing the old public `CursorInput` seam from `text/scene.zig` requires exact mechanical updates in render consumer files outside the original Slice 3 allowlist.
 - Handoff: orchestrator must add only those exact render consumer files to Slice 3 for mechanical `CursorPresentation` consumption, without pulling Slice 4 primitive policy into this slice.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: finish corrected Slice 3 render-owned cursor presentation data.
+- Outcome: removed the old public `CursorInput` seam from the render boundary, carried `CursorPresentation` through the contract/scene/preparer/render-consumer seams, kept `CursorColor` unresolved, and reran `zig build test` in `howl-render` successfully.
+- Handoff: reviewer should gate the corrected Slice 3 render seam against the accepted contract.
+
+- Reviewer `review-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: re-review corrected Slice 3 render-owned cursor presentation data.
+- Outcome: accepted. No findings remain. Reviewer confirmed the old public `CursorInput` seam is gone, `CursorPresentation` is the render-owned boundary truth, and no scene-side cursor color policy or second cursor owner was introduced.
+- Handoff: orchestrator should commit the accepted `howl-render` Slice 3 diff and seed Slice 4.
+
+- Orchestrator `orch-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: close accepted Slice 3 and advance the Kitty cursor parity sprint.
+- Outcome: committed accepted Slice 3 in `howl-render` as `9f48e1d` `Introduce cursor presentation owner`. Slice 4 is now the active implementation section.
+- Handoff: coder must implement only Slice 4 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
