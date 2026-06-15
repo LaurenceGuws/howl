@@ -26,63 +26,55 @@ Active sprint note:
 - Accepted amended slice 2 receipts: `howl-render` `1760cbd`, `howl-linux-host` `81152bb`.
 - Accepted amended slice 3 receipt: `howl-linux-host` `6b4f3e7`.
 - Accepted amended slice 4 receipt: `howl-vt` `02bdc3b`.
-- Current stage: amended slice 5 is the active slice.
+- Accepted frame-resync receipt: `howl-linux-host` `08fe547`.
+- Current stage: narrow host wake/present frame-resync fix is the active slice.
+- Slice-5 status: blocked pending later planning repair for Kitty multiple-cursor owner coverage.
 
 Active slice:
 
-- Slice name: `amended-slice-5-port-kitty-multiple-cursors-or-escalate`.
-- Slice class: execution slice 5 of amended sprint.
-- Slice source: `research/2026-06-15-cursor-kitty-amended-slices.md`.
+- Slice name: `host-wake-present-starvation-frame-resync`.
+- Slice class: narrow host regression fix inside current cursor sprint.
+- Slice source: `research/2026-06-15-host-wake-present-starvation-frame-resync.md`.
 - Authorized next step: coder may implement only this active slice.
 
 Exact goal:
 
-- Finish the still-missing Kitty multiple-cursor port from VT protocol noun through shipped VT surface and render consumption.
-- If the product intentionally refuses multiple cursors, force an explicit user override receipt against the original sprint goal.
+- Fix the host wake/present frame-resync regression where the real repro shows a first matched terminal frame, then an unmatched `host_damage`, then continued PTY wakes, and terminal frames still do not advance autonomously.
+- Repair the centralized frame-pacing and loop-admission seam without reintroducing deleted cursor-event ownership.
 
 Exact files:
 
-- `howl-vt/src/vocabulary.zig`
-- `howl-vt/src/kitty/apply.zig`
-- `howl-vt/src/ffi/surface.zig`
-- `howl-vt/include/howl_vt.h`
-- `howl-vt/test/abi.zig`
-- `howl-render/src/vt_publication/abi.zig`
-- `howl-render/src/vt_publication/publication.zig`
-- `howl-render/src/vt_publication/source_slot.zig`
-- `howl-render/src/vt_publication/cursor.zig`
-- `howl-render/src/text/scene_rects.zig`
-- `howl-linux-host/src/terminal/vt_surface.zig`
-- `howl-linux-host/src/terminal/surface.zig`
+- `howl-linux-host/src/display/frame_timer.zig`
+- `howl-linux-host/src/event.zig`
+- `howl-linux-host/src/display/present.zig`
+- `howl-linux-host/src/terminal/surface_test.zig`
 
 Exact required shape:
 
-- Stop if multiple cursors remain intentionally absent without an explicit user override receipt.
-- Stop if VT still exports `extra_cursor_count = 0` by construction after this slice.
-- Stop if render keeps extra-cursor consumption code without a matching VT producer or a removal decision.
+- Make `frame_timer.zig` return a finite follow-up wait through the existing `wait_ms` seam whenever terminal/present progression still requires another loop turn.
+- Keep the owner boundary centered on `frame_timer.zig`, `event.zig`, and `present.zig`.
+- Do not restore cursor-driven redraw/wait state to the event processor.
+- Do not change `surface.zig`.
+- Do not change `event_loop.zig`.
 
 Exact proof roots:
 
-- `howl-vt/test/abi.zig`
-- `howl-render/src/vt_publication/abi.zig` inline tests
-- `howl-render/src/vt_publication/publication.zig` inline tests
-- `howl-render/src/vt_publication/source_slot.zig` inline tests
-- `howl-render/src/vt_publication/cursor.zig` inline tests
-- `howl-render/src/text/scene_rects.zig` inline tests
-- `howl-linux-host/src/terminal/vt_surface.zig` inline tests
+- `howl-linux-host/src/display/frame_timer.zig`
+- `howl-linux-host/src/display/present.zig`
+- `howl-linux-host/src/event.zig`
 - `howl-linux-host/src/terminal/surface_test.zig`
 
 Verification command:
 
-- `zig build test:abi` in `howl-vt`
-- `zig build test` in `howl-render`
 - `timeout 300s zig build test:unit` in `howl-linux-host`
 
 Exact stop conditions:
 
-- Stop if multiple cursors remain intentionally absent without an explicit user override receipt.
-- Stop if VT still exports `extra_cursor_count = 0` by construction after this slice.
-- Stop if render keeps extra-cursor consumption code without a matching VT producer or a removal decision.
+- Stop if the fix masks the issue through cursor-only redraw ownership.
+- Stop if the host loop can still stall terminal frame progression until user input.
+- Stop if the real repro is still only being addressed by test rewriting.
+- Stop if the diff changes `surface.zig`.
+- Stop if the diff changes `event_loop.zig`.
 
 Artifact rule:
 

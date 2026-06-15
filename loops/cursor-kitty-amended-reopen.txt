@@ -62,3 +62,16 @@ Loop notes:
 - Verification receipts: `zig build simulate:build`, `zig build test:unit`, and `zig build test:abi` in `howl-vt` passed after reviewer acceptance.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: committed accepted amended slice 4 as `howl-vt` `02bdc3b` `Delete unbacked cursor simulation diagnostics`.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: promoted amended slice 5 as the live slice in `sprints/current.txt`.
+- Researcher `no-internal-session-id-exposed`: hello.
+- Intent: write a narrow worker-ready host regression subsprint for PTY wake/present starvation using Alacritty event/scheduler pressure.
+- Outcome: wrote `research/2026-06-15-host-wake-present-starvation-subsprint.md` with exact bug statement, mixed classification receipt, winning Alacritty pressure point, exact owner map, exact file set, code-shape constraints, proof roots, verification, stop conditions, and slice wording.
+- Handoff: orchestrator can promote this as a narrow host scheduling fix slice without rescoping the cursor sprint.
+- Researcher `no-internal-session-id-exposed`: hello again.
+- Intent: repair the wake/present starvation subsprint into one concrete executable fix shape with no optional `event_loop.zig` branch and no worker-invented scheduling contract.
+- Outcome: updated `research/2026-06-15-host-wake-present-starvation-subsprint.md` to commit to the finite frame-timer follow-up deadline shape, forbid `event_loop.zig` and `surface.zig` changes for this path, and promote exact proof obligations by owner test file.
+- Handoff: reviewer should re-gate the host regression subsprint against this single-shape contract before any worker execution pass.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted `research/2026-06-15-host-wake-present-starvation-subsprint.md` after the single-shape repair.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: promoted `research/2026-06-15-host-wake-present-starvation-subsprint.md` into `sprints/current.txt` as the live narrow host regression fix slice ahead of the blocked multiple-cursor slice.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: fixed the real repro command `timeout 0.8 zig-out/harness/howl_term_release_fast --command rain` after building with `zig build -Doptimize=ReleaseFast`; the previous `terminal_frame -> host_damage -> unmatched terminal present` trace no longer appeared.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted the real repro scheduling fix.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: committed the accepted host fix in `howl-linux-host` as `08fe547` `Fix host wake present frame resync`.
