@@ -125,3 +125,15 @@ Loop Notes Log:
 - Intent: close slice 1 acceptance receipts after reviewer approval and move the live sprint forward.
 - Outcome: committed and pushed the accepted slice-1 VT code in `howl-vt` as `76c179d` `Close cursor savepoint reverse-screen gap` after verification and reviewer acceptance.
 - Handoff: root receipts should now close slice 1 and promote slice 2 as the active slice.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello again.
+- Intent: execute slice 2 by preserving Kitty no-shape through the shipped VT C ABI and render publication owners without drifting into draw or host work.
+- Outcome: aligned the render-side main-cursor shape enum with the shipped VT ABI no-shape value, added slice-2 proof that no-shape survives publication copy, retained-slot copy, and text-scene input mapping, and both required verification commands passed.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should review slice 2 against the active ABI and render-publication contract.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: review slice 2 against the active ABI and render-publication contract.
+- Outcome: accepted. Explicit no-shape now survives the shipped VT ABI and active render publication path without reinterpretation, and no slice-3 draw or host work leaked in.
+- Handoff: orchestrator should close slice 2 receipts, record the accepted code commits, and promote slice 3.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: hello again.
+- Intent: close slice 2 acceptance receipts after reviewer approval and move the live sprint forward.
+- Outcome: committed and pushed the accepted slice-2 proof update in `howl-vt` as `81ae424` `Prove cursor ABI no-shape contract` and the accepted render publication update in `howl-render` as `2274aec` `Preserve explicit cursor no-shape`.
+- Handoff: root receipts should now close slice 2 and promote slice 3 as the active slice.

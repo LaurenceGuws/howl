@@ -25,81 +25,67 @@ Active sprint note:
 - User execution-team decision: start this sprint with one fresh teammate per role and reuse those task ids for the live sprint.
 - User slice-acceptance decision: when a planned slice comes due, preexisting tree state for that slice may be reviewed for acceptance or required changes instead of being discarded automatically for predating this loop.
 - Cursor-scoped rule: Kitty parity is primary; Ghostty may only be consulted if full Kitty cursor behavior cannot be modeled without ownership blurring.
-- Last accepted slice: slice 1 accepted with reviewer `ses_1344417eaffeA2DD2YSHiMCisr`, coder `ses_1344417c5ffehYHsYH3lQQog67`, and `howl-vt` commit `76c179d`.
-- Current stage: slice 2 is the active slice.
+- Last accepted slice: slice 2 accepted with reviewer `ses_1344417eaffeA2DD2YSHiMCisr`, coder `ses_1344417c5ffehYHsYH3lQQog67`, `howl-vt` commit `81ae424`, and `howl-render` commit `2274aec`.
+- Current stage: slice 3 is the active slice.
 
 Active slice:
 
-- Slice name: `cursor-kitty-slice-2-vt-abi-and-render-publication`.
-- Slice class: execution slice 2 of 4.
+- Slice name: `cursor-kitty-slice-3-render-draw-and-host-consumption`.
+- Slice class: execution slice 3 of 4.
 - Slice source: `loops/cursor-kitty-full-sprint.txt` queue plus `research/2026-06-15-cursor-kitty-full-sprint-plan.md` evidence.
 - Authorized next step: coder may implement only this active slice.
 
 Exact goal:
 
-- Carry explicit Kitty no-shape through the shipped VT C ABI and across all active render publication owners without reinterpretation.
-- Preserve cursor-only damage and preparation semantics through the active render publication path.
+- Close the remaining cursor parity consequences in the active draw owner and host consumer owners.
+- Prove visible no-shape draws nothing while preserving visibility semantics.
+- Prove Kitty-style `1049` and widened cursor shape propagate correctly into host cadence consumption without host-side VT reinterpretation.
 
 Exact files allowed:
 
-- `howl-vt/src/ffi/lifecycle.zig`
-- `howl-vt/src/ffi/surface.zig`
-- `howl-vt/include/howl_vt.h`
-- `howl-vt/test/abi.zig`
-- `howl-render/src/vt_publication/abi.zig`
-- `howl-render/src/vt_publication/publication.zig`
-- `howl-render/src/vt_publication/source_slot.zig`
-- `howl-render/src/vt_publication/cursor.zig`
-- `howl-render/src/vt_publication/text_input.zig`
-- `howl-render/src/vt_publication/damage.zig`
-- `howl-render/src/vt_publication/prepare_queue.zig`
+- `howl-render/src/text/scene_rects.zig`
+- `howl-linux-host/src/terminal/vt_surface.zig`
+- `howl-linux-host/src/terminal/surface.zig`
+- `howl-linux-host/src/terminal/surface_test.zig`
 
 Exact required shape:
 
-- Widen the shipped VT cursor ABI to represent Kitty no-shape exactly.
-- Widen the render publication ABI and all direct publication consumers to preserve no-shape without reinterpretation.
-- Keep render publication consumer-only: no VT policy invention in render.
-- Preserve cursor-only damage and preparation semantics through the publication path.
+- Keep draw-owner changes inside `howl-render/src/text/scene_rects.zig` only.
+- Keep host changes inside `howl-linux-host` consumer owners only.
+- Preserve explicit visible no-shape as no-draw truth rather than hidden visibility.
+- Preserve Kitty-style `1049` and widened cursor-shape consequences through host consumption without host-side VT reinterpretation.
 
 Slice invariants:
 
 - No-shape is explicit shape truth, not collapsed hidden visibility.
-- ABI widening must include both Zig translation and `howl-vt/include/howl_vt.h`.
-- Render publication remains consumer-only and preserves VT truth unchanged.
-- Cursor-only damage handling must remain proved, not silently widened into full-scene fallback.
+- Draw-owner changes must not leak back into VT ownership.
+- Host code must remain consumer-only and must not invent fallback VT semantics.
+- Kitty-style `1049` must propagate into host cadence consumption correctly.
 
 Exact proof roots:
 
-- `howl-vt/test/abi.zig`
-- `howl-vt/src/ffi/lifecycle.zig` inline tests
-- `howl-vt/src/ffi/surface.zig` inline tests
-- `howl-render/src/vt_publication/abi.zig` inline tests
-- `howl-render/src/vt_publication/publication.zig` inline tests
-- `howl-render/src/vt_publication/source_slot.zig` inline tests
-- `howl-render/src/vt_publication/cursor.zig` inline tests
-- `howl-render/src/vt_publication/text_input.zig` inline tests
-- `howl-render/src/vt_publication/damage.zig` inline tests
-- `howl-render/src/vt_publication/prepare_queue.zig` inline tests
+- `howl-render/src/text/scene_rects.zig` inline tests
+- `howl-linux-host/src/terminal/vt_surface.zig` inline tests
+- `howl-linux-host/src/terminal/surface_test.zig`
 
 Verification command:
 
-- `zig build test:abi` in `howl-vt`
 - `zig build test` in `howl-render`
+- `timeout 300s zig build test:unit` in `howl-linux-host`
 
 Exact non-goals:
 
-- Rewriting VT savepoint ownership again.
-- Host cadence consumption changes.
-- Render draw primitive changes.
+- New host runtime abstractions.
 - Multiple cursors.
 - Pointer cursor shape.
+- Cursor trail redesign.
+- Shell integration behavior.
 
 Exact stop conditions:
 
-- Stop if no-shape is collapsed into hidden visibility or inferred block style.
-- Stop if ABI widening is done in Zig only and not in `howl-vt/include/howl_vt.h`.
-- Stop if render publication adds policy instead of preserving VT truth.
-- Stop if cursor-only damage handling regresses into full-scene fallback without proof.
+- Stop if host code invents fallback VT semantics for no-shape or `1049`.
+- Stop if host or render collapses no-shape into hidden instead of preserving visible no-draw truth.
+- Stop if draw-owner changes leak back into VT ownership.
 
 Artifact rule:
 
