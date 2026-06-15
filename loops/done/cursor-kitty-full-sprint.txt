@@ -165,15 +165,19 @@ Loop Notes Log:
 - Intent: repair the slice-3 host-to-render cadence seam so host-emitted hollow `4` is consumed correctly without revisiting unrelated owners.
 - Outcome: fixed `howl-render/src/c/text_session.zig` to accept hollow `4`, added an inline seam proof for accept-`4` and reject-`5`, and both slice-3 verification commands passed again.
 - Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should re-review slice 3 with the full corrected consequence path.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello again.
+- Intent: execute the now-authorized slice-3 host-to-render cadence seam repair as part of the full consequence path.
+- Outcome: widened `howl-render/src/c/text_session.zig` cadence validation to accept hollow `4` while still rejecting out-of-range values, and added an inline proof for accept-4 reject-5 behavior. `zig build test` in `howl-render` and `timeout 300s zig build test:unit` in `howl-linux-host` both passed.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should re-review slice 3 with the corrected cadence seam included.
 - Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
 - Intent: re-review slice 3 after the cadence seam fix.
 - Outcome: accepted. The full slice-3 consequence path is now covered, including distinct hollow truth across the host-to-render seam.
 - Handoff: orchestrator should close slice 3 receipts, record the accepted code commits, and promote slice 4.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: hello again.
-- Intent: close slice 3 acceptance receipts after reviewer approval and move the live sprint into whole-proof closeout.
-- Outcome: committed and pushed the accepted slice-3 render changes in `howl-render` as `1ba7727` `Preserve distinct cursor draw shapes` and the accepted host changes in `howl-linux-host` as `ff37cbd` `Preserve host cursor shape truth`.
-- Handoff: root receipts should now close slice 3 and promote slice 4 as the active slice.
+- Intent: close slice 3 acceptance receipts after the corrected full consequence path was reviewer-accepted and move the live sprint into whole-proof closeout.
+- Outcome: confirmed the accepted `howl-render` slice-3 commit `1ba7727` includes both `src/text/scene_rects.zig` and `src/c/text_session.zig`, then closed slice 3 with `howl-render` commit `1ba7727` and `howl-linux-host` commit `ff37cbd` before promoting slice 4.
+- Handoff: slice 4 closeout can now be judged on a clean chronological sprint surface.
 - Coder `ses_1344417c5ffehYHsYH3lQQog67`: hello again.
-- Intent: repair the newly authorized slice-3 host-to-render cadence seam so hollow `4` survives host consumption into render without collapsing shape truth.
-- Outcome: widened `howl-render/src/c/text_session.zig` cadence validation to accept hollow `4` while still rejecting out-of-range values, and added an inline proof for accept-4 reject-5 behavior. `zig build test` in `howl-render` and `timeout 300s zig build test:unit` in `howl-linux-host` both passed.
-- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should re-review slice 3 with the corrected cadence seam included.
+- Intent: execute slice 4 by re-running the full curated proof surface and checking the live artifacts for closeout blockers without inventing new behavior work.
+- Outcome: all four required verification gates passed: `zig build test:unit` and `zig build test:abi` in `howl-vt`, `zig build test` in `howl-render`, and `timeout 300s zig build test:unit` in `howl-linux-host`. No proof-run code fix was required from this closeout pass.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should review the sprint closeout pass and the orchestrator should close the remaining receipts.

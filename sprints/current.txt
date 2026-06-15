@@ -7,15 +7,15 @@ Purpose:
 
 Sprint:
 
-- Active planning artifact: `research/2026-06-15-cursor-kitty-full-sprint-plan.md`.
+- No active sprint.
 
 Active loop:
 
-- Active sprint loop artifact: `loops/cursor-kitty-full-sprint.txt`.
+- No active loop artifact.
 
-Active sprint note:
+Last completed sprint:
 
-- Active sprint: rip out existing Howl cursor code and port Kitty's cursor code to Zig.
+- Completed sprint: rip out existing Howl cursor code and port Kitty's cursor code to Zig.
 - Orchestrator session id: `orch-2026-06-15-cursor-restart-01`.
 - Planning researcher session id: `ses_135074a6bffeuLKDxy30qK2cAL`.
 - Planning reviewer session id: `ses_13508b5e7ffe0XZUyUcJd4EPEs`.
@@ -25,65 +25,51 @@ Active sprint note:
 - User execution-team decision: start this sprint with one fresh teammate per role and reuse those task ids for the live sprint.
 - User slice-acceptance decision: when a planned slice comes due, preexisting tree state for that slice may be reviewed for acceptance or required changes instead of being discarded automatically for predating this loop.
 - Cursor-scoped rule: Kitty parity is primary; Ghostty may only be consulted if full Kitty cursor behavior cannot be modeled without ownership blurring.
-- Last accepted slice: slice 3 accepted with reviewer `ses_1344417eaffeA2DD2YSHiMCisr`, coder `ses_1344417c5ffehYHsYH3lQQog67`, `howl-render` commit `1ba7727`, and `howl-linux-host` commit `ff37cbd`.
-- Current stage: slice 4 is the active slice.
+- Accepted slice receipts:
+  - Slice 1: `howl-vt` `76c179d`
+  - Slice 2: `howl-vt` `81ae424`, `howl-render` `2274aec`
+  - Slice 3: `howl-render` `1ba7727`, `howl-linux-host` `ff37cbd`
+- Root receipt closures:
+  - `4c3877a` `Accept cursor slice 1 and promote slice 2`
+  - `77cd097` `Accept cursor slice 2 and promote slice 3`
+  - `061b73d` `Accept cursor slice 3 and promote slice 4`
+- Final sprint closeout status: reviewer accepted slice 4 closeout; active loop and research artifacts archived to `loops/done/` and `research/done/`.
 
 Active slice:
 
-- Slice name: `cursor-kitty-slice-4-proof-and-closeout`.
-- Slice class: execution slice 4 of 4.
-- Slice source: `loops/cursor-kitty-full-sprint.txt` queue plus `research/2026-06-15-cursor-kitty-full-sprint-plan.md` evidence.
-- Authorized next step: coder may implement only this active slice.
+- None.
 
 Exact goal:
 
-- Re-run and tighten the full curated proof surface for the sprint.
-- Remove stale proof expectations and ensure the active planning artifacts can gate the whole sprint end-to-end.
-- Produce final accountability receipts for reviewer acceptance of the full sprint, not just one implementation pass.
+- None.
 
 Exact files allowed:
 
-- `research/2026-06-15-cursor-kitty-full-sprint-plan.md`
-- `sprints/current.txt`
-- `loops/cursor-kitty-full-sprint.txt`
+- None.
 
 Exact required shape:
 
-- Re-run the whole curated proof surface and record the results precisely.
-- Remove stale proof expectations from the active artifacts if any remain.
-- Close the full sprint receipts without inventing new behavior slices.
+- None.
 
 Slice invariants:
 
-- No-shape is explicit shape truth, not collapsed hidden visibility.
-- Public C ABI is the product and must stay matched to the accepted code receipts.
-- The active artifacts must truthfully reflect the accepted state of all slices.
+- No active slice invariants.
 
 Exact proof roots:
 
-- Whole-sprint verification logs for:
-- `zig build test:unit` in `howl-vt`
-- `zig build test:abi` in `howl-vt`
-- `zig build test` in `howl-render`
-- `timeout 300s zig build test:unit` in `howl-linux-host`
+- None.
 
 Verification command:
 
-- `zig build test:unit` in `howl-vt`
-- `zig build test:abi` in `howl-vt`
-- `zig build test` in `howl-render`
-- `timeout 300s zig build test:unit` in `howl-linux-host`
+- None.
 
 Exact non-goals:
 
-- Any new code changes outside reviewer-requested fixups revealed by the full proof run.
-- New behavior slices.
+- None.
 
 Exact stop conditions:
 
-- Stop if any slice still depends on preexisting tree state that was neither accepted nor corrected through the accountable slice receipts from this full sprint.
-- Stop if any active artifact still authorizes coding before full reviewer acceptance of the sprint package.
-- Stop if any proof root remains vague, conditional, or category-only.
+- Stop if new coding starts before a new active sprint is seeded.
 
 Artifact rule:
 
