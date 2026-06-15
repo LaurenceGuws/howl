@@ -1,0 +1,67 @@
+# Cursor Kitty Port Pre-Research
+
+Status:
+
+- Active pre-research loop artifact.
+- Purpose: block stale cursor planning before researcher work starts.
+
+Receipt Header:
+
+- Orchestrator session id: `orch-2026-06-15-cursor-restart-01`.
+- Reviewer session id: `ses_13508b5e7ffe0XZUyUcJd4EPEs`.
+- Active-status note: no cursor sprint exists yet.
+
+User Directive And Non-Negotiables:
+
+- Rip out existing Howl cursor code and port Kitty's cursor code to Zig.
+- C ABI boundary remains non-negotiable.
+- No sprint plan is authorized from deleted artifacts.
+
+Problem Statement:
+
+- This is full cursor replacement work, not partial cleanup, path-local repair, or preservation of current Howl cursor ownership.
+
+Reference Order And Stop Rule:
+
+- Ghostty for VT shape.
+- Alacritty for host/render organization.
+- TigerBeetle for ownership, assertions, source order, and tests.
+- Kitty for cursor behavior and UX only.
+- Escalate any direct source conflict before planning continues.
+
+Pre-Research Scoping Questions:
+
+- What exact current Howl owners, files, symbols, ABI seams, and tests presently define cursor state, cursor parsing, cursor rendering, cursor visibility/blink/shape, and saved/restored cursor behavior?
+- What exact Kitty source files and symbols constitute the cursor behavior being ported, and which behaviors are required versus merely adjacent?
+- Which cursor consequences belong to `howl-vt`, which belong to `howl-render`, which belong to host code, and which belong only to ABI translation?
+- Which existing Howl cursor owners and paths must be deleted outright, which must be replaced, and which must remain untouched?
+- What reference-backed owner/file split should exist after the port, even if it breaks current Howl path layout?
+- What protocol and behavior surface is in scope: DECSCUSR, cursor style, blink state, visibility, save/restore, alt-screen interaction, reset behavior, repaint/damage consequences, host-facing exposure?
+- What assertions and tests must prove the new owner boundary and behavior, and where do those proofs live?
+- Are there any direct conflicts between Kitty behavior and Ghostty, Alacritty, or TigerBeetle pressure; if so, what exact user decision is required before planning can continue?
+- What is the full real slice boundary of the cursor port so planning does not split owner-coupled work into fake incremental cuts?
+
+Anti-Stale Constraints:
+
+- Existing Howl cursor paths, names, and owners are not authority.
+- Deleted sprint and loop artifacts are navigation only.
+- Research may not preserve stale owner paths for diff comfort.
+
+Research Entry Gate:
+
+- Researcher may not propose slices until every scoping question above is answered with current-source and reference proof.
+
+Must Explicitly Prevent:
+
+- Treating existing Howl cursor files, names, or seams as the default shape to preserve.
+- Preserving stale paths for minimal diff comfort instead of moving behavior to the true owner.
+- Writing a sprint plan before proving the current owner map and Kitty source map.
+- Narrowing "port Kitty cursor code" into a partial patch, shim, or follow-up-heavy v1.
+- Letting VT, render, ABI, and host consequences be planned separately when the cursor contract spans them.
+- Using deleted or archived sprint artifacts as live authority.
+- Accepting research without exact file and line references, required tests, and delete/replace accounting.
+- Hiding unresolved ownership or reference conflicts behind future-cleanup language.
+
+Loop Notes Log:
+
+- Reviewer scoped this artifact before researcher work.

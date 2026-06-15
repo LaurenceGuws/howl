@@ -1,0 +1,33 @@
+# Cursor Kitty Restart Full Port
+
+Status:
+
+- Active execution loop artifact.
+
+Receipt Header:
+
+- Orchestrator session id: `orch-2026-06-15-cursor-restart-01`.
+- Reviewer session id: `ses_13508b5e7ffe0XZUyUcJd4EPEs`.
+- Research artifact: `research/2026-06-15-cursor-kitty-restart-plan.md`.
+- Sprint artifact: `sprints/current.txt`.
+
+Current handoff:
+
+- Worker slice: `cursor-kitty-restart-full-port`.
+- Coder must implement only the files and invariants listed in `sprints/current.txt`.
+- Reviewer must gate against the Kitty-first contract and proof roots listed in `sprints/current.txt`.
+
+- Coder `ses_134c2eaebffeky5FCR3NTEYRIv`: hello again.
+- Intent: implement the full Kitty-first cursor replacement slice.
+- Outcome: completed terminal-owned Kitty-like savepoints, removed screen-owned save/restore and copied-primary alt cursor behavior, carried explicit no-shape through VT ABI/render publication/host consumption, and passed VT/render/host verification gates.
+- Handoff: reviewer should gate the implementation against the active slice invariants and proofs.
+
+- Reviewer `ses_13508b5e7ffe0XZUyUcJd4EPEs`: hello again.
+- Intent: gate the `cursor-kitty-restart-full-port` implementation against the active slice only.
+- Outcome: accepted after one follow-up fix to stop host blink cadence from animating explicit no-shape cursor state and after the required coder loop note was recorded.
+- Handoff: orchestrator should commit the accepted VT/render/host changes and treat this slice as complete.
+
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: hello again.
+- Intent: close the accepted Kitty-first cursor replacement slice.
+- Outcome: implementation accepted; receipts recorded; next cursor work must be re-planned before execution resumes.
+- Handoff: no further cursor implementation is authorized from this loop artifact.
