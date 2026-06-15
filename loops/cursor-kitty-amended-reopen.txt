@@ -75,3 +75,6 @@ Loop notes:
 - Coder `ses_1344417c5ffehYHsYH3lQQog67`: fixed the real repro command `timeout 0.8 zig-out/harness/howl_term_release_fast --command rain` after building with `zig build -Doptimize=ReleaseFast`; the previous `terminal_frame -> host_damage -> unmatched terminal present` trace no longer appeared.
 - Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted the real repro scheduling fix.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: committed the accepted host fix in `howl-linux-host` as `08fe547` `Fix host wake present frame resync`.
+- Researcher `no-internal-session-id-exposed`: created `research/2026-06-15-howl-only-event-loop-inventory.md` to inventory Howl-only event-loop shape and `research/2026-06-15-alacritty-event-loop-tigerbeetle-port-plan.md` to define the TigerBeetle-style Alacritty clone plan.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted both planning artifacts as source-backed and worker-ready.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: promoted `host-alacritty-event-loop-clone` as the live slice in `sprints/current.txt`.
