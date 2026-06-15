@@ -242,3 +242,8 @@ Current handoff:
 - Intent: close accepted Slice 2 and advance the Kitty cursor parity sprint.
 - Outcome: committed accepted Slice 2 in `howl-vt` as `82addbf` `Widen VT cursor ABI`, in `howl-render` as `ec49cb2` `Widen cursor publication seam`, and in `howl-linux-host` as `7805b98` `Preserve widened cursor publication`. Slice 3 is now the active implementation section.
 - Handoff: coder must implement only Slice 3 from `research/2026-06-14-alacritty-pristine-cadence-plan.md` and return exact verification receipts for reviewer pressure.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: fix the reviewer rejection on Slice 3.
+- Outcome: stopped correctly. Removing the old public `CursorInput` seam from `text/scene.zig` requires exact mechanical updates in render consumer files outside the original Slice 3 allowlist.
+- Handoff: orchestrator must add only those exact render consumer files to Slice 3 for mechanical `CursorPresentation` consumption, without pulling Slice 4 primitive policy into this slice.

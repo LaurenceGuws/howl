@@ -314,8 +314,12 @@ Allowed files:
 - `howl-render/src/vt_publication/cursor.zig`
 - `howl-render/src/vt_publication/text_input.zig`
 - `howl-render/src/text/contract.zig`
+- `howl-render/src/text/direct_normal.zig`
+- `howl-render/src/text/direct_scene.zig`
+- `howl-render/src/text/scene_rects.zig`
 - `howl-render/src/text/scene.zig`
 - `howl-render/src/text/surface_preparer.zig`
+- `howl-render/src/render_session.zig`
 Required shape:
 - Introduce `CursorPresentation` in `howl-render/src/vt_publication/cursor.zig` with this exact owner data shape:
   `pub const max_extra_cursors = 256;`
@@ -336,12 +340,14 @@ Required shape:
 - `howl-render/src/text/contract.zig` exposes `CursorPresentation` to scene construction without host-side inference.
 - `howl-render/src/text/scene.zig` stores `CursorPresentation` as one scene-owned cursor presentation value.
 - `howl-render/src/text/surface_preparer.zig` maps the widened publication to `CursorPresentation` field-for-field.
+- The old public `CursorInput` geometry-only seam must be removed from the render boundary in this slice. Added render consumer files may only mechanically consume `CursorPresentation` or scene-owned cursor presentation data already defined here; they must not invent Slice 4 primitive policy, color resolution policy, or new cursor owners.
 Exact tests:
 - Scene/preparer tests proving every `CursorPresentation`, `ExtraCursorPresentation`, `CursorTrailRect`, and `CellExtent` field survives mapping intact.
 - Contract tests proving `CursorPresentation` represents block, beam, underline, hollow, point extra cursors, rectangle extra cursors, and cursor trail source up to the exact capacities.
 Non-goals:
 - No host config parsing.
 - No protocol owner changes.
+- No Slice 4 cursor primitive-policy changes; added render consumer files are mechanical seam consumers only.
 Stop conditions:
 - Render cursor truth is representable without host-side inference or shader-side guessing.
 - Workers must not rename `CursorPresentation`, `ExtraCursorPresentation`, `CursorTrailSource`, `CursorTrailRect`, or `CellExtent`, and must not add a second cursor presentation owner.
