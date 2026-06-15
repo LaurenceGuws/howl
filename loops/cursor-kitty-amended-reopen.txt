@@ -1,0 +1,32 @@
+# Cursor Kitty Amended Reopen
+
+Status:
+
+- Active execution loop artifact.
+- This file is the live whole-sprint scratchpad for the reopened cursor sprint.
+
+Receipt Header:
+
+- Orchestrator session id: `orch-2026-06-15-cursor-restart-01`.
+- Researcher session id: `ses_134441825ffenA2u9ugDoVS07f`.
+- Reviewer session id: `ses_1344417eaffeA2DD2YSHiMCisr`.
+- Coder session id: `ses_1344417c5ffehYHsYH3lQQog67`.
+- Source audit artifact: `research/2026-06-15-cursor-kitty-line-map.md`.
+- Source amended-slices artifact: `research/2026-06-15-cursor-kitty-amended-slices.md`.
+
+Sprint goal:
+
+- Rip out the code touching the cursor and port Kitty's cursor code.
+- If remaining cursor code cannot be traced to Kitty, delete it or replace it.
+
+Current handoff:
+
+- Active slice: amended slice 2, deletion-driven retained cursor pipeline surgery.
+- Reviewer accepted amended slice 1 under corrected standard.
+- Accepted amended slice 1 code receipt: `howl-vt` `72e5253` `Delete unbacked VT cursor routing`.
+
+Loop notes:
+
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: reopened the cursor sprint after false completion. The accepted line-map and amended slices are now the live authority.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted amended slice 1 once top-spine-only semantic interpretation was enforced and owner-local/test-local seam reuse was removed.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: closed amended slice 1 in `howl-vt` as `72e5253` and promoted amended slice 2.

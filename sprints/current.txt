@@ -7,69 +7,78 @@ Purpose:
 
 Sprint:
 
-- No active sprint.
+- Active planning artifacts:
+  - `research/2026-06-15-cursor-kitty-line-map.md`
+  - `research/2026-06-15-cursor-kitty-amended-slices.md`
 
 Active loop:
 
-- No active loop artifact.
+- Active sprint loop artifact: `loops/cursor-kitty-amended-reopen.txt`.
 
-Last completed sprint:
+Active sprint note:
 
-- Completed sprint: rip out existing Howl cursor code and port Kitty's cursor code to Zig.
+- Active sprint: rip out the code touching the cursor and port Kitty's cursor code.
 - Orchestrator session id: `orch-2026-06-15-cursor-restart-01`.
-- Planning researcher session id: `ses_135074a6bffeuLKDxy30qK2cAL`.
-- Planning reviewer session id: `ses_13508b5e7ffe0XZUyUcJd4EPEs`.
-- Active sprint researcher session id: `ses_134441825ffenA2u9ugDoVS07f`.
-- Active sprint reviewer session id: `ses_1344417eaffeA2DD2YSHiMCisr`.
-- Active sprint coder session id: `ses_1344417c5ffehYHsYH3lQQog67`.
-- User execution-team decision: start this sprint with one fresh teammate per role and reuse those task ids for the live sprint.
-- User slice-acceptance decision: when a planned slice comes due, preexisting tree state for that slice may be reviewed for acceptance or required changes instead of being discarded automatically for predating this loop.
-- Cursor-scoped rule: Kitty parity is primary; Ghostty may only be consulted if full Kitty cursor behavior cannot be modeled without ownership blurring.
-- Accepted slice receipts:
-  - Slice 1: `howl-vt` `76c179d`
-  - Slice 2: `howl-vt` `81ae424`, `howl-render` `2274aec`
-  - Slice 3: `howl-render` `1ba7727`, `howl-linux-host` `ff37cbd`
-- Root receipt closures:
-  - `4c3877a` `Accept cursor slice 1 and promote slice 2`
-  - `77cd097` `Accept cursor slice 2 and promote slice 3`
-  - `061b73d` `Accept cursor slice 3 and promote slice 4`
-- Final sprint closeout status: reviewer accepted slice 4 closeout; active loop and research artifacts archived to `loops/done/` and `research/done/`.
+- Researcher session id: `ses_134441825ffenA2u9ugDoVS07f`.
+- Reviewer session id: `ses_1344417eaffeA2DD2YSHiMCisr`.
+- Coder session id: `ses_1344417c5ffehYHsYH3lQQog67`.
+- Accepted amended slice 1 receipt: `howl-vt` `72e5253`.
+- Current stage: amended slice 2 is the active slice.
 
 Active slice:
 
-- None.
+- Slice name: `amended-slice-2-delete-retained-cursor-pipeline`.
+- Slice class: execution slice 2 of amended sprint.
+- Slice source: `research/2026-06-15-cursor-kitty-amended-slices.md`.
+- Authorized next step: coder may implement only this active slice.
 
 Exact goal:
 
-- None.
+- Remove the retained cursor publication pipeline that is still Howl-invented rather than a true Kitty cursor port.
+- Replace only the minimum seams truly forced by the Howl C ABI or retained renderer product boundary.
 
 Exact files allowed:
 
-- None.
+- `howl-render/src/vt_publication/prepare_queue.zig`
+- `howl-render/src/vt_publication/source_slot.zig`
+- `howl-render/src/render_session.zig`
+- `howl-linux-host/src/terminal/render_retained.zig`
+- `howl-render/src/vt_publication/publication.zig`
+- `howl-render/src/vt_publication/damage.zig`
+- `howl-render/src/vt_publication/cursor.zig`
+- `howl-render/src/c/text_session.zig`
+- `howl-render/src/text/scene_rects.zig`
+- `howl-linux-host/src/terminal/surface.zig`
+- `howl-linux-host/src/terminal/vt_surface.zig`
+- `howl-render/src/vt_publication/abi.zig`
 
 Exact required shape:
 
-- None.
-
-Slice invariants:
-
-- No active slice invariants.
+- Delete or replace `howl-render/src/vt_publication/prepare_queue.zig:22-198,288-305`.
+- Delete or replace `howl-render/src/vt_publication/source_slot.zig:152-306,461-494,495-525,545-559`.
+- Delete or replace `howl-render/src/render_session.zig:381-415,499-504,586-666,854-879`.
+- Delete or replace `howl-linux-host/src/terminal/render_retained.zig:63-93,191-194`.
 
 Exact proof roots:
 
-- None.
+- `howl-render/src/vt_publication/publication.zig` inline tests
+- `howl-render/src/vt_publication/damage.zig` inline tests
+- `howl-render/src/vt_publication/cursor.zig` inline tests
+- `howl-render/src/c/text_session.zig` inline tests
+- `howl-render/src/text/scene_rects.zig` inline tests
+- `howl-linux-host/src/terminal/vt_surface.zig` inline tests
+- `howl-linux-host/src/terminal/surface_test.zig`
 
 Verification command:
 
-- None.
-
-Exact non-goals:
-
-- None.
+- `zig build test` in `howl-render`
+- `timeout 300s zig build test:unit` in `howl-linux-host`
 
 Exact stop conditions:
 
-- Stop if new coding starts before a new active sprint is seeded.
+- Stop if the retained pipeline survives mainly because it already exists rather than because the C ABI/product boundary proves it necessary.
+- Stop if any remaining cursor-retention owner is left as `NO KITTY SOURCE` without a fresh explicit justification of why Howl must invent it.
+- Stop if render or host policy continues to mutate cursor truth that should still belong to a smaller cursor owner.
 
 Artifact rule:
 
