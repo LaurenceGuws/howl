@@ -1,0 +1,102 @@
+# Cursor Kitty Full Sprint
+
+Status:
+
+- Active execution loop artifact.
+- This file is the live whole-sprint scratchpad and ordered slice queue.
+
+Receipt Header:
+
+- Orchestrator session id: `orch-2026-06-15-cursor-restart-01`.
+- Source planning artifact: `research/2026-06-15-cursor-kitty-full-sprint-plan.md`.
+- Planning researcher session id: `ses_135074a6bffeuLKDxy30qK2cAL`.
+- Planning reviewer session id: `ses_13508b5e7ffe0XZUyUcJd4EPEs`.
+- Active sprint researcher session id: `ses_134441825ffenA2u9ugDoVS07f`.
+- Active sprint reviewer session id: `ses_1344417eaffeA2DD2YSHiMCisr`.
+- Active sprint coder session id: `ses_1344417c5ffehYHsYH3lQQog67`.
+
+User Team Assignment Receipt:
+
+- User direction for this sprint start: create one teammate per role, reuse those task ids, and avoid unnecessary preload rereads.
+- Live role assignment for execution from this point: researcher `ses_134441825ffenA2u9ugDoVS07f`, reviewer `ses_1344417eaffeA2DD2YSHiMCisr`, coder `ses_1344417c5ffehYHsYH3lQQog67`.
+
+Current handoff:
+
+- Full sprint name: `cursor-kitty-full-sprint`.
+- Source planning artifact: `research/2026-06-15-cursor-kitty-full-sprint-plan.md`.
+- `loops/` owns the whole sprint scratchpad, slice queue, and teammate handoff notes for this sprint.
+- `sprints/current.txt` owns the one active slice contract only.
+- Reviewer and coder must treat this loop artifact, `sprints/current.txt`, and the active planning artifact as the live authority set.
+
+Sprint goal:
+
+- Rip out existing Howl cursor code and port Kitty cursor code to Zig across VT, shipped ABI, render publication, draw, and host consumption consequences.
+- Keep Kitty parity primary for cursor work.
+- Keep Ghostty fallback-only for ownership cleanliness if full Kitty behavior cannot otherwise stay clean.
+
+Slice queue:
+
+- Slice 1: VT savepoint and alt-screen rewrite.
+  Goal: replace stale screen-local and screen-set-local cursor save and restore owners with terminal-owned Kitty-like savepoints; port Kitty behavior for `ESC 7/8`, `CSI s/u`, `47`, `1047`, `1049`, restore-without-save, and DECRQSS `" q"`; make no-shape first-class VT truth.
+- Slice 2: shipped VT ABI and render publication widening.
+  Goal: carry explicit Kitty no-shape through the shipped VT C ABI and active render publication owners without reinterpretation.
+- Slice 3: render draw and host consumption closure.
+  Goal: close cursor parity consequences in draw owner and host consumer owners.
+- Slice 4: sprint-wide proof and artifact closeout.
+  Goal: rerun the curated proof surface, close receipts, and leave the sprint accountable end-to-end.
+
+Sprint invariants:
+
+- Save and restore is terminal-owned, not screen-owned.
+- Alt-screen cursor consequences follow Kitty semantics, not copied-primary semantics.
+- No-shape is explicit shape truth, not collapsed hidden visibility.
+- Cursor visibility and cursor colors are not part of savepoint payload.
+- Render and host remain consumers only.
+- Public C ABI is the product and must change wherever cursor contract truth changes.
+- Kitty parity is not weakened by Ghostty.
+
+Sprint verification gates:
+
+- `zig build test:unit` in `howl-vt`
+- `zig build test:abi` in `howl-vt`
+- `zig build test` in `howl-render`
+- `timeout 300s zig build test:unit` in `howl-linux-host`
+
+Sprint non-goals:
+
+- Multiple cursors.
+- Pointer cursor shape.
+- Cursor trail redesign.
+- Shell integration.
+- Unrelated renderer or runtime redesign.
+
+Sprint stop conditions:
+
+- Stop if implementation preserves copied-primary alt-screen behavior.
+- Stop if savepoint truth remains screen-owned or screen-set-owned.
+- Stop if no-shape is collapsed into hidden.
+- Stop if visibility or cursor colors enter the savepoint payload.
+- Stop if Ghostty is used to weaken Kitty parity.
+
+Loop Notes Log:
+
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: hello.
+- Intent: collapse the conflicting live sprint surface into one active planning artifact and one active execution contract before coder handoff.
+- Outcome: archived the stale restart-plan and pre-research loop artifacts, promoted the full-sprint plan as the sole active research authority, and condensed slice 1 into an execution contract.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should accept or reject this live-surface rewrite before coder handoff.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello.
+- Intent: review the live-surface rewrite for current-only accountability and clean coder handoff.
+- Outcome: rejected the first pass because `research/2026-06-15-cursor-kitty-full-sprint-plan.md` slice 4 still referenced archived `loops/cursor-kitty-port-pre-research.txt` as an exact live file.
+- Handoff: orchestrator should remove the stale future-slice file reference from the sole active planning artifact and return the rewrite for review.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: re-review the corrected live-surface rewrite.
+- Outcome: accepted. The active surface is current-only, slice-1 authority is condensed cleanly, and coder handoff is accountable.
+- Handoff: coder `ses_1344417c5ffehYHsYH3lQQog67` may start slice 1 using this loop artifact and `sprints/current.txt`.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: hello again.
+- Intent: repair the artifact model after user rejection of the slice-only loop shape and align the live surface to the user rule: `research/` for evidence, `loops/` for the whole sprint, `sprints/current.txt` for the active slice.
+- Outcome: converted the active loop from a slice-only execution contract into the live whole-sprint scratchpad and slice queue. Slice-specific execution authority is being moved into `sprints/current.txt`.
+- Handoff: reviewer `ses_1344417eaffeA2DD2YSHiMCisr` should review this correction after I own the misguidance plainly.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: hello again.
+- Intent: review the corrected artifact model after the user rejected the earlier slice-only loop orchestration.
+- Outcome: accepted. `loops/` now carries the whole sprint scratchpad and slice queue, `sprints/current.txt` carries the active slice only, and `research/` remains evidence and planning authority.
+- Handoff: coder `ses_1344417c5ffehYHsYH3lQQog67` may start slice 1 from `sprints/current.txt` with this loop artifact as the live whole-sprint context.

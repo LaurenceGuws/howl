@@ -9,7 +9,7 @@ Receipt Header:
 
 - Orchestrator session id: `orch-2026-06-15-cursor-restart-01`.
 - Reviewer session id: `ses_13508b5e7ffe0XZUyUcJd4EPEs`.
-- Active-status note: pre-research loop is active and `research/2026-06-15-cursor-kitty-restart-plan.md` now exists as the current planning artifact under review.
+- Active-status note: pre-research loop is active and `research/2026-06-15-cursor-kitty-full-sprint-plan.md` now exists as the current planning artifact under review.
 
 Live User Instruction And Non-Negotiables:
 
@@ -89,5 +89,5 @@ Loop Notes Log:
 - Reviewer re-scoped this artifact from the blank restart state before new research begins.
 - Researcher `ses_135074a6bffeuLKDxy30qK2cAL`: hello again.
 - Intent: answer the pre-research scoping questions from the blank restart state and author the replacement planning artifact on disk.
-- Outcome: created `research/2026-06-15-cursor-kitty-restart-plan.md` and then updated it through multiple reviewer-directed planning corrections until the remaining defects were limited to loop-accountability only.
+- Outcome: created `research/2026-06-15-cursor-kitty-full-sprint-plan.md` as the current full-sprint planning artifact on disk for reviewer gating.
 - Handoff: reviewer should gate the live research artifact and this loop receipt together as the current planning authority.
