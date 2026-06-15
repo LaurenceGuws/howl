@@ -282,3 +282,8 @@ Current handoff:
 - Intent: implement Slice 5 as originally seeded.
 - Outcome: stopped correctly. Host-owned cursor cadence and trail facts cannot enter the widened publication seam through the current allowlist because the actual prepare-path owners in `howl-render/src/render_session.zig` and `howl-render/src/vt_publication/source_slot.zig` were omitted.
 - Handoff: orchestrator must add only those exact host-to-render seam files to Slice 5, then coder should continue without broadening into unrelated render-session work.
+
+- Coder `coder-2026-06-14-ascii-rain-performance-01`: hello again.
+- Intent: implement corrected Slice 5.
+- Outcome: stopped correctly again. Even with `render_session.zig` and `source_slot.zig` allowed, the real host-to-render prepare entrypoint in `howl-render/src/c/prepare_request.zig` still blocks host-owned cursor cadence and trail inputs from entering publication truth.
+- Handoff: orchestrator must add only that exact render C prepare seam file to Slice 5, then coder should continue without broadening into unrelated render API work.

@@ -393,6 +393,7 @@ Allowed files:
 - `howl-linux-host/src/terminal/surface.zig`
 - `howl-linux-host/src/terminal/cursor_blink.zig`
 - `howl-linux-host/src/terminal/term.zig`
+- `howl-render/src/c/prepare_request.zig`
 - `howl-render/src/render_session.zig`
 - `howl-render/src/vt_publication/publication.zig`
 - `howl-render/src/vt_publication/source_slot.zig`
@@ -407,6 +408,7 @@ Required shape:
 - `howl-linux-host/src/event.zig` schedules the next cursor wake from the minimum of blink deadline, inactivity-stop deadline, and trail decay deadline.
 - `howl-linux-host/src/event.zig` classifies cursor-only presentation changes as host damage, not `terminal_frame`; terminal content changes remain the only owner of `terminal_frame` classification.
 - `howl-linux-host/src/terminal/surface.zig` publishes focused/unfocused cursor presentation explicitly and never mutates VT cursor state for focus policy.
+- `howl-render/src/c/prepare_request.zig` is part of the Slice 5 host-to-render prepare seam and may only be updated to pass host-owned cursor cadence and trail inputs into the already-defined render session/publication path.
 - `howl-render/src/render_session.zig` and `howl-render/src/vt_publication/source_slot.zig` are part of the Slice 5 host-to-render prepare seam and may only be updated to carry host-owned cursor cadence and trail inputs into the already-defined publication shape.
 - `howl-linux-host/src/terminal/term.zig` stops owning duplicated incomplete cursor-visible/blink state after `surface.zig` and `cursor_blink.zig` own presentation.
 Exact tests:
@@ -420,7 +422,7 @@ Exact tests:
 Non-goals:
 - No config shape/thickness parsing.
 - No multiple-cursor drawing.
-- No unrelated render-session API reshaping beyond the host-owned cursor cadence/trail seam.
+- No unrelated render C/session API reshaping beyond the host-owned cursor cadence/trail seam.
 Stop conditions:
 - Cursor cadence is no longer representable as only `visible + deadline`.
 
