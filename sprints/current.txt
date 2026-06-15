@@ -25,43 +25,64 @@ Active sprint note:
 - Accepted amended slice 1 receipt: `howl-vt` `72e5253`.
 - Accepted amended slice 2 receipts: `howl-render` `1760cbd`, `howl-linux-host` `81152bb`.
 - Accepted amended slice 3 receipt: `howl-linux-host` `6b4f3e7`.
-- Current stage: amended slice 4 is the active slice.
+- Accepted amended slice 4 receipt: `howl-vt` `02bdc3b`.
+- Current stage: amended slice 5 is the active slice.
 
 Active slice:
 
-- Slice name: `amended-slice-4-delete-unbacked-cursor-diagnostics-and-simulation`.
-- Slice class: execution slice 4 of amended sprint.
+- Slice name: `amended-slice-5-port-kitty-multiple-cursors-or-escalate`.
+- Slice class: execution slice 5 of amended sprint.
 - Slice source: `research/2026-06-15-cursor-kitty-amended-slices.md`.
 - Authorized next step: coder may implement only this active slice.
 
 Exact goal:
 
-- Remove or explicitly quarantine remaining VT cursor diagnostics/simulation code that has no Kitty source and only preserves Howl-owned cursor accounting.
+- Finish the still-missing Kitty multiple-cursor port from VT protocol noun through shipped VT surface and render consumption.
+- If the product intentionally refuses multiple cursors, force an explicit user override receipt against the original sprint goal.
 
 Exact files:
 
-- `howl-vt/simulation/protocol.zig`
-- `howl-vt/simulation/scrollback.zig`
-- any curated test roots that still rely on those cursor diagnostics
+- `howl-vt/src/vocabulary.zig`
+- `howl-vt/src/kitty/apply.zig`
+- `howl-vt/src/ffi/surface.zig`
+- `howl-vt/include/howl_vt.h`
+- `howl-vt/test/abi.zig`
+- `howl-render/src/vt_publication/abi.zig`
+- `howl-render/src/vt_publication/publication.zig`
+- `howl-render/src/vt_publication/source_slot.zig`
+- `howl-render/src/vt_publication/cursor.zig`
+- `howl-render/src/text/scene_rects.zig`
+- `howl-linux-host/src/terminal/vt_surface.zig`
+- `howl-linux-host/src/terminal/surface.zig`
 
 Exact required shape:
 
-- Delete or replace `howl-vt/simulation/protocol.zig:155-156,387-390,415-416`.
-- Delete or replace `howl-vt/simulation/scrollback.zig:46-47,257-267,370-371,380-406`.
+- Stop if multiple cursors remain intentionally absent without an explicit user override receipt.
+- Stop if VT still exports `extra_cursor_count = 0` by construction after this slice.
+- Stop if render keeps extra-cursor consumption code without a matching VT producer or a removal decision.
 
 Exact proof roots:
 
-- simulation or diagnostic roots that still consume cursor row/col/shape snapshots
-- any package root that would fail if these cursor diagnostics are removed
+- `howl-vt/test/abi.zig`
+- `howl-render/src/vt_publication/abi.zig` inline tests
+- `howl-render/src/vt_publication/publication.zig` inline tests
+- `howl-render/src/vt_publication/source_slot.zig` inline tests
+- `howl-render/src/vt_publication/cursor.zig` inline tests
+- `howl-render/src/text/scene_rects.zig` inline tests
+- `howl-linux-host/src/terminal/vt_surface.zig` inline tests
+- `howl-linux-host/src/terminal/surface_test.zig`
 
 Verification command:
 
-- proof command depends on which curated root still consumes the diagnostics after the edit; validate every impacted package root
+- `zig build test:abi` in `howl-vt`
+- `zig build test` in `howl-render`
+- `timeout 300s zig build test:unit` in `howl-linux-host`
 
 Exact stop conditions:
 
-- Stop if these cursor-only diagnostics remain merely because they are convenient local tooling.
-- Stop if deleting them exposes hidden runtime cursor dependencies that should instead live in accountable proof roots.
+- Stop if multiple cursors remain intentionally absent without an explicit user override receipt.
+- Stop if VT still exports `extra_cursor_count = 0` by construction after this slice.
+- Stop if render keeps extra-cursor consumption code without a matching VT producer or a removal decision.
 
 Artifact rule:
 

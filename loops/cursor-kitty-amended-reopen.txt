@@ -57,3 +57,8 @@ Loop notes:
 - Verification receipt: `timeout 300s zig build test:unit` in `howl-linux-host` passed after reviewer acceptance.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: committed accepted amended slice 3 as `howl-linux-host` `6b4f3e7` `Collapse host cursor event ownership`.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: promoted amended slice 4 as the live slice in `sprints/current.txt`.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: implemented amended slice 4 by removing cursor row/col/visible/shape accounting from simulation determinism digests, scrollback structural hashes, invariant errors, core-state summaries, and breakpoint logging.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted amended slice 4.
+- Verification receipts: `zig build simulate:build`, `zig build test:unit`, and `zig build test:abi` in `howl-vt` passed after reviewer acceptance.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: committed accepted amended slice 4 as `howl-vt` `02bdc3b` `Delete unbacked cursor simulation diagnostics`.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: promoted amended slice 5 as the live slice in `sprints/current.txt`.
