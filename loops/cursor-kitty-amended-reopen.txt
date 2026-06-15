@@ -52,3 +52,8 @@ Loop notes:
 - Verification receipt: `timeout 300s zig build test:unit` in `howl-linux-host` passed after reviewer acceptance.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: committed accepted amended slice 2 as `howl-render` `1760cbd` `Replace retained cursor render spine` and `howl-linux-host` `81152bb` `Route host blink through cursor cadence`.
 - Orchestrator `orch-2026-06-15-cursor-restart-01`: promoted amended slice 3 as the live slice in `sprints/current.txt`.
+- Coder `ses_1344417c5ffehYHsYH3lQQog67`: implemented amended slice 3 by removing event-loop ownership of cursor facts, cursor wait storage, and cursor-redraw threading; moving active-surface wait/redraw consequences behind surface-owned runtime facts; and reducing cursor cadence publication to the single accepted `setHostCursorCadence` seam.
+- Reviewer `ses_1344417eaffeA2DD2YSHiMCisr`: accepted amended slice 3.
+- Verification receipt: `timeout 300s zig build test:unit` in `howl-linux-host` passed after reviewer acceptance.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: committed accepted amended slice 3 as `howl-linux-host` `6b4f3e7` `Collapse host cursor event ownership`.
+- Orchestrator `orch-2026-06-15-cursor-restart-01`: promoted amended slice 4 as the live slice in `sprints/current.txt`.

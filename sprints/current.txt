@@ -24,49 +24,44 @@ Active sprint note:
 - Coder session id: `ses_1344417c5ffehYHsYH3lQQog67`.
 - Accepted amended slice 1 receipt: `howl-vt` `72e5253`.
 - Accepted amended slice 2 receipts: `howl-render` `1760cbd`, `howl-linux-host` `81152bb`.
-- Current stage: amended slice 3 is the active slice.
+- Accepted amended slice 3 receipt: `howl-linux-host` `6b4f3e7`.
+- Current stage: amended slice 4 is the active slice.
 
 Active slice:
 
-- Slice name: `amended-slice-3-delete-host-cursor-event-cadence-policy`.
-- Slice class: execution slice 3 of amended sprint.
+- Slice name: `amended-slice-4-delete-unbacked-cursor-diagnostics-and-simulation`.
+- Slice class: execution slice 4 of amended sprint.
 - Slice source: `research/2026-06-15-cursor-kitty-amended-slices.md`.
 - Authorized next step: coder may implement only this active slice.
 
 Exact goal:
 
-- Remove host cursor event/cadence orchestration that is still Howl-owned cursor policy rather than a minimal host consequence model pressured by Kitty.
-- Collapse the event-loop cursor policy surface to the smallest necessary host seam.
+- Remove or explicitly quarantine remaining VT cursor diagnostics/simulation code that has no Kitty source and only preserves Howl-owned cursor accounting.
 
 Exact files:
 
-- `howl-linux-host/src/event.zig`
-- `howl-linux-host/src/terminal/surface.zig`
-- `howl-linux-host/src/terminal/cursor_blink.zig`
-- `howl-linux-host/src/terminal/render_retained.zig`
-- `howl-linux-host/src/terminal/surface_test.zig`
+- `howl-vt/simulation/protocol.zig`
+- `howl-vt/simulation/scrollback.zig`
+- any curated test roots that still rely on those cursor diagnostics
 
 Exact required shape:
 
-- Delete or replace `howl-linux-host/src/event.zig:52,72,89,194-202,240,255,263,273,631,653,668,684,692-764`.
-- Delete or replace any remaining host-side cursor policy in `howl-linux-host/src/terminal/surface.zig:155-167,398-425,779-906` that cannot be traced to Kitty or to a forced host-only cadence obligation.
+- Delete or replace `howl-vt/simulation/protocol.zig:155-156,387-390,415-416`.
+- Delete or replace `howl-vt/simulation/scrollback.zig:46-47,257-267,370-371,380-406`.
 
 Exact proof roots:
 
-- `howl-linux-host/src/terminal/surface_test.zig`
-- `howl-linux-host/src/terminal/vt_surface.zig` inline tests
-- `howl-linux-host/src/event.zig` tests
-- `howl-linux-host/src/terminal/cursor_blink.zig` inline tests
+- simulation or diagnostic roots that still consume cursor row/col/shape snapshots
+- any package root that would fail if these cursor diagnostics are removed
 
 Verification command:
 
-- `timeout 300s zig build test:unit` in `howl-linux-host`
+- proof command depends on which curated root still consumes the diagnostics after the edit; validate every impacted package root
 
 Exact stop conditions:
 
-- Stop if the host event loop still owns cursor policy beyond wake/wait/present obligations that the host boundary truly forces.
-- Stop if cursor wait/redraw choreography remains Howl-invented without explicit Kitty pressure or explicit user override.
-- Stop if host-side cursor blink/trail policy survives as broad local machinery instead of the smallest accountable host owner surface.
+- Stop if these cursor-only diagnostics remain merely because they are convenient local tooling.
+- Stop if deleting them exposes hidden runtime cursor dependencies that should instead live in accountable proof roots.
 
 Artifact rule:
 
