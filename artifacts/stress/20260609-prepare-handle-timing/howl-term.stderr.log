@@ -1,7 +1,0 @@
-howl-debug turn=120 interval_ms=1005 process_cpu_milli=984 process_ticks=99 wake_count=1 runtime_due_count=0 render_pending_count=0 host_redraw=false terminal_redraw=true loop_turns=119
-howl-debug counters wait_true=13 wait_false=106 wait_false_owner_work=0 wait_false_runtime_admission=0 wait_false_runtime_wake=105 wait_false_present_complete_pending=0 wait_false_render_permission=1 render_permission_redraw_requested=0 render_permission_render_work_pending=1 terminal_keep=0 terminal_should_redraw=118 terminal_drive_performed=118 render_step_surface_idle=0 render_step_idle_prepare=0 render_step_idle_submit=0 render_step_blocked_present=0 render_step_rendered=106 render_step_failed=0 present_submitted=106 present_skipped=0 present_complete_drained=0 present_reason_none=0 present_reason_host_damage=0 present_reason_terminal_frame=106 present_reason_terminal_retire=0 sdl_wait_pump=13 sdl_poll_pump=106
-howl-debug timing render_turn_avg_us=8911 render_turn_max_us=27453 render_prepare_avg_us=8264 render_prepare_max_us=26115 render_upload_avg_us=604 render_upload_max_us=2657 render_retained_submit_avg_us=2 render_retained_submit_max_us=79 present_submit_avg_us=129 present_submit_max_us=2099
-howl-debug thread tid=31145 name=howl-main cpu_milli=984 ticks=99
-howl-debug thread tid=31149 name=howl-term-host cpu_milli=0 ticks=0
-howl-debug thread tid=31150 name=SDLTimer cpu_milli=0 ticks=0
-howl-render-debug prepare_handle count=128 prepare_surface_avg_us=6215 prepare_surface_max_us=23866 owner_create_avg_us=2041 owner_create_max_us=5237

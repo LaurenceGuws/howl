@@ -1,5 +1,0 @@
-usage: ascii_rain_stress [--cols N] [--rows N] [--frames N] [--duration-ms N] [--seed N] [--ascii|--mixed] [--sparse] [--metrics] [--metrics-every N] [--flush-every N]
-
-Emits deliberately hostile terminal traffic for terminal throughput testing.
-Stdout is deterministic for a fixed seed/config. Metrics go to stderr.
-error: InvalidArgs
