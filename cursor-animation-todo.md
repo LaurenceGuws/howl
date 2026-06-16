@@ -76,6 +76,7 @@ Purpose:
 - There is still no current-cursor masking equivalent to Kitty `trail_fragment.glsl`.
 - Render scheduling for animation is the risky seam because recent TUI wake bugs lived nearby.
 - A fresh current-code map exists for the trigger path, but not yet for the render-side four-corner implementation.
+- Cursor blink phase must reset on activity/trail checks like Kitty's `cursor_blink_zero_time`; otherwise manual cursor-jump tests can hide the current cursor during the trail.
 
 ## Done Receipts
 
@@ -118,4 +119,7 @@ Purpose:
    - Done in working tree: render work-state ABI exposes `animation_pending` from `CursorTrail.needs_render`.
    - Done in working tree: host retained work treats `animation_pending` as render work and drives a prepare turn without owning animation policy.
    - Verification passed: `timeout 300s zig build test:unit` in `howl-render`; `timeout 300s zig build test:unit` in `howl-linux-host`.
-8. Later backend/API cut: replace temporary pixel rectangle emission with true four-corner trail quad/shader emission.
+8. Defer cursor blink after activity.
+   - Done in working tree: host cursor blink now tracks a Kitty-like zero-time so activity keeps the cursor visible for the first blink interval.
+   - Verification passed: `timeout 300s zig build test:unit` in `howl-linux-host`.
+9. Later backend/API cut: replace temporary pixel rectangle emission with true four-corner trail quad/shader emission.
