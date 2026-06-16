@@ -115,4 +115,7 @@ Purpose:
    - Done in working tree: host publishes one delayed trigger rect and clears it after successful cadence upload.
    - Verification passed: `timeout 300s zig build test:unit` in `howl-linux-host`; `timeout 300s zig build test:unit` in `howl-render`.
 7. Add retained scheduling proof that animation work continues only while needed.
+   - Done in working tree: render work-state ABI exposes `animation_pending` from `CursorTrail.needs_render`.
+   - Done in working tree: host retained work treats `animation_pending` as render work and drives a prepare turn without owning animation policy.
+   - Verification passed: `timeout 300s zig build test:unit` in `howl-render`; `timeout 300s zig build test:unit` in `howl-linux-host`.
 8. Later backend/API cut: replace temporary pixel rectangle emission with true four-corner trail quad/shader emission.
