@@ -25,6 +25,7 @@ Purpose:
 - Render retained session cadence/state: `howl-render/src/render_session.zig`
 - Render C ABI cadence: `howl-render/include/howl_render.h`, `howl-render/src/c/text_session.zig`
 - Render cursor publication/presentation: `howl-render/src/vt_publication/cursor.zig`
+- Render cursor trail owner: `howl-render/src/text/cursor_trail.zig`
 - Render text input: `howl-render/src/vt_publication/text_input.zig`
 - Render scene rects: `howl-render/src/text/scene_rects.zig`
 
@@ -70,9 +71,8 @@ Purpose:
 ## Known Weak Points
 
 - VT publishes `position_changed_by_client_at_ms`, but the underlying VT value is a movement sequence, not time. Host must not treat that ABI field as elapsed milliseconds.
-- Current trail state is still too host-owned. This was not fixed yet.
-- Current trail shape is still rect-list based instead of Kitty four-corner interpolation.
-- Render cadence now receives host time and trail decay config, but `howl-render/src/text/cursor_trail.zig` is not wired into retained rendering yet.
+- Trail trigger delay/threshold is still host-owned. Render now owns interpolation state after the trigger reaches render.
+- Current backend emission is still a pixel rectangle, not Kitty's true four-corner shader quad.
 - There is still no current-cursor masking equivalent to Kitty `trail_fragment.glsl`.
 - Render scheduling for animation is the risky seam because recent TUI wake bugs lived nearby.
 - A fresh current-code map exists for the trigger path, but not yet for the render-side four-corner implementation.
@@ -106,5 +106,10 @@ Purpose:
    - Done in working tree: `HowlRenderHostCursorCadence` carries `cursor_trail_decay_fast_s`, `cursor_trail_decay_slow_s`, and `now_ns`.
    - Done in working tree: host fills those fields from cursor blink config and current runtime time without making time-only changes dirty.
    - Verification passed: `timeout 300s zig build test:unit` in `howl-render`; `timeout 300s zig build test:unit` in `howl-linux-host`.
-5. Wire render-owned trail into retained session and remove host-owned rect-list animation policy.
-6. Add retained scheduling proof that animation work continues only while needed.
+5. Wire render-owned trail into retained session.
+   - Done in working tree: retained render session owns `CursorTrail` state, consumes host trail rects only as trigger/source geometry, and emits an internal pixel trail rect.
+   - Done in working tree: scene trail rect mapping accepts internal pixel rects without changing the C ABI.
+   - Verification passed: `timeout 300s zig build test:unit` in `howl-render`.
+6. Remove remaining host-owned rect-list animation policy.
+7. Add retained scheduling proof that animation work continues only while needed.
+8. Later backend/API cut: replace temporary pixel rectangle emission with true four-corner trail quad/shader emission.
