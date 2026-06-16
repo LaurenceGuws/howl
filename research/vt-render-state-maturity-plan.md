@@ -200,7 +200,7 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 ### Slice 1: VT Render-State Owner And ABI Skeleton
 
 - Goal: add the stateful VT render-state owner, C ABI declarations, FFI handles, export routing, and base lifecycle/get/set tests without changing host or renderer consumers.
-- Allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/render_state.zig`, `howl-vt/src/ffi/render_state.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_abi.zig`, `howl-vt/test_unit.zig`.
+- Allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/render_state.zig`, `howl-vt/src/ffi/render_state.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_ffi.zig`, `howl-vt/test/abi.zig`, `howl-vt/test_abi.zig`, `howl-vt/test_unit.zig`.
 - Required shape: implement `RenderState.empty`, `RenderState.deinit`, `FfiRenderState`, handle init/deinit, dirty enum, data enum for scalar metadata, `get`, `get_multi`, `set`, colors sized struct getter, row/cell iterator handle allocation stubs that return no rows before update, and exports with the exact C symbols listed above.
 - Required tests: VT ABI tests for init/deinit null safety, missing handle status, invalid enum status, dirty get/set, get_multi success and first-failure `out_written`, colors sized-struct minimum-size rejection, row iterator empty before update, row/cell handle deinit null safety.
 - Non-goals: no host changes, no renderer changes, no deletion of `HowlVtSurfaceResult`, no hover/highlight behavior, no input reshaping, no compatibility aliases.

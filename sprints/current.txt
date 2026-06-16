@@ -16,8 +16,8 @@ Active sprint note:
 - Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 - Researcher session id: `researcher-2026-06-16-vt-render-state-plan-correction-02`.
 - Reviewer session id: `reviewer-2026-06-16-vt-render-state-plan-rereview-02`.
-- Current loop phase: planning accepted, execution not started.
-- Coder is not authorized yet because orchestrator has not seeded Slice 1 for execution.
+- Current loop phase: Slice 1 accepted; Slice 2 not seeded yet.
+- Coder is blocked until orchestrator seeds Slice 2.
 - Current goal: hold a worker-ready, reviewer-accepted slice queue for a Ghostty-derived VT render-state boundary before any host/render cleanup.
 - Planning receipt: accepted by reviewer and committed in root `b5f9eb5 Plan VT render state maturity sprint`.
 
@@ -30,9 +30,10 @@ Start Gates:
 
 Authorized next step:
 
-- Orchestrator may seed Slice 1 for a coder only after user authorizes execution.
-- Slice 1 source is `research/vt-render-state-maturity-plan.md`, section `Slice 1: VT Render-State Owner And ABI Skeleton`.
+- Orchestrator may seed Slice 2 for coder execution.
+- Slice 2 source is `research/vt-render-state-maturity-plan.md`, section `Slice 2: Render-State Update From Terminal Viewport`.
 - Reviewer for execution must remain `reviewer-2026-06-16-vt-render-state-plan-rereview-02` unless explicitly reassigned.
+- Slice 1 accepted receipt: `howl-vt` `aed729e Add VT render state ABI skeleton`.
 
 Artifact rule:
 
