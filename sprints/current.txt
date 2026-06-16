@@ -3,84 +3,40 @@
 Purpose:
 
 - Track the current live sprint guidance only.
-- Point coder and reviewer only at live active artifacts.
+- Point researcher, reviewer, coder, and orchestrator only at live active artifacts.
 
 Sprint:
 
-- Active planning artifacts:
-  - `research/2026-06-15-cursor-kitty-line-map.md`
-  - `research/2026-06-15-cursor-kitty-amended-slices.md`
-
-Active loop:
-
-- Active sprint loop artifact: `loops/cursor-kitty-amended-reopen.txt`.
+- Active planning artifact: `research/vt-render-state-maturity-plan.md`.
+- Active loop artifact: `loops/vt-render-state-maturity-loop.txt`.
 
 Active sprint note:
 
-- Active sprint: rip out the code touching the cursor and port Kitty's cursor code.
-- Orchestrator session id: `orch-2026-06-15-cursor-restart-01`.
-- Researcher session id: `ses_134441825ffenA2u9ugDoVS07f`.
-- Reviewer session id: `ses_1344417eaffeA2DD2YSHiMCisr`.
-- Coder session id: `ses_1344417c5ffehYHsYH3lQQog67`.
-- Accepted amended slice 1 receipt: `howl-vt` `72e5253`.
-- Accepted amended slice 2 receipts: `howl-render` `1760cbd`, `howl-linux-host` `81152bb`.
-- Accepted amended slice 3 receipt: `howl-linux-host` `6b4f3e7`.
-- Accepted amended slice 4 receipt: `howl-vt` `02bdc3b`.
-- Accepted frame-resync receipt: `howl-linux-host` `08fe547`.
-- Current stage: cursor blink and animation are the active slice again.
-- Previous host frame-resync work is accepted and complete; the cursor sprint stays live.
-- Slice-5 status: blocked pending later planning repair for Kitty multiple-cursor owner coverage.
+- Active sprint: VT render-state maturity subsprint.
+- Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
+- Researcher session id: `researcher-2026-06-16-vt-render-state-plan-correction-02`.
+- Reviewer session id: `reviewer-2026-06-16-vt-render-state-plan-rereview-02`.
+- Current loop phase: planning accepted, execution not started.
+- Coder is not authorized yet because orchestrator has not seeded Slice 1 for execution.
+- Current goal: hold a worker-ready, reviewer-accepted slice queue for a Ghostty-derived VT render-state boundary before any host/render cleanup.
+- Planning receipt: accepted by reviewer; commit-hash receipt is pending because user requested orchestration only and no commit was requested.
 
-Active slice:
+Start Gates:
 
-- Slice name: `cursor-blink-animation-fix`.
-- Slice class: narrow terminal cursor behavior fix inside the current cursor sprint.
-- Slice source: `research/2026-06-15-cursor-kitty-amended-slices.md`.
-- Authorized next step: coder may implement only this active slice.
+- No renderer `VtSurface` cleanup before the VT render-state boundary exists and is tested.
+- No host hover/highlight mutation cleanup before the VT render-state boundary exposes hover/highlight/selection facts honestly and is tested.
+- No render input reshaping before host/render consumers can consume the new VT render-state boundary.
+- No compatibility aliases, stale bridge endpoint, or optional `if` language. Boundary maturity is a start condition.
 
-Exact goal:
+Authorized next step:
 
-- Restore visible cursor blink and trail animation under the current runtime shape.
-- Keep cursor blink and animation driven by the terminal owner without reintroducing a busy main-thread loop.
-
-Exact files:
-
-- `howl-linux-host/src/terminal/cursor_blink.zig`
-- `howl-linux-host/src/terminal/surface.zig`
-- `howl-linux-host/src/terminal/surface_test.zig`
-- `howl-linux-host/src/event.zig`
-
-Exact required shape:
-
-- Keep cursor timing owned by the terminal cursor code.
-- Keep the event loop thin.
-- Do not add a new owner layer.
-
-Exact proof roots:
-
-- `howl-linux-host/src/terminal/cursor_blink.zig`
-- `howl-linux-host/src/terminal/surface.zig`
-- `howl-linux-host/src/terminal/surface_test.zig`
-- `howl-linux-host/src/event.zig`
-
-Verification command:
-
-- `zig build -Doptimize=ReleaseFast`
-- `timeout 0.8 zig build run -Doptimize=ReleaseFast -- --command rain`
-- `timeout 300s zig build test:unit` in `howl-linux-host`
-
-Exact stop conditions:
-
-- Stop if the worker invents a Howl-only scheduler/manager layer.
-- Stop if `present.zig` starts owning policy.
-- Stop if `surface.zig` becomes the event-loop owner.
-- Stop if redraw request ownership stays in `input`.
-- Stop if the bootstrap redraw seed stays in `main.zig`.
-- Stop if the real repro still needs test rewriting instead of the ported runtime shape.
+- Orchestrator may seed Slice 1 for a coder only after user authorizes execution.
+- Slice 1 source is `research/vt-render-state-maturity-plan.md`, section `Slice 1: VT Render-State Owner And ABI Skeleton`.
+- Reviewer for execution must remain `reviewer-2026-06-16-vt-render-state-plan-rereview-02` unless explicitly reassigned.
 
 Artifact rule:
 
 - Active `loops/`, `research/`, and `sprints/` contents must stay current-only.
-- `research/` carries evidence and planning reasoning.
-- `loops/` carries the live whole-sprint scratchpad and slice queue.
-- `sprints/current.txt` carries the active slice contract only.
+- `research/` carries evidence and the explicit worker-ready slice plan.
+- `loops/` carries the live team scratchpad, role notes, review verdicts, blockers, and receipts.
+- `sprints/current.txt` carries the active planning contract only.

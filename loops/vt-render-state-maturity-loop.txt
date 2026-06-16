@@ -1,0 +1,55 @@
+VT Render-State Maturity Loop
+
+Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
+
+Problem statement:
+
+- The current renderer-side `VtSurface` mirrors VT ABI fields and adds render presentation fields. That is fake ownership.
+- The current VT ABI surface result is not accepted as mature enough for renderer cleanup. Ghostty is the main VT shape pressure.
+- This subsprint must produce a worker-ready, reviewer-accepted slice queue for a Ghostty-derived VT render-state boundary.
+
+Loop phase:
+
+- Planning only.
+- Active loop is researcher <-> reviewer.
+- Coder is blocked until reviewer accepts the plan and orchestrator seeds the accepted execution slice.
+
+Start gates:
+
+- No renderer `VtSurface` cleanup before the VT render-state boundary exists and is tested.
+- No host hover/highlight mutation cleanup before the VT render-state boundary exposes hover/highlight/selection facts honestly and is tested.
+- No render input reshaping before host/render consumers can consume the new VT render-state boundary.
+- No optional `if` escape hatches. Gates are required sequencing.
+
+Active files:
+
+- Sprint index: `sprints/current.txt`.
+- Research plan: `research/vt-render-state-maturity-plan.md`.
+
+Researcher assignment:
+
+- Produce the full source-backed plan in `research/vt-render-state-maturity-plan.md`.
+- Use Ghostty first for VT shape and Kitty only as selective cross-pressure.
+- Return exact Howl symbols, file changes, ordered slices, tests, non-goals, and stop conditions.
+- Append one loop note here with role/session id, hello, intent, outcome, and handoff/blocker.
+
+Reviewer assignment:
+
+- Review the research plan for worker readiness.
+- Reject confirmation-only output, vague shape, optional gates, missing exact files, missing tests, missing stop conditions, or worker-inventing gaps.
+- Append one verdict note here with role/session id, findings, and accept/reject/user-needed.
+
+Receipts:
+
+- Researcher session id: `researcher-2026-06-16-vt-render-state-plan-correction-02`.
+- Reviewer session id: `reviewer-2026-06-16-vt-render-state-plan-rereview-02`.
+- Accepted planning commit hash: pending because user requested orchestration only and no commit was requested. This blocks archival completion until closed.
+
+Loop notes:
+
+- Orchestrator `orch-2026-06-16-vt-render-state-planning-01`: hello. I promoted the VT render-state maturity subsprint to the active planning surface, blocked coder execution, and set the loop to researcher <-> reviewer only. Handoff: researcher must fill the plan, reviewer must gate it.
+- Researcher `researcher-2026-06-16-vt-render-state-plan-01`: hello. I intended to produce the source-backed Ghostty-derived VT render-state worker plan and preserve the required start gates. Outcome: filled `research/vt-render-state-maturity-plan.md` with exact Ghostty, Kitty, and Howl anchors, concrete Howl C ABI/Zig owner names, ordered slices, tests, non-goals, stop conditions, and receipt fields. Handoff: reviewer should gate worker readiness; coder remains blocked until reviewer acceptance and orchestrator slice seeding.
+- Reviewer `reviewer-2026-06-16-vt-render-state-plan-review-01`: hello. I intended to gate `research/vt-render-state-maturity-plan.md` for worker readiness against the active contract. Outcome: reject. Findings: `research/vt-render-state-maturity-plan.md:153` leaves `howl-vt/src/ffi/surface_bridge.zig` to coder choice, so file ownership and bridge shape are not settled before execution; `research/vt-render-state-maturity-plan.md:238`, `research/vt-render-state-maturity-plan.md:243`, and `research/vt-render-state-maturity-plan.md:253` use conditional allowed verification/files language, leaving tests and allowed files for execution-time judgment instead of a closed slice contract. Handoff: researcher must replace conditional/choice language with exact start conditions, exact allowed files, and exact verification demands before the coder can be seeded.
+- Researcher `researcher-2026-06-16-vt-render-state-plan-correction-02`: hello. I intended to correct only the reviewer-rejected planning gaps. Outcome: removed the bridge choice by forbidding `surface_bridge.zig`, kept old surface compatibility in `ffi/surface.zig` until the deletion slice, replaced conditional allowed-file language with exact file lists, and replaced conditional verification wording with exact commands. Handoff: reviewer should re-gate the active plan; coder remains blocked until reviewer acceptance and orchestrator slice seeding.
+- Reviewer `reviewer-2026-06-16-vt-render-state-plan-rereview-02`: hello. I intended to re-gate the corrected `research/vt-render-state-maturity-plan.md` against the previous rejection and active contract. Verdict: accept. Findings: no blocking findings; the bridge choice is settled at `research/vt-render-state-maturity-plan.md:153`, Slice 4 verification is exact at `research/vt-render-state-maturity-plan.md:238`, Slice 5 allowed files are exact at `research/vt-render-state-maturity-plan.md:243`, and Slice 6 allowed files plus deletion verification are exact at `research/vt-render-state-maturity-plan.md:253-258`. Acceptance notes: the plan is worker-ready for orchestrator seeding, keeps Ghostty as VT-shape authority with Kitty cross-pressure only, preserves the required start gates, rejects `HowlVtSurfaceResult` and renderer `VtSurface` as endpoints, forbids manager/controller/context/bucket invention, and keeps active artifact hygiene clean.
+- Orchestrator `orch-2026-06-16-vt-render-state-planning-01`: hello. I recorded accepted researcher/reviewer receipts and left coder execution blocked until user authorizes Slice 1 seeding. Outcome: worker-ready planning package exists in `research/vt-render-state-maturity-plan.md`; active loop remains the communication scratchpad. Handoff: next orchestrator action is seed Slice 1 only when execution is requested.
