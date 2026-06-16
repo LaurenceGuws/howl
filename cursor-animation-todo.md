@@ -23,6 +23,7 @@ Purpose:
 - Host cursor facts/cadence: `howl-linux-host/src/terminal/surface.zig`
 - Host retained render bridge: `howl-linux-host/src/terminal/render_retained.zig`
 - Render retained session cadence/state: `howl-render/src/render_session.zig`
+- Render C ABI cadence: `howl-render/include/howl_render.h`, `howl-render/src/c/text_session.zig`
 - Render cursor publication/presentation: `howl-render/src/vt_publication/cursor.zig`
 - Render text input: `howl-render/src/vt_publication/text_input.zig`
 - Render scene rects: `howl-render/src/text/scene_rects.zig`
@@ -71,6 +72,7 @@ Purpose:
 - VT publishes `position_changed_by_client_at_ms`, but the underlying VT value is a movement sequence, not time. Host must not treat that ABI field as elapsed milliseconds.
 - Current trail state is still too host-owned. This was not fixed yet.
 - Current trail shape is still rect-list based instead of Kitty four-corner interpolation.
+- Render cadence now receives host time and trail decay config, but `howl-render/src/text/cursor_trail.zig` is not wired into retained rendering yet.
 - There is still no current-cursor masking equivalent to Kitty `trail_fragment.glsl`.
 - Render scheduling for animation is the risky seam because recent TUI wake bugs lived nearby.
 - A fresh current-code map exists for the trigger path, but not yet for the render-side four-corner implementation.
@@ -98,7 +100,11 @@ Purpose:
 2. Move from host rect-list trail visuals toward Kitty render-owned `CursorTrail` state.
    - Done in working tree: added isolated `howl-render/src/text/cursor_trail.zig` owner for Kitty-style four-corner state/math.
 3. Add render-side proof for four-corner easing and completion.
-   - Done in working tree: tests prove corners ease toward target, settle with one final render, and opacity follows cursor visibility.
-   - Done in working tree: render trail target derivation follows actual cursor shape geometry for block, hollow, beam, underline, and no-shape.
-4. Wire render-owned trail into retained session and remove host-owned rect-list animation policy.
-5. Add retained scheduling proof that animation work continues only while needed.
+    - Done in working tree: tests prove corners ease toward target, settle with one final render, and opacity follows cursor visibility.
+    - Done in working tree: render trail target derivation follows actual cursor shape geometry for block, hollow, beam, underline, and no-shape.
+4. Carry cadence time/config through the host/render ABI.
+   - Done in working tree: `HowlRenderHostCursorCadence` carries `cursor_trail_decay_fast_s`, `cursor_trail_decay_slow_s`, and `now_ns`.
+   - Done in working tree: host fills those fields from cursor blink config and current runtime time without making time-only changes dirty.
+   - Verification passed: `timeout 300s zig build test:unit` in `howl-render`; `timeout 300s zig build test:unit` in `howl-linux-host`.
+5. Wire render-owned trail into retained session and remove host-owned rect-list animation policy.
+6. Add retained scheduling proof that animation work continues only while needed.
