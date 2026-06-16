@@ -99,5 +99,6 @@ Purpose:
    - Done in working tree: added isolated `howl-render/src/text/cursor_trail.zig` owner for Kitty-style four-corner state/math.
 3. Add render-side proof for four-corner easing and completion.
    - Done in working tree: tests prove corners ease toward target, settle with one final render, and opacity follows cursor visibility.
+   - Done in working tree: render trail target derivation follows actual cursor shape geometry for block, hollow, beam, underline, and no-shape.
 4. Wire render-owned trail into retained session and remove host-owned rect-list animation policy.
 5. Add retained scheduling proof that animation work continues only while needed.
