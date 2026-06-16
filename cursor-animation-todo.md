@@ -71,7 +71,7 @@ Purpose:
 ## Known Weak Points
 
 - VT publishes `position_changed_by_client_at_ms`, but the underlying VT value is a movement sequence, not time. Host must not treat that ABI field as elapsed milliseconds.
-- Trail trigger delay/threshold is still host-owned. Render now owns interpolation state after the trigger reaches render.
+- Trail trigger delay/threshold is still host-owned. Render owns interpolation state after the trigger reaches render.
 - Current backend emission is still a pixel rectangle, not Kitty's true four-corner shader quad.
 - There is still no current-cursor masking equivalent to Kitty `trail_fragment.glsl`.
 - Render scheduling for animation is the risky seam because recent TUI wake bugs lived nearby.
@@ -111,5 +111,8 @@ Purpose:
    - Done in working tree: scene trail rect mapping accepts internal pixel rects without changing the C ABI.
    - Verification passed: `timeout 300s zig build test:unit` in `howl-render`.
 6. Remove remaining host-owned rect-list animation policy.
+   - Done in working tree: host no longer stores `cursor_trail_started_ns`, ages trail rects, or computes trail opacity.
+   - Done in working tree: host publishes one delayed trigger rect and clears it after successful cadence upload.
+   - Verification passed: `timeout 300s zig build test:unit` in `howl-linux-host`; `timeout 300s zig build test:unit` in `howl-render`.
 7. Add retained scheduling proof that animation work continues only while needed.
 8. Later backend/API cut: replace temporary pixel rectangle emission with true four-corner trail quad/shader emission.
