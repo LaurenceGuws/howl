@@ -20,7 +20,18 @@ Purpose:
 - `session` is not source-backed as a render/text API noun in Alacritty, Kitty, or Ghostty from the initial scan.
 - Howl already exports a prepared render command surface through `HowlRenderSurface` and `HowlRenderRdrSfcHandle`.
 - A replacement for `TextSessionOwner` must not collide with the existing prepared/output render surface noun.
-- Candidate control object noun to prove or reject: `TextSurface` / `HowlRenderTextSurfaceHandle`.
+- `TextSurface` is not accepted as a replacement control-object noun if it only renames the current bucket.
+- Do not choose a replacement control-object noun until enough state has moved to true owners that the remaining object has a narrow job.
+
+## Completed Research Findings
+
+- Alacritty does not support a broad render/text `session` owner. Its closest pressure is `Display`, but Howl hosts own display/window/presentation, so copying `Display` would violate Howl's host/render split.
+- Alacritty cursor pressure is local to display/render input and rect primitive emission: `RenderableContent`, `RenderableCursor`, `display/cursor.rs`, and `DisplayUpdate.cursor_dirty`.
+- Kitty cursor trail pressure supports keeping trail math explicit and render-side, not hiding it in the broad control bucket.
+- Source publication and prepare scheduling are pending-update flow, not a generic owner. Alacritty's `DisplayUpdate` is a small pending record consumed by `Display.handle_update`, not a replacement for `TextSessionOwner`.
+- Current prepared/submitted code already has partial true owners: `surface/handle.zig` owns prepared handle state and payload lifetime, while `submitted_surface.zig` owns submitted retained-base validation.
+- Prepared/submitted research found a real missing owner for the single pending prepared candidate slot and C handle identity. That state should not move into `SubmittedSurface`, because submitted retained-base identity and pending prepared work are different lifecycle stages.
+- Reference-backed candidate owner: `PendingPreparedSurface`, analogous to Alacritty's explicit pending update records, but scoped to Howl's prepared-before-submitted surface state.
 
 ## Reference Anchors To Re-Read
 
@@ -58,14 +69,23 @@ Kitty:
 - Bucket candidate: `howl-render/src/render_session.zig`
   - Current stale type: `TextSessionOwner`.
   - Responsibilities currently include source publication, geometry, prepare request, prepared handles, submitted state, cursor cadence/trail, font config, text shaping session, and sprite resources.
+  - Cursor fields currently embedded in the bucket: host cadence colors/opacities/shape/thickness/decay, trail rect output, trail trigger state, and `text_cursor_trail.CursorTrail`.
+  - Source/prepare fields currently embedded in the bucket: `latest_source`, `latest_source_dirty_epoch`, `prepare_request`, and damage classification/request recomputation methods.
 - C adapter handle lookup: `howl-render/src/c/text_session_handle.zig`
 - C text-session adapter: `howl-render/src/c/text_session.zig`
 - C prepare/submit/work/geometry adapters under `howl-render/src/c/`.
 - Prepared handle lifecycle: `howl-render/src/surface/handle.zig`
 - Submitted retained-base state: `howl-render/src/submitted_surface.zig`
 - Text shaping/prep roots: `howl-render/src/text/session.zig`, `howl-render/src/text/surface_preparer.zig`.
+- Prepared/submitted state still embedded in `TextSessionOwner`: `rdr_sfc_handle`, `prepared_candidate`, `prepared_handles`, candidate registration/clear/invalidation, active submit decision, and submit-pending work-state truth.
 
 ## Research Tasks Before Editing
+
+Status:
+
+- Cursor render ownership research: complete enough for a first extraction proposal.
+- Source/prepare scheduling research: complete enough to reject a broad `DisplayUpdate`/`TextSurface` rename.
+- Prepared/submitted ownership research: complete enough for a first extraction proposal using a narrow pending prepared owner.
 
 1. Alacritty render split map.
    - Map `Display`, `Renderer`, `RenderableContent`, `GlyphCache`, `DamageTracker`, `DisplayUpdate`, and frame/present flow.
@@ -102,11 +122,32 @@ Kitty:
      - `src/c/text_session_handle.zig` -> matching handle lookup file name.
      - `src/c/text_session.zig` -> matching C adapter file name.
 
-## Likely First Implementation Slice
+## Candidate Implementation Slices
 
-- Do not start here until research is complete.
-- Preferred first slice should remove the most misleading public/internal names without splitting behavior yet only if the target noun is proved.
-- If `TextSessionOwner` is confirmed as a bucket, first slice may instead move one responsibility to an existing true owner before a broad rename.
+### Cursor Presentation
+
+- Do not start a broad rename here.
+- Extract cursor cadence/trail presentation state out of `TextSessionOwner` into an owner-true render-side cursor presentation object, reusing `text/cursor_trail.zig` for trail math rather than inventing a scheduler/manager/control layer.
+- The slice should reduce `TextSessionOwner` fields and methods materially: host cadence storage, trail trigger state, source mutation for cursor presentation, and animation pending truth should move together or not at all.
+- Keep file/folder moves out of this slice unless the user approves an exact move list first.
+
+### Pending Prepared Surface
+
+- Extract the pending prepared candidate slot from `TextSessionOwner` into a narrow `PendingPreparedSurface` owner.
+- Move together or not at all: `rdr_sfc_handle`, `prepared_candidate`, `prepared_handles`, candidate registration/clear/invalidation, candidate submit decision checks, and submit-pending truth.
+- Keep `SubmittedSurface` focused on submitted retained-base identity and validation. Do not put pending prepared candidate state there.
+- Keep `PreparedHandle` focused on one handle's lifetime/payload. Do not make an individual handle own the session's pending slot.
+- Keep source publication, cursor cadence, font/text preparation, and geometry out of this slice.
+- `PendingPreparedSurface` must receive latest prepare-token freshness as input and return a decision. It must not own or mutate `prepare_request`.
+- `TextSessionOwner` remains responsible for applying returned full-prepare decisions to `prepare_request`.
+- `PreparedHandle.release`, `PreparedHandle.consume`, and detach logic must route candidate/list mutation through `PendingPreparedSurface`, not through wrapper methods that keep the extracted fields semantically owned by `TextSessionOwner`.
+- The pending owner must assert candidate identity, opaque handle identity, live state, and one-shot `submit_ready` transition order.
+- Required new tests: empty slot is idle, accept makes submit pending true, stale/invalid retained base clears candidate and asks for full prepare, wrong/non-live handle fails, submit-ready transition happens once, submit consume clears without double release, destroy destroys registered handles.
+
+Stop this slice if implementation requires C ABI changes, moves files/folders without approval, moves source publication/geometry/cursor/text/font/submitted retained-base state into the pending owner, leaves `PreparedHandle` mutating extracted fields through `TextSessionOwner`, or only proves old session-level outcomes without owner-local tests.
+
+### Verification For Any Slice
+
 - Every slice must run at least:
   - `timeout 300s zig build test:unit` in `howl-render`
   - host build/tests if ABI or host calls change.
@@ -120,7 +161,7 @@ Kitty:
 
 ## Open Questions
 
-- Is the control object best named `TextSurface`, `TerminalSurface`, or another source-backed noun?
-- Does the ABI need `HowlRenderTextSurfaceHandle`, or should it be named around `Display`/`RenderableContent` adapted to Howl vocabulary?
+- After cursor/source/prepared state is reduced, what narrow job remains for the C ABI control object?
+- Does the ABI need a new handle noun at all, or should it wait until the internal bucket is decomposed enough to name honestly?
 - What is the smallest decomposition slice that reduces bucket shape rather than just renaming it?
 - Which file moves are worth doing in the same slice as ABI renaming, and which should wait?
