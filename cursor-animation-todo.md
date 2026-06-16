@@ -121,5 +121,9 @@ Purpose:
    - Verification passed: `timeout 300s zig build test:unit` in `howl-render`; `timeout 300s zig build test:unit` in `howl-linux-host`.
 8. Defer cursor blink after activity.
    - Done in working tree: host cursor blink now tracks a Kitty-like zero-time so activity keeps the cursor visible for the first blink interval.
+   - Done in working tree: activity reset now always consumes/uploads cursor cadence so the new blink phase cannot visually stick in an old state.
    - Verification passed: `timeout 300s zig build test:unit` in `howl-linux-host`.
-9. Later backend/API cut: replace temporary pixel rectangle emission with true four-corner trail quad/shader emission.
+9. Admit render-owned animation work at frame permit.
+   - Done in working tree: frame pacing now grants render permission when `render_work_pending` is true and the frame permit is ready.
+   - Verification passed: `timeout 300s zig build test:unit` in `howl-linux-host`; `timeout 300s zig build test:unit` in `howl-render`.
+10. Later backend/API cut: replace temporary pixel rectangle emission with true four-corner trail quad/shader emission.
