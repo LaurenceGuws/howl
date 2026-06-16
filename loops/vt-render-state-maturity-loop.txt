@@ -43,7 +43,7 @@ Receipts:
 
 - Researcher session id: `researcher-2026-06-16-vt-render-state-plan-correction-02`.
 - Reviewer session id: `reviewer-2026-06-16-vt-render-state-plan-rereview-02`.
-- Accepted planning commit hash: pending because user requested orchestration only and no commit was requested. This blocks archival completion until closed.
+- Accepted planning commit hash: root `b5f9eb5 Plan VT render state maturity sprint`.
 
 Loop notes:
 
@@ -53,3 +53,4 @@ Loop notes:
 - Researcher `researcher-2026-06-16-vt-render-state-plan-correction-02`: hello. I intended to correct only the reviewer-rejected planning gaps. Outcome: removed the bridge choice by forbidding `surface_bridge.zig`, kept old surface compatibility in `ffi/surface.zig` until the deletion slice, replaced conditional allowed-file language with exact file lists, and replaced conditional verification wording with exact commands. Handoff: reviewer should re-gate the active plan; coder remains blocked until reviewer acceptance and orchestrator slice seeding.
 - Reviewer `reviewer-2026-06-16-vt-render-state-plan-rereview-02`: hello. I intended to re-gate the corrected `research/vt-render-state-maturity-plan.md` against the previous rejection and active contract. Verdict: accept. Findings: no blocking findings; the bridge choice is settled at `research/vt-render-state-maturity-plan.md:153`, Slice 4 verification is exact at `research/vt-render-state-maturity-plan.md:238`, Slice 5 allowed files are exact at `research/vt-render-state-maturity-plan.md:243`, and Slice 6 allowed files plus deletion verification are exact at `research/vt-render-state-maturity-plan.md:253-258`. Acceptance notes: the plan is worker-ready for orchestrator seeding, keeps Ghostty as VT-shape authority with Kitty cross-pressure only, preserves the required start gates, rejects `HowlVtSurfaceResult` and renderer `VtSurface` as endpoints, forbids manager/controller/context/bucket invention, and keeps active artifact hygiene clean.
 - Orchestrator `orch-2026-06-16-vt-render-state-planning-01`: hello. I recorded accepted researcher/reviewer receipts and left coder execution blocked until user authorizes Slice 1 seeding. Outcome: worker-ready planning package exists in `research/vt-render-state-maturity-plan.md`; active loop remains the communication scratchpad. Handoff: next orchestrator action is seed Slice 1 only when execution is requested.
+- Orchestrator `orch-2026-06-16-vt-render-state-planning-01`: hello. I committed the accepted planning package as root `b5f9eb5 Plan VT render state maturity sprint` and recorded the receipt. Outcome: planning package has a commit-hash receipt; next handoff is push root, then seed coder Slice 1 when execution begins.

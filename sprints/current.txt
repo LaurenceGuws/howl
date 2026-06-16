@@ -19,7 +19,7 @@ Active sprint note:
 - Current loop phase: planning accepted, execution not started.
 - Coder is not authorized yet because orchestrator has not seeded Slice 1 for execution.
 - Current goal: hold a worker-ready, reviewer-accepted slice queue for a Ghostty-derived VT render-state boundary before any host/render cleanup.
-- Planning receipt: accepted by reviewer; commit-hash receipt is pending because user requested orchestration only and no commit was requested.
+- Planning receipt: accepted by reviewer and committed in root `b5f9eb5 Plan VT render state maturity sprint`.
 
 Start Gates:
 

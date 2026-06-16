@@ -1,6 +1,6 @@
 # VT Render-State Maturity Plan
 
-Status: active planning artifact, accepted by reviewer, not committed.
+Status: active planning artifact, accepted by reviewer and committed.
 
 Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 
@@ -8,7 +8,7 @@ Researcher session id: `researcher-2026-06-16-vt-render-state-plan-correction-02
 
 Reviewer session id: `reviewer-2026-06-16-vt-render-state-plan-rereview-02`.
 
-Planning commit receipt: pending because user requested orchestration only and no commit was requested. This blocks archival completion until closed.
+Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 
 ## Problem Statement
 
