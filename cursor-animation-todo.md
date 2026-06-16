@@ -96,5 +96,8 @@ Purpose:
    - Done in working tree: a second cursor move before the pending deadline replaces the pending trail candidate and pushes the deadline forward.
    - Done in working tree: a below-threshold move clears pending trail state.
 2. Move from host rect-list trail visuals toward Kitty render-owned `CursorTrail` state.
+   - Done in working tree: added isolated `howl-render/src/text/cursor_trail.zig` owner for Kitty-style four-corner state/math.
 3. Add render-side proof for four-corner easing and completion.
-4. Add retained scheduling proof that animation work continues only while needed.
+   - Done in working tree: tests prove corners ease toward target, settle with one final render, and opacity follows cursor visibility.
+4. Wire render-owned trail into retained session and remove host-owned rect-list animation policy.
+5. Add retained scheduling proof that animation work continues only while needed.
