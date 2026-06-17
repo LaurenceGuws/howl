@@ -16,8 +16,8 @@ Active sprint note:
 - Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 - Researcher session id: `researcher-2026-06-18-pending-surface-hyperlink-test-repair-18`.
 - Reviewer session id: `reviewer-2026-06-18-pending-surface-hyperlink-test-repair-review-02`.
-- Current loop phase: Recovery Slice 5 pending prepared surface rename and hyperlink ABI test repair accepted; commit receipt pending.
-- Coder is blocked until orchestrator records a root commit and reseeds Recovery Slice 5.
+- Current loop phase: Recovery Slice 5 execution.
+- Coder is authorized only for Recovery Slice 5 after orchestrator seed.
 - Current goal: repair Recovery Slice 5 scope so stale embedded `VtSurface`/`vtSurface` names and missing hyperlink ABI-root behavioral tests cannot survive final review.
 - Planning receipt: corrected recovery amendment committed in root `87f37fc Recover VT render state sprint plan`; Recovery Slice 5 scope repair committed in root `e114b80 Repair VT recovery slice scope`; Recovery Slice 5 hyperlink repair committed in root `b964014 Repair VT recovery hyperlink scope`; Recovery Slice 5 text-owner repair committed in root `4bd92d1 Repair VT recovery text owner scope`; Recovery Slice 4B render-state cell ABI repair committed in root `64bfb03 Plan VT render state cell ABI`; accepted Slice 4B product tracked in root `255a797 Track VT render state cell ABI`; visible-metadata repair committed in root `22285b9 Repair VT recovery visible metadata scope`; visible-info reseed committed in root `eeff72c Seed VT recovery slice 5 visible info`; test-link/text-session repair committed in root `178d91e Repair VT recovery test link scope`; test-link reseed committed in root `092052d Seed VT recovery slice 5 test link`; event test expectation repair committed in root `cf86350 Repair VT recovery event test scope`; event test reseed committed in root `bc3c816 Seed VT recovery slice 5 event test`; current pending-prepared/hyperlink-test repair pending reviewer gate.
 
@@ -30,7 +30,7 @@ Start Gates:
 
 Authorized next step:
 
-- Orchestrator must commit the accepted pending-prepared/hyperlink-test planning repair before coder resumes Recovery Slice 5.
+- Coder may implement only Recovery Slice 5 from the repaired scope.
 - Slice 1 accepted receipt: `howl-vt` `aed729e Add VT render state ABI skeleton`.
 - Slice 2 accepted receipt: `howl-vt` `a015e1e Populate VT render state from terminal`.
 - Slice 3 accepted receipt: `howl-vt` `f6d2f8d Complete VT render state row reads`.
