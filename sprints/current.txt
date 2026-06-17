@@ -16,8 +16,8 @@ Active sprint note:
 - Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 - Researcher session id: `researcher-2026-06-16-vt-render-state-plan-correction-02`.
 - Reviewer session id: `reviewer-2026-06-16-vt-render-state-plan-rereview-02`.
-- Current loop phase: Slice 2 accepted; Slice 3 not seeded yet.
-- Coder is blocked until orchestrator seeds Slice 3.
+- Current loop phase: Slice 3 accepted; Slice 4 not seeded yet.
+- Coder is blocked until orchestrator seeds Slice 4.
 - Current goal: hold a worker-ready, reviewer-accepted slice queue for a Ghostty-derived VT render-state boundary before any host/render cleanup.
 - Planning receipt: accepted by reviewer and committed in root `b5f9eb5 Plan VT render state maturity sprint`.
 
@@ -30,11 +30,12 @@ Start Gates:
 
 Authorized next step:
 
-- Orchestrator may seed Slice 3 for coder execution.
-- Slice 3 source is `research/vt-render-state-maturity-plan.md`, section `Slice 3: Row Cells, Selection, And Highlight ABI Completion`.
+- Orchestrator may seed Slice 4 for coder execution.
+- Slice 4 source is `research/vt-render-state-maturity-plan.md`, section `Slice 4: Host Consumes Render-State Boundary For Visible Capture And Hover`.
 - Reviewer for execution must remain `reviewer-2026-06-16-vt-render-state-plan-rereview-02` unless explicitly reassigned.
 - Slice 1 accepted receipt: `howl-vt` `aed729e Add VT render state ABI skeleton`.
 - Slice 2 accepted receipt: `howl-vt` `a015e1e Populate VT render state from terminal`.
+- Slice 3 accepted receipt: `howl-vt` `f6d2f8d Complete VT render state row reads`.
 
 Artifact rule:
 
