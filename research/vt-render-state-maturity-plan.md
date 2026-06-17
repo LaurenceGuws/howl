@@ -1,14 +1,14 @@
 # VT Render-State Maturity Plan
 
-Status: accepted planning amendment after Slice 4 blocker; amended Slice 4 is seeded for execution.
+Status: recovery planning after full-sprint audit; old Slice 5+ guidance is invalid.
 
 Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 
-Researcher session id: `researcher-2026-06-17-vt-render-state-hover-abi-amendment-correction-04`.
+Researcher session id: `researcher-2026-06-17-vt-render-state-recovery-correction-06`.
 
-Reviewer session id: `reviewer-2026-06-17-vt-render-state-hover-abi-amendment-rereview-02`.
+Reviewer session id: pending recovery review.
 
-Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state maturity sprint`; current accepted amendment has no dedicated commit receipt yet.
+Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state maturity sprint`; later root receipts point at invalid old Slice 5+ guidance; current recovery correction pending reviewer acceptance and receipt.
 
 ## Problem Statement
 
@@ -23,7 +23,97 @@ Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state matur
 - After the VT render-state C ABI exists and passes VT ABI tests, renderer `VtSurface` deletion and input reshaping may start.
 - After host and renderer can consume the new VT render-state boundary, downstream cleanup may start.
 - Before those conditions are true, downstream cleanup remains blocked.
-- The old `howl_vt_terminal_copy_surface` path may be kept only as the named bridge slice below. Its deletion condition is host and renderer no longer using `HowlVtSurfaceResult` or renderer `VtSurface`.
+- The old `howl_vt_terminal_copy_surface` path is not a bridge for host or renderer consumption. It may remain only as dead old ABI until the deletion slice, with no host/render product consumer and no new wrapper/payload using it.
+
+## Recovery Amendment: No Compatibility Payload Boundary
+
+Status: active recovery amendment pending reviewer gate.
+
+Recovery researcher session id: `researcher-2026-06-17-vt-render-state-recovery-correction-06`.
+
+Recovery reviewer session id: pending recovery review.
+
+Current accepted product commits from which recovery starts:
+
+- `howl-vt` `aed729e Add VT render state ABI skeleton`.
+- `howl-vt` `a015e1e Populate VT render state from terminal`.
+- `howl-vt` `f6d2f8d Complete VT render state row reads`.
+- `howl-vt` `cf6b80c Expose VT render state hover highlight update`.
+
+Invalidated guidance, not worker-executable:
+
+- Old Slice 5, old Slice 6, and old Slice 7 from the prior plan are invalid as worker guidance wherever they allow staged old-payload retention, staged renderer migration, or renderer-owned `VtSurface` endpoint.
+- `research/vt-render-state-maturity-plan.md:251` is explicitly invalid because it says the renderer prepare call may keep old `HowlVtSurfaceResult` as a temporary compatibility payload inside the host visible wrapper.
+- `research/vt-render-state-maturity-plan.md:26` and `research/vt-render-state-maturity-plan.md:159` are invalid wherever they describe the old copy surface path as an integration path rather than unaccepted legacy debt awaiting deletion.
+- `sprints/current.txt:41-48` is invalid as execution guidance for the same reason.
+
+Corrected architecture premise:
+
+- Alacritty `alacritty/src/window_context.rs:365-398` draws from the window context: it clears redraw state, processes pending display update, locks terminal state, and calls `display.draw` from the window-controlled draw path.
+- Alacritty `alacritty/src/window_context.rs:475-493` requests redraw only after dirty state or hint-highlight dirtiness and only when the window has a frame and is not occluded; it does not spin renderer CPU/GPU work merely because a terminal source exists.
+- Alacritty `alacritty/src/display/window.rs:103-112` stores `has_frame` and `requested_redraw`, and `alacritty/src/display/window.rs:260-264` deduplicates `request_redraw` calls.
+- Alacritty `alacritty/src/display/mod.rs:775-878` builds `RenderableContent` and draws cells inside `Display.draw`, and `alacritty/src/display/mod.rs:1023-1046` swaps buffers and advances damage at the end of that draw.
+- Alacritty `alacritty/src/display/content.rs:24-50` treats renderable content as the terminal content iterator plus cursor/search/hint presentation facts built for a draw, not as a long-lived renderer-owned mirror of the terminal surface.
+- Howl translation: `howl-linux-host` owns window/event-loop pacing and decides when prepare/submit work is attempted; `howl-render` owns retained prepared surfaces and text shaping; `howl-vt` owns render-state truth. The host may pass a VT render-state C ABI handle to the renderer during a window-paced prepare turn. The host must not materialize a compatibility payload and must not ask renderer to prepare outside the existing `render_retained.WorkState.prepare_needed` / submit cadence.
+- Because current `howl-render/include/howl_render.h:453-457` takes `const HowlVtSurfaceResult *vt_surface`, current `howl-render/src/c/prepare_request.zig:6-12` ingests that payload, current `howl-render/src/render_session.zig:388-390` stores `latest_vt_surface`, and current `howl-linux-host/src/terminal/surface.zig:591-600` passes `visible.surface` to renderer prepare, host consumption and renderer consumption are one real boundary change after Slice 4. Splitting host first would require exactly the forbidden temporary old payload. Splitting renderer first would leave no host producer for the new boundary and would not remove the old payload from the live window-paced path.
+
+Additional current-source anchors governing recovery:
+
+- `howl-linux-host/src/terminal/term.zig:35-59`: host `VtState` owns old copied-surface scratch buffers and deinit, so a persistent `HowlVtRenderStateHandle` must be added here or an owner-true equivalent must be named in this same slice; old scratch buffers must not remain as the host visible owner.
+- `howl-linux-host/src/terminal/vt_surface.zig:24-31`: `VisibleCopy` currently owns `HowlVtSurfaceResult`; this owner must be deleted, not wrapped.
+- `howl-linux-host/src/terminal/vt_surface.zig:56-71`: capture currently copies surface, applies host hover mutation, and writes cursor facts from copied cells; this must become render-state update, public hover update, and scalar cursor reads.
+- `howl-linux-host/src/terminal/vt_surface.zig:147-184`: visible acquisition currently calls `howl_vt_terminal_copy_surface`; this call must disappear from host product code in the combined slice.
+- `howl-linux-host/src/terminal/vt_surface.zig:195-230`: host copied-cell hover mutation and local dirty-range mutation must be deleted.
+- `howl-linux-host/src/terminal/surface.zig:583-608`: window-paced render drive currently captures `VisibleCopy`, reads `visible.surface`, and passes old payload to renderer prepare; this must become the single host entry that updates VT render state and calls renderer prepare with the render-state boundary only when work state demands prepare.
+- `howl-linux-host/src/terminal/render_retained.zig:216-248`: retained host render wrapper currently accepts `*const HowlVtSurfaceResult` and calls `howl_render_text_session_take_prepare_request`; this must accept/pass `HowlVtRenderStateHandle` or the exact public render-state ABI input chosen by the slice.
+- `howl-render/src/c/prepare_request.zig:6-12`: render C ingress currently requires old `HowlVtSurfaceResult`; this must be replaced by render-state ABI ingress.
+- `howl-render/src/render_session.zig:106-112`: `PrepareInput` currently embeds `vt_surface.VtSurface`; this must become a render-state input borrowed for prepare, not a retained mirror.
+- `howl-render/src/render_session.zig:388-390` and `522-540`: `TextSessionOwner` stores and ingests renderer-owned `VtSurface`; this must become render-state token/request ownership without retaining VT cells as a mirror.
+- `howl-render/src/vt_surface/surface.zig:17-45`: renderer-owned `VtSurface` is rejected and must be deleted or replaced only by a borrow-only render-state input with no old surface fields or retained VT cell storage.
+- `howl-render/src/vt_surface/text_input.zig:183-238`: text input currently maps from `VtSurface`; it must map by reading render-state row/cell facts and row selection/highlight facts through C ABI, with scratch lifetime bounded to prepare.
+- `howl-render/src/vt_surface/damage.zig:42-112`: cursor/color/surface dedupe currently compares mirrored `VtSurface`; this must be removed or replaced with render-state token/damage facts, not a new mirror.
+- `howl-render/src/vt_surface/cursor.zig:92-120`: cursor presentation currently maps from `VtSurface`; this must map from render-state cursor/color facts plus host cursor cadence presentation.
+- `howl-render/src/text/surface_preparer.zig:123-143`: direct-normal path currently accepts `vt_surface.VtSurface`; this must accept render-state-derived cell input or a borrow-only render-state input without preserving renderer-owned VT cells.
+
+Corrected slice queue from current committed state:
+
+### Accepted Groundwork: Slices 1-4
+
+- Status: accepted product groundwork only, not sufficient to authorize host/render continuation.
+- Commits: `howl-vt` `aed729e`, `a015e1e`, `f6d2f8d`, `cf6b80c`.
+- Authority: the public VT render-state lifecycle/update/read/highlight ABI exists and is the only allowed VT source for host/render consumption.
+- Non-authority: the old accepted planning receipts and old Slice 5+ text are not authority for old-payload staging or renderer `VtSurface` retention.
+
+### Recovery Slice 5: Window-Paced Host And Renderer Consume VT Render State As One Boundary
+
+- Goal: replace the live window-paced host-to-renderer prepare path with VT render-state C ABI consumption in one slice, deleting host copied-surface visible ownership, renderer `VtSurface` ownership, and old `HowlVtSurfaceResult` renderer prepare input together.
+- Why one slice: current host and renderer are joined by the old payload at `howl-linux-host/src/terminal/surface.zig:598-600`, `howl-linux-host/src/terminal/render_retained.zig:216-218`, `howl-render/include/howl_render.h:453-457`, and `howl-render/src/c/prepare_request.zig:6-12`. A host-only stage must keep a compatibility payload for renderer prepare; a renderer-only stage has no host producer and leaves the live path old. Both are fake progress under AGENTS.md.
+- Allowed `howl-linux-host` files: `howl-linux-host/src/terminal/term.zig`, `howl-linux-host/src/terminal/vt_surface.zig`, `howl-linux-host/src/terminal/surface.zig`, `howl-linux-host/src/terminal/render_retained.zig`, `howl-linux-host/src/terminal/surface_test.zig`.
+- Allowed `howl-render` files: `howl-render/build.zig`, `howl-render/build.zig.zon`, `howl-render/include/howl_render.h`, `howl-render/src/c/prepare_request.zig`, `howl-render/src/c/prepare_request_test.zig`, `howl-render/src/c/test_support.zig`, `howl-render/src/libhowl_render.zig`, `howl-render/src/render_session.zig`, `howl-render/src/vt_surface/surface.zig`, `howl-render/src/vt_surface/text_input.zig`, `howl-render/src/vt_surface/damage.zig`, `howl-render/src/vt_surface/cursor.zig`, `howl-render/src/vt_surface/theme.zig`, `howl-render/src/text/surface_preparer.zig`, `howl-render/src/test_unit.zig`, `howl-render/src/test_abi.zig`.
+- Required host shape: add one persistent host-owned VT render-state handle under the existing terminal lifetime owner, preferably `terminal/term.zig` `VtState`, initialized with `howl_vt_render_state_init` during terminal creation and deinitialized with `howl_vt_render_state_deinit` in `VtState.deinit`. `vt_surface.captureVisibleLockedWith` becomes `captureRenderStateLockedWith` or an exact owner-true equivalent that calls `howl_vt_render_state_update`, applies hover through `howl_vt_render_state_update_highlights_for_hyperlink`, reads scalar metadata through `howl_vt_render_state_get`, updates host cursor flags from render-state cursor facts, and returns a small borrow-only visible value containing the `HowlVtRenderStateHandle` and scalar metadata only. It must not contain `HowlVtSurfaceResult`, `HowlVtSurface`, copied cells, dirty arrays, or a renderer compatibility payload.
+- Required host pacing shape: `surface.zig` keeps prepare work inside the existing `driveRenderLocked` `.prepare_needed` branch. It must call render-state capture/update and renderer prepare only in that branch, then submit through the existing retained path. It must not add any event-loop side path, background prepare, prefetch, manager, controller, or render work outside `render_retained.WorkState` and window/presentation cadence.
+- Required render C ABI shape: change `howl_render_text_session_take_prepare_request` so the public input is `HowlVtRenderStateHandle` or a more exact C ABI render-state input that is only a borrowed VT render-state handle plus required scalar presentation values. The function must no longer accept `const HowlVtSurfaceResult *`. `howl-render` must consume the VT render-state through C ABI symbols, not Zig imports from `howl-vt` internals. Any needed build/link dependency on `howl-vt` must be explicit in `howl-render/build.zig` and `build.zig.zon`; hiding it behind host-produced payloads is rejected.
+- Required renderer owner shape: `TextSessionOwner` no longer owns `latest_vt_surface: ?vt_surface.VtSurface`. It owns only render request/token state, submitted/prepared retained surfaces, renderer presentation cadence, and any minimal render-state token facts needed to decide prepare/submit. It must not retain VT cells, dirty arrays, colors, cursor, selection, or highlights as a renderer mirror after prepare.
+- Required renderer prepare shape: `TextSession.prepareSurface` maps render-state rows/cells during prepare. It reads cols, rows, dirty, dirty generation, snapshot sequence, colors, cursor facts, row dirty, row selection, row highlight count/highlight, row cell, selected, and highlighted through the public C ABI. Text shaping may use scratch storage for `CellInput` during prepare, but scratch lifetime is bounded by the prepare call and is not a retained `VtSurface` replacement. Dirty-only mapping uses row dirty facts; full redraw uses all rows. Selection and hover styling come from render-state row/cell facts, not selected bits baked into copied cells or host mutation.
+- Required cursor/presentation shape: renderer-owned blink opacity, focus, effective shape, and cursor trail remain renderer presentation facts. They may be applied while building cursor presentation for the prepared text scene, but must not mutate VT-owned render-state data or a retained VT mirror. Host cadence still enters through `howl_render_text_session_set_cursor_cadence` and `render_retained.State.setHostCursorCadence`.
+- Required old-symbol handling: this slice must remove all host and renderer product-code references to `HowlVtSurfaceResult`, `howl_vt_terminal_copy_surface`, `howl_vt_terminal_ack_surface`, renderer `VtSurface`, and `vtSurfaceFromResult`. Old VT ABI declarations/functions may remain in `howl-vt` only for the later deletion slice, but they must have no host/render product consumer.
+- Required tests: host unit tests prove persistent render-state handle init/deinit, capture updates render-state metadata, hover calls the public VT hover update and produces row highlight facts, old host `applyHyperlinkHover` and copied-cell dirty mutation are deleted, `surface.zig` no longer dereferences `visible.surface`, renderer prepare receives only the render-state handle/input, acquisition/update failure marks retained render failure without host cell mutation, and no render prepare is attempted outside `.prepare_needed` drive. Renderer ABI tests prove `howl_render_text_session_take_prepare_request` rejects missing session/render-state handles, no longer accepts or references `HowlVtSurfaceResult`, reads render-state snapshot/dirty facts into a prepare request, and leaves output zeroed on failure. Renderer unit tests prove text scene input maps cells from render-state row/cell reads, dirty-only mapping uses row dirty flags, selection styling comes from row selection/cell selected reads, hover styling comes from row highlight/cell highlighted reads, cursor presentation maps render-state cursor facts plus renderer cadence, old `sameVtSurface`/`vtSurfaceFromResult` paths are deleted or replaced by token/damage tests, and renderer does not retain VT cells after prepare.
+- Required verification: in `howl-vt`, `zig build test:abi -- render_state`, `zig build test:unit -- render_state`, and `zig build check`; in `howl-render`, `zig build test:abi`, `zig build test:unit`, and `zig build check`; in `howl-linux-host`, `zig build test:unit -- terminal`, `zig build test:integration`, and `zig build check`; at workspace root, `zig build test:abi`, `zig build test:unit`, and `zig build check`.
+- Required product-code searches: `rg "HowlVtSurfaceResult|howl_vt_terminal_copy_surface|howl_vt_terminal_ack_surface|\bVtSurface\b|vtSurfaceFromResult|applyHyperlinkHover" howl-linux-host howl-render` must show no host/render product-code references. Test names may mention old symbols only to assert absence through header/ABI shape; product code may not.
+- Non-goals: no deletion of old `howl-vt` monolithic surface ABI in this slice, no host UX redesign, no new preload micro-management file, no Zig-shaped host import of `howl-vt` internals, no new manager/controller/context bucket, no compatibility aliases, no renderer-owned VT cell mirror under a new name.
+- Stop conditions: any compatibility payload, bridge, shim, temporary `HowlVtSurfaceResult`, old `HowlVtSurfaceResult` inside a new host visible owner, renderer `VtSurface`, renderer-retained VT cells/dirty arrays/colors/cursor/selection/highlights, host copied-cell hover mutation, test-only public substitute, hidden render work outside host/window pace control, render prepare from outside `.prepare_needed`, render ABI still accepting `HowlVtSurfaceResult`, host/render product code still calling `howl_vt_terminal_copy_surface` or `howl_vt_terminal_ack_surface`, or renderer reading `howl-vt` Zig internals.
+- Receipt fields: orchestrator session id `orch-2026-06-16-vt-render-state-planning-01`, researcher session id `researcher-2026-06-17-vt-render-state-recovery-correction-06`, reviewer session id, coder session id, commit hashes for `howl-render`, `howl-linux-host`, and root pointer/receipt commits, all required verification results, and product-code search results.
+
+### Recovery Slice 6: Delete Old Monolithic VT Surface ABI
+
+- Goal: after Recovery Slice 5 is accepted and product-code searches prove no host/render consumer remains, delete the old monolithic surface ABI from `howl-vt`.
+- Allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi/surface.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_ffi.zig`, `howl-vt/test/abi.zig`, `howl-vt/test_abi.zig`, `howl-vt/test_unit.zig`, plus `howl-render/include/howl_render.h` only if stale C include fallout remains.
+- Required shape: delete `HowlVtSurface`, `HowlVtSurfaceResult`, `howl_vt_terminal_query_visible_meta`, `howl_vt_terminal_copy_surface`, `howl_vt_terminal_ack_surface`, and tests that prove old monolithic copy behavior. Keep leaf structs still needed by render-state ABI only if they are still actually referenced by public render-state declarations. No bridge file and no compatibility alias replaces them.
+- Required tests: VT ABI tests pass with render-state symbols only; render ABI/header translation still passes without old surface types; product-code search proves no old monolithic surface symbols remain in `howl-vt`, `howl-render`, or `howl-linux-host` product code.
+- Required verification: in `howl-vt`, `zig build test:abi`, `zig build test:unit`, and `zig build check`; in `howl-render`, `zig build test:abi` and `zig build check`; root `zig build test:abi` and `zig build check`.
+- Non-goals: no host/render consumption redesign after Slice 5, no new ABI convenience aliases, no broad render architecture rewrite.
+- Stop conditions: any host/render product code still references old surface symbols, deleted symbols remain in public headers, tests are weakened instead of migrated, bridge/payload names appear, or deletion requires reintroducing renderer `VtSurface`.
+- Receipt fields: orchestrator session id `orch-2026-06-16-vt-render-state-planning-01`, researcher session id `researcher-2026-06-17-vt-render-state-recovery-correction-06`, reviewer session id, coder session id, commit hashes for `howl-vt`, any touched dependent package, and root pointer/receipt commits, all required verification results, and product-code search results.
 
 ## Ghostty Anchor Map
 
@@ -143,11 +233,7 @@ Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state matur
 - `howl-linux-host/src/terminal/vt_surface.zig:195-214`: host mutates copied cells for hyperlink hover underline and marks dirty ranges locally.
 - `howl-linux-host/src/terminal/vt_surface.zig:216-230`: host dirty range mutation is tied to copied cell mutation, not VT render-state highlight truth.
 - `howl-linux-host/src/terminal/vt_surface.zig:236-263`: host tests prove hover mutation as host-side copied-cell mutation; this is rejected as endpoint.
-- `howl-vt/include/howl_vt.h:386-452`: current public render-state ABI declares init/deinit/update/ack/get/get_multi/set/colors/row/row-cells functions only; it has no public host-callable hover/highlight update function.
-- `howl-vt/src/render_state.zig:216-242`: current VT owner has `RenderState.updateHighlightsForHyperlink`, but it is not reachable from public C ABI.
-- `howl-vt/src/ffi/render_state.zig:496-507`: current FFI exposes hover update only through `testRenderStateUpdateHighlightsForHyperlink`, so host code cannot call it through `howl_vt.h`.
-- `howl-vt/src/ffi/main.zig:100-119`: current FFI main re-exports render-state reads/iterators but no hover update symbol.
-- `howl-vt/src/libhowl_vt.zig:32-51`: current shared-library exports include render-state reads/iterators but no `howl_vt_render_state_*highlight*` update symbol.
+- Prior Slice 4 blocker, now resolved by accepted product commit `cf6b80c`: public render-state reads once existed without a host-callable hover/highlight update function. The accepted public symbol is `howl_vt_render_state_update_highlights_for_hyperlink`.
 - `howl-linux-host/src/terminal/surface.zig:591-600`: host render drive dereferences `visible.surface` and passes a `HowlVtSurfaceResult` pointer to renderer prepare, so host consumption cannot be completed by editing `vt_surface.zig` alone.
 
 ## Exact Required Howl Shape
@@ -156,7 +242,7 @@ Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state matur
 - Add `howl-vt/src/ffi/render_state.zig` as C ABI translator only. It owns opaque wrapper handles and typed C get/set/iterator functions. It does not own terminal mutation policy.
 - Update `howl-vt/src/ffi/main.zig` and `howl-vt/src/libhowl_vt.zig` to route and export the new C ABI symbols.
 - Update `howl-vt/include/howl_vt.h` to declare the render-state ABI. Keep declarations sorted in the existing single header without adding a second public header.
-- Do not add `howl-vt/src/ffi/surface_bridge.zig`. The old `howl_vt_terminal_copy_surface` compatibility path remains in `howl-vt/src/ffi/surface.zig` until Slice 6 deletes the monolithic endpoint.
+- Do not add `howl-vt/src/ffi/surface_bridge.zig`. The old `howl_vt_terminal_copy_surface` ABI is unaccepted legacy debt that may remain only inside `howl-vt` until the deletion slice; no host/render product consumer, wrapper, payload, bridge, or shim may use it.
 - Do not add a manager, controller, context, source, publication, or bucket struct.
 - Do not add Zig-shaped host imports. Hosts consume C ABI symbols only.
 - C ABI symbol set to add exactly:
@@ -202,7 +288,15 @@ Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state matur
 - `RenderState.empty`, `RenderState.deinit`, `RenderState.update`, `RenderState.ack`, `RenderState.updateHighlightsForHyperlink`, `RenderState.rowCount`, `RenderState.cellCount`.
 - `ffi/render_state.zig` symbols: `FfiRenderState`, `FfiRowIterator`, `FfiRowCells`, `FfiDirty`, `FfiCursorVisualStyle`, `FfiData`, `FfiOption`, `FfiRowData`, `FfiRowOption`, `FfiRowCellsData`, `FfiRowSelection`, `FfiRowHighlight`, `FfiColors`, `renderStateInit`, `renderStateDeinit`, `renderStateUpdate`, `renderStateAck`, `renderStateUpdateHighlightsForHyperlink`, `renderStateGet`, `renderStateGetMulti`, `renderStateSet`, `renderStateColorsGet`, `renderStateRowIteratorInit`, `renderStateRowIteratorDeinit`, `renderStateRowIteratorNext`, `renderStateRowGet`, `renderStateRowGetMulti`, `renderStateRowSet`, `renderStateRowCellsInit`, `renderStateRowCellsDeinit`, `renderStateRowCellsNext`, `renderStateRowCellsSelect`, `renderStateRowCellsGet`, `renderStateRowCellsGetMulti`.
 
-## Worker Slice Queue
+## Accepted Groundwork
+
+- Slice 1 accepted receipt: `howl-vt` `aed729e Add VT render state ABI skeleton`.
+- Slice 2 accepted receipt: `howl-vt` `a015e1e Populate VT render state from terminal`.
+- Slice 3 accepted receipt: `howl-vt` `f6d2f8d Complete VT render state row reads`.
+- Slice 4 accepted receipt: `howl-vt` `cf6b80c Expose VT render state hover highlight update`.
+- The old Slice 5, old Slice 6, and old Slice 7 queue entries are invalid and not worker-executable because they split host and renderer consumption in a way that requires a forbidden old `HowlVtSurfaceResult` compatibility payload. They are superseded by `Recovery Slice 5` and `Recovery Slice 6` above.
+
+## Historical Accepted Groundwork Details
 
 ### Slice 1: VT Render-State Owner And ABI Skeleton
 
@@ -244,35 +338,11 @@ Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state matur
 - Stop conditions: host consumption starts before this public symbol is declared/exported/tested, public symbol is only available through `test_ffi.zig`, underline style is ignored or unvalidated at the FFI seam, hover update mutates copied surface cells instead of render-state row highlights, tests live only inline and not in ABI root.
 - Receipt fields: orchestrator session id, researcher session id `researcher-2026-06-17-vt-render-state-hover-abi-amendment-03`, reviewer session id, coder session id, commit hash, `zig build test:abi -- render_state` result, `zig build test:unit -- render_state` result, `zig build check` result in `howl-vt`.
 
-### Slice 5: Host Consumes Render-State Boundary For Visible Capture And Hover
+## Invalidated Old Queue
 
-- Goal: move host visible capture and hover/highlight handling onto the public VT render-state C ABI after the public hover/highlight update API exists and is tested.
-- Allowed files: `howl-linux-host/src/terminal/vt_surface.zig`, `howl-linux-host/src/terminal/surface.zig`, `howl-linux-host/src/terminal/surface_test.zig`.
-- Required shape: replace `VisibleCopy.surface: HowlVtSurfaceResult` as the host visible-state owner with a host visible wrapper that owns `HowlVtRenderStateHandle`, row iterator, row cells iterator, and snapshot metadata read from `howl_vt_render_state_get`. `captureVisibleLockedWith` updates render state through `howl_vt_render_state_update`, applies hover through public `howl_vt_render_state_update_highlights_for_hyperlink`, and stops mutating copied `HowlVtSurfaceCell` arrays. Ack uses `howl_vt_render_state_ack`. `howl-linux-host/src/terminal/surface.zig` must stop dereferencing `visible.surface` as host visible truth at lines 591-600 and must read cursor/source facts from the new visible wrapper. The renderer prepare call may keep the old `HowlVtSurfaceResult` only as a named temporary compatibility payload inside the visible wrapper until Slice 6 reshapes renderer input; it must not be the host visible-state owner and it must not receive host hover mutation.
-- Required tests: host unit tests proving capture updates render-state metadata, hover underline is expressed as a render-state highlight row range through public C ABI, dirty state becomes partial after hover, old `applyHyperlinkHover` mutation path is deleted, ack forwards render-state snapshot sequence through the new ack symbol, acquisition failure preserves no render mutation, and `surface.zig` drive path no longer dereferences `visible.surface` for cursor/source truth.
-- Non-goals: no renderer deletion, no removal of old VT surface ABI, no host presentation redesign, no new preload micro-management file.
-- Stop conditions: host starts before Slice 4 is accepted, host still mutates copied surface cells for hover, host imports Zig VT internals, host stores `HowlVtSurfaceResult` as the host visible-state owner, `surface.zig` still dereferences `visible.surface` for cursor/source truth, missing tests for hover dirty range.
-- Receipt fields: orchestrator session id, researcher session id, reviewer session id, coder session id, commit hash, `zig build test:unit -Dfilter=vt_surface` result, `zig build test:integration` result.
-
-### Slice 6: Renderer Consumes Render-State Boundary And Deletes Mirrored `VtSurface`
-
-- Goal: remove renderer-owned mirrored `VtSurface` as input and reshape text preparation to consume render-state row/cell ABI facts through a render-owned adapter with no VT state ownership.
-- Allowed files: `howl-render/src/vt_surface/surface.zig`, `howl-render/src/vt_surface/text_input.zig`, `howl-render/src/vt_surface/damage.zig`, `howl-render/src/vt_surface/cursor.zig`, `howl-render/src/render_session.zig`, `howl-render/src/test_unit.zig`, `howl-render/src/test_abi.zig`.
-- Required shape: delete `VtSurface` as a retained mirror endpoint. Replace it with a small renderer adapter named `VtRenderStateInput` that borrows a `HowlVtRenderStateHandle` plus row/cell iterator handles for the duration of prepare only. `render_session.PrepareInput` uses `state: VtRenderStateInput`. Text input maps cells by iterating render-state rows/cells, selection/highlight by row facts, cursor presentation by render-state cursor data, colors by render-state colors, and damage by global/row dirty facts. Renderer may keep `CursorPresentation` as renderer-owned output.
-- Required tests: renderer unit tests proving text scene input maps cells from render-state row/cell reads, dirty-only mapping uses row dirty flags, selection styling comes from row selection/cell selected reads, hover highlight styling comes from row highlight/cell highlighted reads, cursor presentation maps render-state cursor facts, blink opacity remains renderer-owned and no longer mutates VT surface mirror, old `sameVtSurface` dedupe tests are removed or replaced with render-state token/damage tests.
-- Non-goals: no VT ABI symbol additions beyond those already accepted, no host changes, no compatibility aliases, no renderer-owned cell mirror replacement under another name.
-- Stop conditions: a struct equivalent to old `VtSurface` remains as the endpoint, renderer still validates `HowlVtSurfaceResult`, renderer still owns VT cells beyond prepare scratch lifetime, selection is consumed only through cell attrs, cursor blink mutation writes into VT-owned data.
-- Receipt fields: orchestrator session id, researcher session id, reviewer session id, coder session id, commit hash, `zig build test:unit -Dfilter=vt_surface` result, `zig build test:unit -Dfilter=render_session` result, `zig build test:abi` result.
-
-### Slice 7: Delete Old Monolithic Endpoint
-
-- Goal: remove the old `HowlVtSurfaceResult` endpoint after host and renderer consume render state.
-- Allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi/surface.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_abi.zig`, `howl-vt/test_unit.zig`, `howl-linux-host/src/terminal/vt_surface.zig`, `howl-linux-host/src/terminal/surface_test.zig`, `howl-render/src/vt_surface/surface.zig`, `howl-render/src/vt_surface/text_input.zig`, `howl-render/src/vt_surface/damage.zig`, `howl-render/src/vt_surface/cursor.zig`, `howl-render/src/render_session.zig`, `howl-render/src/test_unit.zig`, `howl-render/src/test_abi.zig`.
-- Required shape: delete `HowlVtSurface`, `HowlVtSurfaceResult`, `howl_vt_terminal_query_visible_meta`, `howl_vt_terminal_copy_surface`, and `howl_vt_terminal_ack_surface` after Slice 5 and Slice 6 are accepted and product-code searches prove no old consumer remains. Keep cell, color, cursor, and selection leaf structs that are still used by render-state ABI. No bridge file exists in this plan.
-- Required tests: full VT ABI tests passing with render-state symbols only, host tests passing without old copy surface symbols, renderer tests passing without `VtSurface`, and product-code search proving no `HowlVtSurfaceResult`, `howl_vt_terminal_copy_surface`, or renderer `VtSurface` references remain.
-- Non-goals: no new ABI convenience aliases, no broad render architecture rewrite, no host UX changes.
-- Stop conditions: host/render product code still references old surface symbols, deletion requires weakening tests, C ABI header leaves dead typedefs, a bridge file is added or retained.
-- Receipt fields: orchestrator session id, researcher session id, reviewer session id, coder session id, commit hash, `zig build test` result, `zig build test:abi` result, `zig build test:unit` result, `rg "HowlVtSurfaceResult|howl_vt_terminal_copy_surface|\bVtSurface\b" howl-vt howl-render howl-linux-host` result with no product-code references to deleted old endpoint symbols.
+- The prior old Slice 5 host-only consumption section is deleted from active worker guidance. Its temporary old-payload staging is forbidden.
+- The prior old Slice 6 renderer-only consumption section is deleted from active worker guidance. Renderer consumption cannot be split away from host producer migration while the live prepare C ABI is still old-payload shaped.
+- The prior old Slice 7 deletion section is deleted from active worker guidance. Deletion is now Recovery Slice 6 after the combined host/renderer boundary slice is accepted.
 
 ## Sequencing Gates
 
@@ -280,9 +350,8 @@ Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state matur
 - Public VT render-state hover/highlight update ABI exists and is tested before host hover/highlight cleanup.
 - VT render-state ABI exists and is tested before renderer `VtSurface` deletion/input reshaping.
 - Host and renderer only consume the new boundary after it is available.
-- Host cleanup starts after Slice 4 is accepted by reviewer and orchestrator.
-- Renderer cleanup starts after Slice 1, Slice 2, Slice 3, and Slice 4 are accepted by reviewer and orchestrator.
-- Old monolithic surface deletion starts after Slice 5 and Slice 6 are accepted and product-code searches prove no old consumer remains.
+- Host and renderer consumption starts together only after this recovery correction is reviewed, accepted, and orchestrator seeds `Recovery Slice 5`.
+- Old monolithic surface deletion starts only after `Recovery Slice 5` is accepted and product-code searches prove no host/render old consumer remains.
 
 ## Risks And Proof Gaps
 
@@ -291,14 +360,14 @@ Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state matur
 - The old C ABI uses one public header. The plan keeps that to avoid extra public header churn, but the worker must keep declaration ordering readable.
 - Row/cell iterator handles hold slices into render-state storage. Tests must prove row/cell data becomes invalid only by documented update ownership; C ABI docs must say row/cell data is valid until the render state is updated or deinitialized.
 - Current renderer owns cursor blink opacity. That remains renderer-owned presentation policy and must not move into VT render state.
-- Slice 4 exists because accepted Slice 3 exposed hover/highlight reads but left the write/update path test-only; host consumption is blocked until that public C ABI is added and tested.
-- Host `surface.zig` is an exact Slice 5 allowed file because current drive code dereferences `visible.surface` at `howl-linux-host/src/terminal/surface.zig:591-600`.
+- Slice 4 existed because accepted Slice 3 exposed hover/highlight reads but left the write/update path test-only; accepted commit `cf6b80c` resolved that blocker.
+- Host `surface.zig` is an exact Recovery Slice 5 allowed file because current drive code dereferences `visible.surface` at `howl-linux-host/src/terminal/surface.zig:591-600`.
 - Full deletion of old surface ABI is safe only in this private product after host/render references are removed. The deletion slice records that condition explicitly.
 
 ## Readiness Judgment
 
-- Corrected planning amendment accepted by reviewer.
+- Corrected recovery amendment is pending reviewer acceptance.
 - The plan rejects renderer-owned mirrored `VtSurface` as endpoint.
 - The plan rejects monolithic `HowlVtSurfaceResult` as settled endpoint.
-- The worker has exact files, symbols, tests, non-goals, stop conditions, and receipt fields.
-- Amended Slice 4 is seeded in `sprints/current.txt`; host consumption remains blocked until Slice 4 is reviewed, verified, and accepted.
+- Recovery Slice 5 and Recovery Slice 6 have exact files, symbols, tests, non-goals, stop conditions, and receipt fields.
+- No coder is authorized. Host/render consumption remains blocked until reviewer accepts this recovery correction and orchestrator seeds Recovery Slice 5.

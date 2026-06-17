@@ -14,12 +14,12 @@ Active sprint note:
 
 - Active sprint: VT render-state maturity subsprint.
 - Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
-- Researcher session id: `researcher-2026-06-17-vt-render-state-hover-abi-amendment-correction-04`.
-- Reviewer session id: `reviewer-2026-06-17-vt-render-state-hover-abi-amendment-rereview-02`.
-- Current loop phase: amended Slice 4 accepted; host-consumption slice not seeded yet.
-- Coder is blocked until orchestrator seeds host consumption.
-- Current goal: move host visible capture and hover/highlight handling onto the committed VT render-state C ABI.
-- Planning receipt: prior accepted root `b5f9eb5 Plan VT render state maturity sprint`; accepted amendment pending root commit receipt.
+- Researcher session id: `researcher-2026-06-17-vt-render-state-recovery-correction-06`.
+- Reviewer session id: `reviewer-2026-06-17-vt-render-state-recovery-plan-rereview-02`.
+- Current loop phase: recovery plan accepted; Recovery Slice 5 not seeded yet.
+- Coder is blocked until orchestrator seeds Recovery Slice 5.
+- Current goal: replace invalid old Slice 5+ compatibility-payload guidance with a no-bridge host/window-pacing plus renderer render-state consumption recovery plan.
+- Planning receipt: prior root planning receipts are tainted for old Slice 5+ guidance; corrected recovery amendment accepted by reviewer and pending commit receipt.
 
 Start Gates:
 
@@ -30,15 +30,20 @@ Start Gates:
 
 Authorized next step:
 
-- Orchestrator may seed host consumption after the root pointer/receipt commit records amended Slice 4.
+- Orchestrator may seed Recovery Slice 5 after the corrected recovery amendment is committed.
 - Slice 1 accepted receipt: `howl-vt` `aed729e Add VT render state ABI skeleton`.
 - Slice 2 accepted receipt: `howl-vt` `a015e1e Populate VT render state from terminal`.
 - Slice 3 accepted receipt: `howl-vt` `f6d2f8d Complete VT render state row reads`.
 - Amended Slice 4 accepted receipt: `howl-vt` `cf6b80c Expose VT render state hover highlight update`.
 
-Active execution slice:
+Recovery planning amendment:
 
-- Next active slice: host consumption, from `research/vt-render-state-maturity-plan.md`, section `Slice 5: Host Consumes Render-State Boundary For Visible Capture And Hover`.
+- Active recovery section: `Recovery Amendment: No Compatibility Payload Boundary` in `research/vt-render-state-maturity-plan.md`.
+- Corrected next implementation slice if accepted: `Recovery Slice 5: Window-Paced Host And Renderer Consume VT Render State As One Boundary`.
+- Recovery premise: Alacritty window/control pace requests full display rendering; CPU/GPU render work is not spun outside the presentation cadence. In Howl, the existing host `driveRenderLocked` prepare branch remains the pacing owner while renderer consumption changes from old `HowlVtSurfaceResult` to VT render-state C ABI in the same boundary slice.
+- Recovery plan accepted by reviewer `reviewer-2026-06-17-vt-render-state-recovery-plan-rereview-02`; coder remains blocked until orchestrator records commit receipt and seeds Recovery Slice 5.
+- Compatibility payloads, bridges, old `HowlVtSurfaceResult` in a new visible owner, renderer `VtSurface`, host cell mutation, test-only public substitute, and render work outside host/window pace control are stop conditions.
+- Old Slice 5, old Slice 6, and old Slice 7 from the prior plan are invalid and not executable from this sprint index.
 
 Artifact rule:
 
