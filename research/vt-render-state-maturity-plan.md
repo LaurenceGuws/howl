@@ -1,14 +1,14 @@
 # VT Render-State Maturity Plan
 
-Status: active planning artifact, accepted by reviewer and committed.
+Status: accepted planning amendment after Slice 4 blocker; amended Slice 4 is seeded for execution.
 
 Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 
-Researcher session id: `researcher-2026-06-16-vt-render-state-plan-correction-02`.
+Researcher session id: `researcher-2026-06-17-vt-render-state-hover-abi-amendment-correction-04`.
 
-Reviewer session id: `reviewer-2026-06-16-vt-render-state-plan-rereview-02`.
+Reviewer session id: `reviewer-2026-06-17-vt-render-state-hover-abi-amendment-rereview-02`.
 
-Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
+Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state maturity sprint`; current accepted amendment has no dedicated commit receipt yet.
 
 ## Problem Statement
 
@@ -19,7 +19,7 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 
 ## Accepted Start Gates
 
-- After the VT render-state C ABI exists and passes VT ABI tests, host hover/highlight cleanup may start.
+- After the public VT render-state hover/highlight update C ABI exists and passes VT ABI tests, host hover/highlight cleanup may start.
 - After the VT render-state C ABI exists and passes VT ABI tests, renderer `VtSurface` deletion and input reshaping may start.
 - After host and renderer can consume the new VT render-state boundary, downstream cleanup may start.
 - Before those conditions are true, downstream cleanup remains blocked.
@@ -143,6 +143,12 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 - `howl-linux-host/src/terminal/vt_surface.zig:195-214`: host mutates copied cells for hyperlink hover underline and marks dirty ranges locally.
 - `howl-linux-host/src/terminal/vt_surface.zig:216-230`: host dirty range mutation is tied to copied cell mutation, not VT render-state highlight truth.
 - `howl-linux-host/src/terminal/vt_surface.zig:236-263`: host tests prove hover mutation as host-side copied-cell mutation; this is rejected as endpoint.
+- `howl-vt/include/howl_vt.h:386-452`: current public render-state ABI declares init/deinit/update/ack/get/get_multi/set/colors/row/row-cells functions only; it has no public host-callable hover/highlight update function.
+- `howl-vt/src/render_state.zig:216-242`: current VT owner has `RenderState.updateHighlightsForHyperlink`, but it is not reachable from public C ABI.
+- `howl-vt/src/ffi/render_state.zig:496-507`: current FFI exposes hover update only through `testRenderStateUpdateHighlightsForHyperlink`, so host code cannot call it through `howl_vt.h`.
+- `howl-vt/src/ffi/main.zig:100-119`: current FFI main re-exports render-state reads/iterators but no hover update symbol.
+- `howl-vt/src/libhowl_vt.zig:32-51`: current shared-library exports include render-state reads/iterators but no `howl_vt_render_state_*highlight*` update symbol.
+- `howl-linux-host/src/terminal/surface.zig:591-600`: host render drive dereferences `visible.surface` and passes a `HowlVtSurfaceResult` pointer to renderer prepare, so host consumption cannot be completed by editing `vt_surface.zig` alone.
 
 ## Exact Required Howl Shape
 
@@ -174,6 +180,7 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 - `void howl_vt_render_state_deinit(HowlVtRenderStateHandle state);`
 - `HowlVtCallStatus howl_vt_render_state_update(HowlVtRenderStateHandle state, HowlVtHandle terminal, uint64_t scrollback_offset);`
 - `HowlVtCallStatus howl_vt_render_state_ack(HowlVtRenderStateHandle state, HowlVtHandle terminal);`
+- `HowlVtCallStatus howl_vt_render_state_update_highlights_for_hyperlink(HowlVtRenderStateHandle state, uint8_t tag, uint16_t row, uint16_t col, uint8_t underline_style);`
 - `HowlVtCallStatus howl_vt_render_state_get(HowlVtRenderStateHandle state, HowlVtRenderStateData data, void *out);`
 - `HowlVtCallStatus howl_vt_render_state_get_multi(HowlVtRenderStateHandle state, size_t count, const HowlVtRenderStateData *keys, void **values, size_t *out_written);`
 - `HowlVtCallStatus howl_vt_render_state_set(HowlVtRenderStateHandle state, HowlVtRenderStateOption option, const void *value);`
@@ -193,7 +200,7 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 - Internal Zig names to add exactly:
 - `render_state.RenderState`, `render_state.RenderState.Dirty`, `render_state.RenderState.Row`, `render_state.RenderState.Cell`, `render_state.RenderState.Highlight`, `render_state.RenderState.SelectionRange`, `render_state.RenderState.Colors`, `render_state.RenderState.Cursor`.
 - `RenderState.empty`, `RenderState.deinit`, `RenderState.update`, `RenderState.ack`, `RenderState.updateHighlightsForHyperlink`, `RenderState.rowCount`, `RenderState.cellCount`.
-- `ffi/render_state.zig` symbols: `FfiRenderState`, `FfiRowIterator`, `FfiRowCells`, `FfiDirty`, `FfiCursorVisualStyle`, `FfiData`, `FfiOption`, `FfiRowData`, `FfiRowOption`, `FfiRowCellsData`, `FfiRowSelection`, `FfiRowHighlight`, `FfiColors`, `renderStateInit`, `renderStateDeinit`, `renderStateUpdate`, `renderStateAck`, `renderStateGet`, `renderStateGetMulti`, `renderStateSet`, `renderStateColorsGet`, `renderStateRowIteratorInit`, `renderStateRowIteratorDeinit`, `renderStateRowIteratorNext`, `renderStateRowGet`, `renderStateRowGetMulti`, `renderStateRowSet`, `renderStateRowCellsInit`, `renderStateRowCellsDeinit`, `renderStateRowCellsNext`, `renderStateRowCellsSelect`, `renderStateRowCellsGet`, `renderStateRowCellsGetMulti`.
+- `ffi/render_state.zig` symbols: `FfiRenderState`, `FfiRowIterator`, `FfiRowCells`, `FfiDirty`, `FfiCursorVisualStyle`, `FfiData`, `FfiOption`, `FfiRowData`, `FfiRowOption`, `FfiRowCellsData`, `FfiRowSelection`, `FfiRowHighlight`, `FfiColors`, `renderStateInit`, `renderStateDeinit`, `renderStateUpdate`, `renderStateAck`, `renderStateUpdateHighlightsForHyperlink`, `renderStateGet`, `renderStateGetMulti`, `renderStateSet`, `renderStateColorsGet`, `renderStateRowIteratorInit`, `renderStateRowIteratorDeinit`, `renderStateRowIteratorNext`, `renderStateRowGet`, `renderStateRowGetMulti`, `renderStateRowSet`, `renderStateRowCellsInit`, `renderStateRowCellsDeinit`, `renderStateRowCellsNext`, `renderStateRowCellsSelect`, `renderStateRowCellsGet`, `renderStateRowCellsGetMulti`.
 
 ## Worker Slice Queue
 
@@ -227,17 +234,27 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 - Stop conditions: highlight is represented by mutating copied cells as the endpoint, highlight rows lack tags, row highlight lookup is unbounded, no-value and invalid-argument statuses are conflated, sized structs lack size validation.
 - Receipt fields: orchestrator session id, researcher session id, reviewer session id, coder session id, commit hash, `zig build test:abi -Dfilter=render_state` result, `zig build test:unit -Dfilter=render_state` result.
 
-### Slice 4: Host Consumes Render-State Boundary For Visible Capture And Hover
+### Slice 4: Public Hover/Highlight Update ABI
 
-- Goal: move host visible capture and hover/highlight handling onto the new VT render-state C ABI after the ABI exists and is tested.
-- Allowed files: `howl-linux-host/src/terminal/vt_surface.zig`, `howl-linux-host/src/terminal/surface_test.zig`.
-- Required shape: replace `VisibleCopy.surface: HowlVtSurfaceResult` with a host visible wrapper that owns `HowlVtRenderStateHandle`, row iterator, row cells iterator, and snapshot metadata read from `howl_vt_render_state_get`. `captureVisibleLockedWith` updates render state through `howl_vt_render_state_update`, applies hover via render-state highlight API, and stops mutating copied `HowlVtSurfaceCell` arrays. Ack uses `howl_vt_render_state_ack`.
-- Required tests: host unit tests proving capture updates render state metadata, hover underline is expressed as a highlight row range, dirty state becomes partial after hover, old `applyHyperlinkHover` mutation path is deleted, ack forwards render-state snapshot sequence through the new ack symbol, acquisition failure preserves no render mutation.
+- Goal: expose the existing VT-owned hyperlink hover/highlight update path through public C ABI before host consumption starts.
+- Allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/render_state.zig`, `howl-vt/src/ffi/render_state.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_ffi.zig`, `howl-vt/test/abi.zig`, `howl-vt/test_unit.zig`, `howl-vt/test_abi.zig`.
+- Required shape: add public C symbol `howl_vt_render_state_update_highlights_for_hyperlink(HowlVtRenderStateHandle state, uint8_t tag, uint16_t row, uint16_t col, uint8_t underline_style)`. Add Zig FFI owner function `renderStateUpdateHighlightsForHyperlink` in `howl-vt/src/ffi/render_state.zig`, route it through `howl-vt/src/ffi/main.zig`, and export it from `howl-vt/src/libhowl_vt.zig`. The FFI function validates missing render-state handle as `HOWL_VT_CALL_MISSING_HANDLE`, accepts out-of-range row/col as `HOWL_VT_CALL_OK` with no highlight and no dirty escalation, passes `tag`, `row`, `col`, and `underline_style` to `RenderState.updateHighlightsForHyperlink`, and returns `HOWL_VT_CALL_INVALID_ARGUMENT` for underline styles outside `0..4`. `RenderState.updateHighlightsForHyperlink` must stop discarding underline style; it must accept and validate `UnderlineStyle` through the FFI seam while preserving existing row-local tagged highlight behavior.
+- Required tests: ABI-root tests in `howl-vt/test/abi.zig` proving missing handle status, invalid underline style status, out-of-range hover success with no highlight and no dirty escalation, no-link hover success with no highlight and no dirty escalation, same-link hover produces tagged row highlight ranges readable through public row APIs, highlighted cell reads true only inside the range, and global/row dirty become partial/true after hover. Unit tests in `howl-vt/src/render_state.zig` or `howl-vt/test_unit.zig` must prove `underline_style` is accepted through the owner path without changing non-hover cell attrs.
+- Non-goals: no host changes, no renderer changes, no old surface ABI deletion, no test-only helper as public substitute, no Zig-shaped host shortcut.
+- Stop conditions: host consumption starts before this public symbol is declared/exported/tested, public symbol is only available through `test_ffi.zig`, underline style is ignored or unvalidated at the FFI seam, hover update mutates copied surface cells instead of render-state row highlights, tests live only inline and not in ABI root.
+- Receipt fields: orchestrator session id, researcher session id `researcher-2026-06-17-vt-render-state-hover-abi-amendment-03`, reviewer session id, coder session id, commit hash, `zig build test:abi -- render_state` result, `zig build test:unit -- render_state` result, `zig build check` result in `howl-vt`.
+
+### Slice 5: Host Consumes Render-State Boundary For Visible Capture And Hover
+
+- Goal: move host visible capture and hover/highlight handling onto the public VT render-state C ABI after the public hover/highlight update API exists and is tested.
+- Allowed files: `howl-linux-host/src/terminal/vt_surface.zig`, `howl-linux-host/src/terminal/surface.zig`, `howl-linux-host/src/terminal/surface_test.zig`.
+- Required shape: replace `VisibleCopy.surface: HowlVtSurfaceResult` as the host visible-state owner with a host visible wrapper that owns `HowlVtRenderStateHandle`, row iterator, row cells iterator, and snapshot metadata read from `howl_vt_render_state_get`. `captureVisibleLockedWith` updates render state through `howl_vt_render_state_update`, applies hover through public `howl_vt_render_state_update_highlights_for_hyperlink`, and stops mutating copied `HowlVtSurfaceCell` arrays. Ack uses `howl_vt_render_state_ack`. `howl-linux-host/src/terminal/surface.zig` must stop dereferencing `visible.surface` as host visible truth at lines 591-600 and must read cursor/source facts from the new visible wrapper. The renderer prepare call may keep the old `HowlVtSurfaceResult` only as a named temporary compatibility payload inside the visible wrapper until Slice 6 reshapes renderer input; it must not be the host visible-state owner and it must not receive host hover mutation.
+- Required tests: host unit tests proving capture updates render-state metadata, hover underline is expressed as a render-state highlight row range through public C ABI, dirty state becomes partial after hover, old `applyHyperlinkHover` mutation path is deleted, ack forwards render-state snapshot sequence through the new ack symbol, acquisition failure preserves no render mutation, and `surface.zig` drive path no longer dereferences `visible.surface` for cursor/source truth.
 - Non-goals: no renderer deletion, no removal of old VT surface ABI, no host presentation redesign, no new preload micro-management file.
-- Stop conditions: host still mutates copied surface cells for hover, host imports Zig VT internals, host stores stale `HowlVtSurfaceResult` as the primary visible state, missing tests for hover dirty range.
+- Stop conditions: host starts before Slice 4 is accepted, host still mutates copied surface cells for hover, host imports Zig VT internals, host stores `HowlVtSurfaceResult` as the host visible-state owner, `surface.zig` still dereferences `visible.surface` for cursor/source truth, missing tests for hover dirty range.
 - Receipt fields: orchestrator session id, researcher session id, reviewer session id, coder session id, commit hash, `zig build test:unit -Dfilter=vt_surface` result, `zig build test:integration` result.
 
-### Slice 5: Renderer Consumes Render-State Boundary And Deletes Mirrored `VtSurface`
+### Slice 6: Renderer Consumes Render-State Boundary And Deletes Mirrored `VtSurface`
 
 - Goal: remove renderer-owned mirrored `VtSurface` as input and reshape text preparation to consume render-state row/cell ABI facts through a render-owned adapter with no VT state ownership.
 - Allowed files: `howl-render/src/vt_surface/surface.zig`, `howl-render/src/vt_surface/text_input.zig`, `howl-render/src/vt_surface/damage.zig`, `howl-render/src/vt_surface/cursor.zig`, `howl-render/src/render_session.zig`, `howl-render/src/test_unit.zig`, `howl-render/src/test_abi.zig`.
@@ -247,11 +264,11 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 - Stop conditions: a struct equivalent to old `VtSurface` remains as the endpoint, renderer still validates `HowlVtSurfaceResult`, renderer still owns VT cells beyond prepare scratch lifetime, selection is consumed only through cell attrs, cursor blink mutation writes into VT-owned data.
 - Receipt fields: orchestrator session id, researcher session id, reviewer session id, coder session id, commit hash, `zig build test:unit -Dfilter=vt_surface` result, `zig build test:unit -Dfilter=render_session` result, `zig build test:abi` result.
 
-### Slice 6: Delete Old Monolithic Endpoint
+### Slice 7: Delete Old Monolithic Endpoint
 
 - Goal: remove the old `HowlVtSurfaceResult` endpoint after host and renderer consume render state.
 - Allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi/surface.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_abi.zig`, `howl-vt/test_unit.zig`, `howl-linux-host/src/terminal/vt_surface.zig`, `howl-linux-host/src/terminal/surface_test.zig`, `howl-render/src/vt_surface/surface.zig`, `howl-render/src/vt_surface/text_input.zig`, `howl-render/src/vt_surface/damage.zig`, `howl-render/src/vt_surface/cursor.zig`, `howl-render/src/render_session.zig`, `howl-render/src/test_unit.zig`, `howl-render/src/test_abi.zig`.
-- Required shape: delete `HowlVtSurface`, `HowlVtSurfaceResult`, `howl_vt_terminal_query_visible_meta`, `howl_vt_terminal_copy_surface`, and `howl_vt_terminal_ack_surface` after Slice 4 and Slice 5 are accepted and product-code searches prove no old consumer remains. Keep cell, color, cursor, and selection leaf structs that are still used by render-state ABI. No bridge file exists in this plan.
+- Required shape: delete `HowlVtSurface`, `HowlVtSurfaceResult`, `howl_vt_terminal_query_visible_meta`, `howl_vt_terminal_copy_surface`, and `howl_vt_terminal_ack_surface` after Slice 5 and Slice 6 are accepted and product-code searches prove no old consumer remains. Keep cell, color, cursor, and selection leaf structs that are still used by render-state ABI. No bridge file exists in this plan.
 - Required tests: full VT ABI tests passing with render-state symbols only, host tests passing without old copy surface symbols, renderer tests passing without `VtSurface`, and product-code search proving no `HowlVtSurfaceResult`, `howl_vt_terminal_copy_surface`, or renderer `VtSurface` references remain.
 - Non-goals: no new ABI convenience aliases, no broad render architecture rewrite, no host UX changes.
 - Stop conditions: host/render product code still references old surface symbols, deletion requires weakening tests, C ABI header leaves dead typedefs, a bridge file is added or retained.
@@ -260,10 +277,12 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 ## Sequencing Gates
 
 - VT render-state ABI exists and is tested before host hover/highlight cleanup.
+- Public VT render-state hover/highlight update ABI exists and is tested before host hover/highlight cleanup.
 - VT render-state ABI exists and is tested before renderer `VtSurface` deletion/input reshaping.
 - Host and renderer only consume the new boundary after it is available.
-- Downstream cleanup starts after Slice 1, Slice 2, and Slice 3 are accepted by reviewer and orchestrator.
-- Old monolithic surface deletion starts after Slice 4 and Slice 5 are accepted and product-code searches prove no old consumer remains.
+- Host cleanup starts after Slice 4 is accepted by reviewer and orchestrator.
+- Renderer cleanup starts after Slice 1, Slice 2, Slice 3, and Slice 4 are accepted by reviewer and orchestrator.
+- Old monolithic surface deletion starts after Slice 5 and Slice 6 are accepted and product-code searches prove no old consumer remains.
 
 ## Risks And Proof Gaps
 
@@ -272,12 +291,14 @@ Planning commit receipt: root `b5f9eb5 Plan VT render state maturity sprint`.
 - The old C ABI uses one public header. The plan keeps that to avoid extra public header churn, but the worker must keep declaration ordering readable.
 - Row/cell iterator handles hold slices into render-state storage. Tests must prove row/cell data becomes invalid only by documented update ownership; C ABI docs must say row/cell data is valid until the render state is updated or deinitialized.
 - Current renderer owns cursor blink opacity. That remains renderer-owned presentation policy and must not move into VT render state.
+- Slice 4 exists because accepted Slice 3 exposed hover/highlight reads but left the write/update path test-only; host consumption is blocked until that public C ABI is added and tested.
+- Host `surface.zig` is an exact Slice 5 allowed file because current drive code dereferences `visible.surface` at `howl-linux-host/src/terminal/surface.zig:591-600`.
 - Full deletion of old surface ABI is safe only in this private product after host/render references are removed. The deletion slice records that condition explicitly.
 
 ## Readiness Judgment
 
-- Accepted by reviewer for worker seeding.
+- Corrected planning amendment accepted by reviewer.
 - The plan rejects renderer-owned mirrored `VtSurface` as endpoint.
 - The plan rejects monolithic `HowlVtSurfaceResult` as settled endpoint.
 - The worker has exact files, symbols, tests, non-goals, stop conditions, and receipt fields.
-- Coder remains blocked until the user authorizes execution and the orchestrator seeds Slice 1.
+- Amended Slice 4 is seeded in `sprints/current.txt`; host consumption remains blocked until Slice 4 is reviewed, verified, and accepted.

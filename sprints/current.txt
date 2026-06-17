@@ -14,32 +14,35 @@ Active sprint note:
 
 - Active sprint: VT render-state maturity subsprint.
 - Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
-- Researcher session id: `researcher-2026-06-16-vt-render-state-plan-correction-02`.
-- Reviewer session id: `reviewer-2026-06-16-vt-render-state-plan-rereview-02`.
-- Current loop phase: Slice 3 accepted; Slice 4 not seeded yet.
-- Coder is blocked until orchestrator seeds Slice 4.
-- Current goal: hold a worker-ready, reviewer-accepted slice queue for a Ghostty-derived VT render-state boundary before any host/render cleanup.
-- Planning receipt: accepted by reviewer and committed in root `b5f9eb5 Plan VT render state maturity sprint`.
+- Researcher session id: `researcher-2026-06-17-vt-render-state-hover-abi-amendment-correction-04`.
+- Reviewer session id: `reviewer-2026-06-17-vt-render-state-hover-abi-amendment-rereview-02`.
+- Current loop phase: amended Slice 4 accepted; host-consumption slice not seeded yet.
+- Coder is blocked until orchestrator seeds host consumption.
+- Current goal: move host visible capture and hover/highlight handling onto the committed VT render-state C ABI.
+- Planning receipt: prior accepted root `b5f9eb5 Plan VT render state maturity sprint`; accepted amendment pending root commit receipt.
 
 Start Gates:
 
 - No renderer `VtSurface` cleanup before the VT render-state boundary exists and is tested.
-- No host hover/highlight mutation cleanup before the VT render-state boundary exposes hover/highlight/selection facts honestly and is tested.
+- No host hover/highlight mutation cleanup before the VT render-state boundary exposes public hover/highlight update and read facts honestly and is tested.
 - No render input reshaping before host/render consumers can consume the new VT render-state boundary.
 - No compatibility aliases, stale bridge endpoint, or optional `if` language. Boundary maturity is a start condition.
 
 Authorized next step:
 
-- Orchestrator may seed Slice 4 for coder execution.
-- Slice 4 source is `research/vt-render-state-maturity-plan.md`, section `Slice 4: Host Consumes Render-State Boundary For Visible Capture And Hover`.
-- Reviewer for execution must remain `reviewer-2026-06-16-vt-render-state-plan-rereview-02` unless explicitly reassigned.
+- Orchestrator may seed host consumption after the root pointer/receipt commit records amended Slice 4.
 - Slice 1 accepted receipt: `howl-vt` `aed729e Add VT render state ABI skeleton`.
 - Slice 2 accepted receipt: `howl-vt` `a015e1e Populate VT render state from terminal`.
 - Slice 3 accepted receipt: `howl-vt` `f6d2f8d Complete VT render state row reads`.
+- Amended Slice 4 accepted receipt: `howl-vt` `cf6b80c Expose VT render state hover highlight update`.
+
+Active execution slice:
+
+- Next active slice: host consumption, from `research/vt-render-state-maturity-plan.md`, section `Slice 5: Host Consumes Render-State Boundary For Visible Capture And Hover`.
 
 Artifact rule:
 
 - Active `loops/`, `research/`, and `sprints/` contents must stay current-only.
 - `research/` carries evidence and the explicit worker-ready slice plan.
 - `loops/` carries the live team scratchpad, role notes, review verdicts, blockers, and receipts.
-- `sprints/current.txt` carries the active planning contract only.
+- `sprints/current.txt` carries the active execution contract only.
