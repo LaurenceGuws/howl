@@ -15,30 +15,29 @@ Active work:
 - Renderer cleanup accountability sprint after VT render-state maturity closure.
 - Orchestrator session id: `orch-2026-06-18-render-cleanup-accountability-01`.
 - Prior VT render-state maturity sprint is closed by root `fb7b0f6 Track VT surface ABI deletion`.
-- Accepted render cleanup slice receipts: `howl-render` `864ea8b Use C cursor cadence ABI directly`, root `f84e1c8 Track cursor cadence ABI cleanup`; `howl-render` `7af878b Delete dead render shapes`, root `6d0e393`.
+- Accepted render cleanup slice receipts: `howl-render` `864ea8b Use C cursor cadence ABI directly`, root `f84e1c8 Track cursor cadence ABI cleanup`; `howl-render` `7af878b Delete dead render shapes`, root `6d0e393`; `howl-render` `d7f93b7 Delete cursor trail config bucket`, root `398da7f`.
 
 Current problem:
 
-- The first two cleanup slices are accepted, committed, and pushed.
-- Current deterministic lanes in `research/howl-render-cleanup-plan.md` prove exactly one package-wide `style.py` bucket offender: `howl-render/src/text/cursor_trail.zig` `Config`.
-- The next executable slice must delete that bucket by passing exact cursor-trail decay fields directly before broader live owner renames or folder moves.
+- The cursor-trail `Config` cleanup slice is accepted, committed, and pushed.
+- Current deterministic lanes in `research/howl-render-cleanup-plan.md` prove package-wide bucket metrics are zero, but cursor trail capacity is still duplicated as Zig literals in `howl-render/src/text/cursor_presentation.zig` and `howl-render/src/render_session.zig` while the C ABI already owns `HOWL_RENDER_CURSOR_TRAIL_RECTS_MAX`.
+- The next executable slice must delete those duplicated Zig limit literals and route render-session copying through the text contract limit before broader live owner renames or folder moves.
 
 Authorized cleanup:
 
-- Delete `pub const Config` from `howl-render/src/text/cursor_trail.zig`.
-- Change `CursorTrail.update`, `updateCorners`, and `updateOpacity` to take exact `decay_fast_s` and/or `decay_slow_s` parameters instead of a generic `Config` bucket.
-- Change the one product call in `howl-render/src/cursor_presentation.zig` to pass `self.cursor_trail_decay_fast_s` and `self.cursor_trail_decay_slow_s` directly.
-- Update only the existing owner-local `cursor_trail.zig` tests that call `trail.update`.
-- Do not touch C ABI files, shipped headers, `render_session.zig`, `text/ft_hb/support.zig`, scene contract files, scene rect files, build files, README files, or benchmark files.
+- In `howl-render/src/text/cursor_presentation.zig`, replace `pub const max_cursor_trail_rects = 16;` with `pub const max_cursor_trail_rects = @import("howl_render_c").HOWL_RENDER_CURSOR_TRAIL_RECTS_MAX;`.
+- In `howl-render/src/render_session.zig`, delete private `const max_cursor_trail_rects = 16;`.
+- In `howl-render/src/render_session.zig`, change the `trail_rects` array repeat count and copy bound in `readCursorPresentation` to use `contract.max_cursor_trail_rects`.
+- Do not touch C ABI files, shipped headers, `src/c/text_session.zig`, root `cursor_presentation.zig`, `text/contract.zig`, `text/scene.zig`, `text/scene_rects.zig`, `text/ft_hb/support.zig`, build files, README files, or benchmark files.
 
 Required verification:
 
-- `rg -n '\bpub const Config\b|\bConfig\b' howl-render/src/text/cursor_trail.zig`
-- `rg -n 'cursor_trail\.update\(\.\{' howl-render/src`
-- `rg -n '\bcursor_trail\.Config\b|\btext_cursor_trail\.Config\b' howl-render/src howl-render/include`
-- `rg -n '\bdecay_fast_s\b|\bdecay_slow_s\b' howl-render/src/text/cursor_trail.zig howl-render/src/cursor_presentation.zig`
+- `rg -n '^const max_cursor_trail_rects = 16;' howl-render/src/render_session.zig`
+- `rg -n '^pub const max_cursor_trail_rects = 16;' howl-render/src/text/cursor_presentation.zig`
+- `rg -n '\bmax_cursor_trail_rects\b' howl-render/src/render_session.zig howl-render/src/text/cursor_presentation.zig howl-render/src/text/contract.zig howl-render/src/text/scene.zig howl-render/src/text/scene_rects.zig`
+- `rg -n 'HOWL_RENDER_CURSOR_TRAIL_RECTS_MAX' howl-render/include/howl_render.h howl-render/src/c/text_session.zig howl-render/src/cursor_presentation.zig howl-render/src/text/cursor_presentation.zig howl-render/src/render_session.zig`
 - Before/after `python3 style.py --by-file --format json --sort prod howl-render`.
-- Before/after `python3 style.py --by-file --format json --sort path howl-render/src/text/cursor_trail.zig howl-render/src/cursor_presentation.zig`.
+- Before/after `python3 style.py --by-file --format json --sort path howl-render/src/text/cursor_presentation.zig howl-render/src/render_session.zig`.
 - Before/after forbidden-token content/path scans from `research/howl-render-cleanup-plan.md`.
 - `zig build test:unit` in `howl-render`
 - `zig build test:abi` in `howl-render`
@@ -47,17 +46,17 @@ Required verification:
 
 Stop conditions:
 
-- Any `Config` type or `cursor_trail.update(.{ ... })` anonymous bucket call remains after deletion.
-- Worker finds product reachability for `cursor_trail.Config` as a named type outside the current source evidence.
+- Any private cursor trail limit literal remains in `render_session.zig` or `text/cursor_presentation.zig` after the change.
+- `render_session.zig` imports `howl_render_c` only to reach cursor trail capacity instead of consuming `contract.max_cursor_trail_rects`.
 - Worker needs files outside the allowed list in `research/howl-render-cleanup-plan.md`.
-- The cleanup requires host, VT, or render C ABI changes.
-- The cleanup changes cursor trail math, opacity behavior, animation behavior, or cadence validation behavior instead of deleting only the bucket shape.
-- Whole-package `style.py` `bucket_named_structs` and `bucket_struct_lines` do not reach zero.
+- The cleanup requires host, VT, or render C ABI/header changes.
+- The cleanup changes cursor trail math, opacity behavior, animation behavior, scene rendering, or cadence validation behavior instead of deleting only duplicate limit ownership.
+- Whole-package `style.py` `bucket_named_structs` and `bucket_struct_lines` stop being zero.
 
 Next planning target:
 
-- After this bucket deletion slice is accepted, choose the next strongest deterministic target from cursor duplicate/limit cleanup, `render_session.zig`, `text/ft_hb/support.zig`, scene contract pressure, duplicate mutex wrappers, or current metric-dominant files.
-- Reviewer must reject partial cleanup that preserves stale names, folders, comments, aggregate roots, dead tests, or compatibility aliases.
+- After this cursor trail limit authority cleanup slice is accepted, choose the next strongest deterministic target from `render_session.zig`, `text/ft_hb/support.zig`, scene contract pressure, duplicate mutex wrappers, special raster long functions, or current metric-dominant files.
+- Reviewer must reject partial cleanup that preserves stale names, folders, comments, aggregate roots, dead tests, duplicate limits, or compatibility aliases.
 
 Artifact rule:
 
