@@ -15,48 +15,55 @@ Active work:
 - Renderer cleanup accountability sprint after VT render-state maturity closure.
 - Orchestrator session id: `orch-2026-06-18-render-cleanup-accountability-01`.
 - Prior VT render-state maturity sprint is closed by root `fb7b0f6 Track VT surface ABI deletion`.
-- Accepted render cleanup slice receipts: `howl-render` `864ea8b Use C cursor cadence ABI directly`, root `f84e1c8 Track cursor cadence ABI cleanup`; `howl-render` `7af878b Delete dead render shapes`, root `6d0e393`; `howl-render` `d7f93b7 Delete cursor trail config bucket`, root `398da7f`.
+- Accepted render cleanup slice receipts: `howl-render` `864ea8b Use C cursor cadence ABI directly`, root `f84e1c8 Track cursor cadence ABI cleanup`; `howl-render` `7af878b Delete dead render shapes`, root `6d0e393`; `howl-render` `d7f93b7 Delete cursor trail config bucket`, root `398da7f`; `howl-render` `664efd2 Use ABI cursor trail limit`, root `05da287`.
 
 Current problem:
 
-- The cursor-trail `Config` cleanup slice is accepted, committed, and pushed.
-- Current deterministic lanes in `research/howl-render-cleanup-plan.md` prove package-wide bucket metrics are zero, but cursor trail capacity is still duplicated as Zig literals in `howl-render/src/text/cursor_presentation.zig` and `howl-render/src/render_session.zig` while the C ABI already owns `HOWL_RENDER_CURSOR_TRAIL_RECTS_MAX`.
-- The next executable slice must delete those duplicated Zig limit literals and route render-session copying through the text contract limit before broader live owner renames or folder moves.
+- Cursor trail limit authority cleanup is accepted, committed, and pushed.
+- The prior FT/HB-first approval question is superseded by the user's correction. Leave the text stack as-is for now; `ft_hb` can die/rename later, but it is not next.
+- The next approval-ready target is non-text clutter under `howl-render/src/text`.
+- The repaired research package chooses the smallest coherent non-text extraction with exact line proof: move cursor-trail animation state from `howl-render/src/text/cursor_trail.zig` to the shallow root owner `howl-render/src/cursor_trail.zig`.
+- Broader color/effects/metrics/scene/prepare/session/contract/FT-HB moves remain planning-only until exact symbol, move, import, and reference/no-closer-reference consequences are supplied and reviewer-gated.
 
-Authorized cleanup:
+User-needed decision:
 
-- In `howl-render/src/text/cursor_presentation.zig`, replace `pub const max_cursor_trail_rects = 16;` with `pub const max_cursor_trail_rects = @import("howl_render_c").HOWL_RENDER_CURSOR_TRAIL_RECTS_MAX;`.
-- In `howl-render/src/render_session.zig`, delete private `const max_cursor_trail_rects = 16;`.
-- In `howl-render/src/render_session.zig`, change the `trail_rects` array repeat count and copy bound in `readCursorPresentation` to use `contract.max_cursor_trail_rects`.
-- Do not touch C ABI files, shipped headers, `src/c/text_session.zig`, root `cursor_presentation.zig`, `text/contract.zig`, `text/scene.zig`, `text/scene_rects.zig`, `text/ft_hb/support.zig`, build files, README files, or benchmark files.
+- Approve or reject only the cursor-trail extraction in `research/howl-render-cleanup-plan.md`: move `howl-render/src/text/cursor_trail.zig` to `howl-render/src/cursor_trail.zig`, update moved-file imports from `metrics.zig`/`contract.zig` to `text/metrics.zig`/`text/contract.zig`, update `howl-render/src/cursor_presentation.zig` to import `cursor_trail.zig` and rename alias `text_cursor_trail` to `cursor_trail`, and update `howl-render/src/test_unit.zig:10` to import `cursor_trail.zig`.
+- Do not ask the user for FT/HB, scene, preparation, color/effects/metrics, session, path, or contract approval yet.
+- No worker may implement any slice until the user approval receipt for the exact cursor-trail move/import list is recorded in `research/howl-render-cleanup-plan.md` and reviewer gates the repaired executable sub-slice.
 
-Required verification:
+Required gates after user approval:
 
-- `rg -n '^const max_cursor_trail_rects = 16;' howl-render/src/render_session.zig`
-- `rg -n '^pub const max_cursor_trail_rects = 16;' howl-render/src/text/cursor_presentation.zig`
-- `rg -n '\bmax_cursor_trail_rects\b' howl-render/src/render_session.zig howl-render/src/text/cursor_presentation.zig howl-render/src/text/contract.zig howl-render/src/text/scene.zig howl-render/src/text/scene_rects.zig`
-- `rg -n 'HOWL_RENDER_CURSOR_TRAIL_RECTS_MAX' howl-render/include/howl_render.h howl-render/src/c/text_session.zig howl-render/src/cursor_presentation.zig howl-render/src/text/cursor_presentation.zig howl-render/src/render_session.zig`
+- `rg -n 'text/cursor_trail\.zig|text_cursor_trail' howl-render/src howl-render/include`
+- `rg -n 'cursor_trail\.zig|\bcursor_trail\.' howl-render/src howl-render/include`
+- `rg -n '\bCursorTrail\b|\bTarget\b|targetFromCursor' howl-render/src/cursor_trail.zig howl-render/src/cursor_presentation.zig howl-render/src/test_unit.zig`
+- `rg --files howl-render/src howl-render/include | rg '(^|/)cursor_trail\.zig$'`
 - Before/after `python3 style.py --by-file --format json --sort prod howl-render`.
-- Before/after `python3 style.py --by-file --format json --sort path howl-render/src/text/cursor_presentation.zig howl-render/src/render_session.zig`.
+- Before/after candidate-file style rows exactly as listed in `research/howl-render-cleanup-plan.md`.
 - Before/after forbidden-token content/path scans from `research/howl-render-cleanup-plan.md`.
-- `zig build test:unit` in `howl-render`
-- `zig build test:abi` in `howl-render`
-- `zig build check` in `howl-render`
+- `zig build test:unit` in `howl-render`.
+- `zig build test:abi` in `howl-render`.
+- `zig build check` in `howl-render`.
 - `zig build check` at the workspace root after render package verification passes.
 
 Stop conditions:
 
-- Any private cursor trail limit literal remains in `render_session.zig` or `text/cursor_presentation.zig` after the change.
-- `render_session.zig` imports `howl_render_c` only to reach cursor trail capacity instead of consuming `contract.max_cursor_trail_rects`.
-- Worker needs files outside the allowed list in `research/howl-render-cleanup-plan.md`.
+- User approval for the exact cursor-trail extraction sub-slice is missing.
+- Reviewer gate for the exact executable sub-slice is missing.
+- Any broader FT/HB, whole-text, scene, prepare, session, path, color/effects/metrics, or contract move is treated as user-approval-ready before exact symbol/move/import consequences are supplied.
+- Any product import or file path named `text/cursor_trail.zig` remains after an approved implementation.
+- `howl-render/src/test_unit.zig` still imports `text/cursor_trail.zig` after an approved implementation.
+- Any compatibility alias or bridge preserves the old `text/cursor_trail.zig` path.
+- More than exactly one `cursor_trail.zig` file exists after implementation.
+- Worker needs files outside the allowed list for the approved sub-slice in `research/howl-render-cleanup-plan.md`.
 - The cleanup requires host, VT, or render C ABI/header changes.
-- The cleanup changes cursor trail math, opacity behavior, animation behavior, scene rendering, or cadence validation behavior instead of deleting only duplicate limit ownership.
+- The cleanup changes cursor trail animation math, host cursor cadence behavior, glyph raster output, shaping behavior, fallback-font limits, text scene contracts, render-session lifecycle, duplicate mutex wrappers, or C test-support.
 - Whole-package `style.py` `bucket_named_structs` and `bucket_struct_lines` stop being zero.
 
 Next planning target:
 
-- After this cursor trail limit authority cleanup slice is accepted, choose the next strongest deterministic target from `render_session.zig`, `text/ft_hb/support.zig`, scene contract pressure, duplicate mutex wrappers, special raster long functions, or current metric-dominant files.
-- Reviewer must reject partial cleanup that preserves stale names, folders, comments, aggregate roots, dead tests, duplicate limits, or compatibility aliases.
+- After the user resolves the cursor-trail extraction decision and reviewer accepts the repaired package, execute only that cursor-trail move/import repair.
+- After that slice is accepted, continue planning broader non-text clutter under `text/` by making the next chosen move exact before asking for user approval.
+- Reviewer must reject partial cleanup that preserves stale paths, stale names, comments, aggregate roots, dead tests, duplicate limits, or compatibility aliases.
 
 Artifact rule:
 
