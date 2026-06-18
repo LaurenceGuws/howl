@@ -15,39 +15,48 @@ Active work:
 - Renderer cleanup accountability sprint after VT render-state maturity closure.
 - Orchestrator session id: `orch-2026-06-18-render-cleanup-accountability-01`.
 - Prior VT render-state maturity sprint is closed by root `fb7b0f6 Track VT surface ABI deletion`.
-- Accepted Recovery Slice 5 product receipts: `howl-vt` `39c5f7d`, `howl-render` `0f9d339`, `howl-linux-host` `876c21e`, root `a83bb52`.
-- Accepted Recovery Slice 6 product receipts: `howl-vt` `f786252`, root `fb7b0f6`.
+- Accepted render cleanup slice receipt: `howl-render` `864ea8b Use C cursor cadence ABI directly`, root `f84e1c8 Track cursor cadence ABI cleanup`.
 
 Current problem:
 
-- `howl-render/src/vt_surface` survived as residual namespace debt after renderer consumption moved to VT render-state.
-- The folder is not a valid endpoint. Live cursor-presentation facts must live under a true renderer/text owner, not under the rejected old VT-surface namespace.
+- The first safe ABI closure cleanup slice is accepted and committed.
+- Deterministic lanes in `research/howl-render-cleanup-plan.md` still prove dead/self-test-only render shapes in `tokens.zig`, `submitted_surface.zig`, and `text/effects.zig`.
+- The next executable slice must delete those dead/self-test-only shapes before live owner renames or feature work.
 
 Authorized cleanup:
 
-- Move remaining live cursor presentation data/constants to a text-owned file.
-- Repoint text scene/contract imports to the text-owned file.
-- Delete `howl-render/src/vt_surface` entirely.
-- Update active accountability notes so they no longer say Recovery Slice 6 is pending.
+- Delete dead/self-test-only declarations from `howl-render/src/tokens.zig`: `ThreadMutex`, `lockMutex`, `PreparedSurfaceTokenWith`, `RenderResult`, `FullPrepareReason`, `SurfaceLostReason`, `LatestMailbox`, and only their local self-tests.
+- Delete dead/self-test-only declarations from `howl-render/src/submitted_surface.zig`: `SubmitDecision`, `SubmittedWorkState`, `SubmittedSurface.workState`, and `SubmittedSurface.fullPrepareReason`; preserve retained submitted-token behavior.
+- Delete unused `BackendCaps` from `howl-render/src/text/effects.zig`, its local self-test, and the unused re-export from `howl-render/src/text/contract.zig`.
+- Do not touch C ABI headers, `render_session.zig`, `text/ft_hb/support.zig`, `text/cursor_trail.zig`, scene contract files, or host-visible behavior.
 
 Required verification:
 
-- `rg "vt_surface|VtSurface|vtSurface|HowlVtSurface|invalidateForVtSurface" howl-render/src howl-render/include`
+- `rg -n '\b(PreparedSurfaceTokenWith|RenderResult|FullPrepareReason|SurfaceLostReason|LatestMailbox)\b' howl-render/src howl-render/include`
+- `rg -n '\b(SubmitDecision|SubmittedWorkState|BackendCaps)\b' howl-render/src howl-render/include`
+- `rg -n '\bfullPrepareReason\b|\.workState\(' howl-render/src/submitted_surface.zig`
+- `rg -n '\b(ThreadMutex|lockMutex)\b' howl-render/src/tokens.zig`
+- `rg -n 'pub const BackendCaps = effects\.BackendCaps' howl-render/src/text/contract.zig`
+- Before/after `python3 style.py --by-file --format json --sort prod howl-render`.
+- Before/after `python3 style.py --by-file --format json --sort path howl-render/src/tokens.zig howl-render/src/submitted_surface.zig howl-render/src/text/effects.zig howl-render/src/text/contract.zig`.
+- Before/after forbidden-token content/path scans from `research/howl-render-cleanup-plan.md`.
 - `zig build test:unit` in `howl-render`
+- `zig build test:abi` in `howl-render`
 - `zig build check` in `howl-render`
 - `zig build check` at the workspace root after render package verification passes.
 
 Stop conditions:
 
-- Any old surface payload, compatibility shim, bridge, alias, or renderer-retained VT mirror is reintroduced.
-- The cleanup requires host or VT ABI changes.
-- The cleanup changes render behavior instead of moving/deleting stale ownership names.
+- Any targeted symbol remains reachable after deletion.
+- Worker finds product reachability for a targeted symbol outside the current source evidence.
+- Worker needs files outside the allowed list in `research/howl-render-cleanup-plan.md`.
+- The cleanup requires host, VT, or render C ABI changes.
+- The cleanup changes live render behavior instead of deleting dead/self-test-only shapes.
 
 Next planning target:
 
-- Inventory `howl-render` for dead code, bucket nouns, fake lifecycle nouns, stale reference names, and breached folder ownership.
-- Researcher must produce one exact deletion/naming slice before coder implementation.
-- Reviewer must reject partial cleanup that preserves stale names, folders, comments, aggregate roots, or compatibility aliases.
+- After this deletion slice is accepted, choose the next strongest deterministic target from `text/cursor_trail.zig` `Config`, cursor duplicate/limit cleanup, `render_session.zig`, `text/ft_hb/support.zig`, scene contract pressure, or current metric-dominant files.
+- Reviewer must reject partial cleanup that preserves stale names, folders, comments, aggregate roots, dead tests, or compatibility aliases.
 
 Artifact rule:
 
