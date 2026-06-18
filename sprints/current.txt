@@ -16,10 +16,10 @@ Active sprint note:
 - Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 - Researcher session id: `researcher-2026-06-18-slice6-test-owner-scope-repair-19`.
 - Reviewer session id: `reviewer-2026-06-18-slice6-test-owner-scope-repair-review-01`.
-- Current loop phase: Recovery Slice 6 old-surface test-owner scope repair accepted; commit receipt pending.
-- Coder is blocked until orchestrator records a root commit and reseeds Recovery Slice 6.
+- Current loop phase: Recovery Slice 6 execution.
+- Coder is authorized only for Recovery Slice 6 after orchestrator seed.
 - Current goal: repair Slice 6 scope so remaining compiled old-surface tests in true owner files can be deleted or migrated without violating deletion rules.
-- Planning receipt: Recovery Slice 5 accepted and tracked in root `a83bb52 Track VT render state consumption`; accepted product commits are `howl-vt` `39c5f7d`, `howl-render` `0f9d339`, and `howl-linux-host` `876c21e`. Recovery Slice 6 seeded in root `85d651c Seed VT surface ABI deletion`; current Slice 6 old-surface test-owner scope repair accepted by reviewer and pending root commit.
+- Planning receipt: Recovery Slice 5 accepted and tracked in root `a83bb52 Track VT render state consumption`; accepted product commits are `howl-vt` `39c5f7d`, `howl-render` `0f9d339`, and `howl-linux-host` `876c21e`. Recovery Slice 6 seeded in root `85d651c Seed VT surface ABI deletion`; Slice 6 old-surface test-owner scope repair committed in root `dc3a4af Repair VT surface deletion scope`.
 
 Start Gates:
 
@@ -30,7 +30,7 @@ Start Gates:
 
 Authorized next step:
 
-- Orchestrator must commit the accepted Slice 6 scope repair before coder resumes Recovery Slice 6.
+- Coder may implement only Recovery Slice 6.
 - Slice 1 accepted receipt: `howl-vt` `aed729e Add VT render state ABI skeleton`.
 - Slice 2 accepted receipt: `howl-vt` `a015e1e Populate VT render state from terminal`.
 - Slice 3 accepted receipt: `howl-vt` `f6d2f8d Complete VT render state row reads`.
