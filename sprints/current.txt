@@ -16,10 +16,10 @@ Active sprint note:
 - Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 - Researcher session id: `researcher-2026-06-18-slice6-test-owner-scope-repair-19`.
 - Reviewer session id: `reviewer-2026-06-18-slice6-test-owner-scope-repair-review-01`.
-- Current loop phase: Recovery Slice 6 execution.
-- Coder is authorized only for Recovery Slice 6 after orchestrator seed.
-- Current goal: repair Slice 6 scope so remaining compiled old-surface tests in true owner files can be deleted or migrated without violating deletion rules.
-- Planning receipt: Recovery Slice 5 accepted and tracked in root `a83bb52 Track VT render state consumption`; accepted product commits are `howl-vt` `39c5f7d`, `howl-render` `0f9d339`, and `howl-linux-host` `876c21e`. Recovery Slice 6 seeded in root `85d651c Seed VT surface ABI deletion`; Slice 6 old-surface test-owner scope repair committed in root `dc3a4af Repair VT surface deletion scope`.
+- Current loop phase: Recovery Slice 6 accepted; root pointer receipt pending.
+- Coder is blocked until Recovery Slice 6 root receipt is committed.
+- Current goal: record accepted Slice 6 deletion receipts and close the VT surface ABI maturity sprint.
+- Planning receipt: Recovery Slice 5 accepted and tracked in root `a83bb52 Track VT render state consumption`; accepted product commits are `howl-vt` `39c5f7d`, `howl-render` `0f9d339`, and `howl-linux-host` `876c21e`. Recovery Slice 6 seeded in root `85d651c Seed VT surface ABI deletion`; Slice 6 old-surface test-owner scope repair committed in root `dc3a4af Repair VT surface deletion scope`; accepted Slice 6 product commit is `howl-vt` `f786252 Delete old VT surface ABI`.
 
 Start Gates:
 
@@ -30,7 +30,7 @@ Start Gates:
 
 Authorized next step:
 
-- Coder may implement only Recovery Slice 6.
+- Orchestrator must commit the Recovery Slice 6 root pointer/receipt.
 - Slice 1 accepted receipt: `howl-vt` `aed729e Add VT render state ABI skeleton`.
 - Slice 2 accepted receipt: `howl-vt` `a015e1e Populate VT render state from terminal`.
 - Slice 3 accepted receipt: `howl-vt` `f6d2f8d Complete VT render state row reads`.
@@ -44,7 +44,7 @@ Recovery planning amendment:
 - Recovery premise: Alacritty window/control pace requests full display rendering; CPU/GPU render work is not spun outside the presentation cadence. In Howl, the existing host `driveRenderLocked` prepare branch remains the pacing owner while renderer consumption changes from old `HowlVtSurfaceResult` to VT render-state C ABI in the same boundary slice.
 - Recovery plan accepted by reviewer `reviewer-2026-06-17-vt-render-state-recovery-plan-rereview-02` and committed in root `87f37fc Recover VT render state sprint plan`; scope repair accepted and committed in root `e114b80 Repair VT recovery slice scope`; hyperlink repair accepted and committed in root `b964014 Repair VT recovery hyperlink scope`; text-owner repair accepted and committed in root `4bd92d1 Repair VT recovery text owner scope`.
 - Recovery Slice 4B is accepted, committed, and tracked in root `255a797`.
-- Active slice: `Recovery Slice 6: Delete Old Monolithic VT Surface ABI`.
+- Active slice: Recovery Slice 6 accepted; root receipt pending.
 - Exact Recovery Slice 6 allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi/surface.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/ffi/lifecycle.zig`, `howl-vt/src/ffi/selection.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_ffi.zig`, `howl-vt/test/abi.zig`, `howl-vt/test_abi.zig`, `howl-vt/test_unit.zig`, `howl-vt/test/unit/terminal_surface_test.zig`, plus `howl-render/include/howl_render.h` only if stale C include fallout remains.
 - Exact Recovery Slice 6 goal: delete `HowlVtSurface`, `HowlVtSurfaceResult`, `howl_vt_terminal_query_visible_meta`, `howl_vt_terminal_copy_surface`, `howl_vt_terminal_ack_surface`, and tests that prove old monolithic copy behavior. Keep leaf structs still needed by render-state ABI only if still actually referenced by public render-state declarations. No bridge file and no compatibility alias replaces them. `howl-vt/src/ffi/lifecycle.zig`, `howl-vt/src/ffi/selection.zig`, and `howl-vt/test/unit/terminal_surface_test.zig` may change only to delete or migrate compiled tests that still reference the removed ABI.
 - Exact Recovery Slice 6 verification: in `howl-vt`, `zig build test:abi`, `zig build test:unit`, and `zig build check`; in `howl-render`, `zig build test:abi` and `zig build check`; root `zig build test:abi` and `zig build check`.
