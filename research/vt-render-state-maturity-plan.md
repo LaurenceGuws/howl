@@ -1,14 +1,14 @@
 # VT Render-State Maturity Plan
 
-Status: recovery planning after full-sprint audit; old Slice 5+ guidance is invalid; Recovery Slice 5 pending prepared surface rename and hyperlink ABI test repair accepted and pending root commit receipt.
+Status: recovery planning after full-sprint audit; old Slice 5+ guidance is invalid; Recovery Slice 6 old-surface test-owner scope repair accepted and pending root commit receipt.
 
 Orchestrator session id: `orch-2026-06-16-vt-render-state-planning-01`.
 
-Researcher session id: `researcher-2026-06-18-pending-surface-hyperlink-test-repair-18`.
+Researcher session id: `researcher-2026-06-18-slice6-test-owner-scope-repair-19`.
 
-Reviewer session id: `reviewer-2026-06-18-pending-surface-hyperlink-test-repair-review-02`.
+Reviewer session id: `reviewer-2026-06-18-slice6-test-owner-scope-repair-review-01`.
 
-Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state maturity sprint`; no-bridge recovery plan committed in root `87f37fc Recover VT render state sprint plan`; scope repair committed in root `e114b80 Repair VT recovery slice scope`; hyperlink repair committed in root `b964014 Repair VT recovery hyperlink scope`; Recovery Slice 5 text-owner repair committed in root `4bd92d1 Repair VT recovery text owner scope`; Recovery Slice 4B render-state cell ABI plan committed in root `64bfb03 Plan VT render state cell ABI`; accepted Slice 4B product committed in `howl-vt` `eb2d944 Add VT render state cell ABI` and root `255a797 Track VT render state cell ABI`; visible-metadata scope repair committed in root `22285b9 Repair VT recovery visible metadata scope`; Recovery Slice 5 reseed committed in root `eeff72c Seed VT recovery slice 5 visible info`; test-link/text-session repair committed in root `178d91e Repair VT recovery test link scope`; test-link reseed committed in root `092052d Seed VT recovery slice 5 test link`; event test expectation repair committed in root `cf86350 Repair VT recovery event test scope`; event test reseed committed in root `bc3c816 Seed VT recovery slice 5 event test`; current pending prepared surface rename and hyperlink ABI test repair is pending reviewer gate and commit receipt.
+Planning commit receipt: Recovery Slice 5 accepted and tracked in root `a83bb52 Track VT render state consumption`; Recovery Slice 6 seeded in root `85d651c Seed VT surface ABI deletion`; current Slice 6 old-surface test-owner scope repair is accepted and pending root commit receipt.
 
 ## Problem Statement
 
@@ -27,11 +27,11 @@ Planning commit receipt: prior accepted root `b5f9eb5 Plan VT render state matur
 
 ## Recovery Amendment: No Compatibility Payload Boundary
 
-Status: active recovery amendment blocked for Recovery Slice 5 pending prepared surface rename and hyperlink ABI test repair before implementation resumes.
+Status: active recovery amendment accepted for Recovery Slice 6 old-surface test-owner scope repair; deletion resumes only after root commit receipt.
 
-Recovery researcher session id: `researcher-2026-06-18-pending-surface-hyperlink-test-repair-18`.
+Recovery researcher session id: `researcher-2026-06-18-slice6-test-owner-scope-repair-19`.
 
-Recovery reviewer session id: `reviewer-2026-06-18-pending-surface-hyperlink-test-repair-review-02`.
+Recovery reviewer session id: `reviewer-2026-06-18-slice6-test-owner-scope-repair-review-01`.
 
 Current accepted product commits from which recovery starts:
 
@@ -181,13 +181,14 @@ Corrected slice queue from current committed state:
 ### Recovery Slice 6: Delete Old Monolithic VT Surface ABI
 
 - Goal: after Recovery Slice 5 is accepted and product-code searches prove no host/render consumer remains, delete the old monolithic surface ABI from `howl-vt`.
-- Allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi/surface.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_ffi.zig`, `howl-vt/test/abi.zig`, `howl-vt/test_abi.zig`, `howl-vt/test_unit.zig`, plus `howl-render/include/howl_render.h` only if stale C include fallout remains.
+- Allowed files: `howl-vt/include/howl_vt.h`, `howl-vt/src/ffi/surface.zig`, `howl-vt/src/ffi/main.zig`, `howl-vt/src/ffi/lifecycle.zig`, `howl-vt/src/ffi/selection.zig`, `howl-vt/src/libhowl_vt.zig`, `howl-vt/test_ffi.zig`, `howl-vt/test/abi.zig`, `howl-vt/test_abi.zig`, `howl-vt/test_unit.zig`, `howl-vt/test/unit/terminal_surface_test.zig`, plus `howl-render/include/howl_render.h` only if stale C include fallout remains.
 - Required shape: delete `HowlVtSurface`, `HowlVtSurfaceResult`, `howl_vt_terminal_query_visible_meta`, `howl_vt_terminal_copy_surface`, `howl_vt_terminal_ack_surface`, and tests that prove old monolithic copy behavior. Keep leaf structs still needed by render-state ABI only if they are still actually referenced by public render-state declarations. No bridge file and no compatibility alias replaces them.
-- Required tests: VT ABI tests pass with render-state symbols only; render ABI/header translation still passes without old surface types; product-code search proves no old monolithic surface symbols remain in `howl-vt`, `howl-render`, or `howl-linux-host` product code.
+- Required test-owner shape: `howl-vt/src/ffi/lifecycle.zig` and `howl-vt/src/ffi/selection.zig` may change only to delete or migrate inline tests that still compile old `surface.FfiSurfaceCell` or `surface.terminalCopySurface` references. `howl-vt/test/unit/terminal_surface_test.zig` may change only to delete or rewrite old monolithic copy/ack tests made invalid by Slice 6 deletion. `howl-vt/test_unit.zig` may continue to curate the unit root accordingly. No test weakening is allowed beyond removal or migration of proofs for deleted ABI.
+- Required tests: VT ABI tests pass with render-state symbols only; VT unit tests pass after deleting or migrating old monolithic surface proofs; render ABI/header translation still passes without old surface types; product-code search proves no old monolithic surface symbols remain in `howl-vt`, `howl-render`, or `howl-linux-host` product code.
 - Required verification: in `howl-vt`, `zig build test:abi`, `zig build test:unit`, and `zig build check`; in `howl-render`, `zig build test:abi` and `zig build check`; root `zig build test:abi` and `zig build check`.
 - Non-goals: no host/render consumption redesign after Slice 5, no new ABI convenience aliases, no broad render architecture rewrite.
-- Stop conditions: any host/render product code still references old surface symbols, deleted symbols remain in public headers, tests are weakened instead of migrated, bridge/payload names appear, or deletion requires reintroducing renderer `VtSurface`.
-- Receipt fields: orchestrator session id `orch-2026-06-16-vt-render-state-planning-01`, researcher session id `researcher-2026-06-17-vt-render-state-recovery-correction-06`, reviewer session id, coder session id, commit hashes for `howl-vt`, any touched dependent package, and root pointer/receipt commits, all required verification results, and product-code search results.
+- Stop conditions: any host/render product code still references old surface symbols, deleted symbols remain in public headers, tests are weakened instead of migrated/deleted for the removed ABI, bridge/payload names appear, deletion requires reintroducing renderer `VtSurface`, or any additional file outside the allowed Slice 6 list is needed.
+- Receipt fields: orchestrator session id `orch-2026-06-16-vt-render-state-planning-01`, researcher session id `researcher-2026-06-18-slice6-test-owner-scope-repair-19`, reviewer session id, coder session id, commit hashes for `howl-vt`, any touched dependent package, and root pointer/receipt commits, all required verification results, and product-code search results.
 
 ## Ghostty Anchor Map
 
