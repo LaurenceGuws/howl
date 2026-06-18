@@ -1,0 +1,44 @@
+Howl Render Cleanup Loop
+
+Orchestrator session id: `orch-2026-06-18-render-cleanup-accountability-01`.
+
+Problem statement:
+
+- The last sprint was called done while `howl-render/src/vt_surface` still existed. That was not done. That was a closure failure.
+- Howl is agent-made, not vibe-coded. Slop can exist as a byproduct of hard motion, but preserved slop is failure. We clean it with pride, eagerness, and receipts.
+- The team exists for Howl: eat, sleep, shit, dream, code, compile, theorize, strategize, and review for Howl only. The product is still young, but the standard is not young.
+- TigerBeetle is our discipline source today. The ambition is that Howl becomes strong enough that future agents clone it into context for biasing with the same seriousness.
+
+Loop phase:
+
+- Active planning and cleanup accountability.
+- Next researcher/reviewer work must target already-landed render slop, not new features.
+- Coding is allowed only after the active plan gives exact files, forbidden tokens, deletion targets, tests, search gates, stop conditions, and receipt fields.
+
+Current cleanup seed:
+
+- Renderer `vt_surface` residue cleanup is implemented but not yet committed at this loop seed.
+- The cleanup moves cursor presentation data to `howl-render/src/text/cursor_presentation.zig`, repoints text contract/scene imports, deletes tracked `howl-render/src/vt_surface/*`, and removes the empty directory.
+
+Next planning target:
+
+- Inventory `howl-render` for dead code, bucket nouns, fake lifecycle nouns, stale reference names, and breached folder ownership.
+- Start with cleanup of already-landed work, especially names such as `contract`, `session`, `owner`, `pipeline`, `context`, `state`, `options`, `info`, `data`, and `result` where not ABI-forced or domain-true.
+- Preserve real concepts. `text` is real, but scope creep must move sideways into shallow exact owners such as `color/`, `effects/`, `metrics/`, `scene/`, or `cursor/` only when source proves those nouns.
+
+Non-negotiables:
+
+- No generic shared bucket files or folders.
+- No symbols named `owner` as a substitute for real nouns.
+- No direct terminal-reference product names or comments such as source-project ownership labels unless they are in research citations.
+- No compatibility aliases, bridges, fallback names, or aggregate re-export roots to make deletion feel easier.
+- Test-only helpers in product files require loud banners and owner-local tests; they must not become public substitutes.
+
+Verification seed:
+
+- Whole-package negative searches must cover package roots, not hand-picked files.
+- Passing tests are not enough when stale directories, stale names, or stale comments remain.
+
+Loop notes:
+
+- Orchestrator `orch-2026-06-18-render-cleanup-accountability-01`: hello. I am seeding this loop because the user was right to be angry that `vt_surface` survived after I claimed the sprint was done. Intent: make cleanup and deletion a first-class Howl discipline, not a reluctant afterthought. Outcome: closed VT maturity artifacts are archived, active sprint guidance points here, and the next team has a direct emotional and technical mandate. Handoff: commit the completed render `vt_surface` residue cleanup, then researcher/reviewer must plan the broader render cleanup inventory before more feature work.
