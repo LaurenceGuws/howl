@@ -15,6 +15,7 @@ Reviewer session id: open.
 - Keep SDL for the parts we currently use: windowing, input, text input, clipboard, event handling, and convenience surfaces.
 - First priority is deeper control of the GPU present surface, especially Alacritty-style Wayland EGL damaged present; minimal diff is second.
 - The old host GLFW seam and Kitty's GLFW usage are evidence to inspect, not a directive to resurrect GLFW.
+- TigerBeetle hygiene bias from the user's external style scan: the next maturity gap is generic-ish debt, not raw file size. `howl-render/src/grid/rects.zig`, `howl-render/src/scene.zig`, and `howl-render/src/text/direct_normal.zig` are directly relevant to this sprint because they combine render/grid/scene naming debt with `usize`/`anytype` leakage.
 
 ## Required Research Output
 
@@ -51,6 +52,7 @@ Current Howl anchors requiring full inventory:
 - `howl-render/src/grid/scene.zig`.
 - `howl-render/src/grid/damage.zig`.
 - `howl-render/src/grid/rects.zig`.
+- `howl-render/src/text/direct_normal.zig`.
 - `howl-render/src/surface/*.zig`.
 - `howl-render/src/text/surface.zig`.
 - `howl-linux-host/src/display/*.zig`.
@@ -72,6 +74,7 @@ Current Howl anchors requiring full inventory:
 - No API preservation by default.
 - No bucket owners named `scene`, `geometry`, or `grid` may survive unless the research proves they are owner-true against references.
 - Any retained Howl-only invention must record why Alacritty, Ghostty, Kitty, SDL, and official docs do not fit.
+- Do not treat large files as automatically wrong. Bias the research toward genericity debt where `anytype`, `usize`, or broad helper patterns obscure an already-known owner.
 
 ## Open Proof Questions
 
@@ -96,7 +99,10 @@ Current-source seed facts:
 
 - `howl-render/src/geometry.zig` contains `Geometry`, `GeometryLayout`, `GeometryResponse`, `PrepareLayout`, `SurfaceLayout`, `GridSize`, and tests named around surface geometry/grid derivation.
 - `howl-render/src/grid/scene.zig` contains renderable cell, metrics, glyph group, draw primitive, raster request, and `TextScene` shapes; the path/name is suspect because it is not a terminal grid owner.
+- `howl-render/src/grid/rects.zig` is a first-class sprint pressure point because the user-provided TigerBeetle style scan ranked it as the largest current generic-ish offender: 26 `usize`, 27 `anytype`, 53 combined generic-ish hits. Research must determine whether those generics are fake coordinate/plumbing abstraction or justified owner-local helpers.
 - `howl-render/src/scene.zig` builds owned/borrowed `TextScene` draw lists and retained scratch; this overlaps with prepared text surface and render command packet terminology.
+- `howl-render/src/scene.zig` is also a style pressure point from the same scan: 19 `usize`, 2 `anytype`, 21 combined generic-ish hits. Research must separate true draw-list assembly ownership from memory-shaped leakage.
+- `howl-render/src/text/direct_normal.zig` is a style pressure point from the same scan: 26 `usize`, 1 `anytype`, 27 combined generic-ish hits. Research must classify whether index widths are memory-sized implementation facts or domain values that need bounded render/text types.
 - `howl-render/src/surface/*.zig` contains ABI packet realization, resource stores, prepared/submitted surface owners, compositor/emitter/preparer code, and stale dormant imports previously identified for future cleanup.
 - `howl-render/include/howl_render.h` exposes `HowlRenderGridSize` in layout/result, render packet, and prepare input surfaces.
 - `howl-linux-host/src/display/display.zig` currently owns SDL GL context creation and `SDL_GL_SwapWindow`; no EGL damage path exists.
