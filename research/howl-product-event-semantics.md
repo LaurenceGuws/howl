@@ -128,12 +128,12 @@ Finding: `render_work_pending` is a host event-loop fact, not a retained rendere
 
 Files and line refs:
 
-- `howl-render/src/benchmark_main.zig:50-55`: `WorkloadResult.dirtyCellsPerSecond()` is benchmark output.
-- `howl-render/src/benchmark_main.zig:58-78`: `WorkloadDamage`, `Workload`, and `WorkloadPrepareContext` are benchmark fixture/load-case structs.
-- `howl-render/src/benchmark_main.zig:288-357`: `buildWorkload` and concrete workload builders create benchmark cases.
-- `howl-render/src/benchmark_main.zig:681-715`: workload fixture is converted into prepare context and prepared surface.
-- `howl-render/src/benchmark_main.zig:738-859`: `runWorkloadCold`, `runWorkloadWarm`, `runWorkloadResult`, `runWorkload` execute benchmark cases.
-- `howl-render/src/benchmark_main.zig:891`, `916`, `957-973`: printed text/NDJSON uses `workload` and loops over benchmark cases.
+- `howl-render/src/benchmark_main.zig:50-55`: former `WorkloadResult.dirtyCellsPerSecond()` was render benchmark output and must use benchmark-case vocabulary.
+- `howl-render/src/benchmark_main.zig:58-78`: former `WorkloadDamage`, `Workload`, and `WorkloadPrepareContext` were render benchmark fixture/load-case structs and must use benchmark-case vocabulary.
+- `howl-render/src/benchmark_main.zig:288-357`: former `buildWorkload` and concrete workload builders created render benchmark cases and must use benchmark-case vocabulary.
+- `howl-render/src/benchmark_main.zig:681-715`: the former workload fixture conversion into prepare context/prepared surface must use benchmark-case vocabulary.
+- `howl-render/src/benchmark_main.zig:738-859`: former `runWorkloadCold`, `runWorkloadWarm`, `runWorkloadResult`, `runWorkload` executed render benchmark cases and must use benchmark-case vocabulary.
+- `howl-render/src/benchmark_main.zig:891`, `916`, `957-973`: printed text/NDJSON formerly used `workload` and must use `benchmark_case`.
 - `howl-vt/benchmark/terminal_benchmark.zig:443-469`: replay workload name derives from fixture basename.
 - `howl-vt/benchmark/terminal_benchmark.zig:501-534`: benchmark output includes `workload` field.
 - `howl-vt/simulation/main.zig:5-6`: proof comment says deterministic VT simulation workloads; this is a simulation/load-case term, not product event semantics.
@@ -143,7 +143,7 @@ Files and line refs:
 
 Classification: benchmark fixture/load case.
 
-Finding: Do not blindly rename these in product vocabulary cleanup. `workload` is a legitimate benchmark/simulation load-case term in measurement artifacts, output schemas, simulation proof comments, and root build UX. If a future benchmark/simulation vocabulary pass wants stricter names, use `BenchmarkCase`, `ReplayCase`, or `LoadCase`, but that is not required for this product event/interface cleanup.
+Finding correction after user review: render benchmark `workload` vocabulary is not acceptable because `howl-render/src/benchmark_main.zig` is an active render measurement API/output surface. Render benchmark names must use benchmark-case vocabulary. VT benchmark and simulation `workload` terms remain unpromoted for this slice and need their own pass if the same standard is applied there.
 
 ### Legitimate External/Reference Terms
 
@@ -200,7 +200,7 @@ TigerBeetle facts:
 - Retained render state: Howl `SubmittedSurface` retained-base token (`submitted_surface.zig:16-68`) and host retained state (`render_retained.zig:10-37`).
 - Presentation: Alacritty `request_redraw`, `draw`, `swap_buffers` (`display/window.rs:260-264`, `display/mod.rs:607-623`, `display/mod.rs:770-884`); Howl present lifecycle (`present.zig:80-97`).
 - Completion/acknowledgement: Howl host `completePresent()` acks VT source (`surface.zig:519-525`, `vt_surface.zig:58-78`); renderer header resource ack spans (`howl_render.h:250-259`).
-- Benchmark fixture/load case: Howl render/vt benchmark `Workload`/`workload` surfaces (`benchmark_main.zig:58-78`, `terminal_benchmark.zig:501-534`).
+- Benchmark fixture/load case: VT benchmark `workload` surface (`terminal_benchmark.zig:501-534`); render benchmark cases must use `BenchmarkCase`/`benchmark_case` vocabulary.
 
 ## Vocabulary Map
 
@@ -238,7 +238,8 @@ Exact old to new plan:
   - "progress drive requests redraw and next turn for runtime work" -> "progress drive requests redraw and next turn for runtime obligation".
   - "transport pump caps locked feed work" -> "transport pump caps locked feed bytes".
   - "progress thread drains kept work before waiting again" -> "progress thread drains kept turns before waiting again".
-- Benchmark and simulation `Workload`, `WorkloadDamage`, `WorkloadPrepareContext`, `WorkloadResult`, `workload` output fields, simulation workload comments/descriptions -> leave unchanged in this sprint; classified as benchmark fixture/load case or simulation load case.
+- Render benchmark `Workload`, `WorkloadDamage`, `WorkloadPrepareContext`, `WorkloadResult`, and `workload` output fields -> rename to benchmark-case vocabulary.
+- VT benchmark and simulation workload comments/descriptions -> not changed in the render benchmark slice; classify separately before editing.
 - Apache/license `Work` -> leave unchanged; legitimate external legal term.
 
 ABI/interface consequence map:
@@ -287,7 +288,7 @@ Required tests:
 Non-goals:
 
 - Do not move renderer ABI in this slice.
-- Do not rename benchmark `workload` terms.
+- Do not rename VT benchmark/simulation `workload` terms in the render benchmark slice.
 - Do not change retained render behavior.
 
 Stop conditions:
@@ -393,8 +394,8 @@ Allowed files:
 
 Required shape:
 
-- Update design prose from generic `work`/`work state` to the accepted terms: render turn admission, prepare, submit, present, ack, benchmark workload.
-- Leave benchmark `workload` docs intact where they describe load cases.
+- Update design prose from generic `work`/`work state` to the accepted terms: render turn admission, prepare, submit, present, ack, and benchmark case.
+- Leave VT benchmark/simulation `workload` docs intact unless separately promoted.
 
 Required tests:
 
@@ -428,7 +429,7 @@ Receipt expectations:
 - `workState()` mutates state in `render_retained.zig:167-170`; renaming it as a query would be false. Use an admission verb.
 - `render_work_pending` in event-loop facts is easy to over-specialize as presentation-only. Current source proves it means any render turn need (`surface.zig:404-407`, `465-472`).
 - ABI changes remain in scope. Current source does not require a renderer header change for Slice 1/2, but Slice 3 may require one if `SessionWorkState` is proven ABI-facing.
-- Benchmark `workload` is legitimate. Blind renames would break measurement output names and receipts without improving product event semantics.
+- Benchmark `workload` is not uniformly legitimate. Render benchmark output names are an active surface and were corrected to benchmark-case vocabulary; VT benchmark/simulation terms need separate classification before any rename.
 
 ## Reviewer Correction Notes
 
