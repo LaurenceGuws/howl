@@ -1,3 +1,7 @@
+Historical authority at defer time: this was the active render cleanup research package before the user switched the live sprint to host terminal surface layout redesign on 2026-06-19.
+Why superseded or deferred: render cleanup remains retained context, but the current active problem is killing `deriveHostLayout(...)` and replacing host terminal surface geometry with reference-backed ownership.
+Must not be used for: current worker scope, current reviewer gates, or active user approval questions unless explicitly re-promoted.
+
 # Howl Render Cleanup Plan
 
 Status: user approval ready for the first non-text clutter extraction from `text/`: move cursor-trail animation out of `text/` to the shallow `cursor_trail.zig` owner. The prior FT/HB-first approval request is superseded by user correction; FT/HB/text stack stays as-is for now.

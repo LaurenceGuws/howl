@@ -7,65 +7,59 @@ Purpose:
 
 Sprint:
 
-- Active planning artifact: `research/howl-render-cleanup-plan.md`.
-- Active loop artifact: `loops/howl-render-cleanup-loop.txt`.
+- Active planning artifact: `research/howl-linux-host-surface-layout-redesign.md`.
+- Active loop artifact: `loops/howl-linux-host-surface-layout-loop.txt`.
 
 Active work:
 
-- Renderer cleanup accountability sprint after VT render-state maturity closure.
-- Orchestrator session id: `orch-2026-06-18-render-cleanup-accountability-01`.
-- Prior VT render-state maturity sprint is closed by root `fb7b0f6 Track VT surface ABI deletion`.
-- Accepted render cleanup slice receipts: `howl-render` `864ea8b Use C cursor cadence ABI directly`, root `f84e1c8 Track cursor cadence ABI cleanup`; `howl-render` `7af878b Delete dead render shapes`, root `6d0e393`; `howl-render` `d7f93b7 Delete cursor trail config bucket`, root `398da7f`; `howl-render` `664efd2 Use ABI cursor trail limit`, root `05da287`.
+- Host terminal surface layout redesign for the tab-bar/viewport geometry bug.
+- Orchestrator session id: `orch-2026-06-19-host-surface-layout-01`.
+- Slice 1, snapped terminal surface geometry, is accepted and verified. It is receipt context only.
+- Slice 2, display-owned terminal placement, is accepted and verified. It is receipt context only.
+- Current executable slice: Slice 3, terminal input uses placed snapped terminal rect.
 
-Current problem:
+Current Slice 3 Problem:
 
-- Cursor trail limit authority cleanup is accepted, committed, and pushed.
-- The prior FT/HB-first approval question is superseded by the user's correction. Leave the text stack as-is for now; `ft_hb` can die/rename later, but it is not next.
-- The next approval-ready target is non-text clutter under `howl-render/src/text`.
-- The repaired research package chooses the smallest coherent non-text extraction with exact line proof: move cursor-trail animation state from `howl-render/src/text/cursor_trail.zig` to the shallow root owner `howl-render/src/cursor_trail.zig`.
-- Broader color/effects/metrics/scene/prepare/session/contract/FT-HB moves remain planning-only until exact symbol, move, import, and reference/no-closer-reference consequences are supplied and reviewer-gated.
+- Display now owns snapped terminal placement for presentation.
+- Input still uses raw content logical and pixel extents.
+- Raw leftover pixels below/right of the snapped terminal grid can still be treated as terminal input and clamp to the last row/column.
 
-User-needed decision:
+Required Reference Pressure:
 
-- Approve or reject only the cursor-trail extraction in `research/howl-render-cleanup-plan.md`: move `howl-render/src/text/cursor_trail.zig` to `howl-render/src/cursor_trail.zig`, update moved-file imports from `metrics.zig`/`contract.zig` to `text/metrics.zig`/`text/contract.zig`, update `howl-render/src/cursor_presentation.zig` to import `cursor_trail.zig` and rename alias `text_cursor_trail` to `cursor_trail`, and update `howl-render/src/test_unit.zig:10` to import `cursor_trail.zig`.
-- Do not ask the user for FT/HB, scene, preparation, color/effects/metrics, session, path, or contract approval yet.
-- No worker may implement any slice until the user approval receipt for the exact cursor-trail move/import list is recorded in `research/howl-render-cleanup-plan.md` and reviewer gates the repaired executable sub-slice.
+- Alacritty `SizeInfo.contains_point(...)` excludes padding/non-grid area from terminal grid input.
+- Kitty uses explicit window geometry regions before rendering/input consequences.
+- TigerBeetle/Howl law requires owner-true names, assertions, and proof.
 
-Required gates after user approval:
+Execution Gate:
 
-- `rg -n 'text/cursor_trail\.zig|text_cursor_trail' howl-render/src howl-render/include`
-- `rg -n 'cursor_trail\.zig|\bcursor_trail\.' howl-render/src howl-render/include`
-- `rg -n '\bCursorTrail\b|\bTarget\b|targetFromCursor' howl-render/src/cursor_trail.zig howl-render/src/cursor_presentation.zig howl-render/src/test_unit.zig`
-- `rg --files howl-render/src howl-render/include | rg '(^|/)cursor_trail\.zig$'`
-- Before/after `python3 style.py --by-file --format json --sort prod howl-render`.
-- Before/after candidate-file style rows exactly as listed in `research/howl-render-cleanup-plan.md`.
-- Before/after forbidden-token content/path scans from `research/howl-render-cleanup-plan.md`.
-- `zig build test:unit` in `howl-render`.
-- `zig build test:abi` in `howl-render`.
-- `zig build check` in `howl-render`.
-- `zig build check` at the workspace root after render package verification passes.
+- Reviewer must gate the Slice 3 section of `research/howl-linux-host-surface-layout-redesign.md` before coder execution.
+- If reviewer accepts, coder implements only Slice 3 and records evidence in `loops/howl-linux-host-surface-layout-loop.txt`.
+- If reviewer rejects, reviewer writes exact findings in the loop and the plan is repaired before coding.
 
-Stop conditions:
+Required Slice 3 Shape:
 
-- User approval for the exact cursor-trail extraction sub-slice is missing.
-- Reviewer gate for the exact executable sub-slice is missing.
-- Any broader FT/HB, whole-text, scene, prepare, session, path, color/effects/metrics, or contract move is treated as user-approval-ready before exact symbol/move/import consequences are supplied.
-- Any product import or file path named `text/cursor_trail.zig` remains after an approved implementation.
-- `howl-render/src/test_unit.zig` still imports `text/cursor_trail.zig` after an approved implementation.
-- Any compatibility alias or bridge preserves the old `text/cursor_trail.zig` path.
-- More than exactly one `cursor_trail.zig` file exists after implementation.
-- Worker needs files outside the allowed list for the approved sub-slice in `research/howl-render-cleanup-plan.md`.
-- The cleanup requires host, VT, or render C ABI/header changes.
-- The cleanup changes cursor trail animation math, host cursor cadence behavior, glyph raster output, shaping behavior, fallback-font limits, text scene contracts, render-session lifecycle, duplicate mutex wrappers, or C test-support.
-- Whole-package `style.py` `bucket_named_structs` and `bucket_struct_lines` stop being zero.
+- Add `DisplayLayout.terminalLogicalSize(content_logical: Size, content_px: Size, terminal_px: Size) Size`.
+- `terminalLogicalSize(...)` scales snapped terminal pixels into logical input extents, clamps to at least `1`, clamps to content logical extents, and asserts positive/fitting dimensions.
+- Change `event.forwardTerminalInput(...)` to forward terminal logical width/height derived from snapped terminal texture size, not raw content logical size.
+- Change `terminal/input.zig` mouse pixel mapping to use snapped `self.term.render.surface_layout.render_px`, not raw `self.geometry.content_px_w/content_px_h`.
+- Keep terminal placement top-left inside content region.
 
-Next planning target:
+Required Slice 3 Gates:
 
-- After the user resolves the cursor-trail extraction decision and reviewer accepts the repaired package, execute only that cursor-trail move/import repair.
-- After that slice is accepted, continue planning broader non-text clutter under `text/` by making the next chosen move exact before asking for user approval.
-- Reviewer must reject partial cleanup that preserves stale paths, stale names, comments, aggregate roots, dead tests, duplicate limits, or compatibility aliases.
+- `DisplayLayout.terminalLogicalSize(...)` test: content `960x570`, terminal `960x560`, logical `960x570` returns logical height `560`.
+- Terminal input test proves a mouse event in the raw leftover strip below snapped terminal height is rejected rather than mapped to the last row.
+- `zig build check` in `howl-linux-host`.
+- `zig build test:unit` in `howl-linux-host`.
+- Root `zig build check`.
 
-Artifact rule:
+Stop Conditions:
 
-- `sprints/current.txt` carries this live cleanup contract only.
-- Historical VT render-state maturity details are archived in `loops/done/` and `research/done/`; they are not current execution instructions.
+- Reviewer gate is missing.
+- Coder needs files outside the Slice 3 allowed list in `research/howl-linux-host-surface-layout-redesign.md`.
+- Pointer events outside the snapped terminal rect still map to terminal row/column.
+- Fix requires VT, PTY, render C ABI, headers, or SDL event collection changes.
+
+Artifact Rule:
+
+- `sprints/current.txt` carries Slice 3 only as live execution scope.
+- Earlier slices and deferred artifacts are navigation or receipt context only until explicitly re-promoted.

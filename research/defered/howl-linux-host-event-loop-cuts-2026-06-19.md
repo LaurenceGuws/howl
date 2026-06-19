@@ -1,3 +1,7 @@
+Historical authority at defer time: this was source-backed host event-loop planning and receipt context from prior accepted host cadence cuts.
+Why superseded or deferred: the event-loop cuts are not the current active sprint; they are navigation context only for the host layout redesign.
+Must not be used for: current execution scope, current reviewer gates, or new implementation authority unless explicitly re-promoted.
+
 # Howl Linux Host Event Loop Cuts
 
 Purpose:

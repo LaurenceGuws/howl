@@ -1,3 +1,7 @@
+Historical authority at defer time: this was the active render cleanup loop before the user switched the live sprint to host terminal surface layout redesign on 2026-06-19.
+Why superseded or deferred: render cleanup remains real but is not the current active sprint; the host viewport/tab-bar geometry bug now owns the live loop surface.
+Must not be used for: current execution instructions, current sprint scope, or active approval questions unless explicitly re-promoted.
+
 Howl Render Cleanup Loop
 
 Orchestrator session id: `orch-2026-06-18-render-cleanup-accountability-01`.
