@@ -16,8 +16,11 @@ Active execution:
 - Orchestrator session id: `orch-2026-06-19-render-surface-layout-present-01`.
 - Researcher session id: `research-2026-06-19-render-surface-layout-present-01`.
 - Reviewer session id: `review-2026-06-19-render-surface-layout-present-02`.
-- Coder session id: `coder-2026-06-19-render-surface-layout-present-01`.
-- Planning/root commit receipt: open; child render commit receipt: `howl-render` `5383bf6 Rename render layout and draw owners`.
+- Coder session id: open.
+- Slice 1 child render commit receipt: `howl-render` `5383bf6 Rename render layout and draw owners`.
+- Slice 1 root commit receipt: `71b72c7 Track render layout draw owner rename`.
+- Slice 2 child render commit receipt: `howl-render` `6c08bf8 Rename render surface frame ABI`.
+- Slice 2 child linux-host commit receipt: `howl-linux-host` `968d496 Rename host render texture ABI`.
 
 Problem:
 
@@ -37,90 +40,75 @@ Required Reference Pressure:
 
 Current Live Slice:
 
-- Execution Slice 1: rename render layout and prepared draw owners.
+- Execution Slice 2: C ABI packet and host texture rename. Completed and awaiting this root receipt commit.
+- Next executable slice is not promoted in this artifact.
 
-Execution Slice 1 Required Shape:
+Execution Slice 2 Required Shape:
 
-- Move `howl-render/src/geometry.zig` to `howl-render/src/layout.zig`.
-- Move `howl-render/src/scene.zig` to `howl-render/src/text/draw_list.zig`.
-- Move `howl-render/src/grid/scene.zig` to `howl-render/src/text/draw_primitives.zig`.
-- Move `howl-render/src/grid/damage.zig` to `howl-render/src/text/damage.zig`.
-- Move `howl-render/src/grid/rects.zig` to `howl-render/src/text/rect_primitives.zig`.
-- Rename `Geometry` to `RenderLayout`.
-- Rename `GeometryLayout` to `RenderLayoutInput`.
-- Rename `GeometryResponse` to `RenderLayoutResponse`.
-- Rename `PrepareLayout` to `PreparedLayout`.
-- Rename `SurfacePixels` to `DrawablePixels`.
-- Rename `SurfaceLayout` to `CellGridLayout`.
-- Rename `SurfaceGeometryError` to `RenderLayoutError`.
-- Rename `deriveGridForSurface` to `deriveCellGridForLayout`.
-- Rename `deriveGridSize` to `deriveCellGridSize`.
-- Rename `OwnedTextScene` to `OwnedTextDrawList`.
-- Rename `BorrowedTextScene` to `BorrowedTextDrawList`.
-- Rename `RetainedScratch` to `RetainedDrawScratch`.
-- Rename `BuildOptions` to `DrawListOptions`.
-- Rename `SceneAssembly` to `DrawListAssembly`.
-- Rename `TextScene` to `TextDrawList`.
-- Rename `GridMetrics` to `CellGridMetrics`.
-- Do not change C ABI/header names in this slice.
-- Do not preserve compatibility aliases named `TextScene` or the old layout names.
+- Rename `HowlRenderSurface` to `HowlRenderSurfaceFrame`.
+- Rename `HowlRenderHostSurface` to `HowlRenderHostTexture`.
+- Rename `HowlRenderSurfaceToken` to `HowlRenderSurfaceFrameToken`.
+- Keep `HowlRenderSurfaceRect` unchanged because it is a render-surface coordinate rect used by frame damage and commands.
+- Rename `HowlRenderSurfaceDamageItem` to `HowlRenderSurfaceFrameDamageItem`.
+- Rename `HowlRenderSurfaceDamageSpan` to `HowlRenderSurfaceFrameDamageSpan`.
+- Rename `HowlRenderSurfaceCommand` to `HowlRenderSurfaceFrameCommand`.
+- Rename `HowlRenderSurfaceCommandSpan` to `HowlRenderSurfaceFrameCommandSpan`.
+- Rename constants with `HOWL_RENDER_SURFACE_*` only when they describe frame packet limits or commands to `HOWL_RENDER_SURFACE_FRAME_*`.
+- Rename C ABI `HowlRenderGridSize` to `HowlRenderCellGrid`.
+- Update Zig imports/usages directly.
+- Do not add compatibility typedefs or aliases.
 
-Allowed Files For Execution Slice 1:
+Allowed Files For Execution Slice 2:
 
-- `howl-render/src/geometry.zig` -> `howl-render/src/layout.zig`.
-- `howl-render/src/scene.zig` -> `howl-render/src/text/draw_list.zig`.
-- `howl-render/src/grid/scene.zig` -> `howl-render/src/text/draw_primitives.zig`.
-- `howl-render/src/grid/damage.zig` -> `howl-render/src/text/damage.zig`.
-- `howl-render/src/grid/rects.zig` -> `howl-render/src/text/rect_primitives.zig`.
+- `howl-render/include/howl_render.h`.
 - `howl-render/src/libhowl_render.zig`.
-- `howl-render/src/text/direct_normal.zig`.
-- `howl-render/src/surface/surface_preparer.zig`.
+- `howl-render/src/surface/emitter.zig`.
+- `howl-render/src/surface/emitter_test.zig`.
+- `howl-render/src/surface/realizer.zig`.
+- `howl-render/src/surface/realizer_test.zig`.
+- `howl-render/src/surface/realizer_resource_store.zig`.
+- `howl-render/src/surface/resource_store.zig`.
 - `howl-render/src/text/surface.zig`.
-- `howl-render/src/benchmark_main.zig`.
-- Existing owner-local tests embedded in moved files.
-- Direct import updates in files that fail solely because of these moves.
+- `howl-linux-host/src/howl_render_c.h`.
+- `howl-linux-host/build.zig` only if translate-C include behavior breaks.
+- `howl-linux-host/src/display/render_surface.zig`.
+- `howl-linux-host/src/display/render_surface_commands.zig`.
+- `howl-linux-host/src/display/render_surface_resources.zig`.
+- `howl-linux-host/src/display/render_surface_test.zig`.
+- `howl-linux-host/src/terminal/render_retained.zig`.
+- `howl-linux-host/src/terminal/surface.zig`.
+- `howl-linux-host/src/host_test_root.zig` only if test root imports require renaming.
 
 Required Gates:
 
-- Run the existing `howl-render` package test command.
-- Grep gate: no `@import("grid/scene.zig")`.
-- Grep gate: no `@import("grid/damage.zig")`.
-- Grep gate: no `@import("grid/rects.zig")`.
-- Grep gate: no public `TextScene`.
-- Grep gate: no `GeometryLayout`.
-- Grep gate: no `GeometryResponse`.
-- Grep gate: no `SurfaceGeometryError` outside historical docs.
-- Existing scene, damage, and rect tests must move with their owner and remain reachable from one curated root.
+- Render and linux-host tests/builds pass.
+- Grep gate for old C ABI names: `HowlRenderSurface`, `HowlRenderHostSurface`, `HowlRenderGridSize`, `HowlRenderSurfaceToken`, `HowlRenderSurfaceDamageItem`, `HowlRenderSurfaceDamageSpan`, `HowlRenderSurfaceCommand`, `HowlRenderSurfaceCommandSpan` except explicit historical notes inside `research/howl-render-surface-layout-present.md`.
+- Compile gate for both nested repos.
+- ABI assertions still prove packet bounds and span counts.
 
 Non-Goals:
 
-- No C ABI/header rename in this slice.
-- No SDL/EGL code.
-- No behavior change to draw primitives.
+- No EGL damaged present implementation.
 - No X11 implementation slice.
 - No resurrection of the old GLFW backend unless source-backed research proves SDL blocks the required path and the user approves that direction explicitly.
-- No preservation of stale API/ABI names by default.
+- No preservation of old C ABI names by typedef or alias.
 
 Stop Conditions:
 
-- Moving files requires changing C ABI/header names.
-- Tests require duplicate roots.
-- A required replacement name proves impossible without a new owner concept.
+- Translate-C generated bindings cannot be refreshed by normal build/test.
+- Another repo outside allowed files depends on old names.
+- Any old-name alias seems necessary.
 - References conflict on an owner boundary and no explicit user override receipt exists.
-- Any old-name compatibility alias seems necessary.
 
 Artifact Rule:
 
-- `sprints/current.txt` carries Execution Slice 1 only as live execution scope.
-- Coder must report child `howl-render` repo status and root repo status.
-- Reviewer must identify a child commit hash or explicit uncommitted handoff.
-- Orchestrator must close both root and child receipts before accepting the slice.
+- `sprints/current.txt` carries Execution Slice 2 only as live execution scope.
+- Coder must report child `howl-render`, child `howl-linux-host`, and root repo status.
+- Reviewer must identify child commit hashes or explicit uncommitted handoffs.
+- Orchestrator must close render, linux-host, and root receipts before accepting the slice.
 
 Execution status:
 
-- Coder `coder-2026-06-19-render-surface-layout-present-01` implemented Slice 1 in `howl-render`.
-- Verification passed: `zig build test:unit`, `zig build check`, `zig build test:abi`, and `zig build benchmark:render:build` in `howl-render`.
-- Grep gates passed for stale grid/damage/rect imports and old public layout/draw owner names under `howl-render/src`.
-- Review accepted by `review-2026-06-19-render-surface-layout-present-03` with no findings.
-- Child render commit receipt: `5383bf6 Rename render layout and draw owners`.
-- Root commit receipt: open until this artifact and the child pointer are committed.
+- Slice 1 accepted and committed: `howl-render` `5383bf6`; root `71b72c7`.
+- Slice 2 accepted after reviewer pass `review-2026-06-19-render-surface-layout-present-04` and committed in child repos: `howl-render` `6c08bf8`; `howl-linux-host` `968d496`.
+- Slice 2 verification passed: `howl-render` `zig build test:unit`, `zig build check`, `zig build test:abi`, `zig build benchmark:render:build`; `howl-linux-host` `zig build test:unit`, `zig build check`; stale C ABI and host-surface vocabulary grep gates clean.
