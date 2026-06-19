@@ -1,3 +1,9 @@
+Historical Authority
+
+- Historical authority at the time: active host surface layout loop for `orch-2026-06-19-host-surface-layout-01`.
+- Why done: accepted host/display viewport slices were implemented, verified, committed, and pushed before the event-semantics sprint replaced the active surface.
+- Must not be used for: live execution scope, current slice authority, or event-semantics naming decisions.
+
 Howl Linux Host Surface Layout Loop
 
 Orchestrator session id: `orch-2026-06-19-host-surface-layout-01`.

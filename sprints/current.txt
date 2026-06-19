@@ -7,59 +7,77 @@ Purpose:
 
 Sprint:
 
-- Active planning artifact: `research/howl-linux-host-surface-layout-redesign.md`.
-- Active loop artifact: `loops/howl-linux-host-surface-layout-loop.txt`.
+- Active planning artifact: `research/howl-product-event-semantics.md`.
+- Active loop artifact: `loops/howl-product-event-semantics-loop.txt`.
 
-Active work:
+Active execution:
 
-- Host terminal surface layout redesign for the tab-bar/viewport geometry bug.
-- Orchestrator session id: `orch-2026-06-19-host-surface-layout-01`.
-- Slice 1, snapped terminal surface geometry, is accepted and verified. It is receipt context only.
-- Slice 2, display-owned terminal placement, is accepted and verified. It is receipt context only.
-- Current executable slice: Slice 3, terminal input uses placed snapped terminal rect.
+- Product-wide event/interface vocabulary cleanup across all repos.
+- Orchestrator session id: `orch-2026-06-19-product-event-semantics-01`.
+- Researcher session id: `research-2026-06-19-product-event-semantics-01`.
+- Reviewer session id: `review-2026-06-19-product-event-semantics-03`.
+- Current executable slice: Slice 1, host retained render admission vocabulary.
 
-Current Slice 3 Problem:
+Current Slice 1 Problem:
 
-- Display now owns snapped terminal placement for presentation.
-- Input still uses raw content logical and pixel extents.
-- Raw leftover pixels below/right of the snapped terminal grid can still be treated as terminal input and clamp to the last row/column.
+- Host retained render state uses `WorkState`/`workState` even though the owner is admitting a render turn and may mutate bootstrap/present state.
+- Host event-loop facts use `render_work_pending` and `frame_work_pending` where the real concepts are render-turn admission and visual presentation reason.
+- Tests use generic "work" wording for retained render/present/frame behavior.
 
 Required Reference Pressure:
 
-- Alacritty `SizeInfo.contains_point(...)` excludes padding/non-grid area from terminal grid input.
-- Kitty uses explicit window geometry regions before rendering/input consequences.
-- TigerBeetle/Howl law requires owner-true names, assertions, and proof.
+- Alacritty governs host/runtime/display/presentation/render organization.
+- Ghostty governs VT and embedding seam pressure.
+- TigerBeetle requires exact names, bounded event loops/queues, assertions, and proof.
+- Current ABI/interface shape is not assumed correct and is not protected from correction.
 
-Execution Gate:
+Required Slice 1 Shape:
 
-- Reviewer must gate the Slice 3 section of `research/howl-linux-host-surface-layout-redesign.md` before coder execution.
-- If reviewer accepts, coder implements only Slice 3 and records evidence in `loops/howl-linux-host-surface-layout-loop.txt`.
-- If reviewer rejects, reviewer writes exact findings in the loop and the plan is repaired before coding.
+- Rename `render_retained.WorkState` to `RenderTurnAdmission`.
+- Rename retained `workState(bootstrap_surface)` to `admitRenderTurn(bootstrap_surface)` because it mutates bootstrap/present admission before returning the snapshot.
+- Rename `WorkState.needsRenderSurface()` to `needsRenderTurn()`.
+- Rename `Context.workState()` to `renderTurnAdmission()`.
+- Rename local `work_before` to `admission_before` and `driveRenderLocked(..., work)` to `driveRenderLocked(..., admission)`.
+- Rename `LoopRuntimeFacts.render_work_pending` and `RuntimeFacts.render_work_pending` to `render_turn_pending`.
+- Rename `LoopWaitIntent.frame_work_pending` and local `render_pending` to `visual_present_pending`.
+- Rename affected tests from generic work wording to accepted turn/present/admission wording.
+- Preserve retained states `idle`, `prepare_needed`, `submit_ready`, `present_in_flight`, and `failed`.
 
-Required Slice 3 Shape:
+Allowed Files:
 
-- Add `DisplayLayout.terminalLogicalSize(content_logical: Size, content_px: Size, terminal_px: Size) Size`.
-- `terminalLogicalSize(...)` scales snapped terminal pixels into logical input extents, clamps to at least `1`, clamps to content logical extents, and asserts positive/fitting dimensions.
-- Change `event.forwardTerminalInput(...)` to forward terminal logical width/height derived from snapped terminal texture size, not raw content logical size.
-- Change `terminal/input.zig` mouse pixel mapping to use snapped `self.term.render.surface_layout.render_px`, not raw `self.geometry.content_px_w/content_px_h`.
-- Keep terminal placement top-left inside content region.
+- `howl-linux-host/src/terminal/render_retained.zig`.
+- `howl-linux-host/src/terminal/surface.zig`.
+- `howl-linux-host/src/terminal/surface_test.zig`.
+- `howl-linux-host/src/event.zig`.
+- `howl-linux-host/src/display/present.zig`.
+- `loops/howl-product-event-semantics-loop.txt` for coder/reviewer evidence.
 
-Required Slice 3 Gates:
+Required Gates:
 
-- `DisplayLayout.terminalLogicalSize(...)` test: content `960x570`, terminal `960x560`, logical `960x570` returns logical height `560`.
-- Terminal input test proves a mouse event in the raw leftover strip below snapped terminal height is rejected rather than mapped to the last row.
-- `zig build check` in `howl-linux-host`.
-- `zig build test:unit` in `howl-linux-host`.
+- `cd howl-linux-host && zig build test:unit -- "present pending blocks submit path until host present ack"`.
+- `cd howl-linux-host && zig build test:unit -- "submit path runs once no host present is in flight"`.
+- `cd howl-linux-host && zig build test:unit -- "blocked render turn waits until frame deadline"`.
+- `cd howl-linux-host && zig build test:unit -- "latched host redraw remains a present reason after event pump"`.
+- `cd howl-linux-host && zig build test:unit -- "submitWith submits only visual present reasons"`.
+- `cd howl-linux-host && zig build test:unit -- "pty wake observes retained render turn prepared by pty thread"`.
+- `cd howl-linux-host && zig build test:unit`.
+- `cd howl-linux-host && zig build check`.
 - Root `zig build check`.
+
+Non-Goals:
+
+- No renderer ABI movement in this slice.
+- No benchmark or simulation workload renames.
+- No retained render behavior changes.
+- No docs changes; docs are Slice 4.
 
 Stop Conditions:
 
-- Reviewer gate is missing.
-- Coder needs files outside the Slice 3 allowed list in `research/howl-linux-host-surface-layout-redesign.md`.
-- Pointer events outside the snapped terminal rect still map to terminal row/column.
-- Fix requires VT, PTY, render C ABI, headers, or SDL event collection changes.
+- A host call site requires a new renderer C ABI field/function to preserve behavior.
+- `admitRenderTurn()` cannot stay an owner-local retained-render admission decision without widening into event-loop policy.
+- Coder needs files outside the allowed list.
 
 Artifact Rule:
 
-- `sprints/current.txt` carries Slice 3 only as live execution scope.
-- Earlier slices and deferred artifacts are navigation or receipt context only until explicitly re-promoted.
+- `sprints/current.txt` carries Slice 1 only as live execution scope.
+- Later slices in `research/howl-product-event-semantics.md` are queued but not live until promoted here.

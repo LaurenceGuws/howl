@@ -1,3 +1,9 @@
+# Historical Authority
+
+- Historical authority at the time: active host surface layout redesign plan for `orch-2026-06-19-host-surface-layout-01`.
+- Why done: accepted host/display viewport slices were implemented, verified, committed, and pushed before the event-semantics sprint replaced the active surface.
+- Must not be used for: live execution scope, current slice authority, or event-semantics naming decisions.
+
 # Howl Linux Host Surface Layout Redesign
 
 Status: active source-backed plan seed. Reviewer must gate this package before coder execution. Coder and reviewer own execution correction inside `loops/howl-linux-host-surface-layout-loop.txt`.
