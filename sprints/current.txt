@@ -21,6 +21,9 @@ Active execution:
 - Slice 1 root commit receipt: `71b72c7 Track render layout draw owner rename`.
 - Slice 2 child render commit receipt: `howl-render` `6c08bf8 Rename render surface frame ABI`.
 - Slice 2 child linux-host commit receipt: `howl-linux-host` `968d496 Rename host render texture ABI`.
+- Slice 2 root commit receipt: `326cf52 Track render surface frame ABI rename`.
+- Slice 3 child VT commit receipt: `howl-vt` `25c42c5 Expose VT dirty column bounds`.
+- Slice 3 child render commit receipt: `howl-render` `0acbf36 Shape render frame damage rects`.
 
 Problem:
 
@@ -40,75 +43,68 @@ Required Reference Pressure:
 
 Current Live Slice:
 
-- Execution Slice 2: C ABI packet and host texture rename. Completed and awaiting this root receipt commit.
+- Execution Slice 3: VT dirty column ABI and render packet damage rects. Completed and awaiting this root receipt commit.
 - Next executable slice is not promoted in this artifact.
 
-Execution Slice 2 Required Shape:
+Execution Slice 3 Required Shape:
 
-- Rename `HowlRenderSurface` to `HowlRenderSurfaceFrame`.
-- Rename `HowlRenderHostSurface` to `HowlRenderHostTexture`.
-- Rename `HowlRenderSurfaceToken` to `HowlRenderSurfaceFrameToken`.
-- Keep `HowlRenderSurfaceRect` unchanged because it is a render-surface coordinate rect used by frame damage and commands.
-- Rename `HowlRenderSurfaceDamageItem` to `HowlRenderSurfaceFrameDamageItem`.
-- Rename `HowlRenderSurfaceDamageSpan` to `HowlRenderSurfaceFrameDamageSpan`.
-- Rename `HowlRenderSurfaceCommand` to `HowlRenderSurfaceFrameCommand`.
-- Rename `HowlRenderSurfaceCommandSpan` to `HowlRenderSurfaceFrameCommandSpan`.
-- Rename constants with `HOWL_RENDER_SURFACE_*` only when they describe frame packet limits or commands to `HOWL_RENDER_SURFACE_FRAME_*`.
-- Rename C ABI `HowlRenderGridSize` to `HowlRenderCellGrid`.
-- Update Zig imports/usages directly.
-- Do not add compatibility typedefs or aliases.
+- Extend VT row-data ABI with `HOWL_VT_RENDER_STATE_ROW_DATA_DIRTY_COL_START` and `HOWL_VT_RENDER_STATE_ROW_DATA_DIRTY_COL_END`.
+- Back those ABI fields with the existing VT dirty column arrays copied through `screen_set.copyDirtyRows`.
+- Full render damage remains one full render rect.
+- Partial render damage converts dirty rows and dirty column spans to pixel rects.
+- Partial render damage overdamages for neighboring/wide cells, clamps to render bounds, and merges overlapping rects.
+- Preserve existing draw command stream behavior; damage is a present/update hint and packet validation fact, not a retained partial command stream.
 
-Allowed Files For Execution Slice 2:
+Allowed Files For Execution Slice 3:
 
-- `howl-render/include/howl_render.h`.
-- `howl-render/src/libhowl_render.zig`.
+- `howl-vt/include/howl_vt.h`.
+- `howl-vt/src/render_state.zig` for storing the already-copied dirty column bounds on each render-state row.
+- `howl-vt/src/ffi/render_state.zig`.
+- `howl-vt/test/abi.zig`.
+- Renamed render layout/damage/rect owners from Slice 1 only if direct damage shaping requires them.
 - `howl-render/src/surface/emitter.zig`.
 - `howl-render/src/surface/emitter_test.zig`.
 - `howl-render/src/surface/realizer.zig`.
 - `howl-render/src/surface/realizer_test.zig`.
-- `howl-render/src/surface/realizer_resource_store.zig`.
-- `howl-render/src/surface/resource_store.zig`.
 - `howl-render/src/text/surface.zig`.
-- `howl-linux-host/src/howl_render_c.h`.
-- `howl-linux-host/build.zig` only if translate-C include behavior breaks.
-- `howl-linux-host/src/display/render_surface.zig`.
-- `howl-linux-host/src/display/render_surface_commands.zig`.
-- `howl-linux-host/src/display/render_surface_resources.zig`.
-- `howl-linux-host/src/display/render_surface_test.zig`.
-- `howl-linux-host/src/terminal/render_retained.zig`.
-- `howl-linux-host/src/terminal/surface.zig`.
-- `howl-linux-host/src/host_test_root.zig` only if test root imports require renaming.
+- `howl-render/src/surface/prepared_surface.zig`.
+- `howl-render/include/howl_render.h`.
 
 Required Gates:
 
-- Render and linux-host tests/builds pass.
-- Grep gate for old C ABI names: `HowlRenderSurface`, `HowlRenderHostSurface`, `HowlRenderGridSize`, `HowlRenderSurfaceToken`, `HowlRenderSurfaceDamageItem`, `HowlRenderSurfaceDamageSpan`, `HowlRenderSurfaceCommand`, `HowlRenderSurfaceCommandSpan` except explicit historical notes inside `research/howl-render-surface-layout-present.md`.
-- Compile gate for both nested repos.
-- ABI assertions still prove packet bounds and span counts.
+- VT ABI tests for dirty row start/end columns after single-cell edit, full-screen dirty, scroll-exposed row, and hover highlight dirty.
+- Render unit tests for full damage, one dirty row, dirty column span, overdamage clamp at edges, merge overlapping adjacent rows, no zero-area damage, and packet damage count bound overflow.
+- Realizer tests reject invalid damage spans and accept shaped partial damage.
+- `howl-vt` tests/builds pass.
+- `howl-render` tests/builds pass.
 
 Non-Goals:
 
 - No EGL damaged present implementation.
-- No X11 implementation slice.
-- No resurrection of the old GLFW backend unless source-backed research proves SDL blocks the required path and the user approves that direction explicitly.
-- No preservation of old C ABI names by typedef or alias.
+- No host EGL call.
+- No optimization of draw command generation beyond existing behavior.
 
 Stop Conditions:
 
-- Translate-C generated bindings cannot be refreshed by normal build/test.
-- Another repo outside allowed files depends on old names.
-- Any old-name alias seems necessary.
+- Current VT dirty column arrays cannot be exposed without changing VT ownership/lifecycle.
+- Damage count can exceed ABI max under realistic terminal sizes without deterministic full-damage fallback.
 - References conflict on an owner boundary and no explicit user override receipt exists.
 
 Artifact Rule:
 
-- `sprints/current.txt` carries Execution Slice 2 only as live execution scope.
-- Coder must report child `howl-render`, child `howl-linux-host`, and root repo status.
+- `sprints/current.txt` carries Execution Slice 3 only as live execution scope.
+- Coder must report child `howl-vt`, child `howl-render`, and root repo status.
 - Reviewer must identify child commit hashes or explicit uncommitted handoffs.
-- Orchestrator must close render, linux-host, and root receipts before accepting the slice.
+- Orchestrator must close VT, render, and root receipts before accepting the slice.
 
 Execution status:
 
 - Slice 1 accepted and committed: `howl-render` `5383bf6`; root `71b72c7`.
 - Slice 2 accepted after reviewer pass `review-2026-06-19-render-surface-layout-present-04` and committed in child repos: `howl-render` `6c08bf8`; `howl-linux-host` `968d496`.
 - Slice 2 verification passed: `howl-render` `zig build test:unit`, `zig build check`, `zig build test:abi`, `zig build benchmark:render:build`; `howl-linux-host` `zig build test:unit`, `zig build check`; stale C ABI and host-surface vocabulary grep gates clean.
+- Slice 2 root committed: `326cf52`.
+- Slice 3 promoted for implementation.
+- Slice 3 allowed-file correction: `howl-vt/src/render_state.zig` is included because FFI row-data getters can expose only data retained by the VT render-state owner; without retaining the already-copied dirty column bounds on `RenderState.Row`, the ABI extension would be fake.
+- Slice 3 accepted after reviewer passes through `review-2026-06-19-render-surface-layout-present-07` and committed in child repos: `howl-vt` `25c42c5`; `howl-render` `0acbf36`.
+- Slice 3 verification passed: `howl-vt` `zig build test:abi`, `zig build test:unit`, `zig build check`; `howl-render` `zig build test:unit`, `zig build check`, `zig build test:abi`, `zig build benchmark:render:build`.
+- Slice 3 safety note: public C text prepare currently reads VT dirty state but emits full packet damage until a submitted-base ABI exists; command-free prepared-surface paths prove bounded dirty-column damage shaping, and partial frames with draw commands fall back to full packet damage for correctness.
