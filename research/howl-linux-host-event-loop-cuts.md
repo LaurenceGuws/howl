@@ -30,6 +30,10 @@ Completed event-loop cuts:
 - `pty_wait_thread` drains `pty_pump.driveOnce` while bounded work reports `keep`.
 - `pty_pump` marks retained render work directly when VT feed/runtime progress changes terminal state.
 - Host wake acknowledgement now only clears coalescing state; wake no longer admits host-side transport pumping.
+- Slice 2a collapsed SDL GL present completion to synchronous submit completion.
+- `display.State` no longer stores submitted/ready present tokens.
+- `present.zig` no longer drains deferred ready completions; terminal frames complete immediately after `SDL_GL_SwapWindow` returns.
+- Retained VT source ack remains conditional and owner-local, so stale completed snapshots are ignored instead of crashing.
 
 ## Ordered Cuts
 
