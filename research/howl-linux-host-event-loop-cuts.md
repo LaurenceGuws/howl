@@ -34,6 +34,7 @@ Completed event-loop cuts:
 - `display.State` no longer stores submitted/ready present tokens.
 - `present.zig` no longer drains deferred ready completions; terminal frames complete immediately after `SDL_GL_SwapWindow` returns.
 - Retained VT source ack remains conditional and owner-local, so stale completed snapshots are ignored instead of crashing.
+- Slice 2b deleted the remaining host `pending_terminal_present` state and stale ready-completion test scaffolding.
 
 ## Ordered Cuts
 
