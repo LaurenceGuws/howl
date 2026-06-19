@@ -16,7 +16,7 @@ Active execution:
 - Orchestrator session id: `orch-2026-06-19-render-surface-layout-present-01`.
 - Researcher session id: `research-2026-06-19-render-surface-layout-present-01`.
 - Reviewer session id: `review-2026-06-19-render-surface-layout-present-02`.
-- Coder session id: `coder-2026-06-19-render-surface-layout-present-04`.
+- Coder session id: `coder-2026-06-19-render-surface-layout-present-05`.
 - Slice 1 child render commit receipt: `howl-render` `5383bf6 Rename render layout and draw owners`.
 - Slice 1 root commit receipt: `71b72c7 Track render layout draw owner rename`.
 - Slice 2 child render commit receipt: `howl-render` `6c08bf8 Rename render surface frame ABI`.
@@ -26,6 +26,8 @@ Active execution:
 - Slice 3 child render commit receipt: `howl-render` `0acbf36 Shape render frame damage rects`.
 - Slice 3 root commit receipt: `2487694 Track VT dirty column damage slice`.
 - Slice 4 child linux-host commit receipt: `howl-linux-host` `132b810 Prove SDL EGL damaged present seam`.
+- Slice 4 root commit receipt: `6037689 Track SDL EGL damaged present proof`.
+- Slice 5 child linux-host commit receipt: `howl-linux-host` `ff0b779 Prove Wayland present ownership seam`.
 
 Problem:
 
@@ -45,34 +47,34 @@ Required Reference Pressure:
 
 Current Live Slice:
 
-- Execution Slice 4: SDL EGL damaged-present feasibility proof in `howl-linux-host`.
-- Slice 5 damaged-present production behavior is not promoted until this proof slice is reviewed and accepted.
+- Execution Slice 5: Howl-owned Wayland present seam proof in `howl-linux-host`.
+- Production damaged present is not promoted until this Wayland present ownership proof is reviewed and accepted.
 
-Execution Slice 4 Required Shape:
+Execution Slice 5 Required Shape:
 
-- Keep SDL as the window/input/text-input/clipboard/event harness unless source-backed proof shows it blocks required present control.
-- Add a display-owned EGL proof seam that binds `SDL_EGL_GetCurrentDisplay`, `SDL_EGL_GetWindowSurface`, and `SDL_EGL_GetProcAddress`.
-- Resolve `eglSwapBuffersWithDamageKHR` first, then `eglSwapBuffersWithDamageEXT`.
-- Validate main-thread, current-window, current-context, non-null EGL display, non-null EGL window surface, damage rect bounds, and bottom-left coordinate conversion.
-- Return an explicit decision: KHR possible, EXT possible, plain SDL swap fallback only when KHR/EXT is unavailable, or blocked/escalate because required SDL Wayland semantics cannot be preserved.
-- Full damage with KHR/EXT available uses `n_rects == 0` damaged-swap semantics, not plain SDL swap.
+- Keep SDL as the window/input/text-input/clipboard/event harness.
+- Add a display-owned Wayland present proof seam that reads `SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER`, `SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER`, and `SDL_PROP_WINDOW_WAYLAND_EGL_WINDOW_POINTER` through `SDL_GetWindowProperties` and `SDL_GetPointerProperty`.
+- Bind `wl_display_flush` through the system Wayland client header/library so Howl can explicitly preserve the display flush behavior bypassed by direct EGL damaged swap.
+- Preserve hidden-window skip policy through public `SDL_GetWindowFlags` and `SDL_WINDOW_HIDDEN`.
+- Return explicit decisions for ready, hidden skip, missing Wayland display, missing Wayland surface, missing Wayland EGL window, and flush failure.
 - Do not call damaged present in production behavior yet; existing runtime present remains `SDL_GL_SwapWindow` for this proof slice.
 
-Allowed Files For Execution Slice 4:
+Allowed Files For Execution Slice 5:
 
 - `research/howl-render-surface-layout-present.md`.
 - `sprints/current.txt`.
 - `loops/howl-render-surface-layout-present-loop.txt`.
 - `howl-linux-host/src/display/display.zig`.
-- New `howl-linux-host/src/display/egl_present.zig`.
+- `howl-linux-host/src/display/egl_present.zig` only for direct import/decision integration if needed.
+- New `howl-linux-host/src/display/wayland_present.zig`.
 - `howl-linux-host/src/sdl_c.h`.
-- `howl-linux-host/build.zig` only if SDL EGL symbols are not visible through existing translate-C.
+- `howl-linux-host/build.zig` only to link/bind Wayland client support.
 - `howl-linux-host/src/host_test_root.zig` only if a new test file must be imported.
 
 Required Gates:
 
-- Fake-C tests prove KHR preferred over EXT, EXT fallback, plain SDL swap fallback only when KHR/EXT is unavailable, full damage uses `n_rects == 0` when KHR/EXT is available, EGL bottom-left rect conversion, resize/full-damage decision, token monotonicity unchanged, and main-thread/current-window/current-context assertions.
-- Source-backed assertion documents SDL Wayland behavior bypassed by direct damaged swap and whether Howl can preserve required semantics in the current `SDL_GL_SetSwapInterval(0)` path.
+- Fake-C tests prove ready handle acquisition, hidden-window skip, missing display/surface/egl-window blockers, successful explicit flush, and flush failure.
+- Source-backed assertions document SDL property names and SDL Wayland source behavior that sets those properties.
 - Run `zig build test:unit` and `zig build check` in `howl-linux-host`.
 
 Non-Goals:
@@ -81,19 +83,20 @@ Non-Goals:
 - No custom Wayland event loop.
 - No GLFW/backend seam implementation.
 - No X11 implementation.
+- No SDL custom surface/toplevel ownership change yet.
 - No changes outside allowed files.
 
 Stop Conditions:
 
 - References conflict on an owner boundary and no explicit user override receipt exists.
-- A promoted implementation would need to bypass SDL Wayland swap semantics without source-backed proof or explicit user/orchestrator approval.
-- SDL EGL functions cannot be bound through current SDL headers/build.
-- The proof cannot distinguish extension-unavailable fallback from SDL-blocked damaged present.
+- SDL Wayland handle properties cannot be bound through current SDL headers/build.
+- `wl_display_flush` cannot be bound without adding a new dependency beyond system Wayland client support.
+- The proof cannot preserve hidden-window skip and display flush without SDL internals.
 - The proof tries to make permanent plain SDL swap the product answer after proving SDL blocks damaged present; that is rejected because vendor limitations do not define Howl internals.
 
 Artifact Rule:
 
-- `sprints/current.txt` carries Execution Slice 4 only as live scope.
+- `sprints/current.txt` carries Execution Slice 5 only as live scope.
 - Coder must report child `howl-linux-host` and root repo status.
 - Reviewer must identify child commit hash or explicit uncommitted handoff.
 - Orchestrator must close linux-host and root receipts before accepting the slice.
@@ -115,3 +118,7 @@ Execution status:
 - Slice 4 promoted for code proof as `coder-2026-06-19-render-surface-layout-present-04` after user explicitly said to start.
 - Slice 4 code proof committed in child repo: `howl-linux-host` `132b810 Prove SDL EGL damaged present seam`. Verification passed: `zig build test:unit`, `zig build check`.
 - Slice 4 proof result: SDL public EGL access can bind display, window surface, and KHR/EXT damaged-swap procs, but the current SDL-retained public path blocks because it cannot preserve SDL Wayland hidden-window skip or Wayland display flush. Next implementation direction is host-present ownership change, not permanent plain SDL swap.
+- Slice 4 root committed: `6037689 Track SDL EGL damaged present proof`.
+- Slice 5 promoted for code proof as `coder-2026-06-19-render-surface-layout-present-05` after confirming SDL exposes Wayland display/surface/egl-window properties and system Wayland client headers are available.
+- Slice 5 code proof committed in child repo: `howl-linux-host` `ff0b779 Prove Wayland present ownership seam`. Verification passed: `zig build test:unit`, `zig build check`.
+- Slice 5 proof result: Howl can acquire SDL's Wayland display/surface/egl-window handles through public SDL properties, preserve hidden-window skip through public SDL flags, and explicitly flush the acquired Wayland display with `wl_display_flush`.
