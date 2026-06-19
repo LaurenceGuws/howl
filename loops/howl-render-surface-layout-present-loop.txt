@@ -1,0 +1,43 @@
+Howl Render Surface Layout Present Loop
+
+Orchestrator session id: `orch-2026-06-19-render-surface-layout-present-01`.
+Researcher session id: open.
+Reviewer session id: open.
+
+Problem statement:
+
+- Howl currently uses overlapping render nouns: `surface`, `scene`, `geometry`, and `grid` across `howl-render`, `howl-linux-host`, and the render C ABI.
+- Those nouns are not presumed correct. Existing APIs and cross-repo contracts are not frozen.
+- The sprint must produce the reference-backed owner model first, then execute owner-true code/API slices without preserving stale names for compatibility comfort.
+- Linux Wayland is the first host scope, with KDE Wayland-only and Hyprland as the practical target environments. X11 is not an implementation target for this sprint.
+- SDL remains the pragmatic window/input/text-input/clipboard/event harness unless research proves it blocks the required GPU-present control.
+- SDL's normal `SDL_GL_SwapWindow` hides the EGL swap-damage hook; SDL still exposes EGL display, EGL window surface, and EGL proc lookup APIs that may allow a small direct damaged-present path.
+
+Loop phase:
+
+- Active planning loop for render surface/layout/present ownership and naming.
+- Active research plan is `research/howl-render-surface-layout-present.md`.
+- No coder execution is live until research and review settle the full ordered slice plan.
+
+Non-negotiables:
+
+- Alacritty governs host display, damage, renderer organization, and Wayland EGL present-damage shape unless the user explicitly overrides a specific case.
+- Ghostty contributes VT and embedding seam pressure, not broad renderer/display architecture when Alacritty has a direct shape.
+- Kitty contributes GLFW/Wayland/EGL and UX pressure where Alacritty or SDL facts leave a gap, but Kitty does not override Alacritty for the display/render owner split.
+- TigerBeetle style is a hard gate for exact nouns, owner truth, assertions, bounded arrays/queues, and proof.
+- API and ABI names are in scope; no cross-repo API is frozen.
+- Howl must not add an umbrella runtime layer, generic backend manager, or bucket owner to hide the overlap.
+- Do not implement X11 fallback during this sprint.
+
+Initial reference facts already established in this session:
+
+- Alacritty tracks terminal `LineDamageBounds` and `TermDamage`, imports that into display `DamageTracker`, shapes damaged lines into pixel `Rect`s, overdamages for nearby/wide cells, merges overlapping rects, draws normally, and on Wayland EGL calls `swap_buffers_with_damage` at present time.
+- Alacritty's partial GPU update is a present-damage hint, not a retained partial render command stream.
+- SDL3 docs expose `SDL_EGL_GetCurrentDisplay`, `SDL_EGL_GetWindowSurface`, and `SDL_EGL_GetProcAddress`.
+- SDL3 Wayland `SDL_GL_SwapWindow` calls plain `eglSwapBuffers` in `src/video/wayland/SDL_waylandopengles.c`; it has no public damage-rect parameter.
+- Early `howl-linux-host` had a `-Dwindow-backend=sdl|glfw` compile-time backend seam; Kitty vendors a modified GLFW, but its normal GLFW EGL swap path also uses plain `eglSwapBuffers`.
+
+Loop notes:
+
+- Orchestrator `orch-2026-06-19-render-surface-layout-present-01`: hello. Intent: start the render surface/layout/present sprint after user clarified Wayland scope, SDL retention, damaged-present priority, and unfrozen API/cross-repo authority. Outcome: opened a new active loop, archived the completed event-semantics loop, and seeded the non-negotiables and already established reference facts. Handoff: researcher must write the full source-backed plan in `research/howl-render-surface-layout-present.md`, covering all `surface`/`scene`/`geometry`/`grid` owners and the SDL/EGL damaged-present path before any coder slice is promoted.
+- Orchestrator `orch-2026-06-19-render-surface-layout-present-01`: hello. Intent: seed the first research scan without turning it into implementation authority. Outcome: scanned current `howl-render`, current `howl-linux-host`, Alacritty, SDL docs/source, and Kitty/GLFW for the suspicious owner nouns and damaged-present anchors; recorded only compact seed facts in the research artifact. Handoff: researcher still must complete the full inventory, line-cited reference map, and ordered slice plan; no coding is authorized.

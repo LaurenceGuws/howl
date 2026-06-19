@@ -7,69 +7,72 @@ Purpose:
 
 Sprint:
 
-- Active planning artifact: `research/howl-product-event-semantics.md`.
-- Active loop artifact: `loops/howl-product-event-semantics-loop.txt`.
+- Active planning artifact: `research/howl-render-surface-layout-present.md`.
+- Active loop artifact: `loops/howl-render-surface-layout-present-loop.txt`.
 
-Active execution:
+Active planning:
 
-- Product-wide event/interface vocabulary cleanup across all repos.
-- Orchestrator session id: `orch-2026-06-19-product-event-semantics-01`.
-- Researcher session id: `research-2026-06-19-product-event-semantics-01`.
-- Reviewer session id: `review-2026-06-19-product-event-semantics-03`.
-- Slice 1, host retained render admission vocabulary, is accepted and committed as `howl-linux-host d2bde33` and root `4120269`. It is receipt context only.
-- Slice 2, host test-injection ops vocabulary, is accepted and committed as `howl-linux-host b53d381` and root `0675b44`. It is receipt context only.
-- Slice 3, stale host render session mirror deletion, is accepted and committed as `howl-linux-host af7bf44` and root `74bc609`. It is receipt context only.
-- Slice 4, documentation event vocabulary alignment, is accepted and committed as `howl-linux-host 3076c56`, `howl-render 1eae264`, and root `984af4c`. It is receipt context only.
-- Current executable slice: Slice 5, render benchmark API case vocabulary correction.
+- Render surface/layout/present ownership and naming across `howl-render`, `howl-linux-host`, root docs/accountability, and any required C ABI/header surfaces.
+- Orchestrator session id: `orch-2026-06-19-render-surface-layout-present-01`.
+- Researcher session id: open.
+- Reviewer session id: open.
+- No coder execution is live.
 
-Current Slice 5 Problem:
+Problem:
 
-- The previous plan wrongly left render benchmark API/output vocabulary as `workload`.
-- `howl-render/src/benchmark_main.zig` is an active render measurement surface and its CLI text/NDJSON output fields are product-facing enough to use exact benchmark-case vocabulary.
+- Current Howl render/display vocabulary overlaps across `surface`, `scene`, `geometry`, and `grid`.
+- Current APIs and cross-repo contracts are not frozen; wrong names and wrong boundaries must be changed explicitly.
+- First host scope is Linux Wayland under KDE Wayland-only and Hyprland.
+- SDL remains the pragmatic window/input/text-input/clipboard/event harness unless source-backed research proves it blocks required GPU-present control.
+- We need Alacritty-style Wayland EGL present-damage control, and SDL's normal `SDL_GL_SwapWindow` hides that damage hook.
 
 Required Reference Pressure:
 
-- Alacritty governs host/runtime/display/presentation/render organization.
-- Ghostty governs VT and embedding seam pressure.
-- TigerBeetle requires exact names, bounded event loops/queues, assertions, and proof.
-- Current ABI/interface shape is not assumed correct and is not protected from correction.
+- Alacritty governs host display, renderer organization, damage tracking, frame drawing, and Wayland EGL present damage.
+- SDL official docs/source govern what SDL exposes and hides.
+- Kitty/GLFW is secondary evidence for Linux/Wayland/EGL framework pressure and the historical Howl GLFW seam.
+- Ghostty governs VT and embedding seam pressure only where Alacritty lacks the shape.
+- TigerBeetle requires exact names, owner truth, assertions, bounded proof, and no bucket owners.
 
-Required Slice 5 Shape:
+Current Live Slice:
 
-- Rename render benchmark data shapes from `Workload*` to `Benchmark*`/`BenchmarkCase*` names.
-- Rename builder and runner functions from `*Workload*` to `*BenchmarkCase*`/`*Case` names.
-- Rename local variables from `workload(s)` to `benchmark_case(s)`.
-- Rename text output `workload=` to `benchmark_case=`.
-- Rename NDJSON field `workload` to `benchmark_case`.
-- Leave VT benchmark/simulation workload terms for a separate pass unless explicitly promoted.
+- Planning Slice 1: source-backed inventory and full ordered slice plan.
 
-Allowed Files:
+Planning Slice 1 Required Shape:
 
-- `howl-render/src/benchmark_main.zig`.
-- `loops/howl-product-event-semantics-loop.txt` for coder/reviewer evidence.
+- Inventory every current `surface`, `scene`, `geometry`, and `grid` owner in `howl-render` and `howl-linux-host` that affects render layout, prepare, C ABI packets, host GL resources, or present.
+- Produce exact line-cited reference anchors for Alacritty, SDL, Kitty/GLFW, Ghostty as needed, and TigerBeetle constraints.
+- Classify current Howl symbols into the proposed owner model or mark them stale/misnamed.
+- Propose ordered implementation slices with exact allowed files, required shape, tests, non-goals, stop conditions, reviewer id, coder id placeholder, and nested-repo/root commit receipt rules.
+- Include an explicit SDL-retained EGL damaged-present slice if research confirms the direct extension path is viable.
 
-Required Gates:
+Allowed Files For Planning Slice 1:
 
-- `cd howl-render && zig build check`.
-- `cd howl-render && zig build test:unit`.
-- `cd howl-render && zig build test:abi`.
-- `cd howl-render && zig build benchmark:render:build`.
-- Root `zig build check`.
-- Render source/header grep for `work`/`workload` terms returns no matches.
+- `research/howl-render-surface-layout-present.md`.
+- `loops/howl-render-surface-layout-present-loop.txt`.
+- `sprints/current.txt`.
+
+Required Planning Gates:
+
+- Research artifact includes sources read in order.
+- Research artifact includes exact file/line anchors for current source and references.
+- Research artifact includes an ordered full-sprint slice plan.
+- Reviewer accepts the planning package before any coding slice is promoted.
 
 Non-Goals:
 
-- No renderer behavior changes.
-- No render ABI/header changes beyond benchmark output labels.
-- No VT benchmark/simulation workload term changes in this slice.
-- No Apache/license term changes.
+- No product code changes in Planning Slice 1.
+- No X11 implementation slice.
+- No resurrection of the old GLFW backend unless source-backed research proves SDL blocks the required path and the user approves that direction explicitly.
+- No preservation of stale API/ABI names by default.
 
 Stop Conditions:
 
-- Render source/header grep still finds `work`/`workload` terms after the slice.
-- Coder needs files outside the allowed list.
+- Research cannot prove whether SDL-retained EGL damaged present can safely bypass `SDL_GL_SwapWindow`.
+- References conflict on an owner boundary and no explicit user override receipt exists.
+- Planning needs product code edits before reviewer acceptance.
 
 Artifact Rule:
 
-- `sprints/current.txt` carries Slice 5 only as live execution scope.
-- Later slices in `research/howl-product-event-semantics.md` are queued but not live until promoted here.
+- `sprints/current.txt` carries Planning Slice 1 only as live execution scope.
+- No coder may implement until this sprint's research and reviewer gate are complete.
