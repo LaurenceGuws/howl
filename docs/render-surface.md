@@ -283,7 +283,7 @@ The only valid ordering is:
 3. Use: render may emit commands that reference a resource created in the same surface or
    an earlier unretired surface.
 4. Retire: render emits one retire event after the final command that may use the resource.
-5. Ack: host reports one ack only after all host-side work that could read the resource has
+5. Ack: host reports one ack only after all host-side commands or backend submissions that could read the resource have
    completed.
 6. Reuse: render may reuse the numeric `value` only with a greater `generation` after ack.
 
@@ -536,7 +536,7 @@ Glyph atlas lifetime uses the global resource lifetime order: create, update, us
 reuse. A create establishes page dimensions, resource kind, format, generation, and `create_seq`.
 Uploads may update only live, created, unretired pages of matching generation. Commands may use a
 page created earlier in the same surface or any previous unretired surface. Retire must occur after the
-last command that can read the page. Host ack must occur only after host-side work that could read
+last command that can read the page. Host ack must occur only after host-side commands or backend submissions that could read
 the page has completed. Render may reuse a numeric resource `value` only with a greater generation
 after ack.
 
@@ -671,7 +671,7 @@ render-surface rejects invalid input with a non-success status and no partial li
 - Span `count_max` not equal to the named maximum: reject.
 - Upload byte total greater than `HOWL_RENDER_SURFACE_UPLOAD_BYTES_MAX`: reject.
 - Zero render, cell, or grid dimensions: reject.
-- Rects with zero width or height where a command/upload requires visible work: reject.
+- Rects with zero width or height where a command/upload requires a visible draw or update: reject.
 - Rects outside render/resource bounds after clamping would be empty: reject.
 - Stale snapshot, surface, geometry, or resource token: return stale and expose no live spans.
 - Unknown, retired, wrong-generation, or unacked-reused resource IDs: reject.

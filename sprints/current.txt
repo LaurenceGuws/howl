@@ -18,13 +18,13 @@ Active execution:
 - Reviewer session id: `review-2026-06-19-product-event-semantics-03`.
 - Slice 1, host retained render admission vocabulary, is accepted and committed as `howl-linux-host d2bde33` and root `4120269`. It is receipt context only.
 - Slice 2, host test-injection ops vocabulary, is accepted and committed as `howl-linux-host b53d381` and root `0675b44`. It is receipt context only.
-- Current executable slice: Slice 3, delete stale host render session mirror.
+- Slice 3, stale host render session mirror deletion, is accepted and committed as `howl-linux-host af7bf44` and root `74bc609`. It is receipt context only.
+- Current executable slice: Slice 4, documentation event vocabulary alignment.
 
-Current Slice 3 Problem:
+Current Slice 4 Problem:
 
-- `howl-linux-host/src/render_session.zig` is unreferenced by host source/build and carries stale renderer-shaped ownership, including `SessionWorkState` and `workState(...)`.
-- Renaming dead `SessionWorkState` would preserve false ownership. The correct Slice 3 action is deletion.
-- Current source also shows dormant `howl-render` files importing missing `../render_session.zig`; that is a separate renderer structural cleanup, not this host stale-mirror deletion.
+- Active design docs still use generic `work`/`work state` wording where accepted code now says render turn, prepare, submit, present, or ack.
+- Documentation should follow accepted product vocabulary without changing archived receipts or benchmark/simulation workload terms.
 
 Required Reference Pressure:
 
@@ -33,38 +33,35 @@ Required Reference Pressure:
 - TigerBeetle requires exact names, bounded event loops/queues, assertions, and proof.
 - Current ABI/interface shape is not assumed correct and is not protected from correction.
 
-Required Slice 3 Shape:
+Required Slice 4 Shape:
 
-- Delete `howl-linux-host/src/render_session.zig`.
-- Do not add compatibility aliases, stubs, or replacement host-local session surfaces.
-- Prove no host import or build root references `render_session.zig`, `SessionWorkState`, `TextSessionOwner`, or host `.workState(...)` after deletion.
+- Update active docs from generic `work`/`work state` to accepted terms: bounded progress, render prepare/submit/upload, render-turn admission, present, resource ack, and visible draw/update need.
+- Leave benchmark and simulation `workload` terms untouched.
 
 Allowed Files:
 
-- `howl-linux-host/src/render_session.zig`.
+- `howl-linux-host/design.md`.
+- `howl-render/design.md`.
+- `docs/render-surface.md`.
 - `loops/howl-product-event-semantics-loop.txt` for coder/reviewer evidence.
 
 Required Gates:
 
-- `rg "render_session|SessionWorkState|TextSessionOwner|\.workState\(" howl-linux-host/src` returns no matches.
-- `cd howl-linux-host && zig build test:unit`.
-- `cd howl-linux-host && zig build check`.
 - Root `zig build check`.
 
 Non-Goals:
 
-- No renderer file changes in this slice.
-- No renderer ABI changes in this slice.
-- No host replacement abstraction.
-- No docs changes; docs are Slice 4.
+- No product code changes.
+- No archived loop/research prose rewrites.
+- No Apache/license term changes.
+- No benchmark/simulation workload term changes.
 
 Stop Conditions:
 
-- Any host source or build root still imports `render_session.zig`.
-- Deletion requires renderer source changes to keep host green.
+- Docs would describe an unaccepted implementation decision.
 - Coder needs files outside the allowed list.
 
 Artifact Rule:
 
-- `sprints/current.txt` carries Slice 3 only as live execution scope.
+- `sprints/current.txt` carries Slice 4 only as live execution scope.
 - Later slices in `research/howl-product-event-semantics.md` are queued but not live until promoted here.
