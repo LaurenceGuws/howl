@@ -16,13 +16,13 @@ Active execution:
 - Orchestrator session id: `orch-2026-06-19-product-event-semantics-01`.
 - Researcher session id: `research-2026-06-19-product-event-semantics-01`.
 - Reviewer session id: `review-2026-06-19-product-event-semantics-03`.
-- Current executable slice: Slice 1, host retained render admission vocabulary.
+- Slice 1, host retained render admission vocabulary, is accepted and committed as `howl-linux-host d2bde33` and root `4120269`. It is receipt context only.
+- Current executable slice: Slice 2, host test-injection ops vocabulary.
 
-Current Slice 1 Problem:
+Current Slice 2 Problem:
 
-- Host retained render state uses `WorkState`/`workState` even though the owner is admitting a render turn and may mutate bootstrap/present state.
-- Host event-loop facts use `render_work_pending` and `frame_work_pending` where the real concepts are render-turn admission and visual presentation reason.
-- Tests use generic "work" wording for retained render/present/frame behavior.
+- Host test-injection seams use `RealOps`, which hides the concrete platform seam under a generic "real" namespace.
+- PTY/runtime test names still use generic "work" wording where they prove progress turns, transport slices, runtime obligations, or locked feed byte caps.
 
 Required Reference Pressure:
 
@@ -31,53 +31,50 @@ Required Reference Pressure:
 - TigerBeetle requires exact names, bounded event loops/queues, assertions, and proof.
 - Current ABI/interface shape is not assumed correct and is not protected from correction.
 
-Required Slice 1 Shape:
+Required Slice 2 Shape:
 
-- Rename `render_retained.WorkState` to `RenderTurnAdmission`.
-- Rename retained `workState(bootstrap_surface)` to `admitRenderTurn(bootstrap_surface)` because it mutates bootstrap/present admission before returning the snapshot.
-- Rename `WorkState.needsRenderSurface()` to `needsRenderTurn()`.
-- Rename `Context.workState()` to `renderTurnAdmission()`.
-- Rename local `work_before` to `admission_before` and `driveRenderLocked(..., work)` to `driveRenderLocked(..., admission)`.
-- Rename `LoopRuntimeFacts.render_work_pending` and `RuntimeFacts.render_work_pending` to `render_turn_pending`.
-- Rename `LoopWaitIntent.frame_work_pending` and local `render_pending` to `visual_present_pending`.
-- Rename affected tests from generic work wording to accepted turn/present/admission wording.
-- Preserve retained states `idle`, `prepare_needed`, `submit_ready`, `present_in_flight`, and `failed`.
+- Rename `RealOps` in `howl-linux-host/src/terminal/pty_pump.zig` to `TerminalProgressOps`.
+- Rename `RealOps` in `howl-linux-host/src/terminal/pty_wait_thread.zig` to `ProgressThreadOps`.
+- Rename `RealOps` in `howl-linux-host/src/terminal/vt_surface.zig` to `RenderStateCaptureOps`.
+- Rename `RealOps` in `howl-linux-host/src/terminal/fonts.zig` to `FontSizeOps`.
+- Keep `RealAckOps` unless implementation proves reviewer needs the exact `RenderStateAckOps` rename; accepted research says it is already role-specific enough.
+- Rename PTY/runtime test names:
+  - `progress drive keeps work bounded after saturated transport slice` -> `progress drive requests another turn after saturated transport slice`.
+  - `progress drive requests redraw and next turn for runtime work` -> `progress drive requests redraw and next turn for runtime obligation`.
+  - `transport pump caps locked feed work` -> `transport pump caps locked feed bytes`.
+  - `progress thread drains kept work before waiting again` -> `progress thread drains kept turns before waiting again`.
 
 Allowed Files:
 
-- `howl-linux-host/src/terminal/render_retained.zig`.
-- `howl-linux-host/src/terminal/surface.zig`.
-- `howl-linux-host/src/terminal/surface_test.zig`.
-- `howl-linux-host/src/event.zig`.
-- `howl-linux-host/src/display/present.zig`.
+- `howl-linux-host/src/terminal/pty_pump.zig`.
+- `howl-linux-host/src/terminal/pty_wait_thread.zig`.
+- `howl-linux-host/src/terminal/vt_surface.zig`.
+- `howl-linux-host/src/terminal/fonts.zig`.
 - `loops/howl-product-event-semantics-loop.txt` for coder/reviewer evidence.
 
 Required Gates:
 
-- `cd howl-linux-host && zig build test:unit -- "present pending blocks submit path until host present ack"`.
-- `cd howl-linux-host && zig build test:unit -- "submit path runs once no host present is in flight"`.
-- `cd howl-linux-host && zig build test:unit -- "blocked render turn waits until frame deadline"`.
-- `cd howl-linux-host && zig build test:unit -- "latched host redraw remains a present reason after event pump"`.
-- `cd howl-linux-host && zig build test:unit -- "submitWith submits only visual present reasons"`.
-- `cd howl-linux-host && zig build test:unit -- "pty wake observes retained render turn prepared by pty thread"`.
+- `cd howl-linux-host && zig build test:unit -- "progress drive requests another turn after saturated transport slice"`.
+- `cd howl-linux-host && zig build test:unit -- "progress drive requests redraw and next turn for runtime obligation"`.
+- `cd howl-linux-host && zig build test:unit -- "transport pump caps locked feed bytes"`.
+- `cd howl-linux-host && zig build test:unit -- "progress thread drains kept turns before waiting again"`.
 - `cd howl-linux-host && zig build test:unit`.
 - `cd howl-linux-host && zig build check`.
 - Root `zig build check`.
 
 Non-Goals:
 
-- No renderer ABI movement in this slice.
-- No benchmark or simulation workload renames.
-- No retained render behavior changes.
-- No docs changes; docs are Slice 4.
+- No PTY/VT behavior changes.
+- No queue size or timing changes.
+- No renderer ABI changes in this slice.
+- No new test harnesses unless an existing harness needs a rename.
 
 Stop Conditions:
 
-- A host call site requires a new renderer C ABI field/function to preserve behavior.
-- `admitRenderTurn()` cannot stay an owner-local retained-render admission decision without widening into event-loop policy.
+- A rename exposes shared fake ops across unrelated seams; split the test-injection type locally rather than preserving a broad abstraction.
 - Coder needs files outside the allowed list.
 
 Artifact Rule:
 
-- `sprints/current.txt` carries Slice 1 only as live execution scope.
+- `sprints/current.txt` carries Slice 2 only as live execution scope.
 - Later slices in `research/howl-product-event-semantics.md` are queued but not live until promoted here.
