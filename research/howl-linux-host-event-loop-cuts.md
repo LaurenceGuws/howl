@@ -23,6 +23,14 @@ Recent accepted cuts already completed:
 - Expanded normal host PTY read/feed backlog to the ABI normal transport budget, `64 KiB * 16 = 1 MiB`.
 - Removed opportunistic PTY feed after the first readable chunk; host PTY pump now drains the bounded read budget before locking once to feed bytes.
 
+Completed event-loop cuts:
+
+- Slice 1a moved bounded PTY progress into the PTY wait thread after transport readiness.
+- `pty_wait_thread` no longer waits for host wake acknowledgement before reading more PTY data.
+- `pty_wait_thread` drains `pty_pump.driveOnce` while bounded work reports `keep`.
+- `pty_pump` marks retained render work directly when VT feed/runtime progress changes terminal state.
+- Host wake acknowledgement now only clears coalescing state; wake no longer admits host-side transport pumping.
+
 ## Ordered Cuts
 
 ### 1. Replace Wait-Only PTY Thread With Alacritty-Style PTY Event Loop
