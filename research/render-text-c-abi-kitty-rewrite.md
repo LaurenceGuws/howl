@@ -346,3 +346,177 @@ Proposed first-contract scope after user ABI decision:
 - Coding readiness for Phase 1 contracts 2-7: not ready until contract 1 ABI is accepted and committed/receipted by orchestrator workflow.
 - Coding readiness for Phase 2 contract 8: intentionally deferred until Phase 1 produces a clean base.
 - Product-code edit authorization: not granted by this research package.
+
+## Accepted Display-Owner Cleanup Mapping
+
+This mapping is accepted for the next repo-by-repo cleanup after the render surface layout ABI and production `metri` cleanup commits.
+
+### howl-vt
+
+Copy Ghostty's erase-display owner shape exactly where Ghostty has one.
+
+Remove the generic Howl event fields:
+
+- `erase_display: EraseMode`
+- `selective_erase_display: EraseMode`
+
+Introduce the full Ghostty event family:
+
+- `erase_display_below`
+- `erase_display_above`
+- `erase_display_complete`
+- `erase_display_scrollback`
+- `erase_display_scroll_complete`
+
+Parser mapping:
+
+- `CSI J 0` -> `erase_display_below`
+- `CSI J 1` -> `erase_display_above`
+- `CSI J 2` -> `erase_display_complete`
+- `CSI J 3` -> `erase_display_scrollback`
+- private/selective `CSI ? J` routes to the same target family with protected/selective behavior, not a separate `selective_erase_display` owner.
+
+Screen method shape:
+
+- Keep Ghostty-backed `eraseDisplay(...)`.
+- Remove `selectiveEraseDisplay(...)` or fold the behavior behind the protected/selective erase flag.
+
+DECRQDE:
+
+- `displayed_extent_report` -> `screen_extent_report`
+- `appendDisplayedExtentReport` -> `appendScreenExtentReport`
+
+Reason:
+
+- Official xterm sequence is `CSI " v` / Request Displayed Extent (DECRQDE).
+- Ghostty has no owner for DECRQDE in the local reference tree.
+- Howl owner is VT screen; `screen_extent_report` preserves protocol noun `extent` without host/display ownership drift.
+
+Expected verification:
+
+- `zig build check`
+- `zig build test:unit`
+- `zig build test:abi`
+- `git diff --check`
+- `rg 'selective_erase_display|selectiveEraseDisplay|displayed_extent_report|appendDisplayedExtentReport' -g '*.zig'` returns no hits.
+
+### howl-linux-host
+
+The host has window and texture owners, not a Howl display owner. Raw SDL/EGL API spellings may keep `Display` because those are external names.
+
+Create:
+
+- `src/texture/`
+
+Move and rename bucket files:
+
+- `src/render/present.zig` -> `src/texture/egl_swap.zig`
+- `src/render/gl_present.zig` -> `src/texture/frame.zig`
+
+Accepted end pressure:
+
+- `frame.zig` may be the first top-level texture-frame orchestration file.
+- If it remains broad, split true owners into:
+  - `src/texture/gl_context.zig`
+  - `src/texture/tab_cache.zig`
+- Do not leave `present.zig` or `gl_present.zig` bucket names.
+
+Symbol renames:
+
+- `displaySubmitPresentSync` -> `submitFrameSync`
+- `Present` import -> `egl_swap`
+- `EglDecision` -> `SwapDecision`
+- `damagedPresentDecision` -> `damagedSwapDecision`
+- `display_storage` -> `egl_handle_storage`
+- local `display` EGL handle -> `egl_handle`
+- `display_id` -> `platform_id`
+- `WindowDisplayUnavailable` -> `WindowPlatformUnavailable`
+- `WindowDisplayModeUnavailable` -> `WindowPlatformModeUnavailable`
+
+Keep external API spellings:
+
+- `SDL_EVENT_WINDOW_DISPLAY_CHANGED`
+- `SDL_GetDisplayForWindow`
+- `SDL_GetCurrentDisplayMode`
+- `EGLDisplay`
+- `SDL_EGLDisplay`
+- `SDL_EGL_GetCurrentDisplay`
+
+Expected verification:
+
+- `zig build check`
+- `zig build test:unit`
+- `git diff --check`
+- grep confirms no Howl-owned `displaySubmitPresentSync`, `display_storage`, `WindowDisplayUnavailable`, or `WindowDisplayModeUnavailable` remains.
+
+### Implementation Receipt
+
+Implemented in the working tree after mapping acceptance.
+
+`howl-vt` outcome:
+
+- `SemanticEvent` and `ScreenAction` now expose Ghostty-shaped `erase_display_below`, `erase_display_above`, `erase_display_complete`, `erase_display_scrollback`, and `erase_display_scroll_complete` events.
+- Each erase-display event carries the Ghostty-style protected bool payload.
+- Private/selective `CSI ? J` routes through the same event family with `protected = true`.
+- `eraseDisplay(...)` is preserved as the screen method and now takes the protected flag.
+- `selectiveEraseDisplay(...)` is removed.
+- `displayed_extent_report` / `appendDisplayedExtentReport` became `screen_extent_report` / `appendScreenExtentReport`.
+
+`howl-linux-host` outcome:
+
+- `src/render/present.zig` moved to `src/texture/egl_swap.zig`.
+- `src/render/gl_present.zig` moved to `src/texture/frame.zig`.
+- `displaySubmitPresentSync` became `submitFrameSync`.
+- `EglDecision` became `SwapDecision`.
+- `damagedPresentDecision` became `damagedSwapDecision`.
+- `display_storage` became `egl_handle_storage`.
+- EGL handle locals/parameters use `egl_handle` / `current_egl_handle`.
+- SDL window refresh locals/errors use `platform_id`, `WindowPlatformUnavailable`, and `WindowPlatformModeUnavailable`.
+- Host call-site state names use `texture_frame` instead of stale `gl_present`.
+
+Verification performed:
+
+- `howl-vt`: `zig fmt src test`
+- `howl-vt`: `zig build check`
+- `howl-vt`: `zig build test:unit`
+- `howl-vt`: `zig build test:abi`
+- `howl-vt`: `rg 'selective_erase_display|selectiveEraseDisplay|displayed_extent_report|appendDisplayedExtentReport' -g '*.zig'`
+- `howl-linux-host`: `zig fmt src`
+- `howl-linux-host`: `zig build check`
+- `howl-linux-host`: `zig build test:unit`
+- `howl-linux-host`: `git diff --check`
+- `howl-linux-host`: `rg 'display' src -g '*.zig'`
+- `howl-linux-host`: `rg 'render/gl_present|render/present|gl_present|displaySubmitPresentSync|EglDecision|damagedPresentDecision|display_storage|display_id|WindowDisplayUnavailable|WindowDisplayModeUnavailable' -g '*.zig'`
+
+### Texture Realization Owner Correction
+
+Accepted after user review of `howl-linux-host/src/render/surface.zig`.
+
+Owner decision:
+
+- `uploadRenderSurface(...)` is correct because it consumes a render ABI surface frame.
+- The file does not belong under `render/`; it realizes that surface into a host GL texture.
+- Internal GL allocation/deletion helpers should say texture: `ensureTexture(...)`, `deleteTexture(...)`.
+- The render C ABI must stay backend-neutral and must not expose texture or GL nouns.
+- The full host texture update is a frame upload; widgets have surfaces/layouts that compose into that frame.
+
+Implemented outcome:
+
+- `howl-linux-host/src/render/surface.zig` -> `howl-linux-host/src/texture/surface.zig`
+- `howl-linux-host/src/render/surface_commands.zig` -> `howl-linux-host/src/texture/frame_commands.zig`
+- `howl-linux-host/src/render/surface_resources.zig` -> `howl-linux-host/src/texture/frame_resources.zig`
+- `howl-linux-host/src/render/surface_test.zig` -> `howl-linux-host/src/texture/surface_test.zig`
+- `HowlRenderHostTexture` -> `HowlRenderHostSurface`
+- `host_texture_id` -> `host_surface_id`
+- retained submit fields now use `host_surface`.
+
+Verification performed:
+
+- `howl-render`: `zig fmt src`
+- `howl-render`: `zig build check`
+- `howl-render`: `zig build test:abi`
+- `howl-linux-host`: `zig fmt build.zig src`
+- `howl-linux-host`: `zig build check`
+- `howl-linux-host`: `zig build test:unit`
+- root/render/host: `git diff --check`
+- grep gates: stale `HowlRenderHostTexture`, `host_texture_id`, `host_texture`, old `render/surface*` imports, `surface_commands`, `surface_resources`, and `ensureSurface` are clean.
