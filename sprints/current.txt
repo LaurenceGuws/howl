@@ -17,12 +17,12 @@ Live artifacts:
 - Active scoping loop: `loops/howl-host-io-machinery-loop.txt`.
 - Active scoped index/research artifact: `research/howl-host-io-machinery.md`.
 
-Current dirty state:
+Current git state:
 
-- Root has accountability updates for the new scoping mode.
-- `howl-linux-host` has an uncommitted FairMutex extraction that has already passed local verification.
+- Root has accountability updates for the multiplexing shape and host pointer.
+- `howl-linux-host` is clean on `main` at `5aea76f Move PTY state to session owner`.
 
 Immediate accountability:
 
-- Close or explicitly defer the FairMutex extraction receipt before larger I/O machinery cuts.
-- Build the event/consequence scoped index with the user before moving more bucket code.
+- Continue the host I/O machinery scoping from the source references.
+- Build the event/consequence scoped index with the user before broad bucket dissection.

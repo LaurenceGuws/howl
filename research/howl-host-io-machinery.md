@@ -35,9 +35,9 @@ The scoped index must define:
 
 The scoped index must not use placeholder names like `typed facts` as a substitute for ownership.
 
-## Current Known Dirty Slice
+## Closed FairMutex Slice
 
-FairMutex extraction is already implemented but uncommitted in `howl-linux-host`.
+FairMutex extraction is implemented, verified, committed, and clean in `howl-linux-host`.
 
 Files:
 
@@ -46,13 +46,17 @@ Files:
 - `src/pty/pump.zig`
 - `src/buckets that must die/bucekt2_test.zig`
 
-Verified before this artifact was created:
+Commit:
+
+- `4d999a3 Extract host fair mutex owner`
+
+Verified before commit:
 
 - `zig build check`
 - `zig build test:unit`
 - `git diff --check`
 
-This slice must be closed before larger I/O machinery cuts proceed.
+This slice is closed. Larger I/O machinery cuts may proceed only after the next owner move is source-backed and exact.
 
 ## Reference Anchors To Re-Prove In Corrected Research
 
@@ -109,14 +113,81 @@ The user and agent will fill this table with exact symbols and owners:
 
 This is not a worker-ready slice queue. It is the starting bite order to refine with the user.
 
-1. Seal dirty FairMutex extraction.
-2. Write the complete event/consequence contract in this artifact.
-3. Split raw platform event pump from input mutation.
-4. Move host input translation to true owners.
-5. Split terminal byte admission from host UI pointer handling.
-6. Define and extract the term runtime owner.
-7. Extract wake handoff owner.
-8. Extract terminal surface/widget owner only after termio and input are split.
-9. Move link owner out of render.
-10. Make resize/layout consequences explicit.
-11. Delete bucket directory after imports/tests are gone.
+1. Write the complete event/consequence contract in this artifact.
+2. Split raw platform event pump from input mutation.
+3. Move host input translation to true owners.
+4. Split terminal byte admission from host UI pointer handling.
+5. Define and extract the term runtime owner.
+6. Extract wake handoff owner.
+7. Extract terminal surface/widget owner only after termio and input are split.
+8. Move link owner out of render.
+9. Make resize/layout consequences explicit.
+10. Delete bucket directory after imports/tests are gone.
+
+## First Multiplexing Shape Attempt
+
+This is a first attempt, not a prediction of the final architecture. The user and agent will refine it together before product-code moves.
+
+Plain goal:
+
+- One host instance can own many terminal instances.
+- One host instance can own many window instances.
+- A window can present one or more terminal instances through tabs and splits.
+- A terminal instance must not own or imply an OS window.
+- A terminal instance can move between windows without changing PTY, VT, or session identity.
+- Dragging a tab out should create or attach a new window view over the same terminal instance, not recreate the terminal.
+- The current tab bar owner is provisional until proved correct.
+- Splits and tabs are layout/view relationships over terminal instances, not terminal lifetime owners.
+
+Directory rule:
+
+- Do not create a nested `host/` directory inside `howl-linux-host/src`.
+- `howl-linux-host/src` is already the host source boundary.
+- Follow Ghostty-style neat `src` ownership pressure: top-level directories should name real owners directly.
+
+Reference pressure:
+
+- Alacritty is useful for disciplined host/runtime/render pragmatism, but its per-window terminal coupling is wrong for Howl multiplexing.
+- Kitty is useful as a multiplexing/child-monitor/screen stand-in, but not naming law.
+- `Boss` is rejected as a symbol model; names must say what the owner is.
+- Ghostty is strongest for VT/termio/portability seams, not automatically for host/window/app architecture.
+- Foot is valuable for directness and honest nouns, but must be pressured by Ghostty portability and Howl's embeddable ABI boundary.
+
+Likely boundaries:
+
+- Terminal instance: PTY session identity, VT handle, terminal-private runtime state, and terminal-content retained state that survives movement between windows.
+- Window instance: OS window/backend resources, platform presentation cadence, and input source plumbing.
+- View/layout/tab/split: binding between terminal instances and rectangular presentation slots inside a window.
+- Source-root owner for terminal lifetime: a direct `src` owner to be named before moving the aggregate bucket. Do not use `boss` or a framework/business noun.
+
+Likely terminal-instance-owned facts from `bucket4.zig`:
+
+- PTY launch facts.
+- PTY lifecycle state.
+- PTY session handle.
+- VT handle.
+- VT scratch/title/consequence cache.
+- Retained render state only if it is terminal-content retained state, not backend/window resource state.
+- Synchronization only if required for sharing a terminal instance across host/window/pump threads.
+
+Likely not terminal-instance-owned facts:
+
+- OS window pointers or resources.
+- Tab bar slot ownership.
+- Split layout ownership.
+- GL/EGL/backend resources.
+- Presentation pacing.
+- Platform seat state.
+- Focus source policy. Terminal may cache protocol focus consequence state, but window/layout decide focus source routing.
+
+Open naming problem:
+
+- Define the stable identity/lifetime owner before moving `bucket4.zig` as a whole.
+- Avoid `boss`, `manager`, `engine`, `controller`, generic `context`, and nested `host` directories.
+- Candidate vocabulary must be tested against multiplexing: terminal instance ID/slot ownership, window view attachment, tab/split layout, and terminal movement between windows.
+
+Immediate collaboration step:
+
+- Do not move `Term` yet.
+- First accepted piece completed: PTY launch/lifecycle/state moved to `src/pty/session.zig` in `howl-linux-host` commit `5aea76f Move PTY state to session owner`.
+- Next piece must be chosen together from the remaining quarantined facts: VT title cache, VT input/output scratch, scrollback/focus consequence state, render-state handle, or terminal instance identity.
