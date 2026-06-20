@@ -1,3 +1,9 @@
+Historical authority header:
+
+- Historical authority at the time: accepted render surface/layout/present planning package through the render/present ownership sprint.
+- Superseded because: active sprint moved to host I/O machinery and event/consequence ownership planning.
+- Must not be used for: current host I/O machinery scope, bucket dissection authority, or active event/consequence contract.
+
 # Howl Render Surface Layout Present Research
 
 Status: accepted planning package. Reviewer blockers from `review-2026-06-19-render-surface-layout-present-01` are resolved; product code is authorized only through the exact promoted slice in `sprints/current.txt`.

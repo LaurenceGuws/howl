@@ -1,3 +1,9 @@
+Historical authority header:
+
+- Historical authority at the time: active render surface/layout/present loop through root commit `3ac7252 Track old host present lane deletion`.
+- Superseded because: current work moved to host I/O machinery accountability and `loop/flow.md` now records single-agent doctrine with explicit researcher/reviewer planning only when requested.
+- Must not be used for: current host I/O machinery scope, bucket dissection authority, or current active sprint state.
+
 Howl Render Surface Layout Present Loop
 
 Orchestrator session id: `orch-2026-06-19-render-surface-layout-present-01`.

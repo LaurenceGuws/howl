@@ -1,151 +1,60 @@
 # Workflow
 
-## Sprint Planning
+## Current Mode
 
-Slice definition:
+- Howl is currently in single-agent mode.
+- The active workflow is direct user <-> single agent collaboration.
+- Prior multi-agent choreography is discarded for now.
+- The agent may move, rename, create, and delete files, folders, and symbols when the owner boundary requires it.
+- Changes must be complete for the chosen slice, not cosmetic, partial, or compatibility-shaped.
+- Every structural decision must be taken carefully, source-backed where references apply, and then implemented fully.
+- The agent must keep the user informed at real decision points, especially before broad owner moves or boundary changes.
 
-- A slice is an accountable section of a sprint.
-- A slice is sized by the real owner boundary, proof boundary, and product problem under change.
-- A slice is not required to be tiny, minimal, or the smallest possible code change.
-- Fake progress by arbitrarily shrinking a real fix into cosmetic or partial cuts is rejected unless the user explicitly wants that shape.
+## Doctrine
 
-- Researcher and reviewer do the sprint planning work ahead of execution.
-- Planning stops only when the full problem statement is fully and explicitly scoped into slices for the coder.
-- No coding starts while scope, slice boundaries, ownership, tests, non-goals, or stop conditions are unsettled.
-- Only the user may:
-  - narrow scope
-  - call for a smaller sprint
-  - declare a v1 of the sprint
-- Any agent language that drifts toward smaller sprint, narrower scope, v1, partial for now, or similar scope weakening drops the planning work from acceptance unless the user explicitly asked for it.
+- This is a private infant terminal, not a public CRUD app.
+- There are no external consumers to preserve.
+- Stability and compatibility instincts are harmful unless the user explicitly asks for them.
+- No aliases, shims, fallback names, old paths, or compatibility glue for wrong structure.
+- If a name lies, rename it everywhere.
+- If a file is in the wrong owner, move it.
+- If a folder boundary is fake, delete the boundary and rebuild the true one.
+- If references show a better shape, chase it aggressively and try to beat the references at their own game.
+- Existing Howl code is presumed guilty until the owner, reference pressure, assertions, and tests prove it right.
+- Breaking code during a structural slice is acceptable; leaving a broken sprint shape is failure.
+- Never patch over imperfections silently to make green. Fix the owner model.
 
-Planning order:
+## Working Rule
 
-1. Orchestrator states the full problem plainly.
-2. Researcher produces source-backed evidence, the sprint scratchpad, and the full slice plan.
-3. Reviewer reviews the research package and rejects vague, under-scoped, or worker-inventing planning.
-4. Researcher corrects the evidence, scratchpad, and slice plan until the reviewer accepts them.
-5. Orchestrator seeds the accepted sprint plan for execution.
+- Pick one owner boundary at a time.
+- Define the boundary plainly before changing code.
+- The slice may be broad when the true owner boundary is broad.
+- Small safe cuts are rejected when they preserve false ownership.
+- Prefer Alacritty for host, window, event, input, presentation, and renderer organization.
+- Prefer Ghostty for VT and terminal-core shape.
+- Prefer TigerBeetle for ownership truth, exact names, assertions, bounds, and tests.
+- Existing Howl shape is not authority when it conflicts with references or owner truth.
+- If the user gives an explicit direction, follow it unless it conflicts with a non-negotiable project boundary or a reference rule that requires escalation.
 
-Planning completion gate:
+## Breakage Rule
 
-- Planning is complete only when the sprint is fully and explicitly scoped into sequential worker slices sized to the real problem and owner boundaries.
-- Every slice must have:
-  - exact allowed files
-  - exact required shape
-  - exact tests
-  - exact non-goals
-  - exact stop conditions
-  - accountable planning session ids
-- Accepted planning artifacts must record:
-  - orchestrator session id
-  - researcher session id
-  - reviewer session id
-  - commit-hash receipt status
-- Research planning artifacts must be reference-first:
-  - historical local artifacts are navigation only
-  - stable reference anchors and current source re-proof carry the authority
-  - the active research artifact must include a compact anchor map for the references and current owner seams that actually govern the next decision
-- If the accepted planning package is documentation-only and no dedicated commit exists yet, the artifact must say so explicitly and the orchestrator must close that receipt when archiving the accepted package.
+- Compile/test breakage is allowed inside an active structural slice.
+- Use breakage as evidence of the next false dependency, not as an excuse for glue.
+- Fix failures in the slow correct way with the user when the owner model is uncertain.
+- End-of-slice state must be explicit and inspectable.
+- End-of-sprint state must be coherent, owner-true, and verified.
+- Temporary buckets may exist during grinding, but they are not an accepted sprint-end shape.
 
-## Sprint Execution
+## Present Boundary
 
-- Coder executes slices sequentially for the full sprint after planning settled the full sprint.
-- The same reviewer from the research/planning step reviews the execution slices.
-- No execution-phase redesign, narrowing, or rescoping is allowed unless the user explicitly intervenes.
+- Below GL/EGL present, code produces actions only: draw, present, refresh, wake, title/focus/window operations.
+- Below GL/EGL present must not consume input, VT, PTY, selection, terminal, or event meaning.
+- `events` owns consumption of platform/input/VT/PTY facts and decides what action happens next.
+- `window` and GL/EGL owners may be called by `events`, but they must receive already-shaped facts/frames/actions.
 
-Execution order:
+## Acceptance
 
-1. Orchestrator seeds the next accepted slice from the sprint queue with the receipt fields the coder and reviewer will require, including coder/worker session id and commit-hash demand.
-2. Coder implements only that slice.
-3. The same reviewer from planning reviews the actual diff and gates acceptance or rejection.
-4. Orchestrator verifies the slice after the review verdict.
-5. Orchestrator records receipts and the accountable final decision.
-6. If the reviewer accepted and verification passed, the slice is accepted.
-7. If the reviewer rejected or verification failed, the slice is rejected and restarted at the earliest broken stage.
-8. If accepted, move to the next queued slice and repeat.
-
-Execution acceptance gate:
-
-- A slice is accepted only with:
-  - commit hash
-  - orchestrator session id
-  - researcher session id when research or correction backed the slice
-  - reviewer session id
-  - coder/worker session id
-  - required verification results
-
-## Hard Stops
-
-- Drop work from acceptance and restart from the earliest broken stage if:
-  - any teammate concludes the user may need to understand the references better before work can continue
-  - any teammate sees user direction that appears to invent truths against the references without an explicit receipted override
-  - coder invents names, scope, tests, or ownership
-  - reviewer changes from the accepted planning reviewer without explicit reassignment
-  - receipts are missing
-  - execution broadens or narrows the sprint without user direction
-  - implementation reveals the sprint plan was not actually settled
-  - work happened outside the loop
-
-When this stop is triggered:
-
-- block work
-- surface the reference conflict plainly to the user
-- do not continue until the user resolves it or records an explicit override receipt
-
-## Rule
-
-- Accountability is the workflow.
-- Every accepted slice needs receipts.
-- Accepted planning packages also need receipts. The orchestrator must either record the commit-hash receipt on acceptance or record the exact missing receipt as an open handoff that blocks archival completion.
-- Work outside the loop is dropped and redone from the earliest missing accountable stage.
-- Live accountability files are read first.
-- Broad repo doc browsing before reading the live accountability surface is a workflow violation.
-- If the user checks workspace guidance files at any point and they are stale, wrong, misplaced, or incomplete against the real work state, the work is dropped from acceptance.
-
-## Active Artifact Rule
-
-- `loops/`, `research/`, and `sprints/` are the live accountability surface.
-- Only current active artifacts may live directly inside those folders.
-- The active loop file is the shared team scratchpad for the live step. It may carry the controlling contract plus teammate handoff notes in one place.
-- Every non-trivial teammate pass must append a short loop note with:
-  - role and session id
-  - a brief hello
-  - what the teammate intended to achieve in that pass
-  - how at least one task went
-  - next handoff or blocker
-- Historical artifacts must move into the domain-local archive folders:
-  - `loops/done/` including accountable subdirectories when needed to keep the top level clean
-  - `loops/defered/`
-  - `research/done/`
-  - `research/defered/`
-  - `sprints/done/`
-  - `sprints/defered/`
-- If stale or historical artifacts are left in the active folders, accountability is weakened and work should stop until the active surface is cleaned.
-- A bulk legacy archive subdirectory under `loops/done/` may use one directory header file to mark the whole relocated set as historical when the move is archive hygiene only and the inner files are left content-unchanged.
-- No stale files may linger in active folders.
-- No invented files may be created outside the active scope.
-- Active/done/defered placement is part of the work, not optional cleanup.
-
-## Read Order
-
-Session-start read rule:
-
-- The full read order below is mandatory at the start of a role session.
-- Do not force the team to reread the full stack on every iteration when the same active artifacts were already read and have not materially changed.
-- Reread the relevant active artifacts when the controlling loop file, active research artifact, sprint state, role assignment, or user direction changes materially.
-- If there is doubt about whether the live accountability surface changed materially, reread the affected active artifacts before continuing.
-
-Required session-start order:
-
-1. `loop/flow.md`
-2. all role docs under `loop/`:
-   - `loop/orcestrator.md`
-   - `loop/researcher.md`
-   - `loop/reviewer.md`
-   - `loop/coder.md`
-3. the role doc for the current task, reread with special attention
-4. `sprints/current.txt`
-5. the one active loop file explicitly seeded for the task
-6. active `research/` files explicitly seeded for the task
-
-Only after that may the role read additional source, project docs, or external references required by the task.
+- A slice is done only when the code, names, imports, tests, and owner paths all match the chosen boundary.
+- Run the relevant checks before declaring completion.
+- Grep for stale names and old paths after structural changes.
+- Commit and push when the user asks or when the user-approved workflow for that slice requires it.

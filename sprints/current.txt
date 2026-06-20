@@ -1,132 +1,28 @@
-# Active Sprint Index
+# Current Scope Index
 
 Purpose:
 
-- Track the current live sprint guidance only.
-- Point researcher, reviewer, coder, and orchestrator only at live active artifacts.
+- Record whether a strict sprint is active.
+- Point the agent at the live scoping artifacts when no strict sprint is active.
 
-Sprint:
+Current mode:
 
-- Active planning artifact: `research/howl-render-surface-layout-present.md`.
-- Active loop artifact: `loops/howl-render-surface-layout-present-loop.txt`.
+- No strict sprint is active.
+- We are in a user <-> single-agent scoping loop for host I/O machinery.
+- This is not a worker-ready slice queue.
+- The goal is to define the full elephant slowly and correctly, then eat it byte by byte with the user.
 
-Active execution:
+Live artifacts:
 
-- Render surface/layout/present ownership and naming across `howl-render`, `howl-linux-host`, root docs/accountability, and any required C ABI/header surfaces.
-- Orchestrator session id: `orch-2026-06-19-render-surface-layout-present-01`.
-- Researcher session id: `research-2026-06-19-render-surface-layout-present-01`.
-- Reviewer session id: `review-2026-06-19-render-surface-layout-present-02`.
-- Coder session id: `coder-2026-06-19-render-surface-layout-present-06`.
-- Slice 1 child render commit receipt: `howl-render` `5383bf6 Rename render layout and draw owners`.
-- Slice 1 root commit receipt: `71b72c7 Track render layout draw owner rename`.
-- Slice 2 child render commit receipt: `howl-render` `6c08bf8 Rename render surface frame ABI`.
-- Slice 2 child linux-host commit receipt: `howl-linux-host` `968d496 Rename host render texture ABI`.
-- Slice 2 root commit receipt: `326cf52 Track render surface frame ABI rename`.
-- Slice 3 child VT commit receipt: `howl-vt` `25c42c5 Expose VT dirty column bounds`.
-- Slice 3 child render commit receipt: `howl-render` `0acbf36 Shape render frame damage rects`.
-- Slice 3 root commit receipt: `2487694 Track VT dirty column damage slice`.
-- Slice 4 child linux-host commit receipt: `howl-linux-host` `132b810 Prove SDL EGL damaged present seam`.
-- Slice 4 root commit receipt: `6037689 Track SDL EGL damaged present proof`.
-- Slice 5 child linux-host commit receipt: `howl-linux-host` `ff0b779 Prove Wayland present ownership seam`.
-- Slice 5 root commit receipt: `047a69c Track Wayland present ownership proof`.
-- Slice 6 child linux-host commit receipt: `howl-linux-host` `1c0d3c6 Carry render damage to host present`.
+- Active scoping loop: `loops/howl-host-io-machinery-loop.txt`.
+- Active scoped index/research artifact: `research/howl-host-io-machinery.md`.
 
-Problem:
+Current dirty state:
 
-- Current Howl render/display vocabulary overlaps across `surface`, `scene`, `geometry`, and `grid`.
-- Current APIs and cross-repo contracts are not frozen; wrong names and wrong boundaries must be changed explicitly.
-- First host scope is Linux Wayland under KDE Wayland-only and Hyprland.
-- SDL remains the pragmatic window/input/text-input/clipboard/event harness unless source-backed research proves it blocks required GPU-present control.
-- We need Alacritty-style Wayland EGL present-damage control, and SDL's normal `SDL_GL_SwapWindow` hides that damage hook.
+- Root has accountability updates for the new scoping mode.
+- `howl-linux-host` has an uncommitted FairMutex extraction that has already passed local verification.
 
-Required Reference Pressure:
+Immediate accountability:
 
-- Alacritty governs host display, renderer organization, damage tracking, frame drawing, and Wayland EGL present damage.
-- SDL official docs/source govern what SDL exposes and hides.
-- Kitty/GLFW is secondary evidence for Linux/Wayland/EGL framework pressure and the historical Howl GLFW seam.
-- Ghostty governs VT and embedding seam pressure only where Alacritty lacks the shape.
-- TigerBeetle requires exact names, owner truth, assertions, bounded proof, and no bucket owners.
-
-Current Live Slice:
-
-- Execution Slice 6: Carry render-frame damage to host present in `howl-linux-host`.
-- Production damaged present is not promoted until present damage is carried to the display present point.
-
-Execution Slice 6 Required Shape:
-
-- Add a bounded display present-damage owner shape that can represent full damage or up to `HOWL_RENDER_SURFACE_FRAME_DAMAGE_ITEMS_MAX` rects.
-- Copy validated render frame damage from `HowlRenderSurfaceFrame.damage` during terminal submit while the frame pointer is still available.
-- Carry the copied damage through `display/present.Snapshot` into `display/layout.Frame` and `display/display.zig`.
-- Preserve existing runtime present behavior; `displaySubmitPresentSync` still calls `SDL_GL_SwapWindow` for this slice.
-- Damage rects remain in render/display pixel coordinates; EGL bottom-left conversion remains owned by `egl_present.zig` and is not wired in this slice.
-- Do not call damaged present in production behavior yet; existing runtime present remains `SDL_GL_SwapWindow` for this proof slice.
-
-Allowed Files For Execution Slice 6:
-
-- `research/howl-render-surface-layout-present.md`.
-- `sprints/current.txt`.
-- `loops/howl-render-surface-layout-present-loop.txt`.
-- `howl-linux-host/src/display/layout.zig`.
-- New `howl-linux-host/src/display/present_damage.zig`.
-- `howl-linux-host/src/display/present.zig`.
-- `howl-linux-host/src/display/display.zig`.
-- `howl-linux-host/src/terminal/surface.zig`.
-- `howl-linux-host/src/terminal/render_retained.zig` only if the submit result type must carry damage.
-- `howl-linux-host/src/terminal/surface_test.zig`.
-- `howl-linux-host/src/host_test_root.zig` only if a new test file must be imported.
-
-Required Gates:
-
-- Tests prove full damage copies to present snapshot, rect damage copies to present snapshot, damage overflow/invalid spans fall back to full damage or fail explicitly, and `displaySubmitPresentSync` receives damage without changing token monotonicity.
-- Run `zig build test:unit` and `zig build check` in `howl-linux-host`.
-
-Non-Goals:
-
-- No production EGL damaged present call.
-- No custom Wayland event loop.
-- No GLFW/backend seam implementation.
-- No X11 implementation.
-- No SDL custom surface/toplevel ownership change yet.
-- No EGL/Wayland present call wiring yet.
-- No changes outside allowed files.
-
-Stop Conditions:
-
-- References conflict on an owner boundary and no explicit user override receipt exists.
-- Render frame damage cannot be copied without retaining pointers beyond the render frame lifetime.
-- Present damage requires an unbounded allocation.
-- Damage cannot be carried through present snapshot without weakening existing present token semantics.
-- The proof tries to make permanent plain SDL swap the product answer after proving SDL blocks damaged present; that is rejected because vendor limitations do not define Howl internals.
-
-Artifact Rule:
-
-- `sprints/current.txt` carries Execution Slice 6 only as live scope.
-- Coder must report child `howl-linux-host` and root repo status.
-- Reviewer must identify child commit hash or explicit uncommitted handoff.
-- Orchestrator must close linux-host and root receipts before accepting the slice.
-
-Execution status:
-
-- Slice 1 accepted and committed: `howl-render` `5383bf6`; root `71b72c7`.
-- Slice 2 accepted after reviewer pass `review-2026-06-19-render-surface-layout-present-04` and committed in child repos: `howl-render` `6c08bf8`; `howl-linux-host` `968d496`.
-- Slice 2 verification passed: `howl-render` `zig build test:unit`, `zig build check`, `zig build test:abi`, `zig build benchmark:render:build`; `howl-linux-host` `zig build test:unit`, `zig build check`; stale C ABI and host-surface vocabulary grep gates clean.
-- Slice 2 root committed: `326cf52`.
-- Slice 3 promoted for implementation.
-- Slice 3 allowed-file correction: `howl-vt/src/render_state.zig` is included because FFI row-data getters can expose only data retained by the VT render-state owner; without retaining the already-copied dirty column bounds on `RenderState.Row`, the ABI extension would be fake.
-- Slice 3 accepted after reviewer passes through `review-2026-06-19-render-surface-layout-present-07` and committed in child repos: `howl-vt` `25c42c5`; `howl-render` `0acbf36`.
-- Slice 3 verification passed: `howl-vt` `zig build test:abi`, `zig build test:unit`, `zig build check`; `howl-render` `zig build test:unit`, `zig build check`, `zig build test:abi`, `zig build benchmark:render:build`.
-- Slice 3 safety note: public C text prepare currently reads VT dirty state but emits full packet damage until a submitted-base ABI exists; command-free prepared-surface paths prove bounded dirty-column damage shaping, and partial frames with draw commands fall back to full packet damage for correctness.
-- Slice 3 root committed: `2487694 Track VT dirty column damage slice`.
-- Slice 4 planning hardening started after user direction that planning must enumerate options to achieve damaged present goals with tradeoffs and references instead of leaving the result generically blocked.
-- Slice 4 direction sharpened after user clarification: try to make SDL-retained damaged present honest; if it cannot be made honest, escalate to host-present ownership changes instead of accepting vendor limitations as Howl internal architecture.
-- Slice 4 promoted for code proof as `coder-2026-06-19-render-surface-layout-present-04` after user explicitly said to start.
-- Slice 4 code proof committed in child repo: `howl-linux-host` `132b810 Prove SDL EGL damaged present seam`. Verification passed: `zig build test:unit`, `zig build check`.
-- Slice 4 proof result: SDL public EGL access can bind display, window surface, and KHR/EXT damaged-swap procs, but the current SDL-retained public path blocks because it cannot preserve SDL Wayland hidden-window skip or Wayland display flush. Next implementation direction is host-present ownership change, not permanent plain SDL swap.
-- Slice 4 root committed: `6037689 Track SDL EGL damaged present proof`.
-- Slice 5 promoted for code proof as `coder-2026-06-19-render-surface-layout-present-05` after confirming SDL exposes Wayland display/surface/egl-window properties and system Wayland client headers are available.
-- Slice 5 code proof committed in child repo: `howl-linux-host` `ff0b779 Prove Wayland present ownership seam`. Verification passed: `zig build test:unit`, `zig build check`.
-- Slice 5 proof result: Howl can acquire SDL's Wayland display/surface/egl-window handles through public SDL properties, preserve hidden-window skip through public SDL flags, and explicitly flush the acquired Wayland display with `wl_display_flush`.
-- Slice 5 root committed: `047a69c Track Wayland present ownership proof`.
-- Slice 6 promoted for code as `coder-2026-06-19-render-surface-layout-present-06` after confirming render frame damage is available during terminal submit but not yet carried to display present.
-- Slice 6 code committed in child repo: `howl-linux-host` `1c0d3c6 Carry render damage to host present`. Verification passed: `zig build test:unit`, `zig build check`, and `git diff --check` in `howl-linux-host`; root `git diff --check` also passed.
-- Slice 6 result: bounded `display/present_damage.zig` copies full or rect render-frame damage while the frame pointer is live, invalid/count-overflow damage falls back to full, `terminal/surface.zig` carries copied damage through the render turn, and `display/present.Snapshot`/`display/layout.Frame` now carry damage to `displaySubmitPresentSync` without changing production `SDL_GL_SwapWindow` behavior.
+- Close or explicitly defer the FairMutex extraction receipt before larger I/O machinery cuts.
+- Build the event/consequence scoped index with the user before moving more bucket code.
