@@ -190,4 +190,5 @@ Immediate collaboration step:
 
 - Do not move `Term` yet.
 - First accepted piece completed: PTY launch/lifecycle/state moved to `src/pty/session.zig` in `howl-linux-host` commit `5aea76f Move PTY state to session owner`.
-- Next piece must be chosen together from the remaining quarantined facts: VT title cache, VT input/output scratch, scrollback/focus consequence state, render-state handle, or terminal instance identity.
+- Second accepted piece completed: VT title/input/output cached buffers moved to `src/vt/title.zig`, `src/vt/input_buffer.zig`, and `src/vt/output_buffer.zig` in `howl-linux-host` commit `eca3b25 Extract VT cached buffers`.
+- Next piece must be chosen together from the remaining quarantined facts: scrollback/focus consequence state, render-state handle, or terminal instance identity.

@@ -20,7 +20,7 @@ Live artifacts:
 Current git state:
 
 - Root has accountability updates for the multiplexing shape and host pointer.
-- `howl-linux-host` is clean on `main` at `5aea76f Move PTY state to session owner`.
+- `howl-linux-host` is clean on `main` at `eca3b25 Extract VT cached buffers`.
 
 Immediate accountability:
 
