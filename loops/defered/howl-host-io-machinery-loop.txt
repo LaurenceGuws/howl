@@ -1,3 +1,7 @@
+Historical authority at the time: active host I/O machinery scoping loop before the C ABI-only Kitty-derived text rewrite sprint was promoted.
+Why superseded or deferred: user promoted render text C ABI rewrite as the active sprint on 2026-06-20.
+Must not be used for: current sprint authority, render text ownership, or active teammate execution contracts.
+
 Howl Host I/O Machinery Loop
 
 Orchestrator session id: `orch-2026-06-20-host-io-machinery-01`.

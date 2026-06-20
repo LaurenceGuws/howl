@@ -1,28 +1,44 @@
-# Current Scope Index
+# Current Sprint Index
 
 Purpose:
 
-- Record whether a strict sprint is active.
-- Point the agent at the live scoping artifacts when no strict sprint is active.
+- Record the strict sprint currently active.
+- Point every role at one live accountability surface.
 
 Current mode:
 
-- No strict sprint is active.
-- We are in a user <-> single-agent scoping loop for host I/O machinery.
-- This is not a worker-ready slice queue.
-- The goal is to define the full elephant slowly and correctly, then eat it byte by byte with the user.
+- Strict sprint active.
+- Orchestrator/reviewer: main agent.
+- Teammate subagent: combined researcher plus coder-prep only until the sprint plan is accepted.
+- Product code must not change until research, user discussion, and reviewer acceptance define the first execution contract.
+
+Sprint:
+
+- Name: C ABI-only Kitty-derived text rewrite.
+- Goal: replace Howl-only text/font/cell ownership with a Kitty-derived render text pipeline exposed through the C ABI, with no Zig-shaped host shortcuts and no `metrics` symbols in Howl-owned names.
+- Reason: the recent ABI cell authority fix exposed glyph clipping across many faces because Howl lacks Kitty's font cell layout owner and backend glyph fitting rules.
 
 Live artifacts:
 
-- Active scoping loop: `loops/howl-host-io-machinery-loop.txt`.
-- Active scoped index/research artifact: `research/howl-host-io-machinery.md`.
+- Active loop: `loops/render-text-c-abi-kitty-rewrite-loop.txt`.
+- Active research and sprint plan: `research/render-text-c-abi-kitty-rewrite.md`.
+
+Deferred artifacts:
+
+- Prior host I/O machinery scoping was deferred when the user promoted this sprint.
+- Deferred loop: `loops/defered/howl-host-io-machinery-loop.txt`.
+- Deferred research: `research/defered/howl-host-io-machinery.md`.
 
 Current git state:
 
-- Root has accountability updates for the multiplexing shape and host pointer.
-- `howl-linux-host` is clean on `main` at `eca3b25 Extract VT cached buffers`.
+- Root was clean before this sprint surface update.
+- Known pushed baseline from prior accepted work:
+  - root `c8cd840 Track input processor bucket removal`
+  - `howl-linux-host` `54752b2 Move input processor out of bucket`
+  - `howl-render` `f2aab99 Honor ABI cell metrics in text surface`
 
 Immediate accountability:
 
-- Continue the host I/O machinery scoping from the source references.
-- Build the event/consequence scoped index with the user before broad bucket dissection.
+- Re-prove Kitty, FreeType, HarfBuzz, Alacritty renderer, Ghostty renderer/font seams, and current Howl text paths.
+- Build a sprint plan, not a narrow slice queue.
+- Discuss C ABI consequences with the user before product-code edits.
