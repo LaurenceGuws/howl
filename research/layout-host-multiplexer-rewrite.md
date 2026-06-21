@@ -824,3 +824,63 @@ Non-goals preserved:
 - No terminal `Surface` move or rename.
 - No C/render ABI change.
 - No pane close, resize, more-than-two panes, cwd/custom command, movement/transfer, floating, or hidden pane behavior.
+
+## Stage 8 Phase 2A Zellij Pane Info Model
+
+Session: `ses_11638bd08ffeFeIg9JUtmmmhFi`
+
+Verdict: implemented, orchestrator-reviewed, and verified. Pending commit because no explicit commit request has been made.
+
+Problem:
+
+- The active bucket-dissection work exposed that pane focus and pane visibility were conflated.
+- Visible unfocused panes must still participate in runtime/progress redraw policy.
+- Only the focused visible pane may receive input admission.
+- Bucket runtime/progress must not receive mux `active`, focus, visibility, or selection policy.
+- The first visibility attempt fixed behavior but did not copy Zellij's tab/pane info shape explicitly enough.
+
+Reference pressure:
+
+- `utils/dev_references/terminals/zellij/zellij-utils/src/input/actions.rs:158-170` exposes `FocusNextPane`, `FocusPreviousPane`, `MoveFocus`, and `MoveFocusOrTab` as pane focus actions separate from terminal input.
+- `utils/dev_references/terminals/zellij/zellij-utils/src/data.rs:633-663` defines `Direction::{Left, Right, Up, Down}` and horizontal/vertical helpers.
+- `utils/dev_references/terminals/zellij/default-plugins/status-bar/src/one_line_ui.rs:755-764` consumes `are_floating_panes_visible`, `selectable_floating_panes_count`, and `selectable_tiled_panes_count` rather than a single active flag.
+- `utils/dev_references/terminals/zellij/zellij-utils/src/data.rs:2253-2306` defines the tab/pane info pressure through `PaneManifest`, `PaneInfo`, `PaneInfo.is_focused`, and the selectable pane count fields.
+
+Implemented behavior:
+
+- `layout/pane.zig` adds `Kind = enum { tiled, floating }` and `Visibility = enum { visible, hidden }`.
+- `src/tab.zig` adds `TabSelection = enum { selected, unselected }`.
+- `src/tab.zig` adds `TabInfo` with `are_floating_panes_visible`, `selectable_tiled_panes_count`, and `selectable_floating_panes_count`.
+- `src/tab.zig` adds `PaneInfo` with `id`, `kind`, `visibility`, `is_focused`, and `is_selectable`.
+- Selected tabs report initialized panes as tiled, visible, selectable, and exactly one focused pane.
+- Unselected tabs report initialized panes as tiled, hidden, not selectable, and not focused for the current window presentation.
+- Floating is vocabulary only: `are_floating_panes_visible = false` and `selectable_floating_panes_count = 0`.
+- Runtime facts, runtime progress, and frame pane emission now consume tab-owned `PaneInfo` facts before calling the lower terminal bucket.
+- Lower terminal runtime/progress no longer receives a mux `active` policy argument.
+- Presentation bucket forwarding methods for active-pane texture and scrollbar/chip placement were removed in the same dirty slice, with `Tab.framePanes` composing per-pane frame facts directly from true owners.
+- Touched scrollbar owner-call adapters no longer use `anytype`.
+
+Tests/proof added:
+
+- Pane kind vocabulary has distinct tiled and floating values.
+- Focus movement does not change pane visibility.
+- Selected split tabs expose both tiled panes as visible.
+- `TabInfo` reports selected and unselected selectable counts.
+- `PaneInfo` reports selected tiled panes, unselected hidden panes, and focus movement as a focused-flag-only change.
+- Input admission reaches only the focused visible pane.
+- A visible unfocused pane can still contribute progress redraw.
+
+Verified:
+
+- `zig fmt --check build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `git diff --check`
+
+Non-goals preserved:
+
+- No floating placement, z-order, visibility toggle, focus behavior, or selectable-set implementation.
+- No pane close, resize, more-than-two-pane support, cwd/custom command semantics, pane movement/transfer, or tab transfer.
+- No C/render ABI change.
+- No whole-bucket move or rename.
+- No compatibility shims or aliases.
