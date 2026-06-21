@@ -302,3 +302,76 @@ Deferred:
 - Floating-pane transfer, pane hide/show transfer, z-index mutation operations, split trees, tab transfer between windows, and full scrollbar interaction rewrite.
 - Renaming root `scroll_bar.zig` interaction/state owner unless a narrow compiler-required retarget forces it.
 - Any `overlay`, `viewport`, `screen`, `types.zig`, bucket structs, vague names, or ABI changes.
+
+## Stage 3 Pane/Tab Structure Contract
+
+Session: `teammate-2026-06-21-layout-mux-pane-tab-plan-01`
+
+Verdict: ready, accepted by orchestrator with clarifications: `Pane.TerminalPlacement` may describe host geometry for terminal texture placement inside a pane only; it must not imply pane ownership of render ABI resources. `PaneId.first` is a temporary single-pane identity seam only; do not add an allocator or multi-pane id source in this slice.
+
+Problem:
+
+- Current committed host layout has the right file boundary but still routes behavior through temporary Stage 1 names in `layout/window.zig`: `Regions`, `Terminal`, `regions`, `terminal`, and `tabBarHeight`.
+- `layout/tab.zig`, `layout/pane.zig`, and `layout/tab_bar.zig` are placeholders.
+- `events/event.zig` still has host-structure locals named `next_viewport`, `viewport`, and `after_viewport`.
+
+Reference pressure:
+
+- `utils/dev_references/terminals/tmux/layout.c` keeps window layout as a tree over panes, proving pane identity must be separate from placement.
+- `utils/dev_references/terminals/tmux/tmux.h` gives `window_pane`, active pane, pane lists, z-index, and `layout_root`, proving window-owned pane collection/order with separate panes.
+- `utils/dev_references/terminals/tmux/window.c` computes pane index and z-index by walking window-owned pane lists, proving identity/order is not embedded in render geometry.
+- `utils/dev_references/terminals/tmux/layout-custom.c` assigns panes into layout cells and then fixes z-index and pane offsets, supporting a placement seam before split implementation.
+- `utils/dev_references/terminals/zellij/zellij-server/src/tab/mod.rs` has tabs holding panes and coordinates/size, supporting `layout/tab.zig` as tab body to pane placement owner.
+- `utils/dev_references/terminals/zellij/zellij-server/src/panes/terminal_pane.rs` has explicit `PaneId` variants, source-backing a minimal pane id.
+- `utils/dev_references/terminals/zellij/zellij-server/src/panes/floating_panes/mod.rs` tracks panes, positions, z-indices, and layers by `PaneId`, supporting identity/placement separation without implementing floating now.
+- `utils/dev_references/terminals/wezterm/docs/cli/cli/split-pane.md` targets pane ids for split operations, supporting early `PaneId` and deferred split/move behavior.
+- `utils/dev_references/terminals/wezterm/docs/config/lua/wezterm.mux/spawn_window.md` and `mux-window/spawn_tab.md` return distinct mux window/tab/pane objects.
+
+Coder contract:
+
+- Update `howl-linux-host/src/layout.zig` to export `tab`, `pane`, and `tab_bar`; keep root geometry helpers only if still used by owner files.
+- Update `howl-linux-host/src/layout/window.zig` to replace public `Regions`, `Terminal`, `regions`, `terminal`, and `tabBarHeight` with `Interior` and `interior`.
+- Update `howl-linux-host/src/layout/tab_bar.zig` with tab-bar band owner symbols and tests.
+- Update `howl-linux-host/src/layout/tab.zig` with single-pane tab body/placement symbols and tests.
+- Update `howl-linux-host/src/layout/pane.zig` with `PaneId`, pane placement, terminal placement symbols, and tests.
+- Update `howl-linux-host/src/events/event.zig` so open-tab sizing, input forwarding, render snapshot, resize, and close-tab resize route through `Window.interior`, `Tab.body`, `Tab.singlePane`, and `Pane.terminal`.
+- Remove `viewport` local names from host layout paths.
+- Update `howl-linux-host/src/host_test_root.zig` imports and stale-symbol checks.
+- Do not add `howl-linux-host/src/layout/splits.zig` in this slice.
+
+Exact symbols:
+
+- `layout/tab_bar.zig`: `pub const Band = struct { rect: Layout.Rect, pixel_height: u32, logical_height: u32 };`
+- `layout/tab_bar.zig`: `pub fn height(config: *const Config, tab_count: u8) u32`
+- `layout/tab_bar.zig`: `pub fn band(window: *const Window, config: *const Config, tab_count: u8) Band`
+- `layout/window.zig`: `pub const Interior = struct { tab_bar: TabBar.Band, tab_body_rect: Layout.Rect, tab_body_px: Layout.Size, tab_body_logical: Layout.Size };`
+- `layout/window.zig`: `pub fn interior(window: *const Window, tab_bar: *const TabBarConfig, tab_count: u8) Interior`
+- `layout/tab.zig`: `pub const Body = struct { rect: Layout.Rect, pixel_size: Layout.Size, logical_size: Layout.Size };`
+- `layout/tab.zig`: `pub fn body(window: WindowLayout.Interior) Body`
+- `layout/tab.zig`: `pub fn singlePane(body_value: Body, pane_id: Pane.PaneId) Pane.Placement`
+- `layout/pane.zig`: `pub const PaneId = enum(u16) { first = 0, _ };`
+- `layout/pane.zig`: `pub const Placement = struct { id: PaneId, rect: Layout.Rect, pixel_size: Layout.Size, logical_size: Layout.Size };`
+- `layout/pane.zig`: `pub const TerminalPlacement = struct { pane: Placement, texture_px: Layout.Size, texture_rect: Layout.Rect, logical_size: Layout.Size };`
+- `layout/pane.zig`: `pub fn place(id: PaneId, rect: Layout.Rect, pixel_size: Layout.Size, logical_size: Layout.Size) Placement`
+- `layout/pane.zig`: `pub fn terminal(placement: Placement, texture_px: Layout.Size) TerminalPlacement`
+
+Tests and gates:
+
+- `layout/tab_bar.zig`: `height` hides below configured minimum and shows at or above configured minimum.
+- `layout/tab_bar.zig`: `band` returns zero-height rect when hidden and top band rect when shown.
+- `layout/window.zig`: `interior` reserves tab-bar band and exposes tab body rect/sizes below it.
+- `layout/tab.zig`: `body` maps window interior tab body exactly.
+- `layout/tab.zig`: `singlePane` preserves `PaneId.first` and body geometry.
+- `layout/pane.zig`: `place` preserves pane identity separately from rect/sizes.
+- `layout/pane.zig`: `terminal` derives texture rect/logical size inside pane placement.
+- `host_test_root.zig`: import `@import("layout.zig").tab`, `pane`, and `tab_bar`.
+- Stale grep gates in host production source: no `LayoutWindow.Regions`, no `LayoutWindow.Terminal`, no `LayoutWindow.regions`, no `LayoutWindow.terminal`, no `pub const Regions`, no `pub const Terminal` in `layout/window.zig`, no local `next_viewport`, no local `after_viewport`, no `const viewport = LayoutWindow`, no `layout/overlay.zig`, no `OverlaySnapshot`, no `overlaySnapshot`.
+- Verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, and stale-symbol searches in `howl-linux-host/`.
+
+Deferred:
+
+- No `layout/splits.zig` yet.
+- No split tree, split direction, resize tree, split serialization, floating pane placement, hide/show retention, z-index mutation, pane transfer, or tab transfer between windows.
+- No C ABI or render ABI changes.
+- No root `scroll_bar.zig` rename or broader scrollbar interaction rewrite.
+- No `overlay`, `viewport`, host `screen`, `types.zig`, manager/engine/controller/utils owner, or new vague bucket structs.
