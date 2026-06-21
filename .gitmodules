@@ -14,3 +14,6 @@
 	path = howl-linux-host
 	url = git@github.com:LaurenceGuws/howl-linux-host.git
 	branch = main
+[submodule "howl-style"]
+	path = howl-style
+	url = git@github.com:LaurenceGuws/howl-style.git
