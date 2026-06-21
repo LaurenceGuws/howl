@@ -50,6 +50,14 @@ Immediate accountability:
 - `texture/term.zig` owns texture implementation details for the terminal instance. `src/term.zig` does not know GL, windows, tab bar, or non-terminal surface kinds.
 - Everything below `src/term.zig` is built for the terminal instance directly: `vt/*`, `pty/*`, `render/*`, `texture/term.zig`, `input/*`, `scroll_bar.zig`, selection/link/cursor owners as they mature.
 - Rendered terminal output may stay coordinated by `term.zig` for now. Perfecting the render-surface ownership boundary is explicitly deferred; do not invent a new noun to settle it prematurely.
+- For event-loop/runtime/progress/presentation work, copy Alacritty's control-flow shape, not its nouns.
+- Use event-driven multiplexers to fill Alacritty's single-terminal gaps:
+  - Zellij first for pane/tab policy and pane-info facts.
+  - tmux for mature pane/window/session lifecycle and layout verbs.
+  - WezTerm for event-driven mux/window/tab/pane API pressure.
+- Howl nouns remain mandatory: `window`, `tab`, `pane`, `term`, `pty session`, `vt surface`, `render surface`, `texture`, and `frame`.
+- Do not introduce Alacritty nouns such as `Display` or `Context` into Howl.
+- The event loop consumes and orchestrates all eligible live `Term` instances through tab/pane policy. It does not own VT, PTY, render, texture, layout, or terminal-local internals.
 - Execute every slice in this order:
   1. write or preserve policy comments, knobs, options, invariants, assertions, and failing tests first
   2. route the caller through `term.zig` and the true owner namespace

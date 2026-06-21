@@ -1093,3 +1093,90 @@ Current proof anchor:
 
 - `0e47d3d Realize split pane resize layout` proves two-pane resize policy and retained render layout realization.
 - That proof must remain green through all future caller redesign.
+
+## Stage 9A Event Loop Reference Bias Contract
+
+Session: `orch-2026-06-21-layout-mux-01`
+
+Status: active planning addendum for event-loop/runtime/progress/presentation work.
+
+Problem:
+
+- Howl's event loop contains early attempts to port old code toward an Alacritty-like shape.
+- The subsystem is not trusted enough for opportunistic cleanup.
+- Alacritty's app-loop shape is valuable, but its nouns assume one terminal session/display per app process.
+- Howl is multiplexed: a `Term` instance belongs to a pane; panes form tabs; tabs contribute to a frame; the frame is presented through texture/GL host backend for now.
+
+Reference bias:
+
+1. Alacritty is the primary source for event-loop control-flow shape:
+   - event collection
+   - input dispatch
+   - resize/redraw sequencing
+   - PTY/event wake handling
+   - render scheduling
+   - wait intent
+   - presentation cadence
+   - centralized app-loop discipline
+2. Event-driven multiplexers fill the gaps where Alacritty has no multiplexing concepts:
+   - Zellij first for pane/tab policy, pane info, visible/selectable/focused sets, and modern mux behavior.
+   - tmux for mature pane/window/session lifecycle and layout verbs.
+   - WezTerm for event-driven mux/window/tab/pane API pressure.
+3. Howl product nouns win for final names:
+   - `window`
+   - `tab`
+   - `pane`
+   - `term`
+   - `pty session`
+   - `vt surface`
+   - `render surface`
+   - `texture`
+   - `frame`
+
+Forbidden imports from reference nouns:
+
+- Do not add Alacritty `Display`.
+- Do not add Alacritty `Context`.
+- Do not add generic event-loop `Context`, `State`, `Manager`, `Controller`, `Runtime`, `Engine`, `Types`, or `Utils` buckets.
+- Do not add `term-surface` or any second terminal data shape.
+
+Howl event-loop responsibility:
+
+- The event loop consumes and orchestrates all eligible live `Term` instances.
+- It asks tab/pane policy which terms are selected, visible, focused, input-admitted, render-eligible, and frame-emitting.
+- It sequences host/window/input events, resize, PTY/runtime progress, render decisions, frame construction, present submission, present retirement, and wait intent.
+- It does not own VT state, PTY internals, retained render state, texture resources, pane placement math, or terminal-local scrollbar/selection/link/cursor mutation.
+
+Required research-before-code workflow:
+
+1. Read Alacritty source for the exact loop shape and cite paths/lines.
+2. Read Zellij/tmux/WezTerm only where Alacritty's single-terminal model lacks mux concepts.
+3. Produce a Howl translation map using Howl nouns only.
+4. Define the next smallest proof-first slice.
+5. Add policy comments, knob/options/invariant assertions, and tests before implementation.
+6. Only then change code.
+
+Initial research target:
+
+- The remaining `bucket2.zig` runtime/progress path:
+  - `runtimeFacts`
+  - `driveProgressWithFacts`
+  - PTY wake/runtime admission
+  - VT runtime obligation
+  - cursor cadence
+  - render-turn pending
+  - progress consequences
+- This path must not be moved by inventory. It must be redesigned from event-loop caller needs and reference-backed loop shape.
+
+Accepted first event-loop slice:
+
+- Research session: `ses_115484fa2ffe42PLupd3tbH3Ch`.
+- Source-backed conclusion: copy Alacritty's PTY-thread-mutates-then-wakes-UI shape without Alacritty nouns.
+- Howl translation: consume terminal wakes as an event-loop handoff immediately after non-quit event pumping and before host-owned mutations.
+- Wake remains not runtime admission.
+- Runtime drive facts are collected again after host-owned mutations.
+- Fake ordering tests are forbidden; source order, control-spine policy comment, direct assertions, and behavior tests are the proof for this slice.
+- Accepted code change: move `acknowledgeTerminalWakes(self.tabs.items())` in `Processor.runLoopTurn` to the handoff point after `pumpWindowEvents` and before `applyHostOwnedMutations`.
+- Accepted assertion: `driveTerminalProgress` asserts runtime facts tab count matches the tab slice length.
+- Accepted test: wake facts set loop wake pending but do not grant runtime admission.
+- Non-goals preserved: no bucket runtime/progress move, no C/render ABI change, no new nouns, no Alacritty `Display`/`Context`, no event-loop cleanup.
