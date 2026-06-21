@@ -1171,6 +1171,162 @@ Sprint split:
 - `sprints/term-progress-scheduler.txt` owns the per-terminal instance progress scheduler.
 - Each sprint must produce its own source-backed execution contract before product code changes.
 
+Host scheduler research decisions:
+
+- The first scheduler extraction is fake progress unless it is replaced by the correct event-driven model. Do it right the first time rather than preserving broad `Wake`/`Dirty`/`Deadline` buckets as an accepted direction.
+- Broad scheduler input buckets such as `ReasonSet`, `Wake`, `Dirty`, and `Deadline` are marked for deletion or redesign unless the next research proves a richer typed-event shape from Alacritty pressure.
+- PTY `50ms` polling and production `anytype` in the progress path are examples of the bad current style this sprint set exists to remove. They must be researched as part of the exact Alacritty-vs-Howl delta instead of deferred by convenience.
+- Empty or fake host scheduler reasons such as `present_retire` are marked for deletion or redesign unless backed by a real owner event or retained-render/backend fact.
+- The next teammate pass is research-only. No coder pass is authorized until the new research explains the exact Alacritty/Howl differences and returns a decision-ready execution contract.
+
+## Host Main Scheduler Typed Event Contract
+
+Status: implementation plan under user review. Product code remains blocked until this plan is explicitly accepted for coder work.
+
+Research conclusion:
+
+- The committed `howl-linux-host/src/events/scheduler.zig` extraction is temporary scaffolding, not the accepted architecture.
+- The next host-main slice must replace that shape rather than grow compatibility beside it.
+- Alacritty's pressure is concrete event variants plus timer topics. Scheduler ownership is timed events and next wait deadline; dirty/redraw and PTY wake are consequences of typed events, not boolean bucket inputs.
+- Howl's current loop still gathers `LoopRuntimeFacts`, `Tab.RuntimeFacts`, and `Surface.RuntimeFacts`. That path is bad style and must be starved by typed events and owner calls rather than preserved as the final host-main API.
+
+Required Alacritty vs Howl delta to preserve in the implementation seed:
+
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:543-559` defines concrete `EventType` variants, including `Terminal(TerminalEvent)`, `BlinkCursor`, `BlinkCursorTimeout`, and `Frame`. Howl currently derives host waits from `LoopRuntimeFacts` and scheduler buckets instead of typed event payloads.
+- `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event.rs:14-59` defines terminal-origin events, including `PtyWrite`, `CursorBlinkingChange`, `Wakeup`, `Exit`, and `ChildExit`. Howl currently collapses terminal-origin consequences into aggregate runtime facts.
+- `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs:24-32` names timer topics: `SelectionScrolling`, `DelayedSearch`, `BlinkCursor`, `BlinkTimeout`, and `Frame`. Howl currently has a broad `Deadline` input with `terminal_wait_ms` and `frame_wait_ms`.
+- `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs:54-72` processes due timers by publishing their concrete events and returns only the closest remaining deadline. Howl currently lets scheduler policy inspect broad wake/dirty/deadline facts directly.
+- `utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:165-168`, `244-248`, and `263-269` publish `TerminalEvent::Wakeup` after terminal state changes or child exit. Howl must preserve that order: PTY/term progress first, then host wake event.
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:409-415` listens for `TerminalEvent::Wakeup`, marks the window context dirty, and requests redraw only if a frame is available. Howl must map terminal wake to host dirty/redraw consequence, not runtime admission.
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:443-449` listens for `EventType::Frame`, marks a frame available, and requests redraw if dirty. Howl must map frame readiness to a typed timer event, not to a generic frame facts bucket.
+- `utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:1434-1458` publishes `EventType::Frame` through `Scheduler::schedule` under `Topic::Frame` after a frame is used. Howl must keep frame cadence as a real timer topic.
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:483-489` updates scheduler after event processing and sets event-loop wait to `WaitUntil(deadline)` or `Wait`. Howl must compute wait from queued typed events plus closest timer deadline.
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:1846-1861` listens for `BlinkCursor` and `BlinkCursorTimeout` as dirty-producing timed events. Howl cursor cadence must not be hidden in runtime facts once this slice reaches cursor events.
+
+Named Howl host events for the next host-main implementation:
+
+- `HostEvent.terminal_wakeup`
+  - Alacritty equivalent: `TerminalEvent::Wakeup`, defined at `alacritty_terminal/src/event.rs:48-49`, published from PTY event loop at `alacritty_terminal/src/event_loop.rs:165-168`, `244-248`, and `263-269`, handled by UI at `alacritty/src/event.rs:409-415`.
+  - Howl publisher: `howl-linux-host/src/pty/wait_thread.zig` after `pty_pump.driveOnce` reports redraw or non-alive progress. This must be redesigned from fixed `wait_slice_timeout_ms = 50` and production `anytype` into typed term-progress publication.
+  - Howl listener: `howl-linux-host/src/events/event.zig` main loop, which marks the affected tab/pane/window dirty and requests redraw only when frame is available.
+- `HostEvent.terminal_exit`
+  - Alacritty equivalent: `TerminalEvent::Exit` and `TerminalEvent::ChildExit`, defined at `alacritty_terminal/src/event.rs:54-58`, child-exit publication at `alacritty_terminal/src/event_loop.rs:258-269`, UI handling at `alacritty/src/event.rs:417-440`.
+  - Howl publisher: PTY/session progress owner after child/session lifecycle changes.
+  - Howl listener: `events/event.zig` active-tab problem handling and tab close/quit policy.
+- `HostEvent.input_pending`
+  - Alacritty equivalent: winit `WindowEvent` delivery through `ApplicationHandler::window_event`, `alacritty/src/event.rs:249-260`, and normal event dispatch through `WindowContext::handle_event`.
+  - Howl publisher: `events/event_loop.zig` / `input.zig` when SDL events are drained into host input queues.
+  - Howl listener: `events/event.zig` host-owned mutation phase; it must prevent indefinite wait while queued input exists.
+- `HostEvent.window_geometry_changed`
+  - Alacritty equivalent: winit window events handled by `WindowContext::handle_event`; frame/resize consequences are host-window consequences, not scheduler facts.
+  - Howl publisher: `input.drainWindowGeometryChanged()` / `window.refreshGeometry()` path in `events/event.zig`.
+  - Howl listener: `events/event.zig` resize application and terminal resize fanout.
+- `HostEvent.window_focus_changed`
+  - Alacritty equivalent: winit focus/window event through `ApplicationHandler::window_event` and `WindowContext::handle_event`.
+  - Howl publisher: `input.drainWindowFocusChanged()` in `events/event.zig`.
+  - Howl listener: `events/event.zig` focus sync to tabs/panes.
+- `HostEvent.redraw_requested`
+  - Alacritty equivalent: dirty consequence at `alacritty/src/event.rs:409-415`, `443-449`, and cursor blink dirtying at `1846-1861`.
+  - Howl publisher: window/layout/input/term consequences after owner mutation, not a broad `Dirty` input struct.
+  - Howl listener: host scheduler wait/present policy; if frame is available, request present.
+- `HostEvent.frame_ready`
+  - Alacritty equivalent: `EventType::Frame` at `alacritty/src/event.rs:558`, listener at `443-449`.
+  - Howl publisher: scheduler due timer for frame cadence after a frame has been submitted/used.
+  - Howl listener: `events/event.zig` marks `window.has_frame` ready and requests redraw if dirty.
+- `HostEvent.cursor_blink`
+  - Alacritty equivalent: `EventType::BlinkCursor`, `Topic::BlinkCursor`, listener at `alacritty/src/event.rs:1846-1852`.
+  - Howl publisher: cursor cadence timer owner after cursor blink is enabled.
+  - Howl listener: terminal/cursor owner marks cursor visibility consequences and requests redraw.
+- `HostEvent.cursor_blink_timeout`
+  - Alacritty equivalent: `EventType::BlinkCursorTimeout`, `Topic::BlinkTimeout`, listener at `alacritty/src/event.rs:1854-1861`.
+  - Howl publisher: cursor timeout timer owner.
+  - Howl listener: terminal/cursor owner disables blink and requests redraw.
+- `HostEvent.cursor_trail`
+  - Kitty equivalent: cursor trail has distinct render/update pressure at `utils/dev_references/terminals/kitty/kitty/child-monitor.c:786`, `813-829` and is drawn separately at `utils/dev_references/terminals/kitty/kitty/shaders.c:1512-1527`, `1672`.
+  - Howl publisher: cursor trail deadline owner derived from the existing terminal cursor trail state and config.
+  - Howl listener: terminal/cursor owner advances trail state and requests redraw when the trail still needs render.
+- `HostEvent.terminal_progress_due`
+  - Alacritty equivalent: synchronized update timeout in PTY loop at `alacritty_terminal/src/event_loop.rs:227-248`, where timeout completion stops sync and publishes `Wakeup`.
+  - Howl publisher: redesigned term-progress scheduler when VT/PTY progress has a real due time. This replaces current `terminal_work_due_now`/`runtime_wait_ms` fact smuggling and cannot remain a zero-millisecond fake deadline.
+  - Howl listener: term-progress owner drive admission, then terminal wake/redraw event publication.
+
+Named Howl timer topics for the next host-main implementation:
+
+- `TimerTopic.frame`
+  - Alacritty equivalent: `Topic::Frame` at `scheduler.rs:31`, scheduled from `display/mod.rs:1453-1458`, handled as `EventType::Frame` at `event.rs:443-449`.
+  - Howl publisher/listener: `events/scheduler.zig` schedules after present submission/frame use; `events/event.zig` receives due `HostEvent.frame_ready`.
+- `TimerTopic.cursor_blink`
+  - Alacritty equivalent: `Topic::BlinkCursor` at `scheduler.rs:29`, scheduled in `event.rs:1654-1655`, handled at `1846-1852`.
+  - Howl publisher/listener: cursor cadence owner schedules; cursor/terminal owner handles typed event and requests redraw.
+- `TimerTopic.cursor_blink_timeout`
+  - Alacritty equivalent: `Topic::BlinkTimeout` at `scheduler.rs:30`, scheduled in `event.rs:1667-1668`, handled at `1854-1861`.
+  - Howl publisher/listener: cursor cadence owner schedules timeout; cursor/terminal owner handles timeout.
+- `TimerTopic.cursor_trail`
+  - Kitty equivalent: cursor trail animation owns a distinct wait/update cadence at `kitty/child-monitor.c:813-829` and separate trail drawing at `kitty/shaders.c:1512-1527`, `1672`.
+  - Howl publisher/listener: cursor trail deadline schedules this topic; terminal/cursor owner handles the typed trail event.
+- `TimerTopic.terminal_progress`
+  - Alacritty equivalent: PTY synchronized update timeout at `alacritty_terminal/src/event_loop.rs:227-248`, not a UI scheduler topic but a real terminal progress timeout that publishes wake after mutation.
+  - Howl publisher/listener: term-progress scheduler owns it, replacing fixed 50ms polling and `anytype` helper shape.
+- `TimerTopic.selection_scroll`
+  - Alacritty equivalent: `Topic::SelectionScrolling` at `scheduler.rs:27`, scheduled/unscheduled from input at `alacritty/src/input/mod.rs:716`, `1137`, and `1145`.
+  - Howl status: only add when Howl selection scrolling reaches this host scheduler path; do not invent early behavior.
+
+Implementation phases after explicit approval:
+
+1. Phase A: rewrite `events/scheduler.zig` around `HostEvent`, `TimerTopic`, and timer queue/deadline selection.
+   - Delete `Wake`, `Dirty`, `Deadline`, and `Present.terminal_retire` from scheduler.
+   - Scheduler may store timers and publish due `HostEvent`s, following Alacritty `Scheduler::update`.
+   - Scheduler must not inspect terminal runtime facts.
+2. Phase B: adapt `events/event.zig` host-main loop to listen to typed events.
+   - Terminal wake listener marks redraw/dirty consequence and does not grant runtime admission.
+   - Frame-ready listener marks frame available and requests redraw if dirty.
+   - Present selection only uses real current outcomes: none, host redraw, terminal frame.
+3. Phase C: redesign term-progress publication enough to remove the bad polling/API shape from this path.
+   - Replace `wait_slice_timeout_ms = 50` as the core progress model.
+   - Replace touched production `anytype` helpers in `pty/wait_thread.zig` with explicit owner types/functions.
+   - Preserve Alacritty order: term/PTY progress mutates terminal state first, then publishes `HostEvent.terminal_wakeup`.
+4. Phase D: run proof and grep gates before acceptance.
+
+Allowed next-slice files after acceptance:
+
+- `howl-linux-host/src/events/scheduler.zig`
+- `howl-linux-host/src/events/event.zig`
+- `howl-linux-host/src/pty/wait_thread.zig`
+- the smallest true owner file needed if `Term` must expose an explicit progress-publication type
+- existing host unit test root only if needed to preserve one curated test path
+- loop/research artifacts for receipts
+
+Forbidden in the next host-main slice:
+
+- no `ReasonSet`
+- no broad boolean bucket structs replacing `Wake`, `Dirty`, or `Deadline`
+- no compatibility aliases or shims for rejected scheduler shapes
+- no new generic runtime/progress owner
+- no empty present-retire path
+- no Alacritty nouns such as `Display` or `Context`
+- no production `anytype` in touched code
+- no fixed polling timeout as the core terminal-progress model
+- no fake zero-millisecond terminal deadline to stand in for an event
+
+Proof required before acceptance of code:
+
+- Tests prove terminal wake prevents indefinite wait but does not grant runtime/terminal-progress admission.
+- Tests prove dirty/redraw consequences are derived from typed events and frame availability, not from a broad `Dirty` bucket.
+- Tests prove closest real timer topic wins when no host event requires immediate work.
+- Tests prove due terminal progress is an event, not a zero-millisecond fake deadline bucket.
+- Tests prove present selection has no `present_retire` outcome while completion is not backed by a real owner event.
+- Tests prove PTY/term progress publishes wake only after progress has mutated terminal state or lifecycle.
+- Tests prove the progress wait path no longer depends on `wait_slice_timeout_ms = 50`.
+- Grep gates prove rejected host scheduler symbols are absent from `src/events/scheduler.zig` and its direct host-main callers.
+- Grep gates prove no production `anytype` remains in touched progress-publication functions.
+
+Stop conditions:
+
+- Stop if a new event queue owner is needed but its ownership cannot be proved from Alacritty plus Howl mux boundaries.
+- Stop if a retained-render/backend completion event appears necessary for present retirement; that requires a separate source-backed contract.
+- Stop if deleting scheduler buckets exposes a larger `bucket2.zig` rewrite than the allowed files can honestly contain.
+- Stop if PTY progress cannot be made event/readiness driven without changing `howl-pty` ABI contracts; that needs a separate ABI-source contract before coding continues.
+
 Required research-before-code workflow:
 
 1. Read Alacritty source for the exact loop shape and cite paths/lines.
