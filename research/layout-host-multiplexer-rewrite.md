@@ -884,3 +884,39 @@ Non-goals preserved:
 - No C/render ABI change.
 - No whole-bucket move or rename.
 - No compatibility shims or aliases.
+
+## Stage 8 Phase 2B Active Pane Input Forwarding Cut
+
+Session: `orch-2026-06-21-layout-mux-01`
+
+Verdict: implemented, verified, and ready to commit.
+
+Problem:
+
+- `bucket2.zig::Surface` still exposed `drainTextInputFastPath` and `drainPointerInput` as pure forwarding wrappers into `input/processor.zig`.
+- Input admission and active-pane selection are tab/mux policy, not bucket ownership.
+- The bucket should expose only the terminal-local adapter needed by the input processor until that adapter can move to a smaller terminal/input owner.
+
+Implemented behavior:
+
+- Deleted `Surface.drainTextInputFastPath`.
+- Deleted `Surface.drainPointerInput`.
+- Made `Surface.termInput` callable so the selected terminal can provide the existing `input_processor.TermInput` adapter.
+- `Tab.drainTextInputFastPath` now creates the active pane's terminal input adapter and calls `input_processor.drainTextInputFastPath` directly.
+- `Tab.drainPointerInput` now creates the active pane's terminal input adapter and calls `input_processor.drainPointerInput` directly.
+- Runtime behavior is unchanged: only the active pane receives text/pointer input forwarding.
+
+Verified:
+
+- `zig fmt --check build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `git diff --check`
+
+Non-goals preserved:
+
+- No pointer hit-testing changes.
+- No scroll input rewrite.
+- No paste/font/title rewrite.
+- No C/render ABI change.
+- No whole-bucket move or rename.
