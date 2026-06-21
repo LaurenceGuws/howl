@@ -543,3 +543,66 @@ Tests and gates:
 Deferred:
 
 - Runtime split behavior, second pane allocation, dynamic `PaneId` allocator, active pane focus movement, split commands/keybindings, hidden/floating pane behavior, pane transfer, tab transfer, resize/rebalance, z-index repair, serialization, C ABI changes, render ABI changes, and broad cleanup/rename of `bucket2.zig`.
+
+## User Decision: Initial Runtime Split UX
+
+- Copy Zellij's split UX while Howl learns.
+- Start implementation in terms of richness, but keep the minimum action set that gets machinery planned and started correctly.
+- First runtime split behavior should add both split directions, because vertical and horizontal splits should share all machinery except placement math.
+- First split creation spawns a new terminal in the current tab using the default command/cwd.
+- Defer cwd inheritance, custom commands, split sizing UI, moving panes, floating, hidden panes, transfer, and advanced focus behavior unless a narrow first slice requires an explicit placeholder.
+
+## Stage 7 Zellij-Style Split Runtime Plan
+
+Session: `teammate-2026-06-21-layout-mux-zellij-splits-plan-02`
+
+Verdict: ready, accepted by orchestrator for Phase 1 first. The initial visible split support sequence must be phased so no user-visible split action lands before multi-pane presentation can render correctly.
+
+Reference pressure:
+
+- `utils/dev_references/terminals/zellij/zellij-utils/src/cli.rs` exposes `NewPane` with right/down direction, command, and cwd semantics.
+- `utils/dev_references/terminals/zellij/zellij-server/src/route.rs` maps `Action::NewPane` to tiled placement and default terminal spawn.
+- `utils/dev_references/terminals/zellij/zellij-utils/src/data.rs` separates tiled new-pane placement from floating/in-place/stacked placement.
+- `utils/dev_references/terminals/zellij/zellij-client/src/input_handler.rs` treats `Action::NewPane` as a normal action beside tab and floating-pane actions.
+- `utils/dev_references/terminals/tmux/cmd-split-window.c` proves split execution resolves session/window/current pane/layout cell and spawns a pane through runtime ownership.
+- `utils/dev_references/terminals/tmux/window.c` proves pane collection ownership belongs to the window/tab runtime owner.
+- `utils/dev_references/terminals/tmux/layout.c` proves layout leaf identity and pane runtime must reconcile before visible split behavior.
+- `utils/dev_references/terminals/wezterm/docs/cli/cli/split-pane.md` proves split-pane splits the current pane, returns a new pane id, and spawns a default command when none is specified.
+- `utils/dev_references/terminals/wezterm/docs/config/default-keys.md` gives default split key pressure for vertical/horizontal split actions.
+
+Minimum user-visible actions for the later binding phase:
+
+- `Input.Bindings.Action.terminal_split_right`
+- `Input.Bindings.Action.terminal_split_down`
+- terminal config binding fields: `split_right`, `split_down`
+- default config entries under `term.bindings` after key-label spelling is confirmed.
+
+Phases:
+
+- Phase 1: pluralize host presentation frame while preserving current one-pane runtime behavior. No split action, no runtime pane allocation.
+- Phase 2: convert `src/tab.zig` from one-pane delegation to bounded two-pane runtime ownership, still without user-visible binding dispatch.
+- Phase 3: wire `terminal_split_right` and `terminal_split_down` through input config/default config and `events/event.zig` to tab split methods.
+- Phase 4: grow beyond two panes and add focus movement, close, resize, movement/transfer, floating, and hidden behavior as separate contracts.
+
+Stage 7 Phase 1 coder contract:
+
+- Update `howl-linux-host/src/layout.zig`.
+- Add `pub const FramePane = struct { id: pane.PaneId, term_texture_id: u32, term_texture_rect: Rect, scrollbar: scrollbar.Placement, scroll_chip: scroll_chip.Placement };`.
+- Change `Frame` to replace `term_texture_id`, `term_texture_rect`, `scrollbar`, and `scroll_chip` with `panes: []const FramePane` plus `tab_bar_height_px: c_int`.
+- Keep tab-bar metadata fields: `tab_count`, `active_tab`, `tab_bar_revision`, `tab_bar_font_size_px`, `tab_labels`, `damage`.
+- Update `events/event.zig` to populate exactly one `FramePane` for current behavior and pass a slice into `Layout.Frame.panes`.
+- Update `texture/frame.zig` to assert `frame.panes.len > 0`, use `frame.tab_bar_height_px` for tab-bar cache height, draw every pane texture, then draw every pane scrollbar/chip.
+- Update `texture/tab_bar.zig` if it reads `frame.term_texture_rect.y`; use `frame.tab_bar_height_px` instead.
+- No changes to `input/keys.zig`, `config/term.zig`, default config, or runtime split allocation in Phase 1.
+- No C/render ABI changes.
+
+Phase 1 tests and gates:
+
+- `Layout.Frame` can carry one `FramePane` with explicit `tab_bar_height_px`.
+- `texture/frame.zig` fake-C tests prove submitting a frame with two panes draws two terminal textures and scrollbar/chip for each pane.
+- tab-bar cache height uses `Frame.tab_bar_height_px`, not first pane rect y.
+- current one-pane render snapshot emits exactly one `FramePane`.
+- no `terminal_split_right`, `terminal_split_down`, `split_right`, or `split_down` user-visible symbols appear in Phase 1.
+- no C ABI files change.
+- no manager/controller/engine/utils/types files are added.
+- verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, and targeted stale-symbol searches.
