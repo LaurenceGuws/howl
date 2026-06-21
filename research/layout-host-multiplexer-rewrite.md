@@ -375,3 +375,66 @@ Deferred:
 - No C ABI or render ABI changes.
 - No root `scroll_bar.zig` rename or broader scrollbar interaction rewrite.
 - No `overlay`, `viewport`, host `screen`, `types.zig`, manager/engine/controller/utils owner, or new vague bucket structs.
+
+## Stage 4 Split Structure Contract
+
+Session: `teammate-2026-06-21-layout-mux-splits-plan-01`
+
+Verdict: ready, accepted by orchestrator with clarification: stale-name gates must target host layout structure symbols and files. They must not reject official VT scroll viewport protocol names or GL viewport API spellings.
+
+Problem:
+
+- Current layout has real window/tab/tab-bar/pane owners, but no split owner.
+- The next smallest multiplexer slice is a tested split-tree placement owner over `Pane.PaneId` that computes host geometry without adding runtime behavior, hidden panes, transfers, resize interaction, serialization, render ABI changes, or terminal state.
+
+Reference pressure:
+
+- `utils/dev_references/terminals/tmux/layout.c` keeps split layout as a tree of container cells and pane leaves.
+- `utils/dev_references/terminals/tmux/layout.c` separates node cells from window pane leaves.
+- `utils/dev_references/terminals/tmux/layout.c` derives z-index from pane leaves after walking layout.
+- `utils/dev_references/terminals/tmux/layout-custom.c` serializes left-right and top-bottom split kinds, but serialization is deferred.
+- `utils/dev_references/terminals/zellij/zellij-utils/src/input/layout.rs` has explicit horizontal/vertical split direction pressure and stores tiled pane layouts as children with split direction.
+- `utils/dev_references/terminals/zellij/zellij-server/src/panes/tiled_panes/tiled_pane_grid.rs` keeps tiled panes keyed by `PaneId` and computes geometry separately.
+- `utils/dev_references/terminals/wezterm/docs/cli/cli/split-pane.md` targets pane ids and returns pane ids for split operations.
+
+Coder contract:
+
+- Add `howl-linux-host/src/layout/splits.zig` as the owner of split layout shape and deterministic pane placement.
+- Update `howl-linux-host/src/layout.zig` to export `splits`.
+- Update `howl-linux-host/src/layout/tab.zig` only if needed to route `singlePane` or two-pane placement through `Splits` without broadening behavior.
+- Update `howl-linux-host/src/host_test_root.zig` to import `layout.splits` and add targeted stale-symbol gates if needed.
+- Do not change `events/event.zig` unless compile proof requires only narrow import/name fallout.
+
+Exact symbols:
+
+- `layout/splits.zig`: `pub const Direction = enum { left_right, top_bottom };`
+- `layout/splits.zig`: `pub const Leaf = struct { pane: Pane.PaneId };`
+- `layout/splits.zig`: `pub const Pair = struct { direction: Direction, first: Leaf, second: Leaf };`
+- `layout/splits.zig`: `pub const Tree = union(enum) { leaf: Leaf, pair: Pair };`
+- `layout/splits.zig`: `pub fn leaf(pane: Pane.PaneId) Tree`
+- `layout/splits.zig`: `pub fn pair(direction: Direction, first: Pane.PaneId, second: Pane.PaneId) Tree`
+- `layout/splits.zig`: `pub fn place(body_value: Tab.Body, tree: Tree, out: []Pane.Placement) []Pane.Placement`
+
+Rules:
+
+- `Tree` owns layout shape only.
+- `Pane.Placement` remains the host geometry output.
+- `Pane.PaneId` remains identity.
+- `Tab.Body` remains the tab content rectangle.
+- `place` must assert output capacity for the tree leaf count.
+- `place` must not allocate, and must not mutate terminal/render/runtime state.
+- For odd dimensions, give the remainder to the second pane.
+
+Tests and gates:
+
+- Single leaf fills the whole `Tab.Body`.
+- Left-right pair splits width and preserves full height.
+- Top-bottom pair splits height and preserves full width.
+- Pane ids in output match tree leaf order.
+- Odd pixel/logical sizes preserve total coverage without overlap.
+- If current test style allows assertion testing, prove insufficient output capacity asserts in safety builds; otherwise rely on explicit `std.debug.assert` in implementation.
+- Verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, and targeted stale-symbol searches in `howl-linux-host/`.
+
+Deferred:
+
+- Dynamic pane id allocation, split target lookup, focus model, pane close/rebalance, interactive resizing, hidden pane retention, floating panes, pane/tab transfer, z-order repair, layout serialization, runtime event routing for split commands, and any render or C ABI contract.
