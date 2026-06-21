@@ -1,0 +1,578 @@
+# Texture Trigger Wake Scheduler Sprint Scratchpad
+
+Purpose:
+
+- Replace the rejected runtime-facts path with the user-directed owner ladder.
+- Keep the main SDL/event loop extremely small.
+- Route terminal-owner work through texture-present triggers and main wake cadence.
+
+User direction receipts:
+
+- `tab` is a real instance, UX, and layout owner, but it must not become the event orchestrator.
+- Existing owner paths must be used: `term.zig`, `pty/`, `vt/`, `render/`, `texture/`, and `events/`.
+- Do not introduce a new `term_surface` noun.
+- Three event classes must stay distinct:
+  - owner-specific internal events
+  - texture present events
+  - wake events
+- Small owner events do not directly influence the main thread.
+- A scheduler controls each level and passes work to the next level.
+- Texture is the trigger. Multiple trigger pulls fall on deaf ears while the shot is still firing.
+- SDL determines how fast the shot can fire.
+- If texture does nothing, main wake/cadence does nothing.
+- Main must not drive PTY/VT/render progress merely because a texture trigger was consumed.
+- Consuming a texture trigger means upload/present/frame construction only.
+- `trigger` is the preferred noun for the texture-to-wake edge. Avoid weaker alternatives such as `request` where they hide the handgun trigger/cock model.
+- Sync versus async event boundaries and acknowledgement semantics were checked in this scratchpad. The accepted sprint contract uses no explicit texture-trigger ack; atomic trigger set/clear/coalescing is the boundary.
+- Howl's main event loop is unique: Ghostty has too many threads for this target, Alacritty has one terminal, and Zellij is not a traditional windower. WezTerm and Kitty were read lightly for insights only and do not override Howl's owner ladder.
+
+Rejected paths:
+
+- `Surface.RuntimeFacts` in `src/buckets that must die/bucket2.zig`.
+- `Tab.RuntimeFacts` in `src/tab.zig`.
+- `LoopRuntimeFacts` in `src/events/event.zig`.
+- A replacement `Term.ProgressFacts`, `SurfaceFacts`, `Snapshot`, or other facts bucket.
+- A tab-owned event orchestrator.
+- Main-thread PTY wake polling or acknowledgement.
+- Tab polling PTY, VT, render, or cursor facts.
+- `tab.zig` importing `events/scheduler.zig`.
+- Wake ack/query APIs on `term.zig`.
+- Main driving terminal progress after consuming a texture trigger.
+- Pretending ack semantics are settled without reference/user review.
+- Temporary `bucket2.zig` composition seams for PTY progress signal to texture trigger. The bucket is preventing the architecture from blooming; redesign callers through pane/term owner layers instead of adding compatibility wiring.
+
+Pane/term owner correction:
+
+- Pane and term are adjacent layers, not a bucket. Pane is the chrome of the terminal surface; term is the terminal surface owner.
+- The sprint must kill bucket ideology by redesigning callers to stop bypassing architecture.
+- Do not add compatibility shims or new cross-owner wiring to `bucket2.zig` as an accepted endpoint.
+- If `bucket2.zig` must be touched during the deletion, it must be to starve/delete caller paths or move behavior to the true owner, not to host the new composition seam.
+
+Howl citations to preserve:
+
+- `howl-linux-host/src/term.zig` already owns the terminal instance spine: PTY state, PTY session handle, VT handle, retained render state, VT state, and mutex.
+- `howl-linux-host/src/pty/wait_thread.zig` currently drives terminal progress before waking the event loop; this proves the slave side already owns progress-before-signal ordering.
+- `howl-linux-host/src/pty/pump.zig` currently mutates PTY/VT/render consequences and calls `term.render.notePrepareNeeded()` when transport or runtime state changes.
+- `howl-linux-host/src/texture/term.zig` already owns terminal texture realization helpers.
+- `howl-linux-host/src/texture/frame.zig` already owns frame/present submission.
+- `howl-linux-host/src/events/event_loop.zig` already coalesces SDL wake events with `wake_queued`.
+- `howl-linux-host/src/tab_bar/tab_slots.zig` stores tabs in a fixed `[max_tabs]RuntimeTab` array and moves active pointers/order, so tab storage appears pointer-stable across reorder/removal.
+
+Research requirements before coding:
+
+- Research and plan the whole sprint into workable slices in this file.
+- Prefer Howl citations and explicit user-direction receipts for this sprint; reference citations are required only where Alacritty or other references materially affect cadence/scheduler shape.
+- Each slice must name exact files, exact owner changes, exact deletions, tests, and gates.
+- The final slice plan must be worker-ready: a worker should not need a new context preread before coding.
+- If deleting all runtime facts in one slice is too broad, prove why and define the smallest prerequisite slice that still moves toward deleting them without adding a replacement bucket.
+
+Current research status:
+
+- Research artifact populated for orchestrator review.
+- Not accepted for coding until reviewer accepts this file.
+- The dirty tree in `howl-linux-host` is a rejected second attempt and must be repaired in place only inside accepted slice files. Do not use destructive git commands.
+
+## Current Howl Source Citations
+
+Terminal instance and owner-internal sequencing:
+
+- `howl-linux-host/src/term.zig:31-39` defines `Term` as the tiny terminal instance spine: allocator, PTY state, PTY session handle, VT handle, retained render state, VT state, and mutex. This is the existing owner path for terminal-instance sequencing; do not create `term_surface` and do not move a facts bucket here.
+- `howl-linux-host/src/pty/wait_thread.zig:58-67` runs `progressThreadMainWith`: waits for transport, calls `Ops.driveProgress(target_value.term, EventLoop.nowNs())`, signals only after progress reports redraw or death, and drains kept turns before waiting again. This proves the slave/progress thread already owns progress-before-signal ordering.
+- `howl-linux-host/src/pty/wait_thread.zig:80-83` currently implements `signalWake` by setting `wake_pending` and waking the event loop. This is the exact rejected edge to replace: PTY progress must signal texture-present relevance, not expose a main-polled wake/ack fact.
+- `howl-linux-host/src/pty/pump.zig:44-56` defines `driveOnce`/`driveOnceWith`; it pumps transport, progresses VT runtime, checks outbound backlog and liveness, returns `keep`, `should_redraw`, and `alive`. This is owner-internal progress, not main-loop work.
+- `howl-linux-host/src/pty/pump.zig:76-91` defines `progressRuntimeLocked`; it queries/progresses VT runtime under the term mutex, drains terminal replies, and calls `term.render.notePrepareNeeded()` when runtime state changes. This is the render-preparation relevance point before any texture trigger.
+
+Texture and present owners:
+
+- `howl-linux-host/src/texture/term.zig:17-46` owns terminal texture realization through `uploadRenderSurface`. It realizes render resources, ensures host texture storage, uploads render commands, and returns success/failure. This file can host a pure atomic present trigger because that trigger belongs to terminal texture-present relevance; the trigger must not touch GL from the slave thread.
+- `howl-linux-host/src/texture/term.zig:48-53` owns terminal texture deletion for the host texture id.
+- `howl-linux-host/src/texture/frame.zig:70-91` defines `texture/frame.State` and `submitPresentSync`, the frame/present owner called by main once cadence admits present.
+- `howl-linux-host/src/texture/frame.zig:137-169` defines `submitFrameSync`; it draws the tab bar, each pane texture, scrollbar, scroll chip, swaps damage, and returns a present token. This is main-side texture/frame work only, not PTY/VT/render progress.
+
+Main wake cadence and current scheduler:
+
+- `howl-linux-host/src/events/event_loop.zig:17-25` stores `wake_queued` as an atomic in `EventLoop` and clears it on init.
+- `howl-linux-host/src/events/event_loop.zig:52-63` implements `wake`: `wake_queued.swap(true, .acq_rel)` coalesces duplicate wake calls and pushes one SDL user event only on false-to-true.
+- `howl-linux-host/src/events/event_loop.zig:108-112` consumes synthetic wake events and stores `wake_queued = false`, which rearms future wake pushes.
+- `howl-linux-host/src/events/event_loop.zig:180-188` tests duplicate wake calls collapse to one pushed event.
+- `howl-linux-host/src/events/event_loop.zig:190-203` tests synthetic wake consumption rearms future wake pushes.
+- `howl-linux-host/src/events/scheduler.zig:37-67` defines bounded `HostEventQueue`; this is acceptable main wake/scheduler machinery as long as it is fed by texture-triggered work, input/window/layout work, and frame timers, not runtime facts.
+- `howl-linux-host/src/events/scheduler.zig:88-147` defines `Scheduler` timers and frame request cadence; this is the existing wake-cadence owner.
+- `howl-linux-host/src/events/scheduler.zig:149-161` defines wait/present selection from queued host events and frame readiness. Keep this shape, but remove runtime-facts inputs.
+
+Tab storage and lifetime:
+
+- `howl-linux-host/src/tab_bar/tab_slots.zig:10-16` stores tabs in `tabs: [max_tabs]RuntimeTab` and active ordering separately in pointer arrays and slot arrays.
+- `howl-linux-host/src/tab_bar/tab_slots.zig:45-53` returns acquired slots as `&self.tabs[slot_idx]`, proving tab storage address comes from a fixed array slot.
+- `howl-linux-host/src/tab_bar/tab_slots.zig:55-63` appends active tabs by storing the provided pointer in active ordering; it does not move the stored `RuntimeTab` value.
+- `howl-linux-host/src/tab_bar/tab_slots.zig:74-89` removes active tabs by shifting pointer/order arrays only and returns the original pointer/slot id.
+- `howl-linux-host/src/tab_bar/tab_slots.zig:121-141` tests close semantics preserve active pointers. Worker must add one stronger test/comment for term storage lifetime: reordering/removal shifts active pointers only and does not move `tabs[slot_idx]` storage while the tab is alive.
+
+Current rejected dirty symbols:
+
+- `howl-linux-host/src/buckets that must die/bucket2.zig:97-114` defines `Surface.RuntimeFacts` with wake, runtime due, input admission, runtime wait, cursor deadlines, and render pending. Delete it.
+- `howl-linux-host/src/buckets that must die/bucket2.zig:418-430` defines `Surface.runtimeFacts`. Delete it.
+- `howl-linux-host/src/buckets that must die/bucket2.zig:444-456` defines `Surface.driveProgressWithFacts`. Delete it; do not replace it with a facts parameter.
+- `howl-linux-host/src/tab.zig:96-107` defines `Tab.RuntimeFacts`. Delete it.
+- `howl-linux-host/src/tab.zig:231-263` defines `Tab.runtimeFacts`, which polls/aggregates lower-owner facts. Delete it.
+- `howl-linux-host/src/tab.zig:291-307` defines `Tab.driveProgressWithFacts`. Delete it; main must not drive terminal progress because of a texture trigger.
+- `howl-linux-host/src/events/event.zig:47-63` defines `LoopRuntimeFacts`. Delete it.
+- `howl-linux-host/src/events/event.zig:210-247` collects and aggregates runtime facts. Delete it.
+- `howl-linux-host/src/events/event.zig:262-302` maps runtime facts into host events/timers. Delete the facts dependency; keep only host/input/window/texture-trigger/frame timer paths.
+- `howl-linux-host/src/events/event.zig:392-421` drives terminal progress from `LoopRuntimeFacts`. Delete this path. Texture-trigger consumption must never compute PTY/VT/render terminal progress.
+
+## Reference Pressure Needed For This Sprint
+
+- Alacritty pressure is needed only for wake-cadence shape, not for owner nouns.
+- `utils/dev_references/terminals/alacritty/alacritty/src/scheduler.rs:54-72` processes due timers and returns the closest remaining deadline. This supports keeping Howl `events/scheduler.zig` as the main wake-cadence/timer owner.
+- `utils/dev_references/terminals/alacritty/alacritty/src/event.rs:483-489` updates scheduler after event processing and sets `ControlFlow::WaitUntil` or `Wait`. This supports a small main loop that waits on typed host work plus cadence deadlines.
+- Do not copy Alacritty nouns (`Display`, `Context`) into Howl.
+- Focused sync/async boundary findings:
+  - Alacritty's useful pressure is main-loop cadence only: due timers publish concrete events and the app loop waits until the next deadline or indefinitely. This supports `events/scheduler.zig` as wake cadence owner, not main polling terminal facts.
+  - Ghostty separates IO/mailbox/renderer/surface boundaries instead of making the app loop poll terminal internals.
+  - `utils/dev_references/terminals/ghostty/src/termio.zig:1-18` documents `Termio`, backend, and mailbox as separate IO pieces, and recommends multi-threaded operation for terminal IO.
+  - `utils/dev_references/terminals/ghostty/src/Surface.zig:648-678` wires IO, renderer wakeup, renderer mailbox, and surface mailbox explicitly during surface initialization.
+  - `utils/dev_references/terminals/ghostty/src/termio/Termio.zig:386-402` queues messages to a mailbox and notifies the mailbox thread. The sender does not wait for a terminal-output acknowledgement before continuing.
+  - `utils/dev_references/terminals/ghostty/src/termio/stream_handler.zig:101-106` defines `queueRender` as a renderer wake hint, not synchronous render-progress computation.
+  - `utils/dev_references/terminals/ghostty/src/termio/stream_handler.zig:147-173` pushes renderer messages, wakes the renderer, and handles contention without turning the sender into the renderer owner.
+  - `utils/dev_references/terminals/ghostty/src/termio/mailbox.zig:62-103` sends to an SPSC queue and notifies a wakeup handle; notification is fire-and-forget except for logging failures.
+  - `utils/dev_references/terminals/ghostty/src/Surface.zig:1077-1095` handles `.child_exited`, `.renderer_health`, `.scrollbar`, and `.present_surface` as distinct surface messages. `present_surface` is separate from lifecycle and scrollbar messages.
+  - `utils/dev_references/terminals/ghostty/src/Surface.zig:3392-3399` says refresh callback's point is to schedule render, then calls `queueRender`; this supports trigger/wakeup semantics, not main polling terminal internals.
+  - WezTerm light reading shows GUI input paths frequently call `invalidate()` after host-visible changes, for example grep hits in `utils/dev_references/terminals/wezterm/wezterm-gui/src/termwindow/keyevent.rs` and `mouseevent.rs`. This is only an attractive invalidate idea; it is not Howl's owner model for this sprint.
+  - Kitty light reading supports wake/frame callback ideas only: `utils/dev_references/terminals/kitty/glfw/backend_utils.c:272-290` writes to a wakeup fd/eventfd; `utils/dev_references/terminals/kitty/glfw/wl_window.c:3010-3017` handles a Wayland frame callback and clears the callback; `utils/dev_references/terminals/kitty/glfw/wl_window.c:3087-3103` requests a frame event. These are wake/frame mechanics, not terminal-output ack semantics for Howl.
+
+Acknowledgement decision:
+
+- Howl's texture trigger/global bit does not need an explicit acknowledgement message from main to PTY/VT/render owners in this sprint.
+- Reason: the terminal/slave owner already completed terminal progress before setting the texture trigger. Main consuming the trigger only authorizes texture upload/present work under SDL cadence; it does not unlock further PTY/VT/render progress.
+- Reason: `events/event_loop.zig:52-63` already coalesces wake pushes with `wake_queued`, and `events/event_loop.zig:108-112` rearms future wake pushes when the synthetic SDL wake is consumed. A second ack layer would duplicate this at the wrong owner boundary.
+- Reason: Ghostty mailbox/wakeup edges above are notify/queue semantics without terminal-side ack on render scheduling; renderer/surface processing catches up independently.
+
+No-ack trigger invariant:
+
+- `texture/term.PresentTrigger.triggered == false` means no unconsumed terminal texture trigger is pending for that terminal instance.
+- `triggerPresent` sets `triggered` true with acquire/release ordering and calls `EventLoop.wake()` only when the previous value was false.
+- Repeated `triggerPresent` calls while `triggered == true` do not enqueue more SDL wakes and do not store per-event data.
+- Main clears the bit only through `takeTriggered` while collecting texture-present work for a cadence-admitted turn.
+- If terminal output changes again after main clears the bit, the next `triggerPresent` false-to-true transition wakes the main loop again.
+- Clearing the bit is not an acknowledgement to PTY/VT/render. It only marks that main has observed the latest texture trigger state and may attempt upload/present.
+- Main must be correct if a trigger is set concurrently while it is consuming the previous trigger: either the new trigger remains set for a later turn, or the current turn observes latest render state and a later trigger is coalesced by design. Worker must use atomic swap/exchange semantics that do not lose a false-to-true transition after clear.
+
+Ack-if-needed rule, future only:
+
+- If a future owner proves a resource cannot be reused until texture upload/present has consumed it, the acknowledgement belongs at the texture/render resource edge, likely `texture/term.zig` or `render/surface_retained.zig` present-resource ownership.
+- That ack must not be main polling PTY/VT/render facts and must not be exposed as wake ack/query APIs on `term.zig`.
+- No such ack is needed for this sprint because current render state/present bookkeeping already uses `notePresentSubmitted`/`completePresent` around submitted frames, and the new trigger only coalesces demand to attempt present.
+
+## Correct Call Flow
+
+PTY/term internal change to texture present:
+
+1. `pty/wait_thread.zig` owns the slave/progress thread loop.
+2. `pty/pump.zig` mutates PTY/VT/render state through `Term`; `progressRuntimeLocked` calls `term.render.notePrepareNeeded()` when VT runtime changes.
+3. After owner-internal progress has completed, `wait_thread` observes `Outcome.should_redraw` and invokes a terminal texture-present signal.
+4. `texture/term.PresentTrigger.triggerPresent()` sets a coalesced atomic trigger bit and calls `EventLoop.wake()` only on false-to-true.
+5. `events/event_loop.zig` coalesces SDL wake events with `wake_queued`.
+6. `events/event.zig` wakes when SDL cadence allows, consumes latest texture-present trigger state, builds frame data, runs render/texture upload/present path, and schedules frame cadence.
+7. Consuming the texture trigger never calls `pty_pump.driveOnce`, never queries VT runtime due state, never queries PTY wake pending, and never drives cursor/render progress as terminal progress.
+
+Main input flow:
+
+1. Main drains SDL input through existing input/event loop paths.
+2. Main publishes input to focused terminal/PTY owner path through existing `Tab.drainTextInputFastPath`, `Tab.drainPointerInput`, `Tab.handleScrollInput`, `term_input`, and `pty_session.publishInputBytes` paths.
+3. Input publication does not create `RuntimeFacts` and does not synchronously drive PTY/VT/render progress.
+4. The slave/terminal owner later observes resulting PTY/VT output through its internal scheduler and triggers texture present if output changes.
+5. Host-local visuals caused by input, such as selection/link/scrollbar state already owned in the terminal surface bucket, may request host redraw only for host-local presentation. They must not call terminal progress.
+
+Texture trigger semantics:
+
+- Texture is the trigger; main SDL cadence is the cock.
+- Multiple trigger pulls coalesce while the shot is still firing.
+- If the trigger bit is not set and no input/window/layout work exists, main wake/cadence does nothing.
+- Trigger consumption means texture upload/present/frame construction only.
+
+Lifecycle semantics:
+
+- `terminal_exited` is not a texture-present event unless it causes presentable texture work.
+- Current lifecycle handling through `pty_session.outcome`/active-tab problem handling may remain if it does not depend on runtime facts.
+- Async lifecycle event routing is deferred unless facts deletion exposes a concrete blocker.
+
+## Accepted And Rejected Dirty Pieces
+
+Accepted to preserve if they remain independent of runtime facts:
+
+- `events/scheduler.zig` bounded `HostEventQueue`.
+- `events/scheduler.zig` `Scheduler.update` due-timer-to-event shape.
+- Frame cadence timer and `requestFrame` behavior.
+- PTY wait-thread cleanup that removes fixed 50ms polling and production `anytype` from touched code.
+- Cursor typed timer/event names only if they no longer depend on `LoopRuntimeFacts` or tab/main cursor deadline aggregation. If they still depend on facts, remove them from this sprint and leave cursor timing to the later owner-internal scheduler slice.
+
+Rejected from dirty tree:
+
+- `Surface.RuntimeFacts`.
+- `Tab.RuntimeFacts`.
+- `LoopRuntimeFacts`.
+- `runtimeFacts` methods.
+- `driveProgressWithFacts` methods.
+- cursor deadline aggregation through tab/main facts.
+- render pending aggregation through tab/main facts.
+- PTY wake pending/ack as a main-loop protocol.
+- main driving terminal progress after consuming texture trigger.
+- tab event queue/orchestrator.
+
+## Sprint Scope Decision
+
+Deleting `Surface.RuntimeFacts`, `Tab.RuntimeFacts`, and `LoopRuntimeFacts` is feasible in this sprint if and only if the texture trigger lands first in the same slice.
+
+Reason:
+
+- Without a texture trigger, deleting runtime facts leaves no owner-true path for slave-side terminal changes to trigger main-side texture/present work.
+- The forbidden alternatives are main polling PTY wake pending, tab polling lower-owner facts, or moving the same bucket into `term.zig`.
+- The texture trigger is not a replacement facts bucket: it is a single coalesced present trigger bit owned by `texture/term.zig`, with no VT/PTY/render/cursor facts and no per-event computation.
+
+Therefore the worker should implement this as one sprint with two internal slices. If slice 1 cannot compile without retaining facts, stop before slice 2 and report the exact compile dependency.
+
+## Workable Slices
+
+### Slice 1: Texture Present Trigger And PTY Signal
+
+Purpose:
+
+- Add the owner-true trigger path before deleting facts users.
+- Preserve progress-before-signal ordering from the PTY/slave thread.
+- Do not touch GL from the slave thread.
+
+Files:
+
+- `howl-linux-host/src/texture/term.zig`
+- `howl-linux-host/src/term.zig`
+- `howl-linux-host/src/pty/wait_thread.zig`
+- `howl-linux-host/src/buckets that must die/bucket2.zig` only for deletion/starvation of old paths, not as the new PTY-to-texture composition owner
+- `howl-linux-host/src/tab_bar/tab_slots.zig` tests/comments only if needed to prove terminal storage stability
+
+Add in `texture/term.zig`:
+
+- `const EventLoop = @import("../events/event_loop.zig");`
+- `pub const PresentTrigger = struct { triggered: std.atomic.Value(bool) = std.atomic.Value(bool).init(false), event_loop: ?*EventLoop.EventLoop = null, ... }`
+- `pub fn initPresentTrigger(trigger: *PresentTrigger, event_loop: *EventLoop.EventLoop) void`
+- `pub fn triggerPresent(trigger: *PresentTrigger) void`
+- `pub fn takeTriggered(trigger: *PresentTrigger) bool`
+
+Required implementation rules:
+
+- `triggerPresent` does exactly: atomically set `triggered` true; if it was false, call `event_loop.wake()` when present.
+- `triggerPresent` must not call GL, render prepare, PTY/VT progress, tab methods, or scheduler methods.
+- `takeTriggered` atomically clears and returns whether work was triggered.
+- `texture/term.zig` must not import `pty/wait_thread.zig`; texture owns the trigger, not the PTY progress-thread contract.
+
+New files/folders for Slice 1:
+
+- No new files.
+- No new folders.
+
+Sharpen `term.zig` as the terminal surface owner:
+
+- Add imports in `term.zig`: `const EventLoop = @import("events/event_loop.zig");` and `const texture_term = @import("texture/term.zig");`.
+- Add field to `Term`: `texture_trigger: texture_term.PresentTrigger = .{}`.
+- Add `pub fn initTextureTrigger(self: *Term, event_loop: *EventLoop.EventLoop) void` that delegates to `texture_term.initPresentTrigger(&self.texture_trigger, event_loop)`.
+- Add `pub fn triggerTexturePresent(self: *Term) void` that delegates to `texture_term.triggerPresent(&self.texture_trigger)`.
+- Add `pub fn takeTextureTriggered(self: *Term) bool` that delegates to `texture_term.takeTriggered(&self.texture_trigger)`.
+- These are not wake ack/query APIs. They are the terminal surface owner's narrow texture-trigger edge.
+- `term.zig` must still not know GL, windows, tab bar, layout, frame cadence, or scheduler policy. `texture/term.PresentTrigger` is pure atomic/event-loop trigger state and must not touch GL.
+
+Change in `pty/wait_thread.zig`:
+
+- Replace `signalWake` use for `progress.should_redraw` with direct `target_value.term.triggerTexturePresent()`.
+- Preserve stop/kick behavior.
+- Do not import `texture/` into `pty/`; `pty/wait_thread.zig` already imports `Term` and calls the term owner method.
+- Keep `wakePending`/`ackWake` only if still used during slice 1; slice 2 must remove event/tab/main uses and delete or make them test-only/internal.
+
+Rejected `bucket2.zig` wiring:
+
+- Do not add `texture_present: term_texture.PresentTrigger` to `Surface` as the accepted new architecture.
+- Do not add bucket-local PTY-to-texture trigger adapters as a compatibility seam.
+- Do not add `takeTextureTriggered` to bucket as an accepted new API. Starve bucket callers by moving access to `Term.takeTextureTriggered` through the true terminal instance owner path.
+- `bucket2.zig` may call `self.term.initTextureTrigger(self.event_loop)` during the existing initialization only as a caller into the true owner while the bucket is being starved. It must not store the trigger, adapt callbacks, or expose a compatibility wrapper.
+
+Caller redesign steps to starve `bucket2.zig`:
+
+- In `tab.zig`, implement `Tab.takeTextureTriggered` by iterating initialized panes and calling `runtime_pane.term.takeTextureTriggered()` directly. Do not add `Surface.takeTextureTriggered` to `bucket2.zig`.
+- In `pty/wait_thread.zig`, call `target_value.term.triggerTexturePresent()` directly after `driveProgress` reports redraw. Do not call a bucket adapter.
+- In `bucket2.zig`, only initialize the true owner field with `self.term.initTextureTrigger(self.event_loop)` while the existing constructor still owns startup choreography.
+- Do not add bucket compatibility wrappers for trigger, wake, progress, render pending, cursor deadlines, or facts.
+- Any compile break from removing bucket facts must be fixed by moving caller access to `term.zig`, `pty/`, `vt/`, `render/`, or `texture/`, not by reintroducing forwarding methods on `Surface`.
+
+Storage stability proof:
+
+- Current `tab_bar/tab_slots.zig` fixed array storage is sufficient for this sprint because each `Term` lives inside the current `Surface` inside `RuntimeTab` stored in `Slots.tabs`, and active ordering moves pointers, not values.
+- Worker must add a test or comment near `Slots` stating tab storage is fixed by slot and active ordering must not move `tabs[slot_idx]` while a tab is alive.
+- This is not a blocker unless implementation discovers a value-copy move of `RuntimeTab`, `Surface`, or `Term` after `startRuntime`.
+
+Slice 1 tests:
+
+- `texture present trigger coalesces duplicate triggers`.
+- `texture present trigger wakes event loop only on false-to-true`.
+- `take triggered clears trigger and allows a later wake`.
+- `pty wait thread triggers term texture after driveProgress reports redraw`.
+- `tab slot active ordering preserves fixed tab storage address` or stronger existing test extension.
+
+### Exact New Symbol And Signature Map
+
+No new files or folders are planned for the sprint.
+
+New or changed symbols:
+
+- `texture/term.zig`: `pub const PresentTrigger = struct { triggered: std.atomic.Value(bool), event_loop: ?*EventLoop.EventLoop }`.
+- `texture/term.zig`: `pub fn initPresentTrigger(trigger: *PresentTrigger, event_loop: *EventLoop.EventLoop) void`.
+- `texture/term.zig`: `pub fn triggerPresent(trigger: *PresentTrigger) void`.
+- `texture/term.zig`: `pub fn takeTriggered(trigger: *PresentTrigger) bool`.
+- `term.zig` `Term` field: `texture_trigger: texture_term.PresentTrigger`.
+- `term.zig`: `pub fn initTextureTrigger(self: *Term, event_loop: *EventLoop.EventLoop) void`.
+- `term.zig`: `pub fn triggerTexturePresent(self: *Term) void`.
+- `term.zig`: `pub fn takeTextureTriggered(self: *Term) bool`.
+- `pty/wait_thread.zig`: no new callback struct; call `target_value.term.triggerTexturePresent()` after owner-internal progress reports presentable change.
+- `bucket2.zig`: no accepted new trigger field, no accepted progress-signal adapter, and no accepted compatibility trigger API. Any final plan that still places the new seam here is rejected.
+- `tab.zig`: `pub fn takeTextureTriggered(self: *Tab) bool`.
+- `events/scheduler.zig`: replace old terminal wake/progress event with `HostEvent.texture_triggered` if a distinct host event is kept.
+- `events/event.zig`: private helper `fn collectTextureTriggers(tabs: []*RuntimeTab) bool` or equivalent owner-local helper.
+
+Deleted symbols:
+
+- `Surface.RuntimeFacts`.
+- `Surface.runtimeFacts`.
+- `Surface.driveProgressWithFacts`.
+- `Tab.RuntimeFacts`.
+- `Tab.runtimeFacts`.
+- `Tab.driveProgressWithFacts`.
+- `Processor.LoopRuntimeFacts`.
+- `Processor.collectLoopRuntimeFacts`.
+- `Processor.noteLoopRuntimeFacts`.
+- `Processor.driveRuntimeProgress` and helper chain.
+
+### Old Dirty Deletion Map By File
+
+Use this as the worker's deletion checklist:
+
+- `src/buckets that must die/bucket2.zig`
+  - Delete `Surface.RuntimeFacts` and its methods.
+  - Delete `runtimeFacts`.
+  - Delete `driveProgressWithFacts`.
+  - Delete tests in this file that construct or consume runtime facts.
+  - Do not add new trigger composition here. Redesign callers so pane/term/texture owners carry the new seam.
+- `src/buckets that must die/bucekt2_test.zig`
+  - Replace/delete tests around current PTY wake runtime-facts behavior.
+  - Replace/delete tests around cursor cadence via `driveProgressWithFacts`.
+  - Keep render submit/present tests that do not construct facts.
+- `src/tab.zig`
+  - Delete `Tab.RuntimeFacts`.
+  - Delete `runtimeFacts`.
+  - Delete `driveProgressWithFacts`.
+  - Delete `inertRuntimeFacts` and deadline/wait aggregation helpers if unused.
+  - Add `takeTextureTriggered` only.
+- `src/events/event.zig`
+  - Delete `LoopRuntimeFacts`.
+  - Delete facts collection/aggregation.
+  - Delete main terminal progress drive path.
+  - Add texture-trigger collection.
+  - Keep main render/present/frame construction path.
+- `src/events/scheduler.zig`
+  - Replace or remove `terminal_wakeup` terminology from texture-trigger path.
+  - Delete `terminal_progress_due`/`TimerTopic.terminal_progress` unless a non-facts owner-internal scheduler is accepted later.
+- `src/pty/wait_thread.zig`
+  - Replace main wake signaling after redraw with `target_value.term.triggerTexturePresent()`.
+  - Delete or hide `wakePending`/`ackWake` from main/tab protocol after callers are gone.
+
+### User Decisions Captured
+
+- Existing owner paths only.
+- Texture is the trigger.
+- Main SDL/event loop is the cock/cadence.
+- Owner-internal events do not directly influence main.
+- No tab event orchestrator.
+- No `RuntimeFacts` replacement bucket.
+- Use `trigger` vocabulary for this edge.
+- Consuming a texture trigger never drives PTY/VT/render progress.
+- No explicit trigger ack in this sprint; atomic set/clear/coalescing is the contract.
+
+### Slice 2: Delete Runtime Facts And Main Drive Path
+
+Purpose:
+
+- Delete rejected facts and route main through texture-triggered present work only.
+
+Files:
+
+- `howl-linux-host/src/buckets that must die/bucket2.zig`
+- `howl-linux-host/src/tab.zig`
+- `howl-linux-host/src/events/event.zig`
+- `howl-linux-host/src/events/scheduler.zig`
+- `howl-linux-host/src/buckets that must die/bucekt2_test.zig`
+
+Delete in `bucket2.zig`:
+
+- `pub const RuntimeFacts`.
+- `pub fn runtimeFacts`.
+- `pub fn driveProgressWithFacts`.
+- `RuntimeFacts.runtimeWakePending`.
+- `RuntimeFacts.driveAdmitted`.
+- Tests that construct runtime facts or prove facts behavior.
+
+Do not add in `bucket2.zig`:
+
+- `driveProgress` called by main on texture-trigger consumption.
+- Any facts parameter replacement.
+- Any `Term.ProgressFacts` or wake query/ack API.
+
+Keep in `bucket2.zig`:
+
+- `renderTurn` as main-side render/texture realization work.
+- `notePresentSubmitted`, `completePresent`, `noteRenderTurn` present bookkeeping.
+- Cursor owner methods if used by explicit cursor events and not fact aggregation.
+- Input publication helpers through `termInput`.
+
+Delete in `tab.zig`:
+
+- `pub const RuntimeFacts`.
+- `pub fn runtimeFacts`.
+- `pub fn driveProgressWithFacts`.
+- `inertRuntimeFacts`.
+- `minOptionalWaitMs`/`minOptionalDeadlineNs` helpers if now unused by non-facts code.
+- Tests that construct `Tab.RuntimeFacts`.
+
+Add/change in `tab.zig`:
+
+- Add `pub fn takeTextureTriggered(self: *Tab) bool` that loops initialized panes and calls `runtime_pane.term.takeTextureTriggered()`.
+- This method may only clear texture trigger bits. It must not query PTY wake pending, VT due, render pending, cursor deadlines, scheduler state, or drive terminal progress.
+- Keep `renderTurn`, `noteRenderTurn`, `notePresentSubmitted`, `completePresent`, `framePanes`, input publication, focus/layout behavior.
+- Do not import `events/scheduler.zig`.
+
+Delete/change in `event.zig`:
+
+- Delete `LoopRuntimeFacts`.
+- Delete `collectLoopRuntimeFacts`.
+- Delete `noteLoopRuntimeFacts`.
+- Delete facts-based `collectWaitHostEvents`.
+- Delete facts-based `syncTerminalProgressTimer` and any `terminal_progress` scheduling that depends on runtime facts.
+- Delete facts-based `syncCursorTimers` if cursor deadlines still come from `LoopRuntimeFacts`.
+- Delete `driveRuntimeProgress`, `driveTerminalProgress`, and `driveTabRuntimeTurn` paths that drive terminal progress after facts or texture triggers.
+- Add a texture-trigger collection helper in main/event owner, for example `collectTextureTriggers(tabs: []*RuntimeTab) bool`, that calls `tab.takeTextureTriggered()` and appends a host event such as `.texture_triggered` when any trigger was set.
+- Main may render/present after `.texture_triggered`, `.redraw_requested`, `.frame_ready`, or host visual changes when frame cadence admits.
+- Main must not call `pty_pump.driveOnce`, `driveProgressWithFacts`, `runtimeFacts`, `wakePending`, or `ackWake`.
+- Input paths remain publication only: `forwardTerminalInput` can call existing tab/input publication methods and update host-local visual flags, but it must not use `term_input_admitted` to trigger terminal progress.
+- Remove or reduce `term_input_admitted` if it only exists to feed facts/main-drive progress. If still needed for host-local input state, rename only if owner-true and not a facts bridge; otherwise delete.
+
+Change in `scheduler.zig`:
+
+- Replace `HostEvent.terminal_wakeup` with `HostEvent.texture_triggered`, or stop appending terminal wake from texture paths and use `.redraw_requested` only if reviewer prefers no new host event. Preferred user vocabulary is `trigger`, so `.texture_triggered` is the default plan.
+- Remove `HostEvent.terminal_progress_due` and `TimerTopic.terminal_progress` unless a non-facts owner-internal terminal progress scheduler exists in this slice. Current dirty usage is facts-backed, so default action is delete them.
+- Keep frame, input, window, redraw, cursor events only when they are not fed by runtime facts.
+- `chooseWait` remains based on pending input, queued host events, and closest scheduler deadline.
+- `choosePresent` must not imply terminal progress. It chooses present from frame-ready/render output state only.
+
+Slice 2 tests:
+
+- `main maps texture trigger to host present work without terminal progress drive`.
+- `input publication does not call terminal progress drive`.
+- `tab take texture triggered clears pane triggers only`.
+- `runtime facts symbols are gone` through compile and stale grep gates.
+- `texture trigger can cause render/present path without PTY wake polling`.
+- Adjust or delete old tests: `wake facts do not grant runtime admission`, `due terminal work does not become wake`, `active runtime admission follows explicit surface facts`, `active surface wait participates through explicit surface facts`, and bucket tests constructing `RuntimeFacts`.
+
+## Exact Final Call Flow For Worker
+
+PTY/slave output path:
+
+- `pty_wait_thread.progressThreadMainWith` -> `Ops.driveProgress` -> `pty_pump.driveOnce` -> PTY/VT/render state mutation and `term.render.notePrepareNeeded()` -> return `Outcome.should_redraw = true` -> `target_value.term.triggerTexturePresent()` -> `texture/term.PresentTrigger.triggerPresent` -> `EventLoop.wake` coalesced by `wake_queued` -> main wakes on SDL cadence -> `tab.takeTextureTriggered`/event collection observes latest trigger -> `render(self)`/`tab.renderTurn`/`texture/term.uploadRenderSurface`/`texture/frame.submitPresentSync` -> frame cadence scheduling.
+
+Main input path:
+
+- SDL input -> `events/event.zig.forwardTerminalInput` -> `Tab.drainTextInputFastPath`/`Tab.drainPointerInput`/`Tab.handleScrollInput` -> focused pane `termInput` callbacks -> `term_input` and `pty_session.publishInputBytes` -> return to main without terminal progress drive -> slave/PTY owner later produces output and texture trigger if output changes.
+
+Frame cadence path:
+
+- Present submission consumes a frame -> `events/scheduler.zig.Scheduler.requestFrame` schedules `.frame` by refresh interval -> `Scheduler.update` later appends `.frame_ready` -> main can present queued texture/host redraw work when frame is available.
+
+## Verification Gates
+
+Run from `howl-linux-host/` after each accepted internal slice:
+
+- `zig fmt --check build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `git diff --check`
+
+## Stale Grep Gates
+
+Required no-match gates under `howl-linux-host/src/**/*.zig` unless explicitly scoped as test-only deleted symbols in this file:
+
+- `RuntimeFacts`
+- `LoopRuntimeFacts`
+- `ProgressFacts`
+- `SurfaceFacts`
+- `runtimeFacts`
+- `driveProgressWithFacts`
+- `driveTextureTriggeredTerms`
+- `texture_present_requested`
+- `queueProgressRequests`
+- `queueRenderRequests`
+- `requestSurfaceTimers`
+- `render_turn_pending`
+- `runtime_wait_ms`
+- `cursor_blink_deadline_ns`
+- `cursor_blink_timeout_deadline_ns`
+- `cursor_trail_deadline_ns`
+- `terminal_progress_due` unless reintroduced by a non-facts owner-internal scheduler with a separate accepted plan
+- `TimerTopic.terminal_progress` unless reintroduced by a non-facts owner-internal scheduler with a separate accepted plan
+- `wakePending` use from `events/event.zig` or `tab.zig`
+- `ackWake` use from `events/event.zig` or `tab.zig`
+- `@import("events/scheduler.zig")` in `tab.zig`
+- `@import("../events/scheduler.zig")` in `tab.zig`
+- `term_surface`
+
+Required positive grep/check gates:
+
+- `PresentTrigger` appears only in `texture/term.zig`, terminal surface wiring, and tests.
+- `triggerPresent` appears only in `texture/term.zig`, `term.zig`, and tests.
+- `takeTextureTriggered` appears only in `term.zig`, `tab.zig`, `events/event.zig`, and tests.
+- `texture_triggered` appears only in `events/scheduler.zig`, `events/event.zig`, and tests if a distinct host event is kept.
+
+Additional file-specific gates:
+
+- `term.zig` must not gain wake ack/query APIs.
+- `tab.zig` must not import scheduler or poll PTY/VT/render/cursor internals.
+- `texture/term.zig` trigger functions must not call GL, render prepare, PTY/VT progress, tab methods, or scheduler methods.
+- `texture/term.zig` must not import `pty/wait_thread.zig`.
+
+## Dirty Tree Repair Strategy
+
+- Repair dirty tree in place inside the slice files only.
+- Do not revert unrelated user/agent changes.
+- Preserve accepted typed scheduler/wait-thread work only if it survives facts deletion and texture-trigger semantics.
+- Remove facts-dependent cursor/timer code rather than adapting it into another bucket.
+- If implementation discovers that `RuntimeFacts` deletion requires a broad cursor scheduler redesign, delete/disable dirty facts-fed cursor scheduling in this sprint and record cursor owner-internal scheduling as a later sprint.
+- If implementation discovers value moves of `Term`, `Surface`, or `RuntimeTab` after `startRuntime`, stop before coding further and ask orchestrator for a stable owner decision. Current source citations show fixed slot storage, so this is not expected.
+
+## Blockers And Open Decisions
+
+No open research blocker remains for this sprint. The correct owner file exists: `howl-linux-host/src/term.zig` is sharpened as the terminal surface owner for trigger storage and PTY progress signaling, while `texture/term.zig` owns the pure trigger type and operations.
+
+User acceptance checklist:
+
+- The scratchpad maps every rejected dirty facts symbol/path by file.
+- No new file or folder is proposed.
+- No `bucket2.zig` trigger field, adapter, or compatibility wrapper is proposed.
+- All new symbols and signatures are listed exactly.
+- The call flow says terminal progress completes before texture trigger.
+- The call flow says consuming texture trigger performs texture upload/present/frame work only.
+- Main input publication enters terminal/PTY owner path and does not drive terminal progress.
+- The no-ack decision is explicit and includes set/clear/coalescing invariants.
+- Future ack, if ever required, belongs to texture/render resource ownership, not main PTY polling or `term.zig` wake APIs.
+- Tests and stale grep gates reject facts buckets, tab orchestration, main PTY polling, scheduler import into tab, and terminal progress on texture-trigger consumption.
+- Storage stability is resolved by current fixed slot storage citations, with a worker test/comment requirement.
+
+Implementation stop conditions:
+
+- Stop if `Term`/`Surface`/`RuntimeTab` storage is value-moved after the PTY wait thread starts.
+- Stop if deleting `LoopRuntimeFacts` cannot compile without adding a new facts bucket or main polling PTY/VT/render/cursor state.
+- Stop if texture trigger implementation would require the slave thread to touch GL.
+- Stop if lifecycle/exit handling requires a new async event class in this sprint; lifecycle is separate from texture-present unless it causes presentable texture work.
