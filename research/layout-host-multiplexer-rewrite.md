@@ -727,3 +727,100 @@ Tests and gates:
 - Gate: new action symbols appear only in expected files and default config.
 - Gate: no capacity beyond two, cwd/custom command/floating/hidden/move/transfer/resize UI symbols, or C/render ABI changes.
 - Verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, and `git diff --check`.
+
+## Remaining Split Runtime Order
+
+Current accepted state:
+
+- One split per tab is supported.
+- Both split directions work.
+- The new pane becomes active.
+- Two-pane focus movement is supported through layout-owned pane directions and bindings.
+- There is no pane resize yet.
+- There is no pane close yet.
+
+Recommended remaining order:
+
+1. Pane close for the current two-pane split.
+   - Closing one pane restores the other pane to the full tab body.
+   - Closing the last pane follows existing tab/session behavior only after explicitly planned.
+2. Pane resize for the current two-pane split.
+   - Add split ratio storage before UI actions mutate size.
+   - Current `layout/splits.zig` halves placement only; resize requires layout shape growth.
+3. More than two panes.
+   - Add pane id allocation and recursive split tree ownership.
+   - Split target becomes active pane path, not just the root two-pane split.
+4. Cwd and command semantics.
+   - Default command is already used.
+   - Cwd inheritance/override and custom command remain deferred.
+5. Pane movement and transfer.
+   - Move panes within split structure first.
+   - Cross-tab and cross-window transfer later.
+6. Floating and hidden panes.
+   - Add tiled vs floating ownership, z-index mutation, and hide/show retention as separate contracts.
+7. Tab transfer across windows.
+   - Requires mature window/tab runtime collections and is not near-term.
+
+Next recommended slice:
+
+- Stage 8 Phase 2: two-pane close only.
+- It should add no resize math, no more-than-two-pane support, no render ABI work, and no transfer behavior.
+
+## Stage 8 Phase 1 Two-Pane Focus Movement
+
+Session: `ses_116502da4ffeGfmz3gkBalJn1T`
+
+Verdict: implemented and committed in `howl-linux-host` as `a49966c Add two pane focus movement`.
+
+Problem:
+
+- Split-right and split-down created a second pane and made it active, but users could not return focus to the first pane.
+- Focus movement belongs to the tab/layout multiplexer layer. Lower terminal instances only receive focused/unfocused state.
+- Tab and pane keybindings are layout ownership, not terminal-local config and not tab-bar visual config.
+
+Reference pressure:
+
+- Zellij exposes directional pane focus separately from resize/move behavior.
+- tmux `select-pane` changes active pane and then updates focus delivery separately.
+- WezTerm `ActivatePaneDirection` activates an adjacent pane by direction.
+
+Implemented behavior:
+
+- `layout/pane.zig` adds `Direction = enum { left, right, up, down }`.
+- `src/tab.zig` adds `Tab.focusPane(direction)`.
+- Left/right focus works only for left-right splits.
+- Up/down focus works only for top-bottom splits.
+- Single-pane tabs no-op.
+- Focus changes update `active_pane`, call existing pane focus sync, and return `true` only when focus changed.
+- Event dispatch requests redraw, refreshes input policies, and syncs title only on actual focus change.
+- `layout.bindings` owns split, pane focus, and tab navigation bindings.
+- `term.bindings` remains terminal-local.
+- `tab_bar` remains visual tab-bar config only.
+
+Changed files:
+
+- `assets/default_config/init.lua`
+- `src/config.zig`
+- `src/config/layout.zig`
+- `src/config/tab_bar.zig`
+- `src/config/term.zig`
+- `src/events/event.zig`
+- `src/input/keys.zig`
+- `src/layout/pane.zig`
+- `src/layout/tab_bar.zig`
+- `src/layout/window.zig`
+- `src/tab.zig`
+
+Verified:
+
+- `zig fmt build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `git diff --check`
+
+Non-goals preserved:
+
+- No `bucket2.zig` cleanup.
+- No terminal `Surface` move or rename.
+- No C/render ABI change.
+- No pane close, resize, more-than-two panes, cwd/custom command, movement/transfer, floating, or hidden pane behavior.
