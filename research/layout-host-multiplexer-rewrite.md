@@ -118,7 +118,7 @@ Explicit tests required in Stage 2:
 
 - host window interior placement after tab bar reservation
 - single-pane tab body placement
-- overlay placement relative to pane placement
+- scrollbar and scroll-chip placement relative to pane placement
 - split structure tests over pane ids once `splits.zig` lands
 - pane move/hide/show/floating transfer tests as soon as the relevant symbols exist
 
@@ -226,7 +226,7 @@ Proof:
 
 The first execution slice inside this sprint should be:
 
-- Stage 1: remove `layout/viewport.zig`; add `layout/window.zig`, `layout/tab.zig`, `layout/pane.zig`, `layout/tab_bar.zig`, `layout/overlay.zig`
+- Stage 1: remove `layout/viewport.zig`; add `layout/window.zig`, `layout/tab.zig`, `layout/pane.zig`, `layout/tab_bar.zig`; the rejected `layout/overlay.zig` placeholder was removed by the accepted scrollbar layer slice
 - Stage 2: define single-pane-only signatures and tests
 - Stage 3: implement single-pane placement and route current callers through the new structure
 

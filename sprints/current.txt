@@ -15,7 +15,7 @@ Current mode:
 Sprint:
 
 - Name: Host layout multiplexer rewrite.
-- Goal: rewrite `howl-linux-host/src/layout/` into the host structure layer for tabs, panes, splits, and overlays, with explicit `window/` vs `layout/` ownership and no fake `viewport` owner.
+- Goal: rewrite `howl-linux-host/src/layout/` into the host structure layer for tabs, panes, splits, scrollbar, and scroll chip, with explicit `window/` vs `layout/` ownership and no fake `viewport` owner.
 - Reason: current host geometry uses a lying VT-shaped noun and blocks correct multiplexer pressure from tmux/zellij for panes, tabs, and split structure.
 
 Live artifacts:
