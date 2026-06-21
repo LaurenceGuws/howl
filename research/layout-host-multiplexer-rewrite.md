@@ -987,3 +987,35 @@ Non-goals preserved:
 - No pointer hit-testing change.
 - No C/render ABI change.
 - No whole-bucket move or rename.
+
+## Stage 8 Phase 2E Active Pane Paste Cut
+
+Session: `orch-2026-06-21-layout-mux-01`
+
+Verdict: implemented, verified, and ready to commit.
+
+Problem:
+
+- `bucket2.zig::Surface.paste` was another active-pane forwarding face used only through `Tab.paste`.
+- The actual behavior is terminal-local VT paste publication plus cursor activity reset.
+- `Tab` owns active-pane selection and can apply the existing terminal-local operation directly to the selected pane.
+
+Implemented behavior:
+
+- Deleted `Surface.paste`.
+- `Tab.paste` now calls `term_input.publishPaste` on the active pane terminal and resets active pane cursor blink activity.
+- Runtime behavior is unchanged: paste still targets the active pane.
+
+Verified:
+
+- `zig fmt --check build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `git diff --check`
+
+Non-goals preserved:
+
+- No paste protocol behavior change.
+- No input binding behavior change.
+- No C/render ABI change.
+- No whole-bucket move or rename.
