@@ -14,9 +14,9 @@ Current mode:
 
 Sprint:
 
-- Name: Host layout multiplexer rewrite.
-- Goal: rewrite `howl-linux-host/src/layout/` into the host structure layer for tabs, panes, splits, scrollbar, and scroll chip, with explicit `window/` vs `layout/` ownership and no fake `viewport` owner.
-- Reason: current host geometry uses a lying VT-shaped noun and blocks correct multiplexer pressure from tmux/zellij for panes, tabs, and split structure.
+- Name: Terminal instance control spine and bucket caller deletion.
+- Goal: redesign callers to use `howl-linux-host/src/term.zig` as the tiny terminal instance control spine, with `term.zig` delegating to existing owner namespaces under `src/`.
+- Reason: `bucket2.zig::Surface` is fake aggregate ownership. The correct path is not to move, rename, or improve the bucket. Callers must route to the real terminal instance and true owner namespaces until the bucket is unused and deletable.
 
 Live artifacts:
 
@@ -42,9 +42,24 @@ Current git state:
 
 Immediate accountability:
 
-- Define the explicit `window/` vs `layout/` boundary in code and docs.
-- Promote multiplexer nouns from tmux/zellij into host layout planning: `window`, `tab`, `pane`, `layout`, `splits`.
-- Execute the sprint strictly in stages:
-  1. make/move the planned files/folders
-  2. define symbols, signatures and tests
-  3. define signatures' bodies correctly to make correct valuable tests pass
+- Do not change `bucket2.zig` first. Redesign each caller to use `term.zig` and the existing true owner namespace.
+- `term.zig` must remain a tiny terminal instance control spine. It is not a new bucket, surface, manager, runtime, or compatibility layer.
+- Do not introduce `term-surface`, `terminal surface`, a second terminal instance type, or any replacement aggregate data shape.
+- `Surface` remains only where already required by render/texture implementation or C ABI facts; no new host-facing surface noun is allowed.
+- `layout/` owns tab, pane, split, window, visibility, focus, and placement policy. It does not own VT, PTY, render realization, textures, GL, windows, or tab bar rendering.
+- `texture/term.zig` owns texture implementation details for the terminal instance. `src/term.zig` does not know GL, windows, tab bar, or non-terminal surface kinds.
+- Everything below `src/term.zig` is built for the terminal instance directly: `vt/*`, `pty/*`, `render/*`, `texture/term.zig`, `input/*`, `scroll_bar.zig`, selection/link/cursor owners as they mature.
+- Rendered terminal output may stay coordinated by `term.zig` for now. Perfecting the render-surface ownership boundary is explicitly deferred; do not invent a new noun to settle it prematurely.
+- Execute every slice in this order:
+  1. write or preserve policy comments, knobs, options, invariants, assertions, and failing tests first
+  2. route the caller through `term.zig` and the true owner namespace
+  3. delete the now-unused bucket method/field/path
+  4. run `zig fmt --check build.zig src`, `zig build check`, `zig build test:unit`, and `git diff --check`
+  5. commit host first, then root pointer/accountability if requested or if workflow requires it
+- Every handoff must preserve these non-goals:
+  - no bucket move or rename
+  - no bucket beautification
+  - no new surface noun
+  - no C/render ABI change unless explicitly planned and receipted
+  - no compatibility aliases/shims
+  - no broad feature work: pane close, resize UI, more panes, cwd/custom commands, movement/transfer, floating/hidden behavior, tab transfer

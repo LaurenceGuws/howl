@@ -1019,3 +1019,77 @@ Non-goals preserved:
 - No input binding behavior change.
 - No C/render ABI change.
 - No whole-bucket move or rename.
+
+## Stage 9 Terminal Instance Control Spine Sprint Contract
+
+Session: `orch-2026-06-21-layout-mux-01`
+
+Status: active sprint contract after user correction.
+
+Problem:
+
+- The prior bucket-dissection language still allowed drift toward moving or improving `bucket2.zig::Surface`.
+- User direction is stricter: do not change the bucket first; redesign its callers to use `src/term.zig`, and make `term.zig` call existing owner namespaces.
+- The product already has good enough nouns. The failure mode would be inventing a second terminal surface, a replacement bucket, or duplicated data shapes.
+
+User decisions recorded for handoff:
+
+- `src/term.zig` is the one terminal instance control spine.
+- `src/term.zig` must be tiny and narrow.
+- `src/term.zig` coordinates one terminal instance through `vt/*`, `pty/*`, `render/*`, `texture/term.zig`, `input/*`, `scroll_bar.zig`, and other mature owner namespaces.
+- Everything below `src/term.zig` is made for `src/term.zig` directly.
+- No second version of terminal data is allowed.
+- No `term-surface` noun is allowed.
+- `Surface` exists only where already required by render/texture implementation details or C ABI facts.
+- `texture/term.zig` is the terminal texture implementation owner.
+- `src/term.zig` does not know GL, windows, tab bar, other surface kinds, host window lifecycle, or tab/pane/split placement policy.
+- `layout/` defines the tab/pane/split/window policy scope, but the runtime control spine may live at `src/` level where the owner actually makes decisions.
+- Rendered terminal output may stay backed by `src/term.zig` while the render ownership boundary matures.
+- Perfecting the render-surface ownership boundary is deferred; do not invent a new noun to settle it prematurely.
+
+Target ownership map:
+
+- `src/tab.zig` owns mux/tab control policy: selected/unselected, visible/hidden, focused/unfocused, tiled/floating vocabulary, input admission, and resize policy across panes.
+- `layout/*` owns placement and structure facts only: window, tab body, pane placement, split tree, scrollbar/chip placement, z-index composition facts.
+- `src/term.zig` owns one terminal instance control spine and delegates behavior.
+- `vt/*` owns VT protocol state, input encoding, title/focus consequences, selection facts, and visible terminal state.
+- `pty/*` owns PTY session, child I/O, resize delivery, control signals, runtime progress, and wake state.
+- `render/*` owns retained render state, render layout realization, cursor render facts, and terminal render preparation facts.
+- `texture/term.zig` owns host texture/resource realization for a terminal instance.
+- `scroll_bar.zig` owns scrollbar state and terminal-local scrollbar interaction.
+- `input/*` owns host input processing; policy admission remains in tab/term control spines.
+- `bucket2.zig` owns nothing new. It only shrinks as callers are redesigned.
+
+Execution rule for every next slice:
+
+1. Start from a caller, not from bucket inventory.
+2. Write or preserve the policy comment, knob/options list, invariant assertions, and tests before changing behavior.
+3. Route the caller to `src/term.zig` and from there to the true owner namespace.
+4. Delete the now-unused bucket method, field, or path.
+5. Do not add compatibility names, aliases, shims, manager/controller/runtime/engine/utils/types buckets, or `anytype` in touched symbols.
+6. Verify with `zig fmt --check build.zig src`, `zig build check`, `zig build test:unit`, and `git diff --check` from `howl-linux-host`.
+7. Commit accepted host work before giving another worker an implementation slice; root pointer/accountability follows host commit.
+
+Explicit non-goals:
+
+- No `term-surface`, terminal surface, surface facade, or new aggregate replacement for `bucket2.zig`.
+- No moving `bucket2.zig::Surface` wholesale into `term.zig`.
+- No bucket rename, cleanup, beautification, or temporary respectability pass.
+- No C/render ABI change unless separately planned with receipts.
+- No GL/window/tab-bar knowledge in `src/term.zig`.
+- No layout policy in `src/term.zig`.
+- No pane close, pane resize UI, more-than-two panes, cwd/custom commands, movement/transfer, floating/hidden implementation, or tab transfer in this sprint unless promoted as a separate receipted slice.
+
+First recommended execution slice:
+
+- Pick the next caller still depending on `bucket2.zig::Surface` for terminal-local behavior.
+- Define the exact terminal-instance invariant first.
+- Add or preserve a failing proof if behavior is not already covered.
+- Add the narrow `Term` control method only if the caller needs a terminal-instance entry point.
+- Inside `Term`, call the existing true owner namespace.
+- Delete the old bucket caller path.
+
+Current proof anchor:
+
+- `0e47d3d Realize split pane resize layout` proves two-pane resize policy and retained render layout realization.
+- That proof must remain green through all future caller redesign.
