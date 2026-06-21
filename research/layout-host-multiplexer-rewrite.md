@@ -952,3 +952,38 @@ Non-goals preserved:
 - No pointer hit-testing change.
 - No C/render ABI change.
 - No whole-bucket move or rename.
+
+## Stage 8 Phase 2D Active Pane Hover Policy Cut
+
+Session: `orch-2026-06-21-layout-mux-01`
+
+Verdict: implemented, verified, and ready to commit.
+
+Problem:
+
+- `bucket2.zig::Surface.wantsLinkHover` and `Surface.wantsTerminalHoverReporting` were active-pane policy wrappers.
+- Link-hover policy is read from the active pane terminal config, while terminal mouse-motion reporting is a terminal-local VT input fact.
+- The tab already owns active-pane selection, so keeping bucket wrappers widened the fake surface API.
+
+Implemented behavior:
+
+- Deleted `Surface.wantsLinkHover`.
+- Deleted `Surface.wantsTerminalHoverReporting`.
+- `Tab.wantsLinkHover` reads the active pane config directly.
+- `Tab.wantsTerminalHoverReporting` checks active pane liveness and `term_input.wouldReportUnpressedMouseMotion` directly.
+- Runtime behavior is unchanged: input policy configuration still follows the active pane.
+
+Verified:
+
+- `zig fmt --check build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `git diff --check`
+
+Non-goals preserved:
+
+- No link processing behavior change.
+- No mouse reporting protocol change.
+- No pointer hit-testing change.
+- No C/render ABI change.
+- No whole-bucket move or rename.
