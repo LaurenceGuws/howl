@@ -675,3 +675,55 @@ Tests and gates:
 - No changes to `input/keys.zig`, `config/term.zig`, or `assets/default_config/init.lua`.
 - No C/render ABI files changed.
 - Verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, and targeted stale searches.
+
+## Stage 7 Phase 3 Split Action Binding Contract
+
+Session: `teammate-2026-06-21-layout-mux-split-bindings-plan-01`
+
+Verdict: ready, accepted by orchestrator.
+
+Problem:
+
+- Phase 1 made presentation multi-pane capable and Phase 2 added bounded two-pane runtime ownership with internal split methods.
+- Phase 3 exposes those methods through user-visible terminal binding actions and default config keys while keeping advanced pane behavior deferred.
+
+Reference pressure:
+
+- `utils/dev_references/terminals/zellij/zellij-utils/src/cli.rs` proves `NewPane` opens a new pane in right/down direction and command/cwd are separate semantics.
+- `utils/dev_references/terminals/zellij/zellij-server/src/route.rs` proves new-pane action maps to tiled placement and default shell spawn.
+- `utils/dev_references/terminals/zellij/zellij-utils/src/data.rs` proves tiled placement remains separate from floating/in-place/stacked.
+- `utils/dev_references/terminals/zellij/default-plugins/status-bar/src/one_line_ui.rs` exposes Split Right and Split Down as new-pane actions.
+- `utils/dev_references/terminals/wezterm/docs/cli/cli/split-pane.md` proves split-pane splits current pane and default-spawns when no command is specified.
+- `utils/dev_references/terminals/wezterm/docs/config/default-keys.md` provides `CTRL+SHIFT+ALT` split key pressure.
+- Current Howl `input/keys.zig` owns binding action tags and parser-supported key labels including `five` and `apostrophe`.
+- Current Howl `config/term.zig` owns terminal binding specs; current default config keeps terminal bindings under `term.bindings`.
+
+Coder contract:
+
+- Update `howl-linux-host/src/input/keys.zig` with `terminal_split_right` and `terminal_split_down` actions.
+- Update `howl-linux-host/src/config/term.zig` with binding fields `split_right` and `split_down`.
+- Update `howl-linux-host/assets/default_config/init.lua` under `term.bindings`:
+  - `split_right = { "ctrl+shift+alt+five" }`
+  - `split_down = { "ctrl+shift+alt+apostrophe" }`
+- Update `howl-linux-host/src/events/event.zig` to dispatch split actions to active tab using current tab body geometry.
+- Do not update `src/tab.zig` unless a compile-only signature adjustment is strictly required.
+- Add no files and delete no files.
+- Do not update C headers or render ABI files.
+
+Behavior:
+
+- `.terminal_split_right` calls active tab `splitRight(self.input, self.event_loop, &self.conf.term, tab_body)`.
+- `.terminal_split_down` calls active tab `splitDown(self.input, self.event_loop, &self.conf.term, tab_body)`.
+- If split succeeds, request redraw, reconfigure input policies, and sync active window title.
+- If capacity is full and split returns false, do not request redraw and do not mutate unrelated state.
+- If terminal init/start returns an error, propagate it.
+- New pane uses default `conf.term` command/cwd.
+
+Tests and gates:
+
+- `input/keys.zig` tests parse `ctrl+shift+alt+five` to `.terminal_split_right` and `ctrl+shift+alt+apostrophe` to `.terminal_split_down`.
+- `config/term.zig` tests prove `split_right` and `split_down` fields produce the new actions.
+- Add a pure event dispatch/helper test for action-to-direction mapping if practical; otherwise rely on compile coverage and tab Phase 2 tests.
+- Gate: new action symbols appear only in expected files and default config.
+- Gate: no capacity beyond two, cwd/custom command/floating/hidden/move/transfer/resize UI symbols, or C/render ABI changes.
+- Verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, and `git diff --check`.
