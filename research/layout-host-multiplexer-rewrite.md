@@ -606,3 +606,72 @@ Phase 1 tests and gates:
 - no C ABI files change.
 - no manager/controller/engine/utils/types files are added.
 - verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, and targeted stale-symbol searches.
+
+## Stage 7 Phase 2 Two-Pane Runtime Contract
+
+Session: `teammate-2026-06-21-layout-mux-two-pane-runtime-plan-01`
+
+Verdict: ready, accepted by orchestrator with clarification: `Tab.splitRight` and `Tab.splitDown` are internal runtime methods only in Phase 2. No user-visible input actions, config fields, or default keybindings may be added until Phase 3.
+
+Problem:
+
+- Phase 1 made presentation able to draw multiple panes, but `src/tab.zig` still owns exactly one terminal surface.
+- Phase 2 must move runtime tab ownership to a bounded two-pane model and add internal right/down split methods without exposing actions or bindings.
+
+Reference pressure:
+
+- `utils/dev_references/terminals/zellij/zellij-utils/src/cli.rs` proves new-pane actions create panes by right/down direction and carry command/cwd semantics.
+- `utils/dev_references/terminals/zellij/zellij-server/src/route.rs` proves `Action::NewPane` maps to tiled placement and spawns a default terminal.
+- `utils/dev_references/terminals/zellij/zellij-utils/src/data.rs` proves tiled new-pane placement is separate from floating/in-place/stacked.
+- `utils/dev_references/terminals/tmux/cmd-split-window.c` proves split execution resolves current pane/layout and spawns pane runtime through owner state.
+- `utils/dev_references/terminals/tmux/window.c` proves pane collection insertion belongs to the runtime window/tab owner.
+- `utils/dev_references/terminals/wezterm/docs/cli/cli/split-pane.md` proves split-pane splits the current pane and spawns the default command, while cwd/size/move are separate options.
+
+Coder contract:
+
+- Update `howl-linux-host/src/tab.zig` from one terminal delegation to bounded two-pane runtime ownership.
+- Update `howl-linux-host/src/events/event.zig` to consume tab-owned active placement and frame panes.
+- Do not add files or delete files.
+- Do not update `input/keys.zig`, `config/term.zig`, or `assets/default_config/init.lua`.
+- Do not update C headers or render ABI files.
+
+Required tab symbols and state:
+
+- `pub const max_frame_panes = 2;`
+- private `const second_pane: Layout.pane.PaneId = @enumFromInt(1);`
+- replace `first_pane` with `panes: [max_frame_panes]TerminalSurface = undefined`.
+- add `pane_count: u8 = 0`.
+- add `active_pane: Layout.pane.PaneId = .first`.
+- add `split_tree: Layout.splits.Tree = Layout.splits.leaf(.first)`.
+- add stored focus booleans for applying focus to new panes.
+- `activePaneId`, `pane`, `paneConst`, `paneIndex`, `activePane`, `activePaneConst`.
+- `place(self: *const Tab, tab_body: Layout.tab.Body, out: []Layout.pane.Placement) []Layout.pane.Placement`.
+- `activeTerminalPlacement(self: *const Tab, tab_body: Layout.tab.Body) Layout.pane.TerminalPlacement`.
+- `framePanes(self: *const Tab, tab_body: Layout.tab.Body, out: []Layout.FramePane) []Layout.FramePane`.
+- internal runtime split methods `splitRight`, `splitDown`, and shared `split` using default `TerminalConfig` init inputs and tab-body geometry.
+
+Runtime behavior:
+
+- `init` initializes only `panes[0]`, sets `pane_count = 1`, `active_pane = .first`, and `split_tree = Layout.splits.leaf(.first)`.
+- Split from one pane computes a pair tree, places both panes, initializes the second pane using default config and second placement, resizes first pane, then commits `pane_count = 2`, `split_tree`, and `active_pane = second_pane`.
+- Split at capacity returns `false` with no mutation.
+- Text, pointer, scroll, paste, zoom, title, hover, and terminal mouse policy target active pane.
+- Focus state is stored on `Tab`; active pane gets widget focus when tab is active, inactive panes get false.
+- Runtime facts, wake acknowledgement, progress driving, render turn, present submission, and present completion iterate initialized panes and aggregate results conservatively.
+- `framePanes` returns initialized panes as `Layout.FramePane` records using current split placement.
+- Inactive pane close/cleanup behavior remains deferred.
+
+Tests and gates:
+
+- Initial tab state has one pane, active `.first`, and leaf split tree.
+- `pane(.first)` returns `&panes[0]`.
+- Right and down split state install pair tree, preserve first pane, create second pane, and make second active using pure/testable helpers where real PTY init would be too expensive.
+- Capacity rejection does not corrupt pane count, active pane, or split tree.
+- `framePanes` returns two ids/rects after split state is installed.
+- `activeTerminalPlacement` returns second pane placement after split state is installed.
+- `events/event.zig` one-pane present frame test uses `pane_count == 1` even though capacity is 2.
+- `presentFrame` slices only `snapshot.pane_count`.
+- No `Input.Bindings.Action` additions and no `terminal_split_right`, `terminal_split_down`, `split_right`, or `split_down` user-visible symbols outside internal `src/tab.zig` method names.
+- No changes to `input/keys.zig`, `config/term.zig`, or `assets/default_config/init.lua`.
+- No C/render ABI files changed.
+- Verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, and targeted stale searches.
