@@ -252,6 +252,64 @@ Important code references:
 - `/home/home/personal/projects/howl/utils/dev_references/zig_maturity/tigerbeetle/src/constants.zig`
   - explicit constants and invariants
 
+## Multiplexer References For Tabs, Panes, And Splits
+
+Use these when Howl host layout needs terminal-multiplexer nouns, split/pane/tab
+boundaries, focus movement, layout persistence, or resize action shape. These do
+not override Ghostty's terminal `Surface` pressure or Alacritty host/runtime
+pressure; they exist to keep split and pane vocabulary source-backed.
+
+tmux:
+
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux`
+  - mature session/window/pane terminology and command surface
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux/session.c`
+  - session ownership
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux/window.c`
+  - window and pane ownership
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux/layout.c`
+  - pane layout tree
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux/layout-set.c`
+  - named layouts
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux/layout-custom.c`
+  - serialized/custom layouts
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux/cmd-split-window.c`
+  - split command semantics
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux/cmd-resize-pane.c`
+  - pane resize command semantics
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/tmux/cmd-select-pane.c`
+  - pane focus/selection command semantics
+
+Zellij:
+
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/zellij`
+  - modern tab/pane/layout terminology and UX pressure
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/zellij/zellij-server/src/panes`
+  - pane ownership and terminal-pane behavior
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/zellij/zellij-server/src/pane_groups.rs`
+  - pane grouping pressure
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/zellij/example/layouts`
+  - layout file vocabulary
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/zellij/zellij-integration-tests/tests/panes.rs`
+  - pane UX behavior tests
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/zellij/zellij-integration-tests/tests/tabs.rs`
+  - tab UX behavior tests
+
+WezTerm:
+
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/wezterm`
+  - existing mux/window/tab/pane/split API vocabulary
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/wezterm/wezterm-gui/src/termwindow/render/pane.rs`
+  - pane rendering
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/wezterm/wezterm-gui/src/termwindow/render/split.rs`
+  - split rendering
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/wezterm/lua-api-crates/mux/src/pane.rs`
+  - mux pane API
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/wezterm/lua-api-crates/mux/src/tab.rs`
+  - mux tab API
+- `/home/home/personal/projects/howl/utils/dev_references/terminals/wezterm/lua-api-crates/mux/src/window.rs`
+  - mux window API
+
 ## Kitty And Spec Truth Only
 
 Use these only for protocol/spec facts, not architecture shape:

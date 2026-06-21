@@ -14,20 +14,23 @@ Current mode:
 
 Sprint:
 
-- Name: C ABI-only Kitty-derived text rewrite.
-- Goal: replace Howl-only text/font/cell ownership with a Kitty-derived render text pipeline exposed through the C ABI, with no Zig-shaped host shortcuts and no `metrics` symbols in Howl-owned names.
-- Reason: the recent ABI cell authority fix exposed glyph clipping across many faces because Howl lacks Kitty's font cell layout owner and backend glyph fitting rules.
+- Name: Host layout multiplexer rewrite.
+- Goal: rewrite `howl-linux-host/src/layout/` into the host structure layer for tabs, panes, splits, and overlays, with explicit `window/` vs `layout/` ownership and no fake `viewport` owner.
+- Reason: current host geometry uses a lying VT-shaped noun and blocks correct multiplexer pressure from tmux/zellij for panes, tabs, and split structure.
 
 Live artifacts:
 
-- Active loop: `loops/render-text-c-abi-kitty-rewrite-loop.txt`.
-- Active research and sprint plan: `research/render-text-c-abi-kitty-rewrite.md`.
+- Active loop: `loops/layout-host-multiplexer-rewrite-loop.txt`.
+- Active research and sprint plan: `research/layout-host-multiplexer-rewrite.md`.
 
 Deferred artifacts:
 
-- Prior host I/O machinery scoping was deferred when the user promoted this sprint.
-- Deferred loop: `loops/defered/howl-host-io-machinery-loop.txt`.
-- Deferred research: `research/defered/howl-host-io-machinery.md`.
+- The prior render text sprint artifacts remain in place for later resumption:
+  - `loops/render-text-c-abi-kitty-rewrite-loop.txt`
+  - `research/render-text-c-abi-kitty-rewrite.md`
+- Prior host I/O machinery scoping remains deferred:
+  - `loops/defered/howl-host-io-machinery-loop.txt`
+  - `research/defered/howl-host-io-machinery.md`
 
 Current git state:
 
@@ -39,6 +42,9 @@ Current git state:
 
 Immediate accountability:
 
-- Re-prove Kitty, FreeType, HarfBuzz, Alacritty renderer, Ghostty renderer/font seams, and current Howl text paths.
-- Build a sprint plan, not a narrow slice queue.
-- Discuss C ABI consequences with the user before product-code edits.
+- Define the explicit `window/` vs `layout/` boundary in code and docs.
+- Promote multiplexer nouns from tmux/zellij into host layout planning: `window`, `tab`, `pane`, `layout`, `splits`.
+- Execute the sprint strictly in stages:
+  1. make/move the planned files/folders
+  2. define symbols, signatures and tests
+  3. define signatures' bodies correctly to make correct valuable tests pass

@@ -1,0 +1,63 @@
+Host Layout Multiplexer Rewrite Loop
+
+Orchestrator session id: `orch-2026-06-21-layout-mux-01`.
+Reviewer session id: `review-2026-06-21-layout-mux-01`.
+
+Scoping statement:
+
+- The active sprint is to rewrite `howl-linux-host/src/layout/` into the host structure layer for tabs, panes, splits, scrollbar, and scroll chip.
+- `window/` owns SDL window creation and OS-window lifecycle.
+- `layout/` owns the interior structure of the window created by `window/`.
+- `layout/` is the HTML/CSS layer for host composition.
+- `layout/` must not use VT nouns such as `viewport` or `screen` for host structure.
+- `layout/` must follow terminal multiplexer pressure first for this slice: tmux `session/window/pane/layout` and zellij `tab/pane/layout`.
+- Ghostty `Surface` remains a reference for the terminal widget concept, but it is not the top naming pressure for this slice.
+- The rewrite must make panes loosely coupled from placement so panes can move across splits, tabs, and windows, and can become tiled, floating, hidden, or shown while retaining accurate placement facts.
+- Tabs must be able to move between windows.
+- Floating panes must be able to hide/show while preserving correct geometry and identity.
+
+Current mode:
+
+- Single-agent direct collaboration.
+- This is a strict sprint, not a casual rename pass.
+- Execution proceeds only through the accepted staged contract below.
+
+Non-negotiables:
+
+- `window/` owns SDL windowing only.
+- `layout/` owns host structure only.
+- No fake `viewport` owner survives sprint exit.
+- No VT `screen` ownership leaks into host structure.
+- No bucket owners, `Context`, `Info`, `Request`, `Snapshot`, or compatibility glue.
+- Pane identity must be placement-independent.
+- Split structure must reference pane ids/handles rather than embedding pane runtime state.
+- End-of-sprint state must be owner-true, testable, grep-clean for stale layout lies, and fit future split/tab/window transfer work.
+
+Required reference pressure:
+
+- tmux for `session/window/pane/layout` vocabulary and split action semantics.
+- zellij for `tab/pane/layout` vocabulary and modern split/floating UX pressure.
+- WezTerm as supporting mux `window/tab/pane/split` pressure.
+- Ghostty for terminal widget `Surface` pressure and `SplitTree` implementation lessons where needed.
+- Alacritty for host window/display/runtime organization.
+- TigerBeetle for directness, exact names, bounds, assertions, and tests.
+
+Strict sprint stages:
+
+1. make/move the planned files/folders
+2. define symbols, signatures and tests
+3. define signatures' bodies correctly to make correct valuable tests pass
+
+Loop notes:
+
+- Orchestrator `orch-2026-06-21-layout-mux-01`: hello. Intent: promote host layout rewrite to the active strict sprint after user rejected `viewport` and set multiplexer pressure above Ghostty for this slice. Outcome: active sprint now targets `layout/` as host structure layer with pane/tab/split nouns, explicit `window/` vs `layout/` boundary, and a three-stage execution contract. Handoff: research artifact must define the exact file moves, symbol signatures, and proof gates before product-code body work broadens.
+- Teammate `teammate-2026-06-21-layout-mux-stage1-01`: hello. Intent: re-prove the current host window/layout/event coupling and compress Stage 1 into an executable structural contract only. Outcome: `research/layout-host-multiplexer-rewrite.md` now narrows Stage 1 to moving the current `Viewport` API into `layout/window.zig`, adds placeholder owner files only, updates the exact caller/test files, and explicitly defers `splits`, pane ids, and behavior splits. Handoff: coder can execute Stage 1 only if the work stays inside the named files and keeps `zig build check`, `zig build test:unit`, and the stale-viewport grep gates green; otherwise stop and escalate.
+- Reviewer `review-2026-06-21-layout-mux-01`: hello. Intent: review the condensed Stage 1 contract for executability and scope truth. Outcome: accepted `research/layout-host-multiplexer-rewrite.md:121-173` as the controlling Stage 1 execution contract; narrowing out `splits`, `PaneId`, and behavior splitting is correct for current source. Handoff: one coder pass may now execute Stage 1 only inside the named files and stop on any boundary spill.
+- Coder `coder-2026-06-21-layout-mux-stage1-01`: hello. Intent: execute accepted Stage 1 only by moving the current viewport geometry owner into `layout/window.zig`, retargeting caller/export imports, and adding placeholder layout owner files. Outcome: `layout/viewport.zig` is gone, `layout/window.zig` now owns the moved geometry API and tests, `events/event.zig` and `host_test_root.zig` now point at the new owner path, placeholder `layout/tab.zig`, `layout/pane.zig`, `layout/tab_bar.zig`, and `layout/overlay.zig` exist with unit docs only, and required formatting/build/test/grep gates passed. Handoff: ready for reviewer verification and receipt closure; no blocker.
+- Orchestrator `orch-2026-06-21-layout-mux-01`: hello. Intent: close accepted Stage 1 with reviewer acceptance and commit-hash receipt. Outcome: reviewer accepted the Stage 1 structural move and the accepted host tree is now committed in `howl-linux-host` as `807f311 Move viewport owner to layout window`. Handoff: sprint advances to Stage 2 planning for exact symbols, signatures, and tests.
+- Orchestrator `orch-2026-06-21-layout-mux-01`: hello. Intent: stop Stage 2 launch after user rescope on host layering nouns. Outcome: `overlay` is now rejected as a host structure noun; future planning must use `scrollbar` and `scroll_chip` with explicit z-index/layer modeling instead of a generic overlay owner. Handoff: revise the Stage 2 planning contract before any further coder pass.
+- Teammate `teammate-2026-06-21-layout-mux-stage2-scroll-layer-01`: hello. Intent: produce revised Stage 2 research/coder-prep contract after user rejected `overlay`. Outcome: ready contract returned for deleting `layout/overlay.zig`, adding `layout/z_index.zig`, `layout/scrollbar.zig`, and `layout/scroll_chip.zig`, splitting `Layout.ScrollbarLayout` into separate scrollbar and scroll-chip placements, and proving z-index order with tests. Handoff: orchestrator review required before coding.
+- Reviewer `review-2026-06-21-layout-mux-stage2-scroll-layer-01`: hello. Verdict: accept with clarification. Evidence: teammate contract is source-backed by tmux `z_index`/`zentry` pressure and zellij floating pane `z_indices`/layer stack pressure; it directly addresses current stale symbols `OverlaySnapshot`, `overlaySnapshot`, and local `overlay`. Clarification: `layout/z_index.zig` may exist only as the explicit host composition ordering contract and must not become a generic constants bucket, layer manager, draw-policy owner, or hidden overlay replacement. Handoff: launch coder for accepted Stage 2 slice only.
+- Coder `coder-2026-06-21-layout-mux-stage2-scroll-layer-01`: hello. Intent: execute accepted Stage 2 only by deleting the rejected placeholder, adding scrollbar/scroll-chip placement owners with explicit z-index ordering, and splitting frame presentation into separate track and chip placements. Outcome: host source now routes scrollbar and scroll-chip placements through `layout/scrollbar.zig`, `layout/scroll_chip.zig`, and `layout/z_index.zig`; stale rejected product symbols are gone from host source; formatting, check, unit tests, diff check, and stale-symbol search passed. Handoff: ready for reviewer verification; no blocker.
+- Reviewer `review-2026-06-21-layout-mux-stage2-scroll-layer-02`: hello. Verdict: accept. Evidence: reviewed diff scope and new owner files, confirmed `layout/overlay.zig`, `OverlaySnapshot`, `overlaySnapshot`, and local `overlay` were removed from host source, confirmed `z_index.zig` remains a narrow composition-order contract, and reran `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, plus stale-symbol search successfully. Handoff: accepted but not committed because no explicit commit request was made.
+- Orchestrator `orch-2026-06-21-layout-mux-01`: hello. Intent: commit accepted Stage 2 after user clarified accepted work must be committed. Outcome: `howl-linux-host` now records accepted Stage 2 as `41b7964 Split scrollbar layer placement`. Handoff: commit root pointer and accountability artifacts, then continue to the next sprint slice.
