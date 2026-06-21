@@ -1,0 +1,31 @@
+# Layout Scheduler Sprint
+
+Purpose:
+
+- Define the host structure mutation scheduler owner.
+- This sprint derives responsibility from Zellij `Screen`, `ScreenInstruction`, and `screen_thread_main` without importing the `screen` noun.
+
+Scope:
+
+- Add or reshape `howl-linux-host/src/layout/scheduler.zig` only after an execution contract proves the first mutation queue boundary.
+- Own queued tab/pane/layout mutations: split, focus, resize, hide/show, move, close, and pane creation admission when those mutations are planned.
+- Keep `layout/` as host structure policy inside windows.
+
+Reference pressure:
+
+- Zellij `ScreenInstruction`: pane/tab/layout/render-to-client commands.
+- Zellij `screen_thread_main`: owner loop for screen-side pane/tab/session policy.
+- Zellij `Tab`/pane collections: focus, visibility, placement, and pane info policy.
+
+Non-goals:
+
+- No `manager`, `pool manager`, or generic runtime layer.
+- No `screen` noun in Howl host structure.
+- Not necessarily a thread. It may start as a main-thread owner module unless blocking/cross-pane work proves a thread is needed.
+- Does not own PTY, VT, render surfaces, texture resources, GL, OS windows, or terminal-local state.
+
+Proof requirements:
+
+- Comments explain each mutation owner and why it is layout policy, not terminal or window policy.
+- Tests prove mutation ordering, focus/visibility admission, and pane placement consequences before broad behavior lands.
+- `zig fmt --check build.zig src`, `zig build check`, `zig build test:unit`, and `git diff --check` pass for every accepted slice.

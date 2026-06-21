@@ -12,16 +12,38 @@ Current mode:
 - Teammate subagent: combined researcher plus coder-prep only until the sprint plan is accepted.
 - Product code must not change until research, user discussion, and reviewer acceptance define the first execution contract.
 
-Sprint:
+Sprint set:
 
-- Name: Terminal instance control spine and bucket caller deletion.
-- Goal: redesign callers to use `howl-linux-host/src/term.zig` as the tiny terminal instance control spine, with `term.zig` delegating to existing owner namespaces under `src/`.
-- Reason: `bucket2.zig::Surface` is fake aggregate ownership. The correct path is not to move, rename, or improve the bucket. Callers must route to the real terminal instance and true owner namespaces until the bucket is unused and deletable.
+- This is no longer one sprint. The runtime/progress/window/layout/thread redesign is split into three strict sprints.
+- Sprint 1: `sprints/host-main-scheduler.txt`.
+- Sprint 2: `sprints/layout-scheduler.txt`.
+- Sprint 3: `sprints/term-progress-scheduler.txt`.
+
+Hard doctrine for this sprint:
+
+- Howl is currently wrong in this area. Behavior changes are expected when the current behavior exists only to preserve false owner boundaries.
+- Proof is absent or wrong until rebuilt. Existing tests, comments, names, folders, and green builds are not proof that the shape is correct.
+- Current shape is wrong until proven right. Owner boundaries, files, structs, thread loops, schedulers, comments, tests, ABI seams, and all call paths are in scope for redesign and remodeling.
+- All Howl repositories are in scope: `howl-linux-host`, `howl-pty`, `howl-vt`, `howl-render`, host/vendor contracts, and ABI surfaces. Every touched boundary must be pristine, explicit, and proved.
+- The target is exactly the reference-backed owner/thread shape below. Nothing more. Nothing less. No compatibility shims, no aliases, no stale design docs, no special avoidance code, and no partial old-path preservation.
+- Comments are shape and ownership proof. They must explain what is happening here and why this owner performs the work. They must not be decorative citations like `kitty line 5 char 3`, and they must not preserve stale terms such as vague `runtime_facts` when the owner model has changed.
+
+Reference-backed target owner/thread shape:
+
+- Main host thread: `events/scheduler.zig` coordinates window events, frame cadence, redraw/dirty admission, wake coalescing, wait deadlines, and calls lower owners. This embodies Alacritty's UI/event/render scheduling thread using Howl nouns.
+- Host structure owner: `layout/scheduler.zig` may exist as the Zellij `Screen`-derived pane/tab/layout mutation owner, but not as a generic manager and not necessarily as a thread. It owns queued split, focus, resize, hide/show, move, close, and pane creation admission when those mutations are planned.
+- Term instance thread: the existing per-terminal instance background thread remains one thread. Its owner must be sharpened around PTY/terminal progress, not split into extra VT/render threads. This embodies Alacritty's PTY I/O loop / slave-side progress thread.
+- `window/` owns OS window lifecycle. `texture/` owns texture resources. `events/scheduler.zig` coordinates them; window chrome does not own texture or render resource policy.
+- Ghostty-style per-surface renderer and IO thread split is heavy pressure only. It is not copied unless a later proof shows Howl needs that cost.
 
 Live artifacts:
 
 - Active loop: `loops/layout-host-multiplexer-rewrite-loop.txt`.
 - Active research and sprint plan: `research/layout-host-multiplexer-rewrite.md`.
+- Split sprint contracts:
+  - `sprints/host-main-scheduler.txt`
+  - `sprints/layout-scheduler.txt`
+  - `sprints/term-progress-scheduler.txt`
 
 Deferred artifacts:
 
@@ -68,6 +90,5 @@ Immediate accountability:
   - no bucket move or rename
   - no bucket beautification
   - no new surface noun
-  - no C/render ABI change unless explicitly planned and receipted
   - no compatibility aliases/shims
   - no broad feature work: pane close, resize UI, more panes, cwd/custom commands, movement/transfer, floating/hidden behavior, tab transfer

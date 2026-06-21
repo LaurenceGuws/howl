@@ -1147,6 +1147,30 @@ Howl event-loop responsibility:
 - It sequences host/window/input events, resize, PTY/runtime progress, render decisions, frame construction, present submission, present retirement, and wait intent.
 - It does not own VT state, PTY internals, retained render state, texture resources, pane placement math, or terminal-local scrollbar/selection/link/cursor mutation.
 
+Hard reset doctrine:
+
+- Howl's current runtime/progress/window/layout/thread shape is wrong until proven right. The current behavior is not protected just because it is green or convenient.
+- Behavior changes are in scope when preserving behavior would preserve a false owner boundary.
+- Proof is absent or wrong until rebuilt with owner-true tests, assertions, comments, and reference-backed contracts.
+- Every Howl repository and ABI boundary is in scope. `howl-linux-host`, `howl-pty`, `howl-vt`, `howl-render`, host/vendor contracts, and C ABI seams must all become pristine rather than locally patched around.
+- Do not add compatibility shims, aliases, stale-path fallbacks, special avoidance code, or design-doc lies.
+- Comments must explain the local owner truth: what is happening here, why this owner owns it, and what invariant is being protected. Reference citations belong in research receipts; source comments must not be citation graffiti.
+
+Reference-backed scheduler/thread target:
+
+- Alacritty pressure: one main UI/event/render scheduling owner plus one PTY I/O loop per terminal instance. Alacritty `Scheduler` owns pending timers and deadlines; `WindowContext` owns dirty/redraw and display interaction; the PTY event loop mutates terminal state on another thread.
+- Zellij pressure: the vague phrase "pane manager" maps to `Screen`, `ScreenInstruction`, and `screen_thread_main`, which own pane/tab/layout/render-to-client mutations. Howl must not import the `screen` noun for host structure, but may derive a `layout/scheduler.zig` owner from that responsibility.
+- Ghostty pressure: per-surface renderer and IO threads prove a heavier split exists, but it is not the default Howl target.
+- Howl target: `events/scheduler.zig` on the main host thread, optional `layout/scheduler.zig` as a host structure mutation owner, and one existing term instance background thread sharpened around PTY/terminal progress.
+
+Sprint split:
+
+- This cannot be one sprint.
+- `sprints/host-main-scheduler.txt` owns the main host scheduler redesign.
+- `sprints/layout-scheduler.txt` owns the Zellij `Screen`-derived host structure mutation scheduler.
+- `sprints/term-progress-scheduler.txt` owns the per-terminal instance progress scheduler.
+- Each sprint must produce its own source-backed execution contract before product code changes.
+
 Required research-before-code workflow:
 
 1. Read Alacritty source for the exact loop shape and cite paths/lines.
