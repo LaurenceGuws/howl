@@ -920,3 +920,35 @@ Non-goals preserved:
 - No paste/font/title rewrite.
 - No C/render ABI change.
 - No whole-bucket move or rename.
+
+## Stage 8 Phase 2C Active Pane Scroll Input Cut
+
+Session: `orch-2026-06-21-layout-mux-01`
+
+Verdict: implemented, verified, and ready to commit.
+
+Problem:
+
+- `bucket2.zig::Surface.handleScrollInput` was another pure forwarding wrapper.
+- Scroll page handling is owned by `scroll_bar.zig`; active-pane selection is tab policy.
+- Keeping a bucket method for this hid the true owners and preserved bucket surface area without adding safety.
+
+Implemented behavior:
+
+- Deleted `Surface.handleScrollInput`.
+- `Tab.handleScrollInput` now calls `terminal_scrollbar.handlePages` for the active pane's terminal and scrollbar state.
+- Runtime behavior is unchanged: scroll-page input still targets the active pane.
+
+Verified:
+
+- `zig fmt --check build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `git diff --check`
+
+Non-goals preserved:
+
+- No scrollbar behavior change.
+- No pointer hit-testing change.
+- No C/render ABI change.
+- No whole-bucket move or rename.
