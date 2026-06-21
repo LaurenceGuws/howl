@@ -438,3 +438,55 @@ Tests and gates:
 Deferred:
 
 - Dynamic pane id allocation, split target lookup, focus model, pane close/rebalance, interactive resizing, hidden pane retention, floating panes, pane/tab transfer, z-order repair, layout serialization, runtime event routing for split commands, and any render or C ABI contract.
+
+## Stage 5 Tab/Splits Seam Contract
+
+Session: `teammate-2026-06-21-layout-mux-tab-splits-plan-02`
+
+Verdict: ready, accepted by orchestrator. This supersedes the rejected first tab/splits plan by explicitly avoiding the `tab.zig`/`splits.zig` import cycle.
+
+Problem:
+
+- `layout/splits.zig` owns pure split placement but currently imports `layout/tab.zig` for `Tab.Body`.
+- `layout/tab.zig` still exposes `singlePane` as a direct `Pane.place` wrapper.
+- A tab-owned split-placement seam must not create an import cycle.
+
+Reference pressure:
+
+- `utils/dev_references/terminals/tmux/tmux.h` proves pane identity/runtime facts and layout cells are related but distinct through `window_pane.layout_cell`.
+- `utils/dev_references/terminals/tmux/tmux.h` proves windows own pane lists and `layout_root`.
+- `utils/dev_references/terminals/tmux/tmux.h` proves layout cells carry geometry and optional pane leaves, not tab/window convenience wrappers.
+- `utils/dev_references/terminals/tmux/layout-set.c` applies pane leaves through layout geometry after creating a layout root.
+- `utils/dev_references/terminals/zellij/zellij-server/src/tab/mod.rs` proves tabs hold multiple panes and track coordinates/sizes.
+- `utils/dev_references/terminals/zellij/zellij-server/src/tab/layout_applier.rs` proves tab layout application owns the layout-to-pane application seam.
+- `utils/dev_references/terminals/zellij/zellij-utils/src/input/layout.rs` proves split layout shape is separate from runtime panes.
+- `utils/dev_references/terminals/wezterm/docs/cli/cli/split-pane.md` proves split operations produce pane ids and keep direction/target behavior separate from move-pane/top-level behavior.
+
+Coder contract:
+
+- Update `howl-linux-host/src/layout/splits.zig` so it no longer imports `layout/tab.zig`.
+- Change `Splits.place` to take concrete geometry directly: `rect`, `pixel_size`, and `logical_size`.
+- Update `howl-linux-host/src/layout/tab.zig` to import `splits.zig` and expose `placePanes` as the tab-owned body-to-split-placement seam.
+- Update `singlePane` to route through `placePanes` and `Splits.leaf`.
+- Do not add files, delete files, or change `events/event.zig` unless compile proof requires narrow fallout.
+
+Exact symbols:
+
+- `layout/splits.zig`: remove `const Tab = @import("tab.zig");`
+- `layout/splits.zig`: `pub fn place(rect: Layout.Rect, pixel_size: Layout.Size, logical_size: Layout.Size, tree: Tree, out: []Pane.Placement) []Pane.Placement`
+- `layout/tab.zig`: add `const Splits = @import("splits.zig");`
+- `layout/tab.zig`: `pub fn placePanes(body_value: Body, tree: Splits.Tree, out: []Pane.Placement) []Pane.Placement`
+- `layout/tab.zig`: keep `pub fn singlePane(body_value: Body, pane_id: Pane.PaneId) Pane.Placement`, implemented through a local one-item placement array and `placePanes(body_value, Splits.leaf(pane_id), out[0..])`.
+
+Tests and gates:
+
+- Update `layout/splits.zig` tests to call `place(testRect(), testPixelSize(), testLogicalSize(), tree, out[0..])`.
+- Replace private `testBody() Tab.Body` with `testRect() Layout.Rect`, `testPixelSize() Layout.Size`, and `testLogicalSize() Layout.Size`.
+- Keep split tests for leaf fill, left-right, top-bottom, pane order, and odd-size total coverage.
+- Add `layout/tab.zig` tests for `placePanes` routing split tree inside tab body and `singlePane` matching split-leaf placement.
+- Confirm `layout/splits.zig` has no `@import("tab.zig")`; `layout/tab.zig` may import `splits.zig`.
+- Verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, and targeted stale-symbol searches.
+
+Deferred:
+
+- Split command bindings, event routing, dynamic pane id allocation, split target lookup, focus, pane activation, close/rebalance, interactive resizing, hidden pane retention, floating panes, pane/tab transfer, z-index repair, serialization, runtime multi-pane terminal ownership, C ABI changes, render ABI changes, and any rejection of official VT scroll viewport or GL viewport spellings.
