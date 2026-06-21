@@ -490,3 +490,56 @@ Tests and gates:
 Deferred:
 
 - Split command bindings, event routing, dynamic pane id allocation, split target lookup, focus, pane activation, close/rebalance, interactive resizing, hidden pane retention, floating panes, pane/tab transfer, z-index repair, serialization, runtime multi-pane terminal ownership, C ABI changes, render ABI changes, and any rejection of official VT scroll viewport or GL viewport spellings.
+
+## Stage 6 Runtime Tab Owner Contract
+
+Session: `teammate-2026-06-21-layout-mux-runtime-tab-plan-01`
+
+Verdict: ready, accepted by orchestrator with clarification: forwarded associated type constants in `tab.zig` are current-behavior delegation seams only. They are not compatibility shims or a new public host integration API.
+
+Problem:
+
+- Layout can describe pane identity and split placement, but runtime still treats each tab as one raw terminal surface stored directly in `tab_bar/tab_slots.zig` and orchestrated by `events/event.zig`.
+- The next source-backed runtime slice is to introduce a real tab owner while preserving current one-terminal-per-tab behavior.
+
+Reference pressure:
+
+- `utils/dev_references/terminals/tmux/tmux.h` proves `window_pane` owns pane identity/runtime facts and links to layout cells.
+- `utils/dev_references/terminals/tmux/tmux.h` proves tmux windows own active pane, pane lists, z-index list, and layout root.
+- `utils/dev_references/terminals/tmux/layout.c` proves layout leaves attach panes while layout nodes stay separate from pane runtime.
+- `utils/dev_references/terminals/tmux/window.c` proves pane index/count are derived from window-owned pane lists.
+- `utils/dev_references/terminals/zellij/zellij-server/src/tab/mod.rs` proves tabs hold multiple panes and track their coordinates/sizes.
+- `utils/dev_references/terminals/zellij/zellij-server/src/panes/tiled_panes/mod.rs` proves tiled panes are pane-id keyed collections.
+- `utils/dev_references/terminals/zellij/zellij-server/src/panes/floating_panes/mod.rs` proves floating panes are separately owned by pane id, z-order, and visibility.
+- `utils/dev_references/terminals/wezterm/docs/config/lua/mux-window/spawn_tab.md` and `wezterm.mux/spawn_window.md` prove mux windows/tabs/panes are distinct objects.
+
+Coder contract:
+
+- Add `howl-linux-host/src/tab.zig` as the host runtime tab owner.
+- `Tab` wraps exactly one existing terminal surface as `PaneId.first`.
+- `Tab` exposes current methods needed by `events/event.zig` by delegating to its one pane.
+- Update `tab_bar/tab_slots.zig` to store `Tab` instead of raw terminal surfaces.
+- Update `events/event.zig` to operate on `RuntimeTab` while preserving all current behavior.
+- Update `host_test_root.zig` to import `tab.zig`.
+- Do not update `bucket2.zig` except compile-required import fallout; expected no change.
+
+Exact symbols:
+
+- `src/tab.zig`: `pub const Tab = struct { first_pane: TerminalSurface = undefined, ... };`
+- `Tab.activePaneId(self: *const Tab) Layout.pane.PaneId`
+- `Tab.pane(self: *Tab, id: Layout.pane.PaneId) *TerminalSurface`, asserting `id == .first`.
+- `Tab` delegates current lifecycle/runtime/render/input/focus/font/title/paste/session methods to `first_pane` with the same signatures currently used by `events/event.zig`.
+- `tab_bar/tab_slots.zig`: storage changes from raw terminal surface to `RuntimeTab`.
+- `events/event.zig`: raw terminal type changes to `RuntimeTab` owner type; behavior stays unchanged.
+
+Tests and gates:
+
+- `src/tab.zig`: test `activePaneId()` returns `Layout.pane.PaneId.first`.
+- `src/tab.zig`: test `pane(.first)` returns `&tab.first_pane`.
+- Existing `tab_bar/tab_slots.zig` tests must pass with `RuntimeTab`.
+- Add/import smoke in `host_test_root.zig` for `tab.zig`.
+- Verify with `zig fmt build.zig src`, `zig build check`, `zig build test:unit`, `git diff --check`, and targeted stale-symbol searches.
+
+Deferred:
+
+- Runtime split behavior, second pane allocation, dynamic `PaneId` allocator, active pane focus movement, split commands/keybindings, hidden/floating pane behavior, pane transfer, tab transfer, resize/rebalance, z-index repair, serialization, C ABI changes, render ABI changes, and broad cleanup/rename of `bucket2.zig`.
