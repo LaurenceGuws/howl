@@ -1,0 +1,53 @@
+# Render Widget Surface Ownership Sprint
+
+Owner: orchestrator/reviewer.
+
+Purpose:
+
+- Make `howl-render` expose nothing more and nothing less than the host widget draw/render computation and state definitions.
+- Delete stale god-surface worldview, duplicate render paths, and false host-widget control from buckets.
+- Bring real `term_surface`, `tab_bar_surface`, and `scroll_bar_surface` ownership to life only where the host owns those widgets.
+
+Hard vocabulary:
+
+- Use `presentation`, never `realization`.
+- Use `trigger`, never `request` where a wake/action signal is meant.
+- Use exact widget nouns: `term_surface`, `tab_bar_surface`, `scroll_bar_surface`.
+- Do not use `scrollbar_surface`.
+- Do not add or preserve generic host UI nouns such as `HostSurface`, `host_surface`, or a god `Surface` that hides widget ownership.
+
+Render repository scope:
+
+- `howl-render` owns widget draw state definitions and widget draw computation.
+- Its internals may own computation nouns such as shaping, layout, rasterization, atlas packing, and damage computation when those nouns are exact internal work.
+- It must not own host presentation policy, GL texture lifetime, window/frame cadence, tab orchestration, scroll-bar orchestration, terminal orchestration, or host-side widget control.
+- Public render ABI nouns and verbs must match host widget nouns and verbs exactly. Nothing more. Nothing less.
+
+Host ownership:
+
+- `src/term.zig` owns terminal-instance `term_surface` turns only.
+- `src/tab_bar.zig` or `src/tab_bar/*` owns `tab_bar_surface` control and turns.
+- `src/scroll_bar.zig` or `src/scroll_bar/*` owns `scroll_bar_surface` control and turns.
+- `src/buckets that must die/bucket2.zig` owns none of these surfaces.
+- Any control over tab-bar or scroll-bar surfaces must not persist in `bucket2.zig` or `src/term.zig`.
+
+Workflow:
+
+- Researcher writes the source-backed audit and execution plan in `research/render-widget-surface-ownership.md`.
+- Orchestrator/reviewer reviews the research artifact before any product code changes.
+- Coder implements only the accepted slice from the research artifact.
+- Orchestrator/reviewer reviews the implementation diff before accepting or committing.
+
+Required gates per accepted implementation slice:
+
+- `zig fmt --check build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `zig build run -Doptimize=ReleaseFast` with the second-tab/tab-bar repro when host presentation paths are touched
+- repo-local `git diff --check`
+- root `git diff --check`
+
+Known flaw entering sprint:
+
+- Host commit `bc924db` records that `zig build run -Doptimize=ReleaseFast` can panic on second tab/tab-bar show with `trusted render create reuses live resource`.
+- The fix must come from exact widget presentation/resource ownership, not from weakening the assertion.

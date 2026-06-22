@@ -9,88 +9,49 @@ Current mode:
 
 - Strict sprint active.
 - Orchestrator/reviewer: main agent.
-- Teammate subagent: combined researcher plus coder-prep only until the sprint plan is accepted.
-- Product code must not change until research, user discussion, and reviewer acceptance define the first execution contract.
+- Teammate subagent: combined researcher/coder, but researcher-only until the written research plan is reviewed and accepted.
+- Product code must not change until the research artifact is accepted.
 
-Sprint set:
+Active sprint:
 
-- This is no longer one sprint. The runtime/progress/window/layout/thread redesign is split into three strict sprints.
-- Sprint 1: `sprints/host-main-scheduler.txt`.
-- Sprint 2: `sprints/layout-scheduler.txt`.
-- Sprint 3: `sprints/term-progress-scheduler.txt`.
+- Sprint contract: `sprints/render-widget-surface-ownership.txt`.
+- Active loop: `loops/render-widget-surface-ownership-loop.txt`.
+- Active research artifact: `research/render-widget-surface-ownership.md`.
 
-Hard doctrine for this sprint:
+Hard doctrine:
 
-- Howl is currently wrong in this area. Behavior changes are expected when the current behavior exists only to preserve false owner boundaries.
-- Proof is absent or wrong until rebuilt. Existing tests, comments, names, folders, and green builds are not proof that the shape is correct.
-- Current shape is wrong until proven right. Owner boundaries, files, structs, thread loops, schedulers, comments, tests, ABI seams, and all call paths are in scope for redesign and remodeling.
-- All Howl repositories are in scope: `howl-linux-host`, `howl-pty`, `howl-vt`, `howl-render`, host/vendor contracts, and ABI surfaces. Every touched boundary must be pristine, explicit, and proved.
-- The target is exactly the reference-backed owner/thread shape below. Nothing more. Nothing less. No compatibility shims, no aliases, no stale design docs, no special avoidance code, and no partial old-path preservation.
-- Comments are shape and ownership proof. They must explain what is happening here and why this owner performs the work. They must not be decorative citations like `kitty line 5 char 3`, and they must not preserve stale terms such as vague `runtime_facts` when the owner model has changed.
+- `howl-render` exposes exactly the host widget draw/render computation and state definitions. Nothing more. Nothing less.
+- Public render ABI nouns and verbs must match host widget nouns and verbs exactly.
+- `howl-render` internals may own exact computation nouns such as shaping, layout, rasterization, atlas packing, and damage computation.
+- `howl-render` must not own host presentation policy, GL texture lifetime, window cadence, tab orchestration, scroll-bar orchestration, terminal orchestration, or host-side widget control.
+- Use `presentation`, never `realization`.
+- Use `trigger`, never `request` where a wake/action signal is meant.
+- Use exact widget nouns: `term_surface`, `tab_bar_surface`, `scroll_bar_surface`.
+- Do not use `scrollbar_surface`.
+- Do not preserve generic host UI surface worldview: no `HostSurface`, `host_surface`, or god `Surface` hiding widget ownership.
+- `src/term.zig` owns terminal-instance `term_surface` turns only.
+- `src/tab_bar.zig` or `src/tab_bar/*` owns `tab_bar_surface` control and turns.
+- `src/scroll_bar.zig` or `src/scroll_bar/*` owns `scroll_bar_surface` control and turns.
+- Any control over tab-bar or scroll-bar surfaces must not persist in `src/buckets that must die/bucket2.zig` or `src/term.zig`.
 
-Reference-backed target owner/thread shape:
+Workflow:
 
-- Main host thread: `events/scheduler.zig` coordinates window events, frame cadence, redraw/dirty admission, wake coalescing, wait deadlines, and calls lower owners. This embodies Alacritty's UI/event/render scheduling thread using Howl nouns.
-- Host structure owner: `layout/scheduler.zig` may exist as the Zellij `Screen`-derived pane/tab/layout mutation owner, but not as a generic manager and not necessarily as a thread. It owns queued split, focus, resize, hide/show, move, close, and pane creation admission when those mutations are planned.
-- Term instance thread: the existing per-terminal instance background thread remains one thread. Its owner must be sharpened around PTY/terminal progress, not split into extra VT/render threads. This embodies Alacritty's PTY I/O loop / slave-side progress thread.
-- `window/` owns OS window lifecycle. `texture/` owns texture resources. `events/scheduler.zig` coordinates them; window chrome does not own texture or render resource policy.
-- Ghostty-style per-surface renderer and IO thread split is heavy pressure only. It is not copied unless a later proof shows Howl needs that cost.
+- Researcher writes the plan file first.
+- Orchestrator/reviewer audits and accepts or rejects the plan.
+- Coder implements only the accepted slice.
+- Orchestrator/reviewer audits the implementation diff before accepting or committing.
 
-Live artifacts:
+Known flaw entering sprint:
 
-- Active loop: `loops/layout-host-multiplexer-rewrite-loop.txt`.
-- Active research and sprint plan: `research/layout-host-multiplexer-rewrite.md`.
-- Split sprint contracts:
-  - `sprints/host-main-scheduler.txt`
-  - `sprints/layout-scheduler.txt`
-  - `sprints/term-progress-scheduler.txt`
+- Root `99d71fe`, host `bc924db`, render `2803998` form the committed known-flaw checkpoint.
+- `zig build run -Doptimize=ReleaseFast` can panic on second tab/tab-bar show with `trusted render create reuses live resource`.
+- Fix this through exact widget presentation/resource ownership. Do not weaken assertions.
 
-Deferred artifacts:
+Required gates:
 
-- The prior render text sprint artifacts remain in place for later resumption:
-  - `loops/render-text-c-abi-kitty-rewrite-loop.txt`
-  - `research/render-text-c-abi-kitty-rewrite.md`
-- Prior host I/O machinery scoping remains deferred:
-  - `loops/defered/howl-host-io-machinery-loop.txt`
-  - `research/defered/howl-host-io-machinery.md`
-
-Current git state:
-
-- Root was clean before this sprint surface update.
-- Known pushed baseline from prior accepted work:
-  - root `c8cd840 Track input processor bucket removal`
-  - `howl-linux-host` `54752b2 Move input processor out of bucket`
-  - `howl-render` `f2aab99 Honor ABI cell metrics in text surface`
-
-Immediate accountability:
-
-- Do not change `bucket2.zig` first. Redesign each caller to use `term.zig` and the existing true owner namespace.
-- `term.zig` must remain a tiny terminal instance control spine. It is not a new bucket, surface, manager, runtime, or compatibility layer.
-- Do not introduce `term-surface`, `terminal surface`, a second terminal instance type, or any replacement aggregate data shape.
-- `Surface` remains only where already required by render/texture implementation or C ABI facts; no new host-facing surface noun is allowed.
-- `tab` owns only runtime terminal surfaces and split leaves. It does not own layout frame construction, scrollbar placement, active-tab policy, texture presenter state, or window wake policy.
-- `layout/` owns tab, pane, split, window, visibility, focus, placement policy, scrollbar placement, active-tab facts, presentable frame snapshots, and main-thread batching facts. A frame is a layout-owned member/snapshot, not a standalone owner entity. Layout does not own VT, PTY, render contents, texture resources, GL, windows, or tab bar rendering.
-- `texture/` owns main-thread GL presentation for the window. `texture/term.zig` is the texture owner's presenter for `surface_type.term`, not terminal-instance ownership. `src/term.zig` does not own GL, texture resources, layout batching, present submission, frame cadence, windows, tab bar, or non-terminal surface kinds.
-- As soon as a presentable frame becomes ready, the window/main-thread wake path is triggered. Texture consumes the ready layout frame for GL work; texture does not own readiness or active-tab policy.
-- Everything below `src/term.zig` is built for the terminal instance directly: `vt/*`, `pty/*`, `render/*`, `texture/term.zig`, `input/*`, `scroll_bar.zig`, selection/link/cursor owners as they mature.
-- Rendered terminal output may stay coordinated by `term.zig` for now. Perfecting the render-surface ownership boundary is explicitly deferred; do not invent a new noun to settle it prematurely.
-- For event-loop/runtime/progress/presentation work, copy Alacritty's control-flow shape, not its nouns.
-- Use event-driven multiplexers to fill Alacritty's single-terminal gaps:
-  - Zellij first for pane/tab policy and pane-info facts.
-  - tmux for mature pane/window/session lifecycle and layout verbs.
-  - WezTerm for event-driven mux/window/tab/pane API pressure.
-- Howl nouns remain mandatory: `window`, `tab`, `pane`, `term`, `pty session`, `vt surface`, `render surface`, `texture`, and `frame`.
-- Do not introduce Alacritty nouns such as `Display` or `Context` into Howl.
-- The event loop consumes and orchestrates all eligible live `Term` instances through tab/pane policy. It does not own VT, PTY, render, texture, layout, or terminal-local internals.
-- Execute every slice in this order:
-  1. write or preserve policy comments, knobs, options, invariants, assertions, and failing tests first
-  2. route the caller through `term.zig` and the true owner namespace
-  3. delete the now-unused bucket method/field/path
-  4. run `zig fmt --check build.zig src`, `zig build check`, `zig build test:unit`, and `git diff --check`
-  5. commit host first, then root pointer/accountability if requested or if workflow requires it
-- Every handoff must preserve these non-goals:
-  - no bucket move or rename
-  - no bucket beautification
-  - no new surface noun
-  - no compatibility aliases/shims
-  - no broad feature work: pane close, resize UI, more panes, cwd/custom commands, movement/transfer, floating/hidden behavior, tab transfer
+- `zig fmt --check build.zig src`
+- `zig build check`
+- `zig build test:unit`
+- `zig build run -Doptimize=ReleaseFast` with the second-tab/tab-bar repro when host presentation paths are touched
+- repo-local `git diff --check`
+- root `git diff --check`
