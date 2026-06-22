@@ -1,0 +1,466 @@
+Verdict for eventloop:
+
+Reference-backed shape:
+term/PTY thread(s)
+  mutate terminal state
+  produce render-surface update readiness
+  send present trigger / wake to main
+
+main/window thread
+  owns SDL pump
+  owns wake coalescing
+  owns layout batching
+  owns texture/GL presentation
+  owns frame cadence
+
+render
+  owns surface contents/contracts
+  no texture vocab
+
+layout
+  runs on main for now
+  batches visible surface updates into present work
+  owns placement/z-order/visibility
+
+texture
+  runs on main for now
+  consumes batched surface presentation work
+  owns GL resources and draw/present
+This matches references better:
+- Alacritty: PTY thread wakes main; main batches/draws/presents.
+- Foot: main loop gathers refresh flags and presents when frame callback allows.
+- Kitty: IO thread coalesces wakeups; main render loop batches visible windows/tab bar and swaps.
+- Ghostty: renderer thread exists, but even it has app-thread draw fallback. So copying a separate presentation thread is not required and may be wrong for SDL/GL.
+So the corrected product direction:
+- No layout/presentation middle thread now.
+- Main thread is the presentation scheduler.
+- Surfaces/terms emit present triggers to main.
+- Main drains/coalesces triggers, computes layout, batches visible surface present work, and calls texture/GL.
+- Texture present remains host/main-thread owned.
+This also means:
+- events/event.zig / main loop is allowed to be the batching control spine.
+- events/scheduler.zig remains timer/deadline owner only.
+- layout/ is not a thread; it is main-thread policy/data for placement and batching.
+- term.zig should not know texture, but it can trigger “surface present needed” to main.
+- The present trigger can live as a wake edge associated with a surface/update, not as texture state in term.
+For bucket killing, the target becomes clearer:
+- Remove texture state from bucket into main-thread presentation/texture owner.
+- Keep term as PTY/VT/render-surface producer.
+- Main/tab/layout owns batching and placement.
+- Texture owns GL resource details.
+The next code direction should be small:
+1. Rename/reframe existing present_surface_trigger as a main-thread wake/present trigger, not texture-owned.
+2. Move GL resource fields out of bucket toward texture//main presentation owner, not term.
+3. Keep layout batching on main; do not introduce a thread.
+This is more source-backed and less speculative.
+
+
+Alacritty breakdown
+Reference root: /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty
+Thread / owner shape
+Alacritty is close to the user’s premise: one UI/main event thread plus one PTY I/O thread per terminal window, plus auxiliary non-core threads such as config watcher / IPC.
+Key source points:
+- Main entry creates the winit event loop and runs Processor.
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/main.rs:132-211
+- Lines 134-135 describe the main entry as creating window, terminal state, PTY, I/O event loop, input processor, config monitor, and display loop.
+- Lines 137-138 create EventLoop::<Event>::with_user_event().
+- Lines 207-211 create Processor and run it.
+- Processor owns the main event loop control spine and all windows.
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/event.rs:87-101
+- Processor fields include scheduler, windows: HashMap<WindowId, WindowContext>, proxy, gl_config, config, clipboard.
+- Main thread event dispatch:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/event.rs:230-516
+- window_event() handles winit window events and calls window_context.draw() only on WindowEvent::RedrawRequested: lines 249-282.
+- user_event() receives terminal wakeups and other app events: lines 285-464.
+- PTY thread Wakeup sets window_context.dirty = true and requests redraw if a frame is available: lines 409-415.
+- Frame events are used to gate redraws and reduce latency: lines 442-449.
+- about_to_wait() dispatches queued events to all windows and updates scheduler/control flow: lines 466-490.
+Window / terminal / display ownership
+- WindowContext is the per-window owner joining window, display, terminal, PTY notifier, input state, message buffer, dirty flag.
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs:48-70
+- WindowContext::new() creates:
+- terminal state behind Arc<FairMutex<Term<EventProxy>>>: lines 188-194.
+- PTY: lines 196-202.
+- PTY event loop: lines 208-220.
+- starts I/O thread: lines 222-228.
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/window_context.rs:168-257
+- The comment at lines 208-213 is important: PTY I/O runs on another thread so it does not occupy renderer/input cycles; terminal state access is synchronized because I/O updates it and display consumes it.
+PTY I/O thread
+- PTY thread owner:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:31-55
+- Msg is input, shutdown, resize.
+- EventLoop owns poll, pty, rx/tx, terminal, event_proxy.
+- Spawn:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:205-324
+- spawn() creates thread "PTY reader": lines 205-207.
+- poll loop waits on PTY and channel: lines 227-254.
+- readable PTY calls pty_read(): lines 280-295.
+- writable PTY calls pty_write(): lines 298-303.
+- child exit sends events and terminal exit: lines 256-270.
+- Parsing and wake:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty_terminal/src/event_loop.rs:103-170
+- Reads PTY bytes, locks terminal, advances parser: lines 121-155.
+- Bounds lock duration via MAX_LOCKED_READ: lines 159-161.
+- Sends Event::Wakeup if parsed bytes require redraw: lines 165-168.
+Rendering / layout / presentation
+- Display wraps window, font rasterizer/cache, GPU renderer, GL surface/context, size info, damage tracker.
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:341-400
+- Display::new() creates GL surface/context and renderer:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:403-542
+- GL surface: lines 428-433.
+- Make context current: lines 435-436.
+- Create renderer: line 439.
+- Disable vsync: lines 512-515.
+- Alacritty explicitly separates non-GL update work from GL update work:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:647-768
+- handle_update() comment says it must not call OpenGL; renderer updates are performed right before drawing: lines 647-648.
+- process_renderer_update() comment explains Wayland resize/back-buffer correctness and flicker avoidance: lines 739-743.
+- Display::draw():
+- /home/home/personal/projects/howl/utils/dev_references/terminals/alacritty/alacritty/src/display/mod.rs:770-1047
+- Collects renderable content while terminal is locked: lines 783-815.
+- Drops terminal lock before GPU drawing: line 815.
+- Applies terminal damage: lines 803-812.
+- Ensures GL context current: lines 835-836.
+- Draws cells/rects/UI: lines 838-1017.
+- Calls pre_present_notify(): lines 1019-1020.
+- Swaps buffers: line 1031.
+- Requests next frame after swapping for non-Wayland: lines 1040-1044.
+- Swaps damage tracker: line 1046.
+Alacritty implications for Howl
+Alacritty backs:
+- centralized main-thread control flow;
+- background PTY thread waking main/UI owner;
+- render/presentation policy owned above terminal state;
+- dirty/frame-gated redraw scheduling;
+- explicit split between state/layout update and backend present.
+Alacritty does not back:
+- a separate middle presentation thread;
+- multiplexing inside the app;
+- term instances owning render textures;
+- tab bar / scrollbar as separate surfaces in a multi-surface layout owner.
+So for Howl, Alacritty supports the discipline and event spine, not the exact multi-thread middle architecture.
+Ghostty breakdown
+Reference root: /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty
+Surface ownership
+Ghostty’s Surface is the strongest source-backed match for “terminal surface is not necessarily a window/tab/split.”
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/Surface.zig:1-11
+- A surface is a minimal terminal widget.
+- It owns PTY session.
+- Higher application runtime decides whether it is a window, tab, split, preview pane.
+- Events come from app runtime.
+Important fields:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/Surface.zig:85-129
+- renderer, renderer_state, renderer_thread, renderer_thr: lines 85-95.
+- io, io_thread, io_thr: lines 126-129.
+Per-surface threads
+- Surface initialization creates renderer, render state mutex, renderer thread object, IO thread object:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/Surface.zig:549-579
+- Surface stores render state pointing at self.io.terminal:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/Surface.zig:581-615
+- Termio is initialized with:
+- renderer state,
+- renderer wakeup async,
+- renderer mailbox,
+- surface mailbox.
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/Surface.zig:664-678
+- Starts renderer thread and IO thread:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/Surface.zig:714-728
+- renderer thread name "renderer";
+- IO thread name "io".
+IO thread
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/termio/Thread.zig:1-12
+- Comment says it represents the writer thread for terminal IO.
+- Reader side is handled by Termio depending on backend.
+- It offloads writing and mode/timer events from hot parse path.
+- IO thread owns an xev loop, wakeup, stop, scroll timer, resize coalesce timer, sync reset timer:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/termio/Thread.zig:42-86
+- threadMain() and threadMain_():
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/termio/Thread.zig:134-278
+- Crash metadata marks thread type .io: lines 246-251.
+- Mailbox must be SPSC: lines 253-257.
+- Wakeup waits on mailbox and loop runs: lines 272-278.
+Renderer thread
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/renderer/Thread.zig:1-3
+- “renderer thread logic”; can be woken to render.
+- Important design switch:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/renderer/Thread.zig:22-30
+- must_draw_from_app_thread causes renderer thread to send redraw_surface to app runtime instead of directly calling draw.
+This is highly relevant to Howl: Ghostty has a renderer thread, but still respects backend/runtime constraints that sometimes require actual draw on app thread.
+- Thread owns xev loop, wakeup async, stop async, render timer, draw timer, draw_now async, cursor timer, surface pointer, renderer pointer, shared render state, mailbox, app mailbox:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/renderer/Thread.zig:37-110
+- Thread start:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/renderer/Thread.zig:198-263
+- renderer thread enters renderer loop, calls renderer thread hooks, starts async handlers, sends initial wakeup, starts cursor timer and draw timer, runs loop.
+- Mailbox:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/renderer/Thread.zig:336-492
+- Handles visible/focus/config/resize/search/inspector messages.
+- Render/draw:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/renderer/Thread.zig:498-517
+- drawFrame() refuses invisible surfaces, respects renderer-owned vsync, either asks app thread to redraw or calls renderer.drawFrame(false).
+- Wakeup/render:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/renderer/Thread.zig:519-557
+- Wake drains mailbox then calls render callback immediately.
+- renderCallback():
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/renderer/Thread.zig:602-630
+- Skips invisible.
+- renderer.updateFrame(state, cursor_blink_visible).
+- Then drawFrame(false).
+Surface mailbox
+- /home/home/personal/projects/howl/utils/dev_references/terminals/ghostty/src/apprt/surface.zig:13-155
+- Surface messages include title, mouse shape, clipboard, config, close, child exit, desktop notification, renderer health, present_surface, password input, color change, selection scroll tick, pwd change, bell, progress, command start/stop, scrollbar, search progress.
+- Mailbox.push() wraps surface message and sends it to app thread: lines 134-154.
+Ghostty implications for Howl
+Ghostty backs:
+- surface abstraction independent of window/tab/split;
+- per-surface IO and renderer ownership;
+- app runtime as owner of outer UX;
+- renderer thread can wake/prepare but may delegate actual drawing to app thread;
+- surface mailbox carries UI metadata such as scrollbar, title, bell, progress.
+Ghostty does not directly back one shared presentation thread for all visible surfaces. It backs two threads per surface, not a global middle presentation owner.
+But Ghostty strongly supports the user’s “term emits metadata; surface is not texture” boundary.
+Foot breakdown
+Reference root: /home/home/personal/projects/howl/utils/dev_references/terminals/foot
+Foot is mostly single event-loop driven around Wayland/FDM, with timers and hooks. It is useful for presentation scheduling and compositor-frame gating, less useful for a separate middle thread.
+Main loop / FDM
+- Main initializes FDM, reaper, Wayland, renderer, terminal/server:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/main.c:609-637
+- Main loop:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/main.c:674-680
+- while (...) fdm_poll(fdm).
+- FDM API:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/fdm.h:17-34
+- supports fd handlers, event add/del, hooks, signal handlers, poll.
+- FDM loop:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/fdm.c:414-496
+- Executes high/normal/low hooks before epoll_pwait: lines 423-443.
+- Polls registered fds: lines 445-449.
+- Dispatches fd callbacks: lines 477-487.
+PTY/term
+- PTY fd callback:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/terminal.c:244-389
+- Handles EPOLLIN, EPOLLOUT, EPOLLHUP: lines 248-255.
+- Reads bounded chunks: buffer 24 KiB, max iterations 10 unless HUP: lines 273-276.
+- Calls vt_from_slave(term, buf, count): line 297.
+- Does delayed render scheduling after input to avoid intermediate flicker: lines 300-365.
+- Handles PTY hangup: lines 368-385.
+This is a strong source for “batch updates before rendering.”
+Render / presentation scheduling
+- Renderer registers an FDM hook:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/render.c:64-86
+- render_init() registers fdm_hook_refresh_pending_terminals at normal priority.
+- render_refresh() only marks state:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/render.c:5295-5299
+- sets term->render.refresh.grid = true.
+- Refresh hook:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/render.c:5140-5193
+- For each terminal, checks refresh.grid/csd/search/urls.
+- Clears refresh flags.
+- If no Wayland frame callback pending, renders immediately.
+- If frame callback pending, accumulates pending flags for later.
+- Wayland frame callback:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/foot/render.c:4311-4357
+- Destroys callback, clears callback pointer.
+- Copies pending flags.
+- Renders grid/search/urls/csd if required.
+- This is a clean source-backed presentation throttle: no double-render while compositor frame is pending.
+Foot implications for Howl
+Foot backs:
+- central loop with fd hooks;
+- render refresh flags separate from rendering;
+- delayed rendering after PTY input to batch intermediate terminal writes;
+- frame-callback-gated presentation;
+- pending refresh accumulation when a frame is already in flight.
+Foot does not back:
+- a separate presentation thread;
+- per-terminal thread;
+- texture abstraction;
+- cross-surface layout thread.
+But Foot is strong evidence for a surface_update / presentation_pending owner before touching texture.
+Kitty breakdown
+Reference root: /home/home/personal/projects/howl/utils/dev_references/terminals/kitty
+Kitty is the strongest source for multiplexing concepts: OS windows, tabs, windows/panes, tab bar, child monitor, main render loop.
+Child monitor / IO thread
+- ChildMonitor fields:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:48-61
+- owns Python callbacks, count, io_thread, talk_thread, fds, messages, loop data, parser function.
+- Constructor:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:157-188
+- initializes loop data and fd array.
+- children_fds[0] is wakeup fd, [1] signal fd: lines 184-185.
+- Wake main/IO:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:225-228
+- wakeup_io_loop() writes to loop wakeup.
+- I/O loop:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:1649-1747
+- thread name "KittyChildMon": line 1658.
+- Polls all child fds plus wake/signal fds: lines 1660-1682.
+- Reads child PTY data via read_bytes(): lines 1697-1707.
+- Writes buffered data to child: lines 1708-1710.
+- Coalesces expensive main-loop wakeups with input_delay: lines 1731-1739.
+- Read path:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:1505-1525
+- obtains vt parser write buffer, reads bytes, commits write.
+Main loop / render
+- Main loop exposed:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:1433-1443
+- run_main_loop(process_global_state, self).
+- Render preparation:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:756-864
+- prepare_to_render_os_window():
+- starts from os_window->needs_render;
+- updates tab bar data;
+- iterates visible windows in active tab;
+- collects cursor info;
+- sends cell data to GPU;
+- handles animations and max wait.
+- Render OS window:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:954-990
+- checks render-frame gating;
+- makes context current;
+- updates viewport;
+- prepares render data;
+- calls render_prepared_os_window() if needed.
+- Present:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:904-939
+- draws borders, tab bar, visible windows/title bars;
+- calls swap_window_buffers(os_window): line 932;
+- requests frame render when sync-to-monitor path active: line 936.
+- Top-level render loop:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/child-monitor.c:992-1027
+- respects repaint_delay;
+- loops over all OS windows;
+- caches process data around render.
+Tabs / windows / layout ownership
+- Tab owns windows and layout:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/tabs.py:177-220
+- Tab.__init__ stores os_window_id, creates tab id with add_tab, owns WindowList, layout names/current layout.
+- Tab imports tab bar and layout machinery:
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/tabs.py:57-64
+- Window object uses fast data calls including:
+- add_window,
+- mark_os_window_dirty,
+- set_window_render_data,
+- wakeup_main_loop.
+- /home/home/personal/projects/howl/utils/dev_references/terminals/kitty/kitty/window.py:39-98
+Kitty implications for Howl
+Kitty backs:
+- multiplexing via OS window → tab → window/pane;
+- central render loop over OS windows and visible windows;
+- tab bar as explicit render participant;
+- child monitor as separate IO thread over many children;
+- coalesced main-loop wakeups after input;
+- render state marked dirty from window/tab changes;
+- host/main loop owns presentation.
+Kitty does not directly back a separate presentation thread. Like Alacritty and Foot, final drawing/presentation remains in the app/main/render loop, not a generic middle thread.
+Cross-reference comparison table
+Topic	Alacritty	Ghostty	Foot	Kitty
+Main/UI event spine	Processor owns winit event loop and windows	app runtime owns outer events	fdm_poll() main loop	GLFW/main loop + Python/C state
+PTY/IO threading	one PTY reader thread per window	IO thread per surface, plus backend reader details	PTY fd handled in main FDM loop	child monitor IO thread handles many children
+Renderer thread	no separate renderer thread	renderer thread per surface	no; render hook in main loop	no generic renderer thread; render in main loop
+Presentation ownership	Display/main thread owns GL context and swap	renderer thread may draw, or delegate to app thread if required	Wayland frame callback gates render/present	render loop over OS windows swaps buffers
+Surface abstraction	window context == terminal window	Surface independent of window/tab/split	terminal + wayland window	window/pane inside tab
+Multiplexing	skipped	app runtime decides tab/split/window	server can launch terms; not rich pane model	rich tabs/windows/layouts
+Tab bar	not present	runtime/app-specific	not central	explicit tab bar render data
+Scrollbar	minimal/not central	surface mailbox includes scrollbar	scrollback indicator subsurface	scrolling state per window
+Batch render scheduling	dirty + frame events	renderer wakeup/render timers	delayed render lower/upper timers + frame callback pending	input_delay + repaint_delay
+One global presentation thread	no	no; per-surface renderer thread	no	no
+Howl middle-path interpretation
+The user’s proposed shape is directionally consistent with references in boundaries, but not fully source-backed in thread topology.
+Source-backed parts
+1. Term/render API must drop texture vocabulary.
+- Project law already says host owns backend resource realization and texture ownership.
+- Alacritty Display owns GL surface/context/renderer details.
+- Ghostty Surface separates terminal surface from runtime placement.
+- Foot and Kitty keep presentation/backend in host/app loop.
+2. Render owns surface types / render consequences, host consumes them.
+- Alacritty: terminal state → renderable content → Display draws.
+- Ghostty: terminal/render.zig is renderer-neutral render state, while renderer thread/backend consumes it.
+- Howl should keep howl-render surface contracts renderer-neutral.
+3. Term emits metadata for tab bar / scrollbar rather than owning texture.
+- Ghostty apprt/surface.zig has messages for scrollbar, title, progress, bell, pwd, child exit.
+- Kitty tab/window models use metadata to update tab bar/layout/render data.
+- This supports term/VT emitting metadata events, not texture resources.
+4. Batch surface updates before presentation.
+- Foot delayed render and pending frame callback model is strong evidence.
+- Kitty input_delay and repaint_delay are strong evidence.
+- Alacritty dirty/frame gating is strong evidence.
+5. Layout between surface updates and texture present.
+- Kitty supports layout as the owner between windows/panes and OS-window rendering.
+- Foot supports “refresh flags/pending flags” before actual render.
+- Alacritty supports DisplayUpdate and pending_renderer_update split.
+Product-specific / invented parts
+1. One presentation scheduling/owning thread for all visible surface updates is not directly found in Alacritty, Ghostty, Foot, or Kitty.
+- Alacritty: main thread presentation.
+- Ghostty: renderer thread per surface, with app-thread draw fallback.
+- Foot: main FDM hook and Wayland frame callback.
+- Kitty: main render loop over OS windows.
+2. SDL user events as cross-thread routing are platform/backend-specific and not source-backed by the terminal references. They may be acceptable host details, but should not shape ABI or render owners.
+3. layout.zig as thread2 needs more proof. References support layout/presentation as an owner, but not necessarily as its own OS thread.
+4. texture.zig defining how and when GL draws per surface_type is acceptable only if it is host/backend-owned. It must not become the renderer architecture. Alacritty’s Display and Kitty’s render loop are better naming pressure than generic texture.
+Implications for bucket-kill order
+Current bucket:
+- /home/home/personal/projects/howl/howl-linux-host/src/buckets that must die/bucket2.zig
+bucket2.zig currently mixes many owners:
+- terminal runtime (term, PTY/session/wait thread, VT state);
+- host input;
+- event loop;
+- render retained surface;
+- texture resources;
+- surface layout;
+- scrollbar;
+- selection;
+- links;
+- cursor blink/cadence/trail/render;
+- testing hooks.
+Missing owner likely first: surface update / presentation pending
+The safest first cut is probably not pane and not the full middle presentation thread.
+The first source-backed missing owner is a small host-side owner that represents:
+- “this surface has changed”;
+- “this update needs prepare/submit/present”;
+- “this update has damage/pending frame state”;
+- “backend presentation is pending / blocked.”
+Why first:
+- Alacritty has DisplayUpdate, pending_renderer_update, dirty, frame gating.
+- Foot has render.refresh.* and render.pending.*.
+- Kitty has needs_render, repaint delay, render-frame state.
+- Howl already has howl-render/src/event.zig, submitted_surface.zig, retained-state vocabulary.
+- It cuts texture/presentation vocabulary away from term without needing the final threading decision.
+Suggested conceptual owner names to evaluate, source-backed by references:
+- surface_update.zig for host-side update facts.
+- presentation.zig for host presentation scheduling facts.
+- frame.zig or present_frame.zig if the owner is specifically “one pending/in-flight frame.”
+- Avoid manager, engine, controller.
+Likely second: surface as host embedding unit
+After update/presentation facts are separated, create/clarify a host surface owner:
+- terminal surface identity;
+- render surface handle;
+- metadata outflow;
+- dirty/update state;
+- no texture ownership unless it is specifically backend resource owner.
+Ghostty strongly supports Surface as terminal widget independent from window/tab/split.
+Likely third: pane / tab / layout
+Do not cut pane first unless the immediate slice needs multiplexing semantics.
+Why premature:
+- pane is a UX/layout concept. Kitty backs it, but Howl first needs to stop term from owning texture/presentation facts.
+- If pane is introduced before surface update/presentation ownership, it may become another bucket.
+- The references suggest panes/windows/tabs sit above terminal surfaces, not inside terminal runtime.
+Cuts that would be premature
+- Moving texture code into term-like owners.
+- Building a new “layout thread” before the owner contract is proven in single-threaded form.
+- Adding pane before defining what a surface update is and who schedules present.
+- Adding tab bar / scrollbar threads before metadata event contracts are explicit.
+- Creating generic Context, State, Options, Manager, Engine, or Controller buckets.
+Open questions for user
+1. Is the “one presentation scheduling thread” a hard product direction, or an experiment to be proven after the owner boundaries are cleaned?
+2. Must actual GL calls happen on SDL/main thread, or can the backend create/move a GL context to a presentation thread on all supported platforms?
+3. Should layout.zig own only scheduling and batching, or also pane/tab geometry?
+4. Are tab bar and scrollbar render surfaces part of howl-render ABI, or host-local UI surfaces fed by VT metadata?
+5. Should each terminal have its own PTY/VT thread, or should Howl eventually have a Kitty-like child monitor over many terminal instances?
+6. What is the minimum ABI event that represents “surface updated”: dirty rows, snapshot token, metadata event, or opaque render-surface ready?
+Risks / stop conditions
+- Stop if a worker tries to implement a global presentation thread without a recorded reference gap and explicit user approval.
+- Stop if term/render ABI exposes texture, GL, SDL, or backend resource vocabulary.
+- Stop if layout.zig becomes a bucket for pane geometry, surface batching, texture present, tab bar, scrollbar, and terminal metadata.
+- Stop if pane is introduced before terminal surface/update ownership is separated.
+- Stop if host code imports internal terminal modules in Zig-shaped convenience form instead of C ABI contracts.
+- Stop if the design hides ownership behind manager, engine, controller, types, Context, State, or Options.
