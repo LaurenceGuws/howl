@@ -1,0 +1,93 @@
+# Window Texture Surface Present Slice
+
+Purpose:
+
+- Continue the event-loop owner rewrite after `71de4b6 Move surface present wake to events`.
+- Move terminal GL presentation state out of `bucket2.zig` without moving texture ownership into `term.zig`.
+- Establish `surface_type` as the texture-side dispatch vocabulary for visible widget surfaces.
+
+Accepted decisions:
+
+- The middle layout/presentation thread is dissolved for now.
+- The main/window thread owns SDL pump, wake coalescing, layout batching, texture/GL presentation, and frame cadence.
+- `events/scheduler.zig` owns timers/deadlines only.
+- Widget owners use shared surface-present wake language through `events/surface_present.zig`.
+- `term`, `tab_bar`, and `scroll_bar` are surface types for texture presentation.
+- `term.zig` owns PTY/VT/render-surface production and may emit a surface-present trigger, but it does not own texture, GL resources, layout batching, present submission, or frame cadence.
+- `texture/term.zig` is not stale. It is the texture owner's presenter for `surface_type.term`, not terminal-instance ownership.
+- Texture is one window/main-thread presentation owner, not one texture per terminal instance.
+- Texture implementation may split by surface type because term, tab-bar, and scrollbar surfaces can have different priority, cadence, resource shape, upload path, damage rules, and batching behavior.
+
+Current state already completed:
+
+- `events/surface_present.zig` owns shared coalesced trigger mechanics.
+- `term.zig` references the shared trigger for terminal update wake only.
+- `texture/term.zig` no longer owns wake/trigger semantics.
+- `events/scheduler.zig` no longer owns present reason selection.
+- `events/event.zig` owns main/window present reason selection.
+- Host commit: `71de4b6 Move surface present wake to events`.
+- Root receipt commit: `86913ec Track event loop owner decision`.
+
+Next planned slice:
+
+1. Add texture-side surface type vocabulary.
+   - Candidate owner: `texture/surface.zig`.
+   - Candidate enum: `pub const Type = enum { term, tab_bar, scroll_bar };`.
+   - This type is texture presentation dispatch vocabulary only. It does not belong to render API or term.
+
+2. Reframe window texture ownership.
+   - `texture/frame.zig::State` remains the window/main-thread GL presentation owner.
+   - It should own or reach all per-surface-type presenter state required to draw one window frame.
+   - Actual GL calls remain on the main/window thread.
+
+3. Keep surface-type presenter files under `texture/`.
+   - `texture/term.zig` owns how `surface_type.term` render surfaces are uploaded/presented.
+   - Future peer owners are expected for `texture/tab_bar.zig` and `texture/scroll_bar.zig` if those surfaces need distinct presenter state.
+
+4. Remove bucket texture ownership.
+   - Target old bucket fields/methods:
+     - `term_texture`
+     - `render_surface_textures`
+     - `uploadRenderSurface`
+     - direct texture deletion in bucket deinit
+   - Do not move these into `term.zig`.
+   - Do not create a per-terminal texture owner.
+   - Do not move render-turn policy in this slice unless unavoidable and explicitly reapproved.
+
+5. Keep layout on main for now.
+   - Layout owns placement/z-order/visibility/batching facts.
+   - Layout does not own GL resources, render contents, PTY/VT state, or frame cadence.
+
+Required comment receipts for this slice:
+
+- `texture/surface.zig`: surface type vocabulary is texture presentation dispatch only; it does not define render API or term ownership.
+- `texture/frame.zig`: window/main-thread texture owner for GL draw/present; owns surface-type presenter orchestration; does not own PTY/VT/render internals or scheduler timers.
+- `texture/term.zig`: presenter for `surface_type.term`; owns term-surface GL upload/resource rules; does not own terminal instance state, surface-present wake, layout placement, or frame cadence.
+- `layout.zig` or touched layout owner: main-thread placement/batching records; does not own texture resources or render contents.
+- Any touched `bucket2.zig` code: state only the remaining uncut owner groups if a comment is necessary; do not add historical TODO prose.
+
+Hard non-goals:
+
+- No new middle layout/presentation thread.
+- No `Term.texture` or texture state in `term.zig`.
+- No new generic manager/controller/context/options/state bucket.
+- No render API texture vocabulary.
+- No full bucket deletion in this slice.
+- No cursor, selection, link, scrollbar widget rewrite, font-size rewrite, or lifecycle/init rewrite unless a hard compile blocker forces a narrowly reviewed change.
+
+Required gates:
+
+- From `howl-linux-host/`:
+  - `zig fmt --check build.zig src`
+  - `zig build check`
+  - `zig build test:unit`
+  - `git diff --check`
+- From root:
+  - `git diff --check`
+
+Stale grep gates after implementation:
+
+- No `term_texture|render_surface_textures|uploadRenderSurface|deleteTexture` ownership in `bucket2.zig`.
+- No texture/GL/present resource state added to `term.zig`.
+- No `surface_type` vocabulary outside texture/layout/event presentation owners unless explicitly justified by a render/layout boundary.
+- No `PresentSurfaceTrigger`, `present_surface_triggered`, `texture_trigger`, or `triggerTexturePresent` in host source.

@@ -68,8 +68,8 @@ Immediate accountability:
 - `term.zig` must remain a tiny terminal instance control spine. It is not a new bucket, surface, manager, runtime, or compatibility layer.
 - Do not introduce `term-surface`, `terminal surface`, a second terminal instance type, or any replacement aggregate data shape.
 - `Surface` remains only where already required by render/texture implementation or C ABI facts; no new host-facing surface noun is allowed.
-- `layout/` owns tab, pane, split, window, visibility, focus, and placement policy. It does not own VT, PTY, render realization, textures, GL, windows, or tab bar rendering.
-- `texture/term.zig` owns texture implementation details for the terminal instance. `src/term.zig` does not know GL, windows, tab bar, or non-terminal surface kinds.
+- `layout/` owns tab, pane, split, window, visibility, focus, placement policy, and main-thread batching facts. It does not own VT, PTY, render contents, texture resources, GL, windows, or tab bar rendering.
+- `texture/` owns main-thread GL presentation for the window. `texture/term.zig` is the texture owner's presenter for `surface_type.term`, not terminal-instance ownership. `src/term.zig` does not own GL, texture resources, layout batching, present submission, frame cadence, windows, tab bar, or non-terminal surface kinds.
 - Everything below `src/term.zig` is built for the terminal instance directly: `vt/*`, `pty/*`, `render/*`, `texture/term.zig`, `input/*`, `scroll_bar.zig`, selection/link/cursor owners as they mature.
 - Rendered terminal output may stay coordinated by `term.zig` for now. Perfecting the render-surface ownership boundary is explicitly deferred; do not invent a new noun to settle it prematurely.
 - For event-loop/runtime/progress/presentation work, copy Alacritty's control-flow shape, not its nouns.
