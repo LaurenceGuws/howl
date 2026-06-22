@@ -68,8 +68,10 @@ Immediate accountability:
 - `term.zig` must remain a tiny terminal instance control spine. It is not a new bucket, surface, manager, runtime, or compatibility layer.
 - Do not introduce `term-surface`, `terminal surface`, a second terminal instance type, or any replacement aggregate data shape.
 - `Surface` remains only where already required by render/texture implementation or C ABI facts; no new host-facing surface noun is allowed.
-- `layout/` owns tab, pane, split, window, visibility, focus, placement policy, and main-thread batching facts. It does not own VT, PTY, render contents, texture resources, GL, windows, or tab bar rendering.
+- `tab` owns only runtime terminal surfaces and split leaves. It does not own layout frame construction, scrollbar placement, active-tab policy, texture presenter state, or window wake policy.
+- `layout/` owns tab, pane, split, window, visibility, focus, placement policy, scrollbar placement, active-tab facts, presentable frame snapshots, and main-thread batching facts. A frame is a layout-owned member/snapshot, not a standalone owner entity. Layout does not own VT, PTY, render contents, texture resources, GL, windows, or tab bar rendering.
 - `texture/` owns main-thread GL presentation for the window. `texture/term.zig` is the texture owner's presenter for `surface_type.term`, not terminal-instance ownership. `src/term.zig` does not own GL, texture resources, layout batching, present submission, frame cadence, windows, tab bar, or non-terminal surface kinds.
+- As soon as a presentable frame becomes ready, the window/main-thread wake path is triggered. Texture consumes the ready layout frame for GL work; texture does not own readiness or active-tab policy.
 - Everything below `src/term.zig` is built for the terminal instance directly: `vt/*`, `pty/*`, `render/*`, `texture/term.zig`, `input/*`, `scroll_bar.zig`, selection/link/cursor owners as they mature.
 - Rendered terminal output may stay coordinated by `term.zig` for now. Perfecting the render-surface ownership boundary is explicitly deferred; do not invent a new noun to settle it prematurely.
 - For event-loop/runtime/progress/presentation work, copy Alacritty's control-flow shape, not its nouns.

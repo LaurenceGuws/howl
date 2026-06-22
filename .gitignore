@@ -7,5 +7,6 @@ zig16-release-notes.txt
 .vscode/
 .zigversion
 /.idea/
+/.run/
 /.venv/
 !/artifacts/

@@ -17,6 +17,9 @@ Accepted decisions:
 - `texture/term.zig` is not stale. It is the texture owner's presenter for `surface_type.term`, not terminal-instance ownership.
 - Texture is one window/main-thread presentation owner, not one texture per terminal instance.
 - Texture implementation may split by surface type because term, tab-bar, and scrollbar surfaces can have different priority, cadence, resource shape, upload path, damage rules, and batching behavior.
+- Tab owns only runtime terminal surfaces and split leaves. Tab must not own layout frame construction, scrollbar placement, active-tab policy, texture presenter state, or window wake policy.
+- Layout owns tab placement, scrollbar placement, active-tab selection facts, and the presentable frame snapshot. A frame is a layout-owned member/snapshot, not a separate owner entity.
+- As soon as a presentable layout frame is ready, the window/main-thread wake path is triggered. Texture consumes the ready frame for GL work; texture does not decide layout readiness or active-tab policy.
 
 Current state already completed:
 
@@ -35,14 +38,15 @@ Next planned slice:
    - Candidate enum: `pub const Type = enum { term, tab_bar, scroll_bar };`.
    - This type is texture presentation dispatch vocabulary only. It does not belong to render API or term.
 
-2. Reframe window texture ownership.
-   - `texture/frame.zig::State` remains the window/main-thread GL presentation owner.
-   - It should own or reach all per-surface-type presenter state required to draw one window frame.
-   - Actual GL calls remain on the main/window thread.
+2. Reframe layout frame ownership.
+   - The presentable frame is owned by `layout/` as a snapshot/member of layout state.
+   - The frame contains active-tab, tab placement, pane placement, terminal texture ids/rects, scrollbar placement, tab-bar facts, and damage facts needed by the window texture consumer.
+   - The frame is not a standalone texture owner and not a tab-owned construction product.
 
 3. Keep surface-type presenter files under `texture/`.
    - `texture/term.zig` owns how `surface_type.term` render surfaces are uploaded/presented.
    - Future peer owners are expected for `texture/tab_bar.zig` and `texture/scroll_bar.zig` if those surfaces need distinct presenter state.
+   - `texture/frame.zig` may consume a layout-owned frame snapshot and own GL resource state, but it must not become the frame owner or own layout readiness.
 
 4. Remove bucket texture ownership.
    - Target old bucket fields/methods:
@@ -55,15 +59,17 @@ Next planned slice:
    - Do not move render-turn policy in this slice unless unavoidable and explicitly reapproved.
 
 5. Keep layout on main for now.
-   - Layout owns placement/z-order/visibility/batching facts.
-   - Layout does not own GL resources, render contents, PTY/VT state, or frame cadence.
+   - Layout owns placement/z-order/visibility/batching facts, active-tab frame facts, scrollbar placement, and presentable frame readiness.
+   - Layout does not own GL resources, render contents, PTY/VT state, texture uploads, or frame cadence.
+   - When layout produces a presentable frame, the window/main-thread wake path is triggered for presentation.
 
 Required comment receipts for this slice:
 
 - `texture/surface.zig`: surface type vocabulary is texture presentation dispatch only; it does not define render API or term ownership.
-- `texture/frame.zig`: window/main-thread texture owner for GL draw/present; owns surface-type presenter orchestration; does not own PTY/VT/render internals or scheduler timers.
+- `layout.zig` or touched layout owner: owns presentable frame snapshot construction, active-tab frame facts, tab/pane placement, scrollbar placement, and readiness-to-wake facts; does not own texture resources, GL uploads, render contents, PTY/VT internals, or frame cadence.
+- `texture/frame.zig`: window/main-thread texture consumer for GL draw/present of a layout-owned frame snapshot; owns GL resource state and surface-type presenter orchestration; does not own layout frame construction, active-tab policy, PTY/VT/render internals, scheduler timers, or window wake policy.
 - `texture/term.zig`: presenter for `surface_type.term`; owns term-surface GL upload/resource rules; does not own terminal instance state, surface-present wake, layout placement, or frame cadence.
-- `layout.zig` or touched layout owner: main-thread placement/batching records; does not own texture resources or render contents.
+- `tab.zig`: owns runtime terminal surfaces and split leaves only; does not own layout frame construction, active-tab policy, scrollbar placement, texture presenter state, or window wake policy.
 - Any touched `bucket2.zig` code: state only the remaining uncut owner groups if a comment is necessary; do not add historical TODO prose.
 
 Hard non-goals:
@@ -74,6 +80,9 @@ Hard non-goals:
 - No render API texture vocabulary.
 - No full bucket deletion in this slice.
 - No cursor, selection, link, scrollbar widget rewrite, font-size rewrite, or lifecycle/init rewrite unless a hard compile blocker forces a narrowly reviewed change.
+- No `tab.zig` import of `texture/frame.zig` or texture presenter types.
+- No `bucket2.zig` import of `texture/term.zig` or texture presenter types.
+- No frame owner hidden under `texture/frame.zig`; the presentable frame is a layout snapshot/member.
 
 Required gates:
 
@@ -91,3 +100,30 @@ Stale grep gates after implementation:
 - No texture/GL/present resource state added to `term.zig`.
 - No `surface_type` vocabulary outside texture/layout/event presentation owners unless explicitly justified by a render/layout boundary.
 - No `PresentSurfaceTrigger`, `present_surface_triggered`, `texture_trigger`, or `triggerTexturePresent` in host source.
+- No `@import("texture/frame.zig")` in `tab.zig`.
+- No `@import("../texture/term.zig")` in `bucket2.zig`.
+
+Approved follow-up repair seed:
+
+- Status: the current uncommitted host diff is rejected for rework before commit because it routes texture presenter ownership through `bucket2.zig` and texture frame ownership through `tab.zig`.
+- User approval: repair the diff under the corrected owner model recorded above.
+- Exact target boundary:
+  - `tab.zig` owns runtime terminal surfaces and split leaves only.
+  - `layout/` owns active-tab facts, tab/pane placement, scrollbar placement, frame snapshot construction, and presentable-frame readiness.
+  - `texture/` owns GL resources, surface-type presenter slots, uploads, draw, and present consumption of a layout-owned frame snapshot.
+  - `bucket2.zig` owns only the remaining dying terminal-surface aggregate until starved; it must not import texture presenter types.
+- Repair steps:
+  1. Remove `texture/frame.zig` imports and texture-frame parameters from `tab.zig`. Tab may expose runtime terminal surfaces, split leaves, pane ids, and terminal-local render-turn results, but not texture presenters or texture ids.
+  2. Move frame snapshot construction out of `tab.zig` and into a layout owner. The layout frame snapshot must combine active-tab facts, tab/pane placement, scrollbar placement, terminal texture ids/rects supplied by the texture/window presenter owner, tab-bar facts, and damage.
+  3. Remove `texture/term.zig` imports and presenter parameters from `bucket2.zig`. The bucket may prepare terminal render-surface work and return terminal/render facts; texture upload/presenter mutation must happen through texture-owned code called by the window/layout presentation path.
+  4. Keep `texture/frame.zig` as the GL consumer of a layout-owned frame snapshot. It may own presenter slots and upload/draw/present, but it must not own layout frame construction, active-tab policy, scrollbar placement, or readiness-to-wake.
+  5. Wire readiness so that when layout has a presentable frame snapshot, the window/main-thread wake path is triggered for presentation. Do not add a middle thread, a frame manager, or a replacement facts bucket.
+  6. Delete or rewrite tests that proved bucket-owned texture hooks; replace them with tests proving bucket has no texture dependency, tab has no texture-frame dependency, layout constructs frame snapshots, and texture consumes the layout frame.
+- Repair acceptance gates:
+  - Required gates listed above must pass.
+  - Stale grep gates listed above must pass.
+  - Additional grep gates:
+    - `bucket2.zig` contains no `texture_term`, `Presenter`, `host_surface`, or `uploadPreparedSurface` type dependency.
+    - `tab.zig` contains no `TextureFrame`, `termPresenter`, or `termTextureId` dependency.
+    - layout-owned frame construction comments state layout owns frame snapshots and readiness, not GL resources.
+    - texture-owned comments state texture consumes layout frames and owns GL resources, not layout policy or wake readiness.
