@@ -22,6 +22,7 @@ Render repository scope:
 - Its internals may own computation nouns such as shaping, layout, rasterization, atlas packing, and damage computation when those nouns are exact internal work.
 - It must not own host presentation policy, GL texture lifetime, window/frame cadence, tab orchestration, scroll-bar orchestration, terminal orchestration, or host-side widget control.
 - Public render ABI nouns and verbs must match host widget nouns and verbs exactly. Nothing more. Nothing less.
+- Public render ABI must not expose `Frame` vocabulary. Render-computed output uses prepared widget-surface vocabulary; host presentation tokens remain distinct.
 
 Host ownership:
 

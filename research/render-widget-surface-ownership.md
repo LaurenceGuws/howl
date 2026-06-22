@@ -146,7 +146,7 @@ Review proof for first slice:
 
 ## 7. Follow-Up Slices In Order
 
-1. Rename public terminal-only render ABI: `HowlRenderSurfaceFrame`/frame span types used by terminal output and `howl_render_surface_layout`/`howl_render_surface_point_cell` become exact `HowlRenderTermSurfaceFrame`/`howl_render_term_surface_layout`/`howl_render_term_surface_point_cell`; update host call sites/tests; no compatibility shims.
+1. Rename public terminal render ABI without `Frame`: `HowlRenderSurfaceFrame`/frame span types used by terminal output become exact prepared terminal surface names such as `HowlRenderTermSurfacePrepared`, `HowlRenderTermSurfacePreparedToken`, `HowlRenderTermSurfaceDamageSpan`, and `HowlRenderTermSurfaceCommandSpan`; constants use `HOWL_RENDER_TERM_SURFACE_PREPARED_*` or exact command/damage names; `surface_frame` output fields become `term_surface_prepared`; `surface_frame_status` becomes `term_surface_status`; `howl_render_surface_layout`/`howl_render_surface_point_cell` become `howl_render_term_surface_layout`/`howl_render_term_surface_point_cell`; update host call sites/tests; no compatibility shims. `HowlRenderTermSurface` remains the host presentation token and must not be reused for prepared render output.
 2. Split render state handles by widget: replace public `HowlRenderTextHandle`/`HowlRenderText` and `howl_render_text_*` with exact `term_surface` and `tab_bar_surface` state handles/verbs. Keep shared text computation private.
 3. Rename or delete render `realizer*` files/tests to presentation or exact compute vocabulary.
 4. Audit `howl-render/src/event.zig` and `prepared_surface.zig` for `RenderRequest`; rename to `RenderTrigger` only if the semantics are action admission.
