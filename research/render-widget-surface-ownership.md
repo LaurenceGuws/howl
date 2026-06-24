@@ -147,10 +147,10 @@ Review proof for first slice:
 ## 7. Follow-Up Slices In Order
 
 1. Rename public terminal render ABI without `Frame`: `HowlRenderSurfaceFrame`/frame span types used by terminal output become exact prepared terminal surface names such as `HowlRenderTermSurfacePrepared`, `HowlRenderTermSurfacePreparedToken`, `HowlRenderTermSurfaceDamageSpan`, and `HowlRenderTermSurfaceCommandSpan`; constants use `HOWL_RENDER_TERM_SURFACE_PREPARED_*` or exact command/damage names; `surface_frame` output fields become `term_surface_prepared`; `surface_frame_status` becomes `term_surface_status`; `howl_render_surface_layout`/`howl_render_surface_point_cell` become `howl_render_term_surface_layout`/`howl_render_term_surface_point_cell`; update host call sites/tests; no compatibility shims. `HowlRenderTermSurface` remains the host presentation token and must not be reused for prepared render output.
-2. Split render state handles by widget: replace public `HowlRenderTextHandle`/`HowlRenderText` and `howl_render_text_*` with exact `term_surface` and `tab_bar_surface` state handles/verbs. Keep shared text computation private.
-3. Rename or delete render `realizer*` files/tests to presentation or exact compute vocabulary.
-4. Audit `howl-render/src/event.zig` and `prepared_surface.zig` for `RenderRequest`; rename to `RenderTrigger` only if the semantics are action admission.
-5. Move host tab-bar surface control out of `texture/frame.zig` into `src/tab_bar.zig` or `src/tab_bar/*`; `texture/frame.zig` keeps GL presentation orchestration only.
+2. Keep the shared `HowlRenderTextHandle`/`HowlRenderText` owner. User decision: text shaping, font resolution, glyph/resource cache, and text draw computation are a shared text library/cache; surfaces do not own shaping or caching.
+3. Move host tab-bar surface control out of `texture/frame.zig` into `src/tab_bar.zig` or `src/tab_bar/*`; `texture/frame.zig` keeps GL presentation orchestration only. In the same slice, delete the fake independent `tab_bar.height` shape: tab-bar vertical size is the tab-bar text row/cell height derived from font/text layout, not a wrapper height that syncs or ignores cell size.
+4. Rename or delete render `realizer*` files/tests to presentation or exact compute vocabulary.
+5. Audit `howl-render/src/event.zig` and `prepared_surface.zig` for `RenderRequest`; rename to `RenderTrigger` only if the semantics are action admission.
 6. Move scroll-bar control out of `bucket2.zig` into `src/scroll_bar.zig` or `src/scroll_bar/*`; bucket may call the scroll-bar owner but must not own state/control long-term.
 7. Rename host `render/surface_retained.zig` and `render/surface_layout.zig` to term-surface owner names; update `term.zig`, tests, and imports.
 8. Delete or empty `src/buckets that must die/bucket2.zig` and move `bucekt2_test.zig` tests to true owners; remove typo path.

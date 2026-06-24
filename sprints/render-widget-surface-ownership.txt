@@ -28,6 +28,7 @@ Host ownership:
 
 - `src/term.zig` owns terminal-instance `term_surface` turns only.
 - `src/tab_bar.zig` or `src/tab_bar/*` owns `tab_bar_surface` control and turns.
+- `tab_bar_surface` is one row of text cells. Its vertical size derives from tab-bar text/font cell size; no independent tab-bar wrapper height may survive.
 - `src/scroll_bar.zig` or `src/scroll_bar/*` owns `scroll_bar_surface` control and turns.
 - `src/buckets that must die/bucket2.zig` owns none of these surfaces.
 - Any control over tab-bar or scroll-bar surfaces must not persist in `bucket2.zig` or `src/term.zig`.
