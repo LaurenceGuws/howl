@@ -1,13 +1,18 @@
 # Howl
 
-Howl is a C ABI embeddable terminal stack.
+Howl is a native Zig terminal family.
 
-The product boundary is the ABI: hosts embed PTY, VT, and render libraries through public C headers, while each host owns platform UX, event loops, wake policy, presentation cadence, runtime orchestration, and backend resources.
+The active projects are:
 
-## Repositories
+- `howl-vt`: the embeddable terminal model.
+- `howl-headless`: a bounded native PTY host for semantic terminal output.
 
-- `howl-pty`: PTY-backed child transport, lifecycle, resize, input/output, wait/kick, and control signals.
-- `howl-vt`: terminal parser/state, visible-surface truth, selection, input encoding, and host-facing protocol consequences.
-- `howl-render`: backend-agnostic render contracts, geometry, text shaping, prepared surfaces, and submit/retire state.
-- `howl-linux-host`: reference Linux desktop host using SDL/OpenGL.
+`howl-render` is retained unchanged while its text work is evaluated. It still
+targets the retired ABI and is outside the active build.
 
+Initialize the family and run every active package check:
+
+```sh
+git submodule update --init --recursive
+zig build
+```

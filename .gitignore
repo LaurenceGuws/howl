@@ -1,12 +1,10 @@
 .zig-cache/
 zig-out/
-utils/dev_references/
-utils/official_docs/
-vendor/
-zig16-release-notes.txt
-.vscode/
-.zigversion
 /.idea/
 /.run/
 /.venv/
-!/artifacts/
+/.vscode/
+/.zigversion
+/howl-linux-host/
+/howl-pty/
+/howl-style/
