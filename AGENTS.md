@@ -7,11 +7,9 @@ obligation.
 
 - `howl-vt` owns terminal parsing, state, input encoding, and host consequences.
 - `howl-headless` owns one bounded native PTY host and semantic snapshot.
+- `howl-text` owns explicit font loading, shaping, and alpha-mask rasterization.
 
 Each child repository owns its source contract and verification.
-
-`howl-render` is retained unchanged for text salvage and remains outside the
-active build until that work has a native owner.
 
 ## Source bar
 

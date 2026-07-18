@@ -6,9 +6,8 @@ The active projects are:
 
 - `howl-vt`: the embeddable terminal model.
 - `howl-headless`: a bounded native PTY host for semantic terminal output.
-
-`howl-render` is retained unchanged while its text work is evaluated. It still
-targets the retired ABI and is outside the active build.
+- `howl-text`: bounded native font loading, shaping, and alpha-mask
+  rasterization.
 
 Initialize the family and run every active package check:
 
