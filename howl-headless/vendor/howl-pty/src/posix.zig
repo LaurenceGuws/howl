@@ -80,7 +80,12 @@ pub fn make(comptime Backend: type) type {
         };
 
         /// Copies launch strings and initializes an idle PTY owner.
-        pub fn init(allocator: std.mem.Allocator, shell_path: []const u8, command: ?[]const u8, start_path: ?[]const u8) (error{OutOfMemory} || pty.StartError)!Self {
+        pub fn init(
+            allocator: std.mem.Allocator,
+            shell_path: []const u8,
+            command: ?[]const u8,
+            start_path: ?[]const u8,
+        ) pty.InitError!Self {
             try Backend.ensureSupported();
 
             const shell_path_z = try allocator.dupeZ(u8, shell_path);
@@ -182,7 +187,14 @@ pub fn make(comptime Backend: type) type {
             return pid;
         }
 
-        fn adoptParentTransport(self: *Self, transport: Open, pipes: StartPipes, pid: posix.pid_t, cols: u16, rows: u16) void {
+        fn adoptParentTransport(
+            self: *Self,
+            transport: Open,
+            pipes: StartPipes,
+            pid: posix.pid_t,
+            cols: u16,
+            rows: u16,
+        ) void {
             _ = c.close(@intCast(transport.slave_fd));
             _ = c.close(@intCast(pipes.child_ready.write_fd));
             self.master_fd = transport.master_fd;
@@ -289,12 +301,16 @@ pub fn make(comptime Backend: type) type {
         fn stopLiveChild(self: *Self, pid: posix.pid_t) void {
             std.debug.assert(pid > 0);
             _ = sendGroupSignal(pid, .hangup);
-            if (waitChildWithDeadline(pid, stop_hangup_grace_ns) and waitProcessGroupMissing(pid, stop_hangup_grace_ns)) {
+            if (waitChildWithDeadline(pid, stop_hangup_grace_ns) and
+                waitProcessGroupMissing(pid, stop_hangup_grace_ns))
+            {
                 self.child = .none;
                 return;
             }
             _ = sendGroupSignal(pid, .terminate);
-            if (waitChildWithDeadline(pid, stop_terminate_grace_ns) and waitProcessGroupMissing(pid, stop_terminate_grace_ns)) {
+            if (waitChildWithDeadline(pid, stop_terminate_grace_ns) and
+                waitProcessGroupMissing(pid, stop_terminate_grace_ns))
+            {
                 self.child = .none;
                 return;
             }
@@ -326,7 +342,6 @@ pub fn make(comptime Backend: type) type {
 
         /// Writes caller-owned bytes without retaining them.
         pub fn write(self: *Self, bytes: []const u8) pty.WriteError!usize {
-            self.refreshChildState();
             if (!self.transportReady()) return error.NotStarted;
             if (bytes.len == 0) return 0;
 
@@ -341,6 +356,54 @@ pub fn make(comptime Backend: type) type {
             return @intCast(n);
         }
 
+        /// Writes every borrowed byte, waiting when the nonblocking PTY is full.
+        pub fn writeAll(self: *Self, bytes: []const u8) pty.WriteAllError!void {
+            var written: usize = 0;
+            while (written < bytes.len) {
+                const count = self.write(bytes[written..]) catch |failure| switch (failure) {
+                    error.Interrupted => continue,
+                    error.WouldBlock => {
+                        try self.waitWritable();
+                        continue;
+                    },
+                    error.NotStarted => return error.NotStarted,
+                    error.WriteFailed => return error.WriteFailed,
+                };
+                if (count == 0) return error.WriteFailed;
+                written += count;
+            }
+        }
+
+        fn waitWritable(self: *Self) pty.WriteAllError!void {
+            while (true) {
+                if (!self.transportReady()) return error.NotStarted;
+                var descriptors = [_]posix.pollfd{
+                    .{
+                        .fd = self.master_fd.?,
+                        .events = posix.POLL.OUT | posix.POLL.HUP,
+                        .revents = 0,
+                    },
+                    .{
+                        .fd = self.wake_read_fd orelse return error.NotStarted,
+                        .events = posix.POLL.IN | posix.POLL.HUP,
+                        .revents = 0,
+                    },
+                };
+                const ready = posix.poll(&descriptors, -1) catch
+                    return error.WaitFailed;
+                if (ready == 0) continue;
+                if ((descriptors[1].revents & (posix.POLL.IN | posix.POLL.HUP)) != 0) {
+                    self.drainWakePipe();
+                    return error.NotStarted;
+                }
+                if ((descriptors[0].revents & posix.POLL.OUT) != 0) return;
+                if ((descriptors[0].revents & posix.POLL.HUP) != 0) {
+                    return error.WriteFailed;
+                }
+                return error.WriteFailed;
+            }
+        }
+
         /// Reads available transport bytes into caller-owned storage.
         pub fn read(self: *Self, buf: []u8) pty.ReadError!usize {
             if (!self.started) return error.NotStarted;
@@ -350,23 +413,13 @@ pub fn make(comptime Backend: type) type {
             const n = c.read(master_fd, buf.ptr, buf.len);
             if (n < 0) {
                 return switch (posix.errno(n)) {
-                    .AGAIN => {
-                        self.refreshChildState();
-                        if (!self.transportReady()) return error.NotStarted;
-                        return error.WouldBlock;
-                    },
-                    .IO => {
-                        self.refreshChildState();
-                        if (!self.transportReady()) return error.NotStarted;
-                        return error.ReadFailed;
-                    },
+                    .AGAIN => error.WouldBlock,
+                    .IO => error.EndOfStream,
                     .INTR => error.Interrupted,
                     else => error.ReadFailed,
                 };
             }
             if (n == 0) {
-                self.refreshChildState();
-                if (!self.transportReady()) return error.NotStarted;
                 return error.EndOfStream;
             }
             return @intCast(n);
@@ -374,13 +427,16 @@ pub fn make(comptime Backend: type) type {
 
         /// Waits for transport readability, timeout, or an explicit wake.
         pub fn waitReadable(self: *Self, timeout_ms: i32) pty.WaitReadableError!WaitReadableResult {
-            self.refreshChildState();
             if (!self.transportReady()) return error.NotStarted;
             std.debug.assert(self.wake_read_fd != null);
 
             var fds = [_]posix.pollfd{
                 .{ .fd = self.master_fd.?, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 },
-                .{ .fd = self.wake_read_fd orelse return error.NotStarted, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 },
+                .{
+                    .fd = self.wake_read_fd orelse return error.NotStarted,
+                    .events = posix.POLL.IN | posix.POLL.HUP,
+                    .revents = 0,
+                },
             };
             const poll_timeout: i32 = if (timeout_ms < 0) -1 else timeout_ms;
             const ready = posix.poll(&fds, poll_timeout) catch return error.WaitFailed;
@@ -391,16 +447,12 @@ pub fn make(comptime Backend: type) type {
                 return .wake;
             }
             if ((fds[0].revents & posix.POLL.IN) != 0) return .ready;
-            if ((fds[0].revents & posix.POLL.HUP) != 0) {
-                self.refreshChildState();
-                if (!self.transportReady()) return error.NotStarted;
-            }
+            if ((fds[0].revents & posix.POLL.HUP) != 0) return .ready;
             return waitReadablePollResult(fds[0].revents);
         }
 
         /// Applies nonzero terminal dimensions to the active PTY.
         pub fn resize(self: *Self, cols: u16, rows: u16) pty.ResizeError!void {
-            self.refreshChildState();
             if (!self.transportReady()) return error.NotStarted;
             std.debug.assert(cols > 0);
             std.debug.assert(rows > 0);

@@ -8,6 +8,8 @@
         "build.zig",
         "build.zig.zon",
         "build",
+        "howl-headless/src",
+        "howl-headless/vendor/howl-pty/src",
         "howl-text/src",
         "howl-vt/src",
         "README.md",

@@ -8,6 +8,8 @@ pub fn add(
     optimize: std.builtin.OptimizeMode,
     vt: *std.Build.Module,
     text: *std.Build.Module,
+    pty: *std.Build.Module,
+    headless: *std.Build.Module,
 ) void {
     const check = b.step("check", "Compile every active Howl component and proof");
     const test_step = b.step("test", "Run every active Howl correctness proof");
@@ -16,7 +18,7 @@ pub fn add(
     check.dependOn(&audit.step);
     addVt(b, target, optimize, vt, check, test_step);
     addText(b, target, optimize, check, test_step);
-    addHeadless(b, target, optimize, vt, check, test_step);
+    addHeadless(b, target, optimize, pty, headless, check, test_step);
     addHost(b, target, optimize, vt, text, check, test_step);
     b.default_step = check;
 }
@@ -128,28 +130,34 @@ fn addHeadless(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    vt: *std.Build.Module,
+    pty: *std.Build.Module,
+    headless: *std.Build.Module,
     check: *std.Build.Step,
     test_step: *std.Build.Step,
 ) void {
-    const pty = b.createModule(.{
-        .root_source_file = b.path("howl-headless/vendor/howl-pty/src/howl_pty.zig"),
+    const tests_module = b.createModule(.{
+        .root_source_file = b.path("howl-headless/src/test.zig"),
         .target = target,
         .optimize = optimize,
     });
-    pty.addCMacro("_FORTIFY_SOURCE", "0");
-    const module = b.createModule(.{
+    tests_module.addImport("howl_headless", headless);
+    const executable_module = b.createModule(.{
         .root_source_file = b.path("howl-headless/src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("howl_vt", vt);
-    module.addImport("howl_pty", pty);
-    const executable = b.addExecutable(.{ .name = "howl-headless", .root_module = module });
+    executable_module.addImport("howl_headless", headless);
+    const executable = b.addExecutable(.{ .name = "howl-headless", .root_module = executable_module });
     executable.use_llvm = true;
-    const tests = addTest(b, "howl-headless", module);
+    const api = addTest(b, "howl-headless-api", headless);
+    const pty_tests = addTest(b, "howl-pty", pty);
+    const tests = addTest(b, "howl-headless", tests_module);
+    check.dependOn(&api.step);
+    check.dependOn(&pty_tests.step);
     check.dependOn(&executable.step);
     check.dependOn(&tests.step);
+    test_step.dependOn(&addTestRun(b, api).step);
+    test_step.dependOn(&addTestRun(b, pty_tests).step);
     test_step.dependOn(&addTestRun(b, tests).step);
     b.installArtifact(executable);
     const run = b.addRunArtifact(executable);

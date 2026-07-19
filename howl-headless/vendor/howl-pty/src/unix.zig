@@ -8,7 +8,7 @@ const c = posix.c;
 /// Owns one supported Unix PTY and its child process group.
 pub const Pty = posix.make(struct {
     /// Accepts the Linux and macOS implementations selected by this file.
-    pub fn ensureSupported() pty.StartError!void {
+    pub fn ensureSupported() pty.InitError!void {
         if (builtin.os.tag != .linux and builtin.os.tag != .macos) {
             return error.UnsupportedPlatform;
         }

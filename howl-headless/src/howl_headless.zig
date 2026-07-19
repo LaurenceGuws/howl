@@ -1,0 +1,387 @@
+//! Owns one native PTY child and its concurrent, host-neutral Howl terminal state.
+
+const std = @import("std");
+const howl_pty = @import("howl_pty");
+const howl_vt = @import("howl_vt");
+
+/// Bounds one terminal surface width before model or PTY construction.
+pub const max_cols: u16 = 512;
+/// Bounds one terminal surface height before model or PTY construction.
+pub const max_rows: u16 = 256;
+/// Bounds retained semantic history independently from the active surface.
+pub const max_history_rows: u16 = 16_384;
+/// Bounds each complete input or terminal-reply transfer.
+pub const max_transfer_bytes: usize = 64 * 1024;
+const transport_buffer_bytes: usize = 4096;
+
+/// Supplies copied child launch values and bounded terminal dimensions.
+pub const Config = struct {
+    /// Names the executable copied into PTY launch ownership.
+    shell: []const u8 = "/bin/sh",
+    /// Runs one optional shell command; null starts an interactive shell.
+    command: ?[]const u8 = null,
+    /// Selects an optional child working directory.
+    cwd: ?[]const u8 = null,
+    /// Sets the initial nonzero bounded PTY and model width.
+    cols: u16 = 80,
+    /// Sets the initial nonzero bounded PTY and model height.
+    rows: u16 = 24,
+    /// Sets retained scrollback rows within `max_history_rows`.
+    history_rows: u16 = 2000,
+};
+
+/// Delivers coalesced terminal mutation, stop, or failure notifications.
+pub const Wake = struct {
+    /// Borrows embedder state for the lifetime of the terminal.
+    context: ?*anyopaque = null,
+    /// Receives a coalesced notification from the reader thread.
+    notify: *const fn (?*anyopaque) void = ignoreWake,
+};
+
+/// Reports invalid bounds or failure before terminal ownership transfers.
+pub const InitError = howl_vt.Terminal.InitError || std.mem.Allocator.Error ||
+    std.Thread.SpawnError || error{
+    InvalidDimensions,
+    InvalidHistory,
+    OpenPtyFailed,
+    ShellUnavailable,
+    UnsupportedPlatform,
+};
+
+/// Reports input encoding, transfer bound, or complete PTY transfer failure.
+const PtyWriteError = error{
+    NotStarted,
+    PtyWriteFailed,
+    PtyWriteWaitFailed,
+};
+pub const InputError = howl_vt.Terminal.InputError || PtyWriteError || error{InputLimit};
+
+/// Reports a resize rejected by the model or native PTY.
+pub const ResizeError = howl_vt.Terminal.ResizeError || error{
+    InvalidDimensions,
+    NotStarted,
+    PtyResizeFailed,
+};
+
+/// Reports the exact terminal-reader boundary that stopped making progress.
+pub const ReaderError = error{
+    ConsequenceLimit,
+    ModelAllocationFailed,
+    ParsedEventLimit,
+    PtyReadFailed,
+    PtyReplyWriteFailed,
+    PtyReplyWriteWaitFailed,
+    PtyWaitFailed,
+    ReplyAllocationFailed,
+    StringControlLimit,
+};
+
+/// Distinguishes a live child from normal completion or reader failure.
+pub const State = enum(u8) { running, stopped, failed };
+
+const ReaderFailure = enum(u8) {
+    none,
+    consequence_limit,
+    model_allocation_failed,
+    parsed_event_limit,
+    pty_read_failed,
+    pty_reply_write_failed,
+    pty_reply_write_wait_failed,
+    pty_wait_failed,
+    reply_allocation_failed,
+    string_control_limit,
+};
+
+/// Borrows one semantic surface while preventing concurrent terminal mutation.
+pub const Surface = struct {
+    /// Retains the locked owner until this borrow is released.
+    owner: *Terminal,
+    /// Borrows Howl's complete semantic publication until `deinit`.
+    publication: howl_vt.Terminal.SurfacePublication,
+
+    /// Releases the terminal lock after the publication is consumed.
+    pub fn deinit(self: *Surface) void {
+        self.owner.lock.unlock(self.owner.io);
+        self.* = undefined;
+    }
+
+    /// Retires dirty state for this publication while its borrow remains valid.
+    pub fn acknowledge(self: *Surface) bool {
+        return self.owner.model.ackSurface(self.publication.snapshot_seq);
+    }
+};
+
+/// Owns one PTY child, reader thread, terminal model, and wake lifecycle.
+/// The embedder serializes `deinit` against borrowed surfaces and public calls.
+pub const Terminal = struct {
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    transport: howl_pty.Owned,
+    model: howl_vt.Terminal,
+    reader: std.Thread,
+    lock: std.Io.Mutex = .init,
+    write_lock: std.Io.Mutex = .init,
+    state_value: std.atomic.Value(State) = .init(.running),
+    reader_failure: std.atomic.Value(ReaderFailure) = .init(.none),
+    wake_pending: std.atomic.Value(bool) = .init(false),
+    wake: Wake,
+    cols: u16,
+    rows: u16,
+
+    /// Constructs and starts every owned resource before returning a stable pointer.
+    pub fn init(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        config: Config,
+        wake: Wake,
+    ) InitError!*Terminal {
+        try validateSize(config.cols, config.rows);
+        if (config.history_rows > max_history_rows) return error.InvalidHistory;
+
+        var transport = try howl_pty.Owned.init(
+            allocator,
+            config.shell,
+            config.command,
+            config.cwd,
+        );
+        errdefer transport.deinit();
+        var model = try howl_vt.Terminal.initWithHistory(
+            allocator,
+            config.rows,
+            config.cols,
+            config.history_rows,
+        );
+        errdefer model.deinit();
+        transport.start(config.cols, config.rows) catch |failure| switch (failure) {
+            error.AlreadyStarted => unreachable,
+            else => |expected| return expected,
+        };
+
+        const self = try allocator.create(Terminal);
+        errdefer allocator.destroy(self);
+        self.* = .{
+            .allocator = allocator,
+            .io = io,
+            .transport = transport,
+            .model = model,
+            .reader = undefined,
+            .wake = wake,
+            .cols = config.cols,
+            .rows = config.rows,
+        };
+        self.reader = try .spawn(.{}, readLoop, .{self});
+        return self;
+    }
+
+    /// Stops the reader and child before releasing model and allocation ownership.
+    pub fn deinit(self: *Terminal) void {
+        if (self.state_value.load(.acquire) == .running) {
+            self.state_value.store(.stopped, .release);
+        }
+        self.transport.kickWait();
+        self.reader.join();
+        self.transport.deinit();
+        self.model.deinit();
+        const allocator = self.allocator;
+        self.* = undefined;
+        allocator.destroy(self);
+    }
+
+    /// Returns the current lifecycle state without blocking the caller.
+    pub fn state(self: *const Terminal) State {
+        return self.state_value.load(.acquire);
+    }
+
+    /// Returns the reader failure after state becomes `failed`.
+    pub fn readerError(self: *const Terminal) ?ReaderError {
+        return decodeReaderFailure(self.reader_failure.load(.acquire));
+    }
+
+    /// Clears one coalesced wake after the embedder consumes it.
+    pub fn consumeWake(self: *Terminal) void {
+        self.wake_pending.store(false, .release);
+    }
+
+    /// Encodes one host-neutral input event and writes every resulting PTY byte.
+    pub fn send(self: *Terminal, event: howl_vt.Terminal.InputEvent) InputError!void {
+        if (self.state_value.load(.acquire) != .running) return error.NotStarted;
+        self.lock.lockUncancelable(self.io);
+        var scratch: howl_vt.Terminal.InputScratch = .{};
+        var encoded = self.model.encodeInput(self.allocator, &scratch, event) catch |failure| {
+            self.lock.unlock(self.io);
+            return failure;
+        };
+        self.lock.unlock(self.io);
+        defer encoded.deinit();
+        if (encoded.bytes.len > max_transfer_bytes) return error.InputLimit;
+        self.write_lock.lockUncancelable(self.io);
+        defer self.write_lock.unlock(self.io);
+        try writeAll(&self.transport, encoded.bytes);
+    }
+
+    /// Applies one bounded size to both terminal truth and the native PTY.
+    pub fn resize(self: *Terminal, cols: u16, rows: u16) ResizeError!void {
+        try validateSize(cols, rows);
+        if (self.state_value.load(.acquire) != .running) return error.NotStarted;
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        self.transport.resize(cols, rows) catch |failure| switch (failure) {
+            error.NotStarted => return error.NotStarted,
+            error.ResizeFailed => return error.PtyResizeFailed,
+        };
+        self.model.resize(rows, cols) catch |failure| {
+            // The model preserves its old surface on failure; restore the PTY
+            // dimensions or stop on the resulting split ownership invariant.
+            self.transport.resize(self.cols, self.rows) catch
+                @panic("PTY resize rollback failed");
+            return failure;
+        };
+        self.cols = cols;
+        self.rows = rows;
+    }
+
+    /// Locks and borrows one complete semantic surface publication.
+    pub fn surface(self: *Terminal) Surface {
+        self.lock.lockUncancelable(self.io);
+        return .{ .owner = self, .publication = self.model.surfaceSnapshot() };
+    }
+
+    fn readLoop(self: *Terminal) void {
+        var bytes: [transport_buffer_bytes]u8 = undefined;
+        while (self.state_value.load(.acquire) == .running) {
+            const wait = self.transport.waitReadable(-1) catch |failure| switch (failure) {
+                error.Interrupted, error.WouldBlock => continue,
+                error.NotStarted => return self.finish(.stopped, .none),
+                error.WaitFailed => return self.finish(.failed, .pty_wait_failed),
+            };
+            switch (wait) {
+                .timeout => continue,
+                .wake => continue,
+                .ready => {},
+            }
+            const count = self.transport.read(&bytes) catch |failure| switch (failure) {
+                error.Interrupted, error.WouldBlock => continue,
+                error.EndOfStream, error.NotStarted => return self.finish(.stopped, .none),
+                error.ReadFailed => return self.finish(.failed, .pty_read_failed),
+            };
+            self.consume(bytes[0..count]) catch |failure| {
+                if (self.state_value.load(.acquire) != .running) return;
+                return self.finish(.failed, readerFailure(failure));
+            };
+        }
+    }
+
+    fn consume(self: *Terminal, bytes: []const u8) ReaderError!void {
+        self.lock.lockUncancelable(self.io);
+        const summary = self.model.feed(bytes) catch |failure| {
+            self.lock.unlock(self.io);
+            return switch (failure) {
+                error.OutOfMemory => error.ModelAllocationFailed,
+                error.ConsequenceLimit => error.ConsequenceLimit,
+                error.ParsedEventLimit => error.ParsedEventLimit,
+                error.StringControlLimit => error.StringControlLimit,
+            };
+        };
+        const reply = self.model.drainPendingOutput(self.allocator) catch {
+            self.lock.unlock(self.io);
+            return error.ReplyAllocationFailed;
+        };
+        self.lock.unlock(self.io);
+        std.debug.assert(reply.len <= max_transfer_bytes);
+        if (reply.len != 0) {
+            self.write_lock.lockUncancelable(self.io);
+            writeAll(&self.transport, reply) catch |failure| {
+                self.write_lock.unlock(self.io);
+                self.allocator.free(reply);
+                return switch (failure) {
+                    error.NotStarted, error.PtyWriteFailed => error.PtyReplyWriteFailed,
+                    error.PtyWriteWaitFailed => error.PtyReplyWriteWaitFailed,
+                };
+            };
+            self.write_lock.unlock(self.io);
+        }
+        self.allocator.free(reply);
+        if (summary.state_changed or summary.title_changed or summary.icon_changed) self.notify();
+    }
+
+    fn finish(self: *Terminal, state_value: State, failure: ReaderFailure) void {
+        self.reader_failure.store(failure, .release);
+        self.state_value.store(state_value, .release);
+        self.notify();
+    }
+
+    fn notify(self: *Terminal) void {
+        if (!self.wake_pending.swap(true, .acq_rel)) self.wake.notify(self.wake.context);
+    }
+};
+
+fn validateSize(cols: u16, rows: u16) error{InvalidDimensions}!void {
+    if (cols == 0 or rows == 0 or cols > max_cols or rows > max_rows) {
+        return error.InvalidDimensions;
+    }
+}
+
+fn writeAll(transport: *howl_pty.Owned, bytes: []const u8) PtyWriteError!void {
+    transport.writeAll(bytes) catch |failure| return switch (failure) {
+        error.NotStarted => error.NotStarted,
+        error.WriteFailed => error.PtyWriteFailed,
+        error.WaitFailed => error.PtyWriteWaitFailed,
+    };
+}
+
+fn readerFailure(failure: ReaderError) ReaderFailure {
+    return switch (failure) {
+        error.ConsequenceLimit => .consequence_limit,
+        error.ModelAllocationFailed => .model_allocation_failed,
+        error.ParsedEventLimit => .parsed_event_limit,
+        error.PtyReadFailed => .pty_read_failed,
+        error.PtyReplyWriteFailed => .pty_reply_write_failed,
+        error.PtyReplyWriteWaitFailed => .pty_reply_write_wait_failed,
+        error.PtyWaitFailed => .pty_wait_failed,
+        error.ReplyAllocationFailed => .reply_allocation_failed,
+        error.StringControlLimit => .string_control_limit,
+    };
+}
+
+fn decodeReaderFailure(failure: ReaderFailure) ?ReaderError {
+    return switch (failure) {
+        .none => null,
+        .consequence_limit => error.ConsequenceLimit,
+        .model_allocation_failed => error.ModelAllocationFailed,
+        .parsed_event_limit => error.ParsedEventLimit,
+        .pty_read_failed => error.PtyReadFailed,
+        .pty_reply_write_failed => error.PtyReplyWriteFailed,
+        .pty_reply_write_wait_failed => error.PtyReplyWriteWaitFailed,
+        .pty_wait_failed => error.PtyWaitFailed,
+        .reply_allocation_failed => error.ReplyAllocationFailed,
+        .string_control_limit => error.StringControlLimit,
+    };
+}
+
+fn ignoreWake(_: ?*anyopaque) void {}
+
+test "bounds reject invalid terminal ownership" {
+    try std.testing.expectError(error.InvalidDimensions, validateSize(0, 24));
+    try std.testing.expectError(error.InvalidDimensions, validateSize(80, 0));
+    try std.testing.expectError(error.InvalidDimensions, validateSize(max_cols + 1, 24));
+    try std.testing.expectError(error.InvalidDimensions, validateSize(80, max_rows + 1));
+}
+
+test "reader allocation failures preserve their owner boundary" {
+    try std.testing.expectEqual(
+        ReaderFailure.model_allocation_failed,
+        readerFailure(error.ModelAllocationFailed),
+    );
+    try std.testing.expectEqual(
+        ReaderFailure.reply_allocation_failed,
+        readerFailure(error.ReplyAllocationFailed),
+    );
+    try std.testing.expectEqual(
+        @as(?ReaderError, error.ModelAllocationFailed),
+        decodeReaderFailure(.model_allocation_failed),
+    );
+    try std.testing.expectEqual(
+        @as(?ReaderError, error.ReplyAllocationFailed),
+        decodeReaderFailure(.reply_allocation_failed),
+    );
+}

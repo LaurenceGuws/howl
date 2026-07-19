@@ -2,6 +2,12 @@
 
 const std = @import("std");
 
+/// Reports copied launch allocation or an unavailable native implementation.
+pub const InitError = error{
+    OutOfMemory,
+    UnsupportedPlatform,
+};
+
 /// Reports lifecycle or platform failure while starting a child.
 pub const StartError = error{
     AlreadyStarted,
@@ -15,6 +21,13 @@ pub const WriteError = error{
     Interrupted,
     NotStarted,
     WouldBlock,
+    WriteFailed,
+};
+
+/// Reports failure to transfer one complete borrowed input slice.
+pub const WriteAllError = error{
+    NotStarted,
+    WaitFailed,
     WriteFailed,
 };
 

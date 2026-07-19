@@ -1,4 +1,4 @@
-objective: consolidate the active family and pay down VT source-shape debt without losing accepted behavior
+objective: consolidate the family, pay down VT source debt, and establish reusable native terminal ownership
 
 capabilities:
   - name: single_repository_family
@@ -15,6 +15,9 @@ capabilities:
 
   - name: qagent_embedding
     acceptance: QAgent builds and dogfoods against the local Howl VT module during source-shape work
+
+  - name: reusable_headless_terminal
+    acceptance: one curated native owner composes PTY, VT, live input, replies, resize, semantic surfaces, wakes, and cleanup
 
   - name: focused_source_audit
     acceptance: one direct root-owned audit enforces settled patterns and exact reviewed uses

@@ -70,6 +70,7 @@ test "pre-start operations fail exactly and the owner remains reusable" {
 
     var buffer: [16]u8 = undefined;
     try std.testing.expectError(error.NotStarted, owned.write("hello\n"));
+    try std.testing.expectError(error.NotStarted, owned.writeAll("hello\n"));
     try std.testing.expectError(error.NotStarted, owned.read(&buffer));
     try std.testing.expectError(error.NotStarted, owned.waitReadable(0));
     try std.testing.expectError(error.NotStarted, owned.resize(test_cols, test_rows));
@@ -78,7 +79,7 @@ test "pre-start operations fail exactly and the owner remains reusable" {
     owned.stop();
 
     try owned.start(test_cols, test_rows);
-    try std.testing.expectEqual(@as(usize, 6), try owned.write("hello\n"));
+    try owned.writeAll("hello\n");
     try expectOutput(&owned, "hello");
 }
 
@@ -110,7 +111,9 @@ test "deinit closes every PTY descriptor while stopping a live child" {
 
 test "wake resize write read and interrupt operate on one native owner" {
     try requireUnix();
-    const command = "trap 'printf interrupted; exit 0' INT; printf ready; read line; stty size; printf '%s' \"$line\"; while :; do sleep 1; done";
+    const command =
+        "trap 'printf interrupted; exit 0' INT; printf ready; read line; " ++
+        "stty size; printf '%s' \"$line\"; while :; do sleep 1; done";
     var owned = try Owned.init(std.testing.allocator, "/bin/sh", command, null);
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
