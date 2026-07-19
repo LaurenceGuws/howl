@@ -341,7 +341,11 @@ pub const Parser = struct {
             else => false,
         };
 
-        if (byte != 0x1B and byte != 0x9C and !finishing_escape and (transition.state != current_state or transition.action != .none)) {
+        if (byte != 0x1B and
+            byte != 0x9C and
+            !finishing_escape and
+            (transition.state != current_state or transition.action != .none))
+        {
             const transition_action = self.doAction(transition.action, byte);
             defer self.state = transition.state;
             return self.buildPhases(current_state, transition.state, transition_action, byte, null);
@@ -352,7 +356,12 @@ pub const Parser = struct {
         return self.buildPhases(current_state, next_state, action, byte, sos_kind);
     }
 
-    fn feedActiveByte(self: *Parser, current_state: ParseState, sos_kind: ?BufferedControlKind, byte: u8) struct { ParseState, ?Action } {
+    fn feedActiveByte(
+        self: *Parser,
+        current_state: ParseState,
+        sos_kind: ?BufferedControlKind,
+        byte: u8,
+    ) struct { ParseState, ?Action } {
         return switch (current_state) {
             .osc_string => osc: {
                 const result = self.osc.feed(byte) orelse break :osc .{ .osc_string, null };
@@ -401,7 +410,14 @@ pub const Parser = struct {
         self.intermediates_len += 1;
     }
 
-    fn buildPhases(self: *Parser, current_state: ParseState, next_state: ParseState, transition_action: ?Action, byte: u8, sos_kind: ?BufferedControlKind) PhaseActions {
+    fn buildPhases(
+        self: *Parser,
+        current_state: ParseState,
+        next_state: ParseState,
+        transition_action: ?Action,
+        byte: u8,
+        sos_kind: ?BufferedControlKind,
+    ) PhaseActions {
         if (current_state == next_state) {
             return .{ null, transition_action, null };
         }
@@ -710,7 +726,12 @@ pub const Parser = struct {
     }
 };
 
-fn expectPhaseTags(phases: PhaseActions, exit_tag: ?std.meta.Tag(Action), transition_tag: ?std.meta.Tag(Action), entry_tag: ?std.meta.Tag(Action)) !void {
+fn expectPhaseTags(
+    phases: PhaseActions,
+    exit_tag: ?std.meta.Tag(Action),
+    transition_tag: ?std.meta.Tag(Action),
+    entry_tag: ?std.meta.Tag(Action),
+) !void {
     const expected = [_]?std.meta.Tag(Action){ exit_tag, transition_tag, entry_tag };
     for (phases, expected) |phase, maybe_tag| {
         if (maybe_tag) |tag| {
@@ -876,8 +897,8 @@ pub const Event = union(enum) {
     invalid_sequence,
 };
 
-/// Names every state in the generated VT parser automaton.
-pub const ParseState = enum {
+// Names every state in the generated VT parser automaton.
+const ParseState = enum {
     ground,
     escape,
     escape_intermediate,
@@ -894,8 +915,8 @@ pub const ParseState = enum {
     sos_pm_apc_string,
 };
 
-/// Names the byte action performed while crossing a parser parseTransition.
-pub const TransitionAction = enum {
+// Names the byte action performed while crossing a parser parseTransition.
+const TransitionAction = enum {
     none,
     print,
     ground,
@@ -910,14 +931,14 @@ pub const TransitionAction = enum {
     param,
 };
 
-/// Pairs the next parser state with its parseTransition action.
-pub const Transition = struct {
+// Pairs the next parser state with its parseTransition action.
+const Transition = struct {
     state: ParseState,
     action: TransitionAction,
 };
 
-/// Provides the compile-time-complete byte-by-state parseTransition table.
-pub const table = genTable();
+// Provides the compile-time-complete byte-by-state parseTransition table.
+const table = genTable();
 
 const Table = genTableType(false);
 const OptionalTable = genTableType(true);
@@ -1384,16 +1405,44 @@ pub const OscControl = struct {
             .raw_other => .{ .raw_other = .{ .payload = self.buffer.items, .term = term } },
             .title => .{ .title = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
             .icon => .{ .icon = .{ .payload = self.buffer.items, .term = term } },
-            .palette_control => .{ .palette_control = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
-            .palette_reset => .{ .palette_reset = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
-            .dynamic_color => .{ .dynamic_color = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
-            .dynamic_reset => .{ .dynamic_reset = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
+            .palette_control => .{ .palette_control = .{
+                .command = self.policy.command.?,
+                .payload = self.buffer.items,
+                .term = term,
+            } },
+            .palette_reset => .{ .palette_reset = .{
+                .command = self.policy.command.?,
+                .payload = self.buffer.items,
+                .term = term,
+            } },
+            .dynamic_color => .{ .dynamic_color = .{
+                .command = self.policy.command.?,
+                .payload = self.buffer.items,
+                .term = term,
+            } },
+            .dynamic_reset => .{ .dynamic_reset = .{
+                .command = self.policy.command.?,
+                .payload = self.buffer.items,
+                .term = term,
+            } },
             .report_pwd => .{ .report_pwd = .{ .payload = self.buffer.items, .term = term } },
             .hyperlink => .{ .hyperlink = .{ .payload = self.buffer.items, .term = term } },
-            .notification => .{ .notification = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
+            .notification => .{ .notification = .{
+                .command = self.policy.command.?,
+                .payload = self.buffer.items,
+                .term = term,
+            } },
             .pointer_shape => .{ .pointer_shape = .{ .payload = self.buffer.items, .term = term } },
-            .clipboard => .{ .clipboard = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
-            .kitty_color => .{ .kitty_color = .{ .command = self.policy.command.?, .payload = self.buffer.items, .term = term } },
+            .clipboard => .{ .clipboard = .{
+                .command = self.policy.command.?,
+                .payload = self.buffer.items,
+                .term = term,
+            } },
+            .kitty_color => .{ .kitty_color = .{
+                .command = self.policy.command.?,
+                .payload = self.buffer.items,
+                .term = term,
+            } },
             .kitty_text_size => .{ .kitty_text_size = .{ .payload = self.buffer.items, .term = term } },
             .shell_mark => .{ .shell_mark = .{ .payload = self.buffer.items, .term = term } },
             .rxvt_extension => .{ .rxvt_extension = .{ .payload = self.buffer.items, .term = term } },
@@ -1789,11 +1838,23 @@ pub const OscControl = struct {
             .c0 => .{ .command = 0, .class = .title, .max_len = self.metadata_max_len },
             .c1 => .{ .command = 1, .class = .icon, .max_len = self.metadata_max_len },
             .c2 => .{ .command = 2, .class = .title, .max_len = self.metadata_max_len },
-            .c4, .c5 => |state| .{ .command = if (state == .c4) 4 else 5, .class = .palette_control, .max_len = self.metadata_max_len },
+            .c4, .c5 => |state| .{
+                .command = if (state == .c4) 4 else 5,
+                .class = .palette_control,
+                .max_len = self.metadata_max_len,
+            },
             .c7 => .{ .command = 7, .class = .report_pwd, .max_len = self.metadata_max_len },
             .c8 => .{ .command = 8, .class = .hyperlink, .max_len = self.metadata_max_len },
-            .c9, .c99 => |state| .{ .command = if (state == .c9) 9 else 99, .class = .notification, .max_len = self.metadata_max_len },
-            .c10, .c11, .c12, .c13, .c14, .c15, .c16, .c17, .c18, .c19 => .{ .command = prefixDynamicCommand(self.prefix), .class = .dynamic_color, .max_len = self.metadata_max_len },
+            .c9, .c99 => |state| .{
+                .command = if (state == .c9) 9 else 99,
+                .class = .notification,
+                .max_len = self.metadata_max_len,
+            },
+            .c10, .c11, .c12, .c13, .c14, .c15, .c16, .c17, .c18, .c19 => .{
+                .command = prefixDynamicCommand(self.prefix),
+                .class = .dynamic_color,
+                .max_len = self.metadata_max_len,
+            },
             .c21 => .{ .command = 21, .class = .kitty_color, .max_len = self.metadata_max_len },
             .c22 => .{ .command = 22, .class = .pointer_shape, .max_len = self.metadata_max_len },
             .c50 => .{ .command = 50, .class = .iterm2, .max_len = self.metadata_max_len },
@@ -1858,8 +1919,8 @@ fn bodyEscState(comptime kind: OscControl.BodyKind) OscControl.OscState {
     };
 }
 
-/// Incremental string-control parser state without payload ownership.
-pub const PassthroughControl = struct {
+// Incremental string-control parser state without payload ownership.
+const PassthroughControl = struct {
     state: DelimitedState = .idle,
     bel_terminates: bool,
 
@@ -1944,8 +2005,8 @@ const Utf8Result = union(enum) {
     invalid,
 };
 
-/// Incremental UTF-8 decoder state.
-pub const Utf8Decoder = struct {
+// Incremental UTF-8 decoder state.
+const Utf8Decoder = struct {
     buf: [4]u8 = undefined,
     len: u8 = 0,
     needed: u8 = 0,
@@ -2024,13 +2085,23 @@ test "UTF8 decoder: invalid continuation resets partial sequence" {
 }
 
 /// Copies borrowed parser phase actions into arena-backed storage transactionally.
-pub fn appendOwnedPhases(allocator: std.mem.Allocator, arena: std.mem.Allocator, actions: *std.ArrayList(Action), phases: PhaseActions) error{OutOfMemory}!void {
+pub fn appendOwnedPhases(
+    allocator: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    actions: *std.ArrayList(Action),
+    phases: PhaseActions,
+) error{OutOfMemory}!void {
     for (phases) |phase| {
         if (phase) |action| try appendOwnedAction(allocator, arena, actions, action);
     }
 }
 
-fn appendOwnedAction(allocator: std.mem.Allocator, arena: std.mem.Allocator, actions: *std.ArrayList(Action), action: Action) error{OutOfMemory}!void {
+fn appendOwnedAction(
+    allocator: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    actions: *std.ArrayList(Action),
+    action: Action,
+) error{OutOfMemory}!void {
     switch (action) {
         .csi_dispatch => |csi| {
             const params = try dupeArenaSlice(arena, i32, csi.params[0..csi.count]);
@@ -2064,7 +2135,11 @@ fn appendOwnedAction(allocator: std.mem.Allocator, arena: std.mem.Allocator, act
                 .raw_other => .{ .raw_other = .{ .payload = owned, .term = osc.term() } },
                 .title => |v| .{ .title = .{ .command = v.command, .payload = owned, .term = v.term } },
                 .icon => .{ .icon = .{ .payload = owned, .term = osc.term() } },
-                .palette_control => |v| .{ .palette_control = .{ .command = v.command, .payload = owned, .term = v.term } },
+                .palette_control => |v| .{ .palette_control = .{
+                    .command = v.command,
+                    .payload = owned,
+                    .term = v.term,
+                } },
                 .palette_reset => |v| .{ .palette_reset = .{ .command = v.command, .payload = owned, .term = v.term } },
                 .dynamic_color => |v| .{ .dynamic_color = .{ .command = v.command, .payload = owned, .term = v.term } },
                 .dynamic_reset => |v| .{ .dynamic_reset = .{ .command = v.command, .payload = owned, .term = v.term } },

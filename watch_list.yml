@@ -1,7 +1,7 @@
 topics:
   - name: vt_source_shape
-    evidence: 195 internal top-level pub seams support separate tests; 130 inherited lines exceed 120 columns in protocol tables and data
-    exit: tests use deliberate owner seams and ordinary source lines fit the width bar
+    evidence: 50 top-level pub seams serve Terminal boundaries and separate behavioral proofs; production source has no lines over 120 columns
+    exit: the three-owner graph and its deliberate proof seams pass final source review
 
   - name: style_tooling
     evidence: tools/audit_source.sh remains the shell implementation of settled source policy

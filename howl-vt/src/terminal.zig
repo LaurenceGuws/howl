@@ -141,7 +141,12 @@ pub const Screen = struct {
         return initWithCellsAndDefaultCursorStyle(allocator, rows, cols, initial_cursor_style);
     }
 
-    fn initOwnedVisibleGrid(allocator: std.mem.Allocator, rows: u16, cols: u16, cursor_style_default: CursorStyle) InitError!Screen {
+    fn initOwnedVisibleGrid(
+        allocator: std.mem.Allocator,
+        rows: u16,
+        cols: u16,
+        cursor_style_default: CursorStyle,
+    ) InitError!Screen {
         if (rows == 0 or cols == 0) return error.InvalidDimensions;
         const cell_count = cellCount(rows, cols);
         const cells: ?[]Cell = if (cell_count > 0) blk: {
@@ -177,16 +182,32 @@ pub const Screen = struct {
         );
     }
 
-    fn initWithCellsAndDefaultCursorStyle(allocator: std.mem.Allocator, rows: u16, cols: u16, cursor_style_default: CursorStyle) InitError!Screen {
+    fn initWithCellsAndDefaultCursorStyle(
+        allocator: std.mem.Allocator,
+        rows: u16,
+        cols: u16,
+        cursor_style_default: CursorStyle,
+    ) InitError!Screen {
         return initOwnedVisibleGrid(allocator, rows, cols, cursor_style_default);
     }
 
     /// Initialize screen with cells and history storage.
-    pub fn initWithCellsAndHistory(allocator: std.mem.Allocator, rows: u16, cols: u16, history_capacity: u16) InitError!Screen {
+    pub fn initWithCellsAndHistory(
+        allocator: std.mem.Allocator,
+        rows: u16,
+        cols: u16,
+        history_capacity: u16,
+    ) InitError!Screen {
         return initWithCellsHistoryAndDefaultCursorStyle(allocator, rows, cols, history_capacity, initial_cursor_style);
     }
 
-    fn initWithCellsHistoryAndDefaultCursorStyle(allocator: std.mem.Allocator, rows: u16, cols: u16, history_capacity: u16, cursor_style_default: CursorStyle) InitError!Screen {
+    fn initWithCellsHistoryAndDefaultCursorStyle(
+        allocator: std.mem.Allocator,
+        rows: u16,
+        cols: u16,
+        history_capacity: u16,
+        cursor_style_default: CursorStyle,
+    ) InitError!Screen {
         var screen = try initOwnedVisibleGrid(allocator, rows, cols, cursor_style_default);
         errdefer screen.deinit(allocator);
 
@@ -240,7 +261,12 @@ pub const Screen = struct {
     ///
     /// The caller owns the returned Screen and must call `deinit` unless it
     /// transfers ownership by swapping it into a Screen owner.
-    pub fn prepareResize(self: *const Screen, allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!Screen {
+    pub fn prepareResize(
+        self: *const Screen,
+        allocator: std.mem.Allocator,
+        rows: u16,
+        cols: u16,
+    ) std.mem.Allocator.Error!Screen {
         var lines = try self.collectLogicalSnapshot(allocator);
         defer lines.deinit(allocator);
 
@@ -336,7 +362,10 @@ pub const Screen = struct {
         std.debug.assert(viewport.total_rows == screenCount32(reflow.rewrapped.items.len));
         std.debug.assert(viewport.first_visible_line <= screenCount32(lines.logical_lines.items.len));
         if (viewport.first_visible_line < screenCount32(lines.logical_lines.items.len)) {
-            std.debug.assert(viewport.hidden_rows_in_first_visible_line < reflow.line_row_counts.items[@intCast(viewport.first_visible_line)]);
+            std.debug.assert(
+                viewport.hidden_rows_in_first_visible_line <
+                    reflow.line_row_counts.items[@intCast(viewport.first_visible_line)],
+            );
         } else {
             std.debug.assert(viewport.hidden_rows_in_first_visible_line == 0);
         }
@@ -354,7 +383,12 @@ pub const Screen = struct {
         try self.installResizeProjection(allocator, reflow, viewport);
     }
 
-    fn installResizeProjection(self: *Screen, allocator: std.mem.Allocator, reflow: ReflowState, viewport: ViewportState) std.mem.Allocator.Error!void {
+    fn installResizeProjection(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+        reflow: ReflowState,
+        viewport: ViewportState,
+    ) std.mem.Allocator.Error!void {
         self.history_count = 0;
         self.history_write_idx = 0;
         if (self.history_capacity == 0 or self.cols == 0) return;
@@ -442,7 +476,11 @@ pub const Screen = struct {
             while (index < drop) : (index += 1) {
                 self.history_lines.items[@intCast(index)].deinit(allocator);
             }
-            std.mem.copyForwards(HistoryLine, self.history_lines.items[0 .. self.history_lines.items.len - drop], self.history_lines.items[drop..]);
+            std.mem.copyForwards(
+                HistoryLine,
+                self.history_lines.items[0 .. self.history_lines.items.len - drop],
+                self.history_lines.items[drop..],
+            );
             self.history_lines.shrinkRetainingCapacity(self.history_lines.items.len - drop);
         }
     }
@@ -459,7 +497,10 @@ pub const Screen = struct {
 
         const last_visible_row = viewport.visible_start + viewport.visible_rows_kept - 1;
         const clamped_cursor_row = std.math.clamp(reflow.global_cursor_row, viewport.visible_start, last_visible_row);
-        self.cursor.setPositionStructural(@intCast(clamped_cursor_row - viewport.visible_start), @min(reflow.global_cursor_col, cols - 1));
+        self.cursor.setPositionStructural(
+            @intCast(clamped_cursor_row - viewport.visible_start),
+            @min(reflow.global_cursor_col, cols - 1),
+        );
         self.wrap_pending = reflow.next_wrap_pending and self.cursor.row < rows and self.cursor.col == cols - 1;
 
         std.debug.assert(viewport.visible_rows_kept > 0);
@@ -549,7 +590,10 @@ pub const Screen = struct {
     /// Clone retained, open, and visible content into one allocator-owned logical snapshot.
     ///
     /// Allocation failure releases partial clones and leaves this Screen unchanged.
-    pub fn collectLogicalSnapshot(self: *const Screen, allocator: std.mem.Allocator) std.mem.Allocator.Error!LogicalSnapshot {
+    pub fn collectLogicalSnapshot(
+        self: *const Screen,
+        allocator: std.mem.Allocator,
+    ) std.mem.Allocator.Error!LogicalSnapshot {
         var result = LogicalSnapshot{};
         errdefer result.deinit(allocator);
 
@@ -574,7 +618,10 @@ pub const Screen = struct {
             try self.appendSourceRowToLogicalSnapshot(allocator, &result, &current_line, row);
         }
 
-        if (current_line.cells.items.len > 0 or current_line.cursor_offset != null or result.logical_lines.items.len == 0) {
+        if (current_line.cells.items.len > 0 or
+            current_line.cursor_offset != null or
+            result.logical_lines.items.len == 0)
+        {
             if (current_line.cursor_offset) |offset| {
                 result.cursor_found = true;
                 result.cursor_line_index = @intCast(result.logical_lines.items.len);
@@ -647,7 +694,12 @@ pub const Screen = struct {
         return self.cursor.col;
     }
 
-    fn appendProjectionRows(self: *Screen, allocator: std.mem.Allocator, cells: []const Cell, continues_to_visible: bool) std.mem.Allocator.Error!void {
+    fn appendProjectionRows(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+        cells: []const Cell,
+        continues_to_visible: bool,
+    ) std.mem.Allocator.Error!void {
         const cols: u32 = self.cols;
         if (cols == 0) return;
         const cell_count: u32 = @intCast(cells.len);
@@ -660,7 +712,11 @@ pub const Screen = struct {
             const end = @min(cell_count, start + cols);
             std.debug.assert(start <= end);
             std.debug.assert(end <= cell_count);
-            try self.appendProjectedRow(allocator, cells[@intCast(start)..@intCast(end)], row_idx + 1 < row_count or continues_to_visible);
+            try self.appendProjectedRow(
+                allocator,
+                cells[@intCast(start)..@intCast(end)],
+                row_idx + 1 < row_count or continues_to_visible,
+            );
         }
     }
 
@@ -678,14 +734,21 @@ pub const Screen = struct {
     fn dropOldestHistoryLine(self: *Screen, allocator: std.mem.Allocator) u32 {
         std.debug.assert(self.historyLineCount() == self.history_capacity);
         const slot = self.history_lines_start;
-        self.dropOldestProjectedRows(self.projectedRowCountForCells(self.history_lines.items[@intCast(slot)].cells.items));
+        self.dropOldestProjectedRows(
+            self.projectedRowCountForCells(self.history_lines.items[@intCast(slot)].cells.items),
+        );
         self.history_lines.items[@intCast(slot)].deinit(allocator);
         self.history_lines.items[@intCast(slot)] = .{};
         self.history_lines_start = (self.history_lines_start + 1) % self.historyLineCount();
         return slot;
     }
 
-    fn appendProjectedRow(self: *Screen, allocator: std.mem.Allocator, cells: []const Cell, wrapped: bool) std.mem.Allocator.Error!void {
+    fn appendProjectedRow(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+        cells: []const Cell,
+        wrapped: bool,
+    ) std.mem.Allocator.Error!void {
         if (self.cols == 0) return;
         const capacity_target = @min(self.history_count + 1, @as(u32, self.history_capacity));
         try self.ensureProjectedCapacity(allocator, capacity_target);
@@ -714,7 +777,11 @@ pub const Screen = struct {
         self.history_count += 1;
     }
 
-    fn ensureProjectedCapacity(self: *Screen, allocator: std.mem.Allocator, min_rows: u32) std.mem.Allocator.Error!void {
+    fn ensureProjectedCapacity(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+        min_rows: u32,
+    ) std.mem.Allocator.Error!void {
         if (self.cols == 0) return;
 
         const current_rows = self.projectedCapacity();
@@ -741,7 +808,10 @@ pub const Screen = struct {
             std.debug.assert(source_start + cols <= if (self.history) |history| history.len else 0);
             std.debug.assert(dest_start + cols <= new_history.len);
             if (self.history) |history| {
-                @memcpy(new_history[@intCast(dest_start)..@intCast(dest_start + cols)], history[@intCast(source_start)..@intCast(source_start + cols)]);
+                @memcpy(
+                    new_history[@intCast(dest_start)..@intCast(dest_start + cols)],
+                    history[@intCast(source_start)..@intCast(source_start + cols)],
+                );
             }
             if (self.history_wraps) |wraps| new_wraps[@intCast(logical_row)] = wraps[@intCast(old_slot)];
         }
@@ -886,8 +956,20 @@ pub const Screen = struct {
             .cursor_position,
             => self.applyCursorMove(event),
             .write_text, .write_codepoint, .repeat_preceding, .sgr => self.applyRetainedState(event),
-            .line_feed, .next_line, .reverse_index, .carriage_return, .backspace, .horizontal_tab, .horizontal_tab_forward, .horizontal_tab_back => self.applyFlowMove(event),
-            .horizontal_tab_set, .tab_clear_current, .tab_clear_all, .reset_default_tab_stops => self.applyTabState(event),
+            .line_feed,
+            .next_line,
+            .reverse_index,
+            .carriage_return,
+            .backspace,
+            .horizontal_tab,
+            .horizontal_tab_forward,
+            .horizontal_tab_back,
+            => self.applyFlowMove(event),
+            .horizontal_tab_set,
+            .tab_clear_current,
+            .tab_clear_all,
+            .reset_default_tab_stops,
+            => self.applyTabState(event),
             .cursor_visible,
             .cursor_style,
             .cursor_shape,
@@ -901,7 +983,15 @@ pub const Screen = struct {
             .left_right_margin_mode,
             .set_left_right_margins,
             => self.applyScreenState(event),
-            .insert_lines, .delete_lines, .insert_chars, .delete_chars, .scroll_up_lines, .scroll_down_lines, .set_scroll_region, .reset_screen => self.applyLineEdit(event),
+            .insert_lines,
+            .delete_lines,
+            .insert_chars,
+            .delete_chars,
+            .scroll_up_lines,
+            .scroll_down_lines,
+            .set_scroll_region,
+            .reset_screen,
+            => self.applyLineEdit(event),
             .erase_display_below,
             .erase_display_above,
             .erase_display_complete,
@@ -927,11 +1017,19 @@ pub const Screen = struct {
             .cursor_down => |n| self.cursor.setRowByClient(@min(self.cursor.row +| n, self.rows -| 1)),
             .cursor_forward => |n| self.cursor.setColByClient(@min(self.cursor.col +| n, self.rightBoundary())),
             .cursor_back => |n| self.cursor.setColByClient(@max(self.cursor.col -| n, self.leftBoundary())),
-            .cursor_next_line => |n| self.cursor.setPositionByClient(@min(self.cursor.row +| n, self.rows -| 1), self.lineHomeCol()),
+            .cursor_next_line => |n| self.cursor.setPositionByClient(
+                @min(self.cursor.row +| n, self.rows -| 1),
+                self.lineHomeCol(),
+            ),
             .cursor_prev_line => |n| self.cursor.setPositionByClient(self.cursor.row -| n, self.lineHomeCol()),
-            .cursor_horizontal_absolute => |col| self.cursor.setColByClient(@min(self.resolveAbsoluteCol(col), self.rightBoundary())),
+            .cursor_horizontal_absolute => |col| self.cursor.setColByClient(
+                @min(self.resolveAbsoluteCol(col), self.rightBoundary()),
+            ),
             .cursor_vertical_absolute => |row| self.cursor.setRowByClient(@min(row, self.rows -| 1)),
-            .cursor_position => |pos| self.cursor.setPositionByClient(@min(self.resolveAbsoluteRow(pos.row), self.rows -| 1), @min(self.resolveAbsoluteCol(pos.col), self.rightBoundary())),
+            .cursor_position => |pos| self.cursor.setPositionByClient(
+                @min(self.resolveAbsoluteRow(pos.row), self.rows -| 1),
+                @min(self.resolveAbsoluteCol(pos.col), self.rightBoundary()),
+            ),
             else => unreachable,
         }
     }
@@ -1067,7 +1165,11 @@ pub const Screen = struct {
             .rect_selective_erase => |area| self.eraseRect(area, true),
             .rect_fill => |request| self.fillRect(request.area, request.ch),
             .rect_copy => |request| self.copyRect(request),
-            .rect_attrs_change => |request| self.changeRectAttrs(request.area, request.attrs.params[0..request.attrs.param_count], request.reverse),
+            .rect_attrs_change => |request| self.changeRectAttrs(
+                request.area,
+                request.attrs.params[0..request.attrs.param_count],
+                request.reverse,
+            ),
             else => unreachable,
         }
     }
@@ -1374,7 +1476,11 @@ pub const Screen = struct {
 
         self.markDirtyCols(self.cursor.row, self.cursor.col, self.rightBoundary());
         if (move_len > 0) {
-            std.mem.copyBackwards(Cell, row[@intCast(dst_col)..@intCast(dst_col + move_len)], row[@intCast(src_col)..@intCast(src_col + move_len)]);
+            std.mem.copyBackwards(
+                Cell,
+                row[@intCast(dst_col)..@intCast(dst_col + move_len)],
+                row[@intCast(src_col)..@intCast(src_col + move_len)],
+            );
         }
         @memset(row[@intCast(src_col)..@intCast(src_col + screenColCount(amount))], self.eraseCell());
         self.setRowWrapped(self.cursor.row, false);
@@ -1403,7 +1509,11 @@ pub const Screen = struct {
 
         self.markDirtyCols(self.cursor.row, self.cursor.col, self.rightBoundary());
         if (move_len > 0) {
-            std.mem.copyForwards(Cell, row[@intCast(dst_col)..@intCast(dst_col + move_len)], row[@intCast(src_col)..@intCast(src_col + move_len)]);
+            std.mem.copyForwards(
+                Cell,
+                row[@intCast(dst_col)..@intCast(dst_col + move_len)],
+                row[@intCast(src_col)..@intCast(src_col + move_len)],
+            );
         }
         @memset(row[@intCast(tail_start)..@intCast(tail_end)], self.eraseCell());
         self.setRowWrapped(self.cursor.row, false);
@@ -1424,7 +1534,13 @@ pub const Screen = struct {
         std.debug.assert(cursor_col + screenColCount(amount) <= cells.len);
 
         self.markDirtyCols(row, self.cursor.col, self.cols -| 1);
-        if (move_len > 0) std.mem.copyBackwards(Cell, cells[@intCast(dst_col)..@intCast(dst_col + move_len)], cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)]);
+        if (move_len > 0) {
+            std.mem.copyBackwards(
+                Cell,
+                cells[@intCast(dst_col)..@intCast(dst_col + move_len)],
+                cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)],
+            );
+        }
         @memset(cells[@intCast(cursor_col)..@intCast(cursor_col + screenColCount(amount))], self.eraseCell());
         self.setRowWrapped(row, false);
     }
@@ -1444,8 +1560,17 @@ pub const Screen = struct {
         std.debug.assert(screenColCount(self.cols) - screenColCount(amount) <= screenColCount(self.cols));
 
         self.markDirtyCols(row, self.cursor.col, self.cols -| 1);
-        if (move_len > 0) std.mem.copyForwards(Cell, cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)], cells[@intCast(src_col)..@intCast(src_col + move_len)]);
-        @memset(cells[@intCast(screenColCount(self.cols) - screenColCount(amount))..@intCast(screenColCount(self.cols))], self.eraseCell());
+        if (move_len > 0) {
+            std.mem.copyForwards(
+                Cell,
+                cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)],
+                cells[@intCast(src_col)..@intCast(src_col + move_len)],
+            );
+        }
+        @memset(
+            cells[@intCast(screenColCount(self.cols) - screenColCount(amount))..@intCast(screenColCount(self.cols))],
+            self.eraseCell(),
+        );
         self.setRowWrapped(row, false);
     }
 
@@ -1469,10 +1594,11 @@ pub const Screen = struct {
 
         self.markDirtyCols(row, left, right);
         if (move_len > 0) {
+            const source_start = left_idx + screenColCount(amount);
             std.mem.copyForwards(
                 Cell,
                 cells[@intCast(left_idx)..@intCast(left_idx + move_len)],
-                cells[@intCast(left_idx + screenColCount(amount))..@intCast(left_idx + screenColCount(amount) + move_len)],
+                cells[@intCast(source_start)..@intCast(source_start + move_len)],
             );
         }
         @memset(cells[@intCast(left_idx + move_len)..@intCast(left_idx + screenColCount(width))], self.eraseCell());
@@ -1499,9 +1625,10 @@ pub const Screen = struct {
 
         self.markDirtyCols(row, left, right);
         if (move_len > 0) {
+            const destination_start = left_idx + screenColCount(amount);
             std.mem.copyBackwards(
                 Cell,
-                cells[@intCast(left_idx + screenColCount(amount))..@intCast(left_idx + screenColCount(amount) + move_len)],
+                cells[@intCast(destination_start)..@intCast(destination_start + move_len)],
                 cells[@intCast(left_idx)..@intCast(left_idx + move_len)],
             );
         }
@@ -1965,7 +2092,10 @@ pub const Screen = struct {
         const cells = self.cells orelse return;
         const start = self.rowStart(row);
         const erase_cell = self.eraseCell();
-        @memset(cells[@intCast(start + @as(u32, start_col))..@intCast(start + @as(u32, end_col_exclusive))], erase_cell);
+        @memset(
+            cells[@intCast(start + @as(u32, start_col))..@intCast(start + @as(u32, end_col_exclusive))],
+            erase_cell,
+        );
     }
 
     /// Fill unprotected cells in an assumed in-bounds row range with the erase cell.
@@ -2011,7 +2141,11 @@ pub const Screen = struct {
         const row_len = @as(u32, self.cols);
         const dst_start = self.rowStart(dst_row);
         const src_start = self.rowStart(src_row);
-        std.mem.copyForwards(Cell, c[@intCast(dst_start)..@intCast(dst_start + row_len)], c[@intCast(src_start)..@intCast(src_start + row_len)]);
+        std.mem.copyForwards(
+            Cell,
+            c[@intCast(dst_start)..@intCast(dst_start + row_len)],
+            c[@intCast(src_start)..@intCast(src_start + row_len)],
+        );
         self.setRowWrapped(dst_row, self.rowWrapped(src_row));
     }
 
@@ -2021,7 +2155,11 @@ pub const Screen = struct {
         const src_start = self.rowStart(src_row);
         const start_col32 = @as(u32, start_col);
         const end_col32 = @as(u32, end_col_exclusive);
-        std.mem.copyForwards(Cell, c[@intCast(dst_start + start_col32)..@intCast(dst_start + end_col32)], c[@intCast(src_start + start_col32)..@intCast(src_start + end_col32)]);
+        std.mem.copyForwards(
+            Cell,
+            c[@intCast(dst_start + start_col32)..@intCast(dst_start + end_col32)],
+            c[@intCast(src_start + start_col32)..@intCast(src_start + end_col32)],
+        );
         self.setRowWrapped(dst_row, false);
     }
 
@@ -2211,8 +2349,8 @@ fn isTrailingCombiningCodepoint(cp: u21) bool {
     };
 }
 
-/// Identifies the supported terminal underline rendering styles.
-pub const ScreenUnderlineStyle = enum(u3) {
+// Identifies the supported terminal underline rendering styles.
+const ScreenUnderlineStyle = enum(u3) {
     straight,
     double,
     curly,
@@ -2220,8 +2358,8 @@ pub const ScreenUnderlineStyle = enum(u3) {
     dashed,
 };
 
-/// Stores one cell’s style, colors, protection, and hyperlink identity.
-pub const ScreenCellAttrs = struct {
+// Stores one cell’s style, colors, protection, and hyperlink identity.
+const ScreenCellAttrs = struct {
     fg: ScreenColor,
     bg: ScreenColor,
     bold: bool,
@@ -2239,8 +2377,8 @@ pub const ScreenCellAttrs = struct {
     link_id: u32,
 };
 
-/// Stores one Unicode codepoint, display width, and complete cell attributes.
-pub const ScreenCell = struct {
+// Stores one Unicode codepoint, display width, and complete cell attributes.
+const ScreenCell = struct {
     codepoint: u32,
     combining_len: u8 = 0,
     combining: [3]u32 = .{ 0, 0, 0 },
@@ -2255,8 +2393,8 @@ fn isCellContinuation(cell: ScreenCell) bool {
     return cell.x != 0 or cell.y != 0;
 }
 
-/// Provides immutable default terminal cell attributes.
-pub const initial_cell_attrs = ScreenCellAttrs{
+// Provides immutable default terminal cell attributes.
+const initial_cell_attrs = ScreenCellAttrs{
     .fg = default_cell_foreground,
     .bg = default_cell_background,
     .bold = false,
@@ -2274,14 +2412,14 @@ pub const initial_cell_attrs = ScreenCellAttrs{
     .link_id = 0,
 };
 
-/// Provides the blank default cell used for clearing and allocation.
-pub const blank_cell = ScreenCell{
+// Provides the blank default cell used for clearing and allocation.
+const blank_cell = ScreenCell{
     .codepoint = 0,
     .attrs = initial_cell_attrs,
 };
 
-/// Stores one exact 24-bit terminal color.
-pub const ScreenRgb = struct {
+// Stores one exact 24-bit terminal color.
+const ScreenRgb = struct {
     r: u8,
     g: u8,
     b: u8,
@@ -2294,8 +2432,8 @@ const Kind = enum(u8) {
     rgb,
 };
 
-/// Stores a default, indexed, or RGB terminal color.
-pub const ScreenColor = struct {
+// Stores a default, indexed, or RGB terminal color.
+const ScreenColor = struct {
     kind: Kind,
     value: u32,
 
@@ -2332,38 +2470,38 @@ pub const ScreenColor = struct {
     }
 };
 
-/// Provides the immutable default foreground color.
-pub const default_cell_foreground = ScreenColor{ .kind = .default, .value = 0 };
-/// Provides the immutable default background color.
-pub const default_cell_background = ScreenColor{ .kind = .default, .value = 0 };
-/// Provides the immutable default underline color.
-pub const default_cell_underline_color = ScreenColor{ .kind = .default, .value = 0 };
+// Provides the immutable default foreground color.
+const default_cell_foreground = ScreenColor{ .kind = .default, .value = 0 };
+// Provides the immutable default background color.
+const default_cell_background = ScreenColor{ .kind = .default, .value = 0 };
+// Provides the immutable default underline color.
+const default_cell_underline_color = ScreenColor{ .kind = .default, .value = 0 };
 
-/// Identifies block, underline, bar, or hidden cursor presentation.
-pub const ScreenCursorShape = enum {
+// Identifies block, underline, bar, or hidden cursor presentation.
+const ScreenCursorShape = enum {
     block,
     underline,
     bar,
     none,
 };
 
-/// Stores cursor shape and blink state.
-pub const ScreenCursorStyle = struct {
+// Stores cursor shape and blink state.
+const ScreenCursorStyle = struct {
     shape: ScreenCursorShape,
     blink: bool,
 };
 
-/// Selects a program override or restoration to configured default style.
-pub const CursorStyleCommand = union(enum) {
+// Selects a program override or restoration to configured default style.
+const CursorStyleCommand = union(enum) {
     restore_default,
     program_override: ScreenCursorStyle,
 };
 
-/// Provides the default blinking block cursor.
-pub const initial_cursor_style = ScreenCursorStyle{ .shape = .block, .blink = true };
+// Provides the default blinking block cursor.
+const initial_cursor_style = ScreenCursorStyle{ .shape = .block, .blink = true };
 
-/// Owns cursor position, style layers, and client-movement identity.
-pub const ScreenSemanticCursor = struct {
+// Owns cursor position, style layers, and client-movement identity.
+const ScreenSemanticCursor = struct {
     row: u16,
     col: u16,
     visible: bool,
@@ -2431,7 +2569,11 @@ pub const ScreenSemanticCursor = struct {
 
     /// Restores a previously saved effective style as the program override.
     pub fn restoreSavedStyle(self: *ScreenSemanticCursor, style: ScreenCursorStyle) void {
-        self.program_override_style = if (style.shape == self.default_style.shape and style.blink == self.default_style.blink) null else style;
+        self.program_override_style = if (style.shape == self.default_style.shape and
+            style.blink == self.default_style.blink)
+            null
+        else
+            style;
         self.applyStyle(style);
     }
 
@@ -2478,16 +2620,16 @@ pub const ScreenSemanticCursor = struct {
     }
 };
 
-/// Borrows the dirty row interval and optional per-row column bounds.
-pub const ScreenDirtyRows = struct {
+// Borrows the dirty row interval and optional per-row column bounds.
+const ScreenDirtyRows = struct {
     start_row: u16,
     end_row: u16,
     dirty_cols_start: []const u16 = &.{},
     dirty_cols_end: []const u16 = &.{},
 };
 
-/// Owns dirty publication bounds for one screen allocation.
-pub const DirtyState = struct {
+// Owns dirty publication bounds for one screen allocation.
+const DirtyState = struct {
     rows: ?ScreenDirtyRows = null,
     cols_start: ?[]u16 = null,
     cols_end: ?[]u16 = null,
@@ -2509,16 +2651,16 @@ pub const DirtyState = struct {
     }
 };
 
-/// Allocates and initializes one u16 column bound per row when rows are nonzero.
-pub fn allocDirtyCols(allocator: std.mem.Allocator, rows: u16, initial: u16) std.mem.Allocator.Error!?[]u16 {
+// Allocates and initializes one u16 column bound per row when rows are nonzero.
+fn allocDirtyCols(allocator: std.mem.Allocator, rows: u16, initial: u16) std.mem.Allocator.Error!?[]u16 {
     if (rows == 0) return null;
     const buf = try allocator.alloc(u16, rows);
     @memset(buf, initial);
     return buf;
 }
 
-/// Returns a full dirty-row view when the screen has at least one row.
-pub fn rowsForFull(rows: u16, dirty_cols_start: ?[]const u16, dirty_cols_end: ?[]const u16) ?ScreenDirtyRows {
+// Returns a full dirty-row view when the screen has at least one row.
+fn rowsForFull(rows: u16, dirty_cols_start: ?[]const u16, dirty_cols_end: ?[]const u16) ?ScreenDirtyRows {
     if (rows == 0) return null;
     return .{
         .start_row = 0,
@@ -2536,20 +2678,20 @@ pub const ScreenEraseMode = enum(u2) {
     scrollback = 3,
 };
 
-/// Convert a checked standard-library length to the history/reflow domain.
-pub fn screenCount32(len: usize) u32 {
+// Convert a checked standard-library length to the history/reflow domain.
+fn screenCount32(len: usize) u32 {
     std.debug.assert(len <= std.math.maxInt(u32));
     return @intCast(len);
 }
 
-/// Return rows needed for `cell_count`, or zero when no columns exist.
-pub fn rowCountForCells(cell_count: u32, cols: u16) u32 {
+// Return rows needed for `cell_count`, or zero when no columns exist.
+fn rowCountForCells(cell_count: u32, cols: u16) u32 {
     if (cols == 0) return 0;
     return @max(@as(u32, 1), std.math.divCeil(u32, cell_count, cols) catch unreachable);
 }
 
-/// Owned logical terminal line used while reflowing retained content.
-pub const LogicalLine = struct {
+// Owned logical terminal line used while reflowing retained content.
+const LogicalLine = struct {
     cells: std.ArrayListUnmanaged(ScreenCell) = .empty,
     cursor_offset: ?u32 = null,
 
@@ -2575,8 +2717,8 @@ pub const LogicalSnapshot = struct {
     }
 };
 
-/// Owns one logical history line’s cells until deinit.
-pub const HistoryLine = struct {
+// Owns one logical history line’s cells until deinit.
+const HistoryLine = struct {
     cells: std.ArrayListUnmanaged(ScreenCell) = .empty,
 
     /// Releases a history line’s cell allocation.
@@ -2586,15 +2728,15 @@ pub const HistoryLine = struct {
     }
 };
 
-/// Borrows one row window from a reflowed logical line.
-pub const RewrappedRow = struct {
+// Borrows one row window from a reflowed logical line.
+const RewrappedRow = struct {
     start: u32,
     len: u16,
     wrapped: bool,
 };
 
-/// Finds the logical line containing a projected row within parallel bounded arrays.
-pub fn firstLineForRowBounded(line_row_starts: []const u32, line_row_counts: []const u16, row_index: u32) ?u32 {
+// Finds the logical line containing a projected row within parallel bounded arrays.
+fn firstLineForRowBounded(line_row_starts: []const u32, line_row_counts: []const u16, row_index: u32) ?u32 {
     std.debug.assert(line_row_starts.len == line_row_counts.len);
     for (line_row_starts, line_row_counts, 0..) |row_start, row_count, line_idx| {
         if (row_count == 0) continue;
@@ -2603,24 +2745,24 @@ pub fn firstLineForRowBounded(line_row_starts: []const u32, line_row_counts: []c
     return null;
 }
 
-/// Zero-based rectangular area whose optional lower bounds extend to the page edge.
-pub const RectArea = struct {
+// Zero-based rectangular area whose optional lower bounds extend to the page edge.
+const RectArea = struct {
     top: u16,
     left: u16,
     bottom: ?u16,
     right: ?u16,
 };
 
-/// Optional rectangular locator filter coordinates.
-pub const OptionalRectArea = struct {
+// Optional rectangular locator filter coordinates.
+const OptionalRectArea = struct {
     top: ?u16,
     left: ?u16,
     bottom: ?u16,
     right: ?u16,
 };
 
-/// Page-qualified rectangular copy request.
-pub const RectCopy = struct {
+// Page-qualified rectangular copy request.
+const RectCopy = struct {
     area: RectArea,
     source_page: u16,
     dest_top: u16,
@@ -2648,8 +2790,8 @@ pub const ReflowState = struct {
     }
 };
 
-/// Derived viewport window into complete reflow output.
-pub const ViewportState = struct {
+// Derived viewport window into complete reflow output.
+const ViewportState = struct {
     total_rows: u32,
     visible_rows_kept: u16,
     visible_start: u32,
@@ -2691,7 +2833,11 @@ pub const ResizeBuffers = struct {
 /// Reflow one borrowed logical snapshot to allocator-owned rows without consuming it.
 ///
 /// Allocation failure releases partial output and leaves the snapshot reusable.
-pub fn reflowLogicalLines(allocator: std.mem.Allocator, lines: LogicalSnapshot, cols: u16) std.mem.Allocator.Error!ReflowState {
+pub fn reflowLogicalLines(
+    allocator: std.mem.Allocator,
+    lines: LogicalSnapshot,
+    cols: u16,
+) std.mem.Allocator.Error!ReflowState {
     var result = ReflowState{};
     errdefer result.deinit(allocator);
 
@@ -2718,7 +2864,13 @@ pub fn reflowLogicalLines(allocator: std.mem.Allocator, lines: LogicalSnapshot, 
     return result;
 }
 
-fn appendRewrappedRows(allocator: std.mem.Allocator, result: *ReflowState, cells: []const ScreenCell, row_count: u16, cols: u16) std.mem.Allocator.Error!void {
+fn appendRewrappedRows(
+    allocator: std.mem.Allocator,
+    result: *ReflowState,
+    cells: []const ScreenCell,
+    row_count: u16,
+    cols: u16,
+) std.mem.Allocator.Error!void {
     if (cols == 0) return;
     if (row_count == 0) unreachable;
 
@@ -2739,10 +2891,19 @@ fn appendRewrappedRows(allocator: std.mem.Allocator, result: *ReflowState, cells
         try appendRowCells(allocator, &result.flat_rows, cells, start, cols);
     }
 
-    std.debug.assert(screenCount32(result.flat_rows.items.len) == flat_rows_before + @as(u32, row_count) * screenResizeColCount(cols));
+    std.debug.assert(
+        screenCount32(result.flat_rows.items.len) ==
+            flat_rows_before + @as(u32, row_count) * screenResizeColCount(cols),
+    );
 }
 
-fn appendRowCells(allocator: std.mem.Allocator, flat_rows: *std.ArrayListUnmanaged(ScreenCell), cells: []const ScreenCell, start: u32, cols: u16) std.mem.Allocator.Error!void {
+fn appendRowCells(
+    allocator: std.mem.Allocator,
+    flat_rows: *std.ArrayListUnmanaged(ScreenCell),
+    cells: []const ScreenCell,
+    start: u32,
+    cols: u16,
+) std.mem.Allocator.Error!void {
     const cell_len = screenCount32(cells.len);
     var col_idx: u16 = 0;
     while (col_idx < cols) : (col_idx += 1) {
@@ -2776,8 +2937,8 @@ fn updateCursor(result: *ReflowState, row_cursor_base: u32, line_cursor_offset: 
     result.next_wrap_pending = false;
 }
 
-/// Select the visible tail and hidden-history boundary from reflow output.
-pub fn projectViewport(logical_line_count: u32, reflow: ReflowState, rows: u16) ViewportState {
+// Select the visible tail and hidden-history boundary from reflow output.
+fn projectViewport(logical_line_count: u32, reflow: ReflowState, rows: u16) ViewportState {
     const total_rows: u32 = @intCast(reflow.rewrapped.items.len);
     const visible_rows_kept: u16 = @intCast(@min(@as(u32, rows), total_rows));
     const visible_start = total_rows - visible_rows_kept;
@@ -2802,7 +2963,10 @@ pub fn projectViewport(logical_line_count: u32, reflow: ReflowState, rows: u16) 
     } else {
         std.debug.assert(first_visible_line < logical_line_count);
         std.debug.assert(reflow.line_row_starts.items[@intCast(first_visible_line)] <= visible_start);
-        std.debug.assert(hidden_rows_in_first_visible_line < reflow.line_row_counts.items[@intCast(first_visible_line)]);
+        std.debug.assert(
+            hidden_rows_in_first_visible_line <
+                reflow.line_row_counts.items[@intCast(first_visible_line)],
+        );
     }
 
     return .{
@@ -2817,7 +2981,12 @@ pub fn projectViewport(logical_line_count: u32, reflow: ReflowState, rows: u16) 
 /// Allocate complete visible-grid replacement buffers for transfer to one Screen.
 ///
 /// Allocation failure releases every completed buffer and returns no owner.
-pub fn allocResizeBuffers(allocator: std.mem.Allocator, rows: u16, cols: u16, old_tab_stops: ?[]bool) std.mem.Allocator.Error!ResizeBuffers {
+pub fn allocResizeBuffers(
+    allocator: std.mem.Allocator,
+    rows: u16,
+    cols: u16,
+    old_tab_stops: ?[]bool,
+) std.mem.Allocator.Error!ResizeBuffers {
     const cell_count = resizeCellCount(rows, cols);
     var cells: ?[]ScreenCell = null;
     if (cell_count > 0) {
@@ -2862,8 +3031,8 @@ pub fn allocResizeBuffers(allocator: std.mem.Allocator, rows: u16, cols: u16, ol
     };
 }
 
-/// Copy the selected visible rows into allocated replacement buffers.
-pub fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, viewport: ViewportState, cols: u16) void {
+// Copy the selected visible rows into allocated replacement buffers.
+fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, viewport: ViewportState, cols: u16) void {
     const dst = buffers.cells orelse return;
     const dst_wraps = buffers.row_wraps orelse return;
 
@@ -2871,7 +3040,10 @@ pub fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, viewport: V
     std.debug.assert(viewport.total_rows == screenCount32(reflow.rewrapped.items.len));
     std.debug.assert(screenCount32(dst_wraps.len) >= viewport.visible_rows_kept);
     std.debug.assert(screenCount32(dst.len) >= resizeCellCount(viewport.visible_rows_kept, cols));
-    std.debug.assert(screenCount32(reflow.flat_rows.items.len) == screenCount32(reflow.rewrapped.items.len) * screenResizeColCount(cols));
+    std.debug.assert(
+        screenCount32(reflow.flat_rows.items.len) ==
+            screenCount32(reflow.rewrapped.items.len) * screenResizeColCount(cols),
+    );
 
     var src_row = viewport.visible_start;
     var view_row: u16 = 0;
@@ -2879,7 +3051,10 @@ pub fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, viewport: V
         const src = reflow.rewrapped.items[@intCast(src_row)];
         const dst_start = rowStart(view_row, cols);
         std.debug.assert(dst_start + screenResizeColCount(cols) <= screenCount32(dst.len));
-        @memcpy(dst[@intCast(dst_start)..@intCast(dst_start + screenResizeColCount(cols))], flatRowSlice(reflow.flat_rows.items, src, cols));
+        @memcpy(
+            dst[@intCast(dst_start)..@intCast(dst_start + screenResizeColCount(cols))],
+            flatRowSlice(reflow.flat_rows.items, src, cols),
+        );
         dst_wraps[@intCast(view_row)] = src.wrapped;
         src_row += 1;
     }
@@ -2914,8 +3089,8 @@ fn screenResizeColCount(cols: u16) u32 {
     return cols;
 }
 
-/// Applies bounded rectangular attribute operations to one cell in protocol order.
-pub fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool) void {
+// Applies bounded rectangular attribute operations to one cell in protocol order.
+fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool) void {
     for (attrs) |attr| {
         switch (attr) {
             0 => if (!reverse) {
@@ -2995,24 +3170,24 @@ pub fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: b
     }
 }
 
-/// Allocates one tab-stop flag per column and installs default stops.
-pub fn allocTabStops(allocator: std.mem.Allocator, cols: u16) std.mem.Allocator.Error!?[]bool {
+// Allocates one tab-stop flag per column and installs default stops.
+fn allocTabStops(allocator: std.mem.Allocator, cols: u16) std.mem.Allocator.Error!?[]bool {
     if (cols == 0) return null;
     const buf = try allocator.alloc(bool, cols);
     setDefaultTabStops(buf);
     return buf;
 }
 
-/// Replaces all stops with the terminal default every eight columns.
-pub fn setDefaultTabStops(stops: []bool) void {
+// Replaces all stops with the terminal default every eight columns.
+fn setDefaultTabStops(stops: []bool) void {
     @memset(stops, false);
     for (stops, 0..) |*stop, idx| {
         if (idx != 0 and idx % 8 == 0) stop.* = true;
     }
 }
 
-/// Copies the overlapping prefix of optional old and replacement tab stops.
-pub fn copyTabStops(dst: ?[]bool, src: ?[]const bool) void {
+// Copies the overlapping prefix of optional old and replacement tab stops.
+fn copyTabStops(dst: ?[]bool, src: ?[]const bool) void {
     const d = dst orelse return;
     const s = src orelse return;
     @memcpy(d[0..@min(d.len, s.len)], s[0..@min(d.len, s.len)]);
@@ -3023,8 +3198,8 @@ pub const Scratch = struct {
     buf: [512]u8 = undefined,
 };
 
-/// Exact failures while constructing an encoded paste result.
-pub const PasteError = error{ LengthOverflow, OutOfMemory };
+// Exact failures while constructing an encoded paste result.
+const PasteError = error{ LengthOverflow, OutOfMemory };
 
 /// Encode borrowed paste text for the active bracketed-paste mode.
 ///
@@ -3051,10 +3226,10 @@ fn bracketedPasteLength(text_len: usize) error{LengthOverflow}!usize {
     return std.math.add(usize, with_start, "\x1b[201~".len) catch return error.LengthOverflow;
 }
 
-/// Copy fixed protocol bytes into caller scratch storage.
-///
-/// The returned slice borrows `scratch` until its next use.
-pub fn writeScratch(scratch: *Scratch, bytes: []const u8) []const u8 {
+// Copy fixed protocol bytes into caller scratch storage.
+//
+// The returned slice borrows `scratch` until its next use.
+fn writeScratch(scratch: *Scratch, bytes: []const u8) []const u8 {
     std.debug.assert(bytes.len <= scratch.buf.len);
     @memcpy(scratch.buf[0..bytes.len], bytes);
     return scratch.buf[0..bytes.len];
@@ -3065,8 +3240,8 @@ test "bracketed paste length reports arithmetic overflow" {
     try std.testing.expectError(error.LengthOverflow, bracketedPasteLength(std.math.maxInt(usize)));
 }
 
-/// Holds encoded bytes that either borrow caller scratch or own one allocation.
-pub const Encoded = struct {
+// Holds encoded bytes that either borrow caller scratch or own one allocation.
+const Encoded = struct {
     allocator: ?std.mem.Allocator = null,
     bytes: []const u8 = "",
 
@@ -3091,8 +3266,8 @@ test "encoded owner deinit releases owned buffer" {
     try std.testing.expectEqualStrings("", encoded.bytes);
 }
 
-/// Borrow-free physical key event with typed identity and complete modifiers.
-pub const KeyEvent = struct {
+// Borrow-free physical key event with typed identity and complete modifiers.
+const KeyEvent = struct {
     key: InputKey,
     mods: Modifier = .{},
     action: Action = .press,
@@ -3104,18 +3279,18 @@ pub const KeyEvent = struct {
     text: []const u8 = "",
 };
 
-/// Identifies host focus gained or lost for terminal focus reporting.
-pub const FocusEvent = enum {
+// Identifies host focus gained or lost for terminal focus reporting.
+const FocusEvent = enum {
     in,
     out,
 };
 
-/// Host input borrowed by one terminal encoding call.
-///
-/// `bytes` carries committed text, while `key` carries a named or validated
-/// Unicode physical-key event for terminal keyboard protocol encoding. Byte
-/// and paste slices must remain valid until `Terminal.encodeInput` returns.
-pub const Event = union(enum) {
+// Host input borrowed by one terminal encoding call.
+//
+// `bytes` carries committed text, while `key` carries a named or validated
+// Unicode physical-key event for terminal keyboard protocol encoding. Byte
+// and paste slices must remain valid until `Terminal.encodeInput` returns.
+const Event = union(enum) {
     bytes: []const u8,
     key: KeyEvent,
     mouse: MouseEvent,
@@ -3131,8 +3306,8 @@ test "event owner exposes input union tags" {
     try std.testing.expectEqual(@as(std.meta.Tag(Event), .focus), std.meta.activeTag(focus_event));
 }
 
-/// Named physical key whose terminal identity is distinct from Unicode text.
-pub const KeyName = enum {
+// Named physical key whose terminal identity is distinct from Unicode text.
+const KeyName = enum {
     enter,
     tab,
     backspace,
@@ -3217,8 +3392,8 @@ pub const InputKey = union(enum) {
     }
 };
 
-/// Identifies one physical key transition for Kitty event reporting.
-pub const Action = enum(u2) { press = 1, repeat = 2, release = 3 };
+// Identifies one physical key transition for Kitty event reporting.
+const Action = enum(u2) { press = 1, repeat = 2, release = 3 };
 
 /// Bounds committed key text before decimal Kitty encoding.
 pub const max_text_bytes: u8 = 64;
@@ -3603,7 +3778,13 @@ fn encodeModifyOtherKey(
 ) ?[]const u8 {
     if (modify_other_keys < 2 and !(modify_other_keys == 1 and format_other_keys == 1)) return null;
     if (mod.none() and modify_other_keys < 3) return null;
-    if (format_other_keys == 1) return std.fmt.bufPrint(buf, "\x1b[{d};{d}u", .{ codepoint, mod.protocolParameter() }) catch null;
+    if (format_other_keys == 1) {
+        return std.fmt.bufPrint(
+            buf,
+            "\x1b[{d};{d}u",
+            .{ codepoint, mod.protocolParameter() },
+        ) catch null;
+    }
     return std.fmt.bufPrint(buf, "\x1b[27;{d};{d}~", .{ mod.protocolParameter(), codepoint }) catch null;
 }
 
@@ -3837,7 +4018,10 @@ test "named key classes retain exact legacy encodings" {
     try std.testing.expectEqualStrings("\x1b[P", encodeKey(&buf, .{ .named = .f1 }, none, false, false, 0, 0, 0));
     try std.testing.expectEqualStrings("\x1b[24~", encodeKey(&buf, .{ .named = .f12 }, none, false, false, 0, 0, 0));
     try std.testing.expectEqualStrings("+", encodeKey(&buf, .{ .named = .keypad_add }, none, false, false, 0, 0, 0));
-    try std.testing.expectEqualStrings("\x1bOk", encodeKey(&buf, .{ .named = .keypad_add }, none, false, true, 0, 0, 0));
+    try std.testing.expectEqualStrings(
+        "\x1bOk",
+        encodeKey(&buf, .{ .named = .keypad_add }, none, false, true, 0, 0, 0),
+    );
     try std.testing.expectEqualStrings(
         ",",
         encodeKey(&buf, .{ .named = .keypad_separator }, none, false, false, 0, 0, 0),
@@ -3871,7 +4055,10 @@ test "every modifier combination has one Kitty parameter" {
         .{ .modifier = .{ .shift = true, .alt = true, .control = true }, .expected = "\x1b[97;8u" },
     };
     for (cases) |case| {
-        try std.testing.expectEqualStrings(case.expected, encodeKey(&buf, scalar, case.modifier, false, false, 0, 0, 8));
+        try std.testing.expectEqualStrings(
+            case.expected,
+            encodeKey(&buf, scalar, case.modifier, false, false, 0, 0, 8),
+        );
     }
 }
 
@@ -3905,8 +4092,8 @@ pub const MouseEvent = struct {
     buttons_down: u8,
 };
 
-/// Selects which host mouse events the terminal has requested.
-pub const MouseTrackingMode = enum(u8) {
+// Selects which host mouse events the terminal has requested.
+const MouseTrackingMode = enum(u8) {
     off,
     x10,
     normal,
@@ -3914,8 +4101,8 @@ pub const MouseTrackingMode = enum(u8) {
     any_event,
 };
 
-/// Selects the negotiated byte encoding for mouse reports.
-pub const MouseProtocol = enum(u8) {
+// Selects the negotiated byte encoding for mouse reports.
+const MouseProtocol = enum(u8) {
     none,
     utf8,
     sgr,
@@ -4032,8 +4219,8 @@ fn moveBaseCode(event: MouseEvent) u16 {
     return 3;
 }
 
-/// Carries Kitty keyboard flags and the set, add, or remove operation mode.
-pub const KeyFormatChange = struct {
+// Carries Kitty keyboard flags and the set, add, or remove operation mode.
+const KeyFormatChange = struct {
     resource: ?u8,
     value: ?u16,
 };
@@ -4042,8 +4229,8 @@ const saved_dec_mode_limit = 16;
 const SavedDecModeCount = u8;
 const SavedDecModeSlot = u8;
 
-/// Stores terminal modes that affect screen mutation, input encoding, and reports.
-pub const ModeState = struct {
+// Stores terminal modes that affect screen mutation, input encoding, and reports.
+const ModeState = struct {
     keyboard_action_mode: bool = false,
     application_cursor_keys: bool = false,
     application_keypad: bool = false,
@@ -4060,7 +4247,8 @@ pub const ModeState = struct {
     mouse_tracking: MouseTrackingMode = .off,
     mouse_protocol: MouseProtocol = .none,
     pointer_mode: u2 = 1,
-    saved_dec_modes: [saved_dec_mode_limit]SavedDecMode = [_]SavedDecMode{.{ .mode = 0, .state = 0 }} ** saved_dec_mode_limit,
+    saved_dec_modes: [saved_dec_mode_limit]SavedDecMode =
+        [_]SavedDecMode{.{ .mode = 0, .state = 0 }} ** saved_dec_mode_limit,
     saved_dec_mode_count: SavedDecModeCount = 0,
 };
 
@@ -4069,8 +4257,8 @@ const SavedDecMode = struct {
     state: u8,
 };
 
-/// Borrows the DEC mode facts required to answer one mode query.
-pub const DecView = struct {
+// Borrows the DEC mode facts required to answer one mode query.
+const DecView = struct {
     application_cursor_keys: bool,
     application_keypad: bool,
     reverse_screen_mode: bool,
@@ -4085,16 +4273,16 @@ pub const DecView = struct {
     synchronized_output: bool,
 };
 
-/// Borrows the ANSI mode facts required to answer one mode query.
-pub const AnsiView = struct {
+// Borrows the ANSI mode facts required to answer one mode query.
+const AnsiView = struct {
     keyboard_action_mode: bool,
     insert_mode: bool,
     send_receive_mode: bool,
     newline_mode: bool,
 };
 
-/// Returns the DEC mode report state for a supported numeric mode.
-pub fn decModeStateForView(view: DecView, mode: u16) u8 {
+// Returns the DEC mode report state for a supported numeric mode.
+fn decModeStateForView(view: DecView, mode: u16) u8 {
     return switch (mode) {
         1 => boolToDecModeState(view.application_cursor_keys),
         5 => boolToDecModeState(view.reverse_screen_mode),
@@ -4117,8 +4305,8 @@ pub fn decModeStateForView(view: DecView, mode: u16) u8 {
     };
 }
 
-/// Returns the ANSI mode report state for a supported numeric mode.
-pub fn ansiModeStateForView(view: AnsiView, mode: u16) u8 {
+// Returns the ANSI mode report state for a supported numeric mode.
+fn ansiModeStateForView(view: AnsiView, mode: u16) u8 {
     return switch (mode) {
         2 => boolToDecModeState(view.keyboard_action_mode),
         4 => boolToDecModeState(view.insert_mode),
@@ -4132,8 +4320,8 @@ fn boolToDecModeState(enabled: bool) u8 {
     return if (enabled) 1 else 2;
 }
 
-/// Returns an existing saved-mode slot or appends one within caller capacity.
-pub fn savedDecModeSlot(saved_modes: []SavedDecMode, saved_count: *SavedDecModeCount, mode: u16) SavedDecModeSlot {
+// Returns an existing saved-mode slot or appends one within caller capacity.
+fn savedDecModeSlot(saved_modes: []SavedDecMode, saved_count: *SavedDecModeCount, mode: u16) SavedDecModeSlot {
     const cap = savedDecModeCap(saved_modes);
     var slot: SavedDecModeSlot = 0;
     while (slot < saved_count.*) : (slot += 1) {
@@ -4147,8 +4335,8 @@ pub fn savedDecModeSlot(saved_modes: []SavedDecMode, saved_count: *SavedDecModeC
     return cap - 1;
 }
 
-/// Returns a saved DEC mode value when the bounded store contains it.
-pub fn savedDecModeState(saved_modes: []const SavedDecMode, saved_count: SavedDecModeCount, mode: u16) ?u8 {
+// Returns a saved DEC mode value when the bounded store contains it.
+fn savedDecModeState(saved_modes: []const SavedDecMode, saved_count: SavedDecModeCount, mode: u16) ?u8 {
     var slot: SavedDecModeSlot = 0;
     while (slot < saved_count) : (slot += 1) {
         const idx = savedIndex(slot);
@@ -4157,8 +4345,8 @@ pub fn savedDecModeState(saved_modes: []const SavedDecMode, saved_count: SavedDe
     return null;
 }
 
-/// Reports whether a DEC mode has implemented set and reset behavior.
-pub fn canSetDecMode(mode: u16) bool {
+// Reports whether a DEC mode has implemented set and reset behavior.
+fn canSetDecMode(mode: u16) bool {
     return switch (mode) {
         1, 5, 6, 7, 9, 25, 47, 66, 69, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004, 2026 => true,
         else => false,
@@ -4188,7 +4376,10 @@ test "saved dec mode slot appends and saturates" {
     try std.testing.expectEqual(@as(SavedDecModeSlot, 0), savedDecModeSlot(saved[0..], &count, 7));
     try std.testing.expectEqual(@as(SavedDecModeCount, 1), count);
     count = saved_dec_mode_limit;
-    try std.testing.expectEqual(@as(SavedDecModeSlot, saved_dec_mode_limit - 1), savedDecModeSlot(saved[0..], &count, 2004));
+    try std.testing.expectEqual(
+        @as(SavedDecModeSlot, saved_dec_mode_limit - 1),
+        savedDecModeSlot(saved[0..], &count, 2004),
+    );
 }
 
 test "saved dec mode state scans only saved entries" {
@@ -4215,8 +4406,8 @@ const FilterRect = struct {
     right: u16,
 };
 
-/// Stores DEC locator reporting mode, filter rectangle, and one-shot event flags.
-pub const Locator = struct {
+// Stores DEC locator reporting mode, filter rectangle, and one-shot event flags.
+const Locator = struct {
     mode: ReportingMode = .disabled,
     coordinate_unit: u16 = 0,
     report_button_down: bool = false,
@@ -4229,8 +4420,8 @@ pub const Locator = struct {
     last_buttons_down: u8 = 0,
 };
 
-/// Sets locator reporting and coordinate units, disabling unsupported values.
-pub fn setReporting(state: *Locator, mode: u16, unit: u16) void {
+// Sets locator reporting and coordinate units, disabling unsupported values.
+fn setReporting(state: *Locator, mode: u16, unit: u16) void {
     state.mode = switch (mode) {
         1 => .continuous,
         2 => .one_shot,
@@ -4239,8 +4430,8 @@ pub fn setReporting(state: *Locator, mode: u16, unit: u16) void {
     state.coordinate_unit = unit;
 }
 
-/// Installs an optional locator filter rectangle and clears its outside latch.
-pub fn setFilter(state: *Locator, area: OptionalRectArea) void {
+// Installs an optional locator filter rectangle and clears its outside latch.
+fn setFilter(state: *Locator, area: OptionalRectArea) void {
     const row = state.last_row orelse 0;
     const col = state.last_col orelse 0;
     const top = area.top orelse row;
@@ -4255,8 +4446,8 @@ pub fn setFilter(state: *Locator, area: OptionalRectArea) void {
     state.filter_rect = .{ .top = top, .left = left, .bottom = bottom, .right = right };
 }
 
-/// Replaces one-shot locator event flags from borrowed numeric modes.
-pub fn setEvents(state: *Locator, modes: []const u16) void {
+// Replaces one-shot locator event flags from borrowed numeric modes.
+fn setEvents(state: *Locator, modes: []const u16) void {
     for (modes) |mode| switch (mode) {
         0 => {
             state.report_button_down = false;
@@ -4271,8 +4462,8 @@ pub fn setEvents(state: *Locator, modes: []const u16) void {
     };
 }
 
-/// Appends a bounded locator status or position reply for one request parameter.
-pub fn appendReportForRequest(
+// Appends a bounded locator status or position reply for one request parameter.
+fn appendReportForRequest(
     state: *Locator,
     allocator: std.mem.Allocator,
     output: *std.ArrayList(u8),
@@ -4284,11 +4475,20 @@ pub fn appendReportForRequest(
         try appendOutput(output, allocator, "\x1b[0&w");
         return;
     }
-    try appendReport(state, allocator, output, encode_buf, 1, state.last_buttons_down, state.last_row.?, state.last_col.?);
+    try appendReport(
+        state,
+        allocator,
+        output,
+        encode_buf,
+        1,
+        state.last_buttons_down,
+        state.last_row.?,
+        state.last_col.?,
+    );
 }
 
-/// Appends the supported locator device-status reply for parameter 53.
-pub fn appendDeviceStatusReport(
+// Appends the supported locator device-status reply for parameter 53.
+fn appendDeviceStatusReport(
     allocator: std.mem.Allocator,
     output: *std.ArrayList(u8),
     encode_buf: []u8,
@@ -4302,11 +4502,11 @@ pub fn appendDeviceStatusReport(
     try appendOutput(output, allocator, text);
 }
 
-/// Updates representable locator coordinates and appends enabled reports.
-///
-/// Rows outside the retained `u16` coordinate domain are ignored. Report
-/// allocation or capacity failure preserves one-shot and filter latches.
-pub fn handleMouseEvent(
+// Updates representable locator coordinates and appends enabled reports.
+//
+// Rows outside the retained `u16` coordinate domain are ignored. Report
+// allocation or capacity failure preserves one-shot and filter latches.
+fn handleMouseEvent(
     state: *Locator,
     allocator: std.mem.Allocator,
     output: *std.ArrayList(u8),
@@ -4350,10 +4550,23 @@ pub fn handleMouseEvent(
     if (event_code) |code| try appendReport(state, allocator, output, encode_buf, code, event.buttons_down, row, col);
 }
 
-fn appendReport(state: *Locator, allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, event_code: u16, buttons_down: u8, row: u16, col: u16) ApplyError!void {
+fn appendReport(
+    state: *Locator,
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    event_code: u16,
+    buttons_down: u8,
+    row: u16,
+    col: u16,
+) ApplyError!void {
     const button_mask = buttonsMask(buttons_down);
     const coords = coordinates(state, row, col);
-    const text = formatLocatorReport(encode_buf, "\x1b[{d};{d};{d};{d};0&w", .{ event_code, button_mask, coords.row + 1, coords.col + 1 });
+    const text = formatLocatorReport(
+        encode_buf,
+        "\x1b[{d};{d};{d};{d};0&w",
+        .{ event_code, button_mask, coords.row + 1, coords.col + 1 },
+    );
     try appendOutput(output, allocator, text);
     if (state.mode == .one_shot) state.mode = .disabled;
 }
@@ -4394,8 +4607,8 @@ const ClipboardDrainResult = union(enum) {
     failed,
 };
 
-/// Reports allocation failure or rejection by a concrete retained-consequence bound.
-pub const ApplyError = error{
+// Reports allocation failure or rejection by a concrete retained-consequence bound.
+const ApplyError = error{
     OutOfMemory,
     ConsequenceLimit,
 };
@@ -4412,15 +4625,15 @@ const hyperlink_target_max_bytes: u32 = 2 * 1024;
 pub const max_metadata_bytes: u32 = 1024;
 /// A terminal instance interns at most 4096 distinct hyperlink targets.
 const hyperlink_target_max_count: u32 = 4096;
-/// Owns the latest bounded OSC 133 shell mark.
-pub const ShellMark = struct {
+// Owns the latest bounded OSC 133 shell mark.
+const ShellMark = struct {
     kind: u8 = 0,
     status: ?i32 = null,
     metadata: []u8 = &[_]u8{},
 };
 
-/// Owns validated shell-integration identity until replacement or deinit.
-pub const ShellIntegration = struct {
+// Owns validated shell-integration identity until replacement or deinit.
+const ShellIntegration = struct {
     version: u32,
     shell: ?[]u8,
 };
@@ -4431,8 +4644,8 @@ comptime {
     std.debug.assert(hyperlink_target_max_count > 0);
 }
 
-/// Converts a slice length after asserting it fits the protocol-owned u32 domain.
-pub fn byteCount(bytes: []const u8) u32 {
+// Converts a slice length after asserting it fits the protocol-owned u32 domain.
+fn byteCount(bytes: []const u8) u32 {
     std.debug.assert(bytes.len <= std.math.maxInt(u32));
     return @intCast(bytes.len);
 }
@@ -4724,14 +4937,14 @@ fn replaceShellMarkAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("7", state.shell_mark.metadata);
 }
 
-/// Appends a reply transactionally within the accumulated-output bound.
-pub fn appendOutput(output: *std.ArrayList(u8), allocator: std.mem.Allocator, bytes: []const u8) ApplyError!void {
+// Appends a reply transactionally within the accumulated-output bound.
+fn appendOutput(output: *std.ArrayList(u8), allocator: std.mem.Allocator, bytes: []const u8) ApplyError!void {
     try ensureAppendBound(byteCount(output.items), byteCount(bytes), pending_output_max_bytes);
     try output.appendSlice(allocator, bytes);
 }
 
-/// Restores drained reply bytes ahead of current output without partial mutation.
-pub fn restorePendingOutput(output: *std.ArrayList(u8), len: u32) void {
+// Restores drained reply bytes ahead of current output without partial mutation.
+fn restorePendingOutput(output: *std.ArrayList(u8), len: u32) void {
     std.debug.assert(len <= byteCount(output.items));
     output.items.len = len;
 }
@@ -4910,33 +5123,33 @@ fn drainClipboardAllocation(result_allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(?[]const u8, null), state.pendingClipboardSet());
 }
 
-/// Borrows one parsed OSC 133 shell mark until parser mutation.
-pub const ItermShellMark = struct {
+// Borrows one parsed OSC 133 shell mark until parser mutation.
+const ItermShellMark = struct {
     kind: u8,
     status: ?i32,
     metadata: []const u8,
 };
 
-/// Borrows a decimal version and optional bounded `shell` identity.
-/// Duplicate, malformed, or unknown suffix keys reject the complete update.
-pub const ItermShellIntegration = struct {
+// Borrows a decimal version and optional bounded `shell` identity.
+// Duplicate, malformed, or unknown suffix keys reject the complete update.
+const ItermShellIntegration = struct {
     version: u32,
     shell: ?[]const u8,
 };
 
-/// Bounds one shell name without creating a generic metadata namespace.
-pub const max_shell_name_bytes: u8 = 32;
+// Bounds one shell name without creating a generic metadata namespace.
+const max_shell_name_bytes: u8 = 32;
 
-/// Names iTerm controls whose effects are safe inside the native terminal contract.
-pub const ItermCommand = union(enum) {
+// Names iTerm controls whose effects are safe inside the native terminal contract.
+const ItermCommand = union(enum) {
     cursor_shape: ScreenCursorShape,
     report_cell_size,
     set_colors: []const u8,
     shell_integration: ItermShellIntegration,
 };
 
-/// Decodes one borrowed OSC 50 or 1337 payload under its exact command family.
-pub fn parse(osc_command: u16, payload: []const u8) ?ItermCommand {
+// Decodes one borrowed OSC 50 or 1337 payload under its exact command family.
+fn parse(osc_command: u16, payload: []const u8) ?ItermCommand {
     return switch (osc_command) {
         50 => parseCursorShape(payload),
         1337 => parse1337(payload),
@@ -4999,8 +5212,8 @@ fn isShellNameByte(byte: u8) bool {
         byte == '.' or byte == '_' or byte == '+' or byte == '-';
 }
 
-/// Parses one OSC 133 mark and optional command-exit status.
-pub fn parseShellMark(payload: []const u8) ?ItermShellMark {
+// Parses one OSC 133 mark and optional command-exit status.
+fn parseShellMark(payload: []const u8) ?ItermShellMark {
     if (payload.len == 0) return null;
     const separator = std.mem.indexOfScalar(u8, payload, ';') orelse payload.len;
     const kind = payload[0];
@@ -5034,17 +5247,17 @@ test "iTerm safe controls decode without accepting policy commands" {
 
 const KittyColorState = TerminalColorState;
 
-/// Selects one terminal-owned Kitty color-stack operation.
-pub const KittyColorCommand = enum { push, pop };
+// Selects one terminal-owned Kitty color-stack operation.
+const KittyColorCommand = enum { push, pop };
 
-/// Stores at most sixteen complete terminal color states for Kitty push and pop.
-pub const KittyColorStack = struct {
+// Stores at most sixteen complete terminal color states for Kitty push and pop.
+const KittyColorStack = struct {
     stack: [16]KittyColorState = undefined,
     len: u8 = 0,
 };
 
-/// Pushes a color state, dropping the oldest entry when the stack is full.
-pub fn pushState(stack: *KittyColorStack, colors: *const KittyColorState) void {
+// Pushes a color state, dropping the oldest entry when the stack is full.
+fn pushState(stack: *KittyColorStack, colors: *const KittyColorState) void {
     if (stack.len == stack.stack.len) {
         std.mem.copyForwards(KittyColorState, stack.stack[0 .. stack.stack.len - 1], stack.stack[1..stack.stack.len]);
         stack.len -= 1;
@@ -5053,15 +5266,15 @@ pub fn pushState(stack: *KittyColorStack, colors: *const KittyColorState) void {
     stack.len += 1;
 }
 
-/// Restores the newest color state when present and decrements the exposed depth.
-pub fn popState(stack: *KittyColorStack, colors: *KittyColorState) void {
+// Restores the newest color state when present and decrements the exposed depth.
+fn popState(stack: *KittyColorStack, colors: *KittyColorState) void {
     if (stack.len == 0) return;
     stack.len -= 1;
     colors.* = stack.stack[stack.len];
 }
 
-/// Applies one Kitty color control or appends its bounded query reply.
-pub fn handleKittyControl(
+// Applies one Kitty color control or appends its bounded query reply.
+fn handleKittyControl(
     allocator: std.mem.Allocator,
     colors: *KittyColorState,
     output: *std.ArrayList(u8),
@@ -5107,11 +5320,11 @@ fn appendKittyQueryReply(
 }
 
 const key_report_max_bytes = 16;
-/// Howl implements every defined Kitty progressive keyboard flag.
-pub const supported_flags: u8 = 1 | 2 | 4 | 8 | 16;
+// Howl implements every defined Kitty progressive keyboard flag.
+const supported_flags: u8 = 1 | 2 | 4 | 8 | 16;
 
-/// Stores current Kitty keyboard flags and at most sixteen prior flag sets.
-pub const KittyKeyStack = struct {
+// Stores current Kitty keyboard flags and at most sixteen prior flag sets.
+const KittyKeyStack = struct {
     flags: u8 = 0,
     stack: [16]u8 = [_]u8{0} ** 16,
     len: u8 = 0,
@@ -5182,8 +5395,8 @@ const ScreenState = struct {
     keyboard: KittyKeyStack = .{},
 };
 
-/// Combines per-screen keyboard stacks with the terminal color stack.
-pub const KittyState = struct {
+// Combines per-screen keyboard stacks with the terminal color stack.
+const KittyState = struct {
     main: ScreenState = .{},
     alt: ScreenState = .{},
     color_stack: KittyColorStack = .{},
@@ -5214,8 +5427,8 @@ pub const DcsPayloadKind = enum {
     decaupss,
 };
 
-/// Borrows one complete DCS payload for immediate semantic decoding.
-pub const DcsPayload = struct {
+// Borrows one complete DCS payload for immediate semantic decoding.
+const DcsPayload = struct {
     kind: DcsPayloadKind,
     payload: []const u8,
 };
@@ -5232,8 +5445,8 @@ pub const LegacyControlKind = enum {
     hp_memory_lock,
 };
 
-/// Borrows one terminal color key and optional replacement value.
-pub const TerminalColorControlCommand = struct {
+// Borrows one terminal color key and optional replacement value.
+const TerminalColorControlCommand = struct {
     command: u16,
     payload: []const u8,
 };
@@ -5261,8 +5474,8 @@ const C0 = enum(u8) {
     _,
 };
 
-/// Classifies one byte as its exact C0 code without rejecting unknown values.
-pub fn fromByte(byte: u8) C0 {
+// Classifies one byte as its exact C0 code without rejecting unknown values.
+fn fromByte(byte: u8) C0 {
     return @enumFromInt(byte);
 }
 
@@ -5277,8 +5490,8 @@ fn c0Action(control: C0) ?C0Action {
     };
 }
 
-/// Converts a C0 code into its terminal mutation, or null when it is ignored.
-pub fn c0Process(control: C0) ?SemanticEvent {
+// Converts a C0 code into its terminal mutation, or null when it is ignored.
+fn c0Process(control: C0) ?SemanticEvent {
     switch (control) {
         .file_separator => return SemanticEvent{ .legacy_control = .tek_point_plot },
         .group_separator => return SemanticEvent{ .legacy_control = .tek_graph },
@@ -5327,16 +5540,23 @@ test "c0 ignores unsupported controls" {
     try std.testing.expectEqual(@as(?SemanticEvent, null), c0Process(fromByte(0x00)));
 }
 
-/// Routes one completed borrowed CSI sequence; unsupported combinations return null.
-pub fn csiProcess(final: u8, params: []const i32, separators: parser_mod.CsiSeparatorList, leader_byte: u8, is_private: bool, intermediates: []const u8) ?SemanticEvent {
+// Routes one completed borrowed CSI sequence; unsupported combinations return null.
+fn csiProcess(
+    final: u8,
+    params: []const i32,
+    separators: parser_mod.CsiSeparatorList,
+    leader_byte: u8,
+    is_private: bool,
+    intermediates: []const u8,
+) ?SemanticEvent {
     if (is_private) return decodePrivateCsi(final, params, leader_byte, intermediates);
     if (leader_byte != 0) return decodeCsiLeader(final, params, leader_byte, intermediates);
     if (decodeCsiIntermediate(final, params, intermediates)) |event| return event;
     return decodeCsi(final, params, separators, intermediates);
 }
 
-/// Decodes one CSI sequence with intermediates; unsupported forms return null.
-pub fn decodeCsiIntermediate(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
+// Decodes one CSI sequence with intermediates; unsupported forms return null.
+fn decodeCsiIntermediate(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
     if (intermediates.len == 2) return processPair(final, params, intermediates);
     if (intermediates.len != 1) return null;
     return switch (intermediates[0]) {
@@ -5464,8 +5684,8 @@ fn rectFill(params: []const i32) ?SemanticEvent {
     return .{ .rect_fill = .{ .area = rectArea(params, 1), .ch = ch } };
 }
 
-/// Decodes one leader-qualified CSI sequence; unsupported forms return null.
-pub fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []const u8) ?SemanticEvent {
+// Decodes one leader-qualified CSI sequence; unsupported forms return null.
+fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []const u8) ?SemanticEvent {
     return switch (leader) {
         '>' => switch (final) {
             'c' => SemanticEvent.secondary_device_attributes,
@@ -5475,7 +5695,12 @@ pub fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates
                 SemanticEvent.xtversion
             else
                 null,
-            'm' => if (paramAtOrDefault0(params, 0) == 4) SemanticEvent{ .modify_other_keys_set = @intCast(@max(if (params.len >= 2) params[1] else 0, 0)) } else null,
+            'm' => if (paramAtOrDefault0(params, 0) == 4)
+                SemanticEvent{ .modify_other_keys_set = @intCast(
+                    @max(if (params.len >= 2) params[1] else 0, 0),
+                ) }
+            else
+                null,
             'n' => if (paramAtOrDefault0(params, 0) == 4) SemanticEvent.modify_other_keys_disable else null,
             'p' => pointerMode(params),
             'u' => SemanticEvent{ .kitty_keyboard_push = keyboardFlags(params) },
@@ -5519,15 +5744,15 @@ fn pointerMode(params: []const i32) SemanticEvent {
     return SemanticEvent{ .pointer_mode = @intCast(@min(value, 3)) };
 }
 
-/// Tracks colon separators across the parser-bounded CSI parameter array.
-/// Stores at most the parser CSI parameter bound as clamped u16 mode values.
-pub const ModeParams = struct {
+// Tracks colon separators across the parser-bounded CSI parameter array.
+// Stores at most the parser CSI parameter bound as clamped u16 mode values.
+const ModeParams = struct {
     params: [parser_mod.max_params]u16,
     param_count: u8,
 };
 
-/// Stores a bounded suffix of clamped u16 rectangular attribute values.
-pub const AttrParams = struct {
+// Stores a bounded suffix of clamped u16 rectangular attribute values.
+const AttrParams = struct {
     params: [parser_mod.max_params]u16,
     param_count: u8,
 };
@@ -5537,8 +5762,8 @@ fn paramCount32(items: []const i32) u32 {
     return @intCast(items.len);
 }
 
-/// Projects positive one-based parameters into optional zero-based rectangle edges.
-pub fn optionalRectArea(params: []const i32) OptionalRectArea {
+// Projects positive one-based parameters into optional zero-based rectangle edges.
+fn optionalRectArea(params: []const i32) OptionalRectArea {
     return .{
         .top = if (params.len >= 1 and params[0] > 0) paramOrDefault1(params[0]) - 1 else null,
         .left = if (params.len >= 2 and params[1] > 0) paramOrDefault1(params[1]) - 1 else null,
@@ -5547,8 +5772,8 @@ pub fn optionalRectArea(params: []const i32) OptionalRectArea {
     };
 }
 
-/// Projects a parameter suffix into a zero-based rectangle with open bottom and right defaults.
-pub fn rectArea(params: []const i32, start_idx: u8) RectArea {
+// Projects a parameter suffix into a zero-based rectangle with open bottom and right defaults.
+fn rectArea(params: []const i32, start_idx: u8) RectArea {
     const start = @as(u32, start_idx);
     const param_len = paramCount32(params);
     return .{
@@ -5559,8 +5784,8 @@ pub fn rectArea(params: []const i32, start_idx: u8) RectArea {
     };
 }
 
-/// Copies a bounded parameter suffix into rectangular attribute storage.
-pub fn attrParams(params: []const i32, start_idx: u8) AttrParams {
+// Copies a bounded parameter suffix into rectangular attribute storage.
+fn attrParams(params: []const i32, start_idx: u8) AttrParams {
     var out = [_]u16{0} ** parser_mod.max_params;
     const param_len = paramCount32(params);
     var idx: u8 = start_idx;
@@ -5574,28 +5799,28 @@ pub fn attrParams(params: []const i32, start_idx: u8) AttrParams {
     return .{ .params = out, .param_count = @intCast(dst) };
 }
 
-/// Accepts the ECMA-48 graphic ranges permitted by DECFRA.
-pub fn isValidRectFillChar(ch: u16) bool {
+// Accepts the ECMA-48 graphic ranges permitted by DECFRA.
+fn isValidRectFillChar(ch: u16) bool {
     return (ch >= 32 and ch <= 126) or (ch >= 160 and ch <= 255);
 }
 
-/// Returns one for absent or nonpositive parameters and clamps positive values to u16.
-pub fn paramAtOrDefault1(params: []const i32, idx: u8) u16 {
+// Returns one for absent or nonpositive parameters and clamps positive values to u16.
+fn paramAtOrDefault1(params: []const i32, idx: u8) u16 {
     return if (paramCount32(params) > idx) paramOrDefault1(params[idx]) else 1;
 }
 
-/// Returns zero for absent or nonpositive parameters and clamps positive values to u16.
-pub fn paramAtOrDefault0(params: []const i32, idx: u8) u16 {
+// Returns zero for absent or nonpositive parameters and clamps positive values to u16.
+fn paramAtOrDefault0(params: []const i32, idx: u8) u16 {
     return if (paramCount32(params) > idx) paramOrDefault0(params[idx]) else 0;
 }
 
-/// Returns an absent-zero key-format parameter clamped to u8.
-pub fn keyFormatParamAtOrDefault0(params: []const i32, idx: u8) u8 {
+// Returns an absent-zero key-format parameter clamped to u8.
+fn keyFormatParamAtOrDefault0(params: []const i32, idx: u8) u8 {
     return @intCast(@min(paramAtOrDefault0(params, idx), std.math.maxInt(u8)));
 }
 
-/// Maps a numeric erase parameter to the terminal erase domain.
-pub fn eraseMode(v: i32) ScreenEraseMode {
+// Maps a numeric erase parameter to the terminal erase domain.
+fn eraseMode(v: i32) ScreenEraseMode {
     return switch (v) {
         1 => .start_to_cursor,
         2 => .all,
@@ -5604,8 +5829,8 @@ pub fn eraseMode(v: i32) ScreenEraseMode {
     };
 }
 
-/// Maps DECSCUSR parameters to an explicit cursor-style command.
-pub fn cursorStyle(param: u16) CursorStyleCommand {
+// Maps DECSCUSR parameters to an explicit cursor-style command.
+fn cursorStyle(param: u16) CursorStyleCommand {
     return switch (param) {
         0, 1 => .{ .program_override = .{ .shape = .block, .blink = true } },
         2 => .{ .program_override = .{ .shape = .block, .blink = false } },
@@ -5617,8 +5842,8 @@ pub fn cursorStyle(param: u16) CursorStyleCommand {
     };
 }
 
-/// Copies parser-bounded mode parameters into clamped u16 storage.
-pub fn collectParams(params: []const i32) ModeParams {
+// Copies parser-bounded mode parameters into clamped u16 storage.
+fn collectParams(params: []const i32) ModeParams {
     var out = [_]u16{0} ** parser_mod.max_params;
     const n = @min(paramCount32(params), parser_mod.max_params);
     var idx: u8 = 0;
@@ -5638,13 +5863,18 @@ fn paramOrDefault0(v: i32) u16 {
     return @intCast(v);
 }
 
-/// Reports whether a borrowed intermediate-byte sequence contains one byte.
-pub fn intermediatesHas(intermediates: []const u8, needle: u8) bool {
+// Reports whether a borrowed intermediate-byte sequence contains one byte.
+fn intermediatesHas(intermediates: []const u8, needle: u8) bool {
     return std.mem.indexOfScalar(u8, intermediates, needle) != null;
 }
 
-/// Decodes one ordinary CSI sequence; unsupported forms return null.
-pub fn decodeCsi(final: u8, params: []const i32, separators: parser_mod.CsiSeparatorList, intermediates: []const u8) ?SemanticEvent {
+// Decodes one ordinary CSI sequence; unsupported forms return null.
+fn decodeCsi(
+    final: u8,
+    params: []const i32,
+    separators: parser_mod.CsiSeparatorList,
+    intermediates: []const u8,
+) ?SemanticEvent {
     switch (final) {
         '@' => return SemanticEvent{ .insert_chars = paramAtOrDefault1(params, 0) },
         'A' => return SemanticEvent{ .cursor_up = paramAtOrDefault1(params, 0) },
@@ -5671,10 +5901,16 @@ pub fn decodeCsi(final: u8, params: []const i32, separators: parser_mod.CsiSepar
         'h' => return SemanticEvent{ .ansi_mode_set = collectParams(params) },
         'l' => return SemanticEvent{ .ansi_mode_reset = collectParams(params) },
         'm' => return SemanticEvent{ .sgr = .{ .params = params, .separators = separators } },
-        's' => if (params.len == 0) return SemanticEvent.save_cursor else return SemanticEvent{ .set_left_right_margins = .{
-            .left = paramAtOrDefault1(params, 0) - 1,
-            .right = if (params.len >= 2 and params[1] > 0) paramAtOrDefault1(params, 1) - 1 else null,
-        } },
+        's' => if (params.len == 0)
+            return SemanticEvent.save_cursor
+        else
+            return SemanticEvent{ .set_left_right_margins = .{
+                .left = paramAtOrDefault1(params, 0) - 1,
+                .right = if (params.len >= 2 and params[1] > 0)
+                    paramAtOrDefault1(params, 1) - 1
+                else
+                    null,
+            } },
         'u' => return SemanticEvent.restore_cursor,
         'H', 'f' => {
             const row = paramAtOrDefault1(params, 0);
@@ -5714,8 +5950,8 @@ fn decodeEraseDisplay(mode: ScreenEraseMode, protected: bool) SemanticEvent {
     };
 }
 
-/// Decodes one private CSI sequence; unsupported forms return null.
-pub fn decodePrivateCsi(final: u8, params: []const i32, leader: u8, intermediates: []const u8) ?SemanticEvent {
+// Decodes one private CSI sequence; unsupported forms return null.
+fn decodePrivateCsi(final: u8, params: []const i32, leader: u8, intermediates: []const u8) ?SemanticEvent {
     if (leader != '?') return null;
     if (directQuery(final, params)) |event| return event;
     if (params.len == 0) return null;
@@ -5795,7 +6031,11 @@ fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
         1004 => boolEvent(final, .{ .focus_reporting = true }, .{ .focus_reporting = false }),
         2004 => boolEvent(final, .{ .bracketed_paste = true }, .{ .bracketed_paste = false }),
         2026 => boolEvent(final, .{ .synchronized_output = true }, .{ .synchronized_output = false }),
-        1045 => boolEvent(final, .{ .extended_reverse_wraparound_mode = true }, .{ .extended_reverse_wraparound_mode = false }),
+        1045 => boolEvent(
+            final,
+            .{ .extended_reverse_wraparound_mode = true },
+            .{ .extended_reverse_wraparound_mode = false },
+        ),
         else => null,
     };
 }
@@ -5815,9 +6055,21 @@ fn mouseModeToggle(final: u8, mode: i32) ?SemanticEvent {
 
 fn altScreenToggle(final: u8, mode: i32) ?SemanticEvent {
     return switch (mode) {
-        47 => boolEvent(final, .{ .enter_alt_screen = .{ .clear = false, .save_cursor = false } }, .{ .exit_alt_screen = .{ .restore_cursor = false } }),
-        1047 => boolEvent(final, .{ .enter_alt_screen = .{ .clear = true, .save_cursor = false } }, .{ .exit_alt_screen = .{ .restore_cursor = false } }),
-        1049 => boolEvent(final, .{ .enter_alt_screen = .{ .clear = true, .save_cursor = true } }, .{ .exit_alt_screen = .{ .restore_cursor = true } }),
+        47 => boolEvent(
+            final,
+            .{ .enter_alt_screen = .{ .clear = false, .save_cursor = false } },
+            .{ .exit_alt_screen = .{ .restore_cursor = false } },
+        ),
+        1047 => boolEvent(
+            final,
+            .{ .enter_alt_screen = .{ .clear = true, .save_cursor = false } },
+            .{ .exit_alt_screen = .{ .restore_cursor = false } },
+        ),
+        1049 => boolEvent(
+            final,
+            .{ .enter_alt_screen = .{ .clear = true, .save_cursor = true } },
+            .{ .exit_alt_screen = .{ .restore_cursor = true } },
+        ),
         else => null,
     };
 }
@@ -5847,15 +6099,21 @@ fn requestResourcePayload(data: []const u8) ?[]const u8 {
 
 const DcsEvent = @FieldType(parser_mod.Event, "dcs");
 
-/// Decodes one completed borrowed DCS payload; unsupported commands return null.
-pub fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
-    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '$' and dcs.final == 'q') return SemanticEvent{ .dcs_request_status = dcs.payload };
-    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'q') return SemanticEvent{ .dcs_request_termcap = dcs.payload };
-    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'Q') return SemanticEvent{ .dcs_request_resource = dcs.payload };
-    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'p') return SemanticEvent{ .dcs_payload = .{ .kind = .xtsettcap, .payload = dcs.payload } };
-    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '$' and dcs.final == 't') return SemanticEvent{ .dcs_payload = .{ .kind = .decrsps, .payload = dcs.body } };
+// Decodes one completed borrowed DCS payload; unsupported commands return null.
+fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
+    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '$' and dcs.final == 'q')
+        return SemanticEvent{ .dcs_request_status = dcs.payload };
+    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'q')
+        return SemanticEvent{ .dcs_request_termcap = dcs.payload };
+    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'Q')
+        return SemanticEvent{ .dcs_request_resource = dcs.payload };
+    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'p')
+        return SemanticEvent{ .dcs_payload = .{ .kind = .xtsettcap, .payload = dcs.payload } };
+    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '$' and dcs.final == 't')
+        return SemanticEvent{ .dcs_payload = .{ .kind = .decrsps, .payload = dcs.body } };
     if (dcs.final == '|') return SemanticEvent{ .dcs_payload = .{ .kind = .decudk, .payload = dcs.body } };
-    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '!' and dcs.final == 'u') return SemanticEvent{ .dcs_payload = .{ .kind = .decaupss, .payload = dcs.body } };
+    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '!' and dcs.final == 'u')
+        return SemanticEvent{ .dcs_payload = .{ .kind = .decaupss, .payload = dcs.body } };
     return null;
 }
 
@@ -5979,8 +6237,8 @@ fn escAction(final: u8) ?EscAction {
     };
 }
 
-/// Decodes one completed ESC event; unsupported combinations return null.
-pub fn escProcess(final: u8) ?SemanticEvent {
+// Decodes one completed ESC event; unsupported combinations return null.
+fn escProcess(final: u8) ?SemanticEvent {
     switch (final) {
         0x17 => return SemanticEvent{ .legacy_control = .tek_copy },
         0x1C => return SemanticEvent{ .legacy_control = .tek_special_point_plot },
@@ -6025,8 +6283,8 @@ test "esc maps low legacy controls and ignores unsupported finals" {
     try std.testing.expectEqual(@as(?SemanticEvent, null), escProcess('z'));
 }
 
-/// Reports malformed OSC 52 syntax, unsupported query input, invalid base64, or allocation failure.
-pub const ClipboardSetError = error{
+// Reports malformed OSC 52 syntax, unsupported query input, invalid base64, or allocation failure.
+const ClipboardSetError = error{
     InvalidCharacter,
     InvalidOsc52Payload,
     InvalidPadding,
@@ -6048,8 +6306,8 @@ const ClipboardIntoError = error{
     UnsupportedOsc52Query,
 };
 
-/// Decodes one complete borrowed OSC action into a canonical semantic event.
-pub fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
+// Decodes one complete borrowed OSC action into a canonical semantic event.
+fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
     return switch (osc) {
         // A commandless OSC is the parser's legacy title form, not OSC 0.
         .raw_title => |v| SemanticEvent{ .title_set = v.payload },
@@ -6086,8 +6344,8 @@ pub fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
     };
 }
 
-/// Allocates and decodes one base64 OSC 52 payload into caller-owned memory.
-pub fn decodeClipboardSet(allocator: std.mem.Allocator, raw: []const u8) ClipboardSetError![]u8 {
+// Allocates and decodes one base64 OSC 52 payload into caller-owned memory.
+fn decodeClipboardSet(allocator: std.mem.Allocator, raw: []const u8) ClipboardSetError![]u8 {
     const decoded_len = try decodedClipboardSetSize(raw);
     const out = try allocator.alloc(u8, @intCast(decoded_len));
     errdefer allocator.free(out);
@@ -6194,12 +6452,25 @@ test "OSC title commands retain exact title and icon semantics" {
 }
 
 test "OSC hyperlink actions map to semantic events" {
-    try std.testing.expectEqualStrings("https://example.com", oscProcess(.{ .hyperlink = .{ .payload = ";https://example.com", .term = .bel } }).?.hyperlink_set);
+    try std.testing.expectEqualStrings(
+        "https://example.com",
+        oscProcess(.{ .hyperlink = .{
+            .payload = ";https://example.com",
+            .term = .bel,
+        } }).?.hyperlink_set,
+    );
     try std.testing.expect(oscProcess(.{ .hyperlink = .{ .payload = ";", .term = .bel } }).? == .hyperlink_clear);
 }
 
 test "OSC clipboard and color controls preserve payloads" {
-    try std.testing.expectEqualStrings("c;Zm9v", oscProcess(.{ .clipboard = .{ .command = 52, .payload = "c;Zm9v", .term = .bel } }).?.clipboard_set);
+    try std.testing.expectEqualStrings(
+        "c;Zm9v",
+        oscProcess(.{ .clipboard = .{
+            .command = 52,
+            .payload = "c;Zm9v",
+            .term = .bel,
+        } }).?.clipboard_set,
+    );
 
     const kitty_color = oscProcess(.{ .kitty_color = .{ .command = 21, .payload = "foreground=?", .term = .st } }).?;
     try std.testing.expectEqual(@as(u16, 21), kitty_color.color_control.command);
@@ -6390,8 +6661,8 @@ pub const SemanticEvent = union(enum) {
     reset_default_tab_stops,
 };
 
-/// Identifies whether a visible row comes from history or the active screen.
-pub const RowSource = union(enum) {
+// Identifies whether a visible row comes from history or the active screen.
+const RowSource = union(enum) {
     history: u32,
     screen: u16,
 };
@@ -6461,15 +6732,15 @@ pub const View = struct {
     }
 };
 
-/// Pairs a borrowed visible view with its active selection.
-pub const SurfaceSnapshot = struct {
+// Pairs a borrowed visible view with its active selection.
+const SurfaceSnapshot = struct {
     view: View,
     dirty: ?Screen.DirtyRows,
     selection: ?TerminalSelection,
 };
 
-/// Owns primary and alternate screens plus their independent selections.
-pub const Set = struct {
+// Owns primary and alternate screens plus their independent selections.
+const Set = struct {
     primary: Screen,
     alternate: Screen,
     primary_selection: SelectionState = SelectionState.init(),
@@ -6565,8 +6836,8 @@ pub fn visibleView(screen_state: *const Set, scrollback_offset: u32) View {
     };
 }
 
-/// Builds a borrowed view and selection at a clamped u64 offset.
-pub fn projectSurface(screen_state: *const Set, scrollback_offset: u64) SurfaceSnapshot {
+// Builds a borrowed view and selection at a clamped u64 offset.
+fn projectSurface(screen_state: *const Set, scrollback_offset: u64) SurfaceSnapshot {
     const history_count: u64 = if (screen_state.alt_active)
         0
     else
@@ -6640,8 +6911,8 @@ pub const TerminalSelection = struct {
     end: SelectionPos,
 };
 
-/// Selection lifecycle state container.
-pub const SelectionState = struct {
+// Selection lifecycle state container.
+const SelectionState = struct {
     selection: TerminalSelection,
 
     /// Initialize inactive selection state.
@@ -6699,8 +6970,8 @@ pub const SelectionState = struct {
     }
 };
 
-/// Returns selection endpoints in document order without mutating selection state.
-pub fn orderedSelection(sel: TerminalSelection) struct { start: SelectionPos, end: SelectionPos } {
+// Returns selection endpoints in document order without mutating selection state.
+fn orderedSelection(sel: TerminalSelection) struct { start: SelectionPos, end: SelectionPos } {
     if (sel.start.row < sel.end.row) return .{ .start = sel.start, .end = sel.end };
     if (sel.start.row > sel.end.row) return .{ .start = sel.end, .end = sel.start };
     if (sel.start.col <= sel.end.col) return .{ .start = sel.start, .end = sel.end };
@@ -6807,8 +7078,8 @@ pub const Range = struct {
     end_exclusive: u16,
 };
 
-/// Failures produced while copying selected cells into UTF-8 caller storage.
-pub const CopyError = error{
+// Failures produced while copying selected cells into UTF-8 caller storage.
+const CopyError = error{
     CodepointTooLarge,
     OutOfMemory,
     Utf8CannotEncodeSurrogateHalf,
@@ -6871,11 +7142,11 @@ pub fn visibleRange(view: View, selected: TerminalSelection, row: u16) ?Range {
     return .{ .start = range_start, .end_exclusive = range_end };
 }
 
-/// Copy selected cells into caller-owned UTF-8 memory.
-///
-/// The caller owns a successful non-empty result. Invalid stored codepoints
-/// are reported exactly instead of trapping during integer narrowing.
-pub fn copyText(allocator: std.mem.Allocator, screen_state: *const Set, selected: ?TerminalSelection) CopyError![]const u8 {
+// Copy selected cells into caller-owned UTF-8 memory.
+//
+// The caller owns a successful non-empty result. Invalid stored codepoints
+// are reported exactly instead of trapping during integer narrowing.
+fn copyText(allocator: std.mem.Allocator, screen_state: *const Set, selected: ?TerminalSelection) CopyError![]const u8 {
     const active_selection = selected orelse return &.{};
     const ordered_selection = orderedSelection(active_selection);
     var out = std.ArrayList(u8).empty;
@@ -6907,8 +7178,8 @@ pub fn copyText(allocator: std.mem.Allocator, screen_state: *const Set, selected
     return out.toOwnedSlice(allocator);
 }
 
-/// Tracks monotonic mutation, snapshot, and acknowledgement identities.
-pub const Publication = struct {
+// Tracks monotonic mutation, snapshot, and acknowledgement identities.
+const Publication = struct {
     seq: u64 = 1,
     dirty_generation: u64 = 0,
     scrollback_offset: u64 = 0,
@@ -6947,8 +7218,8 @@ pub const Publication = struct {
     }
 };
 
-/// Apply one host-directed semantic event and retain its bounded consequence.
-pub fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
+// Apply one host-directed semantic event and retain its bounded consequence.
+fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     var scratch: Scratch = .{};
     const allocator = vt.allocator;
     switch (event) {
@@ -6961,8 +7232,20 @@ pub fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .color_control => |cmd| {
             switch (cmd.command) {
                 21 => try handleKittyControl(allocator, &vt.host.colors, &vt.host.pending_output, cmd.payload),
-                4 => try handleXtermPaletteControl(allocator, &vt.host.colors, &vt.host.pending_output, scratch.buf[0..], cmd.payload),
-                5 => try handleXtermSpecialPaletteControl(allocator, &vt.host.colors, &vt.host.pending_output, scratch.buf[0..], cmd.payload),
+                4 => try handleXtermPaletteControl(
+                    allocator,
+                    &vt.host.colors,
+                    &vt.host.pending_output,
+                    scratch.buf[0..],
+                    cmd.payload,
+                ),
+                5 => try handleXtermSpecialPaletteControl(
+                    allocator,
+                    &vt.host.colors,
+                    &vt.host.pending_output,
+                    scratch.buf[0..],
+                    cmd.payload,
+                ),
                 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
                     allocator,
                     &vt.host.colors,
@@ -6972,7 +7255,11 @@ pub fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
                     cmd.payload,
                 ),
                 104 => resetXtermPalette(&vt.host.colors, cmd.payload),
-                110, 111, 112, 113, 114, 115, 116, 117, 118, 119 => resetXtermDynamicColor(&vt.host.colors, cmd.command, cmd.payload),
+                110, 111, 112, 113, 114, 115, 116, 117, 118, 119 => resetXtermDynamicColor(
+                    &vt.host.colors,
+                    cmd.command,
+                    cmd.payload,
+                ),
                 else => {},
             }
         },
@@ -6982,7 +7269,13 @@ pub fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .locator_reporting => |cfg| setReporting(&vt.host.locator, cfg.mode, cfg.unit),
         .locator_filter => |area| setFilter(&vt.host.locator, area),
         .locator_events => |modes| setEvents(&vt.host.locator, modes.params[0..modes.param_count]),
-        .locator_request => |param| try appendReportForRequest(&vt.host.locator, allocator, &vt.host.pending_output, scratch.buf[0..], param),
+        .locator_request => |param| try appendReportForRequest(
+            &vt.host.locator,
+            allocator,
+            &vt.host.pending_output,
+            scratch.buf[0..],
+            param,
+        ),
         .media_copy_request => |param| vt.host.media_copy_request = param,
         .dcs_payload => |payload| try vt.host.replaceDcsPayload(payload),
         .legacy_control => |kind| vt.host.legacy_control = kind,
@@ -7004,8 +7297,8 @@ const RectChecksumRequest = struct {
     request_id: u16,
 };
 
-/// Apply one report-directed semantic event to bounded host output.
-pub fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
+// Apply one report-directed semantic event to bounded host output.
+fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     var scratch: Scratch = .{};
     const allocator = vt.allocator;
     const pending_output = &vt.host.pending_output;
@@ -7038,17 +7331,46 @@ pub fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .synchronized_output = vt.modes.synchronized_output,
     };
     switch (event) {
-        .ansi_mode_query => |mode| try appendAnsiModeReport(allocator, pending_output, encode_buf, mode, ansiModeStateForView(ansi_modes, mode)),
-        .modify_other_keys_query => try appendModifyOtherKeysReport(allocator, pending_output, encode_buf, vt.modes.modify_other_keys),
-        .key_format_query => |resource| if (isKeyFormatResource(resource)) try appendKeyFormatReport(allocator, pending_output, encode_buf, resource, vt.modes.key_format[resource]),
-        .dec_mode_query => |mode| try appendDecModeReport(allocator, pending_output, encode_buf, mode, decModeStateForView(dec_modes, mode)),
+        .ansi_mode_query => |mode| try appendAnsiModeReport(
+            allocator,
+            pending_output,
+            encode_buf,
+            mode,
+            ansiModeStateForView(ansi_modes, mode),
+        ),
+        .modify_other_keys_query => try appendModifyOtherKeysReport(
+            allocator,
+            pending_output,
+            encode_buf,
+            vt.modes.modify_other_keys,
+        ),
+        .key_format_query => |resource| if (isKeyFormatResource(resource))
+            try appendKeyFormatReport(
+                allocator,
+                pending_output,
+                encode_buf,
+                resource,
+                vt.modes.key_format[resource],
+            ),
+        .dec_mode_query => |mode| try appendDecModeReport(
+            allocator,
+            pending_output,
+            encode_buf,
+            mode,
+            decModeStateForView(dec_modes, mode),
+        ),
         .dcs_request_status => |request| try appendDecrqssReply(allocator, pending_output, encode_buf, active, request),
         .dcs_request_termcap => try appendTermcapInvalidReport(allocator, pending_output),
         .dcs_request_resource => |request| try appendResourceInvalidReport(allocator, pending_output, request),
         .device_status_report => try appendOutput(pending_output, allocator, "\x1b[0n"),
         .dec_device_status_report => |param| try appendDeviceStatusReport(allocator, pending_output, encode_buf, param),
         .cursor_position_report => try appendCursorPositionReport(allocator, pending_output, encode_buf, render_view),
-        .dec_cursor_position_report => try appendDecCursorPositionReport(allocator, pending_output, encode_buf, render_view),
+        .dec_cursor_position_report => try appendDecCursorPositionReport(
+            allocator,
+            pending_output,
+            encode_buf,
+            render_view,
+        ),
         .primary_device_attributes => try appendOutput(pending_output, allocator, "\x1b[?62;22c"),
         .secondary_device_attributes => try appendOutput(pending_output, allocator, "\x1b[>1;10;0c"),
         .tertiary_device_attributes => try appendOutput(pending_output, allocator, "\x1bP!|00000000\x1b\\"),
@@ -7062,7 +7384,13 @@ pub fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
             .{ .request_id = req.request_id },
             computeRectChecksum(active, vt.xtchecksum_flags, req.page, req.area),
         ),
-        .selected_graphic_rendition_report => |area| try appendSelectedGraphicRenditionReport(allocator, pending_output, encode_buf, active, area),
+        .selected_graphic_rendition_report => |area| try appendSelectedGraphicRenditionReport(
+            allocator,
+            pending_output,
+            encode_buf,
+            active,
+            area,
+        ),
         .screen_extent_report => try appendScreenExtentReport(allocator, pending_output, encode_buf, render_view),
         .parameters_report => |kind| try appendTerminalParametersReport(allocator, pending_output, encode_buf, kind),
         .xtreportcolors => try appendColorStackReport(allocator, pending_output, encode_buf, vt.kitty.color_stack.len),
@@ -7083,7 +7411,13 @@ fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) ApplyError!void {
     try vt.host.appendPendingOutput(reply);
 }
 
-fn appendDecrqssReply(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, screen: *const Screen, request: []const u8) ApplyError!void {
+fn appendDecrqssReply(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    screen: *const Screen,
+    request: []const u8,
+) ApplyError!void {
     if (decrqssPayload(encode_buf, screen, request)) |payload| {
         const start = byteCount(output.items);
         errdefer restorePendingOutput(output, start);
@@ -7125,12 +7459,23 @@ fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) 
     return null;
 }
 
-fn appendModifyOtherKeysReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, value: i8) ApplyError!void {
+fn appendModifyOtherKeysReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    value: i8,
+) ApplyError!void {
     const text = formatTerminalReport(encode_buf, "\x1b[>4;{d}m", .{value});
     try appendOutput(output, allocator, text);
 }
 
-fn appendKeyFormatReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, resource: u8, value: u16) ApplyError!void {
+fn appendKeyFormatReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    resource: u8,
+    value: u16,
+) ApplyError!void {
     const text = formatTerminalReport(encode_buf, "\x1b[>{d};{d}f", .{ resource, value });
     try appendOutput(output, allocator, text);
 }
@@ -7143,7 +7488,11 @@ fn appendTermcapInvalidReport(allocator: std.mem.Allocator, output: *std.ArrayLi
     try appendOutput(output, allocator, "\x1bP0+r\x1b\\");
 }
 
-fn appendResourceInvalidReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), request: []const u8) ApplyError!void {
+fn appendResourceInvalidReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    request: []const u8,
+) ApplyError!void {
     const start = byteCount(output.items);
     errdefer restorePendingOutput(output, start);
     try appendOutput(output, allocator, "\x1bP0+R");
@@ -7151,37 +7500,83 @@ fn appendResourceInvalidReport(allocator: std.mem.Allocator, output: *std.ArrayL
     try appendOutput(output, allocator, "\x1b\\");
 }
 
-fn appendTitleStackPositionReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, current: u16, max: u16) ApplyError!void {
+fn appendTitleStackPositionReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    current: u16,
+    max: u16,
+) ApplyError!void {
     const text = formatTerminalReport(encode_buf, "\x1b[{d};{d}#S", .{ current, max });
     try appendOutput(output, allocator, text);
 }
 
-fn appendCursorPositionReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, render_view: CursorReportView) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[{d};{d}R", .{ render_view.cursor_row + 1, render_view.cursor_col + 1 });
+fn appendCursorPositionReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    render_view: CursorReportView,
+) ApplyError!void {
+    const text = formatTerminalReport(
+        encode_buf,
+        "\x1b[{d};{d}R",
+        .{ render_view.cursor_row + 1, render_view.cursor_col + 1 },
+    );
     try appendOutput(output, allocator, text);
 }
 
-fn appendDecCursorPositionReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, render_view: CursorReportView) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[?{d};{d}R", .{ render_view.cursor_row + 1, render_view.cursor_col + 1 });
+fn appendDecCursorPositionReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    render_view: CursorReportView,
+) ApplyError!void {
+    const text = formatTerminalReport(
+        encode_buf,
+        "\x1b[?{d};{d}R",
+        .{ render_view.cursor_row + 1, render_view.cursor_col + 1 },
+    );
     try appendOutput(output, allocator, text);
 }
 
-fn appendDecModeReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, mode: u16, state: u8) ApplyError!void {
+fn appendDecModeReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    mode: u16,
+    state: u8,
+) ApplyError!void {
     const text = formatTerminalReport(encode_buf, "\x1b[?{d};{d}$y", .{ mode, state });
     try appendOutput(output, allocator, text);
 }
 
-fn appendAnsiModeReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, mode: u16, state: u8) ApplyError!void {
+fn appendAnsiModeReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    mode: u16,
+    state: u8,
+) ApplyError!void {
     const text = formatTerminalReport(encode_buf, "\x1b[{d};{d}$y", .{ mode, state });
     try appendOutput(output, allocator, text);
 }
 
-fn appendColorStackReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, depth: u8) ApplyError!void {
+fn appendColorStackReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    depth: u8,
+) ApplyError!void {
     const text = formatTerminalReport(encode_buf, "\x1b[{d};{d}#Q", .{ depth, depth });
     try appendOutput(output, allocator, text);
 }
 
-fn appendTabStopReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, screen: *const Screen) ApplyError!void {
+fn appendTabStopReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    screen: *const Screen,
+) ApplyError!void {
     const start = byteCount(output.items);
     errdefer restorePendingOutput(output, start);
     try appendOutput(output, allocator, "\x1bP2$u");
@@ -7197,18 +7592,34 @@ fn appendTabStopReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8),
     try appendOutput(output, allocator, "\x1b\\");
 }
 
-fn appendScreenExtentReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, render_view: CursorReportView) ApplyError!void {
+fn appendScreenExtentReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    render_view: CursorReportView,
+) ApplyError!void {
     const text = formatTerminalReport(encode_buf, "\x1b[{d};{d};1;1;1\"w", .{ render_view.rows, render_view.cols });
     try appendOutput(output, allocator, text);
 }
 
-fn appendTerminalParametersReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, kind: u16) ApplyError!void {
+fn appendTerminalParametersReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    kind: u16,
+) ApplyError!void {
     if (kind > 1) return;
     const text = formatTerminalReport(encode_buf, "\x1b[{d};1;1;128;128;1;0x", .{kind + 2});
     try appendOutput(output, allocator, text);
 }
 
-fn appendRectChecksumReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, req: RectChecksumRequest, checksum: u16) ApplyError!void {
+fn appendRectChecksumReport(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    req: RectChecksumRequest,
+    checksum: u16,
+) ApplyError!void {
     const text = formatTerminalReport(encode_buf, "\x1bP{d}!~{X:0>4}\x1b\\", .{ req.request_id, checksum });
     try appendOutput(output, allocator, text);
 }
@@ -7321,7 +7732,9 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
             if (attrs.underline_style != common.underline_style) common.underline_style = .straight;
             if (!colorEq(attrs.fg, common.fg)) common.fg = Screen.default_cell_attrs.fg;
             if (!colorEq(attrs.bg, common.bg)) common.bg = Screen.default_cell_attrs.bg;
-            if (!colorEq(attrs.underline_color, common.underline_color)) common.underline_color = Screen.default_underline_color;
+            if (!colorEq(attrs.underline_color, common.underline_color)) {
+                common.underline_color = Screen.default_underline_color;
+            }
         }
     }
     if (!common.underline) {
@@ -7331,7 +7744,12 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
     return common;
 }
 
-fn appendSgrParam(allocator: std.mem.Allocator, output: *std.ArrayList(u8), first: *bool, text: []const u8) ApplyError!void {
+fn appendSgrParam(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    first: *bool,
+    text: []const u8,
+) ApplyError!void {
     if (!first.*) try appendOutput(output, allocator, ";");
     first.* = false;
     try appendOutput(output, allocator, text);
@@ -7376,7 +7794,14 @@ fn appendColorParam(
     }
 }
 
-fn appendExtendedColorParam(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, first: *bool, prefix: u8, color: Screen.Color) ApplyError!void {
+fn appendExtendedColorParam(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    first: *bool,
+    prefix: u8,
+    color: Screen.Color,
+) ApplyError!void {
     switch (color.kind) {
         .default => return,
         .indexed => {
@@ -7440,8 +7865,8 @@ const Rgb = Screen.Rgb;
 const osc_reply_max_bytes = 8;
 const color_osc_max_bytes = 16;
 
-/// Owns the 256-color palette and dynamic foreground, background, and cursor colors.
-pub const TerminalColorState = struct {
+// Owns the 256-color palette and dynamic foreground, background, and cursor colors.
+const TerminalColorState = struct {
     foreground: Rgb = default_terminal_foreground,
     background: Rgb = default_terminal_background,
     cursor: ?Rgb = null,
@@ -7481,8 +7906,14 @@ const SpecialPaletteKey = enum(u3) {
     italic = 4,
 };
 
-/// Applies or answers one OSC 4 palette request transactionally.
-pub fn handleXtermPaletteControl(allocator: std.mem.Allocator, colors: *TerminalColorState, output: *std.ArrayList(u8), encode_buf: []u8, payload: []const u8) ApplyError!void {
+// Applies or answers one OSC 4 palette request transactionally.
+fn handleXtermPaletteControl(
+    allocator: std.mem.Allocator,
+    colors: *TerminalColorState,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    payload: []const u8,
+) ApplyError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
@@ -7500,8 +7931,14 @@ pub fn handleXtermPaletteControl(allocator: std.mem.Allocator, colors: *Terminal
     }
 }
 
-/// Applies or answers one OSC 5 special-palette request transactionally.
-pub fn handleXtermSpecialPaletteControl(allocator: std.mem.Allocator, colors: *TerminalColorState, output: *std.ArrayList(u8), encode_buf: []u8, payload: []const u8) ApplyError!void {
+// Applies or answers one OSC 5 special-palette request transactionally.
+fn handleXtermSpecialPaletteControl(
+    allocator: std.mem.Allocator,
+    colors: *TerminalColorState,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    payload: []const u8,
+) ApplyError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
@@ -7519,8 +7956,15 @@ pub fn handleXtermSpecialPaletteControl(allocator: std.mem.Allocator, colors: *T
     }
 }
 
-/// Applies or answers one dynamic-color command transactionally.
-pub fn handleXtermDynamicColor(allocator: std.mem.Allocator, colors: *TerminalColorState, output: *std.ArrayList(u8), encode_buf: []u8, command: u16, payload: []const u8) ApplyError!void {
+// Applies or answers one dynamic-color command transactionally.
+fn handleXtermDynamicColor(
+    allocator: std.mem.Allocator,
+    colors: *TerminalColorState,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    command: u16,
+    payload: []const u8,
+) ApplyError!void {
     var key = dynamicKeyForCommand(command) orelse return;
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |value| {
@@ -7533,8 +7977,8 @@ pub fn handleXtermDynamicColor(allocator: std.mem.Allocator, colors: *TerminalCo
     }
 }
 
-/// Resets selected OSC 104 palette entries or the complete palette.
-pub fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8) void {
+// Resets selected OSC 104 palette entries or the complete palette.
+fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8) void {
     if (payload.len == 0) {
         colors.palette = buildDefaultPalette();
         return;
@@ -7546,15 +7990,15 @@ pub fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8) void 
     }
 }
 
-/// Resets one dynamic color selected by its OSC command.
-pub fn resetXtermDynamicColor(colors: *TerminalColorState, command: u16, payload: []const u8) void {
+// Resets one dynamic color selected by its OSC command.
+fn resetXtermDynamicColor(colors: *TerminalColorState, command: u16, payload: []const u8) void {
     if (payload.len != 0) return;
     const key = dynamicKeyForResetCommand(command) orelse return;
     resetDynamicColor(colors, key);
 }
 
-/// Converts a cursor color-control request into a semantic event when applicable.
-pub fn cursorColorEvent(command: TerminalColorControlCommand) ?SemanticEvent {
+// Converts a cursor color-control request into a semantic event when applicable.
+fn cursorColorEvent(command: TerminalColorControlCommand) ?SemanticEvent {
     if (command.command == 12) return cursorColorEventFromDynamicPayload(command.payload, .cursor);
     if (command.command == 112 and command.payload.len == 0) return .{ .cursor_color = null };
     if (command.command == 21) return cursorColorEventFromKittyPayload(command.payload);
@@ -7574,15 +8018,15 @@ fn parseColor(value: []const u8) ?Rgb {
     return null;
 }
 
-/// Applies the iTerm SetColors subset represented by terminal presentation state.
-///
-/// Bare and `srgb:` three- or six-digit values are accepted. Display-P3 and
-/// host-only selection, tab, badge, link, match, preset, and face-policy keys
-/// are intentionally left to an embedder with those domains. Matching iTerm's
-/// command loop, each valid pair commits independently while malformed or
-/// unsupported pairs are ignored without affecting their valid neighbors;
-/// `default` restores the corresponding native TerminalColorState default.
-pub fn handleItermSetColors(colors: *TerminalColorState, payload: []const u8) void {
+// Applies the iTerm SetColors subset represented by terminal presentation state.
+//
+// Bare and `srgb:` three- or six-digit values are accepted. Display-P3 and
+// host-only selection, tab, badge, link, match, preset, and face-policy keys
+// are intentionally left to an embedder with those domains. Matching iTerm's
+// command loop, each valid pair commits independently while malformed or
+// unsupported pairs are ignored without affecting their valid neighbors;
+// `default` restores the corresponding native TerminalColorState default.
+fn handleItermSetColors(colors: *TerminalColorState, payload: []const u8) void {
     const defaults = TerminalColorState{};
     var parts = std.mem.splitScalar(u8, payload, ',');
     while (parts.next()) |part| {
@@ -7689,14 +8133,14 @@ fn specialColorKey(key: []const u8) ?SpecialKey {
     return null;
 }
 
-/// Reports whether a borrowed Kitty color key names supported state.
-pub fn isKnownColorKey(key: []const u8) bool {
+// Reports whether a borrowed Kitty color key names supported state.
+fn isKnownColorKey(key: []const u8) bool {
     if (specialColorKey(key) != null) return true;
     return (std.fmt.parseUnsigned(u8, key, 10) catch null) != null;
 }
 
-/// Returns the current color for a recognized Kitty key.
-pub fn colorForKey(colors: TerminalColorState, key: []const u8) ?Rgb {
+// Returns the current color for a recognized Kitty key.
+fn colorForKey(colors: TerminalColorState, key: []const u8) ?Rgb {
     if (std.fmt.parseUnsigned(u8, key, 10)) |idx| return colors.palette[idx] else |_| {}
     if (specialColorKey(key)) |special| return switch (special) {
         .foreground => colors.foreground,
@@ -7876,15 +8320,15 @@ fn resetDynamicColor(colors: *TerminalColorState, key: DynamicKey) void {
     }
 }
 
-/// Appends one bounded rgb:RRRR/GGGG/BBBB OSC color reply.
-pub fn appendColorOsc(allocator: std.mem.Allocator, output: *std.ArrayList(u8), color: Rgb) ApplyError!void {
+// Appends one bounded rgb:RRRR/GGGG/BBBB OSC color reply.
+fn appendColorOsc(allocator: std.mem.Allocator, output: *std.ArrayList(u8), color: Rgb) ApplyError!void {
     var buf: [32]u8 = undefined;
     const text = formatColorOsc(buf[0..], color);
     try appendOutput(output, allocator, text);
 }
 
-/// Parses and applies a recognized Kitty color key, ignoring invalid values.
-pub fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const u8) void {
+// Parses and applies a recognized Kitty color key, ignoring invalid values.
+fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const u8) void {
     if (std.fmt.parseUnsigned(u8, key, 10)) |idx| {
         if (parseColor(value)) |color| colors.palette[idx] = color;
         return;
@@ -7896,8 +8340,8 @@ pub fn setColorKey(colors: *TerminalColorState, key: []const u8, value: []const 
     }
 }
 
-/// Restores a recognized Kitty color key to its default value.
-pub fn resetColorKey(colors: *TerminalColorState, key: []const u8) void {
+// Restores a recognized Kitty color key to its default value.
+fn resetColorKey(colors: *TerminalColorState, key: []const u8) void {
     if (std.fmt.parseUnsigned(u8, key, 10)) |idx| {
         colors.palette[idx] = paletteColor(idx);
         return;
@@ -7912,7 +8356,13 @@ pub fn resetColorKey(colors: *TerminalColorState, key: []const u8) void {
     };
 }
 
-fn appendXtermSpecialColorReply(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, colors: TerminalColorState, key: SpecialKey) ApplyError!void {
+fn appendXtermSpecialColorReply(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    colors: TerminalColorState,
+    key: SpecialKey,
+) ApplyError!void {
     const osc: u8 = switch (key) {
         .foreground => 10,
         .background => 11,
@@ -7933,7 +8383,13 @@ fn appendXtermSpecialColorReply(allocator: std.mem.Allocator, output: *std.Array
     try appendOutput(output, allocator, "\x1b\\");
 }
 
-fn appendXtermDynamicColorReply(allocator: std.mem.Allocator, output: *std.ArrayList(u8), encode_buf: []u8, colors: TerminalColorState, key: DynamicKey) ApplyError!void {
+fn appendXtermDynamicColorReply(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    encode_buf: []u8,
+    colors: TerminalColorState,
+    key: DynamicKey,
+) ApplyError!void {
     const text = formatOscReply(encode_buf, "\x1b]{d};", .{dynamicCommandForKey(key)});
     const start = byteCount(output.items);
     errdefer restorePendingOutput(output, start);
@@ -8033,9 +8489,21 @@ fn parseHashColor(hex: []const u8) ?Rgb {
             const b = parseHexNibble(hex[2]) orelse return null;
             break :blk .{ .r = r << 4, .g = g << 4, .b = b << 4 };
         },
-        6 => .{ .r = parseHexByte(hex[0..2]) orelse return null, .g = parseHexByte(hex[2..4]) orelse return null, .b = parseHexByte(hex[4..6]) orelse return null },
-        9 => .{ .r = parseHexByte(hex[0..2]) orelse return null, .g = parseHexByte(hex[3..5]) orelse return null, .b = parseHexByte(hex[6..8]) orelse return null },
-        12 => .{ .r = parseHexByte(hex[0..2]) orelse return null, .g = parseHexByte(hex[4..6]) orelse return null, .b = parseHexByte(hex[8..10]) orelse return null },
+        6 => .{
+            .r = parseHexByte(hex[0..2]) orelse return null,
+            .g = parseHexByte(hex[2..4]) orelse return null,
+            .b = parseHexByte(hex[4..6]) orelse return null,
+        },
+        9 => .{
+            .r = parseHexByte(hex[0..2]) orelse return null,
+            .g = parseHexByte(hex[3..5]) orelse return null,
+            .b = parseHexByte(hex[6..8]) orelse return null,
+        },
+        12 => .{
+            .r = parseHexByte(hex[0..2]) orelse return null,
+            .g = parseHexByte(hex[4..6]) orelse return null,
+            .b = parseHexByte(hex[8..10]) orelse return null,
+        },
         else => null,
     };
 }
@@ -8090,8 +8558,8 @@ test "cursor color control mutates semantic cursor owner through screen apply" {
     try std.testing.expectEqual(@as(?Rgb, null), screen.cursor.cursor_color);
 }
 
-/// Apply one Kitty-directed semantic event to terminal-owned Kitty state.
-pub fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
+// Apply one Kitty-directed semantic event to terminal-owned Kitty state.
+fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     var scratch: Scratch = .{};
     const allocator = vt.allocator;
     const active_screen = vt.kitty.activeScreen(vt.screen_state.alt_active);
@@ -8119,8 +8587,8 @@ pub fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     }
 }
 
-/// Observable terminal mutations produced while applying one parser event.
-pub const EventEffect = struct {
+// Observable terminal mutations produced while applying one parser event.
+const EventEffect = struct {
     changed: bool,
     title_changed: bool,
     icon_changed: bool,
@@ -8359,16 +8827,16 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     }
 }
 
-/// Reports parser allocation, parser bound, captured DCS bound, or retained-consequence failure.
-pub const FeedError = error{
+// Reports parser allocation, parser bound, captured DCS bound, or retained-consequence failure.
+const FeedError = error{
     ConsequenceLimit,
     OutOfMemory,
     ParsedEventLimit,
     StringControlLimit,
 };
 
-/// Reports terminal mutation and distinct title or icon metadata changes.
-pub const FeedSummary = struct {
+// Reports terminal mutation and distinct title or icon metadata changes.
+const FeedSummary = struct {
     state_changed: bool,
     title_changed: bool,
     icon_changed: bool,
@@ -8414,7 +8882,11 @@ const DcsCapture = struct {
         self.param_count = hook.count;
         self.intermediates_len = hook.intermediates_len;
         std.mem.copyForwards(i32, self.params[0..hook.count], hook.params[0..hook.count]);
-        std.mem.copyForwards(u8, self.intermediates[0..hook.intermediates_len], hook.intermediates[0..hook.intermediates_len]);
+        std.mem.copyForwards(
+            u8,
+            self.intermediates[0..hook.intermediates_len],
+            hook.intermediates[0..hook.intermediates_len],
+        );
 
         errdefer self.reset();
         var idx: u8 = 0;
@@ -8451,8 +8923,8 @@ const DcsCapture = struct {
     }
 };
 
-/// Owns parser allocation and bounded DCS capture for one terminal lifetime.
-pub const TerminalStreamState = struct {
+// Owns parser allocation and bounded DCS capture for one terminal lifetime.
+const TerminalStreamState = struct {
     /// TerminalStream-state initialization can fail only while allocating parser storage.
     pub const InitError = error{OutOfMemory};
 
@@ -8474,8 +8946,8 @@ pub const TerminalStreamState = struct {
     }
 };
 
-/// Borrows one terminal while translating input bytes into terminal mutation.
-pub const TerminalStream = struct {
+// Borrows one terminal while translating input bytes into terminal mutation.
+const TerminalStream = struct {
     terminal: *Terminal,
 
     /// Creates a stream borrowing the terminal until the stream is discarded.
@@ -8711,7 +9183,9 @@ fn mapDecSpecial(byte: u8) u21 {
 }
 
 test "stream state initialization reports parser allocation failure" {
-    const init: *const fn (std.mem.Allocator) TerminalStreamState.InitError!TerminalStreamState = TerminalStreamState.initAlloc;
+    const init: *const fn (
+        std.mem.Allocator,
+    ) TerminalStreamState.InitError!TerminalStreamState = TerminalStreamState.initAlloc;
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
     try std.testing.expectError(error.OutOfMemory, init(failing.allocator()));
     try std.testing.expect(failing.has_induced_failure);
@@ -8860,7 +9334,12 @@ pub const Terminal = struct {
         absolute: u64,
     };
 
-    fn initWithScreens(allocator: std.mem.Allocator, stream_state: TerminalStreamState, state: Screen, alt_state: Screen) Terminal {
+    fn initWithScreens(
+        allocator: std.mem.Allocator,
+        stream_state: TerminalStreamState,
+        state: Screen,
+        alt_state: Screen,
+    ) Terminal {
         return .{
             .allocator = allocator,
             .stream_state = stream_state,
@@ -8889,7 +9368,12 @@ pub const Terminal = struct {
     /// Both dimensions must be nonzero. The caller owns the returned terminal
     /// and must call `deinit`. `history_capacity` bounds retained logical rows;
     /// the alternate screen never retains history.
-    pub fn initWithHistory(allocator: std.mem.Allocator, rows: u16, cols: u16, history_capacity: u16) InitError!Terminal {
+    pub fn initWithHistory(
+        allocator: std.mem.Allocator,
+        rows: u16,
+        cols: u16,
+        history_capacity: u16,
+    ) InitError!Terminal {
         try validateDimensions(rows, cols);
         var stream_state = try TerminalStreamState.initAlloc(allocator);
         errdefer stream_state.deinit();
@@ -9106,7 +9590,11 @@ pub const Terminal = struct {
     fn saveDecModes(self: *Terminal, mode_numbers: []const u16) void {
         for (mode_numbers) |mode_number| {
             if (!canSetDecMode(mode_number)) continue;
-            const slot = savedDecModeSlot(self.modes.saved_dec_modes[0..], &self.modes.saved_dec_mode_count, mode_number);
+            const slot = savedDecModeSlot(
+                self.modes.saved_dec_modes[0..],
+                &self.modes.saved_dec_mode_count,
+                mode_number,
+            );
             self.modes.saved_dec_modes[@intCast(slot)] = .{
                 .mode = mode_number,
                 .state = self.decModeState(mode_number),
@@ -9116,7 +9604,11 @@ pub const Terminal = struct {
 
     fn restoreDecModes(self: *Terminal, mode_numbers: []const u16) void {
         for (mode_numbers) |mode_number| {
-            const state = savedDecModeState(self.modes.saved_dec_modes[0..], self.modes.saved_dec_mode_count, mode_number) orelse continue;
+            const state = savedDecModeState(
+                self.modes.saved_dec_modes[0..],
+                self.modes.saved_dec_mode_count,
+                mode_number,
+            ) orelse continue;
             switch (state) {
                 1 => self.setDecMode(mode_number, true),
                 2 => self.setDecMode(mode_number, false),
@@ -9270,7 +9762,12 @@ pub const Terminal = struct {
     }
 
     /// Borrows a cell hyperlink URI only when snapshot identity and coordinates are valid.
-    pub fn visibleCellHyperlinkUri(self: *Terminal, snapshot_seq: u64, row: u16, col: u16) error{InvalidArgument}!?[]const u8 {
+    pub fn visibleCellHyperlinkUri(
+        self: *Terminal,
+        snapshot_seq: u64,
+        row: u16,
+        col: u16,
+    ) error{InvalidArgument}!?[]const u8 {
         if (snapshot_seq == 0) return error.InvalidArgument;
         const publication = self.surfaceSnapshot();
         if (publication.snapshot_seq != snapshot_seq) return error.InvalidArgument;
@@ -9389,7 +9886,11 @@ pub const Terminal = struct {
             error.EncodingLimit => unreachable,
         };
         std.debug.assert(encoded.len <= scratch.buf.len);
-        if (self.modes.newline_mode and event.key == .named and event.key.named == .enter and std.mem.eql(u8, encoded, "\r")) {
+        if (self.modes.newline_mode and
+            event.key == .named and
+            event.key.named == .enter and
+            std.mem.eql(u8, encoded, "\r"))
+        {
             return writeScratch(scratch, "\r\n");
         }
         return encoded;
@@ -9593,8 +10094,8 @@ const CursorSavepoint = struct {
     style: Screen.CursorStyle = Screen.default_cursor_style,
 };
 
-/// Stores cursor, charset, origin, and wrap state for one terminal save slot.
-pub const Savepoint = struct {
+// Stores cursor, charset, origin, and wrap state for one terminal save slot.
+const Savepoint = struct {
     valid: bool = false,
     cursor: CursorSavepoint = .{},
     current_attrs: Screen.CellAttrs = Screen.default_cell_attrs,
