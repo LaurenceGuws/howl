@@ -1,5 +1,5 @@
 const std = @import("std");
-const screen_mod = @import("../../src/screen.zig");
+const screen_mod = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 

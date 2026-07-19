@@ -1,12 +1,12 @@
 const std = @import("std");
-const screen_mod = @import("../../src/screen.zig");
-const semantic_event = @import("../../src/semantic_event.zig");
-const erase = @import("../../src/screen/erase.zig");
+const screen_mod = @import("../../src/terminal.zig");
+const semantic_event = @import("../../src/terminal.zig");
+const erase = @import("../../src/terminal.zig");
 const parser_mod = @import("../../src/parser.zig");
 
 const Screen = screen_mod.Screen;
 const Grid = Screen;
-const EraseMode = erase.EraseMode;
+const EraseMode = erase.ScreenEraseMode;
 const SemanticEvent = semantic_event.SemanticEvent;
 const csi_max_params = parser_mod.max_params;
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 status=0
 
-root_public='pub const Terminal = terminal_mod.Terminal;'
+root_public='pub const Terminal = terminal.Terminal;'
 if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|var|threadlocal)[[:space:]]' src/howl_vt.zig) -ne 1 ]] ||
     ! grep -Fxq "$root_public" src/howl_vt.zig; then
     printf 'src/howl_vt.zig: curated embedding root changed\n'
@@ -56,12 +56,13 @@ done < <(grep -RnE "$empty_lifecycle_pattern" src --include='*.zig' || true)
 
 # Result discards are limited to compile-only root and parser test probes.
 root_test_start=$(grep -n '^test[[:space:]]*{' src/howl_vt.zig | cut -d: -f1)
-parser_test_start=$(grep -n '^test[[:space:]]' src/parser.zig | head -n 1 | cut -d: -f1)
+parser_test_start=$(grep -n '^test "parser' src/parser.zig | head -n 1 | cut -d: -f1)
+parser_test_end=$(grep -n '^const StyleChange' src/parser.zig | cut -d: -f1)
 while IFS=: read -r file line text; do
     allowed=false
-    if [[ "$file" == src/howl_vt.zig && "$line" -gt "$root_test_start" && "$text" == '    _ = terminal_mod;' ]]; then
+    if [[ "$file" == src/howl_vt.zig && "$line" -gt "$root_test_start" && "$text" == '    _ = terminal;' ]]; then
         allowed=true
-    elif [[ "$file" == src/parser.zig && "$line" -gt "$parser_test_start" ]] &&
+    elif [[ "$file" == src/parser.zig && "$line" -gt "$parser_test_start" && "$line" -lt "$parser_test_end" ]] &&
         [[ "$text" == '    _ = parser.next('* || "$text" == '    _ = parser.entryPhase('* ]]; then
         allowed=true
     fi

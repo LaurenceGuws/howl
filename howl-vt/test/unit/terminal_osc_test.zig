@@ -1,7 +1,7 @@
 const std = @import("std");
-const host_state = @import("../../src/host_state.zig");
+const host_state = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
-const screen_mod = @import("../../src/screen.zig");
+const screen_mod = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const HostState = host_state;
@@ -66,7 +66,7 @@ test "OSC title limit fails without dropping current title" {
 
     try stream.nextSlice("\x1b]0;ok\x07");
 
-    const title_len = HostState.metadata_max_bytes + 1;
+    const title_len = HostState.max_metadata_bytes + 1;
     const payload = try allocator.alloc(u8, title_len);
     defer allocator.free(payload);
     @memset(payload, 'a');
@@ -89,7 +89,7 @@ test "OSC icon limit preserves prior title and icon" {
     const initial = try terminal.feed("\x1b]2;title\x07\x1b]1;icon\x07");
     try std.testing.expect(initial.title_changed);
     try std.testing.expect(initial.icon_changed);
-    const payload = try allocator.alloc(u8, HostState.metadata_max_bytes + 1);
+    const payload = try allocator.alloc(u8, HostState.max_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'i');
     var sequence = std.ArrayList(u8).empty;
@@ -112,7 +112,7 @@ test "OSC 0 bound failure preserves both prior metadata values" {
     try std.testing.expect(seeded.state_changed);
     try std.testing.expect(seeded.title_changed);
     try std.testing.expect(seeded.icon_changed);
-    const payload = try allocator.alloc(u8, HostState.metadata_max_bytes + 1);
+    const payload = try allocator.alloc(u8, HostState.max_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'b');
     var sequence = std.ArrayList(u8).empty;
@@ -319,7 +319,7 @@ test "cell pixel report facts reject zero and preserve configured dimensions" {
 
 test "iTerm metadata replacement preserves prior state on allocation failure" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
-    var state = HostState.State.init(failing.allocator());
+    var state = HostState.HostState.init(failing.allocator());
     defer state.deinit();
     try state.replaceShellIntegration(.{ .version = 19, .shell = "bash" });
     try std.testing.expectError(

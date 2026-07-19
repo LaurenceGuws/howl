@@ -1,5 +1,5 @@
 const std = @import("std");
-const events_mod = @import("../../../src/parser/events.zig");
+const events_mod = @import("../../../src/parser.zig");
 const parser_mod = @import("../../../src/parser.zig");
 
 const ParserApi = parser_mod.Parser;
@@ -7,7 +7,7 @@ const Event = events_mod.Event;
 const dec_special_designation: u8 = '0';
 const ascii_designation: u8 = 'B';
 
-fn count32(items: anytype) u32 {
+fn paramCount32(items: anytype) u32 {
     std.debug.assert(items.len <= std.math.maxInt(u32));
     return @intCast(items.len);
 }
@@ -152,7 +152,7 @@ const ParsedEvents = struct {
     }
 
     fn eventCount(self: *const ParsedEvents) u32 {
-        return count32(self.events.items) - self.event_head;
+        return paramCount32(self.events.items) - self.event_head;
     }
 
     fn iterator(self: *const ParsedEvents) Iterator {
@@ -178,13 +178,13 @@ const ParsedEvents = struct {
 
     fn beginBatch(self: *const ParsedEvents) AppendBatch {
         return .{
-            .event_len_start = count32(self.events.items),
-            .bytes_len_start = count32(self.bytes.items),
-            .ints_len_start = count32(self.ints.items),
-            .aux_len_start = count32(self.aux.items),
-            .apc_len_start = count32(self.apc_bytes.items),
-            .dcs_len_start = count32(self.dcs_bytes.items),
-            .pm_len_start = count32(self.pm_bytes.items),
+            .event_len_start = paramCount32(self.events.items),
+            .bytes_len_start = paramCount32(self.bytes.items),
+            .ints_len_start = paramCount32(self.ints.items),
+            .aux_len_start = paramCount32(self.aux.items),
+            .apc_len_start = paramCount32(self.apc_bytes.items),
+            .dcs_len_start = paramCount32(self.dcs_bytes.items),
+            .pm_len_start = paramCount32(self.pm_bytes.items),
             .dcs_hook_start = self.dcs_hook,
             .gl_index_start = self.gl_index,
             .g0_designation_start = self.g0_designation,
@@ -207,7 +207,7 @@ const ParsedEvents = struct {
     }
 
     fn finishBatch(self: *ParsedEvents, batch: AppendBatch) void {
-        if (count32(self.events.items) <= batch.event_len_start) return;
+        if (paramCount32(self.events.items) <= batch.event_len_start) return;
         const last = &self.events.items[self.events.items.len - 1];
         switch (last.*) {
             .text => |len| {
@@ -259,7 +259,7 @@ const ParsedEvents = struct {
         const mapped = self.mapCodepoint(cp);
         if (isAsciiTextCodepoint(mapped)) {
             try self.bytes.append(self.allocator, @intCast(mapped));
-            if (count32(self.events.items) > batch.event_len_start) {
+            if (paramCount32(self.events.items) > batch.event_len_start) {
                 const last = &self.events.items[self.events.items.len - 1];
                 switch (last.*) {
                     .text => |*len| {
@@ -294,14 +294,14 @@ const ParsedEvents = struct {
         try self.appendMeta(.{ .osc = .{
             .tag = std.meta.activeTag(action),
             .command = action.command(),
-            .payload_len = count32(action.payload()),
+            .payload_len = paramCount32(action.payload()),
             .terminator = action.term(),
         } });
     }
 
     fn appendBufferedBytes(self: *ParsedEvents, comptime tag: std.meta.FieldEnum(EventMeta), buffer: *std.ArrayList(u8)) error{ OutOfMemory, ParsedEventLimit }!void {
         try self.bytes.appendSlice(self.allocator, buffer.items);
-        try self.appendMeta(@unionInit(EventMeta, @tagName(tag), count32(buffer.items)));
+        try self.appendMeta(@unionInit(EventMeta, @tagName(tag), paramCount32(buffer.items)));
         buffer.clearRetainingCapacity();
     }
 
@@ -312,7 +312,7 @@ const ParsedEvents = struct {
         const body_len = try self.appendDcsBody(hook);
         try self.appendMeta(.{ .dcs = .{
             .body_len = body_len,
-            .payload_len = count32(self.dcs_bytes.items),
+            .payload_len = paramCount32(self.dcs_bytes.items),
             .final = hook.final,
             .param_count = hook.param_count,
             .intermediates_len = hook.intermediates_len,
@@ -333,7 +333,7 @@ const ParsedEvents = struct {
         try self.bytes.appendSlice(self.allocator, hook.intermediates[0..hook.intermediates_len]);
         try self.bytes.append(self.allocator, hook.final);
         try self.bytes.appendSlice(self.allocator, self.dcs_bytes.items);
-        return count32(self.bytes.items) - count32(self.bytes.items[0..start]);
+        return paramCount32(self.bytes.items) - paramCount32(self.bytes.items[0..start]);
     }
 
     fn captureDcsHook(self: *ParsedEvents, hook: parser_mod.DcsHook) void {
@@ -512,13 +512,13 @@ fn oscActionFromMeta(meta: ParsedEvents.OscMeta, payload: []const u8) parser_mod
 
 fn maybeCompactStore(comptime T: type, list: *std.ArrayList(T), head: *u32, min_reclaim: u32) void {
     if (head.* == 0) return;
-    if (head.* == count32(list.items)) {
+    if (head.* == paramCount32(list.items)) {
         list.clearRetainingCapacity();
         head.* = 0;
         return;
     }
-    if (head.* < min_reclaim or head.* * 2 < count32(list.items)) return;
-    const remaining = count32(list.items) - head.*;
+    if (head.* < min_reclaim or head.* * 2 < paramCount32(list.items)) return;
+    const remaining = paramCount32(list.items) - head.*;
     std.mem.copyForwards(T, list.items[0..@intCast(remaining)], list.items[@intCast(head.*)..]);
     list.shrinkRetainingCapacity(remaining);
     head.* = 0;

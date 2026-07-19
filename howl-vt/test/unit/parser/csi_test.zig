@@ -1,5 +1,5 @@
 const std = @import("std");
-const owned_actions = @import("../../../src/parser_owned_actions.zig");
+const owned_actions = @import("../../../src/parser.zig");
 const parser_mod = @import("../../../src/parser.zig");
 
 const CsiAction = parser_mod.CsiAction;

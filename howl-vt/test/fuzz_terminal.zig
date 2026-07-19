@@ -140,9 +140,9 @@ fn encodeKeyboard(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void 
 }
 
 fn encodeUnicodeKeyboard(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
-    const Key = @FieldType(@FieldType(howl_vt.Terminal.InputEvent, "key"), "key");
-    const generated = Key.initUnicode(smith.value(u21)) catch |err| switch (err) {
-        error.InvalidUnicodeScalar => try Key.initUnicode('A'),
+    const InputKey = @FieldType(@FieldType(howl_vt.Terminal.InputEvent, "key"), "key");
+    const generated = InputKey.initUnicode(smith.value(u21)) catch |err| switch (err) {
+        error.InvalidUnicodeScalar => try InputKey.initUnicode('A'),
     };
     var scratch: howl_vt.Terminal.InputScratch = .{};
     var encoded = try terminal.encodeInput(

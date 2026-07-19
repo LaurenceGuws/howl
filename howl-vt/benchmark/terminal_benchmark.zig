@@ -173,13 +173,13 @@ fn nowNs(io: std.Io) u64 {
     return @intCast(std.Io.Clock.awake.now(io).toNanoseconds());
 }
 
-fn count32(items: anytype) u32 {
+fn paramCount32(items: anytype) u32 {
     std.debug.assert(items.len <= std.math.maxInt(u32));
     return @intCast(items.len);
 }
 
 fn count64(items: anytype) u64 {
-    return count32(items);
+    return paramCount32(items);
 }
 
 fn buildAsciiFixture(allocator: std.mem.Allocator) ![]u8 {
@@ -235,7 +235,7 @@ fn buildScrollFixture(allocator: std.mem.Allocator) ![]u8 {
 }
 
 fn summarizeObservations(base_allocator: std.mem.Allocator, name: []const u8, bytes_per_run: u64, observations: []const RunObservation) !WorkloadResult {
-    const runs = count32(observations);
+    const runs = paramCount32(observations);
     const ns_values = try base_allocator.alloc(u64, @intCast(runs));
     defer base_allocator.free(ns_values);
     const alloc_count_values = try base_allocator.alloc(u64, @intCast(runs));

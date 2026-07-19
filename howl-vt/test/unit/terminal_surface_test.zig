@@ -1,11 +1,11 @@
 const std = @import("std");
 const terminal_mod = @import("../../src/terminal.zig");
-const screen = @import("../../src/screen.zig");
+const screen = @import("../../src/terminal.zig");
 const screen_capture = @import("../support/screen_capture.zig");
-const screen_set = @import("../../src/screen_set.zig");
-const selection_projection = @import("../../src/selection_projection.zig");
-const input_encode = @import("../../src/input/encode.zig");
-const input_keyboard = @import("../../src/input/keyboard.zig");
+const screen_set = @import("../../src/terminal.zig");
+const selection_projection = @import("../../src/terminal.zig");
+const input_encode = @import("../../src/terminal.zig");
+const input_keyboard = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
@@ -14,7 +14,7 @@ const StreamHarness = stream_harness.Harness;
 
 var encode_scratch: input_encode.Scratch = .{};
 
-fn encodeKey(terminal: *Terminal, key: input_keyboard.Key, mod: input_keyboard.Modifier) []const u8 {
+fn encodeKey(terminal: *Terminal, key: input_keyboard.InputKey, mod: input_keyboard.Modifier) []const u8 {
     var encoded = terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .key = .{ .key = key, .mods = mod } }) catch unreachable;
     defer encoded.deinit();
     return encoded.bytes;
@@ -269,8 +269,8 @@ test "input encoding APIs are callable without terminal facade methods" {
     var snap_before = try captureSnapshot(&terminal);
     defer snap_before.deinit();
 
-    _ = encodeKey(&terminal, try input_keyboard.Key.initUnicode('A'), .{});
-    _ = encodeKey(&terminal, try input_keyboard.Key.initUnicode('B'), .{});
+    _ = encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('A'), .{});
+    _ = encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('B'), .{});
 
     var snap_after = try captureSnapshot(&terminal);
     defer snap_after.deinit();

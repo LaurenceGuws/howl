@@ -1,14 +1,14 @@
 const std = @import("std");
-const dcs_payload = @import("../../src/dcs_payload.zig");
-const host_state = @import("../../src/host_state.zig");
-const legacy_control = @import("../../src/legacy_control.zig");
+const dcs_payload = @import("../../src/terminal.zig");
+const host_state = @import("../../src/terminal.zig");
+const legacy_control = @import("../../src/terminal.zig");
 const screen_capture = @import("../support/screen_capture.zig");
-const screen_set = @import("../../src/screen_set.zig");
-const selection = @import("../../src/selection.zig");
+const screen_set = @import("../../src/terminal.zig");
+const selection = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
-const input_encode = @import("../../src/input/encode.zig");
-const input_keyboard = @import("../../src/input/keyboard.zig");
-const input_mouse = @import("../../src/input/mouse.zig");
+const input_encode = @import("../../src/terminal.zig");
+const input_keyboard = @import("../../src/terminal.zig");
+const input_mouse = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
@@ -17,7 +17,7 @@ const StreamHarness = stream_harness.Harness;
 
 var encode_scratch: input_encode.Scratch = .{};
 
-fn encodeKey(terminal: *Terminal, key: input_keyboard.Key, mod: input_keyboard.Modifier) []const u8 {
+fn encodeKey(terminal: *Terminal, key: input_keyboard.InputKey, mod: input_keyboard.Modifier) []const u8 {
     var encoded = terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .key = .{ .key = key, .mods = mod } }) catch unreachable;
     defer encoded.deinit();
     return encoded.bytes;
@@ -612,7 +612,7 @@ test "ANSI modes affect key encoding and insert writes" {
 
     try std.testing.expectEqualStrings("\r", encodeKey(&terminal, .{ .named = .enter }, .{}));
     write(&stream, "\x1b[20h\x1b[2h");
-    try std.testing.expectEqualStrings("", encodeKey(&terminal, try input_keyboard.Key.initUnicode('a'), .{}));
+    try std.testing.expectEqualStrings("", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{}));
 
     write(&stream, "\x1b[2l");
     try std.testing.expectEqualStrings("\r\n", encodeKey(&terminal, .{ .named = .enter }, .{}));
@@ -943,17 +943,17 @@ test "modifyOtherKeys set query disable and encoding" {
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try input_keyboard.Key.initUnicode('a'), .{ .alt = true }));
+    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{ .alt = true }));
     write(&stream, "\x1b[>4;2m\x1b[?4m");
     try std.testing.expectEqualStrings("\x1b[>4;2m", pendingOutput(&terminal));
-    try std.testing.expectEqualStrings("\x1b[27;3;97~", encodeKey(&terminal, try input_keyboard.Key.initUnicode('a'), .{ .alt = true }));
-    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try input_keyboard.Key.initUnicode('a'), .{}));
+    try std.testing.expectEqualStrings("\x1b[27;3;97~", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{ .alt = true }));
+    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{}));
 
     write(&stream, "\x1b[>4;3m");
-    try std.testing.expectEqualStrings("\x1b[27;1;97~", encodeKey(&terminal, try input_keyboard.Key.initUnicode('a'), .{}));
+    try std.testing.expectEqualStrings("\x1b[27;1;97~", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{}));
 
     write(&stream, "\x1b[>4n");
-    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try input_keyboard.Key.initUnicode('a'), .{ .alt = true }));
+    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{ .alt = true }));
 }
 
 test "xterm key format query reset and other-key encoding" {
@@ -964,7 +964,7 @@ test "xterm key format query reset and other-key encoding" {
 
     write(&stream, "\x1b[>4;1f\x1b[?4g\x1b[>4;1m");
     try std.testing.expectEqualStrings("\x1b[>4;1f", pendingOutput(&terminal));
-    try std.testing.expectEqualStrings("\x1b[97;3u", encodeKey(&terminal, try input_keyboard.Key.initUnicode('a'), .{ .alt = true }));
+    try std.testing.expectEqualStrings("\x1b[97;3u", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{ .alt = true }));
 
     write(&stream, "\x1b[>4f\x1b[?4g");
     try std.testing.expectEqualStrings("\x1b[>4;1f\x1b[>4;0f", pendingOutput(&terminal));

@@ -1,6 +1,6 @@
 const std = @import("std");
-const screen_mod = @import("../../../src/screen.zig");
-const semantic_event = @import("../../../src/semantic_event.zig");
+const screen_mod = @import("../../../src/terminal.zig");
+const semantic_event = @import("../../../src/terminal.zig");
 
 const Grid = screen_mod.Screen;
 const SemanticEvent = semantic_event.SemanticEvent;
