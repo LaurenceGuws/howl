@@ -222,9 +222,13 @@ test "shell integration OSC 133 records latest mark" {
     try stream.nextSlice("\x1b]133;C;cmdline=ls\x07\x1b]133;D;2\x07");
 
     const mark = terminal.surfaceSnapshot().shell_mark;
+    try std.testing.expectEqual(@as(u64, 2), mark.generation);
     try std.testing.expectEqual(@as(u8, 'D'), mark.kind);
     try std.testing.expectEqual(@as(?i32, 2), mark.status);
     try std.testing.expectEqualStrings("2", mark.metadata);
+
+    try stream.nextSlice("\x1b]133;Z;ignored\x07");
+    try std.testing.expectEqual(@as(u64, 2), terminal.surfaceSnapshot().shell_mark.generation);
 }
 
 test "iTerm safe controls mutate presentation metadata and exact replies" {

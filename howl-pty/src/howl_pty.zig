@@ -113,12 +113,24 @@ const ChildLaunchFailure = enum(u8) {
 
 const SignalResult = enum {
     delivered,
-    missing,
-    failed,
+    target_missing,
+    permission_denied,
+    native_signal_failed,
 };
 
-/// Reports whether child process-group signal delivery reached a live target.
-pub const ControlResult = enum { delivered, child_missing, failed };
+/// Reports exact process-group probing and signal-delivery outcomes.
+pub const ControlResult = enum {
+    /// The kernel accepted delivery to the live child process group.
+    delivered,
+    /// The target was already reaped or no process group remained.
+    target_missing,
+    /// The nonblocking child-state probe failed before signal delivery.
+    state_probe_failed,
+    /// The kernel rejected signal delivery for process ownership permissions.
+    permission_denied,
+    /// Native signal delivery failed for another reason.
+    native_signal_failed,
+};
 
 const WriteWait = enum { ready, timeout, canceled, closed, failed };
 
@@ -353,7 +365,7 @@ pub const Owned = struct {
         std.debug.assert(self.childPid() == null);
     }
 
-    fn refreshChildState(self: *Self) enum { live, missing, failed } {
+    fn refreshChildState(self: *Self) enum { live, missing, probe_failed } {
         if (!self.started) return .missing;
         const pid = self.childPid() orelse return .missing;
         return switch (waitChildNoHang(pid)) {
@@ -362,7 +374,7 @@ pub const Owned = struct {
                 self.child = .none;
                 return .missing;
             },
-            .failed => .failed,
+            .failed => .probe_failed,
         };
     }
 
@@ -598,15 +610,16 @@ pub const Owned = struct {
     pub fn control(self: *Self, signal: ControlSignal) ControlResult {
         switch (self.refreshChildState()) {
             .live => {},
-            .missing => return .child_missing,
-            .failed => return .failed,
+            .missing => return .target_missing,
+            .probe_failed => return .state_probe_failed,
         }
-        if (!self.transportReady()) return .child_missing;
-        const pid = self.childPid() orelse return .child_missing;
+        if (!self.transportReady()) return .target_missing;
+        const pid = self.childPid() orelse return .target_missing;
         return switch (sendGroupSignal(pid, signal)) {
             .delivered => .delivered,
-            .missing => .child_missing,
-            .failed => .failed,
+            .target_missing => .target_missing,
+            .permission_denied => .permission_denied,
+            .native_signal_failed => .native_signal_failed,
         };
     }
 };
@@ -637,8 +650,9 @@ fn closeOwned(fd: posix.fd_t) void {
 
 fn requireCleanupSignal(result: SignalResult) void {
     switch (result) {
-        .delivered, .missing => {},
-        .failed => @panic("PTY child cleanup signal failed"),
+        .delivered, .target_missing => {},
+        .permission_denied => @panic("PTY child cleanup signal permission denied"),
+        .native_signal_failed => @panic("PTY child cleanup signal failed"),
     }
 }
 
@@ -886,8 +900,9 @@ fn sendSignalTarget(target: posix.pid_t, signal: ControlSignal) SignalResult {
         if (res == 0) return .delivered;
         switch (posix.errno(res)) {
             .INTR => continue,
-            .SRCH => return .missing,
-            else => return .failed,
+            .SRCH => return .target_missing,
+            .PERM => return .permission_denied,
+            else => return .native_signal_failed,
         }
     }
 }
@@ -974,7 +989,7 @@ test "idle owner reports exact lifecycle outcomes and remains startable" {
     try std.testing.expectError(error.NotStarted, owned.read(&buffer));
     try std.testing.expectError(error.NotStarted, owned.waitReadable(0));
     try std.testing.expectError(error.NotStarted, owned.resize(test_cols, test_rows));
-    try std.testing.expectEqual(ControlResult.child_missing, owned.control(.interrupt));
+    try std.testing.expectEqual(ControlResult.target_missing, owned.control(.interrupt));
     owned.cancel();
     owned.stop();
     try owned.start(test_cols, test_rows);

@@ -65,6 +65,18 @@ pub const InitError = howl_vt.Terminal.InitError || std.mem.Allocator.Error ||
 pub const InputError = howl_vt.Terminal.InputError || error{InputLimit};
 /// Retains complete or exact partial PTY input transfer truth.
 pub const InputTransfer = howl_pty.Transfer;
+/// Uses Howl VT's bounded finalized-output copy and cursor outcomes.
+pub const LogicalOutputResult = howl_vt.Terminal.LogicalOutputResult;
+/// Reports invalid output-copy limits or allocation failure.
+pub const LogicalOutputError = howl_vt.Terminal.LogicalOutputError;
+/// Bounds one retained finalized logical line.
+pub const logical_output_line_max_bytes = howl_vt.Terminal.logical_output_line_max_bytes;
+/// Bounds aggregate retained output and one complete logical-output result.
+pub const logical_output_max_bytes = howl_vt.Terminal.logical_output_max_bytes;
+/// Selects one supported signal for the owned child process group.
+pub const ControlSignal = howl_pty.ControlSignal;
+/// Reports exact child probing and process-group signal outcomes.
+pub const ControlResult = howl_pty.ControlResult;
 
 /// Reports a resize rejected by the model or native PTY.
 pub const ResizeError = howl_vt.Terminal.ResizeError || error{
@@ -91,6 +103,30 @@ pub const ReaderError = error{
 
 /// Distinguishes a live child from normal completion or reader failure.
 pub const State = enum(u8) { running, stopped, failed };
+
+/// Copies one coherent terminal status observation under the model lock.
+pub const Status = struct {
+    /// Reports the reader-owned lifecycle observation.
+    state: State,
+    /// Retains the exact terminal reader failure after a failed state.
+    reader_error: ?ReaderError,
+    /// Reports the model and PTY column count.
+    cols: u16,
+    /// Reports the model and PTY row count.
+    rows: u16,
+    /// Identifies the surface publication used for terminal metadata.
+    publication: u64,
+    /// Identifies the latest model mutation represented by the publication.
+    dirty_generation: u64,
+    /// Reports whether the current viewport belongs to the alternate screen.
+    alternate_screen: bool,
+    /// Identifies the oldest retained finalized primary line.
+    output_oldest: u64,
+    /// Identifies the newest finalized primary line, or zero before any line.
+    output_newest: u64,
+    /// Identifies the latest accepted OSC 133 shell mark, or zero before any mark.
+    shell_mark_generation: u64,
+};
 
 const ReaderFailure = enum(u8) {
     none,
@@ -244,13 +280,13 @@ pub const Terminal = struct {
         return self.transport.transfer(self.io, encoded.bytes, self.transfer_timeout_ms);
     }
 
-    /// Applies one bounded size to both terminal truth and the native PTY.
-    pub fn resize(self: *Terminal, cols: u16, rows: u16) ResizeError!void {
+    /// Applies one bounded size and reports whether terminal geometry changed.
+    pub fn resize(self: *Terminal, cols: u16, rows: u16) ResizeError!bool {
         try validateSize(cols, rows);
         if (self.state_value.load(.acquire) != .running) return error.NotStarted;
         self.lock.lockUncancelable(self.io);
         defer self.lock.unlock(self.io);
-        if (self.cols == cols and self.rows == rows) return;
+        if (self.cols == cols and self.rows == rows) return false;
         self.transport.resize(cols, rows) catch |failure| switch (failure) {
             error.NotStarted => return error.NotStarted,
             error.ResizeFailed => return error.PtyResizeFailed,
@@ -264,6 +300,47 @@ pub const Terminal = struct {
         };
         self.cols = cols;
         self.rows = rows;
+        return true;
+    }
+
+    /// Copies finalized primary output and its publication-scoped open line.
+    pub fn copyLogicalOutput(
+        self: *Terminal,
+        allocator: std.mem.Allocator,
+        cursor: u64,
+        max_lines: u16,
+        max_bytes: usize,
+    ) LogicalOutputError!LogicalOutputResult {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.copyLogicalOutput(allocator, cursor, max_lines, max_bytes);
+    }
+
+    /// Copies lifecycle, geometry, publication, output, and shell-mark facts coherently.
+    pub fn status(self: *Terminal) Status {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        const publication = self.model.surfaceSnapshot();
+        const output = self.model.logicalOutputRange();
+        return .{
+            .state = self.state(),
+            .reader_error = self.readerError(),
+            .cols = self.cols,
+            .rows = self.rows,
+            .publication = publication.snapshot_seq,
+            .dirty_generation = publication.dirty_generation,
+            .alternate_screen = publication.is_alternate_screen,
+            .output_oldest = output.oldest,
+            .output_newest = output.newest,
+            .shell_mark_generation = publication.shell_mark.generation,
+        };
+    }
+
+    /// Delivers one supported signal to the owned child process group.
+    pub fn control(self: *Terminal, signal: ControlSignal) ControlResult {
+        self.write_lock.lockUncancelable(self.io);
+        defer self.write_lock.unlock(self.io);
+        return self.transport.control(signal);
     }
 
     /// Locks and borrows one complete semantic surface publication.

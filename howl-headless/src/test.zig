@@ -104,6 +104,47 @@ test "owner captures one child semantic surface" {
     terminal.consumeWake();
 }
 
+test "status and logical output form one coherent headless observation" {
+    const terminal = try headless.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "printf 'one\\r\\ntwo\\r\\nopen'" },
+        .{},
+    );
+    defer terminal.deinit();
+    try wait(std.testing.io, terminal);
+
+    const status = terminal.status();
+    try std.testing.expectEqual(headless.State.stopped, status.state);
+    try std.testing.expectEqual(@as(?headless.ReaderError, null), status.reader_error);
+    try std.testing.expectEqual(@as(u64, 1), status.output_oldest);
+    try std.testing.expectEqual(@as(u64, 2), status.output_newest);
+    try std.testing.expectEqual(@as(u64, 0), status.shell_mark_generation);
+
+    var output = switch (try terminal.copyLogicalOutput(std.testing.allocator, 0, 8, 128)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer output.deinit();
+    try std.testing.expectEqualStrings("one\ntwo", output.text);
+    try std.testing.expectEqualStrings("open", output.open_line);
+    try std.testing.expectEqual(status.publication, output.publication);
+}
+
+test "headless forwards exact process-group control outcomes" {
+    const terminal = try headless.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "printf ready; sleep 30" },
+        .{},
+    );
+    defer terminal.deinit();
+    try waitForPrefix(std.testing.io, terminal, "ready");
+    try std.testing.expectEqual(headless.ControlResult.delivered, terminal.control(.interrupt));
+    try wait(std.testing.io, terminal);
+    try std.testing.expectEqual(headless.ControlResult.target_missing, terminal.control(.interrupt));
+}
+
 test "live input reaches the child and mutates terminal truth" {
     const terminal = try headless.Terminal.init(
         std.testing.allocator,
@@ -194,7 +235,7 @@ test "resize publishes only changed dimensions" {
         .{},
     );
     defer terminal.deinit();
-    try terminal.resize(100, 40);
+    try std.testing.expect(try terminal.resize(100, 40));
 
     var snapshot_seq: u64 = undefined;
     var dirty_generation: u64 = undefined;
@@ -208,7 +249,7 @@ test "resize publishes only changed dimensions" {
         try std.testing.expect(surface.acknowledge());
     }
 
-    try terminal.resize(100, 40);
+    try std.testing.expect(!try terminal.resize(100, 40));
     var unchanged = terminal.surface();
     defer unchanged.deinit();
     try std.testing.expectEqual(snapshot_seq, unchanged.publication.snapshot_seq);

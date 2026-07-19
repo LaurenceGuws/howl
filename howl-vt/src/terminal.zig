@@ -3,6 +3,9 @@
 const std = @import("std");
 const parser_mod = @import("parser.zig");
 
+const logical_output_line_bytes_max: usize = 1024 * 1024;
+const logical_output_bytes_max: usize = 1024 * 1024;
+
 /// Terminal screen state for cursor, cells, margins, and history.
 pub const Screen = struct {
     /// Failure while validating dimensions or allocating owned Screen storage.
@@ -68,6 +71,11 @@ pub const Screen = struct {
     history_lines: std.ArrayListUnmanaged(HistoryLine),
     history_lines_start: u32,
     open_history_line: ?HistoryLine,
+    output_lines: std.ArrayListUnmanaged(?OutputLine),
+    output_lines_start: u32,
+    output_lines_count: u16,
+    output_bytes: usize,
+    next_output_id: u64,
     last_graphic_codepoint: ?u21,
     current_attrs: CellAttrs,
     dirty_state: DirtyState,
@@ -119,6 +127,11 @@ pub const Screen = struct {
             .history_lines = .empty,
             .history_lines_start = 0,
             .open_history_line = null,
+            .output_lines = .empty,
+            .output_lines_start = 0,
+            .output_lines_count = 0,
+            .output_bytes = 0,
+            .next_output_id = 1,
             .last_graphic_codepoint = null,
             .current_attrs = initial_cell_attrs,
             .dirty_state = dirty_state,
@@ -244,6 +257,8 @@ pub const Screen = struct {
         self.history_lines.deinit(allocator);
         if (self.open_history_line) |*line| line.deinit(allocator);
         self.open_history_line = null;
+        for (self.output_lines.items) |*slot| if (slot.*) |*line| line.deinit(allocator);
+        self.output_lines.deinit(allocator);
     }
 
     /// Replace this screen with a reflowed grid of the requested dimensions.
@@ -281,6 +296,7 @@ pub const Screen = struct {
         var replacement = self.replacementBase(allocator);
         replacement.installResizeState(rows, cols, buffers.take());
         errdefer replacement.deinit(allocator);
+        try replacement.cloneOutputAuthority(allocator, self);
         try replacement.rebuildResizeAuthority(allocator, lines, reflow, viewport, cols);
         replacement.restoreResizeCursor(rows, cols, reflow, viewport);
         return replacement;
@@ -300,6 +316,10 @@ pub const Screen = struct {
         replacement.history_lines = .empty;
         replacement.history_lines_start = 0;
         replacement.open_history_line = null;
+        replacement.output_lines = .empty;
+        replacement.output_lines_start = 0;
+        replacement.output_lines_count = 0;
+        replacement.output_bytes = 0;
         return replacement;
     }
 
@@ -347,6 +367,30 @@ pub const Screen = struct {
         std.debug.assert(self.left_right_margin_mode == false);
         std.debug.assert(self.left_margin == 0);
         std.debug.assert(self.right_margin == cols -| 1);
+    }
+
+    fn cloneOutputAuthority(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+        source: *const Screen,
+    ) std.mem.Allocator.Error!void {
+        try self.output_lines.ensureTotalCapacity(allocator, source.output_lines.items.len);
+        while (self.output_lines.items.len < source.output_lines.items.len) {
+            self.output_lines.appendAssumeCapacity(null);
+        }
+        for (source.output_lines.items, 0..) |slot, index| {
+            const line = slot orelse continue;
+            self.output_lines.items[index] = .{
+                .id = line.id,
+                .value = switch (line.value) {
+                    .text => |text| .{ .text = try allocator.dupe(u8, text) },
+                    .loss => |loss| .{ .loss = loss },
+                },
+            };
+        }
+        self.output_lines_start = source.output_lines_start;
+        self.output_lines_count = source.output_lines_count;
+        self.output_bytes = source.output_bytes;
     }
 
     fn rebuildResizeAuthority(
@@ -538,9 +582,13 @@ pub const Screen = struct {
             0;
         const projected_after_drop = self.history_count -| projected_drop;
         const projected_target = @min(projected_after_drop + 1, @as(u32, self.history_capacity));
-        self.ensureProjectedCapacity(allocator, projected_target) catch return;
+        self.ensureProjectedCapacity(allocator, projected_target) catch {
+            return;
+        };
         if (!wrapped and !replacing_oldest) {
-            self.history_lines.ensureTotalCapacity(allocator, self.history_lines.items.len + 1) catch return;
+            self.history_lines.ensureTotalCapacity(allocator, self.history_lines.items.len + 1) catch {
+                return;
+            };
         }
 
         const replacement_slot = if (replacing_oldest) self.dropOldestHistoryLine(allocator) else null;
@@ -559,6 +607,99 @@ pub const Screen = struct {
             self.history_lines.appendAssumeCapacity(next_line);
         }
         next_line = .{};
+    }
+
+    fn finalizeOutputLine(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+    ) std.mem.Allocator.Error!void {
+        if (self.history_capacity == 0) return;
+        const byte_count = openOutputLineByteCount(self);
+        if (byte_count > logical_output_line_bytes_max) {
+            try self.retainOutputLoss(allocator, byte_count);
+            return;
+        }
+        const text = copyOpenOutputLine(
+            allocator,
+            self,
+            byte_count,
+        ) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.LineTooLong => unreachable,
+        };
+        errdefer allocator.free(text);
+        try self.retainOutputText(allocator, text);
+    }
+
+    // Finalized output is copied separately because logical-history rows are
+    // retained only after leaving the viewport, while output identity belongs
+    // to the earlier line-finalization boundary and must survive later reflow.
+    fn retainOutputText(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+        text: []u8,
+    ) std.mem.Allocator.Error!void {
+        std.debug.assert(text.len <= logical_output_line_bytes_max);
+        try self.retainOutputLine(allocator, .{ .text = text });
+    }
+
+    fn retainOutputLoss(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+        byte_count: usize,
+    ) std.mem.Allocator.Error!void {
+        std.debug.assert(byte_count > logical_output_line_bytes_max);
+        try self.retainOutputLine(allocator, .{ .loss = .{
+            .byte_count = byte_count,
+            .reason = .line_too_long,
+        } });
+    }
+
+    fn retainOutputLine(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+        value: OutputLine.Value,
+    ) std.mem.Allocator.Error!void {
+        if (self.output_lines.items.len == 0) {
+            try self.output_lines.ensureTotalCapacity(allocator, self.history_capacity);
+            while (self.output_lines.items.len < self.history_capacity) {
+                self.output_lines.appendAssumeCapacity(null);
+            }
+        }
+        while (self.output_lines_count == self.history_capacity or
+            value.retainedBytes() > logical_output_bytes_max - self.output_bytes)
+        {
+            self.evictOldestOutputLine(allocator);
+        }
+        const slot = (self.output_lines_start + self.output_lines_count) %
+            @as(u32, @intCast(self.output_lines.items.len));
+        std.debug.assert(self.output_lines.items[@intCast(slot)] == null);
+        self.output_lines.items[@intCast(slot)] = .{
+            .id = self.takeOutputId(),
+            .value = value,
+        };
+        self.output_lines_count += 1;
+        self.output_bytes += value.retainedBytes();
+        std.debug.assert(self.output_bytes <= logical_output_bytes_max);
+    }
+
+    fn evictOldestOutputLine(self: *Screen, allocator: std.mem.Allocator) void {
+        std.debug.assert(self.output_lines_count > 0);
+        const slot = &self.output_lines.items[@intCast(self.output_lines_start)];
+        var line = slot.* orelse unreachable;
+        self.output_bytes -= line.value.retainedBytes();
+        line.deinit(allocator);
+        slot.* = null;
+        self.output_lines_count -= 1;
+        self.output_lines_start = (self.output_lines_start + 1) %
+            @as(u32, @intCast(self.output_lines.items.len));
+    }
+
+    fn takeOutputId(self: *Screen) u64 {
+        const id = self.next_output_id;
+        self.next_output_id = std.math.add(u64, id, 1) catch
+            @panic("terminal logical output identity exhausted");
+        return id;
     }
 
     /// Release retained logical history while preserving list capacity.
@@ -2252,6 +2393,97 @@ fn cloneAuthorityLine(allocator: std.mem.Allocator, cells: []const ScreenCell) s
     return line;
 }
 
+fn appendCellTextBounded(
+    allocator: std.mem.Allocator,
+    bytes: *std.ArrayList(u8),
+    cell: ScreenCell,
+    limit: usize,
+) (std.mem.Allocator.Error || error{LineTooLong})!void {
+    if (isCellContinuation(cell)) return;
+    var encoded: [4]u8 = undefined;
+    const codepoint: u21 = if (cell.codepoint == 0)
+        ' '
+    else
+        std.math.cast(u21, cell.codepoint) orelse unreachable;
+    const length = std.unicode.utf8Encode(codepoint, &encoded) catch unreachable;
+    if (length > limit -| bytes.items.len) return error.LineTooLong;
+    try bytes.appendSlice(allocator, encoded[0..length]);
+    for (cell.combining[0..cell.combining_len]) |combining| {
+        const scalar = std.math.cast(u21, combining) orelse unreachable;
+        const combining_length = std.unicode.utf8Encode(scalar, &encoded) catch unreachable;
+        if (combining_length > limit -| bytes.items.len) return error.LineTooLong;
+        try bytes.appendSlice(allocator, encoded[0..combining_length]);
+    }
+}
+
+fn cellTextByteCount(cell: ScreenCell) usize {
+    if (isCellContinuation(cell)) return 0;
+    var encoded: [4]u8 = undefined;
+    const codepoint: u21 = if (cell.codepoint == 0)
+        ' '
+    else
+        std.math.cast(u21, cell.codepoint) orelse unreachable;
+    var count: usize = std.unicode.utf8Encode(codepoint, &encoded) catch unreachable;
+    for (cell.combining[0..cell.combining_len]) |combining| {
+        const scalar = std.math.cast(u21, combining) orelse unreachable;
+        const length = std.unicode.utf8Encode(scalar, &encoded) catch unreachable;
+        count = std.math.add(usize, count, length) catch
+            @panic("resident logical output byte count overflow");
+    }
+    return count;
+}
+
+fn openOutputLineByteCount(screen: *const Screen) usize {
+    var count: usize = 0;
+    var start_row = screen.cursor.row;
+    while (start_row > 0 and screen.rowWrapped(start_row - 1)) start_row -= 1;
+    if (start_row == 0) {
+        if (screen.open_history_line) |line| {
+            for (line.cells.items) |cell| {
+                count = std.math.add(usize, count, cellTextByteCount(cell)) catch
+                    @panic("resident logical output byte count overflow");
+            }
+        }
+    }
+    var row = start_row;
+    while (row < screen.rows) : (row += 1) {
+        const content_len = screen.sourceRowContentLen(row);
+        var col: u16 = 0;
+        while (col < content_len) : (col += 1) {
+            count = std.math.add(usize, count, cellTextByteCount(screen.cellInfoAt(row, col))) catch
+                @panic("resident logical output byte count overflow");
+        }
+        if (!screen.rowWrapped(row)) break;
+    }
+    return count;
+}
+
+fn copyOpenOutputLine(
+    allocator: std.mem.Allocator,
+    screen: *const Screen,
+    limit: usize,
+) (std.mem.Allocator.Error || error{LineTooLong})![]u8 {
+    var bytes = std.ArrayList(u8).empty;
+    errdefer bytes.deinit(allocator);
+    var start_row = screen.cursor.row;
+    while (start_row > 0 and screen.rowWrapped(start_row - 1)) start_row -= 1;
+    if (start_row == 0) {
+        if (screen.open_history_line) |line|
+            for (line.cells.items) |cell|
+                try appendCellTextBounded(allocator, &bytes, cell, limit);
+    }
+    var row = start_row;
+    while (row < screen.rows) : (row += 1) {
+        const content_len = screen.sourceRowContentLen(row);
+        var col: u16 = 0;
+        while (col < content_len) : (col += 1) {
+            try appendCellTextBounded(allocator, &bytes, screen.cellInfoAt(row, col), limit);
+        }
+        if (!screen.rowWrapped(row)) break;
+    }
+    return bytes.toOwnedSlice(allocator);
+}
+
 fn decodeExtendedColor(params: []const i32, idx: *u8) ?ScreenColor {
     const next = idx.* + 1;
     if (next >= params.len) return null;
@@ -2725,6 +2957,39 @@ const HistoryLine = struct {
     pub fn deinit(self: *HistoryLine, allocator: std.mem.Allocator) void {
         self.cells.deinit(allocator);
         self.* = .{};
+    }
+};
+
+const OutputLossReason = enum { line_too_long };
+
+const OutputLoss = struct {
+    byte_count: usize,
+    reason: OutputLossReason,
+};
+
+// Owns one bounded finalized primary-screen result and its stable identity.
+const OutputLine = struct {
+    const Value = union(enum) {
+        text: []u8,
+        loss: OutputLoss,
+
+        fn retainedBytes(self: Value) usize {
+            return switch (self) {
+                .text => |text| text.len,
+                .loss => 0,
+            };
+        }
+    };
+
+    id: u64,
+    value: Value,
+
+    fn deinit(self: *OutputLine, allocator: std.mem.Allocator) void {
+        switch (self.value) {
+            .text => |text| allocator.free(text),
+            .loss => {},
+        }
+        self.* = undefined;
     }
 };
 
@@ -4706,6 +4971,8 @@ pub const max_metadata_bytes: u32 = 1024;
 const hyperlink_target_max_count: u32 = 4096;
 // Owns the latest bounded OSC 133 shell mark.
 const ShellMark = struct {
+    // Advances only after one valid OSC 133 mark is retained successfully.
+    generation: u64 = 0,
     kind: u8 = 0,
     status: ?i32 = null,
     metadata: []u8 = &[_]u8{},
@@ -4832,6 +5099,8 @@ pub const HostState = struct {
         const metadata = try self.allocator.dupe(u8, mark.metadata);
         self.allocator.free(self.shell_mark.metadata);
         self.shell_mark = .{
+            .generation = std.math.add(u64, self.shell_mark.generation, 1) catch
+                @panic("terminal shell-mark identity exhausted"),
             .kind = mark.kind,
             .status = mark.status,
             .metadata = metadata,
@@ -5295,7 +5564,12 @@ fn isShellNameByte(byte: u8) bool {
 fn parseShellMark(payload: []const u8) ?ItermShellMark {
     if (payload.len == 0) return null;
     const separator = std.mem.indexOfScalar(u8, payload, ';') orelse payload.len;
+    if (separator != 1) return null;
     const kind = payload[0];
+    switch (kind) {
+        'A', 'B', 'C', 'D' => {},
+        else => return null,
+    }
     const metadata = if (separator < payload.len) payload[separator + 1 ..] else "";
     const status = if (kind == 'D' and metadata.len > 0)
         std.fmt.parseInt(i32, metadata, 10) catch null
@@ -8841,6 +9115,13 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .legacy_control,
         => try applyHostEvent(vt, event),
 
+        .line_feed, .next_line => {
+            if (!vt.screen_state.alt_active) {
+                try vt.screen_state.primary.finalizeOutputLine(vt.allocator);
+            }
+            vt.screen_state.active().applyScreen(event);
+        },
+
         .cursor_up,
         .cursor_down,
         .cursor_forward,
@@ -8853,8 +9134,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .write_text,
         .write_codepoint,
         .repeat_preceding,
-        .line_feed,
-        .next_line,
         .reverse_index,
         .carriage_return,
         .backspace,
@@ -9386,6 +9665,82 @@ pub const Terminal = struct {
     pub const default_presentation = defaultPresentation();
     /// Bounds each borrowed title or icon value in a surface publication.
     pub const metadata_max_bytes = max_metadata_bytes;
+    /// Bounds one finalized logical line retained as UTF-8 evidence.
+    pub const logical_output_line_max_bytes = logical_output_line_bytes_max;
+    /// Bounds all finalized logical-line UTF-8 evidence retained by one terminal.
+    pub const logical_output_max_bytes = logical_output_bytes_max;
+
+    /// Names why one finalized logical line has no retained text.
+    pub const LogicalOutputLossReason = OutputLossReason;
+
+    /// Copies bounded evidence for one finalized line whose text was omitted.
+    pub const LogicalOutputLoss = struct {
+        /// Identifies the omitted finalized line in output order.
+        id: u64,
+        /// Reports the exact UTF-8 byte count measured without retaining text.
+        byte_count: usize,
+        /// Reports why the finalized text was not retained.
+        reason: LogicalOutputLossReason,
+    };
+
+    /// Owns one bounded copy of finalized primary output and the current open line.
+    pub const LogicalOutput = struct {
+        /// Frees both copied slices for this result.
+        allocator: std.mem.Allocator,
+        /// Contains newline-separated finalized lines after the requested cursor.
+        text: []u8,
+        /// Contains the current primary logical line for this publication.
+        open_line: []u8,
+        /// Reports that the open line did not fit after copied finalized evidence.
+        open_line_omitted: bool,
+        /// Owns ordered loss evidence within the copied cursor interval.
+        losses: []LogicalOutputLoss,
+        /// Identifies the oldest finalized line still retained.
+        oldest: u64,
+        /// Identifies the last finalized line copied, or the requested cursor.
+        cursor: u64,
+        /// Identifies the newest finalized line retained at publication time.
+        newest: u64,
+        /// Counts finalized lines copied into `text`.
+        line_count: u16,
+        /// Reports that another finalized line remains after `cursor`.
+        more: bool,
+        /// Binds `open_line` to one surface publication.
+        publication: u64,
+
+        /// Releases both copied byte slices exactly once.
+        pub fn deinit(self: *LogicalOutput) void {
+            self.allocator.free(self.losses);
+            self.allocator.free(self.open_line);
+            self.allocator.free(self.text);
+            self.* = undefined;
+        }
+    };
+
+    /// Distinguishes copied output from exact cursor and retention failures.
+    pub const LogicalOutputResult = union(enum) {
+        /// Owns copied finalized and publication-scoped open output.
+        output: LogicalOutput,
+        /// Reports the oldest cursor after whole-line retention eviction.
+        cursor_stale: u64,
+        /// Reports the newest cursor when a request is from the future.
+        cursor_ahead: u64,
+        /// Identifies a retained line requiring a larger bounded request.
+        line_too_long: u64,
+        /// Reports that the open line alone exceeds the requested byte bound.
+        open_line_too_long,
+    };
+
+    /// Reports invalid zero limits or copy allocation failure.
+    pub const LogicalOutputError = std.mem.Allocator.Error || error{InvalidLimit};
+
+    /// Copies the retained finalized-line identity bounds without output bytes.
+    pub const LogicalOutputRange = struct {
+        /// Identifies the oldest retained line, or the next identity when empty.
+        oldest: u64,
+        /// Identifies the newest retained line, or zero when empty.
+        newest: u64,
+    };
 
     const ScreenSet = Set;
 
@@ -9840,6 +10195,118 @@ pub const Terminal = struct {
         };
     }
 
+    /// Copies finalized primary logical lines after `cursor` and one publication-scoped open line.
+    pub fn copyLogicalOutput(
+        self: *Terminal,
+        allocator: std.mem.Allocator,
+        cursor: u64,
+        max_lines: u16,
+        max_bytes: usize,
+    ) LogicalOutputError!LogicalOutputResult {
+        if (max_lines == 0 or max_bytes == 0 or max_bytes > logical_output_bytes_max) {
+            return error.InvalidLimit;
+        }
+        const primary = &self.screen_state.primary;
+        const count = primary.output_lines_count;
+        const newest = primary.next_output_id - 1;
+        const oldest = if (count == 0)
+            primary.next_output_id
+        else
+            primary.output_lines.items[@intCast(primary.output_lines_start)].?.id;
+        if (cursor > newest) return .{ .cursor_ahead = newest };
+        if (oldest > 1 and cursor < oldest - 1) return .{ .cursor_stale = oldest };
+
+        var text = std.ArrayList(u8).empty;
+        errdefer text.deinit(allocator);
+        var losses = std.ArrayList(LogicalOutputLoss).empty;
+        errdefer losses.deinit(allocator);
+        var entry_count: u16 = 0;
+        var line_count: u16 = 0;
+        var output_cursor = cursor;
+        var more = false;
+        var logical_index: u16 = 0;
+        while (logical_index < count) : (logical_index += 1) {
+            const slot = (primary.output_lines_start + @as(u32, @intCast(logical_index))) %
+                @as(u32, @intCast(primary.output_lines.items.len));
+            const line = primary.output_lines.items[@intCast(slot)].?;
+            if (line.id <= cursor) continue;
+            if (entry_count == max_lines) {
+                more = true;
+                break;
+            }
+            switch (line.value) {
+                .loss => |loss| {
+                    try losses.append(allocator, .{
+                        .id = line.id,
+                        .byte_count = loss.byte_count,
+                        .reason = loss.reason,
+                    });
+                },
+                .text => |line_text| {
+                    const separator: usize = if (line_count == 0) 0 else 1;
+                    const remaining = max_bytes - text.items.len;
+                    if (separator > remaining or line_text.len > remaining - separator) {
+                        if (entry_count == 0) return .{ .line_too_long = line.id };
+                        more = true;
+                        break;
+                    }
+                    if (separator != 0) try text.append(allocator, '\n');
+                    try text.appendSlice(allocator, line_text);
+                    line_count += 1;
+                },
+            }
+            if (more) break;
+            entry_count += 1;
+            output_cursor = line.id;
+        }
+        var open_line_omitted = false;
+        const open_line = copyOpenOutputLine(
+            allocator,
+            primary,
+            max_bytes - text.items.len,
+        ) catch |failure| switch (failure) {
+            error.LineTooLong => if (entry_count == 0)
+                return .open_line_too_long
+            else blk: {
+                open_line_omitted = true;
+                break :blk try allocator.dupe(u8, "");
+            },
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        errdefer allocator.free(open_line);
+        const owned_text = try text.toOwnedSlice(allocator);
+        errdefer allocator.free(owned_text);
+        const owned_losses = try losses.toOwnedSlice(allocator);
+        errdefer allocator.free(owned_losses);
+        const publication = self.surfaceSnapshot().snapshot_seq;
+        return .{ .output = .{
+            .allocator = allocator,
+            .text = owned_text,
+            .open_line = open_line,
+            .open_line_omitted = open_line_omitted,
+            .losses = owned_losses,
+            .oldest = oldest,
+            .cursor = output_cursor,
+            .newest = newest,
+            .line_count = line_count,
+            .more = more,
+            .publication = publication,
+        } };
+    }
+
+    /// Returns the current finalized primary-output retention bounds.
+    pub fn logicalOutputRange(self: *const Terminal) LogicalOutputRange {
+        const primary = &self.screen_state.primary;
+        const count = primary.output_lines_count;
+        return .{
+            .oldest = if (count == 0)
+                primary.next_output_id
+            else
+                primary.output_lines.items[@intCast(primary.output_lines_start)].?.id,
+            .newest = primary.next_output_id - 1,
+        };
+    }
+
     /// Borrows a cell hyperlink URI only when snapshot identity and coordinates are valid.
     pub fn visibleCellHyperlinkUri(
         self: *Terminal,
@@ -10165,6 +10632,65 @@ test "terminal publishes every bounded bell and remains reusable" {
     const reused = try vt.feed("y");
     try std.testing.expect(reused.state_changed);
     try std.testing.expectEqual(@as(u21, 'y'), vt.surfaceSnapshot().snapshot.view.cellAt(0, 1));
+}
+
+test "logical output aggregate evicts whole lines and preserves exact cursor loss" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 2, 4);
+    defer terminal.deinit();
+    const line_bytes = logical_output_bytes_max / 2 + 1;
+    const first = try std.testing.allocator.alloc(u8, line_bytes);
+    @memset(first, 'a');
+    terminal.screen_state.primary.retainOutputText(std.testing.allocator, first) catch |failure| {
+        std.testing.allocator.free(first);
+        return failure;
+    };
+    const second = try std.testing.allocator.alloc(u8, line_bytes);
+    @memset(second, 'b');
+    terminal.screen_state.primary.retainOutputText(std.testing.allocator, second) catch |failure| {
+        std.testing.allocator.free(second);
+        return failure;
+    };
+
+    const range = terminal.logicalOutputRange();
+    try std.testing.expectEqual(@as(u64, 2), range.oldest);
+    try std.testing.expectEqual(@as(u64, 2), range.newest);
+    try std.testing.expectEqual(line_bytes, terminal.screen_state.primary.output_bytes);
+    switch (try terminal.copyLogicalOutput(std.testing.allocator, 0, 1, logical_output_bytes_max)) {
+        .cursor_stale => |oldest| try std.testing.expectEqual(range.oldest, oldest),
+        else => return error.UnexpectedOutputResult,
+    }
+}
+
+test "logical output accepts the maximum copyable line" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 2, 2);
+    defer terminal.deinit();
+    const maximum = try std.testing.allocator.alloc(u8, logical_output_line_bytes_max);
+    @memset(maximum, 'x');
+    terminal.screen_state.primary.retainOutputText(std.testing.allocator, maximum) catch |failure| {
+        std.testing.allocator.free(maximum);
+        return failure;
+    };
+    terminal.screen_state.primary.writeText("open");
+
+    var copied = switch (try terminal.copyLogicalOutput(
+        std.testing.allocator,
+        0,
+        1,
+        logical_output_bytes_max,
+    )) {
+        .output => |output| output,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer copied.deinit();
+    try std.testing.expectEqual(logical_output_line_bytes_max, copied.text.len);
+    try std.testing.expectEqual(@as(u64, 1), copied.cursor);
+    try std.testing.expectEqual(@as(usize, 0), copied.losses.len);
+    try std.testing.expect(copied.open_line_omitted);
+    try std.testing.expectEqual(@as(usize, 0), copied.open_line.len);
+    try std.testing.expectError(
+        error.InvalidLimit,
+        terminal.copyLogicalOutput(std.testing.allocator, 1, 1, logical_output_bytes_max + 1),
+    );
 }
 
 const CursorSavepoint = struct {

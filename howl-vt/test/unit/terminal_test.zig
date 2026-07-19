@@ -31,6 +31,127 @@ fn feedChanged(terminal: *Terminal, bytes: []const u8) !void {
     try std.testing.expect(summary.state_changed);
 }
 
+test "finalized logical output keeps identity across resize and rejects an evicted cursor" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.initWithHistory(allocator, 2, 8, 3);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "one\r\ntwo\r\nthree\r\nopen");
+
+    var first = switch (try terminal.copyLogicalOutput(allocator, 0, 8, 128)) {
+        .output => |output| output,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer first.deinit();
+    try std.testing.expectEqualStrings("one\ntwo\nthree", first.text);
+    try std.testing.expectEqualStrings("open", first.open_line);
+    try std.testing.expectEqual(@as(u64, 1), first.oldest);
+    try std.testing.expectEqual(@as(u64, 3), first.cursor);
+    try std.testing.expectEqual(@as(u64, 3), first.newest);
+
+    try terminal.resize(3, 4);
+    var resized = switch (try terminal.copyLogicalOutput(allocator, 0, 8, 128)) {
+        .output => |output| output,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer resized.deinit();
+    try std.testing.expectEqualStrings(first.text, resized.text);
+    try std.testing.expectEqual(first.oldest, resized.oldest);
+    try std.testing.expectEqual(first.cursor, resized.cursor);
+
+    try feedChanged(&terminal, "\r\nfour\r\nfive\r\nsix");
+    switch (try terminal.copyLogicalOutput(allocator, 0, 8, 128)) {
+        .cursor_stale => |oldest| try std.testing.expect(oldest > first.oldest),
+        else => return error.UnexpectedOutputResult,
+    }
+}
+
+test "alternate-screen output does not enter finalized primary output" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.initWithHistory(allocator, 2, 8, 4);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "primary\r\nopen");
+    const before = terminal.logicalOutputRange();
+    try feedChanged(&terminal, "\x1b[?1049halt-a\r\nalt-b\r\nalt-c\x1b[?1049l");
+    const after = terminal.logicalOutputRange();
+    try std.testing.expectEqual(before, after);
+}
+
+test "open logical output is publication scoped and does not advance its cursor" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.initWithHistory(allocator, 2, 8, 4);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "open");
+    var first = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |output| output,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer first.deinit();
+    try std.testing.expectEqualStrings("open", first.open_line);
+    try std.testing.expectEqual(@as(u64, 0), first.cursor);
+
+    try feedChanged(&terminal, "-line");
+    var second = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |output| output,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer second.deinit();
+    try std.testing.expectEqualStrings("open-line", second.open_line);
+    try std.testing.expectEqual(first.cursor, second.cursor);
+    try std.testing.expect(second.publication > first.publication);
+}
+
+test "logical output identity advances only after retained text allocation succeeds" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 8, 4);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "line");
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.feed("\r\n"));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(u64, 0), terminal.logicalOutputRange().newest);
+
+    failing.fail_index = std.math.maxInt(usize);
+    try feedChanged(&terminal, "\n");
+    try std.testing.expectEqual(@as(u64, 1), terminal.logicalOutputRange().newest);
+}
+
+test "oversized finalized line records loss and terminal continues rendering" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, std.math.maxInt(u16), 32);
+    defer terminal.deinit();
+    var chunk: [64 * 1024]u8 = .{'x'} ** (64 * 1024);
+    const chunk_count = Terminal.logical_output_line_max_bytes / chunk.len + 1;
+    for (0..chunk_count) |_| try feedChanged(&terminal, &chunk);
+    switch (try terminal.copyLogicalOutput(
+        std.testing.allocator,
+        0,
+        1,
+        Terminal.logical_output_max_bytes,
+    )) {
+        .open_line_too_long => {},
+        else => return error.UnexpectedOutputResult,
+    }
+
+    try feedChanged(&terminal, "\r\n");
+    try feedChanged(&terminal, "ok\r\nnext");
+    var output = switch (try terminal.copyLogicalOutput(
+        std.testing.allocator,
+        0,
+        3,
+        Terminal.logical_output_max_bytes,
+    )) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer output.deinit();
+    try std.testing.expectEqual(@as(u64, 2), output.cursor);
+    try std.testing.expectEqualStrings("ok", output.text);
+    try std.testing.expectEqualStrings("next", output.open_line);
+    try std.testing.expectEqual(@as(usize, 1), output.losses.len);
+    try std.testing.expectEqual(@as(u64, 1), output.losses[0].id);
+    try std.testing.expectEqual(chunk_count * chunk.len, output.losses[0].byte_count);
+    try std.testing.expectEqual(Terminal.LogicalOutputLossReason.line_too_long, output.losses[0].reason);
+}
+
 test "terminal history retention is transactional at every allocation failure" {
     var probe = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var terminal = try Terminal.initWithHistory(probe.allocator(), 2, 4, 8);
@@ -81,7 +202,13 @@ fn historyRetentionFailure(fail_index: usize) !void {
     defer terminal.deinit();
     try feedChanged(&terminal, "AAAA\r\nBBBB");
 
-    try feedChanged(&terminal, "\r\nCCCC");
+    feedChanged(&terminal, "\r\nCCCC") catch |failure| {
+        try std.testing.expectEqual(error.OutOfMemory, failure);
+        try std.testing.expect(failing.has_induced_failure);
+        failing.fail_index = std.math.maxInt(usize);
+        try feedChanged(&terminal, "\r\nCCCC");
+        return;
+    };
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expectEqual(@as(u32, 0), terminal.screen_state.primary.historyCount());
     try std.testing.expectEqual(@as(usize, 0), terminal.screen_state.primary.history_lines.items.len);
@@ -124,7 +251,13 @@ fn fullHistoryRetentionFailure(fail_index: usize) !void {
     defer terminal.deinit();
     try feedChanged(&terminal, "AAAA\r\nBBBB\r\nCCCC\r\nDDDD");
 
-    try feedChanged(&terminal, "\r\nEEEE");
+    feedChanged(&terminal, "\r\nEEEE") catch |failure| {
+        try std.testing.expectEqual(error.OutOfMemory, failure);
+        try std.testing.expect(failing.has_induced_failure);
+        failing.fail_index = std.math.maxInt(usize);
+        try feedChanged(&terminal, "\r\nEEEE");
+        return;
+    };
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expectEqual(@as(u32, 2), terminal.screen_state.primary.historyCount());
     try std.testing.expectEqual(@as(usize, 2), terminal.screen_state.primary.history_lines.items.len);
