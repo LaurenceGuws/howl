@@ -225,6 +225,7 @@ pub const Terminal = struct {
         if (self.state_value.load(.acquire) != .running) return error.NotStarted;
         self.lock.lockUncancelable(self.io);
         defer self.lock.unlock(self.io);
+        if (self.cols == cols and self.rows == rows) return;
         self.transport.resize(cols, rows) catch |failure| switch (failure) {
             error.NotStarted => return error.NotStarted,
             error.ResizeFailed => return error.PtyResizeFailed,

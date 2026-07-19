@@ -5,14 +5,17 @@ Howl is a small, correct, embeddable native Zig terminal family.
 The active projects are:
 
 - `howl-vt`: the embeddable terminal model.
-- `howl-headless`: a bounded native PTY host for semantic terminal output.
 - `howl-text`: bounded native font loading, shaping, and alpha-mask
   rasterization.
+- `howl-pty`: bounded native PTY, child process-group, I/O, resize, wake, and
+  cleanup ownership.
+- `howl-headless`: one live composition of `howl-pty` and `howl-vt`.
 - `howl-host`: a native Wayland host with bounded terminal, layout, and text
   owners.
 
-The root package exports `howl_vt` and `howl_text`. Native hosts and development
-proofs remain root workspace operations.
+The root package exports `howl_vt`, `howl_text`, `howl_pty`, and
+`howl_headless`. Native hosts and development proofs remain root workspace
+operations.
 
 Compile every active component and proof:
 

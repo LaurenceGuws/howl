@@ -5,7 +5,7 @@ capabilities:
     acceptance: one version, package URL, dependency graph, build command surface, and atomic history
 
   - name: public_module_graph
-    acceptance: the root package exports curated howl_vt and howl_text modules without exposing source paths
+    acceptance: the root package exports curated howl_vt, howl_text, howl_pty, and howl_headless modules
 
   - name: development_orchestration
     acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig
@@ -14,10 +14,16 @@ capabilities:
     acceptance: terminal behavior and proof survive while production characters, hops, and public surface decrease
 
   - name: qagent_embedding
-    acceptance: QAgent builds and dogfoods against the local Howl VT module during source-shape work
+    acceptance: QAgent builds and dogfoods against the local curated Howl terminal owner
+
+  - name: reusable_native_pty
+    acceptance: >-
+      one curated module owns PTY creation, copied launch values, child process groups, complete I/O,
+      resize, wakeable waits, exact supported-platform errors, and cleanup
 
   - name: reusable_headless_terminal
-    acceptance: one curated native owner composes PTY, VT, live input, replies, resize, semantic surfaces, wakes, and cleanup
+    acceptance: >-
+      one curated native owner composes PTY, VT, live input, replies, resize, semantic surfaces, wakes, and cleanup
 
   - name: focused_source_audit
     acceptance: one direct root-owned audit enforces settled patterns and exact reviewed uses

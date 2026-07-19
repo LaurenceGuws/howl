@@ -1,9 +1,6 @@
 howl-host links system Wayland 1.25.0, wayland-egl 18.1.0, EGL 1.5,
 OpenGL ES 3.2, and xkbcommon 1.13.2 under their installed licenses.
 
-`vendor/howl-vt` is the private native Howl terminal model pinned at
-8ded9da7cc510ccae669e7ada67a01f9e7963011.
-
 `vendor/howl-text` is the private native Howl terminal text owner pinned at
 1e451fd3961a2d25051df9f7e6b3ee4b536fbe04. Its test-data provenance and
 licenses remain recorded within that repository.

@@ -18,7 +18,8 @@ pub fn add(
     check.dependOn(&audit.step);
     addVt(b, target, optimize, vt, check, test_step);
     addText(b, target, optimize, check, test_step);
-    addHeadless(b, target, optimize, pty, headless, check, test_step);
+    addPty(b, pty, check, test_step);
+    addHeadless(b, target, optimize, headless, check, test_step);
     addHost(b, target, optimize, vt, text, check, test_step);
     b.default_step = check;
 }
@@ -126,11 +127,21 @@ fn addText(
     test_step.dependOn(&addTestRun(b, tests).step);
 }
 
+fn addPty(
+    b: *std.Build,
+    pty: *std.Build.Module,
+    check: *std.Build.Step,
+    test_step: *std.Build.Step,
+) void {
+    const tests = addTest(b, "howl-pty", pty);
+    check.dependOn(&tests.step);
+    test_step.dependOn(&addTestRun(b, tests).step);
+}
+
 fn addHeadless(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    pty: *std.Build.Module,
     headless: *std.Build.Module,
     check: *std.Build.Step,
     test_step: *std.Build.Step,
@@ -150,14 +161,11 @@ fn addHeadless(
     const executable = b.addExecutable(.{ .name = "howl-headless", .root_module = executable_module });
     executable.use_llvm = true;
     const api = addTest(b, "howl-headless-api", headless);
-    const pty_tests = addTest(b, "howl-pty", pty);
     const tests = addTest(b, "howl-headless", tests_module);
     check.dependOn(&api.step);
-    check.dependOn(&pty_tests.step);
     check.dependOn(&executable.step);
     check.dependOn(&tests.step);
     test_step.dependOn(&addTestRun(b, api).step);
-    test_step.dependOn(&addTestRun(b, pty_tests).step);
     test_step.dependOn(&addTestRun(b, tests).step);
     b.installArtifact(executable);
     const run = b.addRunArtifact(executable);

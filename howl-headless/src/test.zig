@@ -176,7 +176,7 @@ test "waiting input transfer leaves the model available to drain child output" {
     ));
 }
 
-test "resize updates the PTY and semantic surface" {
+test "resize publishes only changed dimensions" {
     const terminal = try headless.Terminal.init(
         std.testing.allocator,
         std.testing.io,
@@ -186,10 +186,24 @@ test "resize updates the PTY and semantic surface" {
     defer terminal.deinit();
     try terminal.resize(100, 40);
 
-    var surface = terminal.surface();
-    defer surface.deinit();
-    try std.testing.expectEqual(@as(u16, 100), surface.publication.snapshot.view.cols);
-    try std.testing.expectEqual(@as(u16, 40), surface.publication.snapshot.view.rows);
+    var snapshot_seq: u64 = undefined;
+    var dirty_generation: u64 = undefined;
+    {
+        var surface = terminal.surface();
+        defer surface.deinit();
+        try std.testing.expectEqual(@as(u16, 100), surface.publication.snapshot.view.cols);
+        try std.testing.expectEqual(@as(u16, 40), surface.publication.snapshot.view.rows);
+        snapshot_seq = surface.publication.snapshot_seq;
+        dirty_generation = surface.publication.dirty_generation;
+        try std.testing.expect(surface.acknowledge());
+    }
+
+    try terminal.resize(100, 40);
+    var unchanged = terminal.surface();
+    defer unchanged.deinit();
+    try std.testing.expectEqual(snapshot_seq, unchanged.publication.snapshot_seq);
+    try std.testing.expectEqual(dirty_generation, unchanged.publication.dirty_generation);
+    try std.testing.expect(unchanged.publication.snapshot.dirty == null);
 }
 
 test "deinit stops one live child and reader" {

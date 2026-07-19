@@ -4,8 +4,10 @@ sources:
   build/dev.zig: root-only checks, proofs, benchmarks, simulations, and native hosts
   howl-vt/src: current terminal model implementation preserved through source-shape simplification
   howl-text/src: current text loading, shaping, and rasterization implementation
+  howl-pty/src: >-
+    native PTY creation, copied launch values, process-group lifecycle, complete I/O, resize, wakeable waits,
+    exact platform errors, and cleanup
   howl-headless/src: current bounded PTY host and semantic observation implementation
-  howl-headless/vendor/howl-pty/src: current native PTY transport retained by the headless host
   howl-host/src: current Wayland, terminal-thread, layout, and GLES host implementation
   howl-host/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host
   tools/audit_source.sh: settled VT source policy and reviewed construct uses

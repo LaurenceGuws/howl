@@ -10,8 +10,11 @@ components:
   - name: text
     role: explicit font loading, shaping, and alpha-mask rasterization
 
+  - name: pty
+    role: native PTY creation, child process-group lifecycle, complete I/O, resize, wakeable waits, and cleanup
+
   - name: headless
-    role: bounded native PTY hosting and semantic terminal observation
+    role: bounded composition of one native PTY and one semantic terminal model
 
   - name: host
     role: native Wayland window, terminal threads, layout, and GLES text rendering
@@ -19,7 +22,8 @@ components:
 relationships:
   - vt owns terminal truth and accepts host facts through native Zig values
   - text owns terminal text preparation without owning terminal state or presentation
-  - headless embeds vt to exercise arbitrary PTY applications without a graphical host
+  - pty owns copied launch values and exact supported-platform process and I/O mechanics
+  - headless composes pty and vt to exercise arbitrary applications without a graphical host
   - host embeds vt and text while owning platform, thread, window, GPU, and PTY lifecycles
   - qagent is the first real embedder and supplies integration pressure without Howl policy
 
@@ -29,4 +33,5 @@ package:
   modules:
     - howl_vt
     - howl_text
+    - howl_pty
     - howl_headless

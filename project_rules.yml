@@ -6,6 +6,8 @@ rules:
   - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.
   - Domain quantities use types sized for their meaning.
   - Public modules expose curated native Zig values instead of internal source layout.
-  - Hosts own platform I/O, PTYs, threads, windows, graphics devices, and presentation policy.
+  - >-
+    Howl-pty owns native PTY mechanics; hosts own instances, threads, windows, graphics devices, and presentation
+    policy.
   - Tests prove product behavior, failure, cleanup, bounds, and deterministic protocol semantics.
   - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.

@@ -1,4 +1,4 @@
-//! Curates the owned native PTY transport used by howl-headless.
+//! Curates Howl's native PTY and child process-group capability.
 
 const std = @import("std");
 const pty = @import("pty.zig");

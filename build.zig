@@ -20,8 +20,8 @@ pub fn build(b: *std.Build) void {
     });
     text.linkSystemLibrary("freetype", .{});
     text.linkSystemLibrary("harfbuzz", .{});
-    const pty = b.createModule(.{
-        .root_source_file = b.path("howl-headless/vendor/howl-pty/src/howl_pty.zig"),
+    const pty = b.addModule("howl_pty", .{
+        .root_source_file = b.path("howl-pty/src/howl_pty.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
