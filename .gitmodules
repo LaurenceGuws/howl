@@ -7,3 +7,6 @@
 [submodule "howl-text"]
 	path = howl-text
 	url = git@github.com:LaurenceGuws/howl-text.git
+[submodule "howl-host"]
+	path = howl-host
+	url = git@github.com:LaurenceGuws/howl-host.git
