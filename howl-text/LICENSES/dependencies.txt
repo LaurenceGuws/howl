@@ -1,0 +1,24 @@
+Runtime dependencies
+====================
+
+howl-text dynamically links the target system's FreeType and HarfBuzz
+libraries. No source or binary copy of either library is stored here.
+
+Development baseline:
+
+- FreeType 26.6.20: https://freetype.org/
+  FreeType License or GNU GPL version 2, at the distributor's option.
+- HarfBuzz 14.2.1: https://harfbuzz.github.io/
+  Old MIT license.
+
+The target system or binary distributor owns selection, packaging, and the
+corresponding license notices for those linked libraries.
+
+Generated terminal glyph provenance
+===================================
+
+The generated box, block, braille, sextant, octant, and Powerline algorithms
+entered howl-text from this project's earlier private howl-render source and
+are maintained here as native howl-text code. Kitty and Foot are behavioral
+references for Unicode mappings and terminal geometry. howl-text carries no
+source file from either project.

@@ -1,6 +1,6 @@
 # Howl
 
-Howl is a native Zig terminal family.
+Howl is a small, correct, embeddable native Zig terminal family.
 
 The active projects are:
 
@@ -11,9 +11,17 @@ The active projects are:
 - `howl-host`: a native Wayland host with bounded terminal, layout, and text
   owners.
 
-Initialize the family and run every active package check:
+The root package exports `howl_vt` and `howl_text`. Native hosts and development
+proofs remain root workspace operations.
+
+Compile every active component and proof:
 
 ```sh
-git submodule update --init --recursive
 zig build
+```
+
+Run every correctness proof:
+
+```sh
+zig build test
 ```

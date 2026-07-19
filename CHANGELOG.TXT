@@ -1,0 +1,7 @@
+0.1.0-dev
+
+- Narrowed the active terminal family to VT, text, headless, and native host.
+- Made the native Zig VT model the sole embedding surface until its public
+  shape earns a separately designed ABI.
+- Established bounded vterm, iTerm, and Kitty behavior with deterministic
+  tests, simulations, fuzzing, and host adoption.

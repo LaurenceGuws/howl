@@ -1,0 +1,12 @@
+topics:
+  - name: repository_fragmentation
+    evidence: four coordinated modules require submodule, version, build, and commit synchronization
+    exit: active source and history live in one repository with one package graph
+
+  - name: vt_source_shape
+    evidence: 56 Zig files, 157 internal imports, and 197 public symbols obscure one terminal state machine
+    exit: accepted behavior remains while directness reaches the Foot bar
+
+  - name: style_tooling
+    evidence: a Python package and nested shell checker duplicate a narrow source-audit responsibility
+    exit: one small Zig audit owns settled patterns and reviewed uses

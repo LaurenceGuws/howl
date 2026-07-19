@@ -1,10 +1,8 @@
 .zig-cache/
 zig-out/
-/.idea/
-/.run/
-/.venv/
-/.vscode/
-/.zigversion
-/howl-linux-host/
-/howl-pty/
-/howl-style/
+/tools/rain-bench/artifacts/stress/
+/howl-headless/vendor/howl-vt/
+/howl-host/vendor/howl-text/
+/howl-host/vendor/howl-vt/
+/howl-vt/official_docs/
+/howl-vt/zig-pkg/

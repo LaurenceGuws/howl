@@ -1,0 +1,11 @@
+rules:
+  - Every retained character buys capability, correctness, clarity, or deterministic evidence.
+  - Terminal protocol behavior follows primary evidence and exact host-owned facts.
+  - Inputs, retained state, queues, payloads, grids, and platform consequences have explicit bounds.
+  - Construction failure and deinitialization release completed resources in reverse ownership order.
+  - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.
+  - Domain quantities use types sized for their meaning.
+  - Public modules expose curated native Zig values instead of internal source layout.
+  - Hosts own platform I/O, PTYs, threads, windows, graphics devices, and presentation policy.
+  - Tests prove product behavior, failure, cleanup, bounds, and deterministic protocol semantics.
+  - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.
