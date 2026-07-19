@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "$0")/../howl-vt"
+
 status=0
 
 root_public='pub const Terminal = terminal.Terminal;'

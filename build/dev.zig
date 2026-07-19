@@ -13,7 +13,6 @@ pub fn add(
     const test_step = b.step("test", "Run every active Howl correctness proof");
     const audit = b.addSystemCommand(&.{"bash"});
     audit.addFileArg(b.path("tools/audit_source.sh"));
-    audit.setCwd(b.path("howl-vt"));
     check.dependOn(&audit.step);
     addVt(b, target, optimize, vt, check, test_step);
     addText(b, target, optimize, check, test_step);
