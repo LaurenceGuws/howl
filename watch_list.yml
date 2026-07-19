@@ -1,8 +1,1 @@
-topics:
-  - name: vt_source_shape
-    evidence: 50 top-level pub seams serve Terminal boundaries and separate behavioral proofs; production source has no lines over 120 columns
-    exit: the three-owner graph and its deliberate proof seams pass final source review
-
-  - name: style_tooling
-    evidence: tools/audit_source.sh remains the shell implementation of settled source policy
-    exit: one small Zig audit owns settled patterns and reviewed uses
+topics: []

@@ -17,7 +17,7 @@ capabilities:
     acceptance: QAgent builds and dogfoods against the local Howl VT module during source-shape work
 
   - name: focused_source_audit
-    acceptance: one small Zig tool enforces settled patterns and exact reviewed uses
+    acceptance: one direct root-owned audit enforces settled patterns and exact reviewed uses
 
 limitations:
   - name: source_layout
