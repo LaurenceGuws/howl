@@ -13,6 +13,7 @@ pub const max_history_rows: u16 = 16_384;
 /// Bounds each complete input or terminal-reply transfer.
 pub const max_transfer_bytes: usize = 64 * 1024;
 const transport_buffer_bytes: usize = 4096;
+const default_transfer_timeout_ms: u32 = 2000;
 
 /// Supplies copied child launch values and bounded terminal dimensions.
 pub const Config = struct {
@@ -28,6 +29,8 @@ pub const Config = struct {
     rows: u16 = 24,
     /// Sets retained scrollback rows within `max_history_rows`.
     history_rows: u16 = 2000,
+    /// Bounds each PTY input and terminal-reply transfer.
+    transfer_timeout_ms: u32 = default_transfer_timeout_ms,
 };
 
 /// Delivers coalesced terminal mutation, stop, or failure notifications.
@@ -43,18 +46,25 @@ pub const InitError = howl_vt.Terminal.InitError || std.mem.Allocator.Error ||
     std.Thread.SpawnError || error{
     InvalidDimensions,
     InvalidHistory,
+    InvalidTransferTimeout,
+    ChildCwdFailed,
+    ChildExecFailed,
+    ChildSessionFailed,
+    ChildStdioFailed,
+    ForkFailed,
+    MasterConfigureFailed,
+    LaunchStatusFailed,
+    LaunchStatusPipeFailed,
     OpenPtyFailed,
     ShellUnavailable,
     UnsupportedPlatform,
+    WakePipeFailed,
 };
 
-/// Reports input encoding, transfer bound, or complete PTY transfer failure.
-const PtyWriteError = error{
-    NotStarted,
-    PtyWriteFailed,
-    PtyWriteWaitFailed,
-};
-pub const InputError = howl_vt.Terminal.InputError || PtyWriteError || error{InputLimit};
+/// Reports input encoding or transfer-bound rejection before PTY admission.
+pub const InputError = howl_vt.Terminal.InputError || error{InputLimit};
+/// Retains complete or exact partial PTY input transfer truth.
+pub const InputTransfer = howl_pty.Transfer;
 
 /// Reports a resize rejected by the model or native PTY.
 pub const ResizeError = howl_vt.Terminal.ResizeError || error{
@@ -69,8 +79,11 @@ pub const ReaderError = error{
     ModelAllocationFailed,
     ParsedEventLimit,
     PtyReadFailed,
+    PtyReplyCanceled,
+    PtyReplyChildClosed,
+    PtyReplyTimedOut,
+    PtyReplyWaitFailed,
     PtyReplyWriteFailed,
-    PtyReplyWriteWaitFailed,
     PtyWaitFailed,
     ReplyAllocationFailed,
     StringControlLimit,
@@ -85,8 +98,11 @@ const ReaderFailure = enum(u8) {
     model_allocation_failed,
     parsed_event_limit,
     pty_read_failed,
+    pty_reply_canceled,
+    pty_reply_child_closed,
+    pty_reply_timed_out,
+    pty_reply_wait_failed,
     pty_reply_write_failed,
-    pty_reply_write_wait_failed,
     pty_wait_failed,
     reply_allocation_failed,
     string_control_limit,
@@ -127,6 +143,7 @@ pub const Terminal = struct {
     wake: Wake,
     cols: u16,
     rows: u16,
+    transfer_timeout_ms: u32,
 
     /// Constructs and starts every owned resource before returning a stable pointer.
     pub fn init(
@@ -137,6 +154,7 @@ pub const Terminal = struct {
     ) InitError!*Terminal {
         try validateSize(config.cols, config.rows);
         if (config.history_rows > max_history_rows) return error.InvalidHistory;
+        if (config.transfer_timeout_ms == 0) return error.InvalidTransferTimeout;
 
         var transport = try howl_pty.Owned.init(
             allocator,
@@ -153,7 +171,7 @@ pub const Terminal = struct {
         );
         errdefer model.deinit();
         transport.start(config.cols, config.rows) catch |failure| switch (failure) {
-            error.AlreadyStarted => unreachable,
+            error.AlreadyStarted => @panic("fresh PTY owner reported already started"),
             else => |expected| return expected,
         };
 
@@ -168,6 +186,7 @@ pub const Terminal = struct {
             .wake = wake,
             .cols = config.cols,
             .rows = config.rows,
+            .transfer_timeout_ms = config.transfer_timeout_ms,
         };
         self.reader = try .spawn(.{}, readLoop, .{self});
         return self;
@@ -175,10 +194,7 @@ pub const Terminal = struct {
 
     /// Stops the reader and child before releasing model and allocation ownership.
     pub fn deinit(self: *Terminal) void {
-        if (self.state_value.load(.acquire) == .running) {
-            self.state_value.store(.stopped, .release);
-        }
-        self.transport.kickWait();
+        self.cancel();
         self.reader.join();
         self.transport.deinit();
         self.model.deinit();
@@ -202,9 +218,18 @@ pub const Terminal = struct {
         self.wake_pending.store(false, .release);
     }
 
-    /// Encodes one host-neutral input event and writes every resulting PTY byte.
-    pub fn send(self: *Terminal, event: howl_vt.Terminal.InputEvent) InputError!void {
-        if (self.state_value.load(.acquire) != .running) return error.NotStarted;
+    /// Concurrently stops terminal progress and wakes active PTY reads or writes.
+    /// The embedder still serializes destructive `deinit` after public calls return.
+    pub fn cancel(self: *Terminal) void {
+        if (self.state_value.swap(.stopped, .acq_rel) == .running) self.notify();
+        self.transport.cancel();
+    }
+
+    /// Encodes one input event and retains complete or partial PTY transfer truth.
+    pub fn send(self: *Terminal, event: howl_vt.Terminal.InputEvent) InputError!InputTransfer {
+        if (self.state_value.load(.acquire) != .running) {
+            return .{ .incomplete = .{ .transferred = 0, .reason = .not_started } };
+        }
         self.lock.lockUncancelable(self.io);
         var scratch: howl_vt.Terminal.InputScratch = .{};
         var encoded = self.model.encodeInput(self.allocator, &scratch, event) catch |failure| {
@@ -216,7 +241,7 @@ pub const Terminal = struct {
         if (encoded.bytes.len > max_transfer_bytes) return error.InputLimit;
         self.write_lock.lockUncancelable(self.io);
         defer self.write_lock.unlock(self.io);
-        try writeAll(&self.transport, encoded.bytes);
+        return self.transport.transfer(self.io, encoded.bytes, self.transfer_timeout_ms);
     }
 
     /// Applies one bounded size to both terminal truth and the native PTY.
@@ -251,13 +276,12 @@ pub const Terminal = struct {
         var bytes: [transport_buffer_bytes]u8 = undefined;
         while (self.state_value.load(.acquire) == .running) {
             const wait = self.transport.waitReadable(-1) catch |failure| switch (failure) {
-                error.Interrupted, error.WouldBlock => continue,
                 error.NotStarted => return self.finish(.stopped, .none),
                 error.WaitFailed => return self.finish(.failed, .pty_wait_failed),
             };
             switch (wait) {
                 .timeout => continue,
-                .wake => continue,
+                .canceled => return self.finish(.stopped, .none),
                 .ready => {},
             }
             const count = self.transport.read(&bytes) catch |failure| switch (failure) {
@@ -291,15 +315,21 @@ pub const Terminal = struct {
         std.debug.assert(reply.len <= max_transfer_bytes);
         if (reply.len != 0) {
             self.write_lock.lockUncancelable(self.io);
-            writeAll(&self.transport, reply) catch |failure| {
-                self.write_lock.unlock(self.io);
-                self.allocator.free(reply);
-                return switch (failure) {
-                    error.NotStarted, error.PtyWriteFailed => error.PtyReplyWriteFailed,
-                    error.PtyWriteWaitFailed => error.PtyReplyWriteWaitFailed,
-                };
-            };
+            const transfer = self.transport.transfer(self.io, reply, self.transfer_timeout_ms);
             self.write_lock.unlock(self.io);
+            switch (transfer) {
+                .complete => {},
+                .incomplete => |failure| {
+                    self.allocator.free(reply);
+                    return switch (failure.reason) {
+                        .canceled => error.PtyReplyCanceled,
+                        .child_closed, .not_started => error.PtyReplyChildClosed,
+                        .timeout => error.PtyReplyTimedOut,
+                        .wait_failed => error.PtyReplyWaitFailed,
+                        .write_failed => error.PtyReplyWriteFailed,
+                    };
+                },
+            }
         }
         self.allocator.free(reply);
         if (summary.state_changed or summary.title_changed or summary.icon_changed) self.notify();
@@ -322,22 +352,17 @@ fn validateSize(cols: u16, rows: u16) error{InvalidDimensions}!void {
     }
 }
 
-fn writeAll(transport: *howl_pty.Owned, bytes: []const u8) PtyWriteError!void {
-    transport.writeAll(bytes) catch |failure| return switch (failure) {
-        error.NotStarted => error.NotStarted,
-        error.WriteFailed => error.PtyWriteFailed,
-        error.WaitFailed => error.PtyWriteWaitFailed,
-    };
-}
-
 fn readerFailure(failure: ReaderError) ReaderFailure {
     return switch (failure) {
         error.ConsequenceLimit => .consequence_limit,
         error.ModelAllocationFailed => .model_allocation_failed,
         error.ParsedEventLimit => .parsed_event_limit,
         error.PtyReadFailed => .pty_read_failed,
+        error.PtyReplyCanceled => .pty_reply_canceled,
+        error.PtyReplyChildClosed => .pty_reply_child_closed,
+        error.PtyReplyTimedOut => .pty_reply_timed_out,
+        error.PtyReplyWaitFailed => .pty_reply_wait_failed,
         error.PtyReplyWriteFailed => .pty_reply_write_failed,
-        error.PtyReplyWriteWaitFailed => .pty_reply_write_wait_failed,
         error.PtyWaitFailed => .pty_wait_failed,
         error.ReplyAllocationFailed => .reply_allocation_failed,
         error.StringControlLimit => .string_control_limit,
@@ -351,8 +376,11 @@ fn decodeReaderFailure(failure: ReaderFailure) ?ReaderError {
         .model_allocation_failed => error.ModelAllocationFailed,
         .parsed_event_limit => error.ParsedEventLimit,
         .pty_read_failed => error.PtyReadFailed,
+        .pty_reply_canceled => error.PtyReplyCanceled,
+        .pty_reply_child_closed => error.PtyReplyChildClosed,
+        .pty_reply_timed_out => error.PtyReplyTimedOut,
+        .pty_reply_wait_failed => error.PtyReplyWaitFailed,
         .pty_reply_write_failed => error.PtyReplyWriteFailed,
-        .pty_reply_write_wait_failed => error.PtyReplyWriteWaitFailed,
         .pty_wait_failed => error.PtyWaitFailed,
         .reply_allocation_failed => error.ReplyAllocationFailed,
         .string_control_limit => error.StringControlLimit,

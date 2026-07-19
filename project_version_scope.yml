@@ -18,8 +18,8 @@ capabilities:
 
   - name: reusable_native_pty
     acceptance: >-
-      one curated module owns PTY creation, copied launch values, child process groups, complete I/O,
-      resize, wakeable waits, exact supported-platform errors, and cleanup
+      one curated Linux module owns PTY creation, copied launch values, child process groups, exact partial transfers,
+      resize, concurrent cancellation, native errors, and cleanup
 
   - name: reusable_headless_terminal
     acceptance: >-

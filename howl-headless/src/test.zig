@@ -7,20 +7,27 @@ const wait_ms: i64 = 10;
 const wait_turns_max: u16 = 500;
 const transfer_wait_turns_max: u16 = 2000;
 
-const SendState = enum(u8) { pending, succeeded, failed };
+const SendState = enum(u8) { pending, complete, incomplete, failed };
 
 const SendContext = struct {
     terminal: *headless.Terminal,
     bytes: []const u8,
+    started: std.atomic.Value(bool) = .init(false),
     state: std.atomic.Value(SendState) = .init(.pending),
+    transferred: std.atomic.Value(usize) = .init(0),
 };
 
 fn sendBytes(context: *SendContext) void {
-    context.terminal.send(.{ .bytes = context.bytes }) catch {
+    context.started.store(true, .release);
+    const transfer = context.terminal.send(.{ .bytes = context.bytes }) catch {
         context.state.store(.failed, .release);
         return;
     };
-    context.state.store(.succeeded, .release);
+    context.transferred.store(transfer.transferred(), .release);
+    context.state.store(switch (transfer) {
+        .complete => .complete,
+        .incomplete => .incomplete,
+    }, .release);
 }
 
 fn countWake(context: ?*anyopaque) void {
@@ -105,7 +112,9 @@ test "live input reaches the child and mutates terminal truth" {
         .{},
     );
     defer terminal.deinit();
-    try terminal.send(.{ .bytes = "hello\n" });
+    const transfer = try terminal.send(.{ .bytes = "hello\n" });
+    try std.testing.expectEqual(@as(usize, 6), transfer.transferred());
+    try std.testing.expect(transfer == .complete);
     try wait(std.testing.io, terminal);
 
     var surface = terminal.surface();
@@ -162,10 +171,11 @@ test "waiting input transfer leaves the model available to drain child output" {
         }).sleep(std.testing.io);
     }
     const timed_out = send_context.state.load(.acquire) == .pending;
-    if (timed_out) terminal.transport.kickWait();
+    if (timed_out) terminal.cancel();
     sender.join();
     if (timed_out) return error.TransferDeadlock;
-    try std.testing.expectEqual(SendState.succeeded, send_context.state.load(.acquire));
+    try std.testing.expectEqual(SendState.complete, send_context.state.load(.acquire));
+    try std.testing.expectEqual(input.len, send_context.transferred.load(.acquire));
     try wait(std.testing.io, terminal);
 
     var surface = terminal.surface();
@@ -213,5 +223,30 @@ test "deinit stops one live child and reader" {
         .{ .command = "sleep 30" },
         .{},
     );
+    terminal.deinit();
+}
+
+test "cancellation ends a saturated input transfer before ordered deinit" {
+    const terminal = try headless.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "stty raw -echo; printf ready; kill -STOP $$", .transfer_timeout_ms = 10_000 },
+        .{},
+    );
+    errdefer terminal.deinit();
+    try waitForPrefix(std.testing.io, terminal, "ready");
+
+    var input: [headless.max_transfer_bytes]u8 = .{'x'} ** headless.max_transfer_bytes;
+    var send_context = SendContext{ .terminal = terminal, .bytes = &input };
+    const sender = try std.Thread.spawn(.{}, sendBytes, .{&send_context});
+    while (!send_context.started.load(.acquire)) std.atomic.spinLoopHint();
+    try (std.Io.Clock.Duration{
+        .raw = .fromMilliseconds(10),
+        .clock = .awake,
+    }).sleep(std.testing.io);
+    terminal.cancel();
+    sender.join();
+    try std.testing.expectEqual(SendState.incomplete, send_context.state.load(.acquire));
+    try std.testing.expect(send_context.transferred.load(.acquire) < input.len);
     terminal.deinit();
 }

@@ -7,7 +7,7 @@ rules:
   - Domain quantities use types sized for their meaning.
   - Public modules expose curated native Zig values instead of internal source layout.
   - >-
-    Howl-pty owns native PTY mechanics; hosts own instances, threads, windows, graphics devices, and presentation
+    Howl-pty owns Linux PTY mechanics and exact partial transfer outcomes; hosts own instances, threads, windows, graphics devices, and presentation
     policy.
   - Tests prove product behavior, failure, cleanup, bounds, and deterministic protocol semantics.
   - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.
