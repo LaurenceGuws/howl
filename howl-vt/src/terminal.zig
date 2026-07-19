@@ -3510,7 +3510,7 @@ pub fn encodeEvent(
         return try encodeKittyEvent(buf, key, mod, action, shifted, alternate, text, kitty_flags);
     return encodeKey(
         buf,
-        key,
+        legacyKey(key, mod, shifted),
         mod,
         application_cursor_keys,
         application_keypad,
@@ -3518,6 +3518,16 @@ pub fn encodeEvent(
         format_other_keys,
         kitty_flags,
     );
+}
+
+// Legacy terminals consume the produced Shift identity, while extended key
+// protocols retain physical, shifted, and alternate identities separately.
+fn legacyKey(key: InputKey, mod: Modifier, shifted: ?u21) InputKey {
+    if (!mod.shift) return key;
+    return switch (key) {
+        .named => key,
+        .unicode => if (shifted) |value| InputKey.initUnicode(value) catch key else key,
+    };
 }
 
 fn isLegacyControl(key: KeyName) bool {
@@ -3901,6 +3911,12 @@ fn encodeFunctionKey(buf: []u8, key: KeyName, mod: Modifier) ?[]const u8 {
 fn encodeTextKey(buf: []u8, codepoint: u21, mod: Modifier, modify_other_keys: i8, format_other_keys: u16) []const u8 {
     if (codepoint > 31 and codepoint < 127) {
         if (encodeModifyOtherKey(buf, codepoint, mod, modify_other_keys, format_other_keys)) |encoded| return encoded;
+    }
+    if (mod.control) if (legacyControlByte(codepoint)) |byte| {
+        buf[0] = byte;
+        return buf[0..1];
+    };
+    if (codepoint > 31 and codepoint < 127) {
         return singleByte(buf, @intCast(codepoint)).?;
     }
     if (codepoint > 127) {
@@ -3909,6 +3925,18 @@ fn encodeTextKey(buf: []u8, codepoint: u21, mod: Modifier, modify_other_keys: i8
         return buf[0..len];
     }
     return buf[0..0];
+}
+
+// ASCII control chords are legacy byte semantics; lock state has already been
+// removed by Modifier.legacy and remains available only to extended protocols.
+fn legacyControlByte(codepoint: u21) ?u8 {
+    return switch (codepoint) {
+        ' ' => 0,
+        '@'...'_' => @intCast(codepoint - '@'),
+        'a'...'z' => @intCast(codepoint - 'a' + 1),
+        '?' => 0x7f,
+        else => null,
+    };
 }
 
 fn singleByte(buf: []u8, byte: u8) ?[]const u8 {
@@ -4060,6 +4088,57 @@ test "every modifier combination has one Kitty parameter" {
             encodeKey(&buf, scalar, case.modifier, false, false, 0, 0, 8),
         );
     }
+}
+
+test "legacy control encoding ignores num lock" {
+    var buf: [max_encoded_len]u8 = undefined;
+    const cases = [_]struct { key: u21, modifier: Modifier, expected: []const u8 }{
+        .{ .key = 'b', .modifier = .{ .control = true, .num_lock = true }, .expected = "\x02" },
+        .{ .key = 'c', .modifier = .{ .control = true, .num_lock = true }, .expected = "\x03" },
+        .{ .key = 'r', .modifier = .{ .control = true, .num_lock = true }, .expected = "\x12" },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqualStrings(
+            case.expected,
+            try encodeEvent(
+                &buf,
+                try InputKey.initUnicode(case.key),
+                case.modifier,
+                .press,
+                if (case.modifier.shift) '?' else null,
+                case.key,
+                "",
+                "",
+                false,
+                false,
+                0,
+                0,
+                0,
+            ),
+        );
+    }
+}
+
+test "legacy shift identity ignores num lock" {
+    var buf: [max_encoded_len]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "?",
+        try encodeEvent(
+            &buf,
+            try InputKey.initUnicode('/'),
+            .{ .shift = true, .num_lock = true },
+            .press,
+            '?',
+            '/',
+            "",
+            "",
+            false,
+            false,
+            0,
+            0,
+            0,
+        ),
+    );
 }
 
 /// Mouse button values.
