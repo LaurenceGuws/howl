@@ -71,6 +71,48 @@ test "terminal: C0 controls retain exact stream effects" {
     }
 }
 
+test "terminal: G0 G1 designation maps implemented repertoires across split feeds" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 64);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b(")).state_changed);
+    try std.testing.expect((try terminal.feed("0")).state_changed);
+    try std.testing.expect(!(try terminal.feed("+,-.0_`abcdefghijklmnopqrstuvwxyz{|}~")).history_lost);
+    const dec = [_]u21{
+        0x2192, 0x2190, 0x2191, 0x2193, 0x2588,
+        0x00A0, 0x25C6, 0x2592, 0x2409, 0x240C,
+        0x240D, 0x240A, 0x00B0, 0x00B1, 0x2591,
+        0x240B, 0x2518, 0x2510, 0x250C, 0x2514,
+        0x253C, 0x23BA, 0x23BB, 0x2500, 0x23BC,
+        0x23BD, 0x251C, 0x2524, 0x2534, 0x252C,
+        0x2502, 0x2264, 0x2265, 0x03C0, 0x2260,
+        0x00A3, 0x00B7,
+    };
+    for (dec, 0..) |expected, col|
+        try std.testing.expectEqual(expected, terminal.screen_state.activeConst().cellAt(0, @intCast(col)));
+
+    try std.testing.expect(!(try terminal.feed("\x1b)")).state_changed);
+    try std.testing.expect((try terminal.feed("A\x0e#A\x0f#")).state_changed);
+    const screen = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u21, 0x00A3), screen.cellAt(0, 37));
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 38));
+    try std.testing.expectEqual(@as(u21, '#'), screen.cellAt(0, 39));
+
+    try std.testing.expect(!(try terminal.feed("\x1b(U")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b(0")).state_changed);
+    try std.testing.expect((try terminal.feed("_")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x00A0), screen.cellAt(0, 40));
+
+    try terminal.resize(2, 64);
+    try std.testing.expect(!(try terminal.feed("\r\n\r\nq")).history_lost);
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(1, 0));
+
+    try std.testing.expect((try terminal.feed("\x1bc#_")).state_changed);
+    try std.testing.expectEqual(@as(u21, '#'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, '_'), screen.cellAt(0, 1));
+}
+
 test "terminal: tab controls share exact stored-stop and clamping behavior" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 20);

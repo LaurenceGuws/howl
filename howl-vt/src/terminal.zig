@@ -9047,12 +9047,8 @@ pub fn apply(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
             return .{ .changed = true, .title_changed = false, .icon_changed = false };
         },
         .configure_charset => |cfg| {
-            switch (cfg.slot) {
-                0 => vt.g0_designation = cfg.designation,
-                1 => vt.g1_designation = cfg.designation,
-                else => unreachable,
-            }
-            return .{ .changed = true, .title_changed = false, .icon_changed = false };
+            const changed = configureCharset(vt, cfg.slot, cfg.designation);
+            return .{ .changed = changed, .title_changed = false, .icon_changed = false };
         },
         else => {},
     }
@@ -9509,17 +9505,17 @@ const TerminalStream = struct {
         if (esc.intermediates_len == 1) {
             switch (esc.intermediates[0]) {
                 '(' => {
-                    self.terminal.g0_designation = esc.final;
+                    const changed = configureCharset(self.terminal, 0, esc.final);
                     return .{
-                        .changed = true,
+                        .changed = changed,
                         .title_changed = false,
                         .icon_changed = false,
                     };
                 },
                 ')' => {
-                    self.terminal.g1_designation = esc.final;
+                    const changed = configureCharset(self.terminal, 1, esc.final);
                     return .{
-                        .changed = true,
+                        .changed = changed,
                         .title_changed = false,
                         .icon_changed = false,
                     };
@@ -9565,9 +9561,8 @@ const TerminalStream = struct {
     }
 
     fn mapCodepoint(self: *const TerminalStream, cp: u21) u21 {
-        if (!isDecSpecial(self.terminal)) return cp;
         if (cp < 0x20 or cp > 0x7e) return cp;
-        return mapDecSpecial(@intCast(cp));
+        return mapCharset(self.terminal, @intCast(cp));
     }
 };
 
@@ -9579,21 +9574,49 @@ fn discardedStringControl() EventEffect {
     };
 }
 
-fn isDecSpecial(terminal: *const Terminal) bool {
-    return switch (terminal.gl_index) {
-        0 => terminal.g0_designation == '0',
-        1 => terminal.g1_designation == '0',
-        else => false,
+fn configureCharset(terminal: *Terminal, slot: u8, designation: u8) bool {
+    // Unsupported repertoires leave the selected slot unchanged.
+    if (designation != '0' and designation != 'A' and designation != 'B') return false;
+    const target = switch (slot) {
+        0 => &terminal.g0_designation,
+        1 => &terminal.g1_designation,
+        else => return false,
+    };
+    if (target.* == designation) return false;
+    target.* = designation;
+    return true;
+}
+
+fn mapCharset(terminal: *const Terminal, byte: u8) u21 {
+    const designation = switch (terminal.gl_index) {
+        0 => terminal.g0_designation,
+        1 => terminal.g1_designation,
+        else => return byte,
+    };
+    return switch (designation) {
+        '0' => mapDecSpecial(byte),
+        'A' => if (byte == '#') 0x00A3 else byte,
+        else => byte,
     };
 }
 
 fn mapDecSpecial(byte: u8) u21 {
     return switch (byte) {
+        '+' => 0x2192,
+        ',' => 0x2190,
+        '-' => 0x2191,
+        '.' => 0x2193,
+        '0' => 0x2588,
+        '_' => 0x00A0,
         '`' => 0x25C6,
         'a' => 0x2592,
+        'b' => 0x2409,
+        'c' => 0x240C,
+        'd' => 0x240D,
+        'e' => 0x240A,
         'f' => 0x00B0,
         'g' => 0x00B1,
-        'h' => 0x2424,
+        'h' => 0x2591,
         'i' => 0x240B,
         'j' => 0x2518,
         'k' => 0x2510,

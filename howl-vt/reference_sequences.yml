@@ -97,9 +97,15 @@ references:
           - {id: libvterm.esc.decaln, raw: "ESC # 8", effect: fill screen with E, relevance: diagnostic,
             howl: {status: partial}}
           - {id: libvterm.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset, relevance: charset,
-            howl: {status: partial}}
+            conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
           - {id: libvterm.esc.scs_g1, raw: "ESC ) F", effect: designate G1 charset, relevance: charset,
-            howl: {status: partial}}
+            conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
           - {id: libvterm.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset, relevance: charset,
             howl: {status: partial}}
           - {id: libvterm.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset, relevance: charset,
@@ -502,8 +508,16 @@ references:
           - {id: iterm2.esc.deckpnm, raw: "ESC >", effect: numeric keypad, howl: {status: partial}}
           - {id: iterm2.esc.strict_ansi, raw: "ESC <", effect: enter strict ANSI mode, relevance: compatibility,
             howl: {status: 'false'}}
-          - {id: iterm2.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset, howl: {status: partial}}
-          - {id: iterm2.esc.scs_g1, raw: "ESC ) F", effect: designate G1 charset, howl: {status: partial}}
+          - {id: iterm2.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset,
+            conditions: Howl implements only ASCII, UK, and DEC Special Graphics,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
+          - {id: iterm2.esc.scs_g1, raw: "ESC ) F", effect: designate G1 charset,
+            conditions: Howl implements only ASCII, UK, and DEC Special Graphics,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
           - {id: iterm2.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset, howl: {status: partial}}
           - {id: iterm2.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset, howl: {status: partial}}
           - {id: iterm2.esc.decfi, raw: "ESC 9", effect: forward index, relevance: compatibility,
@@ -1100,8 +1114,16 @@ references:
           - {id: kitty.esc.latin1, raw: "ESC % @", effect: select legacy decoding, howl: {status: partial}}
           - {id: kitty.esc.utf8, raw: "ESC % G", effect: select UTF-8 decoding, howl: {status: partial}}
           - {id: kitty.esc.decaln, raw: "ESC # 8", effect: fill screen with E, howl: {status: partial}}
-          - {id: kitty.esc.scs_g0, raw: "ESC ( A|B|0|U|V", effect: designate G0 charset, howl: {status: partial}}
-          - {id: kitty.esc.scs_g1, raw: "ESC ) A|B|0|U|V", effect: designate G1 charset, howl: {status: partial}}
+          - {id: kitty.esc.scs_g0, raw: "ESC ( A|B|0|U|V", effect: designate G0 charset,
+            conditions: Howl implements A B 0 and leaves Kitty CP437 U and VAX42 V unchanged,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
+          - {id: kitty.esc.scs_g1, raw: "ESC ) A|B|0|U|V", effect: designate G1 charset,
+            conditions: Howl implements A B 0 and leaves Kitty CP437 U and VAX42 V unchanged,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
           - {id: kitty.esc.s7c1t, raw: "ESC SP F", effect: select 7-bit C1 transmission, howl: {status: partial}}
           - {id: kitty.esc.s8c1t, raw: "ESC SP G", effect: select 8-bit C1 transmission, howl: {status: partial}}
       - source: screen.c
