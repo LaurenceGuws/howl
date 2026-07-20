@@ -926,6 +926,32 @@ test "terminal: SGR retains exact rendition and colon color state" {
     try std.testing.expectEqual(Screen.default_fg, screen.cellInfoAt(1, 3).attrs.fg);
 }
 
+test "terminal: SGR color mutation is exact fragmented and malformed-transactional" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[0m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[38;2;1")).state_changed);
+    try std.testing.expect((try terminal.feed(";2;3;48;5;196;58:2::4:5:6m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[38;2;1;2;3;48;5;196;58:2::4:5:6m")).state_changed);
+
+    const before = terminal.screen_state.activeConst().current_attrs;
+    try std.testing.expect(!(try terminal.feed("\x1b[38;2;1m")).state_changed);
+    try std.testing.expectEqualDeep(before, terminal.screen_state.activeConst().current_attrs);
+    try std.testing.expect((try terminal.feed("\x1b[1;38;2;1m")).state_changed);
+    try std.testing.expect(terminal.screen_state.activeConst().current_attrs.bold);
+    try std.testing.expectEqual(before.fg, terminal.screen_state.activeConst().current_attrs.fg);
+
+    try std.testing.expect((try terminal.feed("\x1b[31;104m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[31;104m")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[39;49;59m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[39;49;59m")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[1;2;3;4;5;7;8;9m")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[0m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[m")).state_changed);
+}
+
 test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
     const allocator = std.testing.allocator;
 

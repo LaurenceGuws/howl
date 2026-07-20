@@ -2825,12 +2825,18 @@ fn decodeExtendedColor(
     const mode = params[idxOf(next)];
     if (separators.isSet(idx.*)) return decodeColonColor(params, separators, idx, mode);
     if (mode == 5) {
-        if (idx.* + 2 >= params.len) return null;
+        if (idx.* + 2 >= params.len) {
+            idx.* = @intCast(params.len - 1);
+            return null;
+        }
         idx.* += 2;
         return .indexed(clampByte(params[idxOf(idx.*)]));
     }
     if (mode == 2) {
-        if (idx.* + 4 >= params.len) return null;
+        if (idx.* + 4 >= params.len) {
+            idx.* = @intCast(params.len - 1);
+            return null;
+        }
         idx.* += 4;
         return ScreenColor.rgb(.{
             .r = clampByte(params[idxOf(idx.* - 2)]),
@@ -2838,6 +2844,7 @@ fn decodeExtendedColor(
             .b = clampByte(params[idxOf(idx.*)]),
         });
     }
+    idx.* += 1;
     return null;
 }
 
@@ -10157,6 +10164,13 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .dec_mode_restore,
         => return vt.applyModeEvent(event),
 
+        .sgr => {
+            const screen = vt.screen_state.active();
+            const before = screen.current_attrs;
+            screen.applyScreen(event);
+            return !std.meta.eql(before, screen.current_attrs);
+        },
+
         .cursor_style,
         .cursor_shape,
         => {
@@ -10262,7 +10276,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .cursor_color,
         .cursor_text_color,
         .insert_mode,
-        .sgr,
         .insert_lines,
         .delete_lines,
         .insert_chars,

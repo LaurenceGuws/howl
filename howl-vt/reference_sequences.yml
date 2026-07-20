@@ -556,8 +556,10 @@ references:
         census: {semantic_branches: 24, records: 24}
         recognition: implemented
         records:
-          - {id: libvterm.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: libvterm.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr},
             conditions: libvterm can also brighten an existing basic foreground when bold-highbright is configured}
@@ -588,8 +590,10 @@ references:
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.font, raw: "CSI 10..19 m", effect: select font slot, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -614,18 +618,26 @@ references:
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          - {id: libvterm.sgr.fg_basic, raw: "CSI 30..37 m", effect: set basic foreground, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.fg_basic, raw: "CSI 30..37 m", effect: set basic foreground, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: libvterm.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          - {id: libvterm.sgr.bg_basic, raw: "CSI 40..47 m", effect: set basic background, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.bg_basic, raw: "CSI 40..47 m", effect: set basic background, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.bg_extended, raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: libvterm.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -634,7 +646,7 @@ references:
             effect: set small superscript subscript or normal baseline, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr}}
           - {id: libvterm.sgr.bright, raw: "CSI 90..97|100..107 m", effect: set bright foreground or background,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
 
@@ -1266,7 +1278,10 @@ references:
         census: {semantic_branches: 25, records: 25}
         recognition: implemented
         records:
-          - {id: iterm2.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial}}
+          - {id: iterm2.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: iterm2.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1291,7 +1306,10 @@ references:
           - {id: iterm2.sgr.rapid_blink, raw: "CSI 6 m", effect: ignore unsupported rapid blink,
             recognition: accepted_noop, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
             conditions: Howl enables ordinary blink}
-          - {id: iterm2.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: partial}}
+          - {id: iterm2.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: iterm2.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1316,7 +1334,10 @@ references:
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          - {id: iterm2.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: partial}}
+          - {id: iterm2.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: iterm2.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1325,19 +1346,38 @@ references:
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          - {id: iterm2.sgr.fg_basic, raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {status: partial}}
+          - {id: iterm2.sgr.fg_basic, raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: iterm2.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
-            howl: {status: partial}}
-          - {id: iterm2.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
+          - {id: iterm2.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: iterm2.sgr.bg_basic, raw: "CSI 40..47|100..107 m", effect: set basic background,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: iterm2.sgr.bg_extended, raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
-            howl: {status: partial}}
-          - {id: iterm2.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
+          - {id: iterm2.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: iterm2.sgr.underline_color, raw: "CSI 58 ; 2|5 ; Pm m", effect: set underline color,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: iterm2.sgr.underline_color_default, raw: "CSI 59 m", effect: reset underline color,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
       - source: VT100Terminal.m
         symbol: executeDecSetReset
         line: 745
@@ -2198,7 +2238,10 @@ references:
         census: {semantic_branches: 25, records: 25}
         recognition: implemented
         records:
-          - {id: kitty.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial}}
+          - {id: kitty.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: kitty.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -2261,19 +2304,41 @@ references:
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          - {id: kitty.sgr.fg_basic, raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {status: partial}}
+          - {id: kitty.sgr.fg_basic, raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
-            howl: {status: partial}}
-          - {id: kitty.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: partial}}
+            conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
+          - {id: kitty.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: kitty.sgr.bg_basic, raw: "CSI 40..47|100..107 m", effect: set basic background,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.bg_extended, raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
-            howl: {status: partial}}
-          - {id: kitty.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: partial}}
+            conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
+          - {id: kitty.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: kitty.sgr.underline_color, raw: "CSI 58 ; 2|5 ; Pm m", effect: set underline color,
-            howl: {status: partial}}
+            conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.underline_color_default, raw: "CSI 59 m", effect: reset underline color,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
       - source: graphics.c
         symbol: grman_handle_command
         line: 2195
