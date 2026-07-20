@@ -365,8 +365,15 @@ references:
           - {id: libvterm.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
           - {id: libvterm.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
           - {id: libvterm.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
-          - {id: libvterm.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink, howl: {status: partial}}
-          - {id: libvterm.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility, howl: {status: partial}}
+          - {id: libvterm.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
+            conditions: Howl retains blink with each screen cursor while libvterm owns one terminal mode across banks,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
+          - {id: libvterm.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: libvterm.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle left-right margins, howl: {status: partial}}
           - {id: libvterm.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
             howl: {status: partial}}
@@ -1265,10 +1272,17 @@ references:
           - {id: iterm2.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat, howl: {status: partial}}
           - {id: iterm2.mode.mouse_x10, raw: "CSI ? 9 h|l", effect: accept legacy mouse mode without implementation,
             recognition: recognized_noop, howl: {status: 'false'}}
-          - {id: iterm2.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink, howl: {status: partial}}
+          - {id: iterm2.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
+            conditions: Howl retains blink with each screen cursor while iTerm2 delegates one host cursor property,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: iterm2.mode.lnm_private, raw: "CSI ? 20 h|l", effect: ignore private line mode,
             recognition: recognized_noop, howl: {status: 'false'}}
-          - {id: iterm2.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility, howl: {status: partial}}
+          - {id: iterm2.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: iterm2.mode.allow_deccolm, raw: "CSI ? 40 h|l", effect: toggle column-mode permission,
             relevance: policy, howl: {status: 'false'}}
           - {id: iterm2.mode.more_fix, raw: "CSI ? 41 h|l", effect: toggle more compatibility fix,
@@ -1518,8 +1532,15 @@ references:
           - {id: kitty.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
           - {id: kitty.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
           - {id: kitty.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
-          - {id: kitty.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink, howl: {status: partial}}
-          - {id: kitty.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility, howl: {status: partial}}
+          - {id: kitty.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
+            conditions: Kitty resets its shared cursor on alternate entry while Howl retains per-screen cursor style,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
+          - {id: kitty.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: kitty.mode.deccolm, raw: "CSI ? 3 h|l", effect: toggle 80 or 132 column mode and home screen,
             howl: {status: partial}}
           - {id: kitty.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat, howl: {status: partial}}

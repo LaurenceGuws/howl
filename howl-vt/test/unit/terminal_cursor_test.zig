@@ -142,3 +142,53 @@ test "terminal cursor: 1049 restores primary bank and 47 leaves banks independen
     try std.testing.expectEqual(.underline, active(&terminal).cursor.effective_shape);
     try std.testing.expect(!active(&terminal).cursor.blink_intent);
 }
+
+test "terminal cursor: presentation modes preserve exact bank and lifetime truth" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[6 ")).state_changed);
+    try std.testing.expect((try terminal.feed("q")).state_changed);
+    try std.testing.expectEqual(.bar, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(!active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!(try terminal.feed("\x1b[6 q")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?12h\x1b[?25l")).state_changed);
+    try std.testing.expect(active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!active(&terminal).cursor.visible);
+    try std.testing.expect(!(try terminal.feed("\x1b[?12h\x1b[?25l")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?12;25s")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?12l\x1b[?25h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?12;25r")).state_changed);
+    try std.testing.expect(active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!active(&terminal).cursor.visible);
+    try std.testing.expect((try terminal.feed("\x1b[?12$p\x1b[?25$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?12;1$y\x1b[?25;2$y", terminal.host.pendingOutput());
+    terminal.host.clearPendingOutput();
+
+    try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
+    try std.testing.expectEqual(.none, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!active(&terminal).cursor.visible);
+    try std.testing.expect((try terminal.feed("\x1b[?12l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?25l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expectEqual(.bar, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!active(&terminal).cursor.visible);
+
+    try terminal.resize(6, 12);
+    try std.testing.expectEqual(.bar, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!active(&terminal).cursor.visible);
+
+    try std.testing.expect((try terminal.feed("\x1b[7 q")).state_changed);
+    try std.testing.expectEqual(.none, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!(try terminal.feed("\x1b[7 q")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expectEqual(.block, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(active(&terminal).cursor.blink_intent);
+    try std.testing.expect(active(&terminal).cursor.visible);
+}

@@ -3098,6 +3098,14 @@ const ScreenSemanticCursor = struct {
         self.setProgramStyle(.{ .shape = shape, .blink = self.blink_intent });
     }
 
+    // Replaces blink intent while preserving the active shape and style layer.
+    fn setBlink(self: *ScreenSemanticCursor, enabled: bool) bool {
+        if (self.blink_intent == enabled) return false;
+        self.blink_intent = enabled;
+        if (self.program_override_style) |*style| style.blink = enabled;
+        return true;
+    }
+
     /// Restores a previously saved effective style as the program override.
     pub fn restoreSavedStyle(self: *ScreenSemanticCursor, style: ScreenCursorStyle) void {
         self.program_override_style = if (style.shape == self.default_style.shape and
@@ -5017,6 +5025,7 @@ const DecView = struct {
     origin_mode: bool,
     auto_wrap: bool,
     left_right_margin_mode: bool,
+    cursor_blink: bool,
     cursor_visible: bool,
     alt_active: bool,
     mouse_tracking: MouseTrackingMode,
@@ -5041,6 +5050,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         5 => boolToDecModeState(view.reverse_screen_mode),
         6 => boolToDecModeState(view.origin_mode),
         7 => boolToDecModeState(view.auto_wrap),
+        12 => boolToDecModeState(view.cursor_blink),
         69 => boolToDecModeState(view.left_right_margin_mode),
         66 => boolToDecModeState(view.application_keypad),
         25 => boolToDecModeState(view.cursor_visible),
@@ -5108,7 +5118,7 @@ fn savedDecModeState(saved_modes: []const SavedDecMode, saved_count: SavedDecMod
 // Reports whether a DEC mode has implemented set and reset behavior.
 fn canSetDecMode(mode: u16) bool {
     return switch (mode) {
-        1, 5, 6, 7, 9, 25, 47, 66, 69, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004, 2026 => true,
+        1, 5, 6, 7, 9, 12, 25, 47, 66, 69, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004, 2026 => true,
         else => false,
     };
 }
@@ -7135,6 +7145,7 @@ fn modeToggle(final: u8, mode: i32) ?SemanticEvent {
 fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
     return switch (mode) {
         5 => boolEvent(final, .{ .reverse_screen_mode = true }, .{ .reverse_screen_mode = false }),
+        12 => boolEvent(final, .{ .cursor_blink = true }, .{ .cursor_blink = false }),
         25 => boolEvent(final, .{ .cursor_visible = true }, .{ .cursor_visible = false }),
         7 => boolEvent(final, .{ .auto_wrap = true }, .{ .auto_wrap = false }),
         6 => boolEvent(final, .{ .origin_mode = true }, .{ .origin_mode = false }),
@@ -7657,6 +7668,7 @@ pub const SemanticEvent = union(enum) {
     tab_clear_current,
     tab_clear_all,
     cursor_visible: bool,
+    cursor_blink: bool,
     cursor_style: CursorStyleCommand,
     cursor_shape: ScreenCursorShape,
     cursor_color: ?ScreenRgb,
@@ -8466,6 +8478,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .origin_mode = active.origin_mode,
         .auto_wrap = active.auto_wrap,
         .left_right_margin_mode = active.left_right_margin_mode,
+        .cursor_blink = active.cursor.blink_intent,
         .cursor_visible = active.cursor.visible,
         .alt_active = vt.screen_state.alt_active,
         .mouse_tracking = vt.modes.mouse_tracking,
@@ -9980,6 +9993,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .reverse_screen_mode,
         .eight_bit_controls,
         .left_right_margin_mode,
+        .cursor_visible,
+        .cursor_blink,
         .ansi_mode_set,
         .ansi_mode_reset,
         .modify_other_keys_set,
@@ -10002,6 +10017,15 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .dec_mode_save,
         .dec_mode_restore,
         => return vt.applyModeEvent(event),
+
+        .cursor_style,
+        .cursor_shape,
+        => {
+            const cursor = &vt.screen_state.active().cursor;
+            const before = cursor.*;
+            vt.screen_state.active().applyScreen(event);
+            return !std.meta.eql(before, cursor.*);
+        },
 
         .color_control => |control| {
             const primary_before = vt.screen_state.primary.cursor;
@@ -10070,9 +10094,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .horizontal_tab_set,
         .tab_clear_current,
         .tab_clear_all,
-        .cursor_visible,
-        .cursor_style,
-        .cursor_shape,
         .cursor_color,
         .cursor_text_color,
         .auto_wrap,
@@ -11026,6 +11047,8 @@ pub const Terminal = struct {
                 return changed;
             },
             .left_right_margin_mode => |enabled| return self.setDecMode(69, enabled),
+            .cursor_visible => |enabled| return self.setDecMode(25, enabled),
+            .cursor_blink => |enabled| return self.setDecMode(12, enabled),
             .ansi_mode_set => |modes| return self.setAnsiModes(modes.params[0..modes.param_count], true),
             .ansi_mode_reset => |modes| return self.setAnsiModes(modes.params[0..modes.param_count], false),
             .modify_other_keys_set => |value| {
@@ -11087,6 +11110,7 @@ pub const Terminal = struct {
             .origin_mode = active.origin_mode,
             .auto_wrap = active.auto_wrap,
             .left_right_margin_mode = active.left_right_margin_mode,
+            .cursor_blink = active.cursor.blink_intent,
             .cursor_visible = active.cursor.visible,
             .alt_active = self.screen_state.alt_active,
             .mouse_tracking = self.modes.mouse_tracking,
@@ -11151,6 +11175,7 @@ pub const Terminal = struct {
                 active.applyScreen(.{ .auto_wrap = enabled });
                 return !std.meta.eql(before, .{ active.auto_wrap, active.wrap_pending });
             },
+            12 => return active.cursor.setBlink(enabled),
             69 => {
                 const inactive = if (self.screen_state.alt_active)
                     &self.screen_state.primary
@@ -11166,7 +11191,11 @@ pub const Terminal = struct {
                 }
                 return changed;
             },
-            25 => return replaceBool(&active.cursor.visible, enabled),
+            25 => {
+                var changed = replaceBool(&self.screen_state.primary.cursor.visible, enabled);
+                changed = replaceBool(&self.screen_state.alternate.cursor.visible, enabled) or changed;
+                return changed;
+            },
             66 => return replaceBool(&self.modes.application_keypad, enabled),
             47 => return self.switchScreenMode(enabled, false, false),
             1047 => return self.switchScreenMode(enabled, true, false),
