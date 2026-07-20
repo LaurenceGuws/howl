@@ -92,16 +92,43 @@ references:
             howl: {status: partial}}
           - {id: libvterm.esc.s8c1t, raw: "ESC SP G", effect: select 8-bit C1 transmission, relevance: compatibility,
             howl: {status: partial}}
-          - {id: libvterm.esc.decdhl_top, raw: "ESC # 3", effect: double-height top line,
-            conditions: ignored under DECLRMM, relevance: presentation, howl: {status: partial}}
-          - {id: libvterm.esc.decdhl_bottom, raw: "ESC # 4", effect: double-height bottom line,
-            conditions: ignored under DECLRMM, relevance: presentation, howl: {status: partial}}
+          - id: libvterm.esc.decdhl_top
+            raw: "ESC # 3"
+            effect: double-height top line
+            conditions: >-
+              ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
+              Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
+            relevance: presentation
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
+          - id: libvterm.esc.decdhl_bottom
+            raw: "ESC # 4"
+            effect: double-height bottom line
+            conditions: >-
+              ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
+              Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
+            relevance: presentation
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
           - {id: libvterm.esc.decswl, raw: "ESC # 5", effect: single-width line, conditions: ignored under DECLRMM,
-            relevance: presentation, howl: {status: partial}}
-          - {id: libvterm.esc.decdwl, raw: "ESC # 6", effect: double-width line, conditions: ignored under DECLRMM,
-            relevance: presentation, howl: {status: partial}}
+            relevance: presentation, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}}
+          - id: libvterm.esc.decdwl
+            raw: "ESC # 6"
+            effect: double-width line
+            conditions: >-
+              ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
+              Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
           - {id: libvterm.esc.decaln, raw: "ESC # 8", effect: fill screen with E, relevance: diagnostic,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}}
           - {id: libvterm.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset, relevance: charset,
             conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
@@ -577,11 +604,37 @@ references:
             howl: {status: partial}}
           - {id: iterm2.esc.utf8, raw: "ESC % G", effect: select UTF-8 decoding, relevance: charset,
             howl: {status: partial}}
-          - {id: iterm2.esc.decdhl_top, raw: "ESC # 3", effect: double-height top line, howl: {status: partial}}
-          - {id: iterm2.esc.decdhl_bottom, raw: "ESC # 4", effect: double-height bottom line, howl: {status: partial}}
-          - {id: iterm2.esc.decswl, raw: "ESC # 5", effect: single-width line, howl: {status: partial}}
-          - {id: iterm2.esc.decdwl, raw: "ESC # 6", effect: double-width line, howl: {status: partial}}
-          - {id: iterm2.esc.decaln, raw: "ESC # 8", effect: fill screen with E, howl: {status: partial}}
+          - id: iterm2.esc.decdhl_top
+            raw: "ESC # 3"
+            effect: double-height top line
+            conditions: >-
+              iTerm2 expands cells and scales cursor position while Howl owns logical half-width row geometry and resets
+              physical-row geometry on resize
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
+          - id: iterm2.esc.decdhl_bottom
+            raw: "ESC # 4"
+            effect: double-height bottom line
+            conditions: >-
+              iTerm2 expands cells and scales cursor position while Howl owns logical half-width row geometry and resets
+              physical-row geometry on resize
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
+          - id: iterm2.esc.decswl
+            raw: "ESC # 5"
+            effect: single-width line
+            conditions: >-
+              iTerm2 compacts cells and scales cursor position while Howl preserves logical cells and resets
+              physical-row geometry on resize
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
+          - id: iterm2.esc.decdwl
+            raw: "ESC # 6"
+            effect: double-width line
+            conditions: >-
+              iTerm2 expands cells and scales cursor position while Howl owns logical half-width row geometry and resets
+              physical-row geometry on resize
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
+          - {id: iterm2.esc.decaln, raw: "ESC # 8", effect: fill screen with E,
+            conditions: iTerm2 also homes the cursor and resets scroll regions,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay}}
           - {id: iterm2.esc.deckpam, raw: "ESC =", effect: application keypad,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -1293,7 +1346,9 @@ references:
                 test: application keypad modes affect keypad encoding and DECRQM}}}
           - {id: kitty.esc.latin1, raw: "ESC % @", effect: select legacy decoding, howl: {status: partial}}
           - {id: kitty.esc.utf8, raw: "ESC % G", effect: select UTF-8 decoding, howl: {status: partial}}
-          - {id: kitty.esc.decaln, raw: "ESC # 8", effect: fill screen with E, howl: {status: partial}}
+          - {id: kitty.esc.decaln, raw: "ESC # 8", effect: fill screen with E,
+            conditions: Kitty also homes the cursor and resets margins,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay}}
           - {id: kitty.esc.scs_g0, raw: "ESC ( A|B|0|U|V", effect: designate G0 charset,
             conditions: Howl implements A B 0 and leaves Kitty CP437 U and VAX42 V unchanged,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {

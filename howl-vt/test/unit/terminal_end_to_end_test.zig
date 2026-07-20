@@ -163,6 +163,129 @@ test "terminal: four charset slots share locking single-shift save and reset own
     try std.testing.expectEqualSlices(u8, &.{ 'B', 'B', 'B', 'B' }, &terminal.designations);
 }
 
+test "terminal: DEC line geometry owns width movement scroll resize reset and publication" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 10, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("abcdef\x1b#6")).state_changed);
+    var active = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(0));
+    try std.testing.expectEqual(@as(u16, 4), active.cursor.col);
+    try std.testing.expectEqual(@as(u21, 0), active.cellAt(0, 5));
+
+    try std.testing.expect((try terminal.feed("\r\x1b[99CX")).state_changed);
+    active = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u21, 'X'), active.cellAt(0, 4));
+    try std.testing.expect(active.wrap_pending);
+    try std.testing.expect((try terminal.feed("\x1b[2K")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(0));
+    try std.testing.expect((try terminal.feed("\x1b#5\x1b[99GZ")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.single_width, active.lineGeometry(0));
+    try std.testing.expectEqual(@as(u21, 'Z'), active.cellAt(0, 9));
+
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b#6\x1b[3;1H\x1b#3\x1b[4;1H\x1b#4")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(1));
+    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, active.lineGeometry(2));
+    try std.testing.expectEqual(Screen.LineGeometry.double_height_bottom, active.lineGeometry(3));
+
+    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[4;1H\x1bD")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, active.lineGeometry(1));
+    try std.testing.expectEqual(Screen.LineGeometry.double_height_bottom, active.lineGeometry(2));
+    try std.testing.expectEqual(Screen.LineGeometry.single_width, active.lineGeometry(3));
+
+    terminal.screen_state.active().clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b#5")).state_changed);
+    const dirty = terminal.screen_state.activeConst().peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 1), dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 1), dirty.end_row);
+    try std.testing.expectEqual(@as(u16, 0), dirty.dirty_cols_start[1]);
+    try std.testing.expectEqual(@as(u16, 9), dirty.dirty_cols_end[1]);
+
+    try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
+    var surface = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, surface.snapshot.view.lineGeometry(2));
+    try terminal.resize(5, 12);
+    surface = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.snapshot.view.lineGeometry(2));
+    try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
+
+    const cursor_before_alignment = terminal.screen_state.activeConst().cursor;
+    try std.testing.expect((try terminal.feed("\x1b#8")).state_changed);
+    surface = terminal.surfaceSnapshot();
+    for (0..surface.snapshot.view.rows) |row| for (0..surface.snapshot.view.cols) |col| {
+        const expected: u21 = if (row == 2 and col >= 6) 0 else 'E';
+        try std.testing.expectEqual(expected, surface.snapshot.view.cellAt(@intCast(row), @intCast(col)));
+    };
+    try std.testing.expectEqual(cursor_before_alignment.row, terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(cursor_before_alignment.col, terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, surface.snapshot.view.lineGeometry(2));
+
+    try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.single_width, terminal.screen_state.activeConst().lineGeometry(2));
+    try std.testing.expect(!(try terminal.feed("\x1b#6")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?69l\x1b#6\x1bc")).state_changed);
+    for (0..terminal.screen_state.activeConst().rows) |row|
+        try std.testing.expectEqual(
+            Screen.LineGeometry.single_width,
+            terminal.screen_state.activeConst().lineGeometry(@intCast(row)),
+        );
+
+    var history_terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 10, 4);
+    defer history_terminal.deinit();
+    try std.testing.expect((try history_terminal.feed("\x1b#6\x1b[3;1H\x1bD")).state_changed);
+    try std.testing.expectEqual(@as(u32, 1), history_terminal.visibleHistoryCount());
+    try std.testing.expect(history_terminal.scrollViewport(.top));
+    surface = history_terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, surface.snapshot.view.lineGeometry(0));
+    try history_terminal.resize(4, 12);
+    surface = history_terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.snapshot.view.lineGeometry(0));
+}
+
+test "terminal: resize resets physical geometry without reassigning it to reflowed content" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("ABCD\x1b#6\x1b[2;1HEFGH\x1b[3;1HIJKL")).state_changed);
+    try terminal.resize(6, 3);
+
+    const view = terminal.surfaceSnapshot().snapshot.view;
+    const expected = [_][3]u21{
+        .{ 'A', 'B', 'C' },
+        .{ 'D', 0, 0 },
+        .{ 'E', 'F', 'G' },
+        .{ 'H', 0, 0 },
+        .{ 'I', 'J', 'K' },
+        .{ 'L', 0, 0 },
+    };
+    for (expected, 0..) |row_cells, row| {
+        try std.testing.expectEqual(Screen.LineGeometry.single_width, view.lineGeometry(@intCast(row)));
+        for (row_cells, 0..) |codepoint, col|
+            try std.testing.expectEqual(codepoint, view.cellAt(@intCast(row), @intCast(col)));
+    }
+}
+
+test "terminal: repeated DECLRMM set reports alternate-bank geometry reset" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[?47h\x1b#6\x1b[?47l")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, terminal.screen_state.alternate.lineGeometry(0));
+    try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
+    try std.testing.expect(terminal.screen_state.alternate.left_right_margin_mode);
+    try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
+    try std.testing.expect(terminal.screen_state.activeConst().left_right_margin_mode);
+    try std.testing.expectEqual(
+        Screen.LineGeometry.double_width,
+        terminal.screen_state.activeConst().lineGeometry(0),
+    );
+    try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
+    try std.testing.expectEqual(
+        Screen.LineGeometry.single_width,
+        terminal.screen_state.activeConst().lineGeometry(0),
+    );
+}
+
 test "terminal: tab controls share exact stored-stop and clamping behavior" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 20);

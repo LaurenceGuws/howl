@@ -38,11 +38,21 @@ pub const Screen = struct {
     const default_cell = blank_cell;
     /// Uses the canonical borrowed dirty-row publication view.
     pub const DirtyRows = ScreenDirtyRows;
+    /// Describes one row's DEC presentation geometry without prescribing host rendering.
+    pub const LineGeometry = enum(u2) {
+        single_width,
+        double_width,
+        double_height_top,
+        double_height_bottom,
+    };
     const EraseMode = ScreenEraseMode;
     const CellPixelSize = struct {
         width: u32,
         height: u32,
     };
+    const row_wrapped_bit: u8 = 1;
+    const row_geometry_shift: u3 = 1;
+    const row_geometry_mask: u8 = 0b110;
 
     allocator: ?std.mem.Allocator,
     rows: u16,
@@ -61,9 +71,9 @@ pub const Screen = struct {
     scroll_top: u16,
     scroll_bottom: u16,
     cells: ?[]Cell,
-    row_wraps: ?[]bool,
+    row_flags: ?[]u8,
     history: ?[]Cell,
-    history_wraps: ?[]bool,
+    history_flags: ?[]u8,
     history_capacity: u16,
     history_count: u32,
     history_write_idx: u32,
@@ -93,9 +103,9 @@ pub const Screen = struct {
         cols: u16,
         cursor_style_default: CursorStyle,
         cells: ?[]Cell,
-        row_wraps: ?[]bool,
+        row_flags: ?[]u8,
         history: ?[]Cell,
-        history_wraps: ?[]bool,
+        history_flags: ?[]u8,
         history_capacity: u16,
         dirty_state: DirtyState,
         tab_stops: ?[]bool,
@@ -118,9 +128,9 @@ pub const Screen = struct {
             .scroll_top = 0,
             .scroll_bottom = rows -| 1,
             .cells = cells,
-            .row_wraps = row_wraps,
+            .row_flags = row_flags,
             .history = history,
-            .history_wraps = history_wraps,
+            .history_flags = history_flags,
             .history_capacity = history_capacity,
             .history_count = 0,
             .history_write_idx = 0,
@@ -170,12 +180,12 @@ pub const Screen = struct {
             break :blk buf;
         } else null;
         errdefer if (cells) |c| allocator.free(c);
-        const row_wraps: ?[]bool = if (rows > 0) blk: {
-            const buf = try allocator.alloc(bool, rows);
-            @memset(buf, false);
+        const row_flags: ?[]u8 = if (rows > 0) blk: {
+            const buf = try allocator.alloc(u8, rows);
+            @memset(buf, 0);
             break :blk buf;
         } else null;
-        errdefer if (row_wraps) |buf| allocator.free(buf);
+        errdefer if (row_flags) |buf| allocator.free(buf);
         const dirty_cols_start = try allocDirtyCols(allocator, rows, 0);
         errdefer if (dirty_cols_start) |buf| allocator.free(buf);
         const dirty_cols_end = try allocDirtyCols(allocator, rows, cols -| 1);
@@ -188,7 +198,7 @@ pub const Screen = struct {
             cols,
             cursor_style_default,
             cells,
-            row_wraps,
+            row_flags,
             null,
             null,
             0,
@@ -231,13 +241,13 @@ pub const Screen = struct {
             break :blk buf;
         } else null;
         errdefer if (history) |buf| allocator.free(buf);
-        const history_wraps: ?[]bool = if (screen.cells != null and history_capacity > 0) blk: {
-            const buf = try allocator.alloc(bool, 0);
+        const history_flags: ?[]u8 = if (screen.cells != null and history_capacity > 0) blk: {
+            const buf = try allocator.alloc(u8, 0);
             break :blk buf;
         } else null;
 
         screen.history = history;
-        screen.history_wraps = history_wraps;
+        screen.history_flags = history_flags;
         screen.history_capacity = if (screen.cells != null) history_capacity else 0;
         return screen;
     }
@@ -246,15 +256,15 @@ pub const Screen = struct {
     pub fn deinit(self: *Screen, allocator: std.mem.Allocator) void {
         if (self.cells) |c| allocator.free(c);
         self.cells = null;
-        if (self.row_wraps) |buf| allocator.free(buf);
-        self.row_wraps = null;
+        if (self.row_flags) |buf| allocator.free(buf);
+        self.row_flags = null;
         self.dirty_state.deinit(allocator);
         if (self.tab_stops) |buf| allocator.free(buf);
         self.tab_stops = null;
         if (self.history) |h| allocator.free(h);
         self.history = null;
-        if (self.history_wraps) |buf| allocator.free(buf);
-        self.history_wraps = null;
+        if (self.history_flags) |buf| allocator.free(buf);
+        self.history_flags = null;
         for (self.history_lines.items) |*line| line.deinit(allocator);
         self.history_lines.deinit(allocator);
         if (self.open_history_line) |*line| line.deinit(allocator);
@@ -267,7 +277,7 @@ pub const Screen = struct {
     ///
     /// Allocation failure leaves this screen unchanged. Successful replacement
     /// preserves logical content and configured cursor defaults, resets margins
-    /// to the full new grid, and releases the old owned storage.
+    /// and physical-row geometry to the full new grid, and releases old storage.
     pub fn resize(self: *Screen, allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!void {
         var replacement = try self.prepareResize(allocator, rows, cols);
         std.mem.swap(Screen, self, &replacement);
@@ -308,11 +318,11 @@ pub const Screen = struct {
         var replacement = self.*;
         replacement.allocator = allocator;
         replacement.cells = null;
-        replacement.row_wraps = null;
+        replacement.row_flags = null;
         replacement.dirty_state = .{};
         replacement.tab_stops = null;
         replacement.history = null;
-        replacement.history_wraps = null;
+        replacement.history_flags = null;
         replacement.history_count = 0;
         replacement.history_write_idx = 0;
         replacement.history_lines = .empty;
@@ -329,11 +339,11 @@ pub const Screen = struct {
         self.rows = rows;
         self.cols = cols;
         self.cells = buffers.cells;
-        self.row_wraps = buffers.row_wraps;
+        self.row_flags = buffers.row_flags;
         self.dirty_state = buffers.dirty_state;
         self.tab_stops = buffers.tab_stops;
         self.history = null;
-        self.history_wraps = null;
+        self.history_flags = null;
         self.history_count = 0;
         self.history_write_idx = 0;
         self.row_origin = 0;
@@ -349,17 +359,17 @@ pub const Screen = struct {
         std.debug.assert(self.rows == rows);
         std.debug.assert(self.cols == cols);
         std.debug.assert((self.cells != null) == (rows > 0 and cols > 0));
-        std.debug.assert((self.row_wraps != null) == (rows > 0));
+        std.debug.assert((self.row_flags != null) == (rows > 0));
         std.debug.assert((self.dirty_state.cols_start != null) == (rows > 0));
         std.debug.assert((self.dirty_state.cols_end != null) == (rows > 0));
         std.debug.assert((self.tab_stops != null) == (cols > 0));
         if (self.cells) |buf| std.debug.assert(buf.len == cellCount(rows, cols));
-        if (self.row_wraps) |buf| std.debug.assert(buf.len == rows);
+        if (self.row_flags) |buf| std.debug.assert(buf.len == rows);
         if (self.dirty_state.cols_start) |buf| std.debug.assert(buf.len == rows);
         if (self.dirty_state.cols_end) |buf| std.debug.assert(buf.len == rows);
         if (self.tab_stops) |buf| std.debug.assert(buf.len == cols);
         std.debug.assert(self.history == null);
-        std.debug.assert(self.history_wraps == null);
+        std.debug.assert(self.history_flags == null);
         std.debug.assert(self.history_count == 0);
         std.debug.assert(self.history_write_idx == 0);
         std.debug.assert(self.row_origin == 0);
@@ -457,6 +467,7 @@ pub const Screen = struct {
                 allocator,
                 reflow.flat_rows.items[@intCast(row.start)..@intCast(row.start + row.len)],
                 row.wrapped,
+                row.geometry,
             );
         }
     }
@@ -543,18 +554,20 @@ pub const Screen = struct {
 
         const last_visible_row = viewport.visible_start + viewport.visible_rows_kept - 1;
         const clamped_cursor_row = std.math.clamp(reflow.global_cursor_row, viewport.visible_start, last_visible_row);
+        const cursor_row: u16 = @intCast(clamped_cursor_row - viewport.visible_start);
         self.cursor.setPositionStructural(
-            @intCast(clamped_cursor_row - viewport.visible_start),
-            @min(reflow.global_cursor_col, cols - 1),
+            cursor_row,
+            @min(reflow.global_cursor_col, self.lineRightBoundary(cursor_row)),
         );
-        self.wrap_pending = reflow.next_wrap_pending and self.cursor.row < rows and self.cursor.col == cols - 1;
+        self.wrap_pending = reflow.next_wrap_pending and
+            self.cursor.row < rows and self.cursor.col == self.lineRightBoundary(self.cursor.row);
 
         std.debug.assert(viewport.visible_rows_kept > 0);
         std.debug.assert(clamped_cursor_row >= viewport.visible_start);
         std.debug.assert(clamped_cursor_row <= last_visible_row);
         std.debug.assert(self.cursor.row < rows);
         std.debug.assert(self.cursor.col < cols);
-        if (self.wrap_pending) std.debug.assert(self.cursor.col == cols - 1);
+        if (self.wrap_pending) std.debug.assert(self.cursor.col == self.lineRightBoundary(self.cursor.row));
     }
 
     /// Retain one visible row only after all authority and projection allocations succeed.
@@ -605,6 +618,7 @@ pub const Screen = struct {
         self.appendProjectedRowAssumeCapacity(
             next_line.cells.items[next_line.cells.items.len - len ..],
             wrapped,
+            self.lineGeometry(row),
         );
 
         if (self.open_history_line) |*line| line.deinit(allocator);
@@ -835,7 +849,8 @@ pub const Screen = struct {
         var last_non_zero: u16 = 0;
         var has_content = false;
         var col: u16 = 0;
-        while (col < self.cols) : (col += 1) {
+        const line_cols = self.lineColumnCount(row);
+        while (col < line_cols) : (col += 1) {
             if (self.cellInfoAt(row, col).codepoint != 0) {
                 has_content = true;
                 last_non_zero = col + 1;
@@ -843,13 +858,14 @@ pub const Screen = struct {
         }
 
         var len: u16 = if (has_content) last_non_zero else 0;
-        if (self.rowWrapped(row) and self.cols > 0) len = @max(len, self.cols);
+        if (self.rowWrapped(row) and line_cols > 0) len = @max(len, line_cols);
         return len;
     }
 
     fn cursorOffsetInRow(self: *const Screen) u32 {
         if (self.cols == 0) return 0;
-        if (self.wrap_pending and self.cursor.col == self.cols - 1) return self.cols;
+        const line_cols = self.lineColumnCount(self.cursor.row);
+        if (self.wrap_pending and self.cursor.col == line_cols - 1) return line_cols;
         return self.cursor.col;
     }
 
@@ -875,18 +891,20 @@ pub const Screen = struct {
                 allocator,
                 cells[@intCast(start)..@intCast(end)],
                 row_idx + 1 < row_count or continues_to_visible,
+                .single_width,
             );
         }
     }
 
     fn visibleRowContentLen(self: *const Screen, row: u16) u16 {
-        var col = self.cols;
+        const line_cols = self.lineColumnCount(row);
+        var col = line_cols;
         while (col > 0) {
             const idx = col - 1;
             if (self.cellInfoAt(row, idx).codepoint != 0) return col;
             col -= 1;
         }
-        if (self.rowWrapped(row) and self.cols > 0) return self.cols;
+        if (self.rowWrapped(row) and line_cols > 0) return line_cols;
         return 0;
     }
 
@@ -907,15 +925,21 @@ pub const Screen = struct {
         allocator: std.mem.Allocator,
         cells: []const Cell,
         wrapped: bool,
+        geometry: LineGeometry,
     ) std.mem.Allocator.Error!void {
         if (self.cols == 0) return;
         const capacity_target = @min(self.history_count + 1, @as(u32, self.history_capacity));
         try self.ensureProjectedCapacity(allocator, capacity_target);
-        self.appendProjectedRowAssumeCapacity(cells, wrapped);
+        self.appendProjectedRowAssumeCapacity(cells, wrapped, geometry);
     }
 
-    fn appendProjectedRowAssumeCapacity(self: *Screen, cells: []const Cell, wrapped: bool) void {
-        const wraps = self.history_wraps orelse return;
+    fn appendProjectedRowAssumeCapacity(
+        self: *Screen,
+        cells: []const Cell,
+        wrapped: bool,
+        geometry: LineGeometry,
+    ) void {
+        const flags = self.history_flags orelse return;
         const history = self.history orelse return;
         std.debug.assert(self.projectedCapacity() >= @min(self.history_count + 1, @as(u32, self.history_capacity)));
         if (self.history_count == self.history_capacity) {
@@ -927,12 +951,12 @@ pub const Screen = struct {
         const cell_count: u32 = @intCast(cells.len);
 
         std.debug.assert(cell_count <= cols);
-        std.debug.assert(slot < wraps.len);
+        std.debug.assert(slot < flags.len);
         std.debug.assert(base + cols <= history.len);
 
         @memset(history[@intCast(base)..@intCast(base + cols)], blank_cell);
         @memcpy(history[@intCast(base)..@intCast(base + cell_count)], cells);
-        wraps[@intCast(slot)] = wrapped;
+        flags[@intCast(slot)] = rowFlags(wrapped, geometry);
         self.history_count += 1;
     }
 
@@ -952,9 +976,9 @@ pub const Screen = struct {
         errdefer allocator.free(new_history);
         @memset(new_history, blank_cell);
 
-        const new_wraps = try allocator.alloc(bool, @intCast(new_rows));
-        errdefer allocator.free(new_wraps);
-        @memset(new_wraps, false);
+        const new_flags = try allocator.alloc(u8, @intCast(new_rows));
+        errdefer allocator.free(new_flags);
+        @memset(new_flags, 0);
 
         const old_count = self.history_count;
         std.debug.assert(old_count <= current_rows);
@@ -972,13 +996,13 @@ pub const Screen = struct {
                     history[@intCast(source_start)..@intCast(source_start + cols)],
                 );
             }
-            if (self.history_wraps) |wraps| new_wraps[@intCast(logical_row)] = wraps[@intCast(old_slot)];
+            if (self.history_flags) |flags| new_flags[@intCast(logical_row)] = flags[@intCast(old_slot)];
         }
 
         if (self.history) |history| allocator.free(history);
-        if (self.history_wraps) |wraps| allocator.free(wraps);
+        if (self.history_flags) |flags| allocator.free(flags);
         self.history = new_history;
-        self.history_wraps = new_wraps;
+        self.history_flags = new_flags;
         self.history_write_idx = 0;
     }
 
@@ -1020,7 +1044,7 @@ pub const Screen = struct {
         self.current_attrs = initial_cell_attrs;
         self.markAllRowsDirty();
         if (self.cells) |c| @memset(c, blank_cell);
-        if (self.row_wraps) |buf| @memset(buf, false);
+        if (self.row_flags) |buf| @memset(buf, 0);
         if (self.tab_stops) |stops| setDefaultTabStops(stops);
     }
 
@@ -1172,8 +1196,8 @@ pub const Screen = struct {
     fn applyCursorMove(self: *Screen, event: SemanticEvent) void {
         self.wrap_pending = false;
         switch (event) {
-            .cursor_up => |n| self.cursor.setRowByClient(@max(self.cursor.row -| n, self.cursorTopBoundary())),
-            .cursor_down => |n| self.cursor.setRowByClient(@min(self.cursor.row +| n, self.cursorBottomBoundary())),
+            .cursor_up => |n| self.setCursorRowClamped(@max(self.cursor.row -| n, self.cursorTopBoundary())),
+            .cursor_down => |n| self.setCursorRowClamped(@min(self.cursor.row +| n, self.cursorBottomBoundary())),
             .cursor_forward => |n| self.cursor.setColByClient(@min(self.cursor.col +| n, self.cursorRightBoundary())),
             .cursor_back => |n| self.cursor.setColByClient(@max(self.cursor.col -| n, self.cursorLeftBoundary())),
             .cursor_next_line => |n| self.cursor.setPositionByClient(
@@ -1185,13 +1209,16 @@ pub const Screen = struct {
                 self.relativeLineHomeCol(),
             ),
             .cursor_horizontal_absolute => |col| self.cursor.setColByClient(
-                @min(self.resolveAbsoluteCol(col), self.rightBoundary()),
+                @min(self.resolveAbsoluteCol(col), self.lineRightBoundary(self.cursor.row)),
             ),
-            .cursor_vertical_absolute => |row| self.cursor.setRowByClient(self.resolveAbsoluteRow(row)),
-            .cursor_position => |pos| self.cursor.setPositionByClient(
-                @min(self.resolveAbsoluteRow(pos.row), self.rows -| 1),
-                @min(self.resolveAbsoluteCol(pos.col), self.rightBoundary()),
-            ),
+            .cursor_vertical_absolute => |row| self.setCursorRowClamped(self.resolveAbsoluteRow(row)),
+            .cursor_position => |pos| {
+                const row = @min(self.resolveAbsoluteRow(pos.row), self.rows -| 1);
+                self.cursor.setPositionByClient(
+                    row,
+                    @min(self.resolveAbsoluteCol(pos.col), self.lineRightBoundary(row)),
+                );
+            },
             else => unreachable,
         }
     }
@@ -1260,7 +1287,9 @@ pub const Screen = struct {
             .insert_mode => |enabled| self.insert_mode = enabled,
             .character_protection => |enabled| self.current_attrs.protected = enabled,
             .attr_change_extent_rect => |enabled| self.attr_change_extent_rect = enabled,
-            .left_right_margin_mode => |enabled| self.setLeftRightMarginMode(enabled),
+            .left_right_margin_mode => |enabled| {
+                if (self.setLeftRightMarginMode(enabled)) return;
+            },
             .set_left_right_margins => |margins| self.setLeftRightMargins(margins.left, margins.right),
             else => unreachable,
         }
@@ -1350,19 +1379,26 @@ pub const Screen = struct {
         switch (mode) {
             .cursor_to_end => {
                 self.markDirtyRows(self.cursor.row, self.rows -| 1);
-                self.clearDisplayRowRange(protected, self.cursor.row, self.cursor.col, self.cols);
+                self.clearDisplayRowRange(
+                    protected,
+                    self.cursor.row,
+                    self.cursor.col,
+                    self.lineColumnCount(self.cursor.row),
+                );
                 var row = self.cursor.row + 1;
                 while (row < self.rows) : (row += 1) {
-                    self.clearDisplayRowRange(protected, row, 0, self.cols);
+                    self.clearDisplayRowRange(protected, row, 0, self.lineColumnCount(row));
                     self.setRowWrapped(row, false);
+                    self.resetLineGeometry(row);
                 }
             },
             .start_to_cursor => {
                 self.markDirtyRows(0, self.cursor.row);
                 var row: u16 = 0;
                 while (row < self.cursor.row) : (row += 1) {
-                    self.clearDisplayRowRange(protected, row, 0, self.cols);
+                    self.clearDisplayRowRange(protected, row, 0, self.lineColumnCount(row));
                     self.setRowWrapped(row, false);
+                    self.resetLineGeometry(row);
                 }
                 self.clearDisplayRowRange(protected, self.cursor.row, 0, self.cursor.col + 1);
             },
@@ -1370,12 +1406,15 @@ pub const Screen = struct {
                 self.markAllRowsDirty();
                 if (protected) {
                     var row: u16 = 0;
-                    while (row < self.rows) : (row += 1) self.clearDisplayRowRange(true, row, 0, self.cols);
+                    while (row < self.rows) : (row += 1) {
+                        self.clearDisplayRowRange(true, row, 0, self.lineColumnCount(row));
+                        self.resetLineGeometry(row);
+                    }
                 } else {
                     const erase_cell = self.eraseCell();
                     @memset(cells, erase_cell);
+                    if (self.row_flags) |buf| @memset(buf, 0);
                 }
-                if (self.row_wraps) |buf| @memset(buf, false);
             },
             .scrollback => self.clearScrollback(),
         }
@@ -1436,14 +1475,15 @@ pub const Screen = struct {
     }
 
     fn cursorRightBoundary(self: *const Screen) u16 {
-        if (!self.left_right_margin_mode) return self.cols -| 1;
-        return if (self.cursor.col <= self.right_margin) self.right_margin else self.cols -| 1;
+        const line_right = self.lineRightBoundary(self.cursor.row);
+        if (!self.left_right_margin_mode) return line_right;
+        return if (self.cursor.col <= self.right_margin) @min(self.right_margin, line_right) else line_right;
     }
 
     /// Clears visible cells and marks the complete screen dirty.
     pub fn clearVisibleCells(self: *Screen) void {
         if (self.cells) |cells| @memset(cells, blank_cell);
-        if (self.row_wraps) |row_wraps| @memset(row_wraps, false);
+        if (self.row_flags) |flags| @memset(flags, 0);
         self.markAllRowsDirty();
     }
 
@@ -1461,7 +1501,18 @@ pub const Screen = struct {
 
     /// Return the active horizontal editing boundary on the right.
     fn rightBoundary(self: *const Screen) u16 {
-        return if (self.left_right_margin_mode) self.right_margin else self.cols -| 1;
+        return if (self.left_right_margin_mode)
+            @min(self.right_margin, self.lineRightBoundary(self.cursor.row))
+        else
+            self.lineRightBoundary(self.cursor.row);
+    }
+
+    fn lineRightBoundary(self: *const Screen, row: u16) u16 {
+        return self.lineColumnCount(row) -| 1;
+    }
+
+    fn setCursorRowClamped(self: *Screen, row: u16) void {
+        self.cursor.setPositionByClient(row, @min(self.cursor.col, self.lineRightBoundary(row)));
     }
 
     fn clearScrollback(self: *Screen) void {
@@ -1491,8 +1542,9 @@ pub const Screen = struct {
         if (self.rows == 0 or self.cols == 0) return;
         switch (mode) {
             .cursor_to_end => {
-                self.markDirtyCols(self.cursor.row, self.cursor.col, self.cols -| 1);
-                self.clearRowRange(self.cursor.row, self.cursor.col, self.cols);
+                const line_cols = self.lineColumnCount(self.cursor.row);
+                self.markDirtyCols(self.cursor.row, self.cursor.col, line_cols -| 1);
+                self.clearRowRange(self.cursor.row, self.cursor.col, line_cols);
             },
             .start_to_cursor => {
                 self.markDirtyCols(self.cursor.row, 0, self.cursor.col);
@@ -1500,7 +1552,7 @@ pub const Screen = struct {
             },
             .all => {
                 self.markDirtyRow(self.cursor.row);
-                self.clearRowRange(self.cursor.row, 0, self.cols);
+                self.clearRowRange(self.cursor.row, 0, self.lineColumnCount(self.cursor.row));
                 self.setRowWrapped(self.cursor.row, false);
             },
             .scrollback => {},
@@ -1510,8 +1562,9 @@ pub const Screen = struct {
     /// Erase at least one character from the cursor through the screen edge.
     pub fn eraseChars(self: *Screen, count: u16) void {
         if (self.rows == 0 or self.cols == 0) return;
-        if (self.cursor.col >= self.cols) return;
-        const amount = @min(@max(count, 1), self.cols - self.cursor.col);
+        const line_cols = self.lineColumnCount(self.cursor.row);
+        if (self.cursor.col >= line_cols) return;
+        const amount = @min(@max(count, 1), line_cols - self.cursor.col);
         self.markDirtyCols(self.cursor.row, self.cursor.col, self.cursor.col + amount - 1);
         self.clearRowRange(self.cursor.row, self.cursor.col, self.cursor.col + amount);
     }
@@ -1538,11 +1591,12 @@ pub const Screen = struct {
     /// Erase unprotected cells on the active line according to `mode`.
     fn selectiveEraseLine(self: *Screen, mode: EraseMode) void {
         if (self.rows == 0 or self.cols == 0) return;
+        const line_cols = self.lineColumnCount(self.cursor.row);
         switch (mode) {
-            .cursor_to_end => self.selectiveClearRowRange(self.cursor.row, self.cursor.col, self.cols),
+            .cursor_to_end => self.selectiveClearRowRange(self.cursor.row, self.cursor.col, line_cols),
             .start_to_cursor => self.selectiveClearRowRange(self.cursor.row, 0, self.cursor.col + 1),
             .all => {
-                self.selectiveClearRowRange(self.cursor.row, 0, self.cols);
+                self.selectiveClearRowRange(self.cursor.row, 0, line_cols);
                 self.setRowWrapped(self.cursor.row, false);
             },
             .scrollback => {},
@@ -1716,20 +1770,22 @@ pub const Screen = struct {
     }
 
     fn insertColumnsInRow(self: *Screen, row: u16, count: u16) void {
-        const amount = @min(@max(count, 1), self.cols - self.cursor.col);
+        const line_cols = self.lineColumnCount(row);
+        if (self.cursor.col >= line_cols) return;
+        const amount = @min(@max(count, 1), line_cols - self.cursor.col);
         const cells = self.rowCells(row) orelse return;
         const cursor_col = screenColCount(self.cursor.col);
         const dst_col = cursor_col + screenColCount(amount);
-        const move_len = screenColCount(self.cols) - dst_col;
+        const move_len = screenColCount(line_cols) - dst_col;
 
         std.debug.assert(cursor_col <= dst_col);
-        std.debug.assert(dst_col <= screenColCount(self.cols));
-        std.debug.assert(dst_col + move_len == screenColCount(self.cols));
+        std.debug.assert(dst_col <= screenColCount(line_cols));
+        std.debug.assert(dst_col + move_len == screenColCount(line_cols));
         std.debug.assert(cursor_col + move_len <= cells.len);
         std.debug.assert(dst_col + move_len <= cells.len);
         std.debug.assert(cursor_col + screenColCount(amount) <= cells.len);
 
-        self.markDirtyCols(row, self.cursor.col, self.cols -| 1);
+        self.markDirtyCols(row, self.cursor.col, line_cols -| 1);
         if (move_len > 0) {
             std.mem.copyBackwards(
                 Cell,
@@ -1742,20 +1798,22 @@ pub const Screen = struct {
     }
 
     fn deleteColumnsInRow(self: *Screen, row: u16, count: u16) void {
-        const amount = @min(@max(count, 1), self.cols - self.cursor.col);
+        const line_cols = self.lineColumnCount(row);
+        if (self.cursor.col >= line_cols) return;
+        const amount = @min(@max(count, 1), line_cols - self.cursor.col);
         const cells = self.rowCells(row) orelse return;
         const cursor_col = screenColCount(self.cursor.col);
-        const src_col = @min(cursor_col + screenColCount(amount), screenColCount(self.cols));
-        const move_len = screenColCount(self.cols) - src_col;
+        const src_col = @min(cursor_col + screenColCount(amount), screenColCount(line_cols));
+        const move_len = screenColCount(line_cols) - src_col;
 
         std.debug.assert(cursor_col <= src_col);
-        std.debug.assert(src_col <= screenColCount(self.cols));
-        std.debug.assert(src_col + move_len == screenColCount(self.cols));
+        std.debug.assert(src_col <= screenColCount(line_cols));
+        std.debug.assert(src_col + move_len == screenColCount(line_cols));
         std.debug.assert(cursor_col + move_len <= cells.len);
         std.debug.assert(src_col + move_len <= cells.len);
-        std.debug.assert(screenColCount(self.cols) - screenColCount(amount) <= screenColCount(self.cols));
+        std.debug.assert(screenColCount(line_cols) - screenColCount(amount) <= screenColCount(line_cols));
 
-        self.markDirtyCols(row, self.cursor.col, self.cols -| 1);
+        self.markDirtyCols(row, self.cursor.col, line_cols -| 1);
         if (move_len > 0) {
             std.mem.copyForwards(
                 Cell,
@@ -1764,7 +1822,7 @@ pub const Screen = struct {
             );
         }
         @memset(
-            cells[@intCast(screenColCount(self.cols) - screenColCount(amount))..@intCast(screenColCount(self.cols))],
+            cells[@intCast(screenColCount(line_cols) - screenColCount(amount))..@intCast(screenColCount(line_cols))],
             self.eraseCell(),
         );
         self.setRowWrapped(row, false);
@@ -2024,12 +2082,13 @@ pub const Screen = struct {
     /// Move forward through at most `count` tab stops, clamping at the last column.
     fn horizontalTabForward(self: *Screen, count: u16) void {
         if (self.cols == 0) return;
+        const line_cols = self.lineColumnCount(self.cursor.row);
         var remaining = count;
         while (remaining > 0) : (remaining -= 1) {
-            if (self.cursor.col >= self.cols - 1) break;
+            if (self.cursor.col >= line_cols - 1) break;
             var col = self.cursor.col + 1;
-            while (col < self.cols and !self.tabStopAt(col)) : (col += 1) {}
-            self.cursor.setColByClient(if (col < self.cols) col else self.cols - 1);
+            while (col < line_cols and !self.tabStopAt(col)) : (col += 1) {}
+            self.cursor.setColByClient(if (col < line_cols) col else line_cols - 1);
         }
     }
 
@@ -2073,14 +2132,14 @@ pub const Screen = struct {
         if (self.rows == 0) return;
         const bottom = self.scrollBottom();
         if (self.cursor.row < bottom) {
-            self.cursor.setRowByClient(self.cursor.row + 1);
+            self.setCursorRowClamped(self.cursor.row + 1);
             return;
         }
         if (self.cursor.row == bottom) {
             self.scrollUpRegion(self.scroll_top, bottom, 1);
             return;
         }
-        if (self.cursor.row < self.rows - 1) self.cursor.setRowByClient(self.cursor.row + 1);
+        if (self.cursor.row < self.rows - 1) self.setCursorRowClamped(self.cursor.row + 1);
     }
 
     /// Move upward, scrolling the active region downward at its top edge.
@@ -2089,7 +2148,7 @@ pub const Screen = struct {
         if (self.cursor.row == self.scroll_top) {
             self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1);
         } else {
-            self.cursor.setRowByClient(self.cursor.row -| 1);
+            self.setCursorRowClamped(self.cursor.row -| 1);
         }
     }
 
@@ -2103,6 +2162,7 @@ pub const Screen = struct {
         const bottom_start = self.rowStart(self.rows - 1);
         @memset(cells[@intCast(bottom_start)..@intCast(bottom_start + row_len)], blank_cell);
         self.setRowWrapped(self.rows - 1, false);
+        self.resetLineGeometry(self.rows - 1);
     }
 
     fn scrollBottom(self: *const Screen) u16 {
@@ -2128,12 +2188,26 @@ pub const Screen = struct {
     }
 
     /// Enable horizontal margins, or disable them and restore full-width defaults.
-    fn setLeftRightMarginMode(self: *Screen, enabled: bool) void {
+    ///
+    /// Every enable clears physical-row geometry, including repeated sets after
+    /// a screen-bank switch. The result reports every resulting state mutation.
+    fn setLeftRightMarginMode(self: *Screen, enabled: bool) bool {
+        var changed = self.left_right_margin_mode != enabled;
         self.left_right_margin_mode = enabled;
+        if (enabled) {
+            var row: u16 = 0;
+            while (row < self.rows) : (row += 1) {
+                if (self.lineGeometry(row) == .single_width) continue;
+                self.resetLineGeometry(row);
+                changed = true;
+            }
+        }
         if (!enabled) {
+            changed = changed or self.left_margin != 0 or self.right_margin != self.cols -| 1;
             self.left_margin = 0;
             self.right_margin = self.cols -| 1;
         }
+        return changed;
     }
 
     /// Set ordered horizontal margins and home the cursor after a valid change.
@@ -2198,6 +2272,7 @@ pub const Screen = struct {
         while (clear_row <= bounded_bottom) : (clear_row += 1) {
             self.clearRowRange(clear_row, left, right + 1);
             self.setRowWrapped(clear_row, false);
+            if (left == 0 and right + 1 == self.cols) self.resetLineGeometry(clear_row);
         }
     }
 
@@ -2224,6 +2299,7 @@ pub const Screen = struct {
         while (clear_row < top + amount) : (clear_row += 1) {
             self.clearRowRange(clear_row, left, right + 1);
             self.setRowWrapped(clear_row, false);
+            if (left == 0 and right + 1 == self.cols) self.resetLineGeometry(clear_row);
         }
     }
 
@@ -2234,22 +2310,89 @@ pub const Screen = struct {
     }
 
     fn rowWrapIndex(self: *const Screen, logical_row: u16) ?u16 {
-        if (self.row_wraps == null) return null;
+        if (self.row_flags == null) return null;
         if (self.rows == 0 or logical_row >= self.rows) return null;
         return (self.row_origin + logical_row) % self.rows;
     }
 
     /// Reports whether a visible row continues into the next row.
     pub fn rowWrapped(self: *const Screen, logical_row: u16) bool {
-        const wraps = self.row_wraps orelse return false;
+        const flags = self.row_flags orelse return false;
         const idx = self.rowWrapIndex(logical_row) orelse return false;
-        return wraps[@intCast(idx)];
+        return flags[@intCast(idx)] & row_wrapped_bit != 0;
+    }
+
+    /// Returns one visible row's DEC geometry, defaulting outside retained state.
+    pub fn lineGeometry(self: *const Screen, logical_row: u16) LineGeometry {
+        const flags = self.row_flags orelse return .single_width;
+        const idx = self.rowWrapIndex(logical_row) orelse return .single_width;
+        return @enumFromInt((flags[@intCast(idx)] & row_geometry_mask) >> row_geometry_shift);
+    }
+
+    fn setLineGeometry(self: *Screen, logical_row: u16, geometry: LineGeometry) bool {
+        const flags = self.row_flags orelse return false;
+        const idx = self.rowWrapIndex(logical_row) orelse return false;
+        const previous = self.lineGeometry(logical_row);
+        if (previous == geometry) return false;
+        flags[@intCast(idx)] = (flags[@intCast(idx)] & ~row_geometry_mask) |
+            (@as(u8, @intFromEnum(geometry)) << row_geometry_shift);
+        const width = self.lineColumnCount(logical_row);
+        if (self.cells != null and width < self.cols) self.clearRowRange(logical_row, width, self.cols);
+        if (self.cursor.row == logical_row) {
+            self.cursor.setColByClient(@min(self.cursor.col, width -| 1));
+            self.wrap_pending = false;
+        }
+        self.markDirtyRow(logical_row);
+        return true;
+    }
+
+    fn applyLineGeometry(self: *Screen, geometry: LineGeometry) bool {
+        if (self.left_right_margin_mode) return false;
+        return self.setLineGeometry(self.cursor.row, geometry);
+    }
+
+    fn resetLineGeometry(self: *Screen, row: u16) void {
+        if (self.lineGeometry(row) == .single_width) return;
+        std.debug.assert(self.setLineGeometry(row, .single_width));
+    }
+
+    fn alignmentDisplay(self: *Screen) bool {
+        const cells = self.cells orelse return false;
+        const fill = Cell{ .codepoint = 'E', .attrs = self.current_attrs };
+        var row: u16 = 0;
+        while (row < self.rows) : (row += 1) {
+            const start = self.rowStart(row);
+            const line_cols = self.lineColumnCount(row);
+            @memset(cells[@intCast(start)..@intCast(start + line_cols)], fill);
+            @memset(cells[@intCast(start + line_cols)..@intCast(start + self.cols)], self.eraseCell());
+        }
+        self.wrap_pending = false;
+        if (self.row_flags) |flags| {
+            for (flags) |*flag| flag.* &= ~row_wrapped_bit;
+        }
+        self.markAllRowsDirty();
+        return true;
+    }
+
+    fn lineColumnCount(self: *const Screen, logical_row: u16) u16 {
+        return switch (self.lineGeometry(logical_row)) {
+            .single_width => self.cols,
+            .double_width, .double_height_top, .double_height_bottom => @max(@as(u16, 1), self.cols / 2),
+        };
     }
 
     fn setRowWrapped(self: *Screen, logical_row: u16, wrapped: bool) void {
-        const wraps = self.row_wraps orelse return;
+        const flags = self.row_flags orelse return;
         const idx = self.rowWrapIndex(logical_row) orelse return;
-        wraps[@intCast(idx)] = wrapped;
+        if (wrapped)
+            flags[@intCast(idx)] |= row_wrapped_bit
+        else
+            flags[@intCast(idx)] &= ~row_wrapped_bit;
+    }
+
+    fn rowFlags(wrapped: bool, geometry: LineGeometry) u8 {
+        return (if (wrapped) row_wrapped_bit else 0) |
+            (@as(u8, @intFromEnum(geometry)) << row_geometry_shift);
     }
 
     /// Return a value view whose cells borrow the retained logical history line.
@@ -2274,9 +2417,15 @@ pub const Screen = struct {
 
     /// Return whether a newest-first projected history row continues logically.
     fn historyRowWrapped(self: *const Screen, history_idx: u32) bool {
-        const wraps = self.history_wraps orelse return false;
+        const flags = self.history_flags orelse return false;
         const slot = self.historySlotForRecency(history_idx) orelse return false;
-        return wraps[@intCast(slot)];
+        return flags[@intCast(slot)] & row_wrapped_bit != 0;
+    }
+
+    fn historyLineGeometry(self: *const Screen, history_idx: u32) LineGeometry {
+        const flags = self.history_flags orelse return .single_width;
+        const slot = self.historySlotForRecency(history_idx) orelse return .single_width;
+        return @enumFromInt((flags[@intCast(slot)] & row_geometry_mask) >> row_geometry_shift);
     }
 
     /// Return the physical ring slot for the next projected history row.
@@ -2288,9 +2437,9 @@ pub const Screen = struct {
 
     /// Return allocated projected-history row capacity.
     fn projectedCapacity(self: *const Screen) u32 {
-        const wraps = self.history_wraps orelse return 0;
-        std.debug.assert(wraps.len <= std.math.maxInt(u32));
-        return @intCast(wraps.len);
+        const flags = self.history_flags orelse return 0;
+        std.debug.assert(flags.len <= std.math.maxInt(u32));
+        return @intCast(flags.len);
     }
 
     /// Return projected row count for `cells` at the current column width.
@@ -2371,6 +2520,7 @@ pub const Screen = struct {
         if (self.cols == 0) return;
         self.clearRowRange(row, 0, self.cols);
         self.setRowWrapped(row, false);
+        self.resetLineGeometry(row);
     }
 
     fn copyRow(self: *Screen, dst_row: u16, src_row: u16) void {
@@ -2383,7 +2533,7 @@ pub const Screen = struct {
             c[@intCast(dst_start)..@intCast(dst_start + row_len)],
             c[@intCast(src_start)..@intCast(src_start + row_len)],
         );
-        self.setRowWrapped(dst_row, self.rowWrapped(src_row));
+        self.copyRowFlags(dst_row, src_row);
     }
 
     fn copyRowRange(self: *Screen, dst_row: u16, src_row: u16, start_col: u16, end_col_exclusive: u16) void {
@@ -2397,7 +2547,17 @@ pub const Screen = struct {
             c[@intCast(dst_start + start_col32)..@intCast(dst_start + end_col32)],
             c[@intCast(src_start + start_col32)..@intCast(src_start + end_col32)],
         );
-        self.setRowWrapped(dst_row, false);
+        if (start_col == 0 and end_col_exclusive == self.cols)
+            self.copyRowFlags(dst_row, src_row)
+        else
+            self.setRowWrapped(dst_row, false);
+    }
+
+    fn copyRowFlags(self: *Screen, dst_row: u16, src_row: u16) void {
+        const flags = self.row_flags orelse return;
+        const dst = self.rowWrapIndex(dst_row) orelse return;
+        const src = self.rowWrapIndex(src_row) orelse return;
+        flags[@intCast(dst)] = flags[@intCast(src)];
     }
 
     /// Mark one in-bounds row dirty across its full visible width.
@@ -3128,6 +3288,7 @@ const RewrappedRow = struct {
     start: u32,
     len: u16,
     wrapped: bool,
+    geometry: Screen.LineGeometry = .single_width,
 };
 
 // Finds the logical line containing a projected row within parallel bounded arrays.
@@ -3197,13 +3358,13 @@ const ViewportState = struct {
 /// Owned visible-grid buffers transferred together into a replacement Screen.
 pub const ResizeBuffers = struct {
     cells: ?[]ScreenCell,
-    row_wraps: ?[]bool,
+    row_flags: ?[]u8,
     dirty_state: DirtyState,
     tab_stops: ?[]bool,
 
     const empty: ResizeBuffers = .{
         .cells = null,
-        .row_wraps = null,
+        .row_flags = null,
         .dirty_state = .{},
         .tab_stops = null,
     };
@@ -3211,7 +3372,7 @@ pub const ResizeBuffers = struct {
     /// Release every owned buffer and reset the value.
     pub fn deinit(self: *ResizeBuffers, allocator: std.mem.Allocator) void {
         if (self.cells) |buf| allocator.free(buf);
-        if (self.row_wraps) |buf| allocator.free(buf);
+        if (self.row_flags) |buf| allocator.free(buf);
         self.dirty_state.deinit(allocator);
         if (self.tab_stops) |buf| allocator.free(buf);
         self.* = empty;
@@ -3391,13 +3552,13 @@ pub fn allocResizeBuffers(
     }
     errdefer if (cells) |buf| allocator.free(buf);
 
-    var row_wraps: ?[]bool = null;
+    var row_flags: ?[]u8 = null;
     if (rows > 0) {
-        const buf = try allocator.alloc(bool, rows);
-        @memset(buf, false);
-        row_wraps = buf;
+        const buf = try allocator.alloc(u8, rows);
+        @memset(buf, 0);
+        row_flags = buf;
     }
-    errdefer if (row_wraps) |buf| allocator.free(buf);
+    errdefer if (row_flags) |buf| allocator.free(buf);
 
     const dirty_cols_start = try allocDirtyCols(allocator, rows, 0);
     errdefer if (dirty_cols_start) |buf| allocator.free(buf);
@@ -3408,19 +3569,19 @@ pub fn allocResizeBuffers(
     copyTabStops(tab_stops, old_tab_stops);
 
     std.debug.assert((cells != null) == (cell_count > 0));
-    std.debug.assert((row_wraps != null) == (rows > 0));
+    std.debug.assert((row_flags != null) == (rows > 0));
     std.debug.assert((dirty_cols_start != null) == (rows > 0));
     std.debug.assert((dirty_cols_end != null) == (rows > 0));
     std.debug.assert((tab_stops != null) == (cols > 0));
     if (cells) |buf| std.debug.assert(buf.len == cell_count);
-    if (row_wraps) |buf| std.debug.assert(buf.len == rows);
+    if (row_flags) |buf| std.debug.assert(buf.len == rows);
     if (dirty_cols_start) |buf| std.debug.assert(buf.len == rows);
     if (dirty_cols_end) |buf| std.debug.assert(buf.len == rows);
     if (tab_stops) |buf| std.debug.assert(buf.len == cols);
 
     return .{
         .cells = cells,
-        .row_wraps = row_wraps,
+        .row_flags = row_flags,
         .dirty_state = DirtyState.initFull(rows, dirty_cols_start, dirty_cols_end),
         .tab_stops = tab_stops,
     };
@@ -3429,11 +3590,11 @@ pub fn allocResizeBuffers(
 // Copy the selected visible rows into allocated replacement buffers.
 fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, viewport: ViewportState, cols: u16) void {
     const dst = buffers.cells orelse return;
-    const dst_wraps = buffers.row_wraps orelse return;
+    const dst_flags = buffers.row_flags orelse return;
 
     std.debug.assert(viewport.visible_start + viewport.visible_rows_kept <= viewport.total_rows);
     std.debug.assert(viewport.total_rows == screenCount32(reflow.rewrapped.items.len));
-    std.debug.assert(screenCount32(dst_wraps.len) >= viewport.visible_rows_kept);
+    std.debug.assert(screenCount32(dst_flags.len) >= viewport.visible_rows_kept);
     std.debug.assert(screenCount32(dst.len) >= resizeCellCount(viewport.visible_rows_kept, cols));
     std.debug.assert(
         screenCount32(reflow.flat_rows.items.len) ==
@@ -3450,7 +3611,7 @@ fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, viewport: Viewp
             dst[@intCast(dst_start)..@intCast(dst_start + screenResizeColCount(cols))],
             flatRowSlice(reflow.flat_rows.items, src, cols),
         );
-        dst_wraps[@intCast(view_row)] = src.wrapped;
+        dst_flags[@intCast(view_row)] = Screen.rowFlags(src.wrapped, src.geometry);
         src_row += 1;
     }
 
@@ -7385,6 +7546,14 @@ pub const View = struct {
         return @intCast(self.cellInfoAt(row, col).codepoint);
     }
 
+    /// Returns one visible row's DEC geometry without prescribing host scaling.
+    pub fn lineGeometry(self: View, row: u16) Screen.LineGeometry {
+        return switch (self.rowSource(row)) {
+            .history => |recency| self.screen.historyLineGeometry(recency),
+            .screen => |screen_row| self.screen.lineGeometry(screen_row),
+        };
+    }
+
     /// Returns the display depth contributed by one visible row.
     pub fn rowDepth(self: View, row: u16) u32 {
         if (self.rows == 0 or row >= self.rows) return self.scrollback_offset;
@@ -9402,6 +9571,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .application_cursor_keys,
         .application_keypad,
         .reverse_screen_mode,
+        .left_right_margin_mode,
         .ansi_mode_set,
         .ansi_mode_reset,
         .modify_other_keys_set,
@@ -9520,7 +9690,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .insert_columns,
         .delete_columns,
         .attr_change_extent_rect,
-        .left_right_margin_mode,
         .set_left_right_margins,
         .reset_default_tab_stops,
         => vt.screen_state.active().applyScreen(event),
@@ -9799,6 +9968,18 @@ const TerminalStream = struct {
                         .title_changed = false,
                         .icon_changed = false,
                     };
+                },
+                '#' => {
+                    const active = self.terminal.screen_state.active();
+                    const changed = switch (esc.final) {
+                        '3' => active.applyLineGeometry(.double_height_top),
+                        '4' => active.applyLineGeometry(.double_height_bottom),
+                        '5' => active.applyLineGeometry(.single_width),
+                        '6' => active.applyLineGeometry(.double_width),
+                        '8' => active.alignmentDisplay(),
+                        else => return try self.applyEvent(.{ .esc_dispatch = esc }),
+                    };
+                    return .{ .changed = changed, .title_changed = false, .icon_changed = false };
                 },
                 else => {},
             }
@@ -10401,6 +10582,7 @@ pub const Terminal = struct {
             .application_cursor_keys => |enabled| return replaceBool(&self.modes.application_cursor_keys, enabled),
             .application_keypad => |enabled| return replaceBool(&self.modes.application_keypad, enabled),
             .reverse_screen_mode => |enabled| return replaceBool(&self.modes.reverse_screen_mode, enabled),
+            .left_right_margin_mode => |enabled| return self.setDecMode(69, enabled),
             .ansi_mode_set => |modes| return self.setAnsiModes(modes.params[0..modes.param_count], true),
             .ansi_mode_reset => |modes| return self.setAnsiModes(modes.params[0..modes.param_count], false),
             .modify_other_keys_set => |value| {
@@ -10527,13 +10709,19 @@ pub const Terminal = struct {
                 return !std.meta.eql(before, .{ active.auto_wrap, active.wrap_pending });
             },
             69 => {
-                const before = .{ active.left_right_margin_mode, active.left_margin, active.right_margin };
-                active.applyScreen(.{ .left_right_margin_mode = enabled });
-                return !std.meta.eql(before, .{
-                    active.left_right_margin_mode,
-                    active.left_margin,
-                    active.right_margin,
-                });
+                const inactive = if (self.screen_state.alt_active)
+                    &self.screen_state.primary
+                else
+                    &self.screen_state.alternate;
+                var changed = active.setLeftRightMarginMode(enabled);
+                changed = replaceBool(&inactive.left_right_margin_mode, enabled) or changed;
+                if (!enabled) {
+                    changed = inactive.left_margin != 0 or
+                        inactive.right_margin != inactive.cols -| 1 or changed;
+                    inactive.left_margin = 0;
+                    inactive.right_margin = inactive.cols -| 1;
+                }
+                return changed;
             },
             25 => return replaceBool(&active.cursor.visible, enabled),
             66 => return replaceBool(&self.modes.application_keypad, enabled),
