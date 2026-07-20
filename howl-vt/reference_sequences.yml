@@ -775,9 +775,15 @@ references:
         census: {semantic_branches: 24, records: 24}
         recognition: implemented
         records:
-          - {id: iterm2.osc.title_icon, raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon, howl: {status: partial}}
-          - {id: iterm2.osc.icon, raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon, howl: {status: partial}}
-          - {id: iterm2.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title, howl: {status: partial}}
+          - {id: iterm2.osc.title_icon, raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon,
+            conditions: iTerm2 truncates at newline, sanitizes controls, and may derive a subtitle from the icon title,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: oscProcess}}
+          - {id: iterm2.osc.icon, raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon,
+            conditions: iTerm2 truncates at newline, sanitizes controls, and may derive a subtitle,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: oscProcess}}
+          - {id: iterm2.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title,
+            conditions: iTerm2 truncates at newline and sanitizes control characters,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: oscProcess}}
           - {id: iterm2.osc.palette, raw: "OSC 4 ; Pt (BEL|ST)", effect: set or query palette, howl: {status: partial}}
           - {id: iterm2.osc.eterm, raw: "OSC 6 ; Pt (BEL|ST)", effect: Eterm extension, relevance: compatibility,
             howl: {status: 'false'}}
@@ -1495,9 +1501,18 @@ references:
         census: {semantic_branches: 32, records: 32}
         recognition: implemented
         records:
-          - {id: kitty.osc.title_icon, raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon, howl: {status: partial}}
-          - {id: kitty.osc.icon, raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon, howl: {status: partial}}
-          - {id: kitty.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title, howl: {status: partial}}
+          - {id: kitty.osc.title_icon, raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC metadata reports only committed replacement and survives split cancellation"}}}
+          - {id: kitty.osc.icon, raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC metadata reports only committed replacement and survives split cancellation"}}}
+          - {id: kitty.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC metadata reports only committed replacement and survives split cancellation"}}}
           - {id: kitty.osc.palette, raw: "OSC 4 ; Pt (BEL|ST)", effect: set or query palette, howl: {status: partial}}
           - {id: kitty.osc.palette_reset, raw: "OSC 104 ; Pm (BEL|ST)", effect: reset palette, howl: {status: partial}}
           - {id: kitty.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory, howl: {status: partial}}

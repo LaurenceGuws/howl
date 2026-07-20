@@ -48,6 +48,29 @@ test "OSC 0 1 and 2 match libvterm title and icon properties" {
     try std.testing.expectEqualStrings("Icon", publication.icon.?);
 }
 
+test "OSC metadata reports only committed replacement and survives split cancellation" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    const first = try terminal.feed("\x1b]0;stable\x07");
+    try std.testing.expect(first.state_changed and first.title_changed and first.icon_changed);
+    const repeated = try terminal.feed("\x1b]0;stable\x1b\\");
+    try std.testing.expect(!repeated.state_changed);
+    try std.testing.expect(!repeated.title_changed and !repeated.icon_changed);
+
+    try std.testing.expect(!(try terminal.feed("\x1b]2;split")).state_changed);
+    try std.testing.expect(!(try terminal.feed("-title")).state_changed);
+    const completed = try terminal.feed("\x1b\\");
+    try std.testing.expect(completed.state_changed and completed.title_changed and !completed.icon_changed);
+    try std.testing.expectEqualStrings("split-title", terminal.surfaceSnapshot().title.?);
+
+    try std.testing.expect(!(try terminal.feed("\x1b]1;discarded\x18")).state_changed);
+    try std.testing.expectEqualStrings("stable", terminal.surfaceSnapshot().icon.?);
+    const cleared = try terminal.feed("\x1b]1;\x07");
+    try std.testing.expect(cleared.state_changed and cleared.icon_changed);
+    try std.testing.expectEqualStrings("", terminal.surfaceSnapshot().icon.?);
+}
+
 test "raw OSC title updates terminal title through OSC owner path" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
@@ -377,6 +400,28 @@ test "iTerm SetColors resets represented domains and ignores malformed pairs ind
     try std.testing.expectEqual(@as(?Rgb, null), presentation.cursor);
     try std.testing.expectEqual(@as(?Rgb, null), presentation.cursor_text);
     try std.testing.expectEqual(Terminal.default_presentation.palette[1], presentation.palette[1]);
+}
+
+test "OSC colors distinguish mutation query and malformed no-op" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    const malformed = try terminal.feed("\x1b]4;1;bogus\x07\x1b]10;no-color\x1b\\");
+    try std.testing.expect(!malformed.state_changed);
+    try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
+
+    const changed = try terminal.feed("\x1b]4;1;#010203\x07");
+    try std.testing.expect(changed.state_changed);
+    const repeated = try terminal.feed("\x1b]4;1;#010203\x1b\\");
+    try std.testing.expect(!repeated.state_changed);
+
+    const query = try terminal.feed("\x1b]4;1;?\x07");
+    try std.testing.expect(query.state_changed);
+    try std.testing.expectEqualStrings("\x1b]4;1;rgb:01/02/03\x1b\\", terminal.host.pendingOutput());
+
+    terminal.host.clearPendingOutput();
+    const iterm_malformed = try terminal.feed("\x1b]1337;SetColors=fg=bogus,missing,p3=x\x07");
+    try std.testing.expect(!iterm_malformed.state_changed);
 }
 
 test "xterm pointer mode stores bounded resource value" {

@@ -5313,14 +5313,14 @@ pub const HostState = struct {
         try appendOutput(&self.pending_output, self.allocator, bytes);
     }
 
-    /// Replace the bounded title after allocation succeeds, preserving the old title on failure.
-    pub fn replaceTitle(self: *HostState, title: []const u8) ApplyError!void {
-        try replaceMetadata(self, &self.current_title, title);
+    /// Replace the bounded title transactionally and report whether its bytes changed.
+    pub fn replaceTitle(self: *HostState, title: []const u8) ApplyError!bool {
+        return replaceMetadata(self, &self.current_title, title);
     }
 
-    /// Replace the bounded icon name transactionally.
-    pub fn replaceIcon(self: *HostState, icon: []const u8) ApplyError!void {
-        try replaceMetadata(self, &self.current_icon, icon);
+    /// Replace the bounded icon name transactionally and report whether it changed.
+    pub fn replaceIcon(self: *HostState, icon: []const u8) ApplyError!bool {
+        return replaceMetadata(self, &self.current_icon, icon);
     }
 
     /// Replaces typed shell integration after optional shell allocation succeeds.
@@ -5354,9 +5354,11 @@ pub const HostState = struct {
         };
     }
 
-    /// Replace title and icon together after both bounded allocations succeed.
-    pub fn replaceTitleAndIcon(self: *HostState, value: []const u8) ApplyError!void {
+    /// Replace title and icon together transactionally and report any changed bytes.
+    pub fn replaceTitleAndIcon(self: *HostState, value: []const u8) ApplyError!bool {
         try ensureRetainedBound(byteCount(value), max_metadata_bytes);
+        if (optionalBytesEqual(self.current_title, value) and
+            optionalBytesEqual(self.current_icon, value)) return false;
         const title = try self.allocator.dupe(u8, value);
         errdefer self.allocator.free(title);
         const icon = try self.allocator.dupe(u8, value);
@@ -5364,6 +5366,7 @@ pub const HostState = struct {
         if (self.current_icon) |old| self.allocator.free(old);
         self.current_title = title;
         self.current_icon = icon;
+        return true;
     }
 
     /// Retain one BEL occurrence without choosing an audible or visual policy.
@@ -5491,11 +5494,17 @@ fn replaceMetadata(
     self: *HostState,
     destination: *?[]u8,
     bytes: []const u8,
-) ApplyError!void {
+) ApplyError!bool {
     try ensureRetainedBound(byteCount(bytes), max_metadata_bytes);
+    if (optionalBytesEqual(destination.*, bytes)) return false;
     const owned = try self.allocator.dupe(u8, bytes);
     if (destination.*) |old| self.allocator.free(old);
     destination.* = owned;
+    return true;
+}
+
+fn optionalBytesEqual(current: ?[]const u8, replacement: []const u8) bool {
+    return if (current) |bytes| std.mem.eql(u8, bytes, replacement) else false;
 }
 
 test "shell mark replacement is bounded transactional and reusable" {
@@ -5576,24 +5585,26 @@ test "paired title and icon replacement is transactional under allocation failur
 fn replaceTitleAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
-    try state.replaceTitle("old");
-    state.replaceTitle("new") catch |err| {
+    try std.testing.expect(try state.replaceTitle("old"));
+    const changed = state.replaceTitle("new") catch |err| {
         try std.testing.expectEqualStrings("old", state.current_title.?);
         return err;
     };
+    try std.testing.expect(changed);
     try std.testing.expectEqualStrings("new", state.current_title.?);
 }
 
 fn replaceIconAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
-    try state.replaceTitle("title");
-    try state.replaceIcon("old");
-    state.replaceIcon("new") catch |err| {
+    try std.testing.expect(try state.replaceTitle("title"));
+    try std.testing.expect(try state.replaceIcon("old"));
+    const changed = state.replaceIcon("new") catch |err| {
         try std.testing.expectEqualStrings("title", state.current_title.?);
         try std.testing.expectEqualStrings("old", state.current_icon.?);
         return err;
     };
+    try std.testing.expect(changed);
     try std.testing.expectEqualStrings("title", state.current_title.?);
     try std.testing.expectEqualStrings("new", state.current_icon.?);
 }
@@ -5601,13 +5612,14 @@ fn replaceIconAllocation(allocator: std.mem.Allocator) !void {
 fn replaceTitleAndIconAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
-    try state.replaceTitle("old-title");
-    try state.replaceIcon("old-icon");
-    state.replaceTitleAndIcon("both") catch |err| {
+    try std.testing.expect(try state.replaceTitle("old-title"));
+    try std.testing.expect(try state.replaceIcon("old-icon"));
+    const changed = state.replaceTitleAndIcon("both") catch |err| {
         try std.testing.expectEqualStrings("old-title", state.current_title.?);
         try std.testing.expectEqualStrings("old-icon", state.current_icon.?);
         return err;
     };
+    try std.testing.expect(changed);
     try std.testing.expectEqualStrings("both", state.current_title.?);
     try std.testing.expectEqualStrings("both", state.current_icon.?);
 }
@@ -5653,8 +5665,8 @@ test "retained host consequences enforce owner-specific boundaries" {
     const title = try allocator.alloc(u8, max_metadata_bytes + 1);
     defer allocator.free(title);
     @memset(title, 't');
-    try state.replaceTitle(title[0 .. max_metadata_bytes - 1]);
-    try state.replaceTitle(title[0..max_metadata_bytes]);
+    try std.testing.expect(try state.replaceTitle(title[0 .. max_metadata_bytes - 1]));
+    try std.testing.expect(try state.replaceTitle(title[0..max_metadata_bytes]));
     try std.testing.expectError(error.ConsequenceLimit, state.replaceTitle(title));
     try std.testing.expectEqual(max_metadata_bytes, byteCount(state.current_title.?));
 
@@ -7881,17 +7893,19 @@ const Publication = struct {
 };
 
 // Apply one host-directed semantic event and retain its bounded consequence.
-fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
+fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
     var scratch: Scratch = .{};
     const allocator = vt.allocator;
     switch (event) {
         .bell => try vt.host.ringBell(),
-        .title_and_icon_set => |value| try vt.host.replaceTitleAndIcon(value),
-        .title_set => |title| try vt.host.replaceTitle(title),
-        .icon_set => |icon| try vt.host.replaceIcon(icon),
+        .title_and_icon_set => |value| return vt.host.replaceTitleAndIcon(value),
+        .title_set => |title| return vt.host.replaceTitle(title),
+        .icon_set => |icon| return vt.host.replaceIcon(icon),
         .shell_integration_set => |integration| try vt.host.replaceShellIntegration(integration),
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
         .color_control => |cmd| {
+            const before = vt.host.colors;
+            const output_before = vt.host.pending_output.items.len;
             switch (cmd.command) {
                 21 => try handleKittyControl(allocator, &vt.host.colors, &vt.host.pending_output, cmd.payload),
                 4 => try handleXtermPaletteControl(
@@ -7924,6 +7938,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
                 ),
                 else => {},
             }
+            return !std.meta.eql(before, vt.host.colors) or output_before != vt.host.pending_output.items.len;
         },
         .hyperlink_set => |uri| vt.screen_state.active().setCurrentLinkId(try vt.host.internHyperlink(uri)),
         .hyperlink_clear => vt.screen_state.active().setCurrentLinkId(0),
@@ -7943,6 +7958,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .legacy_control => |kind| vt.host.legacy_control = kind,
         else => unreachable,
     }
+    return true;
 }
 
 const xtversion_text = "howl-vt dev";
@@ -9322,28 +9338,21 @@ pub fn apply(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
         .title_changed = false,
         .icon_changed = false,
     };
+    const title_changed = switch (semantic) {
+        .title_and_icon_set => |value| !optionalBytesEqual(vt.host.current_title, value),
+        .title_set => |value| !optionalBytesEqual(vt.host.current_title, value),
+        else => false,
+    };
+    const icon_changed = switch (semantic) {
+        .title_and_icon_set => |value| !optionalBytesEqual(vt.host.current_icon, value),
+        .icon_set => |value| !optionalBytesEqual(vt.host.current_icon, value),
+        else => false,
+    };
     const changed = try applySemantic(vt, semantic);
-    return switch (semantic) {
-        .title_and_icon_set => .{
-            .changed = true,
-            .title_changed = true,
-            .icon_changed = true,
-        },
-        .title_set => .{
-            .changed = true,
-            .title_changed = true,
-            .icon_changed = false,
-        },
-        .icon_set => .{
-            .changed = true,
-            .title_changed = false,
-            .icon_changed = true,
-        },
-        else => .{
-            .changed = changed,
-            .title_changed = false,
-            .icon_changed = false,
-        },
+    return .{
+        .changed = changed,
+        .title_changed = title_changed,
+        .icon_changed = icon_changed,
     };
 }
 
@@ -9417,13 +9426,18 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         => return vt.applyModeEvent(event),
 
         .color_control => |control| {
+            const cursor_before = vt.screen_state.activeConst().cursor;
             if (cursorColorEvent(control)) |cursor_event| {
                 vt.screen_state.active().applyScreen(cursor_event);
             }
-            try applyHostEvent(vt, event);
+            const host_changed = try applyHostEvent(vt, event);
+            const cursor_after = vt.screen_state.activeConst().cursor;
+            return host_changed or !std.meta.eql(cursor_before, cursor_after);
         },
         .iterm_set_colors => |payload| {
+            const before = vt.host.colors;
             handleItermSetColors(&vt.host.colors, payload);
+            return !std.meta.eql(before, vt.host.colors);
         },
         .bell,
         .title_and_icon_set,
@@ -9441,7 +9455,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .media_copy_request,
         .dcs_payload,
         .legacy_control,
-        => try applyHostEvent(vt, event),
+        => return applyHostEvent(vt, event),
 
         .line_feed, .next_line => {
             if (!vt.screen_state.alt_active) {
