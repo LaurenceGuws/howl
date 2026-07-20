@@ -275,6 +275,26 @@ test "resize publishes only changed dimensions" {
     try std.testing.expect(unchanged.publication.snapshot.dirty == null);
 }
 
+test "model resize allocation failure restores prior PTY geometry" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const terminal = try headless.Terminal.init(
+        failing.allocator(),
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{},
+    );
+    defer terminal.deinit();
+    failing.fail_index = failing.alloc_index;
+
+    try std.testing.expectError(error.OutOfMemory, terminal.resize(100, 40));
+    try std.testing.expect(failing.has_induced_failure);
+    const status = terminal.status();
+    try std.testing.expectEqual(headless.State.running, status.state);
+    try std.testing.expect(!status.resize_rollback_failed);
+    try std.testing.expectEqual(@as(u16, 80), status.cols);
+    try std.testing.expectEqual(@as(u16, 24), status.rows);
+}
+
 test "deinit stops one live child and reader" {
     const terminal = try headless.Terminal.init(
         std.testing.allocator,

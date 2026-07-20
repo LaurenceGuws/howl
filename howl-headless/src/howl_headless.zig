@@ -83,6 +83,7 @@ pub const ResizeError = howl_vt.Terminal.ResizeError || error{
     InvalidDimensions,
     NotStarted,
     PtyResizeFailed,
+    ResizeRollbackFailed,
 };
 
 /// Reports the exact terminal-reader boundary that stopped making progress.
@@ -101,7 +102,7 @@ pub const ReaderError = error{
     StringControlLimit,
 };
 
-/// Distinguishes a live child from normal completion or reader failure.
+/// Distinguishes active terminal progress from completion or an exact failed boundary.
 pub const State = enum(u8) { running, stopped, failed };
 /// Matches the VT owner's maximum retained bytes for one OSC 133 mark.
 pub const shell_mark_metadata_max_bytes = howl_vt.Terminal.shell_mark_metadata_max_bytes;
@@ -144,10 +145,12 @@ pub const ShellMark = struct {
 
 /// Copies one coherent terminal status observation under the model lock.
 pub const Status = struct {
-    /// Reports the reader-owned lifecycle observation.
+    /// Reports the terminal progress lifecycle observation.
     state: State,
     /// Retains the exact terminal reader failure after a failed state.
     reader_error: ?ReaderError,
+    /// Reports that model resize failed and restoring the prior PTY geometry also failed.
+    resize_rollback_failed: bool,
     /// Reports the model and PTY column count.
     cols: u16,
     /// Reports the model and PTY row count.
@@ -213,7 +216,10 @@ pub const Terminal = struct {
     write_lock: std.Io.Mutex = .init,
     state_value: std.atomic.Value(State) = .init(.running),
     reader_failure: std.atomic.Value(ReaderFailure) = .init(.none),
-    wake_pending: std.atomic.Value(bool) = .init(false),
+    wake_generation: std.atomic.Value(u64) = .init(0),
+    wake_consumed: std.atomic.Value(u64) = .init(0),
+    wake_announced: std.atomic.Value(u64) = .init(0),
+    resize_rollback_failed: std.atomic.Value(bool) = .init(false),
     wake: Wake,
     cols: u16,
     rows: u16,
@@ -287,9 +293,11 @@ pub const Terminal = struct {
         return decodeReaderFailure(self.reader_failure.load(.acquire));
     }
 
-    /// Clears one coalesced wake after the embedder consumes it.
+    /// Acknowledges every mutation published before this call.
+    /// A concurrent later mutation is announced before this call returns or by its producer.
     pub fn consumeWake(self: *Terminal) void {
-        self.wake_pending.store(false, .release);
+        const observed = self.wake_generation.load(.acquire);
+        self.acknowledgeWake(observed);
     }
 
     /// Concurrently stops terminal progress and wakes active PTY reads or writes.
@@ -323,7 +331,11 @@ pub const Terminal = struct {
         try validateSize(cols, rows);
         if (self.state_value.load(.acquire) != .running) return error.NotStarted;
         self.lock.lockUncancelable(self.io);
-        defer self.lock.unlock(self.io);
+        var announce_failure = false;
+        defer {
+            self.lock.unlock(self.io);
+            if (announce_failure) self.notify();
+        }
         if (self.cols == cols and self.rows == rows) return false;
         self.transport.resize(cols, rows) catch |failure| switch (failure) {
             error.NotStarted => return error.NotStarted,
@@ -331,9 +343,13 @@ pub const Terminal = struct {
         };
         self.model.resize(rows, cols) catch |failure| {
             // The model preserves its old surface on failure; restore the PTY
-            // dimensions or stop on the resulting split ownership invariant.
-            self.transport.resize(self.cols, self.rows) catch
-                @panic("PTY resize rollback failed");
+            // dimensions. This catch is the sole route into the failed split-
+            // geometry transition when the compensating ioctl also fails.
+            self.transport.resize(self.cols, self.rows) catch {
+                self.stopAfterResizeRollbackFailure();
+                announce_failure = true;
+                return error.ResizeRollbackFailed;
+            };
             return failure;
         };
         self.cols = cols;
@@ -381,6 +397,7 @@ pub const Terminal = struct {
         return .{
             .state = self.state(),
             .reader_error = self.readerError(),
+            .resize_rollback_failed = self.resize_rollback_failed.load(.acquire),
             .cols = self.cols,
             .rows = self.rows,
             .publication = publication.snapshot_seq,
@@ -393,6 +410,7 @@ pub const Terminal = struct {
     }
 
     /// Delivers one supported signal to the owned child process group.
+    /// Process-group control remains available after terminal progress fails.
     pub fn control(self: *Terminal, signal: ControlSignal) ControlResult {
         self.write_lock.lockUncancelable(self.io);
         defer self.write_lock.unlock(self.io);
@@ -469,13 +487,54 @@ pub const Terminal = struct {
     }
 
     fn finish(self: *Terminal, state_value: State, failure: ReaderFailure) void {
-        self.reader_failure.store(failure, .release);
-        self.state_value.store(state_value, .release);
+        if (failure != .none) {
+            self.reader_failure.store(failure, .release);
+            self.state_value.store(.failed, .release);
+        } else {
+            if (self.state_value.cmpxchgStrong(
+                .running,
+                state_value,
+                .release,
+                .monotonic,
+            )) |actual| {
+                std.debug.assert(actual != .running);
+                return;
+            }
+        }
         self.notify();
     }
 
     fn notify(self: *Terminal) void {
-        if (!self.wake_pending.swap(true, .acq_rel)) self.wake.notify(self.wake.context);
+        const previous = self.wake_generation.fetchAdd(1, .acq_rel);
+        if (previous == std.math.maxInt(u64)) @panic("terminal wake generation exhausted");
+        if (self.wake_consumed.load(.acquire) == previous) self.announceWake(previous + 1);
+    }
+
+    fn acknowledgeWake(self: *Terminal, observed: u64) void {
+        self.wake_consumed.store(observed, .release);
+        const published = self.wake_generation.load(.acquire);
+        if (published != observed) self.announceWake(published);
+    }
+
+    fn announceWake(self: *Terminal, generation: u64) void {
+        var announced = self.wake_announced.load(.acquire);
+        while (announced < generation) {
+            announced = self.wake_announced.cmpxchgWeak(
+                announced,
+                generation,
+                .acq_rel,
+                .acquire,
+            ) orelse {
+                self.wake.notify(self.wake.context);
+                return;
+            };
+        }
+    }
+
+    fn stopAfterResizeRollbackFailure(self: *Terminal) void {
+        self.resize_rollback_failed.store(true, .release);
+        self.state_value.store(.failed, .release);
+        self.transport.cancel();
     }
 };
 
@@ -546,4 +605,57 @@ test "reader allocation failures preserve their owner boundary" {
         @as(?ReaderError, error.ReplyAllocationFailed),
         decodeReaderFailure(.reply_allocation_failed),
     );
+}
+
+test "wake mutation between observation and acknowledgement is announced" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+
+    terminal.notify();
+    try std.testing.expectEqual(@as(u32, 1), wake_count.load(.acquire));
+    const observed = terminal.wake_generation.load(.acquire);
+
+    terminal.notify();
+    try std.testing.expectEqual(@as(u32, 1), wake_count.load(.acquire));
+    terminal.acknowledgeWake(observed);
+    try std.testing.expectEqual(@as(u32, 2), wake_count.load(.acquire));
+    try std.testing.expectEqual(terminal.wake_generation.load(.acquire), terminal.wake_announced.load(.acquire));
+}
+
+test "resize rollback failure transition stops progress and preserves cleanup control" {
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{},
+    );
+    defer terminal.deinit();
+
+    terminal.stopAfterResizeRollbackFailure();
+    terminal.notify();
+    try std.testing.expectEqual(State.failed, terminal.state());
+    try std.testing.expect(terminal.status().resize_rollback_failed);
+    try std.testing.expectError(error.NotStarted, terminal.resize(81, 24));
+    const transfer = try terminal.send(.{ .bytes = "ignored" });
+    try std.testing.expectEqual(@as(usize, 0), transfer.transferred());
+    switch (transfer) {
+        .complete => return error.UnexpectedCompleteTransfer,
+        .incomplete => |failure| try std.testing.expectEqual(
+            howl_pty.TransferFailure.not_started,
+            failure.reason,
+        ),
+    }
+    try std.testing.expectEqual(ControlResult.delivered, terminal.control(.interrupt));
+}
+
+fn countTestWake(context: ?*anyopaque) void {
+    const count: *std.atomic.Value(u32) = @ptrCast(@alignCast(context.?));
+    const previous = count.fetchAdd(1, .monotonic);
+    std.debug.assert(previous < std.math.maxInt(u32));
 }
