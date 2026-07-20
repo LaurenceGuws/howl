@@ -960,6 +960,52 @@ test "XTSAVE and XTRESTORE restore supported DEC private modes" {
     try std.testing.expectEqualStrings("\x1b[?1;1$y\x1b[?7;2$y\x1b[?25;2$y\x1b[?1004;1$y\x1b[?2004;1$y", pendingOutput(&terminal));
 }
 
+test "DEC cursor and alternate modes preserve bounded lifecycle truth" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[?5h\x1b[?6h\x1b[?7l\x1b[3;4H\x1b[4 q\x1b[1m\x1b)0\x0e\x1b[?1048h",
+    )).state_changed);
+    try std.testing.expect((try terminal.feed(
+        "\x1b[?5l\x1b[?6l\x1b[?7h\x1b[1;1H\x1b[1 q\x1b[0m\x1b)B\x0f\x1b[?1048l",
+    )).state_changed);
+    const restored = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u16, 2), restored.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), restored.cursor.col);
+    try std.testing.expectEqual(.underline, restored.cursor.effective_shape);
+    try std.testing.expect(!restored.cursor.blink_intent);
+    try std.testing.expect(restored.current_attrs.bold);
+    try std.testing.expect(terminal.modes.reverse_screen_mode);
+    try std.testing.expect(restored.origin_mode);
+    try std.testing.expect(!restored.auto_wrap);
+    try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
+    try std.testing.expectEqual(@as(u8, '0'), terminal.g1_designation);
+
+    clearPendingOutput(&terminal);
+    const query = try terminal.feed("\x1b[?6$p");
+    try std.testing.expect(!query.title_changed and !query.icon_changed);
+    try std.testing.expectEqualStrings("\x1b[?6;1$y", pendingOutput(&terminal));
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?9999h\x1b[?1049x")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1047hALT")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1047l")).state_changed);
+    try terminal.resize(5, 10);
+    try std.testing.expect((try terminal.feed("\x1b[?1047h")).state_changed);
+    const alternate = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u16, 5), alternate.rows);
+    try std.testing.expectEqual(@as(u16, 10), alternate.cols);
+    try std.testing.expectEqual(@as(u21, 0), alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 0), alternate.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), alternate.cursor.col);
+}
+
 test "application keypad modes affect keypad encoding and DECRQM" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

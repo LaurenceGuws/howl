@@ -4736,6 +4736,7 @@ const DecView = struct {
     application_cursor_keys: bool,
     application_keypad: bool,
     reverse_screen_mode: bool,
+    origin_mode: bool,
     auto_wrap: bool,
     left_right_margin_mode: bool,
     cursor_visible: bool,
@@ -4760,6 +4761,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
     return switch (mode) {
         1 => boolToDecModeState(view.application_cursor_keys),
         5 => boolToDecModeState(view.reverse_screen_mode),
+        6 => boolToDecModeState(view.origin_mode),
         7 => boolToDecModeState(view.auto_wrap),
         69 => boolToDecModeState(view.left_right_margin_mode),
         66 => boolToDecModeState(view.application_keypad),
@@ -4794,8 +4796,14 @@ fn boolToDecModeState(enabled: bool) u8 {
     return if (enabled) 1 else 2;
 }
 
+fn replaceBool(target: *bool, value: bool) bool {
+    if (target.* == value) return false;
+    target.* = value;
+    return true;
+}
+
 // Returns an existing saved-mode slot or appends one within caller capacity.
-fn savedDecModeSlot(saved_modes: []SavedDecMode, saved_count: *SavedDecModeCount, mode: u16) SavedDecModeSlot {
+fn savedDecModeSlot(saved_modes: []SavedDecMode, saved_count: *SavedDecModeCount, mode: u16) ?SavedDecModeSlot {
     const cap = savedDecModeCap(saved_modes);
     var slot: SavedDecModeSlot = 0;
     while (slot < saved_count.*) : (slot += 1) {
@@ -4806,7 +4814,7 @@ fn savedDecModeSlot(saved_modes: []SavedDecMode, saved_count: *SavedDecModeCount
         saved_count.* += 1;
         return new_slot;
     }
-    return cap - 1;
+    return null;
 }
 
 // Returns a saved DEC mode value when the bounded store contains it.
@@ -4840,20 +4848,21 @@ test "saved dec mode slot reuses existing entry" {
     var saved = [_]SavedDecMode{.{ .mode = 0, .state = 0 }} ** saved_dec_mode_limit;
     saved[0] = .{ .mode = 7, .state = 1 };
     var count: SavedDecModeCount = 1;
-    try std.testing.expectEqual(@as(SavedDecModeSlot, 0), savedDecModeSlot(saved[0..], &count, 7));
+    try std.testing.expectEqual(@as(?SavedDecModeSlot, 0), savedDecModeSlot(saved[0..], &count, 7));
     try std.testing.expectEqual(@as(SavedDecModeCount, 1), count);
 }
 
 test "saved dec mode slot appends and saturates" {
     var saved = [_]SavedDecMode{.{ .mode = 0, .state = 0 }} ** saved_dec_mode_limit;
     var count: SavedDecModeCount = 0;
-    try std.testing.expectEqual(@as(SavedDecModeSlot, 0), savedDecModeSlot(saved[0..], &count, 7));
+    try std.testing.expectEqual(@as(?SavedDecModeSlot, 0), savedDecModeSlot(saved[0..], &count, 7));
     try std.testing.expectEqual(@as(SavedDecModeCount, 1), count);
+    saved[saved_dec_mode_limit - 1] = .{ .mode = 2004, .state = 1 };
     count = saved_dec_mode_limit;
-    try std.testing.expectEqual(
-        @as(SavedDecModeSlot, saved_dec_mode_limit - 1),
-        savedDecModeSlot(saved[0..], &count, 2004),
-    );
+    try std.testing.expectEqual(@as(?SavedDecModeSlot, null), savedDecModeSlot(saved[0..], &count, 1004));
+    try std.testing.expectEqual(@as(SavedDecModeCount, saved_dec_mode_limit), count);
+    try std.testing.expectEqual(@as(u16, 2004), saved[saved_dec_mode_limit - 1].mode);
+    try std.testing.expectEqual(@as(u8, 1), saved[saved_dec_mode_limit - 1].state);
 }
 
 test "saved dec mode state scans only saved entries" {
@@ -6578,6 +6587,7 @@ fn altScreenToggle(final: u8, mode: i32) ?SemanticEvent {
             .{ .enter_alt_screen = .{ .clear = true, .save_cursor = false } },
             .{ .exit_alt_screen = .{ .restore_cursor = false } },
         ),
+        1048 => boolEvent(final, SemanticEvent.save_cursor, SemanticEvent.restore_cursor),
         1049 => boolEvent(
             final,
             .{ .enter_alt_screen = .{ .clear = true, .save_cursor = true } },
@@ -7833,6 +7843,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .application_cursor_keys = vt.modes.application_cursor_keys,
         .application_keypad = vt.modes.application_keypad,
         .reverse_screen_mode = vt.modes.reverse_screen_mode,
+        .origin_mode = active.origin_mode,
         .auto_wrap = active.auto_wrap,
         .left_right_margin_mode = active.left_right_margin_mode,
         .cursor_visible = active.cursor.visible,
@@ -9150,7 +9161,7 @@ pub fn apply(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
         .title_changed = false,
         .icon_changed = false,
     };
-    try applySemantic(vt, semantic);
+    const changed = try applySemantic(vt, semantic);
     return switch (semantic) {
         .title_and_icon_set => .{
             .changed = true,
@@ -9168,23 +9179,23 @@ pub fn apply(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
             .icon_changed = true,
         },
         else => .{
-            .changed = true,
+            .changed = changed,
             .title_changed = false,
             .icon_changed = false,
         },
     };
 }
 
-fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!void {
+fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
     switch (event) {
         .reset_screen => vt.resetScreen(),
         .save_cursor => vt.saveCursor(),
         .restore_cursor => vt.restoreCursor(),
         .enter_alt_screen => |opts| {
-            vt.switchScreenMode(true, opts.clear, opts.save_cursor);
+            return vt.switchScreenMode(true, opts.clear, opts.save_cursor);
         },
         .exit_alt_screen => |opts| {
-            vt.switchScreenMode(false, false, opts.restore_cursor);
+            return vt.switchScreenMode(false, false, opts.restore_cursor);
         },
         .ansi_mode_query,
         .modify_other_keys_query,
@@ -9242,7 +9253,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .mouse_protocol_urxvt,
         .dec_mode_save,
         .dec_mode_restore,
-        => vt.applyModeEvent(event),
+        => return vt.applyModeEvent(event),
 
         .color_control => |control| {
             if (cursorColorEvent(control)) |cursor_event| {
@@ -9339,6 +9350,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .reset_default_tab_stops,
         => vt.screen_state.active().applyScreen(event),
     }
+    return true;
 }
 
 // Reports parser allocation, parser bound, captured DCS bound, or retained-consequence failure.
@@ -10142,9 +10154,9 @@ pub const Terminal = struct {
     }
 
     /// Switches primary or alternate screen with explicit clear and cursor-save behavior.
-    pub fn switchScreenMode(self: *Terminal, enable_alt: bool, clear_alt: bool, save_restore_cursor: bool) void {
+    pub fn switchScreenMode(self: *Terminal, enable_alt: bool, clear_alt: bool, save_restore_cursor: bool) bool {
         if (enable_alt) {
-            if (self.screen_state.alt_active) return;
+            if (self.screen_state.alt_active) return false;
             if (save_restore_cursor) self.saveCursor();
             self.screen_state.alt_active = true;
             self.scrollback_offset = 0;
@@ -10152,50 +10164,72 @@ pub const Terminal = struct {
             if (clear_alt) self.screen_state.alternate.clearVisibleCells();
             self.screen_state.alternate.resetCursorForAltEntry();
             self.screen_state.alternate.markAllRowsDirty();
-            return;
+            return true;
         }
 
-        if (!self.screen_state.alt_active) return;
+        if (!self.screen_state.alt_active) return false;
         self.screen_state.alt_active = false;
         self.clampScrollbackOffset();
         self.screen_state.activeSelection().clear();
         if (save_restore_cursor) self.restoreCursor();
         self.screen_state.primary.markAllRowsDirty();
+        return true;
     }
 
     /// Apply one canonical semantic mode event.
-    pub fn applyModeEvent(self: *Terminal, event: SemanticEvent) void {
+    pub fn applyModeEvent(self: *Terminal, event: SemanticEvent) bool {
         switch (event) {
-            .application_cursor_keys => |enabled| self.modes.application_cursor_keys = enabled,
-            .application_keypad => |enabled| self.modes.application_keypad = enabled,
-            .reverse_screen_mode => |enabled| self.modes.reverse_screen_mode = enabled,
-            .ansi_mode_set => |modes| self.setAnsiModes(modes.params[0..modes.param_count], true),
-            .ansi_mode_reset => |modes| self.setAnsiModes(modes.params[0..modes.param_count], false),
-            .modify_other_keys_set => |value| self.modes.modify_other_keys = value,
-            .modify_other_keys_disable => self.modes.modify_other_keys = -1,
+            .application_cursor_keys => |enabled| return replaceBool(&self.modes.application_cursor_keys, enabled),
+            .application_keypad => |enabled| return replaceBool(&self.modes.application_keypad, enabled),
+            .reverse_screen_mode => |enabled| return replaceBool(&self.modes.reverse_screen_mode, enabled),
+            .ansi_mode_set => |modes| return self.setAnsiModes(modes.params[0..modes.param_count], true),
+            .ansi_mode_reset => |modes| return self.setAnsiModes(modes.params[0..modes.param_count], false),
+            .modify_other_keys_set => |value| {
+                if (self.modes.modify_other_keys == value) return false;
+                self.modes.modify_other_keys = value;
+                return true;
+            },
+            .modify_other_keys_disable => {
+                if (self.modes.modify_other_keys == -1) return false;
+                self.modes.modify_other_keys = -1;
+                return true;
+            },
             .key_format_change => |change| {
                 if (change.resource) |resource| {
-                    if (isKeyFormatResource(resource)) self.modes.key_format[resource] = change.value orelse 0;
+                    if (!isKeyFormatResource(resource)) return false;
+                    const value = change.value orelse 0;
+                    if (self.modes.key_format[resource] == value) return false;
+                    self.modes.key_format[resource] = value;
+                    return true;
                 } else {
+                    const empty = [_]u16{0} ** 8;
+                    if (std.mem.eql(u16, self.modes.key_format[0..], empty[0..])) return false;
                     self.modes.key_format = [_]u16{0} ** 8;
+                    return true;
                 }
             },
-            .pointer_mode => |value| self.modes.pointer_mode = value,
-            .reverse_wraparound_mode => |enabled| self.modes.reverse_wraparound_mode = enabled,
-            .extended_reverse_wraparound_mode => |enabled| self.modes.extended_reverse_wraparound_mode = enabled,
-            .focus_reporting => |enabled| self.modes.focus_reporting = enabled,
-            .bracketed_paste => |enabled| self.modes.bracketed_paste = enabled,
-            .synchronized_output => |enabled| self.modes.synchronized_output = enabled,
-            .mouse_tracking_off => self.modes.mouse_tracking = .off,
-            .mouse_tracking_x10 => self.modes.mouse_tracking = .x10,
-            .mouse_tracking_normal => self.modes.mouse_tracking = .normal,
-            .mouse_tracking_button_event => self.modes.mouse_tracking = .button_event,
-            .mouse_tracking_any_event => self.modes.mouse_tracking = .any_event,
-            .mouse_protocol_utf8 => |enabled| self.modes.mouse_protocol = if (enabled) .utf8 else .none,
-            .mouse_protocol_sgr => |enabled| self.modes.mouse_protocol = if (enabled) .sgr else .none,
-            .mouse_protocol_urxvt => |enabled| self.modes.mouse_protocol = if (enabled) .urxvt else .none,
-            .dec_mode_save => |modes| self.saveDecModes(modes.params[0..modes.param_count]),
-            .dec_mode_restore => |modes| self.restoreDecModes(modes.params[0..modes.param_count]),
+            .pointer_mode => |value| {
+                if (self.modes.pointer_mode == value) return false;
+                self.modes.pointer_mode = value;
+                return true;
+            },
+            .reverse_wraparound_mode => |enabled| return replaceBool(&self.modes.reverse_wraparound_mode, enabled),
+            .extended_reverse_wraparound_mode => |enabled| {
+                return replaceBool(&self.modes.extended_reverse_wraparound_mode, enabled);
+            },
+            .focus_reporting => |enabled| return replaceBool(&self.modes.focus_reporting, enabled),
+            .bracketed_paste => |enabled| return replaceBool(&self.modes.bracketed_paste, enabled),
+            .synchronized_output => |enabled| return replaceBool(&self.modes.synchronized_output, enabled),
+            .mouse_tracking_off => return self.setMouseTracking(.off),
+            .mouse_tracking_x10 => return self.setMouseTracking(.x10),
+            .mouse_tracking_normal => return self.setMouseTracking(.normal),
+            .mouse_tracking_button_event => return self.setMouseTracking(.button_event),
+            .mouse_tracking_any_event => return self.setMouseTracking(.any_event),
+            .mouse_protocol_utf8 => |enabled| return self.setMouseProtocol(if (enabled) .utf8 else .none),
+            .mouse_protocol_sgr => |enabled| return self.setMouseProtocol(if (enabled) .sgr else .none),
+            .mouse_protocol_urxvt => |enabled| return self.setMouseProtocol(if (enabled) .urxvt else .none),
+            .dec_mode_save => |modes| return self.saveDecModes(modes.params[0..modes.param_count]),
+            .dec_mode_restore => |modes| return self.restoreDecModes(modes.params[0..modes.param_count]),
             else => unreachable,
         }
     }
@@ -10206,6 +10240,7 @@ pub const Terminal = struct {
             .application_cursor_keys = self.modes.application_cursor_keys,
             .application_keypad = self.modes.application_keypad,
             .reverse_screen_mode = self.modes.reverse_screen_mode,
+            .origin_mode = active.origin_mode,
             .auto_wrap = active.auto_wrap,
             .left_right_margin_mode = active.left_right_margin_mode,
             .cursor_visible = active.cursor.visible,
@@ -10218,22 +10253,29 @@ pub const Terminal = struct {
         }, mode_number);
     }
 
-    fn saveDecModes(self: *Terminal, mode_numbers: []const u16) void {
+    fn saveDecModes(self: *Terminal, mode_numbers: []const u16) bool {
+        var changed = false;
         for (mode_numbers) |mode_number| {
             if (!canSetDecMode(mode_number)) continue;
             const slot = savedDecModeSlot(
                 self.modes.saved_dec_modes[0..],
                 &self.modes.saved_dec_mode_count,
                 mode_number,
-            );
-            self.modes.saved_dec_modes[@intCast(slot)] = .{
+            ) orelse continue;
+            const value: SavedDecMode = .{
                 .mode = mode_number,
                 .state = self.decModeState(mode_number),
             };
+            const target = &self.modes.saved_dec_modes[@intCast(slot)];
+            if (target.mode == value.mode and target.state == value.state) continue;
+            target.* = value;
+            changed = true;
         }
+        return changed;
     }
 
-    fn restoreDecModes(self: *Terminal, mode_numbers: []const u16) void {
+    fn restoreDecModes(self: *Terminal, mode_numbers: []const u16) bool {
+        var changed = false;
         for (mode_numbers) |mode_number| {
             const state = savedDecModeState(
                 self.modes.saved_dec_modes[0..],
@@ -10241,49 +10283,81 @@ pub const Terminal = struct {
                 mode_number,
             ) orelse continue;
             switch (state) {
-                1 => self.setDecMode(mode_number, true),
-                2 => self.setDecMode(mode_number, false),
+                1 => changed = self.setDecMode(mode_number, true) or changed,
+                2 => changed = self.setDecMode(mode_number, false) or changed,
                 else => {},
             }
         }
+        return changed;
     }
 
-    fn setDecMode(self: *Terminal, mode_number: u16, enabled: bool) void {
+    fn setDecMode(self: *Terminal, mode_number: u16, enabled: bool) bool {
         const active = self.screen_state.active();
         switch (mode_number) {
-            1 => self.modes.application_cursor_keys = enabled,
-            5 => self.modes.reverse_screen_mode = enabled,
-            6 => active.applyScreen(.{ .origin_mode = enabled }),
-            7 => active.applyScreen(.{ .auto_wrap = enabled }),
-            69 => active.applyScreen(.{ .left_right_margin_mode = enabled }),
-            25 => active.applyScreen(.{ .cursor_visible = enabled }),
-            66 => self.modes.application_keypad = enabled,
-            47 => self.switchScreenMode(enabled, false, false),
-            1047 => self.switchScreenMode(enabled, true, false),
-            1049 => self.switchScreenMode(enabled, true, true),
-            9 => self.modes.mouse_tracking = if (enabled) .x10 else .off,
-            1000 => self.modes.mouse_tracking = if (enabled) .normal else .off,
-            1002 => self.modes.mouse_tracking = if (enabled) .button_event else .off,
-            1003 => self.modes.mouse_tracking = if (enabled) .any_event else .off,
-            1004 => self.modes.focus_reporting = enabled,
-            1005 => self.modes.mouse_protocol = if (enabled) .utf8 else .none,
-            1006 => self.modes.mouse_protocol = if (enabled) .sgr else .none,
-            1015 => self.modes.mouse_protocol = if (enabled) .urxvt else .none,
-            2004 => self.modes.bracketed_paste = enabled,
-            2026 => self.modes.synchronized_output = enabled,
-            else => {},
+            1 => return replaceBool(&self.modes.application_cursor_keys, enabled),
+            5 => return replaceBool(&self.modes.reverse_screen_mode, enabled),
+            6 => {
+                const before = .{ active.origin_mode, active.cursor.row, active.cursor.col, active.wrap_pending };
+                active.applyScreen(.{ .origin_mode = enabled });
+                const after = .{ active.origin_mode, active.cursor.row, active.cursor.col, active.wrap_pending };
+                return !std.meta.eql(before, after);
+            },
+            7 => {
+                const before = .{ active.auto_wrap, active.wrap_pending };
+                active.applyScreen(.{ .auto_wrap = enabled });
+                return !std.meta.eql(before, .{ active.auto_wrap, active.wrap_pending });
+            },
+            69 => {
+                const before = .{ active.left_right_margin_mode, active.left_margin, active.right_margin };
+                active.applyScreen(.{ .left_right_margin_mode = enabled });
+                return !std.meta.eql(before, .{
+                    active.left_right_margin_mode,
+                    active.left_margin,
+                    active.right_margin,
+                });
+            },
+            25 => return replaceBool(&active.cursor.visible, enabled),
+            66 => return replaceBool(&self.modes.application_keypad, enabled),
+            47 => return self.switchScreenMode(enabled, false, false),
+            1047 => return self.switchScreenMode(enabled, true, false),
+            1049 => return self.switchScreenMode(enabled, true, true),
+            9 => return self.setMouseTracking(if (enabled) .x10 else .off),
+            1000 => return self.setMouseTracking(if (enabled) .normal else .off),
+            1002 => return self.setMouseTracking(if (enabled) .button_event else .off),
+            1003 => return self.setMouseTracking(if (enabled) .any_event else .off),
+            1004 => return replaceBool(&self.modes.focus_reporting, enabled),
+            1005 => return self.setMouseProtocol(if (enabled) .utf8 else .none),
+            1006 => return self.setMouseProtocol(if (enabled) .sgr else .none),
+            1015 => return self.setMouseProtocol(if (enabled) .urxvt else .none),
+            2004 => return replaceBool(&self.modes.bracketed_paste, enabled),
+            2026 => return replaceBool(&self.modes.synchronized_output, enabled),
+            else => return false,
         }
     }
 
-    fn setAnsiModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) void {
+    fn setAnsiModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) bool {
         const active = self.screen_state.active();
+        var changed = false;
         for (mode_numbers) |mode_number| switch (mode_number) {
-            2 => self.modes.keyboard_action_mode = enabled,
-            4 => active.applyScreen(.{ .insert_mode = enabled }),
-            12 => self.modes.send_receive_mode = enabled,
-            20 => self.modes.newline_mode = enabled,
+            2 => changed = replaceBool(&self.modes.keyboard_action_mode, enabled) or changed,
+            4 => changed = replaceBool(&active.insert_mode, enabled) or changed,
+            12 => changed = replaceBool(&self.modes.send_receive_mode, enabled) or changed,
+            20 => changed = replaceBool(&self.modes.newline_mode, enabled) or changed,
             else => {},
         };
+        return changed;
+    }
+
+    fn setMouseTracking(self: *Terminal, value: MouseTrackingMode) bool {
+        if (self.modes.mouse_tracking == value) return false;
+        self.modes.mouse_tracking = value;
+        return true;
+    }
+
+    fn setMouseProtocol(self: *Terminal, value: MouseProtocol) bool {
+        if (self.modes.mouse_protocol == value) return false;
+        self.modes.mouse_protocol = value;
+        return true;
     }
 
     /// Acknowledges a published snapshot and retires dirty state only for valid identities.

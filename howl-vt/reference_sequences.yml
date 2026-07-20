@@ -309,7 +309,9 @@ references:
           - {id: libvterm.mode.alt_1047, raw: "CSI ? 1047 h|l", effect: enter or exit alternate screen,
             howl: {status: partial}}
           - {id: libvterm.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save or restore cursor,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: altScreenToggle, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC cursor and alternate modes preserve bounded lifecycle truth", line: 963}}}
           - {id: libvterm.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: alternate screen with cursor save,
             howl: {status: partial}}
           - {id: libvterm.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
@@ -1066,11 +1068,14 @@ references:
             howl: {status: partial}}
           - {id: iterm2.mode.meta_escape, raw: "CSI ? 1036 h|l", effect: toggle Meta-sends-Escape, relevance: input,
             howl: {status: 'false'}}
-          - {id: iterm2.mode.alt_1047, raw: "CSI ? 1047 h|l", effect: toggle cleared alternate screen,
-            howl: {status: partial}}
+          - {id: iterm2.mode.alt_1047, raw: "CSI ? 1047 h|l",
+            effect: preserve cursor coordinates across switch and clear alternate on exit,
+            conditions: ignored when smcup or rmcup is disabled, howl: {status: partial}}
           - {id: iterm2.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save or restore cursor,
-            howl: {status: partial}}
+            conditions: ignored when smcup or rmcup is disabled,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: altScreenToggle}}
           - {id: iterm2.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: alternate screen with cursor save,
+            conditions: repeated set saves and clears; repeated reset restores; smcup or rmcup may disable,
             howl: {status: partial}}
           - {id: iterm2.mode.key_up_1337, raw: "CSI ? 1337 h|l", effect: toggle key-release reports, relevance: input,
             howl: {status: 'false'}}
@@ -1262,11 +1267,14 @@ references:
           - {id: kitty.mode.mouse_pixel, raw: "CSI ? 1016 h|l", effect: toggle SGR pixel mouse encoding,
             howl: {status: partial}}
           - {id: kitty.mode.alt_47, raw: "CSI ? 47 h|l", effect: toggle alternate screen, howl: {status: partial}}
-          - {id: kitty.mode.alt_1047, raw: "CSI ? 1047 h|l", effect: toggle cleared alternate screen,
+          - {id: kitty.mode.alt_1047, raw: "CSI ? 1047 h|l",
+            effect: toggle alternate screen without clear or cursor save,
             howl: {status: partial}}
-          - {id: kitty.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save cursor on set, recognition: implemented,
+          - {id: kitty.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save cursor on set or reset,
+            recognition: implemented,
             howl: {status: partial}}
           - {id: kitty.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: toggle alternate screen with cursor save,
+            conditions: clear and save or restore occur only on an actual screen transition,
             howl: {status: partial}}
           - {id: kitty.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
             howl: {status: partial}}
