@@ -5218,13 +5218,13 @@ fn setEvents(state: *Locator, modes: []const u16) void {
 fn appendReportForRequest(
     state: *Locator,
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     param: u16,
 ) ApplyError!void {
     if (param > 1) return;
     if (state.mode == .disabled or state.last_row == null or state.last_col == null) {
-        try appendOutput(output, allocator, "\x1b[0&w");
+        try appendCsiReply(output, allocator, .terminal, "0&w");
         return;
     }
     try appendReport(
@@ -5242,16 +5242,16 @@ fn appendReportForRequest(
 // Appends the supported locator device-status reply for parameter 53.
 fn appendDeviceStatusReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     param: u16,
 ) ApplyError!void {
     const text = switch (param) {
-        55 => formatLocatorReport(encode_buf, "\x1b[?50n", .{}),
-        56 => formatLocatorReport(encode_buf, "\x1b[?57;1n", .{}),
+        55 => formatLocatorReport(encode_buf, "?50n", .{}),
+        56 => formatLocatorReport(encode_buf, "?57;1n", .{}),
         else => return,
     };
-    try appendOutput(output, allocator, text);
+    try appendCsiReply(output, allocator, .terminal, text);
 }
 
 // Updates representable locator coordinates and appends enabled reports.
@@ -5261,7 +5261,7 @@ fn appendDeviceStatusReport(
 fn handleMouseEvent(
     state: *Locator,
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     event: MouseEvent,
 ) ApplyError!void {
@@ -5305,7 +5305,7 @@ fn handleMouseEvent(
 fn appendReport(
     state: *Locator,
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     event_code: u16,
     buttons_down: u8,
@@ -5316,10 +5316,10 @@ fn appendReport(
     const coords = coordinates(state, row, col);
     const text = formatLocatorReport(
         encode_buf,
-        "\x1b[{d};{d};{d};{d};0&w",
+        "{d};{d};{d};{d};0&w",
         .{ event_code, button_mask, coords.row + 1, coords.col + 1 },
     );
-    try appendOutput(output, allocator, text);
+    try appendCsiReply(output, allocator, .terminal, text);
     if (state.mode == .one_shot) state.mode = .disabled;
 }
 
@@ -5363,6 +5363,22 @@ const ClipboardDrainResult = union(enum) {
 const ApplyError = error{
     OutOfMemory,
     ConsequenceLimit,
+};
+
+// Selects adaptive terminal replies or extension-mandated seven-bit framing.
+const ReplyProtocol = enum { terminal, kitty, iterm };
+
+// Names the C1 controls emitted by current terminal reply families.
+const ReplyControl = enum { csi, dcs, osc, st };
+
+// Owns bounded reply bytes and the terminal-selected C1 transmission form.
+const PendingOutput = struct {
+    bytes: std.ArrayList(u8),
+    eight_bit_controls: bool = false,
+
+    fn init() PendingOutput {
+        return .{ .bytes = .empty };
+    }
 };
 
 /// Accumulated replies await a host drain and stop at a bounded 64 KiB queue.
@@ -5423,7 +5439,7 @@ pub const HostState = struct {
 
     allocator: std.mem.Allocator,
     colors: TerminalColorState = .{},
-    pending_output: std.ArrayList(u8),
+    pending_output: PendingOutput,
     hyperlink_targets: std.ArrayList([]u8),
     pending_clipboard: ?ClipboardRequest = null,
     current_title: ?[]u8 = null,
@@ -5440,7 +5456,7 @@ pub const HostState = struct {
     pub fn init(allocator: std.mem.Allocator) HostState {
         return .{
             .allocator = allocator,
-            .pending_output = std.ArrayList(u8).empty,
+            .pending_output = PendingOutput.init(),
             .hyperlink_targets = std.ArrayList([]u8).empty,
         };
     }
@@ -5456,7 +5472,7 @@ pub const HostState = struct {
             if (integration.shell) |shell| self.allocator.free(shell);
         self.allocator.free(self.shell_mark.metadata);
         if (self.dcs_payload) |payload| self.allocator.free(payload.payload);
-        self.pending_output.deinit(self.allocator);
+        self.pending_output.bytes.deinit(self.allocator);
     }
 
     /// Reset host-observed state governed by terminal reset.
@@ -5466,10 +5482,10 @@ pub const HostState = struct {
 
     /// Borrow pending terminal reply bytes until the next HostState mutation.
     pub fn pendingOutput(self: *const HostState) []const u8 {
-        return self.pending_output.items;
+        return self.pending_output.bytes.items;
     }
 
-    /// Append bounded reply bytes transactionally through the HostState allocator.
+    /// Append already serialized host-owned bytes transactionally without framing reinterpretation.
     pub fn appendPendingOutput(self: *HostState, bytes: []const u8) ApplyError!void {
         try appendOutput(&self.pending_output, self.allocator, bytes);
     }
@@ -5576,7 +5592,7 @@ pub const HostState = struct {
 
     /// Consume pending replies while retaining their allocation capacity.
     pub fn clearPendingOutput(self: *HostState) void {
-        self.pending_output.clearRetainingCapacity();
+        self.pending_output.bytes.clearRetainingCapacity();
     }
 
     /// Borrow the URI for a retained nonzero identity, or return null.
@@ -5703,15 +5719,68 @@ fn replaceShellMarkAllocation(allocator: std.mem.Allocator) !void {
 }
 
 // Appends a reply transactionally within the accumulated-output bound.
-fn appendOutput(output: *std.ArrayList(u8), allocator: std.mem.Allocator, bytes: []const u8) ApplyError!void {
-    try ensureAppendBound(byteCount(output.items), byteCount(bytes), pending_output_max_bytes);
-    try output.appendSlice(allocator, bytes);
+fn appendOutput(output: *PendingOutput, allocator: std.mem.Allocator, bytes: []const u8) ApplyError!void {
+    try ensureAppendBound(byteCount(output.bytes.items), byteCount(bytes), pending_output_max_bytes);
+    try output.bytes.appendSlice(allocator, bytes);
+}
+
+// Appends one reply framing control through the sole 7-bit/8-bit decision.
+fn appendReplyControl(
+    output: *PendingOutput,
+    allocator: std.mem.Allocator,
+    protocol: ReplyProtocol,
+    control: ReplyControl,
+) ApplyError!void {
+    const eight_bit = protocol == .terminal and output.eight_bit_controls;
+    const bytes = if (eight_bit) switch (control) {
+        .csi => "\x9b",
+        .dcs => "\x90",
+        .osc => "\x9d",
+        .st => "\x9c",
+    } else switch (control) {
+        .csi => "\x1b[",
+        .dcs => "\x1bP",
+        .osc => "\x1b]",
+        .st => "\x1b\\",
+    };
+    try appendOutput(output, allocator, bytes);
+}
+
+// Appends one complete CSI reply transactionally.
+fn appendCsiReply(
+    output: *PendingOutput,
+    allocator: std.mem.Allocator,
+    protocol: ReplyProtocol,
+    payload: []const u8,
+) ApplyError!void {
+    const start = byteCount(output.bytes.items);
+    errdefer restorePendingOutput(output, start);
+    try appendReplyControl(output, allocator, protocol, .csi);
+    try appendOutput(output, allocator, payload);
+}
+
+// Appends one complete DCS or OSC reply with a matching ST transactionally.
+fn appendStringReply(
+    output: *PendingOutput,
+    allocator: std.mem.Allocator,
+    protocol: ReplyProtocol,
+    control: enum { dcs, osc },
+    payload: []const u8,
+) ApplyError!void {
+    const start = byteCount(output.bytes.items);
+    errdefer restorePendingOutput(output, start);
+    try appendReplyControl(output, allocator, protocol, switch (control) {
+        .dcs => .dcs,
+        .osc => .osc,
+    });
+    try appendOutput(output, allocator, payload);
+    try appendReplyControl(output, allocator, protocol, .st);
 }
 
 // Restores drained reply bytes ahead of current output without partial mutation.
-fn restorePendingOutput(output: *std.ArrayList(u8), len: u32) void {
-    std.debug.assert(len <= byteCount(output.items));
-    output.items.len = len;
+fn restorePendingOutput(output: *PendingOutput, len: u32) void {
+    std.debug.assert(len <= byteCount(output.bytes.items));
+    output.bytes.items.len = len;
 }
 
 fn ensureAppendBound(current_len: u32, append_len: u32, max_len: u32) ApplyError!void {
@@ -5861,8 +5930,8 @@ test "retained host consequences enforce owner-specific boundaries" {
 
 test "pending output enforces exact accumulated boundary" {
     const allocator = std.testing.allocator;
-    var output: std.ArrayList(u8) = .empty;
-    defer output.deinit(allocator);
+    var output = PendingOutput.init();
+    defer output.bytes.deinit(allocator);
 
     const bytes = try allocator.alloc(u8, pending_output_max_bytes + 1);
     defer allocator.free(bytes);
@@ -5870,12 +5939,12 @@ test "pending output enforces exact accumulated boundary" {
 
     try appendOutput(&output, allocator, bytes[0 .. pending_output_max_bytes - 1]);
     try appendOutput(&output, allocator, bytes[pending_output_max_bytes - 1 .. pending_output_max_bytes]);
-    try std.testing.expectEqual(pending_output_max_bytes, byteCount(output.items));
+    try std.testing.expectEqual(pending_output_max_bytes, byteCount(output.bytes.items));
     try std.testing.expectError(
         error.ConsequenceLimit,
         appendOutput(&output, allocator, bytes[pending_output_max_bytes..]),
     );
-    try std.testing.expectEqual(pending_output_max_bytes, byteCount(output.items));
+    try std.testing.expectEqual(pending_output_max_bytes, byteCount(output.bytes.items));
 }
 
 fn drainClipboardAllocation(result_allocator: std.mem.Allocator) !void {
@@ -6050,7 +6119,7 @@ fn popState(stack: *KittyColorStack, colors: *KittyColorState) void {
 fn handleKittyControl(
     allocator: std.mem.Allocator,
     colors: *KittyColorState,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     payload: []const u8,
 ) ApplyError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
@@ -6073,13 +6142,14 @@ fn handleKittyControl(
 }
 fn appendKittyQueryReply(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     key: []const u8,
     colors: KittyColorState,
 ) ApplyError!void {
-    const start = byteCount(output.items);
+    const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
-    try appendOutput(output, allocator, "\x1b]21;");
+    try appendReplyControl(output, allocator, .kitty, .osc);
+    try appendOutput(output, allocator, "21;");
     try appendOutput(output, allocator, key);
     try appendOutput(output, allocator, "=");
     if (colorForKey(colors, key)) |color| {
@@ -6089,7 +6159,7 @@ fn appendKittyQueryReply(
     } else {
         try appendOutput(output, allocator, "?");
     }
-    try appendOutput(output, allocator, "\x1b\\");
+    try appendReplyControl(output, allocator, .kitty, .st);
 }
 
 const key_report_max_bytes = 16;
@@ -6139,12 +6209,12 @@ const KittyKeyStack = struct {
     pub fn appendReport(
         self: *const KittyKeyStack,
         allocator: std.mem.Allocator,
-        output: *std.ArrayList(u8),
+        output: *PendingOutput,
         encode_buf: []u8,
     ) ApplyError!void {
         std.debug.assert(encode_buf.len >= key_report_max_bytes);
-        const text = std.fmt.bufPrint(encode_buf, "\x1b[?{d}u", .{self.flags}) catch unreachable;
-        try appendOutput(output, allocator, text);
+        const payload = std.fmt.bufPrint(encode_buf, "?{d}u", .{self.flags}) catch unreachable;
+        try appendCsiReply(output, allocator, .kitty, payload);
     }
 };
 
@@ -7382,6 +7452,7 @@ pub const SemanticEvent = union(enum) {
     cursor_color: ?ScreenRgb,
     cursor_text_color: ?ScreenRgb,
     reverse_screen_mode: bool,
+    eight_bit_controls: bool,
     auto_wrap: bool,
     origin_mode: bool,
     insert_mode: bool,
@@ -8074,7 +8145,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
         .color_control => |cmd| {
             const before = vt.host.colors;
-            const output_before = vt.host.pending_output.items.len;
+            const output_before = vt.host.pending_output.bytes.items.len;
             switch (cmd.command) {
                 21 => try handleKittyControl(allocator, &vt.host.colors, &vt.host.pending_output, cmd.payload),
                 4 => try handleXtermPaletteControl(
@@ -8107,7 +8178,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
                 ),
                 else => {},
             }
-            return !std.meta.eql(before, vt.host.colors) or output_before != vt.host.pending_output.items.len;
+            return !std.meta.eql(before, vt.host.colors) or output_before != vt.host.pending_output.bytes.items.len;
         },
         .hyperlink_set => |uri| vt.screen_state.active().setCurrentLinkId(try vt.host.internHyperlink(uri)),
         .hyperlink_clear => vt.screen_state.active().setCurrentLinkId(0),
@@ -8216,7 +8287,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .dcs_request_status => |request| try appendDecrqssReply(allocator, pending_output, encode_buf, active, request),
         .dcs_request_termcap => try appendTermcapInvalidReport(allocator, pending_output),
         .dcs_request_resource => |request| try appendResourceInvalidReport(allocator, pending_output, request),
-        .device_status_report => try appendOutput(pending_output, allocator, "\x1b[0n"),
+        .device_status_report => try appendCsiReply(pending_output, allocator, .terminal, "0n"),
         .dec_device_status_report => |param| try appendDeviceStatusReport(allocator, pending_output, encode_buf, param),
         .cursor_position_report => try appendCursorPositionReport(allocator, pending_output, encode_buf, render_view),
         .dec_cursor_position_report => try appendDecCursorPositionReport(
@@ -8225,9 +8296,15 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
             encode_buf,
             render_view,
         ),
-        .primary_device_attributes => try appendOutput(pending_output, allocator, "\x1b[?62;22c"),
-        .secondary_device_attributes => try appendOutput(pending_output, allocator, "\x1b[>1;10;0c"),
-        .tertiary_device_attributes => try appendOutput(pending_output, allocator, "\x1bP!|00000000\x1b\\"),
+        .primary_device_attributes => try appendCsiReply(pending_output, allocator, .terminal, "?62;22c"),
+        .secondary_device_attributes => try appendCsiReply(pending_output, allocator, .terminal, ">1;10;0c"),
+        .tertiary_device_attributes => try appendStringReply(
+            pending_output,
+            allocator,
+            .terminal,
+            .dcs,
+            "!|00000000",
+        ),
         .xtversion => try appendXtVersionReport(allocator, pending_output),
         .xttitlepos => try appendTitleStackPositionReport(allocator, pending_output, encode_buf, 0, 0),
         .xtchecksum => |flags| vt.xtchecksum_flags = flags,
@@ -8257,30 +8334,31 @@ fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) ApplyError!void {
     const cell = vt.cellPixelSize() orelse return;
     // The current host supplies logical pixel metrics and owns no output-scale
     // protocol, so points equal pixels and the reported scale is exactly one.
-    const reply = std.fmt.bufPrint(
+    const payload = std.fmt.bufPrint(
         scratch,
-        "\x1b]1337;ReportCellSize={d};{d};1\x1b\\",
+        "1337;ReportCellSize={d};{d};1",
         .{ cell.height, cell.width },
     ) catch unreachable;
-    try vt.host.appendPendingOutput(reply);
+    try appendStringReply(&vt.host.pending_output, vt.allocator, .iterm, .osc, payload);
 }
 
 fn appendDecrqssReply(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     screen: *const Screen,
     request: []const u8,
 ) ApplyError!void {
     if (decrqssPayload(encode_buf, screen, request)) |payload| {
-        const start = byteCount(output.items);
+        const start = byteCount(output.bytes.items);
         errdefer restorePendingOutput(output, start);
-        try appendOutput(output, allocator, "\x1bP1$r");
+        try appendReplyControl(output, allocator, .terminal, .dcs);
+        try appendOutput(output, allocator, "1$r");
         try appendOutput(output, allocator, payload);
-        try appendOutput(output, allocator, "\x1b\\");
+        try appendReplyControl(output, allocator, .terminal, .st);
         return;
     }
-    try appendOutput(output, allocator, "\x1bP0$r\x1b\\");
+    try appendStringReply(output, allocator, .terminal, .dcs, "0$r");
 }
 
 fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) ?[]const u8 {
@@ -8315,86 +8393,87 @@ fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) 
 
 fn appendModifyOtherKeysReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     value: i8,
 ) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[>4;{d}m", .{value});
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, ">4;{d}m", .{value});
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 fn appendKeyFormatReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     resource: u8,
     value: u16,
 ) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[>{d};{d}f", .{ resource, value });
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, ">{d};{d}f", .{ resource, value });
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
-fn appendXtVersionReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8)) ApplyError!void {
-    try appendOutput(output, allocator, "\x1bP>|" ++ xtversion_text ++ "\x1b\\");
+fn appendXtVersionReport(allocator: std.mem.Allocator, output: *PendingOutput) ApplyError!void {
+    try appendStringReply(output, allocator, .terminal, .dcs, ">|" ++ xtversion_text);
 }
 
-fn appendTermcapInvalidReport(allocator: std.mem.Allocator, output: *std.ArrayList(u8)) ApplyError!void {
-    try appendOutput(output, allocator, "\x1bP0+r\x1b\\");
+fn appendTermcapInvalidReport(allocator: std.mem.Allocator, output: *PendingOutput) ApplyError!void {
+    try appendStringReply(output, allocator, .terminal, .dcs, "0+r");
 }
 
 fn appendResourceInvalidReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     request: []const u8,
 ) ApplyError!void {
-    const start = byteCount(output.items);
+    const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
-    try appendOutput(output, allocator, "\x1bP0+R");
+    try appendReplyControl(output, allocator, .terminal, .dcs);
+    try appendOutput(output, allocator, "0+R");
     try appendOutput(output, allocator, request);
-    try appendOutput(output, allocator, "\x1b\\");
+    try appendReplyControl(output, allocator, .terminal, .st);
 }
 
 fn appendTitleStackPositionReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     current: u16,
     max: u16,
 ) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[{d};{d}#S", .{ current, max });
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, "{d};{d}#S", .{ current, max });
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 fn appendCursorPositionReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
     const row = reportCursorCoordinate(render_view.cursor_row, render_view.origin_top, render_view.origin_mode);
     const col = reportCursorCoordinate(render_view.cursor_col, render_view.origin_left, render_view.origin_mode);
-    const text = formatTerminalReport(
+    const payload = formatTerminalReport(
         encode_buf,
-        "\x1b[{d};{d}R",
+        "{d};{d}R",
         .{ row, col },
     );
-    try appendOutput(output, allocator, text);
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 fn appendDecCursorPositionReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
     const row = reportCursorCoordinate(render_view.cursor_row, render_view.origin_top, render_view.origin_mode);
     const col = reportCursorCoordinate(render_view.cursor_col, render_view.origin_left, render_view.origin_mode);
-    const text = formatTerminalReport(
+    const payload = formatTerminalReport(
         encode_buf,
-        "\x1b[?{d};{d}R",
+        "?{d};{d}R",
         .{ row, col },
     );
-    try appendOutput(output, allocator, text);
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 // A restored cursor may precede current margins; relative reports clamp that
@@ -8411,45 +8490,46 @@ test "cursor report coordinate saturates origin and preserves one-based u16 exte
 
 fn appendDecModeReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     mode: u16,
     state: u8,
 ) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[?{d};{d}$y", .{ mode, state });
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, "?{d};{d}$y", .{ mode, state });
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 fn appendAnsiModeReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     mode: u16,
     state: u8,
 ) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[{d};{d}$y", .{ mode, state });
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, "{d};{d}$y", .{ mode, state });
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 fn appendColorStackReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     depth: u8,
 ) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[{d};{d}#Q", .{ depth, depth });
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, "{d};{d}#Q", .{ depth, depth });
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 fn appendTabStopReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     screen: *const Screen,
 ) ApplyError!void {
-    const start = byteCount(output.items);
+    const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
-    try appendOutput(output, allocator, "\x1bP2$u");
+    try appendReplyControl(output, allocator, .terminal, .dcs);
+    try appendOutput(output, allocator, "2$u");
     var first = true;
     var col: u16 = 0;
     while (col < screen.cols) : (col += 1) {
@@ -8459,56 +8539,56 @@ fn appendTabStopReport(
         const text = formatTerminalReport(encode_buf, "{d}", .{col + 1});
         try appendOutput(output, allocator, text);
     }
-    try appendOutput(output, allocator, "\x1b\\");
+    try appendReplyControl(output, allocator, .terminal, .st);
 }
 
 fn appendScreenExtentReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1b[{d};{d};1;1;1\"w", .{ render_view.rows, render_view.cols });
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, "{d};{d};1;1;1\"w", .{ render_view.rows, render_view.cols });
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 fn appendTerminalParametersReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     kind: u16,
 ) ApplyError!void {
     if (kind > 1) return;
-    const text = formatTerminalReport(encode_buf, "\x1b[{d};1;1;128;128;1;0x", .{kind + 2});
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, "{d};1;1;128;128;1;0x", .{kind + 2});
+    try appendCsiReply(output, allocator, .terminal, payload);
 }
 
 fn appendRectChecksumReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     req: RectChecksumRequest,
     checksum: u16,
 ) ApplyError!void {
-    const text = formatTerminalReport(encode_buf, "\x1bP{d}!~{X:0>4}\x1b\\", .{ req.request_id, checksum });
-    try appendOutput(output, allocator, text);
+    const payload = formatTerminalReport(encode_buf, "{d}!~{X:0>4}", .{ req.request_id, checksum });
+    try appendStringReply(output, allocator, .terminal, .dcs, payload);
 }
 
 fn appendSelectedGraphicRenditionReport(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     screen: *const Screen,
     area: RectArea,
 ) ApplyError!void {
     const common = commonAttrsForRect(screen, area) orelse {
-        try appendOutput(output, allocator, "\x1b[0m");
+        try appendCsiReply(output, allocator, .terminal, "0m");
         return;
     };
 
-    const start = byteCount(output.items);
+    const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
-    try appendOutput(output, allocator, "\x1b[");
+    try appendReplyControl(output, allocator, .terminal, .csi);
     var first = true;
     try appendSgrParam(allocator, output, &first, "0");
     if (common.bold) try appendSgrParam(allocator, output, &first, "1");
@@ -8616,7 +8696,7 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
 
 fn appendSgrParam(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     first: *bool,
     text: []const u8,
 ) ApplyError!void {
@@ -8637,7 +8717,7 @@ fn underlineStyleParam(style: Screen.UnderlineStyle) []const u8 {
 
 fn appendColorParam(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     first: *bool,
     is_fg: bool,
@@ -8666,7 +8746,7 @@ fn appendColorParam(
 
 fn appendExtendedColorParam(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     first: *bool,
     prefix: u8,
@@ -8718,8 +8798,8 @@ test "cursor style report payload reads semantic cursor owner" {
 }
 
 test "cursor position report payload names semantic cursor position" {
-    var output = std.ArrayList(u8).empty;
-    defer output.deinit(std.testing.allocator);
+    var output = PendingOutput.init();
+    defer output.bytes.deinit(std.testing.allocator);
     var encode_buf: [64]u8 = undefined;
 
     try appendCursorPositionReport(std.testing.allocator, &output, encode_buf[0..], .{
@@ -8728,7 +8808,7 @@ test "cursor position report payload names semantic cursor position" {
         .cursor_row = 2,
         .cursor_col = 4,
     });
-    try std.testing.expectEqualStrings("\x1b[3;5R", output.items);
+    try std.testing.expectEqualStrings("\x1b[3;5R", output.bytes.items);
 }
 
 const Rgb = Screen.Rgb;
@@ -8780,7 +8860,7 @@ const SpecialPaletteKey = enum(u3) {
 fn handleXtermPaletteControl(
     allocator: std.mem.Allocator,
     colors: *TerminalColorState,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     payload: []const u8,
 ) ApplyError!void {
@@ -8789,12 +8869,13 @@ fn handleXtermPaletteControl(
         const value = parts.next() orelse break;
         const idx = std.fmt.parseUnsigned(u16, idx_text, 10) catch continue;
         if (std.mem.eql(u8, value, "?")) {
-            const text = formatOscReply(encode_buf, "\x1b]4;{d};", .{idx});
-            const start = byteCount(output.items);
+            const text = formatOscReply(encode_buf, "4;{d};", .{idx});
+            const start = byteCount(output.bytes.items);
             errdefer restorePendingOutput(output, start);
+            try appendReplyControl(output, allocator, .terminal, .osc);
             try appendOutput(output, allocator, text);
             if (paletteTargetColor(colors.*, idx)) |color| try appendColorOsc(allocator, output, color);
-            try appendOutput(output, allocator, "\x1b\\");
+            try appendReplyControl(output, allocator, .terminal, .st);
         } else if (parseColor(value)) |color| {
             setPaletteTarget(colors, idx, color);
         }
@@ -8805,7 +8886,7 @@ fn handleXtermPaletteControl(
 fn handleXtermSpecialPaletteControl(
     allocator: std.mem.Allocator,
     colors: *TerminalColorState,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     payload: []const u8,
 ) ApplyError!void {
@@ -8813,13 +8894,14 @@ fn handleXtermSpecialPaletteControl(
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
         const idx = std.fmt.parseUnsigned(u3, idx_text, 10) catch continue;
-        const text = formatOscReply(encode_buf, "\x1b]5;{d};", .{idx});
+        const text = formatOscReply(encode_buf, "5;{d};", .{idx});
         if (std.mem.eql(u8, value, "?")) {
-            const start = byteCount(output.items);
+            const start = byteCount(output.bytes.items);
             errdefer restorePendingOutput(output, start);
+            try appendReplyControl(output, allocator, .terminal, .osc);
             try appendOutput(output, allocator, text);
             if (colors.special_palette[idx]) |color| try appendColorOsc(allocator, output, color);
-            try appendOutput(output, allocator, "\x1b\\");
+            try appendReplyControl(output, allocator, .terminal, .st);
         } else if (parseColor(value)) |color| {
             colors.special_palette[idx] = color;
         }
@@ -8830,7 +8912,7 @@ fn handleXtermSpecialPaletteControl(
 fn handleXtermDynamicColor(
     allocator: std.mem.Allocator,
     colors: *TerminalColorState,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     command: u16,
     payload: []const u8,
@@ -9191,7 +9273,7 @@ fn resetDynamicColor(colors: *TerminalColorState, key: DynamicKey) void {
 }
 
 // Appends one bounded rgb:RRRR/GGGG/BBBB OSC color reply.
-fn appendColorOsc(allocator: std.mem.Allocator, output: *std.ArrayList(u8), color: Rgb) ApplyError!void {
+fn appendColorOsc(allocator: std.mem.Allocator, output: *PendingOutput, color: Rgb) ApplyError!void {
     var buf: [32]u8 = undefined;
     const text = formatColorOsc(buf[0..], color);
     try appendOutput(output, allocator, text);
@@ -9228,7 +9310,7 @@ fn resetColorKey(colors: *TerminalColorState, key: []const u8) void {
 
 fn appendXtermSpecialColorReply(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     colors: TerminalColorState,
     key: SpecialKey,
@@ -9245,27 +9327,29 @@ fn appendXtermSpecialColorReply(
         .cursor => colors.cursor orelse colors.foreground,
         else => colors.foreground,
     };
-    const text = formatOscReply(encode_buf, "\x1b]{d};", .{osc});
-    const start = byteCount(output.items);
+    const text = formatOscReply(encode_buf, "{d};", .{osc});
+    const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
+    try appendReplyControl(output, allocator, .terminal, .osc);
     try appendOutput(output, allocator, text);
     try appendColorOsc(allocator, output, color);
-    try appendOutput(output, allocator, "\x1b\\");
+    try appendReplyControl(output, allocator, .terminal, .st);
 }
 
 fn appendXtermDynamicColorReply(
     allocator: std.mem.Allocator,
-    output: *std.ArrayList(u8),
+    output: *PendingOutput,
     encode_buf: []u8,
     colors: TerminalColorState,
     key: DynamicKey,
 ) ApplyError!void {
-    const text = formatOscReply(encode_buf, "\x1b]{d};", .{dynamicCommandForKey(key)});
-    const start = byteCount(output.items);
+    const text = formatOscReply(encode_buf, "{d};", .{dynamicCommandForKey(key)});
+    const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
+    try appendReplyControl(output, allocator, .terminal, .osc);
     try appendOutput(output, allocator, text);
     if (dynamicColor(colors, key)) |color| try appendColorOsc(allocator, output, color);
-    try appendOutput(output, allocator, "\x1b\\");
+    try appendReplyControl(output, allocator, .terminal, .st);
 }
 
 fn setSpecialColor(colors: *TerminalColorState, key: SpecialKey, color: Rgb) void {
@@ -9477,11 +9561,24 @@ pub fn process(event: parser_mod.Event) ?SemanticEvent {
         .codepoint => |cp| return SemanticEvent{ .write_codepoint = cp },
         .control => |c| return controlProcess(c),
         .osc => |osc_event| return processOscEvent(osc_event),
-        .esc_dispatch => |esc_dispatch| return escProcess(esc_dispatch.final),
+        .esc_dispatch => |esc_dispatch| return escDispatchProcess(
+            esc_dispatch.final,
+            esc_dispatch.intermediates[0..esc_dispatch.intermediates_len],
+        ),
         .apc => return null,
         .dcs => |dcs_data| return dcsProcess(dcs_data),
         .pm, .invalid_sequence => return null,
     }
+}
+
+fn escDispatchProcess(final: u8, intermediates: []const u8) ?SemanticEvent {
+    if (std.mem.eql(u8, intermediates, " ")) return switch (final) {
+        'F' => .{ .eight_bit_controls = false },
+        'G' => .{ .eight_bit_controls = true },
+        else => null,
+    };
+    if (intermediates.len != 0) return null;
+    return escProcess(final);
 }
 
 fn processOscEvent(osc_event: parser_mod.OscAction) ?SemanticEvent {
@@ -9571,6 +9668,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .application_cursor_keys,
         .application_keypad,
         .reverse_screen_mode,
+        .eight_bit_controls,
         .left_right_margin_mode,
         .ansi_mode_set,
         .ansi_mode_reset,
@@ -10500,6 +10598,7 @@ pub const Terminal = struct {
         self.gr_index = 1;
         self.single_shift = null;
         self.designations = .{ 'B', 'B', 'B', 'B' };
+        self.host.pending_output.eight_bit_controls = false;
         self.kitty.resetTerminalState();
         self.host.resetTerminalState();
     }
@@ -10582,6 +10681,11 @@ pub const Terminal = struct {
             .application_cursor_keys => |enabled| return replaceBool(&self.modes.application_cursor_keys, enabled),
             .application_keypad => |enabled| return replaceBool(&self.modes.application_keypad, enabled),
             .reverse_screen_mode => |enabled| return replaceBool(&self.modes.reverse_screen_mode, enabled),
+            .eight_bit_controls => |enabled| {
+                const changed = self.host.pending_output.eight_bit_controls != enabled;
+                self.host.pending_output.eight_bit_controls = enabled;
+                return changed;
+            },
             .left_right_margin_mode => |enabled| return self.setDecMode(69, enabled),
             .ansi_mode_set => |modes| return self.setAnsiModes(modes.params[0..modes.param_count], true),
             .ansi_mode_reset => |modes| return self.setAnsiModes(modes.params[0..modes.param_count], false),

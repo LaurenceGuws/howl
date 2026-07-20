@@ -88,10 +88,22 @@ references:
         census: {semantic_branches: 22, records: 22}
         recognition: implemented
         records:
-          - {id: libvterm.esc.s7c1t, raw: "ESC SP F", effect: select 7-bit C1 transmission, relevance: compatibility,
-            howl: {status: partial}}
-          - {id: libvterm.esc.s8c1t, raw: "ESC SP G", effect: select 8-bit C1 transmission, relevance: compatibility,
-            howl: {status: partial}}
+          - id: libvterm.esc.s7c1t
+            raw: "ESC SP F"
+            effect: select 7-bit C1 transmission
+            conditions: Howl keeps typed key mouse focus and paste encoding in their independently selected protocols
+            relevance: compatibility
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "S7C1T and S8C1T serialize mixed replies through one bounded owner"}}
+          - id: libvterm.esc.s8c1t
+            raw: "ESC SP G"
+            effect: select 8-bit C1 transmission
+            conditions: Howl keeps typed key mouse focus and paste encoding in their independently selected protocols
+            relevance: compatibility
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "S7C1T and S8C1T serialize mixed replies through one bounded owner"}}
           - id: libvterm.esc.decdhl_top
             raw: "ESC # 3"
             effect: double-height top line
@@ -1359,8 +1371,22 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
-          - {id: kitty.esc.s7c1t, raw: "ESC SP F", effect: select 7-bit C1 transmission, howl: {status: partial}}
-          - {id: kitty.esc.s8c1t, raw: "ESC SP G", effect: select 8-bit C1 transmission, howl: {status: partial}}
+          - id: kitty.esc.s7c1t
+            raw: "ESC SP F"
+            effect: select 7-bit C1 transmission
+            conditions: >-
+              Kitty ignores this control while Howl selects terminal reply framing; Kitty extension replies stay fixed
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "S7C1T and S8C1T serialize mixed replies through one bounded owner"}}
+          - id: kitty.esc.s8c1t
+            raw: "ESC SP G"
+            effect: select 8-bit C1 transmission
+            conditions: >-
+              Kitty ignores this control while Howl selects terminal reply framing; Kitty extension replies stay fixed
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "S7C1T and S8C1T serialize mixed replies through one bounded owner"}}
       - source: screen.c
         symbol: screen_set_mode
         line: 1759

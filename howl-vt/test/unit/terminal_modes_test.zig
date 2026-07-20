@@ -614,6 +614,52 @@ test "report query limit fails without partial pending output" {
     try std.testing.expectEqualStrings("\x1bP1$r1;4r\x1b\\", pendingOutput(&terminal));
 }
 
+test "S7C1T and S8C1T serialize mixed replies through one bounded owner" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+    try terminal.setCellPixelSize(9, 18);
+
+    write(&stream, "\x1b]4;1;#010203\x1b\\");
+    clearPendingOutput(&terminal);
+    try stream.nextSlice("\x1b ");
+    try stream.nextSlice("G\x1b[5n\x1bP$qr\x1b\\\x1b]4;1;?\x1b\\\x1b[?u\x1b]1337;ReportCellSize\x07");
+    try std.testing.expectEqualStrings(
+        "\x9b0n\x901$r1;3r\x9c\x9d4;1;rgb:01/02/03\x9c" ++
+            "\x1b[?0u\x1b]1337;ReportCellSize=18;9;1\x1b\\",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    write(&stream, "\x1b7");
+    try stream.nextSlice("\x1b ");
+    try stream.nextSlice("F\x1b8\x1b[5n");
+    try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    write(&stream, "\x1b G\x1bc\x1b[5n");
+    try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+}
+
+test "eight-bit multipart reply limit rolls back every framing byte" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+    write(&stream, "\x1b G");
+
+    const fill_len = HostState.pending_output_max_bytes - 2;
+    const fill = try allocator.alloc(u8, fill_len);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+
+    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1bP$qr\x1b\\"));
+    try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
+    for (pendingOutput(&terminal)) |byte| try std.testing.expectEqual(@as(u8, 'x'), byte);
+}
+
 test "ENQ default answerback is empty and printable space remains text" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 8);
