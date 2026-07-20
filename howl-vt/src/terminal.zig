@@ -8379,16 +8379,23 @@ fn appendDecrqssReply(
     screen: *const Screen,
     request: []const u8,
 ) ApplyError!void {
+    const start = byteCount(output.bytes.items);
+    errdefer restorePendingOutput(output, start);
+    try appendReplyControl(output, allocator, .terminal, .dcs);
+    if (std.mem.eql(u8, request, "m")) {
+        try appendOutput(output, allocator, "1$r");
+        try appendSgrAttrs(allocator, output, encode_buf, currentAttrs(screen));
+        try appendReplyControl(output, allocator, .terminal, .st);
+        return;
+    }
     if (decrqssPayload(encode_buf, screen, request)) |payload| {
-        const start = byteCount(output.bytes.items);
-        errdefer restorePendingOutput(output, start);
-        try appendReplyControl(output, allocator, .terminal, .dcs);
         try appendOutput(output, allocator, "1$r");
         try appendOutput(output, allocator, payload);
         try appendReplyControl(output, allocator, .terminal, .st);
         return;
     }
-    try appendStringReply(output, allocator, .terminal, .dcs, "0$r");
+    try appendOutput(output, allocator, "0$r");
+    try appendReplyControl(output, allocator, .terminal, .st);
 }
 
 fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) ?[]const u8 {
@@ -8397,21 +8404,22 @@ fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) 
         return std.fmt.bufPrint(encode_buf, "{d};{d}r", .{ screen.scroll_top + 1, bottom + 1 }) catch null;
     }
     if (std.mem.eql(u8, request, "s")) {
+        const left = if (screen.left_right_margin_mode) screen.left_margin else 0;
         const right = if (screen.left_right_margin_mode) screen.right_margin else screen.cols -| 1;
-        return std.fmt.bufPrint(encode_buf, "{d};{d}s", .{ screen.left_margin + 1, right + 1 }) catch null;
+        return std.fmt.bufPrint(encode_buf, "{d};{d}s", .{ left + 1, right + 1 }) catch null;
     }
     if (std.mem.eql(u8, request, " q")) {
         const style = screen.cursor.effectiveStyle();
         const value: u8 = switch (style.shape) {
             .none => 1,
-            .block => if (style.blink) 0 else 2,
+            .block => if (style.blink) 1 else 2,
             .underline => if (style.blink) 3 else 4,
             .bar => if (style.blink) 5 else 6,
         };
         return std.fmt.bufPrint(encode_buf, "{d} q", .{value}) catch null;
     }
     if (std.mem.eql(u8, request, "\"q")) {
-        const value: u8 = if (screen.current_attrs.protected) 1 else 0;
+        const value: u8 = if (screen.current_attrs.protected) 1 else 2;
         return std.fmt.bufPrint(encode_buf, "{d}\"q", .{value}) catch null;
     }
     if (std.mem.eql(u8, request, "*x")) {
@@ -8620,20 +8628,30 @@ fn appendSelectedGraphicRenditionReport(
     const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
     try appendReplyControl(output, allocator, .terminal, .csi);
+    try appendSgrAttrs(allocator, output, encode_buf, common);
+}
+
+// Appends one complete SGR parameter payload for retained terminal attributes.
+fn appendSgrAttrs(
+    allocator: std.mem.Allocator,
+    output: *PendingOutput,
+    encode_buf: []u8,
+    attrs: CommonAttrs,
+) ApplyError!void {
     var first = true;
     try appendSgrParam(allocator, output, &first, "0");
-    if (common.bold) try appendSgrParam(allocator, output, &first, "1");
-    if (common.dim) try appendSgrParam(allocator, output, &first, "2");
-    if (common.italic) try appendSgrParam(allocator, output, &first, "3");
-    if (common.underline) try appendSgrParam(allocator, output, &first, underlineStyleParam(common.underline_style));
-    if (common.blink) try appendSgrParam(allocator, output, &first, "5");
-    if (common.reverse) try appendSgrParam(allocator, output, &first, "7");
-    if (common.invisible) try appendSgrParam(allocator, output, &first, "8");
-    if (common.strikethrough) try appendSgrParam(allocator, output, &first, "9");
-    try appendColorParam(allocator, output, encode_buf, &first, true, common.fg, Screen.default_cell_attrs.fg);
-    try appendColorParam(allocator, output, encode_buf, &first, false, common.bg, Screen.default_cell_attrs.bg);
-    if (common.underline and !colorEq(common.underline_color, Screen.default_underline_color)) {
-        try appendExtendedColorParam(allocator, output, encode_buf, &first, 58, common.underline_color);
+    if (attrs.bold) try appendSgrParam(allocator, output, &first, "1");
+    if (attrs.dim) try appendSgrParam(allocator, output, &first, "2");
+    if (attrs.italic) try appendSgrParam(allocator, output, &first, "3");
+    if (attrs.underline) try appendSgrParam(allocator, output, &first, underlineStyleParam(attrs.underline_style));
+    if (attrs.blink) try appendSgrParam(allocator, output, &first, "5");
+    if (attrs.reverse) try appendSgrParam(allocator, output, &first, "7");
+    if (attrs.invisible) try appendSgrParam(allocator, output, &first, "8");
+    if (attrs.strikethrough) try appendSgrParam(allocator, output, &first, "9");
+    try appendColorParam(allocator, output, encode_buf, &first, true, attrs.fg, Screen.default_cell_attrs.fg);
+    try appendColorParam(allocator, output, encode_buf, &first, false, attrs.bg, Screen.default_cell_attrs.bg);
+    if (attrs.underline and !colorEq(attrs.underline_color, Screen.default_underline_color)) {
+        try appendExtendedColorParam(allocator, output, encode_buf, &first, 58, attrs.underline_color);
     }
     try appendOutput(output, allocator, "m");
 }
@@ -8678,6 +8696,25 @@ const CommonAttrs = struct {
     fg: Screen.Color,
     bg: Screen.Color,
 };
+
+// Copies current pen attributes into the shared bounded SGR report shape.
+fn currentAttrs(screen: *const Screen) CommonAttrs {
+    const attrs = screen.current_attrs;
+    return .{
+        .bold = attrs.bold,
+        .dim = attrs.dim,
+        .italic = attrs.italic,
+        .underline = attrs.underline,
+        .underline_style = attrs.underline_style,
+        .underline_color = attrs.underline_color,
+        .blink = attrs.blink,
+        .reverse = attrs.reverse,
+        .invisible = attrs.invisible,
+        .strikethrough = attrs.strikethrough,
+        .fg = attrs.fg,
+        .bg = attrs.bg,
+    };
+}
 
 fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
     const bounds = screen.rectBounds(area) orelse return null;
@@ -8821,7 +8858,7 @@ test "cursor style report payload reads semantic cursor owner" {
 
     screen.applyScreen(.{ .cursor_style = .{ .program_override = .{ .shape = .block, .blink = true } } });
     const block_blink = decrqssPayload(encode_buf[0..], &screen, " q").?;
-    try std.testing.expectEqualStrings("0 q", block_blink);
+    try std.testing.expectEqualStrings("1 q", block_blink);
 
     screen.applyScreen(.{ .cursor_style = .{ .program_override = .{ .shape = .none, .blink = false } } });
     const no_shape = decrqssPayload(encode_buf[0..], &screen, " q").?;

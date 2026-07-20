@@ -647,7 +647,7 @@ test "eight-bit multipart reply limit rolls back every framing byte" {
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
-    write(&stream, "\x1b G");
+    write(&stream, "\x1b G\x1b[1;3;38;5;200m");
 
     const fill_len = HostState.pending_output_max_bytes - 2;
     const fill = try allocator.alloc(u8, fill_len);
@@ -655,7 +655,7 @@ test "eight-bit multipart reply limit rolls back every framing byte" {
     @memset(fill, 'x');
     try terminal.host.appendPendingOutput(fill);
 
-    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1bP$qr\x1b\\"));
+    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1bP$qm\x1b\\"));
     try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
     for (pendingOutput(&terminal)) |byte| try std.testing.expectEqual(@as(u8, 'x'), byte);
 }
@@ -954,11 +954,44 @@ test "DECRQSS replies for owned state and invalid requests" {
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    write(&stream, "\x1b[2;3r\x1b[?69h\x1b[2;7s\x1b[3 q\x1b[1\"q\x1b[2*x");
-    write(&stream, "\x1bP$qr\x1b\\\x1bP$qs\x1b\\\x1bP$q q\x1b\\\x1bP$q\"q\x1b\\\x1bP$q*x\x1b\\\x1bP$qm\x1b\\");
-
+    write(&stream, "\x1bP$qr\x1b\\\x1bP$qs\x1b\\\x1bP$q q\x1b\\\x1bP$q\"q\x1b\\\x1bP$qm\x1b\\\x1bP$qbad\x1b\\");
     try std.testing.expectEqualStrings(
-        "\x1bP1$r2;3r\x1b\\\x1bP1$r2;7s\x1b\\\x1bP1$r3 q\x1b\\\x1bP1$r1\"q\x1b\\\x1bP1$r2*x\x1b\\\x1bP0$r\x1b\\",
+        "\x1bP1$r1;4r\x1b\\\x1bP1$r1;8s\x1b\\\x1bP1$r1 q\x1b\\" ++
+            "\x1bP1$r2\"q\x1b\\\x1bP1$r0m\x1b\\\x1bP0$r\x1b\\",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    write(
+        &stream,
+        "\x1b[2;3r\x1b[?69h\x1b[2;7s\x1b[3 q\x1b[1\"q" ++
+            "\x1b[2*x\x1b[1;3;4:3;5;7;8;9;38;5;200;48;2;1;2;3;58;2;4;5;6m\x1b7" ++
+            "\x1b[0m\x1b[0\"q\x1b[6 q\x1b8\x1b G",
+    );
+    try stream.nextSlice("\x90$q");
+    try stream.nextSlice("r\x9c\x90$qs\x9c\x90$q q\x9c\x90$q\"q\x9c\x90$q*x\x9c\x90$qm\x9c");
+    try std.testing.expectEqualStrings(
+        "\x901$r2;3r\x9c\x901$r2;7s\x9c\x901$r3 q\x9c\x901$r1\"q\x9c\x901$r2*x\x9c" ++
+            "\x901$r0;1;3;4:3;5;7;8;9;38;5;200;48;2;1;2;3;58;2;4;5;6m\x9c",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    write(
+        &stream,
+        "\x1b[1 q\x90$q q\x9c\x1b[2 q\x90$q q\x9c\x1b[3 q\x90$q q\x9c" ++
+            "\x1b[4 q\x90$q q\x9c\x1b[5 q\x90$q q\x9c\x1b[6 q\x90$q q\x9c",
+    );
+    try std.testing.expectEqualStrings(
+        "\x901$r1 q\x9c\x901$r2 q\x9c\x901$r3 q\x9c\x901$r4 q\x9c\x901$r5 q\x9c\x901$r6 q\x9c",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    write(&stream, "\x1bc\x1bP$qr\x1b\\\x1bP$qs\x1b\\\x1bP$q q\x1b\\\x1bP$q\"q\x1b\\\x1bP$qm\x1b\\");
+    try std.testing.expectEqualStrings(
+        "\x1bP1$r1;4r\x1b\\\x1bP1$r1;8s\x1b\\\x1bP1$r1 q\x1b\\" ++
+            "\x1bP1$r2\"q\x1b\\\x1bP1$r0m\x1b\\",
         pendingOutput(&terminal),
     );
 }

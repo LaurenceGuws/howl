@@ -419,31 +419,43 @@ references:
         census: {semantic_branches: 6, records: 6}
         recognition: implemented
         records:
-          - {id: libvterm.dcs.decrqss_sgr, raw: "DCS $ q m ST", effect: report current graphic rendition,
-            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
-            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+          - id: libvterm.dcs.decrqss_sgr
+            raw: "DCS $ q m ST"
+            effect: report current graphic rendition
+            conditions: >-
+              Howl prefixes canonical reset and reports retained dim and underline variants but lacks libvterm font or
+              baseline
+            relevance: query
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendSgrAttrs, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECRQSS replies for owned state and invalid requests"}}
           - {id: libvterm.dcs.decrqss_decstbm, raw: "DCS $ q r ST", effect: report vertical margins,
-            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            relevance: query, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
             proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+            symbol: "DECRQSS replies for owned state and invalid requests"}}}
           - {id: libvterm.dcs.decrqss_decslrm, raw: "DCS $ q s ST", effect: report horizontal margins,
-            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            relevance: query, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
             proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+            symbol: "DECRQSS replies for owned state and invalid requests"}}}
           - {id: libvterm.dcs.decrqss_decscusr, raw: "DCS $ q SP q ST", effect: report cursor style,
-            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            conditions: Howl's host-configurable hidden cursor has no distinct libvterm DECSCUSR report value,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
             proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+            symbol: "DECRQSS replies for owned state and invalid requests"}}}
           - {id: libvterm.dcs.decrqss_decsca, raw: 'DCS $ q " q ST', effect: report character protection,
-            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            relevance: query, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
             proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
-          - {id: libvterm.dcs.decrqss_unsupported, raw: "DCS $ q Pt ST", effect: report invalid status request,
-            conditions: Pt is not a recognized status string, recognition: rejected_known, relevance: query,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
-            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+            symbol: "DECRQSS replies for owned state and invalid requests"}}}
+          - id: libvterm.dcs.decrqss_unsupported
+            raw: "DCS $ q Pt ST"
+            effect: report invalid status request
+            conditions: >-
+              Pt is not recognized; libvterm retains three request bytes while Howl bounds and compares the full payload
+            recognition: rejected_known
+            relevance: query
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECRQSS replies for owned state and invalid requests"}}
       - source: state.c
         symbol: on_apc
         line: 1941
