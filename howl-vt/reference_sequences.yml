@@ -41,11 +41,17 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
           - {id: libvterm.c0.lf, raw: "\\x0a", effect: line feed, conditions: LNM also returns carriage,
-            relevance: core, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+            relevance: core, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: libvterm.c0.vt, raw: "\\x0b", effect: line feed, conditions: LNM also returns carriage,
-            relevance: compatibility, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+            relevance: compatibility, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySemantic,
+            proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: libvterm.c0.ff, raw: "\\x0c", effect: line feed, conditions: LNM also returns carriage,
-            relevance: compatibility, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+            relevance: compatibility, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySemantic,
+            proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: libvterm.c0.cr, raw: "\\x0d", effect: carriage return, relevance: core, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -296,16 +302,22 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
-          - {id: libvterm.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, conditions: modes 4|20,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.sm, raw: "CSI Pm h", effect: set ANSI modes,
+            conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: libvterm.csi.decset, raw: "CSI ? Pm h", effect: set DEC private modes, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
           - {id: libvterm.csi.hpb, raw: "CSI [Ps=1] j", effect: cursor backward, relevance: compatibility,
             howl: {status: 'false'}}
           - {id: libvterm.csi.vpb, raw: "CSI [Ps=1] k", effect: cursor up, relevance: compatibility,
             howl: {status: 'false'}}
-          - {id: libvterm.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, conditions: modes 4|20,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes,
+            conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: libvterm.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC private modes, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
           - {id: libvterm.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, bounds: indexed and RGB forms,
@@ -350,8 +362,14 @@ references:
         census: {semantic_branches: 2, records: 2}
         recognition: implemented
         records:
-          - {id: libvterm.mode.irm, raw: "CSI 4 h|l", effect: toggle insert mode, howl: {status: partial}}
-          - {id: libvterm.mode.lnm, raw: "CSI 20 h|l", effect: toggle newline mode, howl: {status: partial}}
+          - {id: libvterm.mode.irm, raw: "CSI 4 h|l", effect: toggle insert mode,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
+          - {id: libvterm.mode.lnm, raw: "CSI 20 h|l", effect: toggle newline mode,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
       - source: state.c
         symbol: set_dec_mode
         line: 777
@@ -1412,11 +1430,17 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
           - {id: kitty.c0.lf, raw: "\\x0a", effect: line feed, conditions: mLNM also returns carriage,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: kitty.c0.vt, raw: "\\x0b", effect: line feed, conditions: mLNM also returns carriage,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: kitty.c0.ff, raw: "\\x0c", effect: line feed, conditions: mLNM also returns carriage,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySemantic, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: kitty.c0.cr, raw: "\\x0d", effect: carriage return, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1527,8 +1551,14 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: application cursor mode changes arrow key encoding}}}
-          - {id: kitty.mode.irm, raw: "CSI 4 h|l", effect: toggle insert mode, howl: {status: partial}}
-          - {id: kitty.mode.lnm, raw: "CSI 20 h|l", effect: toggle newline mode, howl: {status: partial}}
+          - {id: kitty.mode.irm, raw: "CSI 4 h|l", effect: toggle insert mode,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
+          - {id: kitty.mode.lnm, raw: "CSI 20 h|l", effect: toggle newline mode,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: kitty.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
           - {id: kitty.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
           - {id: kitty.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}

@@ -27,6 +27,56 @@ test "terminal: stream applies bytes to grid state deterministically" {
     try std.testing.expectEqual(@as(u16, 2), s.cursor.col);
 }
 
+test "terminal: ANSI insert and newline modes retain exact global lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("ABCD\x1b[1;2H")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[4;20")).state_changed);
+    try std.testing.expect((try terminal.feed("h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[4;20h")).state_changed);
+    try std.testing.expect((try terminal.feed("X")).state_changed);
+    const primary = &terminal.screen_state.primary;
+    try std.testing.expectEqual(@as(u21, 'A'), primary.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'X'), primary.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'B'), primary.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'C'), primary.cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 'D'), primary.cellAt(0, 4));
+
+    try std.testing.expect((try terminal.feed("\x1b[1;5H\n")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[2;5H\x0b")).state_changed);
+    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[3;5H\x0c")).state_changed);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+
+    try std.testing.expect((try terminal.feed("\x1b[?47hAB\x1b[1GZ")).state_changed);
+    try std.testing.expect(terminal.screen_state.alternate.insert_mode);
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.alternate.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.alternate.cellAt(0, 2));
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expect(terminal.screen_state.primary.insert_mode);
+
+    try terminal.resize(5, 10);
+    try std.testing.expect(terminal.screen_state.primary.insert_mode);
+    try std.testing.expect(terminal.screen_state.alternate.insert_mode);
+    try std.testing.expect((try terminal.feed("\x1b[4$p\x1b[20$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[4;1$y\x1b[20;1$y", terminal.host.pendingOutput());
+    terminal.host.clearPendingOutput();
+
+    try std.testing.expect((try terminal.feed("\x1b[20l\x1b[1;5H\n")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect(!terminal.modes.newline_mode);
+    try std.testing.expect(!terminal.screen_state.primary.insert_mode);
+    try std.testing.expect(!terminal.screen_state.alternate.insert_mode);
+}
+
 test "terminal: XTPUSHSGR restores selected rendition with bounded stack truth" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);

@@ -10070,7 +10070,9 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             if (!vt.screen_state.alt_active) {
                 try vt.screen_state.primary.finalizeOutputLine(vt.allocator);
             }
-            vt.screen_state.active().applyScreen(event);
+            vt.screen_state.active().applyScreen(
+                if (event == .line_feed and vt.modes.newline_mode) .next_line else event,
+            );
         },
 
         .cursor_up,
@@ -10932,6 +10934,9 @@ pub const Terminal = struct {
     /// Applies terminal reset while preserving dimensions and owned allocations.
     pub fn resetScreen(self: *Terminal) void {
         self.screen_state.reset();
+        self.screen_state.primary.insert_mode = false;
+        self.screen_state.alternate.insert_mode = false;
+        self.modes.newline_mode = false;
         self.primary_savepoint.clear();
         self.alternate_savepoint.clear();
         self.gl_index = 0;
@@ -11215,11 +11220,13 @@ pub const Terminal = struct {
     }
 
     fn setAnsiModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) bool {
-        const active = self.screen_state.active();
         var changed = false;
         for (mode_numbers) |mode_number| switch (mode_number) {
             2 => changed = replaceBool(&self.modes.keyboard_action_mode, enabled) or changed,
-            4 => changed = replaceBool(&active.insert_mode, enabled) or changed,
+            4 => {
+                changed = replaceBool(&self.screen_state.primary.insert_mode, enabled) or changed;
+                changed = replaceBool(&self.screen_state.alternate.insert_mode, enabled) or changed;
+            },
             12 => changed = replaceBool(&self.modes.send_receive_mode, enabled) or changed,
             20 => changed = replaceBool(&self.modes.newline_mode, enabled) or changed,
             else => {},
