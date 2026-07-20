@@ -1507,10 +1507,11 @@ pub const Screen = struct {
         }
     }
 
-    /// Erase at least one character from the cursor through the active right boundary.
+    /// Erase at least one character from the cursor through the screen edge.
     pub fn eraseChars(self: *Screen, count: u16) void {
         if (self.rows == 0 or self.cols == 0) return;
-        const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
+        if (self.cursor.col >= self.cols) return;
+        const amount = @min(@max(count, 1), self.cols - self.cursor.col);
         self.markDirtyCols(self.cursor.row, self.cursor.col, self.cursor.col + amount - 1);
         self.clearRowRange(self.cursor.row, self.cursor.col, self.cursor.col + amount);
     }
@@ -1648,6 +1649,7 @@ pub const Screen = struct {
     pub fn insertChars(self: *Screen, count: u16) void {
         if (self.rows == 0 or self.cols == 0) return;
         if (self.cursor.col >= self.cols) return;
+        if (!self.cursorWithinHorizontalMargins()) return;
 
         const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
         const row = self.rowCells(self.cursor.row) orelse return;
@@ -1678,6 +1680,7 @@ pub const Screen = struct {
     pub fn deleteChars(self: *Screen, count: u16) void {
         if (self.rows == 0 or self.cols == 0) return;
         if (self.cursor.col >= self.cols) return;
+        if (!self.cursorWithinHorizontalMargins()) return;
 
         const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
         const row = self.rowCells(self.cursor.row) orelse return;
@@ -2132,6 +2135,7 @@ pub const Screen = struct {
     fn insertLines(self: *Screen, count: u16) void {
         const bottom = self.scrollBottom();
         if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return;
+        if (!self.cursorWithinHorizontalMargins()) return;
         self.scrollDownRegion(self.cursor.row, bottom, count);
     }
 
@@ -2139,7 +2143,13 @@ pub const Screen = struct {
     fn deleteLines(self: *Screen, count: u16) void {
         const bottom = self.scrollBottom();
         if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return;
+        if (!self.cursorWithinHorizontalMargins()) return;
         self.scrollUpRegion(self.cursor.row, bottom, count);
+    }
+
+    fn cursorWithinHorizontalMargins(self: *const Screen) bool {
+        if (!self.left_right_margin_mode) return true;
+        return self.cursor.col >= self.left_margin and self.cursor.col <= self.right_margin;
     }
 
     /// Scroll an ordered, clamped region upward by at most its row count.

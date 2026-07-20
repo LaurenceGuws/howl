@@ -201,6 +201,94 @@ test "terminal: CSI cursor positioning shares parameter, margin, and origin boun
     try std.testing.expectEqual(@as(u16, 3), cursor.col);
 }
 
+test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
+    const allocator = std.testing.allocator;
+
+    {
+        var terminal = try Terminal.init(allocator, 2, 8);
+        defer terminal.deinit();
+        try std.testing.expect(!(try terminal.feed("ABCDEFGH\x1b[?69h\x1b[3;6s\x1b[1;4H\x1b[@")).history_lost);
+        const screen = terminal.screen_state.activeConst();
+        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 3));
+        try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(0, 4));
+        try std.testing.expectEqual(@as(u21, 'E'), screen.cellAt(0, 5));
+        try std.testing.expectEqual(@as(u21, 'G'), screen.cellAt(0, 6));
+        try std.testing.expectEqual(@as(u21, 'H'), screen.cellAt(0, 7));
+
+        try std.testing.expect(!(try terminal.feed("\x1b[1;1H\x1b[999999P")).history_lost);
+        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 1));
+        try std.testing.expect(!(try terminal.feed(
+            "\x1b[1\"qZ\x1b[48;2;40;44;52m\x1b[1;1H\x1b[999999X",
+        )).history_lost);
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 7));
+        try std.testing.expectEqual(Screen.Color.rgbComponents(40, 44, 52), screen.cellInfoAt(0, 7).attrs.bg);
+        try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+    }
+
+    {
+        var terminal = try Terminal.init(allocator, 4, 6);
+        defer terminal.deinit();
+        try std.testing.expect(!(try terminal.feed(
+            "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[4;1HDDDDDD" ++
+                "\x1b[2;4r\x1b[?69h\x1b[2;5s\x1b[2;3H\x1b[L",
+        )).history_lost);
+        const screen = terminal.screen_state.activeConst();
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 4));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 5));
+        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 1));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 4));
+        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 5));
+
+        try std.testing.expect(!(try terminal.feed("\x1b[2;1H\x1b[999999M")).history_lost);
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 1));
+        try std.testing.expect(!(try terminal.feed("\x1b[2;3H\x1b[999999M")).history_lost);
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 4));
+    }
+
+    {
+        var terminal = try Terminal.init(allocator, 4, 5);
+        defer terminal.deinit();
+        try std.testing.expect(!(try terminal.feed(
+            "\x1b[1;1HAAAAA\x1b[2;1HBBBBB\x1b[3;1HCCCCC\x1b[4;1HDDDDD" ++
+                "\x1b[2;4r\x1b[?69h\x1b[2;4s\x1b[999999S",
+        )).history_lost);
+        const screen = terminal.screen_state.activeConst();
+        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 3));
+        try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(3, 4));
+        const cursor = screen.cursor;
+        try std.testing.expect(!(try terminal.feed("\x1b[0T")).history_lost);
+        try std.testing.expectEqual(cursor.row, screen.cursor.row);
+        try std.testing.expectEqual(cursor.col, screen.cursor.col);
+    }
+
+    {
+        var terminal = try Terminal.initWithHistory(allocator, 2, 3, 2);
+        defer terminal.deinit();
+        try std.testing.expect(!(try terminal.feed("\x1b[1;1HAAA\x1b[2;1HBBB\x1b[2;2H")).history_lost);
+        const before = terminal.screen_state.activeConst().cursor;
+        try std.testing.expect(!(try terminal.feed("\x1b[S")).history_lost);
+        const screen = terminal.screen_state.activeConst();
+        try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+        try std.testing.expectEqual(before.row, screen.cursor.row);
+        try std.testing.expectEqual(before.col, screen.cursor.col);
+        try std.testing.expect(!screen.rowWrapped(1));
+        try std.testing.expect(screen.peekDirtyRows() != null);
+    }
+}
+
 test "terminal: OSC cursor colors route into semantic cursor owner" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
