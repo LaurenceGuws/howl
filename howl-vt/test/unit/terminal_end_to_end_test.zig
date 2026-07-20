@@ -27,6 +27,82 @@ test "terminal: stream applies bytes to grid state deterministically" {
     try std.testing.expectEqual(@as(u16, 2), s.cursor.col);
 }
 
+test "terminal: XTPUSHSGR restores selected rendition with bounded stack truth" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 16);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[#}")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[1;31;44mS\x1b[1;30#")).state_changed);
+    try std.testing.expect((try terminal.feed("{")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[3;32;45m\x1b[#qA")).state_changed);
+
+    const saved = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
+    const selected = terminal.screen_state.activeConst().cellInfoAt(0, 1).attrs;
+    try std.testing.expect(selected.bold);
+    try std.testing.expect(selected.italic);
+    try std.testing.expectEqual(saved.fg, selected.fg);
+    try std.testing.expect(!std.meta.eql(selected.bg, saved.bg));
+
+    try std.testing.expect((try terminal.feed("\x1b[#{\x1b[#{\x1b[22;23;39;49m\x1b[#}\x1b[#}B")).state_changed);
+    const nested = terminal.screen_state.activeConst().cellInfoAt(0, 2).attrs;
+    try std.testing.expect(selected.bold == nested.bold);
+    try std.testing.expect(selected.italic == nested.italic);
+    try std.testing.expectEqual(selected.fg, nested.fg);
+    try std.testing.expectEqual(selected.bg, nested.bg);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[1;2;3;4:2;5;7;8;9;38:2::1:2:3;48:2::4:5:6m" ++
+            "\x1b[#p\x1b[0m\x1b[#}C",
+    )).state_changed);
+    const complete = terminal.screen_state.activeConst().cellInfoAt(0, 3).attrs;
+    try std.testing.expect(complete.bold);
+    try std.testing.expect(complete.dim);
+    try std.testing.expect(complete.italic);
+    try std.testing.expect(complete.blink);
+    try std.testing.expect(complete.reverse);
+    try std.testing.expect(complete.invisible);
+    try std.testing.expect(complete.underline);
+    try std.testing.expect(complete.strikethrough);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.double, complete.underline_style);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(1, 2, 3), complete.fg);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(4, 5, 6), complete.bg);
+
+    try std.testing.expect((try terminal.feed("\x1b[4m\x1b[21#{\x1b[24m\x1b[#}D")).state_changed);
+    try std.testing.expect(!terminal.screen_state.activeConst().cellInfoAt(0, 4).attrs.underline);
+
+    var pushes: u8 = 0;
+    while (pushes < 10) : (pushes += 1)
+        try std.testing.expect((try terminal.feed("\x1b[#{")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[#{")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[#}")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[#{")).state_changed);
+}
+
+test "terminal: XTPUSHSGR stack spans resize screen switches and reset" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[1;38;2;1;2;3m\x1b[#{\x1b[22;39m")).state_changed);
+    try terminal.resize(3, 12);
+    try std.testing.expect((try terminal.feed("\x1b[#}R")).state_changed);
+    const restored = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
+    try std.testing.expect(restored.bold);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(1, 2, 3), restored.fg);
+
+    try std.testing.expect((try terminal.feed("\x1b[31mP\x1b[#{\x1b[?1049h\x1b[32m\x1b[#}A")).state_changed);
+    const primary = terminal.screen_state.primary.cellInfoAt(0, 1).attrs;
+    const alternate = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
+    try std.testing.expectEqual(primary.fg, alternate.fg);
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[31m\x1b[#{\x1bc")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[#}S")).state_changed);
+    const reset_restored = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
+    try std.testing.expect(!std.meta.eql(Terminal.default_cell_attrs.fg, reset_restored.fg));
+}
+
 test "terminal: C0 controls retain exact stream effects" {
     const allocator = std.testing.allocator;
 

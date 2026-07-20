@@ -2899,6 +2899,15 @@ const ScreenCellAttrs = struct {
     link_id: u32,
 };
 
+const sgr_stack_capacity = 10;
+const sgr_stack_default_selection: u16 = 0b111_1111_1111;
+
+// Retains one bounded selective rendition snapshot for XTPUSHSGR.
+const SgrStackEntry = struct {
+    attrs: ScreenCellAttrs = initial_cell_attrs,
+    selection: u16 = 0,
+};
+
 // Stores one Unicode codepoint, display width, and complete cell attributes.
 const ScreenCell = struct {
     codepoint: u32,
@@ -6601,6 +6610,8 @@ fn processPlus(final: u8, params: []const i32) ?SemanticEvent {
 
 fn processHash(final: u8, params: []const i32) ?SemanticEvent {
     return switch (final) {
+        'p', '{' => SemanticEvent{ .sgr_stack_push = collectParams(params) },
+        'q', '}' => SemanticEvent.sgr_stack_pop,
         'P' => SemanticEvent{ .kitty_color_stack = .{ .push = queryParam(params) orelse return null } },
         'Q' => SemanticEvent{ .kitty_color_stack = .{ .pop = queryParam(params) orelse return null } },
         'S' => SemanticEvent.xttitlepos,
@@ -6745,6 +6756,56 @@ const ModeParams = struct {
     params: [parser_mod.max_params]u16,
     param_count: u8,
 };
+
+fn sgrSelection(params: ModeParams) u16 {
+    if (params.param_count == 0) return sgr_stack_default_selection;
+    var selection: u16 = 0;
+    for (params.params[0..params.param_count]) |param| {
+        const bit: ?u4 = switch (param) {
+            1 => 0,
+            2 => 1,
+            3 => 2,
+            4 => 3,
+            5 => 4,
+            7 => 5,
+            8 => 6,
+            9 => 7,
+            21 => 8,
+            30 => 9,
+            31 => 10,
+            else => null,
+        };
+        if (bit) |value| selection |= @as(u16, 1) << value;
+    }
+    return selection;
+}
+
+fn restoreSelectedSgr(current: *ScreenCellAttrs, entry: SgrStackEntry) void {
+    if (entry.selection & (1 << 0) != 0) current.bold = entry.attrs.bold;
+    if (entry.selection & (1 << 1) != 0) current.dim = entry.attrs.dim;
+    if (entry.selection & (1 << 2) != 0) current.italic = entry.attrs.italic;
+    if (entry.selection & (1 << 3) != 0) {
+        current.underline = entry.attrs.underline;
+        current.underline_style = entry.attrs.underline_style;
+    } else if (entry.selection & (1 << 8) != 0) {
+        if (!entry.attrs.underline) {
+            current.underline = false;
+            current.underline_style = .straight;
+        } else if (entry.attrs.underline_style == .double) {
+            current.underline = true;
+            current.underline_style = .double;
+        }
+    }
+    if (entry.selection & (1 << 4) != 0) {
+        current.blink = entry.attrs.blink;
+        current.blink_fast = entry.attrs.blink_fast;
+    }
+    if (entry.selection & (1 << 5) != 0) current.reverse = entry.attrs.reverse;
+    if (entry.selection & (1 << 6) != 0) current.invisible = entry.attrs.invisible;
+    if (entry.selection & (1 << 7) != 0) current.strikethrough = entry.attrs.strikethrough;
+    if (entry.selection & (1 << 9) != 0) current.fg = entry.attrs.fg;
+    if (entry.selection & (1 << 10) != 0) current.bg = entry.attrs.bg;
+}
 
 // Stores a bounded suffix of clamped u16 rectangular attribute values.
 const AttrParams = struct {
@@ -7626,6 +7687,8 @@ pub const SemanticEvent = union(enum) {
     kitty_keyboard_pop: u16,
     shell_mark: ItermShellMark,
     kitty_color_stack: KittyColorCommand,
+    sgr_stack_push: ModeParams,
+    sgr_stack_pop,
     title_and_icon_set: []const u8,
     title_set: []const u8,
     icon_set: []const u8,
@@ -9901,6 +9964,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         => try applyKittyEvent(vt, event),
 
         .kitty_color_stack => |command| return applyKittyColorStack(vt, command),
+        .sgr_stack_push => |params| return vt.pushSgr(params),
+        .sgr_stack_pop => return vt.popSgr(),
 
         .application_cursor_keys,
         .application_keypad,
@@ -10689,6 +10754,8 @@ pub const Terminal = struct {
     screen_state: ScreenSet,
     modes: ModeState = .{},
     kitty: KittyState = .{},
+    sgr_stack: [sgr_stack_capacity]SgrStackEntry = [_]SgrStackEntry{.{}} ** sgr_stack_capacity,
+    sgr_stack_len: u8 = 0,
     xtchecksum_flags: u16 = 0,
     host: HostState,
     gl_index: u8 = 0,
@@ -10838,6 +10905,26 @@ pub const Terminal = struct {
         self.host.pending_output.eight_bit_controls = false;
         self.kitty.resetTerminalState();
         self.host.resetTerminalState();
+    }
+
+    // Pushes selected active rendition attributes onto the fixed iTerm2-compatible stack.
+    fn pushSgr(self: *Terminal, params: ModeParams) bool {
+        if (self.sgr_stack_len == sgr_stack_capacity) return false;
+        self.sgr_stack[self.sgr_stack_len] = .{
+            .attrs = self.screen_state.activeConst().current_attrs,
+            .selection = sgrSelection(params),
+        };
+        self.sgr_stack_len += 1;
+        return true;
+    }
+
+    // Pops one snapshot and restores only the attributes selected by its push.
+    fn popSgr(self: *Terminal) bool {
+        if (self.sgr_stack_len == 0) return false;
+        self.sgr_stack_len -= 1;
+        const entry = self.sgr_stack[self.sgr_stack_len];
+        restoreSelectedSgr(&self.screen_state.active().current_attrs, entry);
+        return true;
     }
 
     /// Saves cursor, charset, origin, and wrap state into the active screen slot.

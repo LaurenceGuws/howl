@@ -886,10 +886,39 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendColorStackReport, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}
-          - {id: iterm2.csi.xtpushsgr, raw: "CSI Pm # {", effect: push selected rendition state,
-            howl: {status: partial}}
-          - {id: iterm2.csi.xtpopsgr_brace, raw: "CSI [Ps=0] # }", effect: pop rendition state, howl: {status: partial}}
-          - {id: iterm2.csi.xtpopsgr_q, raw: "CSI [Ps=0] # q", effect: pop rendition state, howl: {status: partial}}
+          - id: iterm2.csi.xtpushsgr
+            raw: "CSI Pm # p|{"
+            effect: push selected rendition state
+            conditions: fixed depth 10; empty selects every iTerm2 stack attribute; full stack is unchanged
+            howl:
+              status: full
+              source: howl-vt/src/terminal.zig
+              symbol: Terminal.pushSgr
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: XTPUSHSGR restores selected rendition with bounded stack truth"
+          - id: iterm2.csi.xtpopsgr_brace
+            raw: "CSI [Ps=0] # }"
+            effect: pop rendition state
+            conditions: restores only attributes selected by push; empty stack is unchanged
+            howl:
+              status: full
+              source: howl-vt/src/terminal.zig
+              symbol: Terminal.popSgr
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: XTPUSHSGR restores selected rendition with bounded stack truth"
+          - id: iterm2.csi.xtpopsgr_q
+            raw: "CSI [Ps=0] # q"
+            effect: pop rendition state
+            conditions: alias of XTPOPSGR brace form
+            howl:
+              status: full
+              source: howl-vt/src/terminal.zig
+              symbol: Terminal.popSgr
+              proof:
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig
+                symbol: "terminal: XTPUSHSGR restores selected rendition with bounded stack truth"
           - {id: iterm2.csi.xtsmgraphics, raw: "CSI ? Pm S", effect: set or query graphics attributes,
             relevance: host consequence, howl: {status: 'false'}}
           - {id: iterm2.csi.kitty_set, raw: "CSI = flags ; [mode=1] u", effect: set Kitty keyboard flags,
