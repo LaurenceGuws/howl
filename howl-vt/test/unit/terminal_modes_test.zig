@@ -686,6 +686,46 @@ test "terminal size reports use exact current cell and pixel facts" {
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
 
+test "title stack retains exact bounded title lifecycle and report bytes" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 5);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[22t")).state_changed);
+    try stream.nextSlice("\x1b]2;on");
+    const first = try terminal.feed("e\x1b\\");
+    try std.testing.expect(first.state_changed and first.title_changed);
+
+    const push_first = try terminal.feed("\x1b[22t");
+    try std.testing.expect(push_first.state_changed and !push_first.title_changed);
+    try stream.nextSlice("\x1b]2;two\x07\x1b[22;2;0t\x1b]2;three\x1b\\");
+    try std.testing.expect(!(try terminal.feed("\x1b[22;1t\x1b[23;1t")).state_changed);
+
+    const pop_second = try terminal.feed("\x1b[23;2;0t");
+    try std.testing.expect(pop_second.state_changed and pop_second.title_changed);
+    try std.testing.expectEqualStrings("two", terminal.host.current_title.?);
+
+    try stream.nextSlice("\x1bc");
+    const pop_first = try terminal.feed("\x1b[23t");
+    try std.testing.expect(pop_first.state_changed and pop_first.title_changed);
+    try std.testing.expectEqualStrings("one", terminal.host.current_title.?);
+    try std.testing.expect(!(try terminal.feed("\x1b[23t")).state_changed);
+
+    clearPendingOutput(&terminal);
+    try stream.nextSlice("\x1b G\x9b2");
+    try stream.nextSlice("1t");
+    try std.testing.expectEqualStrings("\x1b]lone\x1b\\", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 2);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x9b21t"));
+    try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
+}
+
 test "eight-bit multipart reply limit rolls back every framing byte" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

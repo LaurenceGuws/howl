@@ -5391,6 +5391,8 @@ const dcs_payload_max_bytes: u32 = 2 * 1024;
 const hyperlink_target_max_bytes: u32 = 2 * 1024;
 /// Each retained title or icon name follows the 1 KiB parser metadata scale.
 pub const max_metadata_bytes: u32 = 1024;
+/// Kitty retains the newest ten nonempty child titles.
+const title_stack_limit = 10;
 /// A terminal instance interns at most 4096 distinct hyperlink targets.
 const hyperlink_target_max_count: u32 = 4096;
 // Owns the latest bounded OSC 133 shell mark.
@@ -5406,6 +5408,11 @@ const ShellMark = struct {
 const ShellIntegration = struct {
     version: u32,
     shell: ?[]u8,
+};
+
+const TitleStackEffect = struct {
+    changed: bool = false,
+    title_changed: bool = false,
 };
 
 comptime {
@@ -5444,6 +5451,8 @@ pub const HostState = struct {
     pending_clipboard: ?ClipboardRequest = null,
     current_title: ?[]u8 = null,
     current_icon: ?[]u8 = null,
+    title_stack: [title_stack_limit]?[]u8 = [_]?[]u8{null} ** title_stack_limit,
+    title_stack_len: u8 = 0,
     shell_integration: ?ShellIntegration = null,
     shell_mark: ShellMark = .{},
     bell_generation: u64 = 0,
@@ -5468,6 +5477,7 @@ pub const HostState = struct {
         if (self.pending_clipboard) |req| self.allocator.free(req.raw);
         if (self.current_title) |title| self.allocator.free(title);
         if (self.current_icon) |icon| self.allocator.free(icon);
+        for (self.title_stack[0..self.title_stack_len]) |title| self.allocator.free(title.?);
         if (self.shell_integration) |integration|
             if (integration.shell) |shell| self.allocator.free(shell);
         self.allocator.free(self.shell_mark.metadata);
@@ -5498,6 +5508,39 @@ pub const HostState = struct {
     /// Replace the bounded icon name transactionally and report whether it changed.
     pub fn replaceIcon(self: *HostState, icon: []const u8) ApplyError!bool {
         return replaceMetadata(self, &self.current_icon, icon);
+    }
+
+    /// Pushes one nonempty current title, dropping the oldest only after allocation succeeds.
+    fn pushTitle(self: *HostState) ApplyError!bool {
+        const current = self.current_title orelse return false;
+        if (current.len == 0) return false;
+        const owned = try self.allocator.dupe(u8, current);
+        if (self.title_stack_len == title_stack_limit) {
+            self.allocator.free(self.title_stack[0].?);
+            std.mem.copyForwards(
+                ?[]u8,
+                self.title_stack[0 .. title_stack_limit - 1],
+                self.title_stack[1..title_stack_limit],
+            );
+            self.title_stack[title_stack_limit - 1] = owned;
+            return true;
+        }
+        self.title_stack[self.title_stack_len] = owned;
+        self.title_stack_len += 1;
+        return true;
+    }
+
+    /// Pops one retained title, transferring its allocation into current title ownership.
+    fn popTitle(self: *HostState) TitleStackEffect {
+        if (self.title_stack_len == 0) return .{};
+        self.title_stack_len -= 1;
+        const slot = &self.title_stack[self.title_stack_len];
+        const restored = slot.*.?;
+        slot.* = null;
+        const title_changed = !optionalBytesEqual(self.current_title, restored);
+        if (self.current_title) |current| self.allocator.free(current);
+        self.current_title = restored;
+        return .{ .changed = true, .title_changed = title_changed };
     }
 
     /// Replaces typed shell integration after optional shell allocation succeeds.
@@ -5810,6 +5853,40 @@ test "paired title and icon replacement is transactional under allocation failur
         replaceTitleAndIconAllocation,
         .{},
     );
+}
+
+test "title stack push preserves current and retained titles on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, pushTitleAllocation, .{});
+}
+
+test "title stack retains only the newest ten titles" {
+    var state = HostState.init(std.testing.allocator);
+    defer state.deinit();
+    var buf: [2]u8 = undefined;
+    for (0..title_stack_limit + 1) |idx| {
+        const title = try std.fmt.bufPrint(&buf, "{d}", .{idx});
+        try std.testing.expect(try state.replaceTitle(title));
+        try std.testing.expect(try state.pushTitle());
+    }
+    try std.testing.expectEqual(@as(u8, title_stack_limit), state.title_stack_len);
+    try std.testing.expectEqualStrings("1", state.title_stack[0].?);
+    try std.testing.expectEqualStrings("10", state.title_stack[title_stack_limit - 1].?);
+}
+
+fn pushTitleAllocation(allocator: std.mem.Allocator) !void {
+    var state = HostState.init(allocator);
+    defer state.deinit();
+    try std.testing.expect(try state.replaceTitle("first"));
+    try std.testing.expect(try state.pushTitle());
+    try std.testing.expect(try state.replaceTitle("second"));
+    const changed = state.pushTitle() catch |err| {
+        try std.testing.expectEqualStrings("second", state.current_title.?);
+        try std.testing.expectEqual(@as(u8, 1), state.title_stack_len);
+        try std.testing.expectEqualStrings("first", state.title_stack[0].?);
+        return err;
+    };
+    try std.testing.expect(changed);
+    try std.testing.expectEqual(@as(u8, 2), state.title_stack_len);
 }
 
 fn replaceTitleAllocation(allocator: std.mem.Allocator) !void {
@@ -6331,6 +6408,11 @@ const SizeReport = enum {
     text_cells,
 };
 
+const TitleStackCommand = enum {
+    push,
+    pop,
+};
+
 const C0Action = enum {
     bell,
     line_feed,
@@ -6846,12 +6928,23 @@ fn decodeCsi(
             return SemanticEvent{ .parameters_report = kind };
         },
         't' => {
-            if (intermediates.len != 0 or params.len == 0 or params.len > 2) return null;
+            if (intermediates.len != 0 or params.len == 0) return null;
+            if (params[0] == 22 or params[0] == 23) {
+                if (params.len > 3 or (params.len == 3 and params[2] != 0)) return null;
+                if (params.len >= 2 and params[1] < 0) return null;
+                const command: TitleStackCommand = if (params[0] == 22) .push else .pop;
+                return SemanticEvent{ .title_stack = .{
+                    .command = command,
+                    .option = paramAtOrDefault0(params, 1),
+                } };
+            }
+            if (params.len > 2) return null;
             if (params.len == 2 and params[1] < 0) return null;
             return switch (params[0]) {
                 14 => SemanticEvent{ .size_report = .window_pixels },
                 16 => SemanticEvent{ .size_report = .cell_pixels },
                 18 => SemanticEvent{ .size_report = .text_cells },
+                21 => if (params.len == 1) SemanticEvent.window_title_report else null,
                 else => null,
             };
         },
@@ -7565,6 +7658,8 @@ pub const SemanticEvent = union(enum) {
     screen_extent_report,
     parameters_report: u16,
     size_report: SizeReport,
+    window_title_report,
+    title_stack: struct { command: TitleStackCommand, option: u16 },
     xtreportcolors,
     locator_reporting: struct { mode: u16, unit: u16 },
     locator_filter: OptionalRectArea,
@@ -8372,10 +8467,29 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         ),
         .screen_extent_report => try appendScreenExtentReport(allocator, pending_output, encode_buf, render_view),
         .parameters_report => |kind| try appendTerminalParametersReport(allocator, pending_output, encode_buf, kind),
+        .window_title_report => try appendWindowTitleReport(vt),
         .xtreportcolors => try appendColorStackReport(allocator, pending_output, encode_buf, &vt.kitty.color_stack),
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
         else => unreachable,
     }
+}
+
+fn applyTitleStack(host: *HostState, command: @FieldType(SemanticEvent, "title_stack")) ApplyError!TitleStackEffect {
+    if (command.option != 0 and command.option != 2) return .{};
+    return switch (command.command) {
+        .push => .{ .changed = try host.pushTitle() },
+        .pop => host.popTitle(),
+    };
+}
+
+fn appendWindowTitleReport(vt: *Terminal) ApplyError!void {
+    const output = &vt.host.pending_output;
+    const start = byteCount(output.bytes.items);
+    errdefer restorePendingOutput(output, start);
+    try appendReplyControl(output, vt.allocator, .iterm, .osc);
+    try appendOutput(output, vt.allocator, "l");
+    if (vt.host.current_title) |title| try appendOutput(output, vt.allocator, title);
+    try appendReplyControl(output, vt.allocator, .iterm, .st);
 }
 
 fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) ApplyError!bool {
@@ -9712,6 +9826,14 @@ pub fn apply(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
         .title_changed = false,
         .icon_changed = false,
     };
+    if (semantic == .title_stack) {
+        const effect = try applyTitleStack(&vt.host, semantic.title_stack);
+        return .{
+            .changed = effect.changed,
+            .title_changed = effect.title_changed,
+            .icon_changed = false,
+        };
+    }
     const title_changed = switch (semantic) {
         .title_and_icon_set => |value| !optionalBytesEqual(vt.host.current_title, value),
         .title_set => |value| !optionalBytesEqual(vt.host.current_title, value),
@@ -9745,6 +9867,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             var scratch: Scratch = .{};
             return try appendSizeReport(vt, scratch.buf[0..], kind);
         },
+        .title_stack => unreachable,
         .ansi_mode_query,
         .modify_other_keys_query,
         .key_format_query,
@@ -9766,6 +9889,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .selected_graphic_rendition_report,
         .screen_extent_report,
         .parameters_report,
+        .window_title_report,
         .xtreportcolors,
         .iterm_report_cell_size,
         => try applyReportEvent(vt, event),
