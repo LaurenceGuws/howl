@@ -1362,7 +1362,11 @@ references:
           - {id: iterm2.dcs.xtsettcap, raw: "DCS + p Pt ST", effect: set termcap or terminfo values,
             howl: {status: partial}}
           - {id: iterm2.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
-            howl: {status: partial}}
+            conditions: "Howl answers Co, colors, RGB, Tc, and Su without exposing term identity, profile, key mapping,
+              or arbitrary terminfo",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "XTGETTCAP replies preserve ordered names values failures and C1 serialization"}}}
       - source: VT100GraphicRendition.m
         symbol: VT100GraphicRenditionExecuteSGR
         line: 25
@@ -2309,7 +2313,11 @@ references:
         recognition: implemented
         records:
           - {id: kitty.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap values, relevance: query,
-            howl: {status: partial}}
+            conditions: "Howl answers Co, colors, RGB, Tc, and Su without term identity, dimensions, key strings,
+              OS queries, or Kitty queries",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "XTGETTCAP replies preserve ordered names values failures and C1 serialization"}}}
           - {id: kitty.dcs.decrqss, raw: "DCS $ q Pt ST", effect: query terminal state string, relevance: query,
             howl: {status: partial}}
           - id: kitty.dcs.sync

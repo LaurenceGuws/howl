@@ -8916,7 +8916,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
             decModeStateForView(dec_modes, mode),
         ),
         .dcs_request_status => |request| try appendDecrqssReply(allocator, pending_output, encode_buf, active, request),
-        .dcs_request_termcap => try appendTermcapInvalidReport(allocator, pending_output),
+        .dcs_request_termcap => |request| try appendTermcapReports(allocator, pending_output, request),
         .dcs_request_resource => |request| try appendResourceInvalidReport(allocator, pending_output, request),
         .device_status_report => try appendCsiReply(pending_output, allocator, .terminal, "0n"),
         .dec_device_status_report => |param| try appendDeviceStatusReport(allocator, pending_output, encode_buf, param),
@@ -9094,8 +9094,73 @@ fn appendXtVersionReport(allocator: std.mem.Allocator, output: *PendingOutput) A
     try appendStringReply(output, allocator, .terminal, .dcs, ">|" ++ xtversion_text);
 }
 
-fn appendTermcapInvalidReport(allocator: std.mem.Allocator, output: *PendingOutput) ApplyError!void {
-    try appendStringReply(output, allocator, .terminal, .dcs, "0+r");
+const TermcapValue = union(enum) {
+    flag,
+    encoded: []const u8,
+};
+
+// Answers only capability facts owned by terminal state rather than host configuration.
+fn termcapValue(encoded_name: []const u8) ?TermcapValue {
+    if (hexNameEquals(encoded_name, "Co") or hexNameEquals(encoded_name, "colors"))
+        return .{ .encoded = "323536" };
+    if (hexNameEquals(encoded_name, "RGB")) return .{ .encoded = "38" };
+    if (hexNameEquals(encoded_name, "Tc") or hexNameEquals(encoded_name, "Su")) return .flag;
+    return null;
+}
+
+fn hexNameEquals(encoded: []const u8, name: []const u8) bool {
+    if (encoded.len % 2 != 0 or encoded.len / 2 != name.len) return false;
+    for (name, 0..) |byte, index| {
+        const high = std.fmt.charToDigit(encoded[index * 2], 16) catch return false;
+        const low = std.fmt.charToDigit(encoded[index * 2 + 1], 16) catch return false;
+        if (((high << 4) | low) != byte) return false;
+    }
+    return true;
+}
+
+fn appendTermcapReports(
+    allocator: std.mem.Allocator,
+    output: *PendingOutput,
+    request: []const u8,
+) ApplyError!void {
+    const start = byteCount(output.bytes.items);
+    errdefer restorePendingOutput(output, start);
+    var names = std.mem.splitScalar(u8, request, ';');
+    while (names.next()) |encoded_name| {
+        try appendReplyControl(output, allocator, .terminal, .dcs);
+        const value = termcapValue(encoded_name);
+        try appendOutput(output, allocator, if (value == null) "0+r" else "1+r");
+        try appendOutput(output, allocator, encoded_name);
+        if (value) |known| switch (known) {
+            .flag => {},
+            .encoded => |encoded_value| {
+                try appendOutput(output, allocator, "=");
+                try appendOutput(output, allocator, encoded_value);
+            },
+        };
+        try appendReplyControl(output, allocator, .terminal, .st);
+    }
+}
+
+test "XTGETTCAP reply allocation failure rolls back the complete ordered response" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        appendTermcapReportsAllocation,
+        .{},
+    );
+}
+
+fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
+    var output = PendingOutput.init();
+    defer output.bytes.deinit(allocator);
+    appendTermcapReports(allocator, &output, "436F;5463;626F677573") catch |failure| {
+        try std.testing.expectEqual(@as(usize, 0), output.bytes.items.len);
+        return failure;
+    };
+    try std.testing.expectEqualStrings(
+        "\x1bP1+r436F=323536\x1b\\\x1bP1+r5463\x1b\\\x1bP0+r626F677573\x1b\\",
+        output.bytes.items,
+    );
 }
 
 fn appendResourceInvalidReport(

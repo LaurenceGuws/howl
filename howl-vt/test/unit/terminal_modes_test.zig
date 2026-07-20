@@ -1168,15 +1168,48 @@ test "DECRQSS replies for owned state and invalid requests" {
     );
 }
 
-test "DCS resource queries return conservative invalid replies" {
+test "XTGETTCAP replies preserve ordered names values failures and C1 serialization" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    write(&stream, "\x1bP+q436F\x1b\\\x1bP+Q6E616D65\x1b\\");
+    try std.testing.expect(!(try terminal.feed("\x1bP+q436F;636f6c6f")).state_changed);
+    try std.testing.expect((try terminal.feed("7273;524742;5463;5375;626f677573;4;zz\x1b\\")).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1bP1+r436F=323536\x1b\\" ++
+            "\x1bP1+r636f6c6f7273=323536\x1b\\" ++
+            "\x1bP1+r524742=38\x1b\\" ++
+            "\x1bP1+r5463\x1b\\" ++
+            "\x1bP1+r5375\x1b\\" ++
+            "\x1bP0+r626f677573\x1b\\" ++
+            "\x1bP0+r4\x1b\\" ++
+            "\x1bP0+rzz\x1b\\",
+        pendingOutput(&terminal),
+    );
 
-    try std.testing.expectEqualStrings("\x1bP0+r\x1b\\\x1bP0+R6E616D65\x1b\\", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1bP+Q6E616D65\x1b\\")).state_changed);
+    try std.testing.expectEqualStrings("\x1bP0+R6E616D65\x1b\\", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b G\x90+q436f;5463\x9c")).state_changed);
+    try std.testing.expectEqualStrings("\x901+r436f=323536\x9c\x901+r5463\x9c", pendingOutput(&terminal));
+}
+
+test "XTGETTCAP response capacity failure rolls back every requested reply" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+    const fill = try allocator.alloc(u8, host_state.pending_output_max_bytes - 8);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+
+    try std.testing.expectError(
+        error.ConsequenceLimit,
+        terminal.feed("\x1bP+q436F;5463\x1b\\"),
+    );
+    try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
 
 test "DCS legacy payload protocols retain latest host-neutral payload" {
