@@ -247,6 +247,7 @@ pub const Parser = struct {
     pub const InitError = error{OutOfMemory};
 
     utf8: Utf8Decoder,
+    latin1: bool,
     state: ParseState,
     csi_params: [csi_max_params]i32,
     csi_separators: CsiSeparatorList,
@@ -272,6 +273,7 @@ pub const Parser = struct {
 
         return .{
             .utf8 = .{},
+            .latin1 = false,
             .state = .ground,
             .csi_params = [_]i32{0} ** csi_max_params,
             .csi_separators = CsiSeparatorList.initEmpty(),
@@ -302,6 +304,23 @@ pub const Parser = struct {
         self.dcs.reset();
         self.pm.reset();
         self.sos.reset();
+    }
+
+    /// Selects ISO-8859-1 graphic decoding or UTF-8 and clears partial text.
+    ///
+    /// C1 bytes remain terminal controls in both modes. The result reports an
+    /// encoding or partial-decoder mutation.
+    pub fn selectLatin1(self: *Parser, enabled: bool) bool {
+        const changed = self.latin1 != enabled or self.utf8.needed != 0;
+        self.utf8.reset();
+        self.latin1 = enabled;
+        return changed;
+    }
+
+    /// Restores UTF-8 decoding for terminal hard reset.
+    pub fn resetTextEncoding(self: *Parser) void {
+        self.utf8.reset();
+        self.latin1 = false;
     }
 
     /// Returns and clears the pending OSC allocation or bound failure.
@@ -665,6 +684,10 @@ pub const Parser = struct {
     }
 
     fn consumeGroundByte(self: *Parser, byte: u8) ?Action {
+        if (self.latin1) {
+            std.debug.assert(byte >= 0xA0);
+            return .{ .print = @intCast(byte) };
+        }
         return switch (self.utf8.feed(byte)) {
             .codepoint => |cp| .{ .print = cp },
             .invalid => .invalid,

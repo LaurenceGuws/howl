@@ -10668,6 +10668,18 @@ const TerminalStream = struct {
                     };
                     return .{ .changed = changed, .title_changed = false, .icon_changed = false };
                 },
+                '%' => {
+                    const latin1 = switch (esc.final) {
+                        '@' => true,
+                        'G' => false,
+                        else => return try self.applyEvent(.{ .esc_dispatch = esc }),
+                    };
+                    return .{
+                        .changed = self.terminal.stream_state.parser.selectLatin1(latin1),
+                        .title_changed = false,
+                        .icon_changed = false,
+                    };
+                },
                 else => {},
             }
         }
@@ -11194,6 +11206,7 @@ pub const Terminal = struct {
         self.gr_index = 1;
         self.single_shift = null;
         self.designations = .{ 'B', 'B', 'B', 'B' };
+        self.stream_state.parser.resetTextEncoding();
         self.host.pending_output.eight_bit_controls = false;
         self.kitty.resetTerminalState();
         self.host.resetTerminalState();

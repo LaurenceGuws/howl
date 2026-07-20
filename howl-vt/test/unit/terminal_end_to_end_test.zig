@@ -133,6 +133,38 @@ test "terminal: cursor savepoints retain exact bank reset and resize state" {
     try std.testing.expect(!(try terminal.feed("\x1b8")).state_changed);
 }
 
+test "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 12);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b%")).state_changed);
+    try std.testing.expect((try terminal.feed("@")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b%@")).state_changed);
+    try std.testing.expect((try terminal.feed("\xe9\xc3\xa9")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0xE9), terminal.screen_state.activeConst().cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0xC3), terminal.screen_state.activeConst().cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 0xA9), terminal.screen_state.activeConst().cellAt(0, 2));
+
+    try std.testing.expect(!(try terminal.feed("\x1b%X")).state_changed);
+    try std.testing.expect((try terminal.feed("\xe9")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0xE9), terminal.screen_state.activeConst().cellAt(0, 3));
+
+    try std.testing.expect((try terminal.feed("\x9b2;1H")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expect(!(try terminal.feed("\x1b%")).state_changed);
+    try std.testing.expect((try terminal.feed("G")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\xc3")).state_changed);
+    try std.testing.expect((try terminal.feed("\xa9")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0xE9), terminal.screen_state.activeConst().cellAt(1, 0));
+    try std.testing.expect(!(try terminal.feed("\x1b%G")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b%@\xe9\x1bc")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\xe9")).state_changed);
+    try std.testing.expect(!(try terminal.feed("X")).state_changed);
+    try std.testing.expect((try terminal.feed("\xc3\xa9")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0xE9), terminal.screen_state.activeConst().cellAt(0, 0));
+}
+
 test "terminal: erase families retain exact ranges protection geometry and mutation" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
     defer terminal.deinit();

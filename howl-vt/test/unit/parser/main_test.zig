@@ -141,6 +141,40 @@ test "parser: UTF-8 continuation bytes do not become standalone C1 controls" {
     try std.testing.expect(output.actions.items[0] == .csi_dispatch);
 }
 
+test "parser: Latin-1 selection preserves C1 controls and reset ownership" {
+    const gpa = std.testing.allocator;
+    var parser = try Parser.init(gpa);
+    defer parser.deinit();
+    var output = try Output.init(gpa);
+    defer output.deinit(gpa);
+
+    try std.testing.expect(parser.selectLatin1(true));
+    try std.testing.expect(!parser.selectLatin1(true));
+    output.appendPhases(parser.next(0xE9));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expectEqual(@as(u21, 0xE9), output.actions.items[0].print);
+
+    output.clear();
+    for ("\x9b2J") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expect(output.actions.items[0] == .csi_dispatch);
+
+    parser.reset();
+    output.clear();
+    output.appendPhases(parser.next(0xE9));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expectEqual(@as(u21, 0xE9), output.actions.items[0].print);
+
+    parser.resetTextEncoding();
+    output.clear();
+    output.appendPhases(parser.next(0xE9));
+    try expectActionCount(output.actions.items, 0);
+    try std.testing.expect(parser.selectLatin1(false));
+    output.appendPhases(parser.next('A'));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expectEqual(@as(u21, 'A'), output.actions.items[0].print);
+}
+
 test "parser: split input - partial CSI then final byte" {
     const gpa = std.testing.allocator;
     var parser = try Parser.init(gpa);

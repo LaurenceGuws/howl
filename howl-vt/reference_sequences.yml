@@ -725,9 +725,14 @@ references:
           - {id: iterm2.esc.epa, raw: "ESC W", effect: end protected area, relevance: compatibility,
             howl: {status: 'false'}}
           - {id: iterm2.esc.latin1, raw: "ESC % @", effect: select Latin-1 decoding, relevance: charset,
-            howl: {status: partial}}
+            conditions: C1 bytes remain terminal controls while bytes A0-FF decode as ISO-8859-1 graphics,
+            howl: {status: full, source: howl-vt/src/parser.zig, symbol: selectLatin1, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
           - {id: iterm2.esc.utf8, raw: "ESC % G", effect: select UTF-8 decoding, relevance: charset,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/parser.zig, symbol: selectLatin1, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
           - id: iterm2.esc.decdhl_top
             raw: "ESC # 3"
             effect: double-height top line
@@ -1702,8 +1707,16 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: application keypad modes affect keypad encoding and DECRQM}}}
-          - {id: kitty.esc.latin1, raw: "ESC % @", effect: select legacy decoding, howl: {status: partial}}
-          - {id: kitty.esc.utf8, raw: "ESC % G", effect: select UTF-8 decoding, howl: {status: partial}}
+          - {id: kitty.esc.latin1, raw: "ESC % @", effect: ignore attempt to select legacy decoding,
+            recognition: recognized_noop, conditions: Kitty remains permanently UTF-8 while Howl selects ISO-8859-1,
+            howl: {status: partial, source: howl-vt/src/parser.zig, symbol: selectLatin1, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
+          - {id: kitty.esc.utf8, raw: "ESC % G", effect: ignore attempt to select UTF-8 decoding,
+            recognition: recognized_noop, conditions: Kitty remains UTF-8 while Howl reports mutation after Latin-1,
+            howl: {status: partial, source: howl-vt/src/parser.zig, symbol: selectLatin1, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
           - {id: kitty.esc.decaln, raw: "ESC # 8", effect: fill screen with E,
             conditions: Kitty also homes the cursor and resets margins,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay}}
