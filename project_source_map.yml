@@ -3,14 +3,17 @@ sources:
   build.zig.zon: published package identity and source boundary
   build/dev.zig: root-only checks, proofs, benchmarks, simulations, and native hosts
   howl-vt/src: current terminal model implementation preserved through source-shape simplification
+  howl-vt/reference_sequences.yml: >-
+    pinned libvterm, iTerm2, and Kitty sequence evidence with exact current Howl support and proof locations
   howl-text/src: current text loading, shaping, and rasterization implementation
   howl-pty/src/howl_pty.zig: >-
     Linux PTY creation, copied launch values, process-group lifecycle, bounded transfer outcomes, resize,
     concurrent cancellation, exact native errors, and cleanup
   howl-control/src/howl_control.zig: >-
-    curated PTY and terminal-model lifecycle, optional local endpoint server, shared mutation admission, primitive operations,
-    and exact shutdown ownership
-  howl-control/src/client.zig: terminal identity, endpoint facts, private protocol codec, Linux socket mechanics, and one-shot client
+    curated PTY and terminal-model lifecycle, optional local endpoint server, shared mutation admission,
+    primitive operations, and exact shutdown ownership
+  howl-control/src/client.zig: >-
+    terminal identity, endpoint facts, private protocol codec, Linux socket mechanics, and one-shot client
   howl-control/src/test.zig: live PTY and semantic control proofs
   howl-host/src: current Wayland, terminal-thread, layout, and GLES host implementation
   howl-host/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host

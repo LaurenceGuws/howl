@@ -1,0 +1,1375 @@
+schema: 1
+
+grammar:
+  ESC: "\\x1b"
+  CSI: "ESC [ | \\x9b"
+  OSC: "ESC ] | \\x9d"
+  DCS: "ESC P | \\x90"
+  APC: "ESC _ | \\x9f"
+  PM: "ESC ^ | \\x9e"
+  SOS: "ESC X | \\x98"
+  ST: "ESC \\\\ | \\x9c"
+  BEL: "\\x07"
+  Ps: scalar parameter
+  Pm: semicolon-separated parameters
+  Pp: colon-separated subparameters
+  Pt: text
+  Pb: arbitrary bytes
+  F: final byte
+
+references:
+  libvterm:
+    revision: 934bc2fbf21800ac3458a499df8820ca5fb45fd3
+    root: src
+    groups:
+      - source: state.c
+        symbol: on_control
+        line: 477
+        census: {semantic_branches: 15, records: 15}
+        recognition: implemented
+        records:
+          - {id: libvterm.c0.bel, raw: BEL, effect: ring bell, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.bs, raw: "\\x08", effect: cursor left, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.ht, raw: "\\x09", effect: next tab stop, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.lf, raw: "\\x0a", effect: line feed, conditions: LNM also returns carriage,
+            relevance: core, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.vt, raw: "\\x0b", effect: line feed, conditions: LNM also returns carriage,
+            relevance: compatibility, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.ff, raw: "\\x0c", effect: line feed, conditions: LNM also returns carriage,
+            relevance: compatibility, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.cr, raw: "\\x0d", effect: carriage return, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.so, raw: "\\x0e", effect: select G1 into GL, relevance: charset, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.si, raw: "\\x0f", effect: select G0 into GL, relevance: charset, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c1.ind, raw: "\\x84", effect: index, relevance: compatibility, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.c1.nel, raw: "\\x85", effect: next line, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.c1.hts, raw: "\\x88", effect: set tab stop, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.c1.ri, raw: "\\x8d", effect: reverse index, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.c1.ss2, raw: "\\x8e", effect: single shift G2, relevance: charset, howl: {status: partial}}
+          - {id: libvterm.c1.ss3, raw: "\\x8f", effect: single shift G3, relevance: charset, howl: {status: partial}}
+      - source: state.c
+        symbol: on_escape
+        line: 619
+        census: {semantic_branches: 22, records: 22}
+        recognition: implemented
+        records:
+          - {id: libvterm.esc.s7c1t, raw: "ESC SP F", effect: select 7-bit C1 transmission, relevance: compatibility,
+            howl: {status: partial}}
+          - {id: libvterm.esc.s8c1t, raw: "ESC SP G", effect: select 8-bit C1 transmission, relevance: compatibility,
+            howl: {status: partial}}
+          - {id: libvterm.esc.decdhl_top, raw: "ESC # 3", effect: double-height top line,
+            conditions: ignored under DECLRMM, relevance: presentation, howl: {status: partial}}
+          - {id: libvterm.esc.decdhl_bottom, raw: "ESC # 4", effect: double-height bottom line,
+            conditions: ignored under DECLRMM, relevance: presentation, howl: {status: partial}}
+          - {id: libvterm.esc.decswl, raw: "ESC # 5", effect: single-width line, conditions: ignored under DECLRMM,
+            relevance: presentation, howl: {status: partial}}
+          - {id: libvterm.esc.decdwl, raw: "ESC # 6", effect: double-width line, conditions: ignored under DECLRMM,
+            relevance: presentation, howl: {status: partial}}
+          - {id: libvterm.esc.decaln, raw: "ESC # 8", effect: fill screen with E, relevance: diagnostic,
+            howl: {status: partial}}
+          - {id: libvterm.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset, relevance: charset,
+            howl: {status: partial}}
+          - {id: libvterm.esc.scs_g1, raw: "ESC ) F", effect: designate G1 charset, relevance: charset,
+            howl: {status: partial}}
+          - {id: libvterm.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset, relevance: charset,
+            howl: {status: partial}}
+          - {id: libvterm.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset, relevance: charset,
+            howl: {status: partial}}
+          - {id: libvterm.esc.decsc, raw: "ESC 7", effect: save cursor and pen, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.esc.decrc, raw: "ESC 8", effect: restore cursor and pen, relevance: core,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.esc.vt52_exit, raw: "ESC <", effect: accepted no-op for VT52 exit,
+            recognition: recognized_noop, relevance: compatibility, howl: {status: 'false'}}
+          - {id: libvterm.esc.deckpam, raw: "ESC =", effect: application keypad, relevance: input,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.esc.deckpnm, raw: "ESC >", effect: numeric keypad, relevance: input, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.esc.ris, raw: "ESC c", effect: hard terminal reset, relevance: core, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.esc.ls2, raw: "ESC n", effect: select G2 into GL, relevance: charset, howl: {status: partial}}
+          - {id: libvterm.esc.ls3, raw: "ESC o", effect: select G3 into GL, relevance: charset, howl: {status: partial}}
+          - {id: libvterm.esc.ls1r, raw: "ESC ~", effect: select G1 into GR, relevance: charset,
+            howl: {status: partial}}
+          - {id: libvterm.esc.ls2r, raw: "ESC }", effect: select G2 into GR, relevance: charset,
+            howl: {status: partial}}
+          - {id: libvterm.esc.ls3r, raw: "ESC |", effect: select G3 into GR, relevance: charset,
+            howl: {status: partial}}
+      - source: state.c
+        symbol: on_csi
+        line: 954
+        census: {semantic_branches: 49, records: 49}
+        recognition: implemented
+        bounds: one leader and one intermediate byte
+        records:
+          - {id: libvterm.csi.ich, raw: "CSI [Ps=1] @", effect: insert characters, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: absolute cursor position,
+            conditions: origin and margin modes, howl: {status: partial, source: howl-vt/src/terminal.zig,
+            symbol: decodeCsi}}
+          - {id: libvterm.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, conditions: Ps 0|1|2|3,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.decsel_display, raw: "CSI ? [Ps=0] J", effect: selective erase display,
+            conditions: protected cells, howl: {status: partial, source: howl-vt/src/terminal.zig,
+            symbol: decodePrivateCsi}}
+          - {id: libvterm.csi.el, raw: "CSI [Ps=0] K", effect: erase line, conditions: Ps 0|1|2, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.decsel_line, raw: "CSI ? [Ps=0] K", effect: selective erase line,
+            conditions: protected cells, howl: {status: partial, source: howl-vt/src/terminal.zig,
+            symbol: decodePrivateCsi}}
+          - {id: libvterm.csi.il, raw: "CSI [Ps=1] L", effect: insert lines, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.dl, raw: "CSI [Ps=1] M", effect: delete lines, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.dch, raw: "CSI [Ps=1] P", effect: delete characters, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.su, raw: "CSI [Ps=1] S", effect: scroll up, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.sd, raw: "CSI [Ps=1] T", effect: scroll down, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, relevance: query,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.da2, raw: "CSI > [Ps=0] c", effect: report secondary device attributes, relevance: query,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
+          - {id: libvterm.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: absolute cursor position,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, conditions: Ps 0|3|5,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, conditions: modes 4|20,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.decset, raw: "CSI ? Pm h", effect: set DEC private modes, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
+          - {id: libvterm.csi.hpb, raw: "CSI [Ps=1] j", effect: cursor backward, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: libvterm.csi.vpb, raw: "CSI [Ps=1] k", effect: cursor up, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: libvterm.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, conditions: modes 4|20,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC private modes, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
+          - {id: libvterm.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, bounds: indexed and RGB forms,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.decsgr, raw: "CSI ? Pm m", effect: DEC baseline rendition, conditions: Ps 4|5|24,
+            howl: {status: partial}}
+          - {id: libvterm.csi.dsr, raw: "CSI [Ps=0] n", effect: device status or cursor report, conditions: Ps 5|6,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: DEC status report, relevance: query,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
+          - {id: libvterm.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsiIntermediate}}
+          - {id: libvterm.csi.decrqm, raw: "CSI ? Ps $ p", effect: report DEC mode state, relevance: query,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiIntermediate}}
+          - {id: libvterm.csi.xtversion, raw: "CSI > [Ps=0] q", effect: report terminal version, relevance: query,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
+          - {id: libvterm.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor shape and blink,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: processSpace}}
+          - {id: libvterm.csi.decsca, raw: "CSI [Ps=0] \" q", effect: set character protection, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: processQuote}}
+          - {id: libvterm.csi.decstbm, raw: "CSI [top=1] ; [bottom] r", effect: set vertical margins,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.decslrm, raw: "CSI [left=1] ; [right] s", effect: set horizontal margins,
+            conditions: DECLRMM, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: processTick}}
+          - {id: libvterm.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: processTick}}
+      - source: state.c
+        symbol: set_mode
+        line: 760
+        census: {semantic_branches: 2, records: 2}
+        recognition: implemented
+        records:
+          - {id: libvterm.mode.irm, raw: "CSI 4 h|l", effect: toggle insert mode, howl: {status: partial}}
+          - {id: libvterm.mode.lnm, raw: "CSI 20 h|l", effect: toggle newline mode, howl: {status: partial}}
+      - source: state.c
+        symbol: set_dec_mode
+        line: 777
+        census: {semantic_branches: 18, records: 18}
+        recognition: implemented
+        records:
+          - {id: libvterm.mode.decckm, raw: "CSI ? 1 h|l", effect: toggle application cursor keys,
+            howl: {status: partial}}
+          - {id: libvterm.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
+          - {id: libvterm.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
+          - {id: libvterm.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
+          - {id: libvterm.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink, howl: {status: partial}}
+          - {id: libvterm.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility, howl: {status: partial}}
+          - {id: libvterm.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle left-right margins, howl: {status: partial}}
+          - {id: libvterm.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
+            howl: {status: partial}}
+          - {id: libvterm.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking,
+            howl: {status: partial}}
+          - {id: libvterm.mode.mouse_any, raw: "CSI ? 1003 h|l", effect: toggle motion tracking,
+            howl: {status: partial}}
+          - {id: libvterm.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reports, howl: {status: partial}}
+          - {id: libvterm.mode.mouse_utf8, raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
+            howl: {status: partial}}
+          - {id: libvterm.mode.mouse_sgr, raw: "CSI ? 1006 h|l", effect: toggle SGR mouse encoding,
+            howl: {status: partial}}
+          - {id: libvterm.mode.mouse_urxvt, raw: "CSI ? 1015 h|l", effect: toggle urxvt mouse encoding,
+            howl: {status: partial}}
+          - {id: libvterm.mode.alt_1047, raw: "CSI ? 1047 h|l", effect: enter or exit alternate screen,
+            howl: {status: partial}}
+          - {id: libvterm.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save or restore cursor,
+            howl: {status: partial}}
+          - {id: libvterm.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: alternate screen with cursor save,
+            howl: {status: partial}}
+          - {id: libvterm.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
+            howl: {status: partial}}
+      - source: state.c
+        symbol: on_osc
+        line: 1805
+        census: {semantic_branches: 4, records: 4}
+        recognition: implemented
+        records:
+          - {id: libvterm.osc.title_icon, raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+            symbol: "OSC 0 1 and 2 match libvterm title and icon properties", line: 24}}}
+          - {id: libvterm.osc.icon, raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+            symbol: "OSC 0 1 and 2 match libvterm title and icon properties", line: 24}}}
+          - {id: libvterm.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+            symbol: "OSC 0 1 and 2 match libvterm title and icon properties", line: 24}}}
+          - {id: libvterm.osc.clipboard, raw: "OSC 52 ; Pc ; Pd ST", effect: clipboard set or query,
+            bounds: unchunked payload, relevance: host consequence, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: decodeClipboardSet,
+            proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+            symbol: "OSC 52 decoded clipboard drain clears pending request", line: 190}}}
+      - source: state.c
+        symbol: on_dcs
+        line: 1925
+        census: {semantic_branches: 6, records: 6}
+        recognition: implemented
+        records:
+          - {id: libvterm.dcs.decrqss_sgr, raw: "DCS $ q m ST", effect: report current graphic rendition,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+          - {id: libvterm.dcs.decrqss_decstbm, raw: "DCS $ q r ST", effect: report vertical margins,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+          - {id: libvterm.dcs.decrqss_decslrm, raw: "DCS $ q s ST", effect: report horizontal margins,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+          - {id: libvterm.dcs.decrqss_decscusr, raw: "DCS $ q SP q ST", effect: report cursor style,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+          - {id: libvterm.dcs.decrqss_decsca, raw: 'DCS $ q " q ST', effect: report character protection,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+          - {id: libvterm.dcs.decrqss_unsupported, raw: "DCS $ q Pt ST", effect: report invalid status request,
+            conditions: Pt is not a recognized status string, recognition: rejected_known, relevance: query,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess,
+            proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+            symbol: "DECRQSS replies for owned state and invalid requests", line: 838}}}
+      - source: state.c
+        symbol: on_apc
+        line: 1941
+        census: {semantic_branches: 1, records: 1}
+        recognition: delegated
+        records:
+          - {id: libvterm.apc.fallback, raw: "APC Pb ST", effect: delegate payload to configured APC fallback,
+            conditions: unhandled without a fallback, howl: {status: 'false'}}
+      - source: state.c
+        symbol: on_pm
+        line: 1953
+        census: {semantic_branches: 1, records: 1}
+        recognition: delegated
+        records:
+          - {id: libvterm.pm.fallback, raw: "PM Pb ST", effect: delegate payload to configured PM fallback,
+            conditions: unhandled without a fallback, howl: {status: 'false'}}
+      - source: state.c
+        symbol: on_sos
+        line: 1965
+        census: {semantic_branches: 1, records: 1}
+        recognition: delegated
+        records:
+          - {id: libvterm.sos.fallback, raw: "SOS Pb ST", effect: delegate payload to configured SOS fallback,
+            conditions: unhandled without a fallback, howl: {status: 'false'}}
+      - source: pen.c
+        symbol: vterm_state_setpen
+        line: 276
+        census: {semantic_branches: 24, records: 24}
+        recognition: implemented
+        records:
+          - {id: libvterm.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.underline, raw: "CSI 4[:style] m", effect: enable or style underline,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.blink, raw: "CSI 5 m", effect: enable blink, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.font, raw: "CSI 10..19 m", effect: select font slot, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.fg_basic, raw: "CSI 30..37 m", effect: set basic foreground, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.bg_basic, raw: "CSI 40..47 m", effect: set basic background, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.bg_extended, raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.small_baseline, raw: "CSI 73|74|75 m",
+            effect: set small superscript subscript or normal baseline, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.bright, raw: "CSI 90..97|100..107 m", effect: set bright foreground or background,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
+
+  iterm2:
+    revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
+    root: sources/VT100
+    groups:
+      - source: VT100ControlParser.m
+        symbol: decodeFromContext
+        line: 51
+        census: {semantic_branches: 9, records: 9}
+        recognition: implemented
+        records:
+          - {id: iterm2.c0.bel, raw: BEL, effect: ring bell, howl: {status: partial}}
+          - {id: iterm2.c0.bs, raw: "\\x08", effect: cursor left, howl: {status: partial}}
+          - {id: iterm2.c0.ht, raw: "\\x09", effect: next tab stop, howl: {status: partial}}
+          - {id: iterm2.c0.lf, raw: "\\x0a", effect: line feed, howl: {status: partial}}
+          - {id: iterm2.c0.vt, raw: "\\x0b", effect: line feed, howl: {status: partial}}
+          - {id: iterm2.c0.ff, raw: "\\x0c", effect: line feed, howl: {status: partial}}
+          - {id: iterm2.c0.cr, raw: "\\x0d", effect: carriage return, howl: {status: partial}}
+          - {id: iterm2.c0.so, raw: "\\x0e", effect: select G1 into GL, howl: {status: partial}}
+          - {id: iterm2.c0.si, raw: "\\x0f", effect: select G0 into GL, howl: {status: partial}}
+      - source: VT100OtherParser.m
+        symbol: decodeBytes
+        line: 18
+        census: {semantic_branches: 27, records: 27}
+        recognition: implemented
+        records:
+          - {id: iterm2.esc.spa, raw: "ESC V", effect: start protected area, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: iterm2.esc.epa, raw: "ESC W", effect: end protected area, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: iterm2.esc.latin1, raw: "ESC % @", effect: select Latin-1 decoding, relevance: charset,
+            howl: {status: partial}}
+          - {id: iterm2.esc.utf8, raw: "ESC % G", effect: select UTF-8 decoding, relevance: charset,
+            howl: {status: partial}}
+          - {id: iterm2.esc.decdhl_top, raw: "ESC # 3", effect: double-height top line, howl: {status: partial}}
+          - {id: iterm2.esc.decdhl_bottom, raw: "ESC # 4", effect: double-height bottom line, howl: {status: partial}}
+          - {id: iterm2.esc.decswl, raw: "ESC # 5", effect: single-width line, howl: {status: partial}}
+          - {id: iterm2.esc.decdwl, raw: "ESC # 6", effect: double-width line, howl: {status: partial}}
+          - {id: iterm2.esc.decaln, raw: "ESC # 8", effect: fill screen with E, howl: {status: partial}}
+          - {id: iterm2.esc.deckpam, raw: "ESC =", effect: application keypad, howl: {status: partial}}
+          - {id: iterm2.esc.deckpnm, raw: "ESC >", effect: numeric keypad, howl: {status: partial}}
+          - {id: iterm2.esc.strict_ansi, raw: "ESC <", effect: enter strict ANSI mode, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: iterm2.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset, howl: {status: partial}}
+          - {id: iterm2.esc.scs_g1, raw: "ESC ) F", effect: designate G1 charset, howl: {status: partial}}
+          - {id: iterm2.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset, howl: {status: partial}}
+          - {id: iterm2.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset, howl: {status: partial}}
+          - {id: iterm2.esc.decfi, raw: "ESC 9", effect: forward index, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: iterm2.esc.decrc, raw: "ESC 8", effect: restore cursor, howl: {status: partial}}
+          - {id: iterm2.esc.decsc, raw: "ESC 7", effect: save cursor, howl: {status: partial}}
+          - {id: iterm2.esc.decbi, raw: "ESC 6", effect: backward index, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: iterm2.esc.ind, raw: "ESC D", effect: index, howl: {status: partial}}
+          - {id: iterm2.esc.nel, raw: "ESC E", effect: next line, howl: {status: partial}}
+          - {id: iterm2.esc.hts, raw: "ESC H", effect: set tab stop, howl: {status: partial}}
+          - {id: iterm2.esc.ri, raw: "ESC M", effect: reverse index, howl: {status: partial}}
+          - {id: iterm2.esc.decid, raw: "ESC Z", effect: primary device attributes report, relevance: query,
+            howl: {status: partial}}
+          - {id: iterm2.esc.ris, raw: "ESC c", effect: hard reset, howl: {status: partial}}
+          - {id: iterm2.esc.screen_title, raw: "ESC k Pt (CR|LF|ST)", effect: set GNU Screen title,
+            relevance: compatibility, howl: {status: 'false'}}
+      - source: VT100CSIParser.m
+        symbol: decodeFromContext
+        line: 353
+        census: {semantic_branches: 64, records: 64}
+        recognition: implemented
+        records:
+          - {id: iterm2.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward, howl: {status: partial}}
+          - {id: iterm2.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial}}
+          - {id: iterm2.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down, howl: {status: partial}}
+          - {id: iterm2.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward, howl: {status: partial}}
+          - {id: iterm2.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up, howl: {status: partial}}
+          - {id: iterm2.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line, howl: {status: partial}}
+          - {id: iterm2.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line, howl: {status: partial}}
+          - {id: iterm2.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position, howl: {status: partial}}
+          - {id: iterm2.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: partial}}
+          - {id: iterm2.csi.da, raw: "CSI [Ps=0] c", effect: device attributes report, relevance: query,
+            howl: {status: partial}}
+          - {id: iterm2.csi.decstbm, raw: "CSI [top=1] ; [bottom] r", effect: set vertical margins,
+            howl: {status: partial}}
+          - {id: iterm2.csi.dsr, raw: "CSI [Ps=0] n", effect: status or cursor report, relevance: query,
+            howl: {status: partial}}
+          - {id: iterm2.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, howl: {status: partial}}
+          - {id: iterm2.csi.el, raw: "CSI [Ps=0] K", effect: erase line, howl: {status: partial}}
+          - {id: iterm2.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position, howl: {status: partial}}
+          - {id: iterm2.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, howl: {status: partial}}
+          - {id: iterm2.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {status: partial}}
+          - {id: iterm2.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, howl: {status: partial}}
+          - {id: iterm2.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, howl: {status: partial}}
+          - {id: iterm2.csi.il, raw: "CSI [Ps=1] L", effect: insert lines, howl: {status: partial}}
+          - {id: iterm2.csi.dch, raw: "CSI [Ps=1] P", effect: delete characters, howl: {status: partial}}
+          - {id: iterm2.csi.dl, raw: "CSI [Ps=1] M", effect: delete lines, howl: {status: partial}}
+          - {id: iterm2.csi.window, raw: "CSI Pm t", effect: dispatch window operation by first parameter,
+            recognition: delegated, relevance: host consequence, howl: {status: partial}}
+          - {id: iterm2.csi.su, raw: "CSI [Ps=1] S", effect: scroll up, howl: {status: partial}}
+          - {id: iterm2.csi.sd, raw: "CSI [Ps=1] T", effect: scroll down, howl: {status: partial}}
+          - {id: iterm2.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: partial}}
+          - {id: iterm2.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column, howl: {status: partial}}
+          - {id: iterm2.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward, howl: {status: partial}}
+          - {id: iterm2.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row, howl: {status: partial}}
+          - {id: iterm2.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down, howl: {status: partial}}
+          - {id: iterm2.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters, howl: {status: partial}}
+          - {id: iterm2.csi.media_copy, raw: "CSI [Ps=0] i", effect: media copy request, relevance: host consequence,
+            howl: {status: partial}}
+          - {id: iterm2.csi.save_or_margins, raw: "CSI Pm s", effect: save cursor or set horizontal margins,
+            conditions: parameter and DECLRMM dependent, howl: {status: partial}}
+          - {id: iterm2.csi.restore_cursor, raw: "CSI u", effect: restore cursor, howl: {status: partial}}
+          - {id: iterm2.csi.decset, raw: "CSI ? Pm h", effect: set DEC modes, howl: {status: partial}}
+          - {id: iterm2.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC modes, howl: {status: partial}}
+          - {id: iterm2.csi.decdsr, raw: "CSI ? Ps n", effect: DEC status report, howl: {status: partial}}
+          - {id: iterm2.csi.decrqm_dec, raw: "CSI ? Ps $ p", effect: query DEC mode, howl: {status: partial}}
+          - {id: iterm2.csi.decrqm_ansi, raw: "CSI Ps $ p", effect: query ANSI mode, howl: {status: partial}}
+          - {id: iterm2.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial}}
+          - {id: iterm2.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style, howl: {status: partial}}
+          - {id: iterm2.csi.decsca, raw: "CSI [Ps=0] \" q", effect: select character protection,
+            howl: {status: partial}}
+          - {id: iterm2.csi.deccara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ r", effect: change rectangle attributes,
+            howl: {status: partial}}
+          - {id: iterm2.csi.decrara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ t", effect: reverse rectangle attributes,
+            howl: {status: partial}}
+          - {id: iterm2.csi.decsace, raw: "CSI [Ps=0] * x", effect: set rectangle attribute extent,
+            howl: {status: partial}}
+          - {id: iterm2.csi.deccra, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt2 ; Pl2 ; Pp2 $ v", effect: copy rectangle,
+            howl: {status: partial}}
+          - {id: iterm2.csi.decfra, raw: "CSI Pc ; Pt ; Pl ; Pb ; Pr $ x", effect: fill rectangle,
+            howl: {status: partial}}
+          - {id: iterm2.csi.decera, raw: "CSI Pt ; Pl ; Pb ; Pr $ z", effect: erase rectangle, howl: {status: partial}}
+          - {id: iterm2.csi.decsera, raw: "CSI Pt ; Pl ; Pb ; Pr $ {", effect: selective erase rectangle,
+            howl: {status: partial}}
+          - {id: iterm2.csi.decsed, raw: "CSI ? [Ps=0] J", effect: selective erase display, howl: {status: partial}}
+          - {id: iterm2.csi.decsel, raw: "CSI ? [Ps=0] K", effect: selective erase line, howl: {status: partial}}
+          - {id: iterm2.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {status: partial}}
+          - {id: iterm2.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns, howl: {status: partial}}
+          - {id: iterm2.csi.xtpushcolors, raw: "CSI [Ps=0] # P", effect: push color stack, howl: {status: partial}}
+          - {id: iterm2.csi.xtpopcolors, raw: "CSI [Ps=0] # Q", effect: pop color stack, howl: {status: partial}}
+          - {id: iterm2.csi.xtreportcolors, raw: "CSI # R", effect: report color stack, howl: {status: partial}}
+          - {id: iterm2.csi.xtpushsgr, raw: "CSI Pm # {", effect: push selected rendition state,
+            howl: {status: partial}}
+          - {id: iterm2.csi.xtpopsgr_brace, raw: "CSI [Ps=0] # }", effect: pop rendition state, howl: {status: partial}}
+          - {id: iterm2.csi.xtpopsgr_q, raw: "CSI [Ps=0] # q", effect: pop rendition state, howl: {status: partial}}
+          - {id: iterm2.csi.xtsmgraphics, raw: "CSI ? Pm S", effect: set or query graphics attributes,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.csi.kitty_set, raw: "CSI = flags ; [mode=1] u", effect: set Kitty keyboard flags,
+            howl: {status: partial}}
+          - {id: iterm2.csi.kitty_push, raw: "CSI > [flags=0] u", effect: push Kitty keyboard flags,
+            howl: {status: partial}}
+          - {id: iterm2.csi.kitty_pop, raw: "CSI < [count=1] u", effect: pop Kitty keyboard flags,
+            howl: {status: partial}}
+          - {id: iterm2.csi.kitty_query, raw: "CSI ? u", effect: report Kitty keyboard flags, howl: {status: partial}}
+      - source: VT100XtermParser.m
+        symbol: tokenTypeForMode
+        line: 263
+        census: {semantic_branches: 24, records: 24}
+        recognition: implemented
+        records:
+          - {id: iterm2.osc.title_icon, raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon, howl: {status: partial}}
+          - {id: iterm2.osc.icon, raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon, howl: {status: partial}}
+          - {id: iterm2.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title, howl: {status: partial}}
+          - {id: iterm2.osc.palette, raw: "OSC 4 ; Pt (BEL|ST)", effect: set or query palette, howl: {status: partial}}
+          - {id: iterm2.osc.eterm, raw: "OSC 6 ; Pt (BEL|ST)", effect: Eterm extension, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: iterm2.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
+            relevance: host metadata, howl: {status: partial}}
+          - {id: iterm2.osc.hyperlink, raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
+            howl: {status: partial}}
+          - {id: iterm2.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
+            howl: {status: partial}}
+          - {id: iterm2.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
+            howl: {status: partial}}
+          - {id: iterm2.osc.cursor, raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,
+            howl: {status: partial}}
+          - {id: iterm2.osc.highlight_bg, raw: "OSC 17 ; color (BEL|ST)", effect: set or query highlight background,
+            howl: {status: partial}}
+          - {id: iterm2.osc.highlight_fg, raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
+            howl: {status: partial}}
+          - {id: iterm2.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
+            relevance: host consequence, howl: {status: partial}}
+          - {id: iterm2.osc.kvp_50, raw: "OSC 50 ; key=value (BEL|ST)", effect: legacy iTerm key-value command,
+            howl: {status: partial}}
+          - {id: iterm2.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard or base64 paste,
+            relevance: host consequence, howl: {status: partial}}
+          - {id: iterm2.osc.palette_reset, raw: "OSC 104 ; Pm (BEL|ST)", effect: reset palette entries,
+            howl: {status: partial}}
+          - {id: iterm2.osc.reset_fg, raw: "OSC 110 (BEL|ST)", effect: reset foreground, howl: {status: partial}}
+          - {id: iterm2.osc.reset_bg, raw: "OSC 111 (BEL|ST)", effect: reset background, howl: {status: partial}}
+          - {id: iterm2.osc.reset_cursor, raw: "OSC 112 (BEL|ST)", effect: reset cursor color, howl: {status: partial}}
+          - {id: iterm2.osc.reset_highlight_bg, raw: "OSC 117 (BEL|ST)", effect: reset highlight background,
+            howl: {status: partial}}
+          - {id: iterm2.osc.reset_highlight_fg, raw: "OSC 119 (BEL|ST)", effect: reset highlight foreground,
+            howl: {status: partial}}
+          - {id: iterm2.osc.shell_mark, raw: "OSC 133 ; mark [; metadata] (BEL|ST)",
+            effect: update shell integration mark, howl: {status: partial}}
+          - {id: iterm2.osc.framer, raw: "OSC 134 ; Pt (BEL|ST)", effect: frame wrapped terminal data,
+            relevance: transport, howl: {status: 'false'}}
+          - {id: iterm2.osc.tab_status, raw: "OSC 21337 ; Pt (BEL|ST)", effect: set tab status metadata,
+            relevance: host metadata, howl: {status: 'false'}}
+      - source: VT100Terminal.m
+        symbol: executeXtermSetKvp
+        line: 4144
+        census: {semantic_branches: 54, records: 54}
+        recognition: implemented
+        conditions: trusted-session checks guard host-sensitive effects
+        records:
+          - {id: iterm2.osc1337.file, raw: "OSC 1337 ; File=Pm : base64 (BEL|ST)", effect: transfer or display file,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.multipart_file, raw: "OSC 1337 ; MultipartFile=Pm (BEL|ST)",
+            effect: begin multipart file transfer, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.file_part, raw: "OSC 1337 ; FilePart=base64 (BEL|ST)",
+            effect: append multipart file data, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.file_end, raw: "OSC 1337 ; FileEnd=Pt (BEL|ST)",
+            effect: complete multipart file transfer, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.set_badge, raw: "OSC 1337 ; SetBadgeFormat=base64 (BEL|ST)", effect: set session badge,
+            relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.set_mark, raw: "OSC 1337 ; SetMark[=Pt] (BEL|ST)", effect: create scrollback mark,
+            relevance: host metadata, howl: {status: partial}}
+          - {id: iterm2.osc1337.steal_focus, raw: "OSC 1337 ; StealFocus (BEL|ST)", effect: request application focus,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.clear_scrollback, raw: "OSC 1337 ; ClearScrollback (BEL|ST)", effect: clear scrollback,
+            relevance: host consequence, howl: {status: partial}}
+          - {id: iterm2.osc1337.current_dir, raw: "OSC 1337 ; CurrentDir=Pt (BEL|ST)", effect: report working directory,
+            relevance: host metadata, howl: {status: partial}}
+          - {id: iterm2.osc1337.remote_host, raw: "OSC 1337 ; RemoteHost=user@host (BEL|ST)",
+            effect: report remote host, relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.set_profile, raw: "OSC 1337 ; SetProfile=Pt (BEL|ST)", effect: switch profile,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.add_note, raw: "OSC 1337 ; AddNote=Pt (BEL|ST)", effect: add visible note,
+            recognition: implemented, relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.add_annotation, raw: "OSC 1337 ; AddAnnotation=Pt (BEL|ST)",
+            effect: add visible annotation, relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.add_hidden_note, raw: "OSC 1337 ; AddHiddenNote=Pt (BEL|ST)", effect: add hidden note,
+            relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.add_hidden_annotation, raw: "OSC 1337 ; AddHiddenAnnotation=Pt (BEL|ST)",
+            effect: add hidden annotation, relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.highlight_cursor_line, raw: "OSC 1337 ; HighlightCursorLine=[bool] (BEL|ST)",
+            effect: toggle cursor-line highlight, relevance: presentation, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.clear_captured_output, raw: "OSC 1337 ; ClearCapturedOutput=Pt (BEL|ST)",
+            effect: clear captured command output, relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.copy, raw: "OSC 1337 ; Copy[=name] (BEL|ST)", effect: begin clipboard capture,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.end_copy, raw: "OSC 1337 ; EndCopy (BEL|ST)", effect: finish clipboard capture,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.copy_to_clipboard, raw: "OSC 1337 ; CopyToClipboard=target (BEL|ST)",
+            effect: select clipboard target, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.block, raw: "OSC 1337 ; Block=id=Pt;attr=start|end[;type=Pt;render=bool] (BEL|ST)",
+            effect: delimit semantic block, relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.update_block_fold, raw: "OSC 1337 ; UpdateBlock=id=Pt;action=fold (BEL|ST)",
+            effect: fold semantic block, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.update_block_unfold, raw: "OSC 1337 ; UpdateBlock=id=Pt;action=unfold (BEL|ST)",
+            effect: unfold semantic block, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.button_copy, raw: "OSC 1337 ; Button=type=copy;block=Pt (BEL|ST)",
+            effect: insert block copy button, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.button_custom, raw: "OSC 1337 ; Button=type=custom[;code=Ps;icon=Pt] (BEL|ST)",
+            effect: insert or invalidate custom buttons, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.request_upload, raw: "OSC 1337 ; RequestUpload=Pt (BEL|ST)",
+            effect: request host file upload, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.begin_file, raw: "OSC 1337 ; BeginFile=Pt (BEL|ST)",
+            effect: reject deprecated file command, recognition: rejected_known, relevance: compatibility,
+            howl: {status: 'false'}}
+          - {id: iterm2.osc1337.end_file, raw: "OSC 1337 ; EndFile=Pt (BEL|ST)", effect: reject deprecated file command,
+            recognition: rejected_known, relevance: compatibility, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.report_cell_size, raw: "OSC 1337 ; ReportCellSize (BEL|ST)",
+            effect: report cell dimensions, relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig,
+            symbol: parse}}
+          - {id: iterm2.osc1337.cursor_shape, raw: "OSC 1337 ; CursorShape=Ps (BEL|ST)", effect: set cursor shape,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parse}}
+          - {id: iterm2.osc1337.set_colors, raw: "OSC 1337 ; SetColors=Pt (BEL|ST)", effect: set terminal colors,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parse}}
+          - {id: iterm2.osc1337.shell_integration, raw: "OSC 1337 ; ShellIntegrationVersion=Pt (BEL|ST)",
+            effect: report shell integration identity, relevance: host metadata, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: parse}}
+          - {id: iterm2.osc1337.request_attention, raw: "OSC 1337 ; RequestAttention=Ps (BEL|ST)",
+            effect: request user attention, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.background_image, raw: "OSC 1337 ; SetBackgroundImageFile=Pt (BEL|ST)",
+            effect: set background image, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.profile_property, raw: "OSC 1337 ; SetProfileProperty=key=base64-json (BEL|ST)",
+            effect: set profile property, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.user_var, raw: "OSC 1337 ; SetUserVar=name=base64 (BEL|ST)", effect: set user variable,
+            relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.unicode_set, raw: "OSC 1337 ; UnicodeVersion=Ps (BEL|ST)", effect: set Unicode version,
+            relevance: presentation, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.unicode_push, raw: "OSC 1337 ; UnicodeVersion=push[=Ps] (BEL|ST)",
+            effect: push Unicode version, relevance: presentation, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.unicode_pop, raw: "OSC 1337 ; UnicodeVersion=pop (BEL|ST)", effect: pop Unicode version,
+            relevance: presentation, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.set_key_label, raw: "OSC 1337 ; SetKeyLabel=key=label (BEL|ST)", effect: set key label,
+            relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.push_key_labels, raw: "OSC 1337 ; PushKeyLabels=Pt (BEL|ST)",
+            effect: push key-label state, relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.pop_key_labels, raw: "OSC 1337 ; PopKeyLabels=Pt (BEL|ST)", effect: pop key-label state,
+            relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.disinter, raw: "OSC 1337 ; Disinter=Pt (BEL|ST)", effect: detach session from burial,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.report_variable, raw: "OSC 1337 ; ReportVariable=base64-name (BEL|ST)",
+            effect: report variable value, relevance: query, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.custom, raw: "OSC 1337 ; Custom=Pm:payload (BEL|ST)",
+            effect: dispatch custom host message, relevance: extension, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.notification, raw: "OSC 1337 ; Notification=Pt (BEL|ST)",
+            effect: post rich notification, relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.capabilities, raw: "OSC 1337 ; Capabilities=Pt (BEL|ST)",
+            effect: report host capabilities, relevance: query, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.env, raw: "OSC 1337 ; Env=Pt (BEL|ST)", effect: update environment metadata,
+            relevance: host metadata, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.it2ssh, raw: "OSC 1337 ; it2ssh=Pt (BEL|ST)", effect: begin SSH integration,
+            relevance: transport, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.send_conductor, raw: "OSC 1337 ; SendConductor=Pt (BEL|ST)",
+            effect: send Conductor message, relevance: transport, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.end_ssh, raw: "OSC 1337 ; EndSSH=Pt (BEL|ST)", effect: end SSH integration,
+            relevance: transport, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.open_url, raw: "OSC 1337 ; OpenURL=Pm:base64-url (BEL|ST)", effect: open host URL,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.wrap_start, raw: "OSC 1337 ; wrap=a=start;cmd=base64;uid=hex (BEL|ST)",
+            effect: start wrapped command channel, relevance: transport, howl: {status: 'false'}}
+          - {id: iterm2.osc1337.debug, raw: "OSC 1337 ; Debug=Pt (BEL|ST)", effect: mutate or report debug input state,
+            conditions: DEBUG build, relevance: diagnostic, howl: {status: 'false'}}
+      - source: VT100DCSParser.m
+        symbol: execute
+        line: 591
+        census: {semantic_branches: 11, records: 11}
+        recognition: implemented
+        records:
+          - {id: iterm2.dcs.tmux_hook, raw: "DCS 1000 p Pb ST", effect: enter tmux passthrough parser,
+            recognition: delegated, relevance: transport, howl: {status: 'false'}}
+          - {id: iterm2.dcs.ssh_hook, raw: "DCS 2000 p Pb ST", effect: enter SSH conductor parser,
+            recognition: delegated, relevance: transport, howl: {status: 'false'}}
+          - {id: iterm2.dcs.sixel, raw: "DCS Pm q Pb ST", effect: decode Sixel image, recognition: delegated,
+            relevance: graphics, howl: {status: 'false'}}
+          - {id: iterm2.dcs.tmux_wrap, raw: "DCS t tmux;Pb ST", effect: unwrap tmux terminal bytes,
+            relevance: transport, howl: {status: 'false'}}
+          - {id: iterm2.dcs.sync_begin, raw: "DCS = 1 s ST", effect: begin synchronized update, howl: {status: partial}}
+          - {id: iterm2.dcs.sync_end, raw: "DCS = 2 s ST", effect: end synchronized update, howl: {status: partial}}
+          - {id: iterm2.dcs.decrqss, raw: "DCS $ q Pt ST", effect: request terminal state string, relevance: query,
+            howl: {status: partial}}
+          - {id: iterm2.dcs.decrsps_deccir, raw: "DCS 1 $ t Pt ST", effect: restore cursor information,
+            howl: {status: partial}}
+          - {id: iterm2.dcs.decrsps_dectabsr, raw: "DCS 2 $ t Pt ST", effect: restore tab stops,
+            howl: {status: partial}}
+          - {id: iterm2.dcs.xtsettcap, raw: "DCS + p Pt ST", effect: set termcap or terminfo values,
+            howl: {status: partial}}
+          - {id: iterm2.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
+            howl: {status: partial}}
+      - source: VT100GraphicRendition.m
+        symbol: VT100GraphicRenditionExecuteSGR
+        line: 25
+        census: {semantic_branches: 24, records: 24}
+        recognition: implemented
+        records:
+          - {id: iterm2.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial}}
+          - {id: iterm2.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: partial}}
+          - {id: iterm2.sgr.faint, raw: "CSI 2 m", effect: enable faint, howl: {status: partial}}
+          - {id: iterm2.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {status: partial}}
+          - {id: iterm2.sgr.underline, raw: "CSI 4[:style] m", effect: enable or style underline,
+            howl: {status: partial}}
+          - {id: iterm2.sgr.blink, raw: "CSI 5|6 m", effect: enable blink, howl: {status: partial}}
+          - {id: iterm2.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: partial}}
+          - {id: iterm2.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: partial}}
+          - {id: iterm2.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: partial}}
+          - {id: iterm2.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold and faint, howl: {status: partial}}
+          - {id: iterm2.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: partial}}
+          - {id: iterm2.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: partial}}
+          - {id: iterm2.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: partial}}
+          - {id: iterm2.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: partial}}
+          - {id: iterm2.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: partial}}
+          - {id: iterm2.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: partial}}
+          - {id: iterm2.sgr.fg_basic, raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {status: partial}}
+          - {id: iterm2.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
+            howl: {status: partial}}
+          - {id: iterm2.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: partial}}
+          - {id: iterm2.sgr.bg_basic, raw: "CSI 40..47|100..107 m", effect: set basic background,
+            howl: {status: partial}}
+          - {id: iterm2.sgr.bg_extended, raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
+            howl: {status: partial}}
+          - {id: iterm2.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: partial}}
+          - {id: iterm2.sgr.underline_color, raw: "CSI 58 ; 2|5 ; Pm m", effect: set underline color,
+            howl: {status: partial}}
+          - {id: iterm2.sgr.underline_color_default, raw: "CSI 59 m", effect: reset underline color,
+            howl: {status: partial}}
+      - source: VT100Terminal.m
+        symbol: executeDecSetReset
+        line: 745
+        census: {semantic_branches: 38, records: 38}
+        recognition: implemented
+        records:
+          - {id: iterm2.mode.decckm, raw: "CSI ? 1 h|l", effect: toggle application cursor keys,
+            howl: {status: partial}}
+          - {id: iterm2.mode.ansi_vt52, raw: "CSI ? 2 h|l", effect: ignore emulation switch,
+            recognition: recognized_noop, relevance: compatibility, howl: {status: 'false'}}
+          - {id: iterm2.mode.deccolm, raw: "CSI ? 3 h|l", effect: toggle 80 or 132 columns, conditions: allowColumnMode,
+            howl: {status: partial}}
+          - {id: iterm2.mode.decsclm, raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
+            recognition: recognized_noop, howl: {status: 'false'}}
+          - {id: iterm2.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse video, howl: {status: partial}}
+          - {id: iterm2.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
+          - {id: iterm2.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
+          - {id: iterm2.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat, howl: {status: partial}}
+          - {id: iterm2.mode.mouse_x10, raw: "CSI ? 9 h|l", effect: accept legacy mouse mode without implementation,
+            recognition: recognized_noop, howl: {status: 'false'}}
+          - {id: iterm2.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink, howl: {status: partial}}
+          - {id: iterm2.mode.lnm_private, raw: "CSI ? 20 h|l", effect: ignore private line mode,
+            recognition: recognized_noop, howl: {status: 'false'}}
+          - {id: iterm2.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility, howl: {status: partial}}
+          - {id: iterm2.mode.allow_deccolm, raw: "CSI ? 40 h|l", effect: toggle column-mode permission,
+            relevance: policy, howl: {status: 'false'}}
+          - {id: iterm2.mode.more_fix, raw: "CSI ? 41 h|l", effect: toggle more compatibility fix,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: iterm2.mode.reverse_wrap, raw: "CSI ? 45 h|l", effect: toggle reverse wraparound,
+            howl: {status: partial}}
+          - {id: iterm2.mode.alt_47, raw: "CSI ? 47 h|l", effect: toggle alternate screen preserving cursor position,
+            howl: {status: partial}}
+          - {id: iterm2.mode.deckpam, raw: "CSI ? 66 h|l", effect: toggle application keypad, howl: {status: partial}}
+          - {id: iterm2.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle horizontal margins, conditions: VT level 400+,
+            howl: {status: partial}}
+          - {id: iterm2.mode.decsdm, raw: "CSI ? 80 h|l", effect: toggle Sixel display mode, howl: {status: 'false'}}
+          - {id: iterm2.mode.decncsm, raw: "CSI ? 95 h|l", effect: preserve screen on column-mode change,
+            conditions: VT level 500+, howl: {status: 'false'}}
+          - {id: iterm2.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
+            howl: {status: partial}}
+          - {id: iterm2.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking, howl: {status: partial}}
+          - {id: iterm2.mode.mouse_any, raw: "CSI ? 1003 h|l", effect: toggle motion tracking, howl: {status: partial}}
+          - {id: iterm2.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reporting,
+            conditions: host policy permits, howl: {status: partial}}
+          - {id: iterm2.mode.mouse_utf8, raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
+            howl: {status: partial}}
+          - {id: iterm2.mode.mouse_sgr, raw: "CSI ? 1006 h|l", effect: toggle SGR mouse encoding,
+            howl: {status: partial}}
+          - {id: iterm2.mode.alt_scroll, raw: "CSI ? 1007 h|l", effect: toggle alternate mouse scroll,
+            conditions: host policy permits, howl: {status: 'false'}}
+          - {id: iterm2.mode.mouse_urxvt, raw: "CSI ? 1015 h|l", effect: toggle urxvt mouse encoding,
+            howl: {status: partial}}
+          - {id: iterm2.mode.mouse_pixel, raw: "CSI ? 1016 h|l", effect: toggle SGR pixel mouse encoding,
+            howl: {status: partial}}
+          - {id: iterm2.mode.meta_escape, raw: "CSI ? 1036 h|l", effect: toggle Meta-sends-Escape, relevance: input,
+            howl: {status: 'false'}}
+          - {id: iterm2.mode.alt_1047, raw: "CSI ? 1047 h|l", effect: toggle cleared alternate screen,
+            howl: {status: partial}}
+          - {id: iterm2.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save or restore cursor,
+            howl: {status: partial}}
+          - {id: iterm2.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: alternate screen with cursor save,
+            howl: {status: partial}}
+          - {id: iterm2.mode.key_up_1337, raw: "CSI ? 1337 h|l", effect: toggle key-release reports, relevance: input,
+            howl: {status: 'false'}}
+          - {id: iterm2.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
+            howl: {status: partial}}
+          - {id: iterm2.mode.synchronized_output, raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
+            howl: {status: partial}}
+          - {id: iterm2.mode.dark_mode_dsr, raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report,
+            relevance: extension, howl: {status: 'false'}}
+          - {id: iterm2.mode.resize_notifications, raw: "CSI ? 2048 h|l", effect: toggle resize notifications,
+            relevance: extension, howl: {status: 'false'}}
+      - source: VT100Terminal.m
+        symbol: XTERMCC_WINDOWSIZE
+        line: 2730
+        census: {semantic_branches: 16, records: 16}
+        recognition: implemented
+        records:
+          - {id: iterm2.window.deiconify, raw: "CSI 1 t", effect: deiconify window, relevance: host consequence,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.iconify, raw: "CSI 2 t", effect: iconify window, relevance: host consequence,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.move, raw: "CSI 3 ; x ; y t", effect: move window, relevance: host consequence,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.resize_pixels, raw: "CSI 4 ; height ; width t", effect: resize window in pixels,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.window.raise, raw: "CSI 5 t", effect: raise window, relevance: host consequence,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.lower, raw: "CSI 6 t", effect: lower window, relevance: host consequence,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.resize_cells, raw: "CSI 8 ; rows ; cols t", effect: resize terminal in cells,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: iterm2.window.report_state, raw: "CSI 11 t", effect: report iconified state, relevance: query,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.report_position, raw: "CSI 13 t", effect: report window position, relevance: query,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.report_pixels, raw: "CSI 14 t", effect: report window pixel size, relevance: query,
+            howl: {status: partial}}
+          - {id: iterm2.window.report_cells, raw: "CSI 18 t", effect: report terminal cell dimensions, relevance: query,
+            howl: {status: partial}}
+          - {id: iterm2.window.report_screen, raw: "CSI 19 t", effect: report screen dimensions, relevance: query,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.report_icon_title, raw: "CSI 20 t", effect: report icon title, relevance: query,
+            howl: {status: 'false'}}
+          - {id: iterm2.window.report_window_title, raw: "CSI 21 t", effect: report window title, relevance: query,
+            howl: {status: partial}}
+          - {id: iterm2.window.push_title, raw: "CSI 22 ; [Ps] t", effect: push title stack, relevance: host metadata,
+            howl: {status: partial}}
+          - {id: iterm2.window.pop_title, raw: "CSI 23 ; [Ps] t", effect: pop title stack, relevance: host metadata,
+            howl: {status: partial}}
+
+  kitty:
+    revision: d4106ef2db687579a69fefc949a6dc1b662f3ca8
+    root: kitty
+    groups:
+      - source: vt-parser.c
+        symbol: REPORT_DRAW
+        line: 105
+        census: {semantic_branches: 9, records: 9}
+        recognition: implemented
+        records:
+          - {id: kitty.c0.bel, raw: BEL, effect: ring bell, howl: {status: partial}}
+          - {id: kitty.c0.bs, raw: "\\x08", effect: cursor left, howl: {status: partial}}
+          - {id: kitty.c0.ht, raw: "\\x09", effect: next tab stop, howl: {status: partial}}
+          - {id: kitty.c0.lf, raw: "\\x0a", effect: line feed, howl: {status: partial}}
+          - {id: kitty.c0.vt, raw: "\\x0b", effect: line feed, howl: {status: partial}}
+          - {id: kitty.c0.ff, raw: "\\x0c", effect: line feed, howl: {status: partial}}
+          - {id: kitty.c0.cr, raw: "\\x0d", effect: carriage return, howl: {status: partial}}
+          - {id: kitty.c0.so, raw: "\\x0e", effect: select G1 into GL, howl: {status: partial}}
+          - {id: kitty.c0.si, raw: "\\x0f", effect: select G0 into GL, howl: {status: partial}}
+      - source: vt-parser.c
+        symbol: consume_esc
+        line: 278
+        census: {semantic_branches: 22, records: 22}
+        recognition: implemented
+        records:
+          - {id: kitty.esc.dcs, raw: "ESC P", effect: begin DCS string, relevance: transport, howl: {status: partial}}
+          - {id: kitty.esc.osc, raw: "ESC ]", effect: begin OSC string, relevance: transport, howl: {status: partial}}
+          - {id: kitty.esc.csi, raw: "ESC [", effect: begin CSI sequence, relevance: transport, howl: {status: partial}}
+          - {id: kitty.esc.apc, raw: "ESC _", effect: begin APC string, relevance: transport, howl: {status: partial}}
+          - {id: kitty.esc.sos, raw: "ESC X", effect: begin SOS string, relevance: transport, howl: {status: partial}}
+          - {id: kitty.esc.pm, raw: "ESC ^", effect: begin PM string, relevance: transport, howl: {status: partial}}
+          - {id: kitty.esc.ris, raw: "ESC c", effect: hard reset, howl: {status: partial}}
+          - {id: kitty.esc.ind, raw: "ESC D", effect: index, howl: {status: partial}}
+          - {id: kitty.esc.nel, raw: "ESC E", effect: next line, howl: {status: partial}}
+          - {id: kitty.esc.ri, raw: "ESC M", effect: reverse index, howl: {status: partial}}
+          - {id: kitty.esc.hts, raw: "ESC H", effect: set tab stop, howl: {status: partial}}
+          - {id: kitty.esc.decsc, raw: "ESC 7", effect: save cursor, howl: {status: partial}}
+          - {id: kitty.esc.decrc, raw: "ESC 8", effect: restore cursor, howl: {status: partial}}
+          - {id: kitty.esc.deckpnm, raw: "ESC >", effect: numeric keypad, howl: {status: partial}}
+          - {id: kitty.esc.deckpam, raw: "ESC =", effect: application keypad, howl: {status: partial}}
+          - {id: kitty.esc.latin1, raw: "ESC % @", effect: select legacy decoding, howl: {status: partial}}
+          - {id: kitty.esc.utf8, raw: "ESC % G", effect: select UTF-8 decoding, howl: {status: partial}}
+          - {id: kitty.esc.decaln, raw: "ESC # 8", effect: fill screen with E, howl: {status: partial}}
+          - {id: kitty.esc.scs_g0, raw: "ESC ( A|B|0|U|V", effect: designate G0 charset, howl: {status: partial}}
+          - {id: kitty.esc.scs_g1, raw: "ESC ) A|B|0|U|V", effect: designate G1 charset, howl: {status: partial}}
+          - {id: kitty.esc.s7c1t, raw: "ESC SP F", effect: select 7-bit C1 transmission, howl: {status: partial}}
+          - {id: kitty.esc.s8c1t, raw: "ESC SP G", effect: select 8-bit C1 transmission, howl: {status: partial}}
+      - source: screen.c
+        symbol: screen_set_mode
+        line: 1759
+        census: {semantic_branches: 31, records: 31}
+        recognition: implemented
+        records:
+          - {id: kitty.mode.decckm, raw: "CSI ? 1 h|l", effect: toggle application cursor keys, howl: {status: partial}}
+          - {id: kitty.mode.irm, raw: "CSI 4 h|l", effect: toggle insert mode, howl: {status: partial}}
+          - {id: kitty.mode.lnm, raw: "CSI 20 h|l", effect: toggle newline mode, howl: {status: partial}}
+          - {id: kitty.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
+          - {id: kitty.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
+          - {id: kitty.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
+          - {id: kitty.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink, howl: {status: partial}}
+          - {id: kitty.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility, howl: {status: partial}}
+          - {id: kitty.mode.deccolm, raw: "CSI ? 3 h|l", effect: toggle 80 or 132 column mode and home screen,
+            howl: {status: partial}}
+          - {id: kitty.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat, howl: {status: partial}}
+          - {id: kitty.mode.decsclm, raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
+            recognition: recognized_noop, howl: {status: 'false'}}
+          - {id: kitty.mode.decnrcm, raw: "CSI ? 42 h|l", effect: ignore national replacement charset mode,
+            recognition: recognized_noop, howl: {status: 'false'}}
+          - {id: kitty.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
+            howl: {status: partial}}
+          - {id: kitty.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking, howl: {status: partial}}
+          - {id: kitty.mode.mouse_any, raw: "CSI ? 1003 h|l", effect: toggle motion tracking, howl: {status: partial}}
+          - {id: kitty.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reports, howl: {status: partial}}
+          - {id: kitty.mode.mouse_utf8, raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
+            howl: {status: partial}}
+          - {id: kitty.mode.mouse_sgr, raw: "CSI ? 1006 h|l", effect: toggle SGR mouse encoding,
+            howl: {status: partial}}
+          - {id: kitty.mode.mouse_urxvt, raw: "CSI ? 1015 h|l", effect: toggle urxvt mouse encoding,
+            howl: {status: partial}}
+          - {id: kitty.mode.mouse_pixel, raw: "CSI ? 1016 h|l", effect: toggle SGR pixel mouse encoding,
+            howl: {status: partial}}
+          - {id: kitty.mode.alt_47, raw: "CSI ? 47 h|l", effect: toggle alternate screen, howl: {status: partial}}
+          - {id: kitty.mode.alt_1047, raw: "CSI ? 1047 h|l", effect: toggle cleared alternate screen,
+            howl: {status: partial}}
+          - {id: kitty.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save cursor on set, recognition: implemented,
+            howl: {status: partial}}
+          - {id: kitty.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: toggle alternate screen with cursor save,
+            howl: {status: partial}}
+          - {id: kitty.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
+            howl: {status: partial}}
+          - {id: kitty.mode.synchronized_output, raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
+            howl: {status: partial}}
+          - {id: kitty.mode.color_preference, raw: "CSI ? 2031 h|l", effect: toggle color-preference notifications,
+            relevance: extension, howl: {status: 'false'}}
+          - {id: kitty.mode.inband_resize, raw: "CSI ? 2048 h|l", effect: toggle in-band resize notifications,
+            relevance: extension, howl: {status: 'false'}}
+          - {id: kitty.mode.paste_events, raw: "CSI ? 5522 h|l", effect: toggle extended paste events, relevance: input,
+            howl: {status: 'false'}}
+          - {id: kitty.mode.application_escape, raw: "CSI ? 7727 h|l", effect: reject application escape mode,
+            recognition: rejected_known, relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.mode.termios_signals, raw: "CSI ? 19997 h|l", effect: toggle terminal-generated termios signals,
+            relevance: input, howl: {status: 'false'}}
+      - source: vt-parser.c
+        symbol: dispatch_csi
+        line: 1114
+        census: {semantic_branches: 66, records: 66}
+        recognition: implemented
+        bounds: scalar handlers reject excess and negative parameters
+        records:
+          - {id: kitty.csi.ich, raw: "CSI [Ps=1] @", effect: insert characters, howl: {status: partial}}
+          - {id: kitty.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial}}
+          - {id: kitty.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up, howl: {status: partial}}
+          - {id: kitty.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down, howl: {status: partial}}
+          - {id: kitty.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down, howl: {status: partial}}
+          - {id: kitty.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward, howl: {status: partial}}
+          - {id: kitty.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward, howl: {status: partial}}
+          - {id: kitty.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward, howl: {status: partial}}
+          - {id: kitty.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line, howl: {status: partial}}
+          - {id: kitty.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line, howl: {status: partial}}
+          - {id: kitty.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column, howl: {status: partial}}
+          - {id: kitty.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column, howl: {status: partial}}
+          - {id: kitty.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row, howl: {status: partial}}
+          - {id: kitty.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: partial}}
+          - {id: kitty.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: partial}}
+          - {id: kitty.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position, howl: {status: partial}}
+          - {id: kitty.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position, howl: {status: partial}}
+          - {id: kitty.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, howl: {status: partial}}
+          - {id: kitty.csi.decsed, raw: "CSI ? [Ps=0] J", effect: selective erase display, howl: {status: partial}}
+          - {id: kitty.csi.el, raw: "CSI [Ps=0] K", effect: erase line, howl: {status: partial}}
+          - {id: kitty.csi.decsel, raw: "CSI ? [Ps=0] K", effect: selective erase line, howl: {status: partial}}
+          - {id: kitty.csi.il, raw: "CSI [Ps=1] L", effect: insert lines, howl: {status: partial}}
+          - {id: kitty.csi.dl, raw: "CSI [Ps=1] M", effect: delete lines, howl: {status: partial}}
+          - {id: kitty.csi.dch, raw: "CSI [Ps=1] P", effect: delete characters, howl: {status: partial}}
+          - {id: kitty.csi.push_colors, raw: "CSI [Ps=0] # P", effect: push color stack, howl: {status: partial}}
+          - {id: kitty.csi.pop_colors, raw: "CSI [Ps=0] # Q", effect: pop color stack, howl: {status: partial}}
+          - {id: kitty.csi.report_colors, raw: "CSI # R", effect: report color stack, howl: {status: partial}}
+          - {id: kitty.csi.reset_tabs, raw: "CSI ? 5 W", effect: reset default tab stops, howl: {status: partial}}
+          - {id: kitty.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters, howl: {status: partial}}
+          - {id: kitty.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, howl: {status: partial}}
+          - {id: kitty.csi.da2, raw: "CSI > [Ps=0] c", effect: report secondary device attributes,
+            howl: {status: partial}}
+          - {id: kitty.csi.da_private, raw: "CSI ? [Ps=0] c", effect: report private device attributes,
+            howl: {status: partial}}
+          - {id: kitty.csi.da3, raw: "CSI = [Ps=0] c", effect: report tertiary device attributes,
+            howl: {status: partial}}
+          - {id: kitty.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stop, howl: {status: partial}}
+          - {id: kitty.csi.sm, raw: "CSI Pm h", effect: set modes, howl: {status: partial}}
+          - {id: kitty.csi.rm, raw: "CSI Pm l", effect: reset modes, howl: {status: partial}}
+          - {id: kitty.csi.dsr, raw: "CSI [Ps=0] n", effect: report device status, howl: {status: partial}}
+          - {id: kitty.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: report DEC status, howl: {status: partial}}
+          - {id: kitty.csi.save_cursor, raw: "CSI s", effect: save cursor, howl: {status: partial}}
+          - {id: kitty.csi.save_modes, raw: "CSI ? Pm s", effect: save DEC modes, howl: {status: partial}}
+          - {id: kitty.csi.report_window_pixels, raw: "CSI 14 ; [Ps] t", effect: report window pixel size,
+            relevance: query, howl: {status: partial}}
+          - {id: kitty.csi.report_cell_pixels, raw: "CSI 16 ; [Ps] t", effect: report cell pixel size, relevance: query,
+            howl: {status: partial}}
+          - {id: kitty.csi.report_text_cells, raw: "CSI 18 ; [Ps] t", effect: report text area dimensions,
+            relevance: query, howl: {status: partial}}
+          - {id: kitty.csi.title_push, raw: "CSI 22 ; [Ps] t", effect: push title stack, relevance: host metadata,
+            howl: {status: partial}}
+          - {id: kitty.csi.title_pop, raw: "CSI 23 ; [Ps] t", effect: pop title stack, relevance: host metadata,
+            howl: {status: partial}}
+          - {id: kitty.csi.resize_pixels_unsupported, raw: "CSI 4 ; height ; width t",
+            effect: reject application pixel resize, recognition: rejected_known, relevance: host consequence,
+            howl: {status: 'false'}}
+          - {id: kitty.csi.resize_cells_unsupported, raw: "CSI 8 ; rows ; cols t",
+            effect: reject application cell resize, recognition: rejected_known, relevance: host consequence,
+            howl: {status: 'false'}}
+          - {id: kitty.csi.restore_cursor, raw: "CSI u", effect: restore cursor, howl: {status: partial}}
+          - {id: kitty.csi.kitty_query, raw: "CSI ? u", effect: report keyboard flags, howl: {status: partial}}
+          - {id: kitty.csi.kitty_set, raw: "CSI = flags ; [mode=1] u", effect: set keyboard flags,
+            howl: {status: partial}}
+          - {id: kitty.csi.kitty_push, raw: "CSI > [flags=0] u", effect: push keyboard flags, howl: {status: partial}}
+          - {id: kitty.csi.kitty_pop, raw: "CSI < [count=1] u", effect: pop keyboard flags, howl: {status: partial}}
+          - {id: kitty.csi.decstbm, raw: "CSI [top] ; [bottom] r", effect: set vertical margins,
+            howl: {status: partial}}
+          - {id: kitty.csi.restore_modes, raw: "CSI ? Pm r", effect: restore DEC modes, howl: {status: partial}}
+          - {id: kitty.csi.report_sgr, raw: "CSI Pm $ r", effect: report rectangle rendition, howl: {status: partial}}
+          - {id: kitty.csi.decsace, raw: "CSI [Ps=0] * x", effect: set rectangle attribute extent,
+            howl: {status: partial}}
+          - {id: kitty.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style, howl: {status: partial}}
+          - {id: kitty.csi.multi_cursor, raw: "CSI > Pm SP q", effect: set multiple cursor shapes, relevance: extension,
+            howl: {status: partial}}
+          - {id: kitty.csi.xtversion, raw: "CSI > [Ps=0] q", effect: report version, relevance: query,
+            howl: {status: partial}}
+          - {id: kitty.csi.su, raw: "CSI [Ps=1] S", effect: scroll up, howl: {status: partial}}
+          - {id: kitty.csi.sd, raw: "CSI [Ps=1] T", effect: scroll down, howl: {status: partial}}
+          - {id: kitty.csi.scrollback_fill, raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
+            relevance: extension, howl: {status: partial}}
+          - {id: kitty.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial}}
+          - {id: kitty.csi.decrqm, raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state, howl: {status: partial}}
+          - {id: kitty.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {status: partial}}
+          - {id: kitty.csi.modify_other_keys, raw: "CSI > Ps ; Ps m", effect: set modifyOtherKeys, relevance: input,
+            howl: {status: partial}}
+      - source: vt-parser.c
+        symbol: dispatch_osc
+        line: 493
+        census: {semantic_branches: 32, records: 32}
+        recognition: implemented
+        records:
+          - {id: kitty.osc.title_icon, raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon, howl: {status: partial}}
+          - {id: kitty.osc.icon, raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon, howl: {status: partial}}
+          - {id: kitty.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title, howl: {status: partial}}
+          - {id: kitty.osc.palette, raw: "OSC 4 ; Pt (BEL|ST)", effect: set or query palette, howl: {status: partial}}
+          - {id: kitty.osc.palette_reset, raw: "OSC 104 ; Pm (BEL|ST)", effect: reset palette, howl: {status: partial}}
+          - {id: kitty.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory, howl: {status: partial}}
+          - {id: kitty.osc.hyperlink, raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
+            howl: {status: partial}}
+          - {id: kitty.osc.notify_9, raw: "OSC 9 ; Pt (BEL|ST)", effect: display notification,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.osc.notify_99, raw: "OSC 99 ; Pt (BEL|ST)", effect: display notification,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.osc.notify_777, raw: "OSC 777 ; Pt (BEL|ST)", effect: display notification,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.osc.notify_1337, raw: "OSC 1337 ; Pt (BEL|ST)", effect: display notification,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground, howl: {status: partial}}
+          - {id: kitty.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background, howl: {status: partial}}
+          - {id: kitty.osc.cursor, raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,
+            howl: {status: partial}}
+          - {id: kitty.osc.highlight_bg, raw: "OSC 17 ; color (BEL|ST)", effect: set or query highlight background,
+            howl: {status: partial}}
+          - {id: kitty.osc.highlight_fg, raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
+            howl: {status: partial}}
+          - {id: kitty.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
+            relevance: host consequence, howl: {status: partial}}
+          - {id: kitty.osc.reset_fg, raw: "OSC 110 (BEL|ST)", effect: reset foreground, howl: {status: partial}}
+          - {id: kitty.osc.reset_bg, raw: "OSC 111 (BEL|ST)", effect: reset background, howl: {status: partial}}
+          - {id: kitty.osc.reset_cursor, raw: "OSC 112 (BEL|ST)", effect: reset cursor color, howl: {status: partial}}
+          - {id: kitty.osc.reset_highlight_bg, raw: "OSC 117 (BEL|ST)", effect: reset highlight background,
+            howl: {status: partial}}
+          - {id: kitty.osc.reset_highlight_fg, raw: "OSC 119 (BEL|ST)", effect: reset highlight foreground,
+            howl: {status: partial}}
+          - {id: kitty.osc.kitty_color, raw: "OSC 21 ; Pt (BEL|ST)", effect: query set or reset terminal colors,
+            howl: {status: partial}}
+          - {id: kitty.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard transfer,
+            relevance: host consequence, howl: {status: partial}}
+          - {id: kitty.osc.clipboard_5522, raw: "OSC 5522 ; Pc ; Pd (BEL|ST)", effect: Kitty clipboard extension,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.osc.text_size, raw: "OSC TEXT_SIZE_CODE ; Pt (BEL|ST)", effect: control text sizing,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.osc.drag_drop, raw: "OSC DND_CODE ; Pt (BEL|ST)", effect: drag and drop control,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.osc.shell_mark, raw: "OSC 133 ; mark [; metadata] (BEL|ST)",
+            effect: update shell integration mark, howl: {status: partial}}
+          - {id: kitty.osc.file_transfer, raw: "OSC FILE_TRANSFER_CODE ; Pt (BEL|ST)", effect: transfer file,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.osc.color_push, raw: "OSC 30001 (BEL|ST)", effect: push color stack, howl: {status: partial}}
+          - {id: kitty.osc.color_pop, raw: "OSC 30101 (BEL|ST)", effect: pop color stack, howl: {status: partial}}
+          - {id: kitty.osc.metadata, raw: "OSC 3008 ; Pt (BEL|ST)", effect: update terminal metadata,
+            relevance: host metadata, howl: {status: partial}}
+      - source: vt-parser.c
+        symbol: dispatch_osc
+        line: 514
+        census: {semantic_branches: 27, records: 27}
+        recognition: recognized_noop
+        records:
+          - {id: kitty.osc_ignore.special_colors_5, raw: "OSC 5 ; Pt (BEL|ST)", effect: ignore xterm special colors,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.special_colors_105, raw: "OSC 105 ; Pt (BEL|ST)", effect: ignore xterm special colors,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.special_enable_6, raw: "OSC 6 ; Pt (BEL|ST)",
+            effect: ignore xterm special-color enablement, relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.special_enable_106, raw: "OSC 106 ; Pt (BEL|ST)",
+            effect: ignore xterm special-color enablement, relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.color_report_13, raw: "OSC 13 ; Pt (BEL|ST)", effect: ignore color report,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.color_report_14, raw: "OSC 14 ; Pt (BEL|ST)", effect: ignore color report,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.color_report_15, raw: "OSC 15 ; Pt (BEL|ST)", effect: ignore color report,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.color_report_16, raw: "OSC 16 ; Pt (BEL|ST)", effect: ignore color report,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.color_report_18, raw: "OSC 18 ; Pt (BEL|ST)", effect: ignore color report,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.logging, raw: "OSC 46 ; Pt (BEL|ST)", effect: ignore xterm logging,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.font, raw: "OSC 50 ; Pt (BEL|ST)", effect: ignore xterm font selection,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.emacs, raw: "OSC 51 ; Pt (BEL|ST)", effect: ignore Emacs shell command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.xterm_query_60, raw: "OSC 60 ; Pt (BEL|ST)", effect: ignore xterm query control,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.xterm_query_61, raw: "OSC 61 ; Pt (BEL|ST)", effect: ignore xterm query control,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_audio, raw: "OSC 440 ; Pt (BEL|ST)", effect: ignore audio command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.vscode, raw: "OSC 633 ; Pt (BEL|ST)", effect: ignore VS Code shell integration,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.vte, raw: "OSC 666 ; Pt (BEL|ST)", effect: ignore VTE shell integration,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.fig, raw: "OSC 697 ; Pt (BEL|ST)", effect: ignore Fig shell integration,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_locale, raw: "OSC 701 ; Pt (BEL|ST)", effect: ignore locale command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_ansi, raw: "OSC 7704 ; Pt (BEL|ST)", effect: ignore ANSI color command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_copy_title, raw: "OSC 7721 ; Pt (BEL|ST)", effect: ignore copy-title command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_emoji, raw: "OSC 7750 ; Pt (BEL|ST)", effect: ignore emoji-style command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_font, raw: "OSC 7770 ; Pt (BEL|ST)", effect: ignore font-size command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_glyphs, raw: "OSC 7771 ; Pt (BEL|ST)", effect: ignore glyph-coverage command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_window, raw: "OSC 7777 ; Pt (BEL|ST)", effect: ignore window-size command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.mintty_wide, raw: "OSC 77119 ; Pt (BEL|ST)", effect: ignore wide-character command,
+            relevance: compatibility, howl: {status: 'false'}}
+          - {id: kitty.osc_ignore.windows, raw: "OSC 9001 ; Pt (BEL|ST)", effect: ignore Windows Terminal command,
+            relevance: compatibility, howl: {status: 'false'}}
+      - source: vt-parser.c
+        symbol: dispatch_dcs
+        line: 675
+        census: {semantic_branches: 3, records: 3}
+        recognition: implemented
+        records:
+          - {id: kitty.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap values, relevance: query,
+            howl: {status: partial}}
+          - {id: kitty.dcs.decrqss, raw: "DCS $ q Pt ST", effect: query terminal state string, relevance: query,
+            howl: {status: partial}}
+          - {id: kitty.dcs.sync, raw: "DCS = Ps s Pt ST", effect: synchronized update control, howl: {status: partial}}
+      - source: vt-parser.c
+        symbol: parse_kitty_dcs
+        line: 643
+        census: {semantic_branches: 10, records: 10}
+        recognition: implemented
+        records:
+          - {id: kitty.dcs.remote_cmd, raw: "DCS @kitty-cmd{Pb ST", effect: dispatch remote-control command,
+            relevance: extension, howl: {status: 'false'}}
+          - {id: kitty.dcs.overlay_ready, raw: "DCS @kitty-overlay-ready|Pb ST", effect: report overlay readiness,
+            relevance: host metadata, howl: {status: 'false'}}
+          - {id: kitty.dcs.kitten_result, raw: "DCS @kitty-kitten-result|Pb ST", effect: report kitten result,
+            relevance: extension, howl: {status: 'false'}}
+          - {id: kitty.dcs.remote_print, raw: "DCS @kitty-print|Pb ST", effect: print remote payload,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.dcs.remote_echo, raw: "DCS @kitty-echo|Pb ST", effect: echo remote payload,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.dcs.remote_ssh, raw: "DCS @kitty-ssh|Pb ST", effect: dispatch SSH integration payload,
+            relevance: transport, howl: {status: 'false'}}
+          - {id: kitty.dcs.remote_askpass, raw: "DCS @kitty-ask|Pb ST", effect: dispatch askpass request,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.dcs.remote_clone, raw: "DCS @kitty-clone|Pb ST", effect: clone terminal state,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.dcs.remote_edit, raw: "DCS @kitty-edit|Pb ST", effect: dispatch remote edit request,
+            relevance: host consequence, howl: {status: 'false'}}
+          - {id: kitty.dcs.restore_cursor, raw: "DCS @kitty-restore-cursor-appearance|Pb ST",
+            effect: restore cursor appearance, relevance: presentation, howl: {status: 'false'}}
+      - source: vt-parser.c
+        symbol: dispatch_apc
+        line: 1416
+        census: {semantic_branches: 1, records: 1}
+        recognition: implemented
+        records:
+          - {id: kitty.apc.graphics, raw: "APC G Pb ST", effect: Kitty graphics command, relevance: graphics,
+            bounds: parser command and payload bounds, howl: {status: 'false'}}
+      - source: vt-parser.c
+        symbol: dispatch_pm
+        line: 1432
+        census: {semantic_branches: 1, records: 1}
+        recognition: rejected_known
+        records:
+          - {id: kitty.pm.unsupported, raw: "PM Pt ST", effect: report unsupported PM payload, howl: {status: 'false'}}
+      - source: vt-parser.c
+        symbol: dispatch_sos
+        line: 1445
+        census: {semantic_branches: 1, records: 1}
+        recognition: rejected_known
+        records:
+          - {id: kitty.sos.unsupported, raw: "SOS Pt ST", effect: report unsupported SOS payload,
+            howl: {status: 'false'}}
+      - source: vt-parser.c
+        symbol: _parse_sgr
+        line: 965
+        census: {semantic_branches: 24, records: 24}
+        recognition: implemented
+        records:
+          - {id: kitty.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial}}
+          - {id: kitty.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: partial}}
+          - {id: kitty.sgr.faint, raw: "CSI 2 m", effect: enable faint, howl: {status: partial}}
+          - {id: kitty.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {status: partial}}
+          - {id: kitty.sgr.underline, raw: "CSI 4[:style] m", effect: enable or style underline,
+            howl: {status: partial}}
+          - {id: kitty.sgr.blink, raw: "CSI 5|6 m", effect: enable blink, howl: {status: partial}}
+          - {id: kitty.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: partial}}
+          - {id: kitty.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: partial}}
+          - {id: kitty.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: partial}}
+          - {id: kitty.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold and faint, howl: {status: partial}}
+          - {id: kitty.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: partial}}
+          - {id: kitty.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: partial}}
+          - {id: kitty.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: partial}}
+          - {id: kitty.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: partial}}
+          - {id: kitty.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: partial}}
+          - {id: kitty.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: partial}}
+          - {id: kitty.sgr.fg_basic, raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {status: partial}}
+          - {id: kitty.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
+            howl: {status: partial}}
+          - {id: kitty.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: partial}}
+          - {id: kitty.sgr.bg_basic, raw: "CSI 40..47|100..107 m", effect: set basic background,
+            howl: {status: partial}}
+          - {id: kitty.sgr.bg_extended, raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
+            howl: {status: partial}}
+          - {id: kitty.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: partial}}
+          - {id: kitty.sgr.underline_color, raw: "CSI 58 ; 2|5 ; Pm m", effect: set underline color,
+            howl: {status: partial}}
+          - {id: kitty.sgr.underline_color_default, raw: "CSI 59 m", effect: reset underline color,
+            howl: {status: partial}}
+      - source: graphics.c
+        symbol: grman_handle_command
+        line: 2195
+        census: {semantic_branches: 9, records: 9}
+        recognition: implemented
+        conditions: APC G control keys precede optional payload after semicolon
+        records:
+          - {id: kitty.graphics.transmit_default, raw: "APC G [a=]Pm ; Pb ST", effect: transmit image data,
+            relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.transmit, raw: "APC G a=t,Pm ; Pb ST", effect: transmit image data, relevance: graphics,
+            howl: {status: 'false'}}
+          - {id: kitty.graphics.transmit_display, raw: "APC G a=T,Pm ; Pb ST", effect: transmit and display image,
+            relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.query, raw: "APC G a=q,Pm ; Pb ST",
+            effect: probe image transmission support then discard probe, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.animate, raw: "APC G a=a,Pm ST", effect: control image animation, relevance: graphics,
+            howl: {status: 'false'}}
+          - {id: kitty.graphics.frame, raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
+            relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.put, raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
+            howl: {status: 'false'}}
+          - {id: kitty.graphics.delete, raw: "APC G a=d,d=selector,Pm ST", effect: delete image placements or data,
+            relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.compose, raw: "APC G a=c,Pm ST", effect: compose animation frames, relevance: graphics,
+            howl: {status: 'false'}}
+      - source: graphics.c
+        symbol: handle_delete_command
+        line: 2047
+        census: {semantic_branches: 12, records: 12}
+        recognition: implemented
+        records:
+          - {id: kitty.graphics.delete_all, raw: "APC G a=d,d=a|A ST",
+            effect: delete all non-cell placements optionally including data, relevance: graphics,
+            howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_id, raw: "APC G a=d,d=i|I,i=Ps ST",
+            effect: delete by image id optionally including data, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_range, raw: "APC G a=d,d=r|R,Pm ST",
+            effect: delete image id range optionally including data, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_point, raw: "APC G a=d,d=p|P,x=Ps,y=Ps ST",
+            effect: delete at cell point optionally including data, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_point3d, raw: "APC G a=d,d=q|Q,x=Ps,y=Ps,z=Ps ST",
+            effect: delete at cell point and z-index optionally including data, relevance: graphics,
+            howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_x, raw: "APC G a=d,d=x|X,x=Ps ST",
+            effect: delete at column optionally including data, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_y, raw: "APC G a=d,d=y|Y,y=Ps ST",
+            effect: delete at row optionally including data, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_z, raw: "APC G a=d,d=z|Z,z=Ps ST",
+            effect: delete at z-index optionally including data, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_cursor, raw: "APC G a=d,d=c|C ST",
+            effect: delete at cursor optionally including data, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_number, raw: "APC G a=d,d=n|N,I=Ps ST",
+            effect: delete by image number optionally including data, relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_frame, raw: "APC G a=d,d=f|F,Pm ST", effect: delete animation frame or image,
+            relevance: graphics, howl: {status: 'false'}}
+          - {id: kitty.graphics.delete_default, raw: "APC G a=d,Pm ST", effect: delete all non-cell placements,
+            relevance: graphics, howl: {status: 'false'}}
+
+selective_overlaps:
+  - id: overlap.csi_s
+    raw: "CSI Pm s"
+    references: [libvterm.csi.decslrm, iterm2.csi.save_or_margins, kitty.csi.save_cursor]
+    conflict: parameterless ANSI save cursor versus mode-dependent DECSLRM
+  - id: overlap.csi_t
+    raw: "CSI Ps [ + ] T"
+    references: [libvterm.csi.sd, iterm2.csi.sd, kitty.csi.sd, kitty.csi.scrollback_fill]
+    conflict: standard scroll-down versus Kitty scrollback-fill extension
+  - id: overlap.osc5
+    raw: "OSC 5 ; Pt (BEL|ST)"
+    references: [kitty.osc_ignore.special_colors_5]
+    conflict: Kitty ignores xterm special colors while Howl implements that palette family
+  - id: overlap.osc50
+    raw: "OSC 50 ; Pt (BEL|ST)"
+    references: [iterm2.osc.kvp_50, kitty.osc_ignore.font]
+    conflict: xterm font selection versus iTerm key-value command
+  - id: overlap.osc52
+    raw: "OSC 52 ; Pc ; Pd (BEL|ST)"
+    references: [libvterm.osc.clipboard, iterm2.osc.clipboard, kitty.osc.clipboard]
+    conflict: clipboard query/set policy and Kitty 5522 extension differ despite shared transport
+  - id: overlap.dcs_ps_p
+    raw: "DCS Ps p Pb ST"
+    references: [iterm2.dcs.tmux_hook, iterm2.dcs.ssh_hook]
+    conflict: iTerm assigns private tmux and SSH parsers to parameter values 1000 and 2000
+  - id: overlap.synchronized_output
+    raw: "CSI ? 2026 h|l | DCS = 1|2 s ST"
+    references: [iterm2.dcs.sync_begin, iterm2.dcs.sync_end, kitty.dcs.sync]
+    conflict: DEC private mode and DCS transports coexist
+  - id: overlap.csi_u
+    raw: "CSI [leader] Pm u"
+    references: [iterm2.csi.restore_cursor, iterm2.csi.kitty_set, iterm2.csi.kitty_push, iterm2.csi.kitty_pop,
+      iterm2.csi.kitty_query, kitty.csi.restore_cursor, kitty.csi.kitty_set, kitty.csi.kitty_push, kitty.csi.kitty_pop,
+      kitty.csi.kitty_query]
+    conflict: plain restore cursor shares a final byte with leader-qualified Kitty keyboard controls
