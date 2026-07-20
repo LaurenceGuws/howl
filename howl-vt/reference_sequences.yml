@@ -1307,8 +1307,18 @@ references:
             relevance: graphics, howl: {status: 'false'}}
           - {id: iterm2.dcs.tmux_wrap, raw: "DCS t tmux;Pb ST", effect: unwrap tmux terminal bytes,
             relevance: transport, howl: {status: 'false'}}
-          - {id: iterm2.dcs.sync_begin, raw: "DCS = 1 s ST", effect: begin synchronized update, howl: {status: partial}}
-          - {id: iterm2.dcs.sync_end, raw: "DCS = 2 s ST", effect: end synchronized update, howl: {status: partial}}
+          - id: iterm2.dcs.sync_begin
+            raw: "DCS = 1 s ST"
+            effect: begin synchronized update
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+              path: howl-vt/test/unit/terminal_test.zig,
+              test: synchronized update DCS shares exact bounded mode state}}
+          - id: iterm2.dcs.sync_end
+            raw: "DCS = 2 s ST"
+            effect: end synchronized update
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+              path: howl-vt/test/unit/terminal_test.zig,
+              test: synchronized update DCS shares exact bounded mode state}}
           - {id: iterm2.dcs.decrqss, raw: "DCS $ q Pt ST", effect: request terminal state string, relevance: query,
             howl: {status: partial}}
           - {id: iterm2.dcs.decrsps_deccir, raw: "DCS 1 $ t Pt ST", effect: restore cursor information,
@@ -1535,7 +1545,9 @@ references:
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: terminal paste encoding is gated by DECSET 2004}}}
           - {id: iterm2.mode.synchronized_output, raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
+              proof: {path: howl-vt/test/unit/terminal_test.zig,
+                test: synchronized update DCS shares exact bounded mode state}}}
           - {id: iterm2.mode.dark_mode_dsr, raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report,
             relevance: extension, howl: {status: 'false'}}
           - {id: iterm2.mode.resize_notifications, raw: "CSI ? 2048 h|l", effect: toggle resize notifications,
@@ -2257,7 +2269,13 @@ references:
             howl: {status: partial}}
           - {id: kitty.dcs.decrqss, raw: "DCS $ q Pt ST", effect: query terminal state string, relevance: query,
             howl: {status: partial}}
-          - {id: kitty.dcs.sync, raw: "DCS = Ps s Pt ST", effect: synchronized update control, howl: {status: partial}}
+          - id: kitty.dcs.sync
+            raw: "DCS = Ps s Pt ST"
+            effect: synchronized update control
+            conditions: Ps 1 starts and Ps 2 stops; Kitty also expires or stops pending mode on timeout and resize
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+              path: howl-vt/test/unit/terminal_test.zig,
+              test: synchronized update DCS shares exact bounded mode state}}
       - source: vt-parser.c
         symbol: parse_kitty_dcs
         line: 643

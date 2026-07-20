@@ -384,6 +384,35 @@ test "terminal tracks synchronized output private mode" {
     try std.testing.expect(!vt.modes.synchronized_output);
 }
 
+test "synchronized update DCS shares exact bounded mode state" {
+    var vt = try Terminal.init(std.testing.allocator, 2, 8);
+    defer vt.deinit();
+
+    try std.testing.expect(!(try vt.feed("\x1bP=1sbody")).state_changed);
+    try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect((try vt.feed("\x1b\\")).state_changed);
+    try std.testing.expect(vt.modes.synchronized_output);
+    try std.testing.expect(!(try vt.feed("\x90=1s\x9c")).state_changed);
+
+    try std.testing.expect(!(try vt.feed(
+        "\x1bP=3s\x1b\\\x1bP=1;2s\x1b\\\x1bP=s\x1b\\\x1bP=1q\x1b\\\x1bP?1s\x1b\\",
+    )).state_changed);
+    try std.testing.expect(vt.modes.synchronized_output);
+    try std.testing.expect((try vt.feed("\x90=2signored\x9c")).state_changed);
+    try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect(!(try vt.feed("\x1bP=2s\x1b\\")).state_changed);
+
+    try std.testing.expect((try vt.feed("\x1b[?2026h\x1b[?2026s\x1bP=2s\x1b\\")).state_changed);
+    try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect((try vt.feed("\x1b[?2026r")).state_changed);
+    try std.testing.expect(vt.modes.synchronized_output);
+    try std.testing.expect((try vt.feed("\x1b[?2026$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?2026;1$y", vt.host.pendingOutput());
+    vt.host.clearPendingOutput();
+    try std.testing.expect((try vt.feed("\x1bc")).state_changed);
+    try std.testing.expect(!vt.modes.synchronized_output);
+}
+
 test "terminal visible view projects scrollback rows" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 2, 2, 4);
     defer vt.deinit();

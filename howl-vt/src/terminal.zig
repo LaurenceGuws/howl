@@ -7428,6 +7428,15 @@ const DcsEvent = @FieldType(parser_mod.Event, "dcs");
 
 // Decodes one completed borrowed DCS payload; unsupported commands return null.
 fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
+    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '=' and
+        dcs.final == 's' and dcs.param_count == 1)
+    {
+        return switch (dcs.params[0]) {
+            1 => .{ .synchronized_output = true },
+            2 => .{ .synchronized_output = false },
+            else => null,
+        };
+    }
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '$' and dcs.final == 'q')
         return SemanticEvent{ .dcs_request_status = dcs.payload };
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'q')
