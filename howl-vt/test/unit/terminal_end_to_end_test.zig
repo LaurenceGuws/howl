@@ -27,6 +27,40 @@ test "terminal: stream applies bytes to grid state deterministically" {
     try std.testing.expectEqual(@as(u16, 2), s.cursor.col);
 }
 
+test "terminal: REP retains bounded glyph state and exact lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[b")).state_changed);
+    try std.testing.expect((try terminal.feed("A\xcc\x81\xcc\xa7\xcc\x88\xcc\x84")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
+    try std.testing.expect((try terminal.feed("2b")).state_changed);
+
+    const primary = terminal.screen_state.activeConst();
+    for (0..3) |col| {
+        const cell = primary.cellInfoAt(0, @intCast(col));
+        try std.testing.expectEqual(@as(u21, 'A'), cell.codepoint);
+        try std.testing.expectEqual(@as(u8, 3), cell.combining_len);
+        try std.testing.expectEqualSlices(u32, &.{ 0x301, 0x327, 0x308 }, cell.combining[0..3]);
+    }
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[3b")).state_changed);
+    try std.testing.expect((try terminal.feed("B\x1b[b")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.activeConst().cellAt(0, 1));
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[b")).state_changed);
+    const repeated = terminal.screen_state.activeConst().cellInfoAt(0, 3);
+    try std.testing.expectEqual(@as(u21, 'A'), repeated.codepoint);
+    try std.testing.expectEqual(@as(u8, 3), repeated.combining_len);
+
+    try terminal.resize(3, 10);
+    try std.testing.expect((try terminal.feed("\x1b[b")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[b")).state_changed);
+}
+
 test "terminal: erase families retain exact ranges protection geometry and mutation" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
     defer terminal.deinit();

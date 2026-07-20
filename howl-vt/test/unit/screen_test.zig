@@ -283,31 +283,6 @@ test "screen: zero-count character edits default to one cell" {
     try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 3));
 }
 
-test "screen: REP repeats last written codepoint" {
-    const gpa = std.testing.allocator;
-    var s = try Grid.initWithCells(gpa, 1, 6);
-    defer s.deinit(gpa);
-
-    apply(&s, SemanticEvent{ .write_text = "A" });
-    apply(&s, SemanticEvent{ .repeat_preceding = 3 });
-
-    try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 1));
-    try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 2));
-    try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 3));
-    try std.testing.expectEqual(@as(u16, 4), s.cursor.col);
-}
-
-test "screen: REP is no-op without preceding codepoint" {
-    const gpa = std.testing.allocator;
-    var s = try Grid.initWithCells(gpa, 1, 4);
-    defer s.deinit(gpa);
-
-    apply(&s, SemanticEvent{ .repeat_preceding = 3 });
-    try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u16, 0), s.cursor.col);
-}
-
 test "screen: RI scrolls region down at top margin" {
     const gpa = std.testing.allocator;
     var s = try Grid.initWithCells(gpa, 3, 4);

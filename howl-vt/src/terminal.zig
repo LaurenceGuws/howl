@@ -89,7 +89,7 @@ pub const Screen = struct {
     output_bytes: usize,
     next_output_id: u64,
     history_loss_generation: u64,
-    last_graphic_codepoint: ?u21,
+    last_graphic: ?LastGraphic,
     current_attrs: CellAttrs,
     dirty_state: DirtyState,
     tab_stops: ?[]bool,
@@ -146,7 +146,7 @@ pub const Screen = struct {
             .output_bytes = 0,
             .next_output_id = 1,
             .history_loss_generation = 0,
-            .last_graphic_codepoint = null,
+            .last_graphic = null,
             .current_attrs = initial_cell_attrs,
             .dirty_state = dirty_state,
             .tab_stops = tab_stops,
@@ -1042,7 +1042,7 @@ pub const Screen = struct {
         self.row_origin = 0;
         self.scroll_top = 0;
         self.scroll_bottom = self.rows -| 1;
-        self.last_graphic_codepoint = null;
+        self.last_graphic = null;
         self.current_attrs = initial_cell_attrs;
         self.markAllRowsDirty();
         if (self.cells) |c| @memset(c, blank_cell);
@@ -1171,7 +1171,7 @@ pub const Screen = struct {
             .cursor_vertical_absolute,
             .cursor_position,
             => self.applyCursorMove(event),
-            .write_text, .write_codepoint, .repeat_preceding, .sgr => self.applyRetainedState(event),
+            .write_text, .write_codepoint, .sgr => self.applyRetainedState(event),
             .line_feed,
             .next_line,
             .reverse_index,
@@ -1250,7 +1250,6 @@ pub const Screen = struct {
         switch (event) {
             .write_text => |text| self.writeText(text),
             .write_codepoint => |codepoint| self.writeCell(codepoint),
-            .repeat_preceding => |count| self.repeatPreceding(count),
             .sgr => |sgr| self.applySgr(sgr.params, sgr.separators),
             else => unreachable,
         }
@@ -1980,12 +1979,19 @@ pub const Screen = struct {
         for (text) |byte| self.writeCell(@intCast(byte));
     }
 
-    /// Repeat the last graphic codepoint up to `count` times.
-    fn repeatPreceding(self: *Screen, count: u16) void {
-        if (self.last_graphic_codepoint) |cp| {
-            var remaining = count;
-            while (remaining > 0) : (remaining -= 1) self.writeCell(cp);
+    /// Repeat the complete bounded preceding glyph using the current rendition.
+    ///
+    /// A zero count has the protocol default of one. The result is false only
+    /// when no preceding graphic exists; accepted repetition uses the ordinary
+    /// write path and therefore owns its wrapping, insertion, and dirty facts.
+    fn repeatPreceding(self: *Screen, count: u16) bool {
+        const graphic = self.last_graphic orelse return false;
+        var remaining = @max(count, 1);
+        while (remaining > 0) : (remaining -= 1) {
+            self.writeCell(graphic.codepoint);
+            for (graphic.combining[0..graphic.combining_len]) |cp| self.writeCell(cp);
         }
+        return true;
     }
 
     /// Write one codepoint with combining, insertion, wrapping, dirty, and cursor semantics.
@@ -2011,7 +2017,7 @@ pub const Screen = struct {
                 .attrs = self.current_attrs,
             };
         }
-        self.last_graphic_codepoint = cp;
+        self.last_graphic = .{ .codepoint = cp };
         if (self.cursor.col < right) {
             self.cursor.setColByClient(self.cursor.col + 1);
         } else if (self.auto_wrap) {
@@ -2031,6 +2037,12 @@ pub const Screen = struct {
 
         lead_cell.combining[lead_cell.combining_len] = cp;
         lead_cell.combining_len += 1;
+        if (self.last_graphic) |*graphic| {
+            if (graphic.combining_len < graphic.combining.len) {
+                graphic.combining[graphic.combining_len] = cp;
+                graphic.combining_len += 1;
+            }
+        }
         self.markDirtyCols(pos.row, pos.col, pos.col);
         return true;
     }
@@ -3039,6 +3051,13 @@ const ScreenCell = struct {
     x: u8 = 0,
     y: u8 = 0,
     attrs: ScreenCellAttrs,
+};
+
+// Retains the complete bounded graphic cluster consumed by REP.
+const LastGraphic = struct {
+    codepoint: u21,
+    combining_len: u8 = 0,
+    combining: [3]u21 = .{ 0, 0, 0 },
 };
 
 fn isCellContinuation(cell: ScreenCell) bool {
@@ -10307,6 +10326,9 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .erase_chars => |count| {
             return vt.screen_state.active().eraseChars(count);
         },
+        .repeat_preceding => |count| {
+            return vt.screen_state.active().repeatPreceding(count);
+        },
         .insert_columns => |count| {
             return vt.screen_state.active().insertColumns(count);
         },
@@ -10327,7 +10349,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .cursor_position,
         .write_text,
         .write_codepoint,
-        .repeat_preceding,
         .reverse_index,
         .carriage_return,
         .backspace,

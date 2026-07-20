@@ -291,8 +291,11 @@ references:
           - {id: libvterm.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward,
             conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
+            conditions: libvterm clamps complete glyph repetition to the logical row while Howl wraps through the grid,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
           - {id: libvterm.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, relevance: query,
             conditions: libvterm identifies VT100 level with 22 and OSC 52 while Howl identifies VT220 level with 22,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
@@ -819,7 +822,11 @@ references:
           - {id: iterm2.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward,
             conditions: double-width line stepping, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: iterm2.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial}}
+          - {id: iterm2.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
+            conditions: iTerm2 includes double-width and external-attribute behavior absent from Howl,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
           - {id: iterm2.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down,
             conditions: iTerm2 clamps from above the vertical region into its bottom, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
@@ -1816,7 +1823,11 @@ references:
           - {id: kitty.csi.ich, raw: "CSI [Ps=1] @", effect: insert characters,
             conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: kitty.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial}}
+          - {id: kitty.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
+            conditions: Kitty repeats its last codepoint while Howl retains its bounded combining cluster,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
           - {id: kitty.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
             conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
