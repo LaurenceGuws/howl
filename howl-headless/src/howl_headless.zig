@@ -143,7 +143,7 @@ pub const ShellMark = struct {
     }
 };
 
-/// Copies one coherent terminal status observation under the model lock.
+/// Copies one coherent terminal status observation under the model and lifecycle locks.
 pub const Status = struct {
     /// Reports the terminal progress lifecycle observation.
     state: State,

@@ -1,0 +1,123 @@
+howl-headless/src/howl_headless.zig|anyopaque|context: ?*anyopaque = null,
+howl-headless/src/howl_headless.zig|anyopaque|fn countTestWake(context: ?*anyopaque) void {
+howl-headless/src/howl_headless.zig|anyopaque|fn ignoreWake(_: ?*anyopaque) void {}
+howl-headless/src/howl_headless.zig|anyopaque|notify: *const fn (?*anyopaque) void = ignoreWake,
+howl-headless/src/main.zig|anytype|fn rowContentEnd(view: anytype, row: u16) u16 {
+howl-headless/src/main.zig|anytype|fn writeSnapshot(writer: *std.Io.Writer, view: anytype) std.Io.Writer.Error!void {
+howl-headless/src/test.zig|anyopaque|fn countWake(context: ?*anyopaque) void {
+howl-headless/src/test.zig|anytype|fn rowStartsWith(view: anytype, expected: []const u8) bool {
+howl-headless/src/test.zig|anytype|fn viewContains(view: anytype, expected: []const u8) bool {
+howl-host/src/text.zig|discard|_ = entries.find(key).?;
+howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|fn frameDone(data: ?*anyopaque, callback: ?*c.struct_wl_callback, _: u32) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn pointerFrame(_: ?*anyopaque, _: ?*c.struct_wl_pointer) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn shellPing(_: ?*anyopaque, base: ?*c.struct_xdg_wm_base, serial: u32) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn window(data: ?*anyopaque) *Window {
+howl-text/src/generated_geometry.zig|anytype|comptime inside: anytype,
+howl-text/src/generated_geometry.zig|anytype|context: anytype,
+howl-vt/benchmark/pty_feed_record.zig|discard|_ = try std.fmt.hexToBytes(chunk, hex);
+howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+howl-vt/benchmark/terminal_benchmark.zig|anytype|fn count64(items: anytype) u64 {
+howl-vt/benchmark/terminal_benchmark.zig|anytype|fn paramCount32(items: anytype) u32 {
+howl-vt/benchmark/terminal_benchmark.zig|discard|_ = args.next();
+howl-vt/simulation/protocol.zig|anytype|fn hashCell(hasher: *std.hash.Fnv1a_64, cell: anytype) void {
+howl-vt/simulation/protocol.zig|anytype|fn hashColor(hasher: *std.hash.Fnv1a_64, color: anytype) void {
+howl-vt/simulation/protocol.zig|anytype|fn hashValue(hasher: *std.hash.Fnv1a_64, value: anytype) void {
+howl-vt/simulation/scrollback.zig|anytype|fn visibleContentLen(s: anytype, row: u16, cols: u16) u16 {
+howl-vt/src/howl_vt.zig|discard|_ = terminal;
+howl-vt/src/parser.zig|discard|_ = parser.entryPhase(.escape, 0x1B);
+howl-vt/src/parser.zig|discard|_ = parser.next('$');
+howl-vt/src/parser.zig|discard|_ = parser.next('1');
+howl-vt/src/parser.zig|discard|_ = parser.next('1');
+howl-vt/src/parser.zig|discard|_ = parser.next('1');
+howl-vt/src/parser.zig|discard|_ = parser.next('2');
+howl-vt/src/parser.zig|discard|_ = parser.next('2');
+howl-vt/src/parser.zig|discard|_ = parser.next('3');
+howl-vt/src/parser.zig|discard|_ = parser.next(':');
+howl-vt/src/parser.zig|discard|_ = parser.next(';');
+howl-vt/src/parser.zig|discard|_ = parser.next(';');
+howl-vt/src/parser.zig|discard|_ = parser.next('P');
+howl-vt/src/parser.zig|discard|_ = parser.next('P');
+howl-vt/src/parser.zig|discard|_ = parser.next('[');
+howl-vt/src/parser.zig|discard|_ = parser.next(']');
+howl-vt/src/parser.zig|discard|_ = parser.next('_');
+howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
+howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
+howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
+howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
+howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
+howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
+howl-vt/src/terminal.zig|anytype|fn formatLocatorReport(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
+howl-vt/src/terminal.zig|anytype|fn formatOscReply(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
+howl-vt/src/terminal.zig|anytype|fn formatTerminalReport(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
+howl-vt/test/fuzz_terminal.zig|discard|_ = terminal.feed(bytes) catch |err| switch (err) {
+howl-vt/test/fuzz_terminal.zig|discard|_ = terminal.scrollViewport(switch (smith.valueRangeAtMost(u8, 0, 3)) {
+howl-vt/test/fuzz_terminal.zig|discard|_ = try proof.feed("S");
+howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
+howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
+howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
+howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("\x18A");
+howl-vt/test/fuzz_terminal.zig|discard|_ = view.cellInfoAt(row, col);
+howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("E");
+howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b[5n");
+howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b[?2004h");
+howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b]52;c;SG93bA==\x07");
+howl-vt/test/unit/parser/csi_test.zig|discard|_ = try feedCsiBytes("99m");
+howl-vt/test/unit/parser/events_test.zig|anytype|fn paramCount32(items: anytype) u32 {
+howl-vt/test/unit/parser/main_test.zig|discard|_ = parser.next('P');
+howl-vt/test/unit/parser/main_test.zig|discard|_ = parser.next('P');
+howl-vt/test/unit/parser/main_test.zig|discard|_ = parser.next(0x1B);
+howl-vt/test/unit/parser/main_test.zig|discard|_ = parser.next(0x1B);
+howl-vt/test/unit/parser/main_test.zig|discard|_ = self.arena.reset(.retain_capacity);
+howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 2, .col = 3, .mod = .{}, .buttons_down = 1 });
+howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 3, .col = 3, .mod = .{}, .buttons_down = 0 });
+howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .press, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 1 });
+howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .release, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 0 });
+howl-vt/test/unit/terminal_surface_test.zig|discard|_ = encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('A'), .{});
+howl-vt/test/unit/terminal_surface_test.zig|discard|_ = encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('B'), .{});
+howl-vt/test_unit.zig|discard|_ = @import("src/howl_vt.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/csi_mapping_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/csi_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/events_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/main_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/string_control_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/report_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/route_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/screen/cursor_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/screen/history_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/screen/resize_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/screen/tabs_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/screen/write_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/screen_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_cursor_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_end_to_end_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_modes_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_osc_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_snapshot_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_surface_test.zig");
+howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_test.zig");
