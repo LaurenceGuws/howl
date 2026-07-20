@@ -206,12 +206,60 @@ test "mouse mode queries and save restore include extended protocols" {
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    write(&stream, "\x1b[?1003h\x1b[?1005h\x1b[?1003;1005s");
+    write(&stream, "\x1b[?1003h\x1b[?1016h\x1b[?1003;1016s");
     write(&stream, "\x1b[?1000h\x1b[?1006h");
-    write(&stream, "\x1b[?1003;1005r");
-    write(&stream, "\x1b[?9$p\x1b[?1000$p\x1b[?1003$p\x1b[?1005$p\x1b[?1006$p\x1b[?1015$p");
+    write(&stream, "\x1b[?1003;1016r");
+    write(&stream, "\x1b[?9$p\x1b[?1000$p\x1b[?1003$p\x1b[?1005$p\x1b[?1006$p\x1b[?1015$p\x1b[?1016$p");
 
-    try std.testing.expectEqualStrings("\x1b[?9;2$y\x1b[?1000;2$y\x1b[?1003;1$y\x1b[?1005;1$y\x1b[?1006;2$y\x1b[?1015;2$y", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings(
+        "\x1b[?9;2$y\x1b[?1000;2$y\x1b[?1003;1$y\x1b[?1005;2$y" ++
+            "\x1b[?1006;2$y\x1b[?1015;2$y\x1b[?1016;1$y",
+        pendingOutput(&terminal),
+    );
+}
+
+test "mouse and focus modes own exact protocol selection mutation and pixel reports" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[?1000h\x1b[?1006h")).state_changed);
+    try std.testing.expect((try terminal.feed("12345678")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1000h\x1b[?1006h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1000h\x1b[?1006h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1002h\x1b[?1016")).state_changed);
+    try std.testing.expect((try terminal.feed("h")).state_changed);
+
+    const pixel_press = input_mouse.MouseEvent{
+        .kind = .press,
+        .button = .left,
+        .row = 1,
+        .col = 2,
+        .pixel_x = 319,
+        .pixel_y = 239,
+        .mod = .{ .control = true },
+        .buttons_down = 1,
+    };
+    try std.testing.expectEqualStrings("\x1b[<16;320;240M", encodeMouse(&terminal, pixel_press));
+
+    const missing_pixel = input_mouse.MouseEvent{
+        .kind = .press,
+        .button = .left,
+        .row = 1,
+        .col = 2,
+        .pixel_x = 319,
+        .mod = .{},
+        .buttons_down = 1,
+    };
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, missing_pixel));
+
+    try std.testing.expect((try terminal.feed("\x1b[?1016l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1016l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1004h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1004h")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[I", encodeFocusIn(&terminal));
+    try std.testing.expect((try terminal.feed("\x1b[?1004l")).state_changed);
+    try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
 }
 
 test "application cursor mode changes arrow key encoding" {

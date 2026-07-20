@@ -424,18 +424,33 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: libvterm.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
           - {id: libvterm.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
           - {id: libvterm.mode.mouse_any, raw: "CSI ? 1003 h|l", effect: toggle motion tracking,
-            howl: {status: partial}}
-          - {id: libvterm.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reports, howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
+          - {id: libvterm.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reports, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
           - {id: libvterm.mode.mouse_utf8, raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting supports legacy x10 normal utf8 and urxvt encodings"}}}
           - {id: libvterm.mode.mouse_sgr, raw: "CSI ? 1006 h|l", effect: toggle SGR mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
           - {id: libvterm.mode.mouse_urxvt, raw: "CSI ? 1015 h|l", effect: toggle urxvt mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting supports legacy x10 normal utf8 and urxvt encodings"}}}
           - {id: libvterm.mode.alt_1047, raw: "CSI ? 1047 h|l", effect: enter or exit alternate screen,
             howl: {status: partial}}
           - {id: libvterm.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save or restore cursor,
@@ -1384,21 +1399,37 @@ references:
           - {id: iterm2.mode.decncsm, raw: "CSI ? 95 h|l", effect: preserve screen on column-mode change,
             conditions: VT level 500+, howl: {status: 'false'}}
           - {id: iterm2.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
-            howl: {status: partial}}
-          - {id: iterm2.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking, howl: {status: partial}}
-          - {id: iterm2.mode.mouse_any, raw: "CSI ? 1003 h|l", effect: toggle motion tracking, howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
+          - {id: iterm2.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
+          - {id: iterm2.mode.mouse_any, raw: "CSI ? 1003 h|l", effect: toggle motion tracking, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
           - {id: iterm2.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reporting,
             conditions: host policy permits, howl: {status: partial}}
           - {id: iterm2.mode.mouse_utf8, raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting supports legacy x10 normal utf8 and urxvt encodings"}}}
           - {id: iterm2.mode.mouse_sgr, raw: "CSI ? 1006 h|l", effect: toggle SGR mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
           - {id: iterm2.mode.alt_scroll, raw: "CSI ? 1007 h|l", effect: toggle alternate mouse scroll,
             conditions: host policy permits, howl: {status: 'false'}}
           - {id: iterm2.mode.mouse_urxvt, raw: "CSI ? 1015 h|l", effect: toggle urxvt mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting supports legacy x10 normal utf8 and urxvt encodings"}}}
           - {id: iterm2.mode.mouse_pixel, raw: "CSI ? 1016 h|l", effect: toggle SGR pixel mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
           - {id: iterm2.mode.meta_escape, raw: "CSI ? 1036 h|l", effect: toggle Meta-sends-Escape, relevance: input,
             howl: {status: 'false'}}
           - {id: iterm2.mode.alt_1047, raw: "CSI ? 1047 h|l",
@@ -1661,18 +1692,37 @@ references:
           - {id: kitty.mode.decnrcm, raw: "CSI ? 42 h|l", effect: ignore national replacement charset mode,
             recognition: recognized_noop, howl: {status: 'false'}}
           - {id: kitty.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
-            howl: {status: partial}}
-          - {id: kitty.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking, howl: {status: partial}}
-          - {id: kitty.mode.mouse_any, raw: "CSI ? 1003 h|l", effect: toggle motion tracking, howl: {status: partial}}
-          - {id: kitty.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reports, howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
+          - {id: kitty.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
+          - {id: kitty.mode.mouse_any, raw: "CSI ? 1003 h|l", effect: toggle motion tracking, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
+          - {id: kitty.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reports, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
           - {id: kitty.mode.mouse_utf8, raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting supports legacy x10 normal utf8 and urxvt encodings"}}}
           - {id: kitty.mode.mouse_sgr, raw: "CSI ? 1006 h|l", effect: toggle SGR mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
           - {id: kitty.mode.mouse_urxvt, raw: "CSI ? 1015 h|l", effect: toggle urxvt mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse reporting supports legacy x10 normal utf8 and urxvt encodings"}}}
           - {id: kitty.mode.mouse_pixel, raw: "CSI ? 1016 h|l", effect: toggle SGR pixel mouse encoding,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
           - {id: kitty.mode.alt_47, raw: "CSI ? 47 h|l", effect: toggle alternate screen, howl: {status: partial}}
           - {id: kitty.mode.alt_1047, raw: "CSI ? 1047 h|l",
             effect: toggle alternate screen without clear or cursor save,

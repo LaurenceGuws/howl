@@ -4876,6 +4876,7 @@ const MouseProtocol = enum(u8) {
     none,
     utf8,
     sgr,
+    sgr_pixel,
     urxvt,
 };
 
@@ -4896,6 +4897,11 @@ fn wouldEncodeMouse(event: MouseEvent, tracking: MouseTrackingMode, protocol: Mo
     const row1 = mouseRow1(event.row);
     const col1 = @as(u32, event.col) + 1;
     const cb = mouseCode(event, tracking);
+    if (protocol == .sgr_pixel) {
+        const pixel_x = event.pixel_x orelse return false;
+        const pixel_y = event.pixel_y orelse return false;
+        return pixel_x < std.math.maxInt(u32) and pixel_y < std.math.maxInt(u32);
+    }
     if (protocol == .sgr or protocol == .urxvt) return true;
     if (protocol == .utf8) {
         return validMouseCodepoint(cb + 32) and
@@ -4924,6 +4930,13 @@ pub fn encodeMouse(buf: []u8, event: MouseEvent, tracking: MouseTrackingMode, pr
     const cb = mouseCode(event, tracking);
     return switch (protocol) {
         .sgr => encodeSgrMouse(buf, cb, col1, row1, event.kind == .release),
+        .sgr_pixel => encodeSgrMouse(
+            buf,
+            cb,
+            event.pixel_x.? + 1,
+            event.pixel_y.? + 1,
+            event.kind == .release,
+        ),
         .urxvt => encodeUrxvtMouse(buf, cb, col1, row1),
         .utf8 => encodeCsiMMouse(buf, cb, col1, row1, true),
         .none => encodeCsiMMouse(buf, cb, col1, row1, false),
@@ -5016,6 +5029,22 @@ test "mouse protocols encode boundaries without partial sequences" {
     };
 
     try std.testing.expectEqualStrings("\x1b[<28;7;5M", encodeMouse(&buf, base, .normal, .sgr));
+    try std.testing.expectEqualStrings("", encodeMouse(&buf, base, .normal, .sgr_pixel));
+    try std.testing.expectEqualStrings("\x1b[<28;320;240M", encodeMouse(
+        &buf,
+        .{
+            .kind = .press,
+            .button = .left,
+            .row = 4,
+            .col = 6,
+            .pixel_x = 319,
+            .pixel_y = 239,
+            .mod = .{ .shift = true, .alt = true, .control = true },
+            .buttons_down = 1,
+        },
+        .normal,
+        .sgr_pixel,
+    ));
     try std.testing.expectEqualStrings("\x1b[60;7;5M", encodeMouse(&buf, base, .normal, .urxvt));
     try std.testing.expectEqualStrings("\x1b[M#\"!", encodeMouse(
         &buf,
@@ -5051,6 +5080,21 @@ test "mouse protocols encode boundaries without partial sequences" {
     try std.testing.expectEqualStrings("\x1b[32;1;2147483648M", encodeMouse(&buf, last_row, .normal, .urxvt));
     try std.testing.expectEqualStrings("", encodeMouse(&buf, last_row, .normal, .utf8));
     try std.testing.expectEqualStrings("", encodeMouse(&buf, last_row, .normal, .none));
+    try std.testing.expectEqualStrings("", encodeMouse(
+        &buf,
+        .{
+            .kind = .press,
+            .button = .left,
+            .row = 0,
+            .col = 0,
+            .pixel_x = std.math.maxInt(u32),
+            .pixel_y = 0,
+            .mod = .{},
+            .buttons_down = 1,
+        },
+        .normal,
+        .sgr_pixel,
+    ));
     try std.testing.expectEqual(@as(u32, 1), mouseRow1(std.math.minInt(i32)));
 }
 
@@ -5137,6 +5181,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         1004 => boolToDecModeState(view.focus_reporting),
         1005 => boolToDecModeState(view.mouse_protocol == .utf8),
         1006 => boolToDecModeState(view.mouse_protocol == .sgr),
+        1016 => boolToDecModeState(view.mouse_protocol == .sgr_pixel),
         1015 => boolToDecModeState(view.mouse_protocol == .urxvt),
         2004 => boolToDecModeState(view.bracketed_paste),
         2026 => boolToDecModeState(view.synchronized_output),
@@ -5193,7 +5238,7 @@ fn savedDecModeState(saved_modes: []const SavedDecMode, saved_count: SavedDecMod
 // Reports whether a DEC mode has implemented set and reset behavior.
 fn canSetDecMode(mode: u16) bool {
     return switch (mode) {
-        1, 5, 6, 7, 9, 12, 25, 47, 66, 69, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004, 2026 => true,
+        1, 5, 6, 7, 9, 12, 25, 47, 66, 69, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026 => true,
         else => false,
     };
 }
@@ -7262,6 +7307,7 @@ fn mouseModeToggle(final: u8, mode: i32) ?SemanticEvent {
         1005 => boolEvent(final, .{ .mouse_protocol_utf8 = true }, .{ .mouse_protocol_utf8 = false }),
         1006 => boolEvent(final, .{ .mouse_protocol_sgr = true }, .{ .mouse_protocol_sgr = false }),
         1015 => boolEvent(final, .{ .mouse_protocol_urxvt = true }, .{ .mouse_protocol_urxvt = false }),
+        1016 => boolEvent(final, .{ .mouse_protocol_sgr_pixel = true }, .{ .mouse_protocol_sgr_pixel = false }),
         else => null,
     };
 }
@@ -7790,6 +7836,7 @@ pub const SemanticEvent = union(enum) {
     mouse_protocol_utf8: bool,
     mouse_protocol_sgr: bool,
     mouse_protocol_urxvt: bool,
+    mouse_protocol_sgr_pixel: bool,
     kitty_keyboard_set: struct { flags: u8, mode: u8 },
     kitty_keyboard_query,
     kitty_keyboard_push: u8,
@@ -10078,6 +10125,17 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .sgr_stack_push => |params| return vt.pushSgr(params),
         .sgr_stack_pop => return vt.popSgr(),
 
+        .focus_reporting => |enabled| return vt.setDecMode(1004, enabled),
+        .mouse_tracking_off => return vt.setMouseTracking(.off),
+        .mouse_tracking_x10 => return vt.setDecMode(9, true),
+        .mouse_tracking_normal => return vt.setDecMode(1000, true),
+        .mouse_tracking_button_event => return vt.setDecMode(1002, true),
+        .mouse_tracking_any_event => return vt.setDecMode(1003, true),
+        .mouse_protocol_utf8 => |enabled| return vt.setDecMode(1005, enabled),
+        .mouse_protocol_sgr => |enabled| return vt.setDecMode(1006, enabled),
+        .mouse_protocol_urxvt => |enabled| return vt.setDecMode(1015, enabled),
+        .mouse_protocol_sgr_pixel => |enabled| return vt.setDecMode(1016, enabled),
+
         .application_cursor_keys,
         .application_keypad,
         .reverse_screen_mode,
@@ -10093,17 +10151,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .pointer_mode,
         .reverse_wraparound_mode,
         .extended_reverse_wraparound_mode,
-        .focus_reporting,
         .bracketed_paste,
         .synchronized_output,
-        .mouse_tracking_off,
-        .mouse_tracking_x10,
-        .mouse_tracking_normal,
-        .mouse_tracking_button_event,
-        .mouse_tracking_any_event,
-        .mouse_protocol_utf8,
-        .mouse_protocol_sgr,
-        .mouse_protocol_urxvt,
         .dec_mode_save,
         .dec_mode_restore,
         => return vt.applyModeEvent(event),
@@ -11224,17 +11273,8 @@ pub const Terminal = struct {
             .extended_reverse_wraparound_mode => |enabled| {
                 return replaceBool(&self.modes.extended_reverse_wraparound_mode, enabled);
             },
-            .focus_reporting => |enabled| return replaceBool(&self.modes.focus_reporting, enabled),
             .bracketed_paste => |enabled| return replaceBool(&self.modes.bracketed_paste, enabled),
             .synchronized_output => |enabled| return replaceBool(&self.modes.synchronized_output, enabled),
-            .mouse_tracking_off => return self.setMouseTracking(.off),
-            .mouse_tracking_x10 => return self.setMouseTracking(.x10),
-            .mouse_tracking_normal => return self.setMouseTracking(.normal),
-            .mouse_tracking_button_event => return self.setMouseTracking(.button_event),
-            .mouse_tracking_any_event => return self.setMouseTracking(.any_event),
-            .mouse_protocol_utf8 => |enabled| return self.setMouseProtocol(if (enabled) .utf8 else .none),
-            .mouse_protocol_sgr => |enabled| return self.setMouseProtocol(if (enabled) .sgr else .none),
-            .mouse_protocol_urxvt => |enabled| return self.setMouseProtocol(if (enabled) .urxvt else .none),
             .dec_mode_save => |modes| return self.saveDecModes(modes.params[0..modes.param_count]),
             .dec_mode_restore => |modes| return self.restoreDecModes(modes.params[0..modes.param_count]),
             else => unreachable,
@@ -11348,6 +11388,7 @@ pub const Terminal = struct {
             1005 => self.setMouseProtocol(if (enabled) .utf8 else .none),
             1006 => self.setMouseProtocol(if (enabled) .sgr else .none),
             1015 => self.setMouseProtocol(if (enabled) .urxvt else .none),
+            1016 => self.setMouseProtocol(if (enabled) .sgr_pixel else .none),
             2004 => replaceBool(&self.modes.bracketed_paste, enabled),
             2026 => replaceBool(&self.modes.synchronized_output, enabled),
             else => false,
@@ -11371,7 +11412,8 @@ pub const Terminal = struct {
     }
 
     fn setMouseTracking(self: *Terminal, value: MouseTrackingMode) bool {
-        if (self.modes.mouse_tracking == value) return false;
+        const pending_changed = self.screen_state.active().cancelPendingWrap();
+        if (self.modes.mouse_tracking == value) return pending_changed;
         self.modes.mouse_tracking = value;
         return true;
     }
