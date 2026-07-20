@@ -402,9 +402,9 @@ test "screen: DECSCA protects cells from selective erase" {
     defer s.deinit(gpa);
 
     apply(&s, SemanticEvent{ .write_text = "A" });
-    apply(&s, SemanticEvent{ .character_protection = true });
+    apply(&s, SemanticEvent{ .character_protection = .dec });
     apply(&s, SemanticEvent{ .write_text = "B" });
-    apply(&s, SemanticEvent{ .character_protection = false });
+    apply(&s, SemanticEvent{ .character_protection = .none });
     apply(&s, SemanticEvent{ .write_text = "CDEF" });
 
     s.cursor.setPositionByClient(1, 2);
@@ -428,7 +428,7 @@ test "screen: DECERA clips rectangle to viewport" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 2, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "GHI" });
 
-    apply(&s, SemanticEvent{ .rect_erase = .{ .top = 0, .left = 0, .bottom = 1, .right = 1 } });
+    try std.testing.expect(s.eraseRect(.{ .top = 0, .left = 0, .bottom = 1, .right = 1 }, false));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(1, 0));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(1, 1));
@@ -446,13 +446,13 @@ test "screen: DECSERA preserves protected cells" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "D" });
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 1 } });
-    apply(&s, SemanticEvent{ .character_protection = true });
+    apply(&s, SemanticEvent{ .character_protection = .dec });
     apply(&s, SemanticEvent{ .write_text = "E" });
-    apply(&s, SemanticEvent{ .character_protection = false });
+    apply(&s, SemanticEvent{ .character_protection = .none });
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 2 } });
     apply(&s, SemanticEvent{ .write_text = "FGHI" });
 
-    apply(&s, SemanticEvent{ .rect_selective_erase = .{ .top = 0, .left = 0, .bottom = 2, .right = 2 } });
+    try std.testing.expect(s.eraseRect(.{ .top = 0, .left = 0, .bottom = 2, .right = 2 }, true));
     try std.testing.expectEqual(@as(u21, 'E'), s.cellAt(1, 1));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(2, 2));
 }

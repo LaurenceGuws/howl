@@ -105,7 +105,7 @@ test "terminal: cursor savepoints retain exact bank reset and resize state" {
     try std.testing.expect(terminal.modes.reverse_screen_mode);
     try std.testing.expect(primary.current_attrs.bold);
     try std.testing.expect(primary.current_attrs.italic);
-    try std.testing.expect(primary.current_attrs.protected);
+    try std.testing.expect(primary.current_attrs.protected == .dec);
     try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
     try std.testing.expectEqual(@as(u8, '0'), terminal.designations[1]);
     try std.testing.expect(!(try terminal.feed("\x1b[s")).state_changed);
@@ -288,6 +288,40 @@ test "terminal: erase families retain exact ranges protection geometry and mutat
     try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
 }
 
+test "terminal: ISO and DEC protection retain distinct erase semantics" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 6);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b")).state_changed);
+    try std.testing.expect((try terminal.feed("V")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bV")).state_changed);
+    try std.testing.expect((try terminal.feed("A\x1b[0mB\x1bWC")).state_changed);
+    const screen = terminal.screen_state.activeConst();
+    try std.testing.expect(screen.cellInfoAt(0, 0).attrs.protected == .iso);
+    try std.testing.expect(screen.cellInfoAt(0, 1).attrs.protected == .iso);
+    try std.testing.expect(screen.cellInfoAt(0, 2).attrs.protected == .none);
+
+    try std.testing.expect((try terminal.feed("\r\x1b[2K")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 2));
+    try std.testing.expect(!(try terminal.feed("\x1b[2K")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[1\"qD\x1b[0mE\x1b[2\"qF")).state_changed);
+    try std.testing.expect(screen.cellInfoAt(1, 0).attrs.protected == .dec);
+    try std.testing.expect(screen.cellInfoAt(1, 1).attrs.protected == .dec);
+    try std.testing.expect((try terminal.feed("\r\x1b[2K")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+
+    try std.testing.expect((try terminal.feed("\x96D\x1b[0mE\x97F\r\x1b[?2K")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'E'), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 2));
+    try std.testing.expect(!(try terminal.feed("\x97")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[0\"q")).state_changed);
+}
+
 test "terminal: erase mutation owns pending wrap and published continuation" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
@@ -326,6 +360,32 @@ test "terminal: erase mutation owns pending wrap and published continuation" {
     try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(0, 3));
     screen.clearDirtyRows();
     try std.testing.expect(!(try terminal.feed("\x1b[?2K")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+}
+
+test "terminal: rectangle erase owns exact pending wrap mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 4);
+    defer terminal.deinit();
+    const screen = terminal.screen_state.active();
+
+    try std.testing.expect((try terminal.feed("\x1bV    ")).state_changed);
+    try std.testing.expect(screen.wrap_pending);
+    try std.testing.expect((try terminal.feed("\x1bW")).state_changed);
+    try std.testing.expect(screen.wrap_pending);
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[1;1;1;4$z")).state_changed);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!(try terminal.feed("\x1b[1;1;1;4$z")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+
+    try std.testing.expect((try terminal.feed("\x1b[1\"q ")).state_changed);
+    try std.testing.expect(screen.wrap_pending);
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[1;1;1;4${")).state_changed);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!(try terminal.feed("\x1b[1;1;1;4${")).state_changed);
     try std.testing.expect(screen.peekDirtyRows() == null);
 }
 
@@ -889,10 +949,10 @@ test "terminal: DEC margins bound rectangles and reject inverted coordinates" {
     const selective_dirty = screen.peekDirtyRows().?;
     try std.testing.expectEqual(@as(u16, 1), selective_dirty.start_row);
     try std.testing.expectEqual(@as(u16, 2), selective_dirty.end_row);
-    for (1..3) |row| {
-        try std.testing.expectEqual(@as(u16, 1), selective_dirty.dirty_cols_start[row]);
-        try std.testing.expectEqual(@as(u16, 2), selective_dirty.dirty_cols_end[row]);
-    }
+    try std.testing.expectEqual(@as(u16, 1), selective_dirty.dirty_cols_start[1]);
+    try std.testing.expectEqual(@as(u16, 2), selective_dirty.dirty_cols_end[1]);
+    try std.testing.expectEqual(@as(u16, 1), selective_dirty.dirty_cols_start[2]);
+    try std.testing.expectEqual(@as(u16, 1), selective_dirty.dirty_cols_end[2]);
 
     screen.clearDirtyRows();
     try std.testing.expect(!(try terminal.feed("\x1b[999;999;998;998$z")).state_changed);

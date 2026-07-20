@@ -164,8 +164,8 @@ test "csi mapping: positioning, tab, erase, and reset semantics" {
 }
 
 test "csi mapping: protection, rectangular ops, and margins" {
-    try std.testing.expect(process(makeStyleChangeWithParamAndIntermediate('q', 1, '"')).?.character_protection);
-    try std.testing.expect(!process(makeStyleChangeWithParamAndIntermediate('q', 2, '"')).?.character_protection);
+    try std.testing.expect(process(makeStyleChangeWithParamAndIntermediate('q', 1, '"')).?.character_protection == .dec);
+    try std.testing.expect(process(makeStyleChangeWithParamAndIntermediate('q', 2, '"')).?.character_protection == .none);
     try std.testing.expect(process(makePrivateStyleChange('J', &.{2})).?.erase_display_complete);
     try std.testing.expectEqual(EraseMode.start_to_cursor, process(makePrivateStyleChange('K', &.{1})).?.selective_erase_line);
     try std.testing.expect(process(makePrivateStyleChange('J', &.{5})) == null);

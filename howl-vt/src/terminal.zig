@@ -21,6 +21,8 @@ pub const Screen = struct {
     pub const Baseline = ScreenBaseline;
     /// Uses the canonical complete cell attribute value.
     pub const CellAttrs = ScreenCellAttrs;
+    /// Distinguishes unprotected, ISO guarded-area, and DEC selective-erase cells.
+    pub const Protection = ScreenProtection;
     /// Uses the canonical terminal cell value.
     pub const Cell = ScreenCell;
     /// Uses the canonical cursor shape.
@@ -1211,7 +1213,7 @@ pub const Screen = struct {
             .shift_left_columns,
             .shift_right_columns,
             => self.applyGridEdit(event),
-            .rect_erase, .rect_selective_erase, .rect_fill, .rect_copy, .rect_attrs_change => self.applyRectEdit(event),
+            .rect_fill, .rect_copy, .rect_attrs_change => self.applyRectEdit(event),
             else => unreachable,
         }
     }
@@ -1307,7 +1309,7 @@ pub const Screen = struct {
                 self.cursor.setPositionByClient(if (enabled) self.scroll_top else 0, self.lineHomeCol());
             },
             .insert_mode => |enabled| self.insert_mode = enabled,
-            .character_protection => |enabled| self.current_attrs.protected = enabled,
+            .character_protection => |protection| self.current_attrs.protected = protection,
             .attr_change_extent_rect => |enabled| self.attr_change_extent_rect = enabled,
             .left_right_margin_mode => |enabled| {
                 if (self.setLeftRightMarginMode(enabled)) return;
@@ -1369,8 +1371,6 @@ pub const Screen = struct {
     fn applyRectEdit(self: *Screen, event: SemanticEvent) void {
         self.wrap_pending = false;
         switch (event) {
-            .rect_erase => |area| self.eraseRect(area, false),
-            .rect_selective_erase => |area| self.eraseRect(area, true),
             .rect_fill => |request| self.fillRect(request.area, request.ch),
             .rect_copy => |request| self.copyRect(request),
             .rect_attrs_change => |request| self.changeRectAttrs(
@@ -1393,7 +1393,7 @@ pub const Screen = struct {
     /// Returns whether cells, row facts, history, or pending wrap changed; it cannot fail.
     pub fn eraseDisplay(self: *Screen, mode: EraseMode, protected: bool) bool {
         var changed = self.cancelPendingWrap();
-        const cells = self.cells orelse return changed;
+        if (self.cells == null) return changed;
         if (self.rows == 0 or self.cols == 0) return changed;
         switch (mode) {
             .cursor_to_end => {
@@ -1419,30 +1419,9 @@ pub const Screen = struct {
                 changed = self.clearDisplayRowRange(protected, self.cursor.row, 0, self.cursor.col + 1) or changed;
             },
             .all => {
-                if (protected) {
-                    var row: u16 = 0;
-                    while (row < self.rows) : (row += 1) {
-                        changed = self.eraseFullDisplayRow(row, true) or changed;
-                    }
-                } else {
-                    const erase_cell = self.eraseCell();
-                    var display_changed = false;
-                    for (cells) |cell| {
-                        if (!std.meta.eql(cell, erase_cell)) {
-                            display_changed = true;
-                            break;
-                        }
-                    }
-                    if (self.row_flags) |flags| for (flags) |flag| {
-                        if (flag != 0) {
-                            display_changed = true;
-                            break;
-                        }
-                    };
-                    @memset(cells, erase_cell);
-                    if (self.row_flags) |buf| @memset(buf, 0);
-                    if (display_changed) self.markAllRowsDirty();
-                    changed = display_changed or changed;
+                var row: u16 = 0;
+                while (row < self.rows) : (row += 1) {
+                    changed = self.eraseFullDisplayRow(row, protected) or changed;
                 }
             },
             .scrollback => return self.clearScrollback() or changed,
@@ -1645,19 +1624,19 @@ pub const Screen = struct {
         }
     }
 
-    /// Erase a clipped rectangle, optionally preserving protected cells.
-    fn eraseRect(self: *Screen, area: RectArea, selective: bool) void {
-        const bounds = self.rectBounds(area) orelse return;
-        self.markDirtyRect(bounds);
+    /// Erase one clipped rectangle under ISO or DEC protection rules.
+    /// Returns exact cell, row-continuation, or pending-wrap mutation.
+    pub fn eraseRect(self: *Screen, area: RectArea, selective: bool) bool {
+        var changed = self.cancelPendingWrap();
+        const bounds = self.rectBounds(area) orelse return changed;
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
-            if (selective) {
-                self.selectiveClearRowRange(row, bounds.left, bounds.right + 1);
-            } else {
-                self.clearRowRange(row, bounds.left, bounds.right + 1);
+            changed = self.eraseRowRange(row, bounds.left, bounds.right + 1, selective) or changed;
+            if (bounds.left == 0 and bounds.right + 1 == self.cols) {
+                changed = self.clearRowContinuation(row) or changed;
             }
-            if (bounds.left == 0 and bounds.right + 1 == self.cols) self.setRowWrapped(row, false);
         }
+        return changed;
     }
 
     /// Fill a clipped rectangle with `codepoint` and the current write attributes.
@@ -2058,7 +2037,7 @@ pub const Screen = struct {
     /// Apply SGR parameters to the retained attributes used by subsequent writes.
     pub fn applySgr(self: *Screen, params: []const i32, separators: parser_mod.CsiSeparatorList) void {
         if (params.len == 0) {
-            self.current_attrs = initial_cell_attrs;
+            self.resetRendition();
             return;
         }
 
@@ -2077,9 +2056,16 @@ pub const Screen = struct {
         }
     }
 
+    // SGR does not own ISO or DEC character protection.
+    fn resetRendition(self: *Screen) void {
+        const protection = self.current_attrs.protected;
+        self.current_attrs = initial_cell_attrs;
+        self.current_attrs.protected = protection;
+    }
+
     fn applyBasicSgr(self: *Screen, param: i32) void {
         switch (param) {
-            0 => self.current_attrs = initial_cell_attrs,
+            0 => self.resetRendition(),
             1 => self.current_attrs.bold = true,
             2 => self.current_attrs.dim = true,
             3 => self.current_attrs.italic = true,
@@ -2572,26 +2558,13 @@ pub const Screen = struct {
         var col = start_col;
         while (col < end_col_exclusive) : (col += 1) {
             const cell = &cells[@intCast(start + @as(u32, col))];
-            if (selective and cell.attrs.protected) continue;
+            if (cell.attrs.protected == .iso or (selective and cell.attrs.protected == .dec)) continue;
             if (std.meta.eql(cell.*, erase_cell)) continue;
             cell.* = erase_cell;
             self.markDirtyCols(row, col, col);
             changed = true;
         }
         return changed;
-    }
-
-    /// Fill unprotected cells in an assumed in-bounds row range with the erase cell.
-    fn selectiveClearRowRange(self: *Screen, row: u16, start_col: u16, end_col_exclusive: u16) void {
-        const cells = self.cells orelse return;
-        const start = self.rowStart(row);
-        const erase_cell = self.eraseCell();
-        var col = start_col;
-        while (col < end_col_exclusive) : (col += 1) {
-            const idx = start + @as(u32, col);
-            if (cells[@intCast(idx)].attrs.protected) continue;
-            cells[@intCast(idx)] = erase_cell;
-        }
     }
 
     /// Reject an inverted rectangle, then clamp it to the active origin bounds.
@@ -2630,7 +2603,9 @@ pub const Screen = struct {
 
     /// Construct an empty cell carrying the current erase attributes.
     fn eraseCell(self: *const Screen) Cell {
-        return .{ .codepoint = 0, .attrs = self.current_attrs };
+        var attrs = self.current_attrs;
+        attrs.protected = .none;
+        return .{ .codepoint = 0, .attrs = attrs };
     }
 
     fn clearFullRow(self: *Screen, row: u16) void {
@@ -3011,6 +2986,13 @@ const ScreenBaseline = enum(u2) {
     lowered,
 };
 
+// Distinguishes ISO guarded areas from DEC selective-erase protection.
+const ScreenProtection = enum(u2) {
+    none,
+    iso,
+    dec,
+};
+
 // Stores one cell's font, baseline, style, colors, protection, and hyperlink identity.
 const ScreenCellAttrs = struct {
     fg: ScreenColor,
@@ -3028,7 +3010,7 @@ const ScreenCellAttrs = struct {
     strikethrough: bool,
     underline_style: ScreenUnderlineStyle,
     underline_color: ScreenColor,
-    protected: bool,
+    protected: ScreenProtection,
     link_id: u32,
 };
 
@@ -3081,7 +3063,7 @@ const initial_cell_attrs = ScreenCellAttrs{
     .strikethrough = false,
     .underline_style = .straight,
     .underline_color = default_cell_underline_color,
-    .protected = false,
+    .protected = .none,
     .link_id = 0,
 };
 
@@ -6692,6 +6674,8 @@ fn controlProcess(control: u8) ?SemanticEvent {
         0x85 => escProcess('E'),
         0x88 => escProcess('H'),
         0x8D => escProcess('M'),
+        0x96 => escProcess('V'),
+        0x97 => escProcess('W'),
         else => c0Process(fromByte(control)),
     };
 }
@@ -6767,8 +6751,8 @@ fn processPair(final: u8, params: []const i32, intermediates: []const u8) ?Seman
 fn processQuote(final: u8, params: []const i32) ?SemanticEvent {
     if (final == 'q') {
         return switch (paramAtOrDefault0(params, 0)) {
-            0, 2 => SemanticEvent{ .character_protection = false },
-            1 => SemanticEvent{ .character_protection = true },
+            0, 2 => SemanticEvent{ .character_protection = .none },
+            1 => SemanticEvent{ .character_protection = .dec },
             else => null,
         };
     }
@@ -7555,6 +7539,7 @@ const EscAction = union(enum) {
     save_cursor,
     restore_cursor,
     application_keypad: bool,
+    character_protection: ScreenProtection,
 };
 
 fn escAction(final: u8) ?EscAction {
@@ -7567,6 +7552,8 @@ fn escAction(final: u8) ?EscAction {
         'c' => .hard_reset,
         '7' => .save_cursor,
         '8' => .restore_cursor,
+        'V' => .{ .character_protection = .iso },
+        'W' => .{ .character_protection = .none },
         '=' => EscAction{ .application_keypad = true },
         '>' => EscAction{ .application_keypad = false },
         else => null,
@@ -7593,6 +7580,7 @@ fn escProcess(final: u8) ?SemanticEvent {
         .save_cursor => SemanticEvent.save_cursor,
         .restore_cursor => SemanticEvent.restore_cursor,
         .application_keypad => |enabled| SemanticEvent{ .application_keypad = enabled },
+        .character_protection => |protection| SemanticEvent{ .character_protection = protection },
     };
 }
 
@@ -7992,7 +7980,7 @@ pub const SemanticEvent = union(enum) {
     erase_chars: u16,
     shift_left_columns: u16,
     shift_right_columns: u16,
-    character_protection: bool,
+    character_protection: ScreenProtection,
     rect_erase: RectArea,
     rect_selective_erase: RectArea,
     rect_fill: struct { area: RectArea, ch: u21 },
@@ -8872,7 +8860,7 @@ fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) 
         return std.fmt.bufPrint(encode_buf, "{d} q", .{value}) catch null;
     }
     if (std.mem.eql(u8, request, "\"q")) {
-        const value: u8 = if (screen.current_attrs.protected) 1 else 2;
+        const value: u8 = if (screen.current_attrs.protected == .dec) 1 else 2;
         return std.fmt.bufPrint(encode_buf, "{d}\"q", .{value}) catch null;
     }
     if (std.mem.eql(u8, request, "*x")) {
@@ -10335,6 +10323,18 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .erase_chars => |count| {
             return vt.screen_state.active().eraseChars(count);
         },
+        .rect_erase => |area| {
+            return vt.screen_state.active().eraseRect(area, false);
+        },
+        .rect_selective_erase => |area| {
+            return vt.screen_state.active().eraseRect(area, true);
+        },
+        .character_protection => |protection| {
+            const active = vt.screen_state.active();
+            if (active.current_attrs.protected == protection) return false;
+            active.current_attrs.protected = protection;
+            return true;
+        },
         .repeat_preceding => |count| {
             return vt.screen_state.active().repeatPreceding(count);
         },
@@ -10379,9 +10379,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .set_scroll_region,
         .shift_left_columns,
         .shift_right_columns,
-        .character_protection,
-        .rect_erase,
-        .rect_selective_erase,
         .rect_fill,
         .rect_copy,
         .rect_attrs_change,
