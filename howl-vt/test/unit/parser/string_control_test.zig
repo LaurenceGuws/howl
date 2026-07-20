@@ -245,6 +245,68 @@ test "parser string controls: C1 introducers frame every control family" {
     try std.testing.expect(output.actions.items[2] == .sos_end);
 }
 
+test "parser string controls: BEL terminates only OSC" {
+    const gpa = std.testing.allocator;
+    const cases = [_]struct {
+        sequence: []const u8,
+        put_tag: std.meta.Tag(Action),
+        end_tag: std.meta.Tag(Action),
+    }{
+        .{ .sequence = "\x1bPq\x07\x1b\\", .put_tag = .dcs_put, .end_tag = .dcs_unhook },
+        .{ .sequence = "\x1b_\x07\x1b\\", .put_tag = .apc_put, .end_tag = .apc_end },
+        .{ .sequence = "\x1b^\x07\x1b\\", .put_tag = .pm_put, .end_tag = .pm_end },
+        .{ .sequence = "\x1bX\x07\x1b\\", .put_tag = .sos_put, .end_tag = .sos_end },
+    };
+
+    for (cases) |case| {
+        var parser = try Parser.init(gpa);
+        defer parser.deinit();
+        var output = try Output.init(gpa);
+        defer output.deinit(gpa);
+
+        for (case.sequence) |byte| output.appendPhases(parser.next(byte));
+        try std.testing.expectEqual(case.put_tag, std.meta.activeTag(output.actions.items[1]));
+        try std.testing.expectEqual(@as(u8, 0x07), switch (output.actions.items[1]) {
+            .dcs_put => |byte| byte,
+            .apc_put => |byte| byte,
+            .pm_put => |byte| byte,
+            .sos_put => |byte| byte,
+            else => unreachable,
+        });
+        try std.testing.expectEqual(case.end_tag, std.meta.activeTag(output.actions.items[2]));
+    }
+}
+
+test "parser string controls: incomplete controls remain incomplete until reset" {
+    const gpa = std.testing.allocator;
+    const sequences = [_][]const u8{
+        "\x1b]0;open",
+        "\x1bP$qopen",
+        "\x1b_open",
+        "\x1b^open",
+        "\x1bXopen",
+    };
+
+    for (sequences) |sequence| {
+        var parser = try Parser.init(gpa);
+        defer parser.deinit();
+        var output = try Output.init(gpa);
+        defer output.deinit(gpa);
+
+        for (sequence) |byte| output.appendPhases(parser.next(byte));
+        for (output.actions.items) |action| switch (action) {
+            .osc_dispatch, .dcs_unhook, .apc_end, .pm_end, .sos_end => return error.UnexpectedCompletion,
+            else => {},
+        };
+
+        parser.reset();
+        output.actions.clearRetainingCapacity();
+        output.appendPhases(parser.next('R'));
+        try expectActionCount(output.actions.items, 1);
+        try std.testing.expectEqual(@as(u21, 'R'), output.actions.items[0].print);
+    }
+}
+
 test "parser string controls: stray ESC in OSC appends byte to payload" {
     const gpa = std.testing.allocator;
     var parser = try Parser.init(gpa);

@@ -9,6 +9,7 @@ const terminal_mod = @import("../../src/terminal.zig");
 const input_encode = @import("../../src/terminal.zig");
 const input_keyboard = @import("../../src/terminal.zig");
 const input_mouse = @import("../../src/terminal.zig");
+const parser_mod = @import("../../src/parser.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
@@ -896,6 +897,31 @@ test "canceled DCS discards its partial consequence before the next complete DCS
     try stream.nextSlice("\x1bP+p436F=keep\x1b\\");
     try std.testing.expectEqual(dcs_payload.DcsPayloadKind.xtsettcap, dcsPayloadKind(&terminal).?);
     try std.testing.expectEqualStrings("436F=keep", dcsPayload(&terminal).?);
+}
+
+test "DCS payload bound reports overflow and remains restartable" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+
+    const header = "\x1bP+p436F=";
+    const half = (parser_mod.max_metadata_control_bytes - 5) / 2;
+    const remainder = parser_mod.max_metadata_control_bytes - 5 - half;
+    try std.testing.expect(!(try terminal.feed(header)).history_lost);
+    try std.testing.expect(!(try terminal.feed("x" ** half)).history_lost);
+    try std.testing.expect(!(try terminal.feed("x" ** remainder)).history_lost);
+    try std.testing.expect(!(try terminal.feed("\x1b\\")).history_lost);
+    try std.testing.expectEqual(@as(usize, parser_mod.max_metadata_control_bytes), dcsPayload(&terminal).?.len);
+
+    try std.testing.expect(!(try terminal.feed(header)).history_lost);
+    try std.testing.expect(!(try terminal.feed("y" ** half)).history_lost);
+    try std.testing.expect(!(try terminal.feed("y" ** remainder)).history_lost);
+    try std.testing.expectError(error.StringControlLimit, terminal.feed("y"));
+    try std.testing.expectEqual(@as(usize, parser_mod.max_metadata_control_bytes), dcsPayload(&terminal).?.len);
+    try std.testing.expectEqual(@as(u8, 'x'), dcsPayload(&terminal).?[5]);
+
+    try std.testing.expect(!(try terminal.feed("\x1bP+pkeep\x1b\\")).history_lost);
+    try std.testing.expectEqualStrings("keep", dcsPayload(&terminal).?);
 }
 
 test "legacy Tektronix C0 and ESC controls retain latest host-neutral state" {

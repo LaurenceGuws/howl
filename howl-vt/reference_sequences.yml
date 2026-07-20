@@ -408,15 +408,42 @@ references:
         census: {semantic_branches: 9, records: 9}
         recognition: implemented
         records:
-          - {id: iterm2.c0.bel, raw: BEL, effect: ring bell, howl: {status: partial}}
-          - {id: iterm2.c0.bs, raw: "\\x08", effect: cursor left, howl: {status: partial}}
-          - {id: iterm2.c0.ht, raw: "\\x09", effect: next tab stop, howl: {status: partial}}
-          - {id: iterm2.c0.lf, raw: "\\x0a", effect: line feed, howl: {status: partial}}
-          - {id: iterm2.c0.vt, raw: "\\x0b", effect: line feed, howl: {status: partial}}
-          - {id: iterm2.c0.ff, raw: "\\x0c", effect: line feed, howl: {status: partial}}
-          - {id: iterm2.c0.cr, raw: "\\x0d", effect: carriage return, howl: {status: partial}}
-          - {id: iterm2.c0.so, raw: "\\x0e", effect: select G1 into GL, howl: {status: partial}}
-          - {id: iterm2.c0.si, raw: "\\x0f", effect: select G0 into GL, howl: {status: partial}}
+          - {id: iterm2.c0.bel, raw: BEL, effect: ring bell, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: iterm2.c0.bs, raw: "\\x08", effect: cursor left, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: iterm2.c0.ht, raw: "\\x09", effect: next tab stop, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: iterm2.c0.lf, raw: "\\x0a", effect: line feed, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: iterm2.c0.vt, raw: "\\x0b", effect: line feed, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: iterm2.c0.ff, raw: "\\x0c", effect: line feed, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: iterm2.c0.cr, raw: "\\x0d", effect: carriage return, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: iterm2.c0.so, raw: "\\x0e", effect: select G1 into GL, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: iterm2.c0.si, raw: "\\x0f", effect: select G0 into GL, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
       - source: VT100OtherParser.m
         symbol: decodeBytes
         line: 18
@@ -895,27 +922,66 @@ references:
         census: {semantic_branches: 9, records: 9}
         recognition: implemented
         records:
-          - {id: kitty.c0.bel, raw: BEL, effect: ring bell, howl: {status: partial}}
-          - {id: kitty.c0.bs, raw: "\\x08", effect: cursor left, howl: {status: partial}}
-          - {id: kitty.c0.ht, raw: "\\x09", effect: next tab stop, howl: {status: partial}}
-          - {id: kitty.c0.lf, raw: "\\x0a", effect: line feed, howl: {status: partial}}
-          - {id: kitty.c0.vt, raw: "\\x0b", effect: line feed, howl: {status: partial}}
-          - {id: kitty.c0.ff, raw: "\\x0c", effect: line feed, howl: {status: partial}}
-          - {id: kitty.c0.cr, raw: "\\x0d", effect: carriage return, howl: {status: partial}}
-          - {id: kitty.c0.so, raw: "\\x0e", effect: select G1 into GL, howl: {status: partial}}
-          - {id: kitty.c0.si, raw: "\\x0f", effect: select G0 into GL, howl: {status: partial}}
+          - {id: kitty.c0.bel, raw: BEL, effect: ring bell, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: kitty.c0.bs, raw: "\\x08", effect: cursor left, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: kitty.c0.ht, raw: "\\x09", effect: next tab stop, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: kitty.c0.lf, raw: "\\x0a", effect: line feed, conditions: mLNM also returns carriage,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: kitty.c0.vt, raw: "\\x0b", effect: line feed, conditions: mLNM also returns carriage,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: kitty.c0.ff, raw: "\\x0c", effect: line feed, conditions: mLNM also returns carriage,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: kitty.c0.cr, raw: "\\x0d", effect: carriage return, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: kitty.c0.so, raw: "\\x0e", effect: select G1 into GL, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: kitty.c0.si, raw: "\\x0f", effect: select G0 into GL, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
       - source: vt-parser.c
         symbol: consume_esc
         line: 278
         census: {semantic_branches: 22, records: 22}
         recognition: implemented
         records:
-          - {id: kitty.esc.dcs, raw: "ESC P", effect: begin DCS string, relevance: transport, howl: {status: partial}}
-          - {id: kitty.esc.osc, raw: "ESC ]", effect: begin OSC string, relevance: transport, howl: {status: partial}}
-          - {id: kitty.esc.csi, raw: "ESC [", effect: begin CSI sequence, relevance: transport, howl: {status: partial}}
-          - {id: kitty.esc.apc, raw: "ESC _", effect: begin APC string, relevance: transport, howl: {status: partial}}
-          - {id: kitty.esc.sos, raw: "ESC X", effect: begin SOS string, relevance: transport, howl: {status: partial}}
-          - {id: kitty.esc.pm, raw: "ESC ^", effect: begin PM string, relevance: transport, howl: {status: partial}}
+          - {id: kitty.esc.dcs, raw: "ESC P", effect: begin DCS string, relevance: transport, howl: {status: full,
+            source: howl-vt/src/parser.zig, symbol: fillEscape, proof: {
+              path: howl-vt/test/unit/parser/string_control_test.zig,
+              symbol: "parser string controls: DCS hook metadata and payload with ST terminator", line: 87}}}
+          - {id: kitty.esc.osc, raw: "ESC ]", effect: begin OSC string, relevance: transport, howl: {status: full,
+            source: howl-vt/src/parser.zig, symbol: fillEscape, proof: {
+              path: howl-vt/test/unit/parser/string_control_test.zig,
+              symbol: "parser string controls: OSC with ST terminator", line: 53}}}
+          - {id: kitty.esc.csi, raw: "ESC [", effect: begin CSI sequence, relevance: transport, howl: {status: full,
+            source: howl-vt/src/parser.zig, symbol: fillEscape, proof: {
+              path: howl-vt/test/unit/parser/main_test.zig,
+              symbol: "parser: split input - partial CSI then final byte", line: 144}}}
+          - {id: kitty.esc.apc, raw: "ESC _", effect: begin APC string, relevance: transport, howl: {status: full,
+            source: howl-vt/src/parser.zig, symbol: fillEscape, proof: {
+              path: howl-vt/test/unit/parser/string_control_test.zig,
+              symbol: "parser string controls: APC with ST terminator", line: 69}}}
+          - {id: kitty.esc.sos, raw: "ESC X", effect: begin SOS string, relevance: transport, howl: {status: full,
+            source: howl-vt/src/parser.zig, symbol: fillEscape, proof: {
+              path: howl-vt/test/unit/parser/string_control_test.zig,
+              symbol: "parser string controls: SOS forms remain distinct and terminate", line: 129}}}
+          - {id: kitty.esc.pm, raw: "ESC ^", effect: begin PM string, relevance: transport, howl: {status: full,
+            source: howl-vt/src/parser.zig, symbol: fillEscape, proof: {
+              path: howl-vt/test/unit/parser/string_control_test.zig,
+              symbol: "parser string controls: PM with ST terminator", line: 109}}}
           - {id: kitty.esc.ris, raw: "ESC c", effect: hard reset, howl: {status: partial}}
           - {id: kitty.esc.ind, raw: "ESC D", effect: index, howl: {status: partial}}
           - {id: kitty.esc.nel, raw: "ESC E", effect: next line, howl: {status: partial}}
