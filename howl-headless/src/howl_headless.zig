@@ -103,6 +103,44 @@ pub const ReaderError = error{
 
 /// Distinguishes a live child from normal completion or reader failure.
 pub const State = enum(u8) { running, stopped, failed };
+/// Matches the VT owner's maximum retained bytes for one OSC 133 mark.
+pub const shell_mark_metadata_max_bytes = howl_vt.Terminal.shell_mark_metadata_max_bytes;
+/// Matches the VT owner's maximum retained shell-integration identity.
+pub const shell_name_max_bytes = howl_vt.Terminal.shell_name_max_bytes;
+
+comptime {
+    std.debug.assert(shell_mark_metadata_max_bytes <= std.math.maxInt(u16));
+    std.debug.assert(shell_name_max_bytes <= std.math.maxInt(u8));
+}
+
+/// Copies the latest real OSC 133 mark and any already-retained shell identity.
+pub const ShellMark = struct {
+    /// Identifies this accepted mark monotonically within one terminal.
+    generation: u64,
+    /// Retains the exact OSC 133 A, B, C, or D mark kind.
+    kind: u8,
+    /// Retains the optional status parsed from the mark without inference.
+    status: ?i32,
+    /// Stores bounded metadata bytes; only `metadata_len` bytes are meaningful.
+    metadata: [shell_mark_metadata_max_bytes]u8,
+    /// Bounds the meaningful metadata prefix within the fixed buffer.
+    metadata_len: u16,
+    /// Stores a retained shell identity; only `shell_len` bytes are meaningful.
+    shell: [shell_name_max_bytes]u8,
+    /// Bounds the meaningful shell prefix; zero means no shell identity.
+    shell_len: u8,
+
+    /// Borrows the copied bounded mark metadata.
+    pub fn metadataBytes(self: *const ShellMark) []const u8 {
+        return self.metadata[0..self.metadata_len];
+    }
+
+    /// Borrows the copied shell identity, when the terminal retained one.
+    pub fn shellBytes(self: *const ShellMark) ?[]const u8 {
+        if (self.shell_len == 0) return null;
+        return self.shell[0..self.shell_len];
+    }
+};
 
 /// Copies one coherent terminal status observation under the model lock.
 pub const Status = struct {
@@ -124,8 +162,8 @@ pub const Status = struct {
     output_oldest: u64,
     /// Identifies the newest finalized primary line, or zero before any line.
     output_newest: u64,
-    /// Identifies the latest accepted OSC 133 shell mark, or zero before any mark.
-    shell_mark_generation: u64,
+    /// Copies the latest accepted OSC 133 mark, or null before any mark.
+    shell_mark: ?ShellMark,
 };
 
 const ReaderFailure = enum(u8) {
@@ -322,6 +360,24 @@ pub const Terminal = struct {
         defer self.lock.unlock(self.io);
         const publication = self.model.surfaceSnapshot();
         const output = self.model.logicalOutputRange();
+        var shell_mark: ?ShellMark = null;
+        if (publication.shell_mark.generation != 0) {
+            var mark = ShellMark{
+                .generation = publication.shell_mark.generation,
+                .kind = publication.shell_mark.kind,
+                .status = publication.shell_mark.status,
+                .metadata = @splat(0),
+                .metadata_len = @intCast(publication.shell_mark.metadata.len),
+                .shell = @splat(0),
+                .shell_len = 0,
+            };
+            @memcpy(mark.metadata[0..mark.metadata_len], publication.shell_mark.metadata);
+            if (publication.shell_integration) |integration| if (integration.shell) |shell| {
+                mark.shell_len = @intCast(shell.len);
+                @memcpy(mark.shell[0..mark.shell_len], shell);
+            };
+            shell_mark = mark;
+        }
         return .{
             .state = self.state(),
             .reader_error = self.readerError(),
@@ -332,7 +388,7 @@ pub const Terminal = struct {
             .alternate_screen = publication.is_alternate_screen,
             .output_oldest = output.oldest,
             .output_newest = output.newest,
-            .shell_mark_generation = publication.shell_mark.generation,
+            .shell_mark = shell_mark,
         };
     }
 

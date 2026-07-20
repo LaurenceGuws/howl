@@ -119,7 +119,7 @@ test "status and logical output form one coherent headless observation" {
     try std.testing.expectEqual(@as(?headless.ReaderError, null), status.reader_error);
     try std.testing.expectEqual(@as(u64, 1), status.output_oldest);
     try std.testing.expectEqual(@as(u64, 2), status.output_newest);
-    try std.testing.expectEqual(@as(u64, 0), status.shell_mark_generation);
+    try std.testing.expectEqual(@as(?headless.ShellMark, null), status.shell_mark);
 
     var output = switch (try terminal.copyLogicalOutput(std.testing.allocator, 0, 8, 128)) {
         .output => |value| value,
@@ -129,6 +129,24 @@ test "status and logical output form one coherent headless observation" {
     try std.testing.expectEqualStrings("one\ntwo", output.text);
     try std.testing.expectEqualStrings("open", output.open_line);
     try std.testing.expectEqual(status.publication, output.publication);
+}
+
+test "status copies retained shell mark facts and shell identity" {
+    const terminal = try headless.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "printf '\\033]1337;ShellIntegrationVersion=20;shell=bash\\a" ++
+            "\\033]133;D;7\\a'" },
+        .{},
+    );
+    defer terminal.deinit();
+    try wait(std.testing.io, terminal);
+    const mark = terminal.status().shell_mark.?;
+    try std.testing.expectEqual(@as(u64, 1), mark.generation);
+    try std.testing.expectEqual(@as(u8, 'D'), mark.kind);
+    try std.testing.expectEqual(@as(?i32, 7), mark.status);
+    try std.testing.expectEqualStrings("7", mark.metadataBytes());
+    try std.testing.expectEqualStrings("bash", mark.shellBytes().?);
 }
 
 test "headless forwards exact process-group control outcomes" {

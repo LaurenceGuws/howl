@@ -9636,6 +9636,8 @@ pub const Terminal = struct {
     pub const ShellIntegration = ItermShellIntegration;
     /// Bounds the optional copied shell name in shell-integration metadata.
     pub const shell_name_max_bytes = max_shell_name_bytes;
+    /// Bounds copied OSC 133 metadata retained by one shell mark.
+    pub const shell_mark_metadata_max_bytes = max_metadata_bytes;
     /// Exposes the typed host-input vocabulary accepted by encodeInput.
     pub const InputEvent = Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
