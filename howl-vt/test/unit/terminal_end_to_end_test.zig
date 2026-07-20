@@ -845,6 +845,73 @@ test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
     }
 }
 
+test "terminal: HPB and VPB retain bounded cursor movement and exact mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    const screen = terminal.screen_state.activeConst();
+
+    try std.testing.expect((try terminal.feed("\x1b[4;8H\x1b[0j")).state_changed);
+    try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[j")).state_changed);
+    try std.testing.expectEqual(@as(u16, 5), screen.cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[999999j")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[j")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[0k")).state_changed);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.row);
+    try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
+    try std.testing.expect((try terminal.feed("k")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expect((try terminal.feed("\x1b[999999k")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), screen.cursor.row);
+    try std.testing.expect(!(try terminal.feed("\x1b[k")).state_changed);
+}
+
+test "terminal: DECFI and DECBI shift exact active margin rows at horizontal edges" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+    defer terminal.deinit();
+    const screen = terminal.screen_state.active();
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[1;1HABCDEF\x1b[2;1HGHIJKL\x1b[3;1HMNOPQR" ++
+            "\x1b[2;3r\x1b[?69h\x1b[2;5s\x1b[2;5H",
+    )).state_changed);
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b")).state_changed);
+    try std.testing.expect((try terminal.feed("9")).state_changed);
+    const after_left = [_][]const u8{ "ABCDEF", "GIJK\x00L", "MOPQ\x00R" };
+    for (after_left, 0..) |expected, row| for (expected, 0..) |ch, col| {
+        try std.testing.expectEqual(@as(u21, ch), screen.cellAt(@intCast(row), @intCast(col)));
+    };
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), screen.cursor.col);
+    const left_dirty = screen.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 1), left_dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 2), left_dirty.end_row);
+    for (1..3) |row| {
+        try std.testing.expectEqual(@as(u16, 1), left_dirty.dirty_cols_start[row]);
+        try std.testing.expectEqual(@as(u16, 4), left_dirty.dirty_cols_end[row]);
+    }
+
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[2;2H\x1b6")).state_changed);
+    const after_right = [_][]const u8{ "ABCDEF", "G\x00IJKL", "M\x00OPQR" };
+    for (after_right, 0..) |expected, row| for (expected, 0..) |ch, col| {
+        try std.testing.expectEqual(@as(u21, ch), screen.cellAt(@intCast(row), @intCast(col)));
+    };
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
+    const right_dirty = screen.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 1), right_dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 2), right_dirty.end_row);
+
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?69h\x1b[2;5s\x1b[2;5H")).state_changed);
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b9")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+}
+
 test "terminal: CSI cursor positioning shares parameter, margin, and origin bounds" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 8, 12);

@@ -331,9 +331,15 @@ references:
           - {id: libvterm.csi.decset, raw: "CSI ? Pm h", effect: set DEC private modes, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
           - {id: libvterm.csi.hpb, raw: "CSI [Ps=1] j", effect: cursor backward, relevance: compatibility,
-            howl: {status: 'false'}}
+            conditions: libvterm honors the left margin only under DECOM while Howl uses its directional margin policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: HPB and VPB retain bounded cursor movement and exact mutation"}}}
           - {id: libvterm.csi.vpb, raw: "CSI [Ps=1] k", effect: cursor up, relevance: compatibility,
-            howl: {status: 'false'}}
+            conditions: libvterm honors the top margin only under DECOM while Howl uses its directional margin policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: HPB and VPB retain bounded cursor movement and exact mutation"}}}
           - {id: libvterm.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes,
             conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
@@ -803,7 +809,10 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           - {id: iterm2.esc.decfi, raw: "ESC 9", effect: forward index, relevance: compatibility,
-            howl: {status: 'false'}}
+            conditions: iTerm2 gates the command to VT400 while Howl has no legacy emulation level,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Screen.forwardIndex, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DECFI and DECBI shift exact active margin rows at horizontal edges"}}}
           - {id: iterm2.esc.decrc, raw: "ESC 8", effect: restore cursor,
             conditions: iTerm2 also restores its product-selected Unicode version,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreCursor, proof: {
@@ -815,7 +824,10 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
           - {id: iterm2.esc.decbi, raw: "ESC 6", effect: backward index, relevance: compatibility,
-            howl: {status: 'false'}}
+            conditions: iTerm2 gates the command to VT400 while Howl has no legacy emulation level,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Screen.backIndex, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DECFI and DECBI shift exact active margin rows at horizontal edges"}}}
           - {id: iterm2.esc.ind, raw: "ESC D", effect: index, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,

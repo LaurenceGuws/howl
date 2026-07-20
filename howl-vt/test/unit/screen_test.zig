@@ -364,7 +364,7 @@ test "screen: SL shifts scroll-region rows left" {
     apply(&s, SemanticEvent{ .write_text = "KLMNO" });
 
     apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 2 } });
-    apply(&s, SemanticEvent{ .shift_left_columns = 2 });
+    try std.testing.expect(s.shiftColumnsLeft(2));
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'B'), s.cellAt(0, 1));
@@ -387,7 +387,7 @@ test "screen: SR respects horizontal margins" {
     apply(&s, SemanticEvent{ .write_text = "ABCDE" });
     apply(&s, SemanticEvent{ .left_right_margin_mode = true });
     apply(&s, SemanticEvent{ .set_left_right_margins = .{ .left = 1, .right = 3 } });
-    apply(&s, SemanticEvent{ .shift_right_columns = 1 });
+    try std.testing.expect(s.shiftColumnsRight(1));
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(0, 1));
