@@ -1922,9 +1922,9 @@ pub const Screen = struct {
             const param = params[idxOf(idx)];
             switch (param) {
                 4 => self.applyUnderlineStyle(params, separators, &idx),
-                38 => self.applyExtendedColor(params, &idx, true),
-                48 => self.applyExtendedColor(params, &idx, false),
-                58 => self.applyUnderlineColor(params, &idx),
+                38 => self.applyExtendedColor(params, separators, &idx, true),
+                48 => self.applyExtendedColor(params, separators, &idx, false),
+                58 => self.applyUnderlineColor(params, separators, &idx),
                 else => self.applyBasicSgr(param),
             }
         }
@@ -1940,6 +1940,7 @@ pub const Screen = struct {
             7 => self.current_attrs.reverse = true,
             8 => self.current_attrs.invisible = true,
             9 => self.current_attrs.strikethrough = true,
+            21 => self.setUnderline(.double),
             22 => {
                 self.current_attrs.bold = false;
                 self.current_attrs.dim = false;
@@ -1999,13 +2000,24 @@ pub const Screen = struct {
         self.current_attrs.blink_fast = false;
     }
 
-    fn applyExtendedColor(self: *Screen, params: []const i32, idx: *u8, is_fg: bool) void {
-        const sgr_color = decodeExtendedColor(params, idx) orelse return;
+    fn applyExtendedColor(
+        self: *Screen,
+        params: []const i32,
+        separators: parser_mod.CsiSeparatorList,
+        idx: *u8,
+        is_fg: bool,
+    ) void {
+        const sgr_color = decodeExtendedColor(params, separators, idx) orelse return;
         if (is_fg) self.current_attrs.fg = sgr_color else self.current_attrs.bg = sgr_color;
     }
 
-    fn applyUnderlineColor(self: *Screen, params: []const i32, idx: *u8) void {
-        const sgr_color = decodeExtendedColor(params, idx) orelse return;
+    fn applyUnderlineColor(
+        self: *Screen,
+        params: []const i32,
+        separators: parser_mod.CsiSeparatorList,
+        idx: *u8,
+    ) void {
+        const sgr_color = decodeExtendedColor(params, separators, idx) orelse return;
         self.current_attrs.underline_color = sgr_color;
     }
 
@@ -2568,10 +2580,15 @@ fn copyOpenOutputLine(
     return bytes.toOwnedSlice(allocator);
 }
 
-fn decodeExtendedColor(params: []const i32, idx: *u8) ?ScreenColor {
+fn decodeExtendedColor(
+    params: []const i32,
+    separators: parser_mod.CsiSeparatorList,
+    idx: *u8,
+) ?ScreenColor {
     const next = idx.* + 1;
     if (next >= params.len) return null;
     const mode = params[idxOf(next)];
+    if (separators.isSet(idx.*)) return decodeColonColor(params, separators, idx, mode);
     if (mode == 5) {
         if (idx.* + 2 >= params.len) return null;
         idx.* += 2;
@@ -2587,6 +2604,35 @@ fn decodeExtendedColor(params: []const i32, idx: *u8) ?ScreenColor {
         });
     }
     return null;
+}
+
+// Decodes one colon-delimited color group and consumes every owned subparameter.
+fn decodeColonColor(
+    params: []const i32,
+    separators: parser_mod.CsiSeparatorList,
+    idx: *u8,
+    mode: i32,
+) ?ScreenColor {
+    var end = idx.*;
+    while (end + 1 < params.len and separators.isSet(end)) end += 1;
+    defer idx.* = end;
+
+    const count = end - idx.* + 1;
+    if (mode == 5) {
+        if (count < 3) return null;
+        return .indexed(clampByte(params[idxOf(idx.* + 2)]));
+    }
+    if (mode != 2 or count < 5) return null;
+
+    // Five fields are the widespread 2:R:G:B form. Six or more carry a
+    // color-space field before RGB; unsupported trailing tolerance fields are ignored.
+    const red = idx.* + if (count == 5) @as(u8, 2) else 3;
+    if (red + 2 > end) return null;
+    return ScreenColor.rgb(.{
+        .r = clampByte(params[idxOf(red)]),
+        .g = clampByte(params[idxOf(red + 1)]),
+        .b = clampByte(params[idxOf(red + 2)]),
+    });
 }
 
 fn idxOf(value: u8) usize {

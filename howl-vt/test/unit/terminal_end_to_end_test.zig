@@ -396,6 +396,73 @@ test "terminal: DECCRA preserves cursor and overlapping source bytes" {
     }
 }
 
+test "terminal: SGR retains exact rendition and colon color state" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b[1;2;3;4:3;5;7;8;9;31;44mA" ++
+            "\x1b[22;23;24;25;27;28;29;39;49mB" ++
+            "\x1b[21;90;107mC" ++
+            "\x1b[38;5;196;48;2;1;2;3;58;5;45mD" ++
+            "\x1b[38:2::10:20:30;48:5:200;58:2::40:50:60mE" ++
+            "\x1b[4:0mF\x1b[4:1mG\x1b[4:2mH\x1b[4:4mI\x1b[4:5mJ\x1b[4:3mK" ++
+            "\x1b[25;39m\x1b[38:5mL",
+    )).history_lost);
+    const screen = terminal.screen_state.activeConst();
+
+    const set = screen.cellInfoAt(0, 0).attrs;
+    try std.testing.expect(set.bold);
+    try std.testing.expect(set.dim);
+    try std.testing.expect(set.italic);
+    try std.testing.expect(set.blink);
+    try std.testing.expect(set.reverse);
+    try std.testing.expect(set.invisible);
+    try std.testing.expect(set.strikethrough);
+    try std.testing.expect(set.underline);
+    try std.testing.expectEqual(Screen.UnderlineStyle.curly, set.underline_style);
+    try std.testing.expectEqual(Screen.Color.indexed(1), set.fg);
+    try std.testing.expectEqual(Screen.Color.indexed(4), set.bg);
+
+    const cleared = screen.cellInfoAt(0, 1).attrs;
+    try std.testing.expect(!cleared.bold);
+    try std.testing.expect(!cleared.dim);
+    try std.testing.expect(!cleared.italic);
+    try std.testing.expect(!cleared.blink);
+    try std.testing.expect(!cleared.reverse);
+    try std.testing.expect(!cleared.invisible);
+    try std.testing.expect(!cleared.strikethrough);
+    try std.testing.expect(!cleared.underline);
+    try std.testing.expectEqual(Screen.default_fg, cleared.fg);
+    try std.testing.expectEqual(Screen.default_cell_attrs.bg, cleared.bg);
+
+    const bright = screen.cellInfoAt(0, 2).attrs;
+    try std.testing.expect(bright.underline);
+    try std.testing.expectEqual(Screen.UnderlineStyle.double, bright.underline_style);
+    try std.testing.expectEqual(Screen.Color.indexed(8), bright.fg);
+    try std.testing.expectEqual(Screen.Color.indexed(15), bright.bg);
+
+    const semicolon = screen.cellInfoAt(0, 3).attrs;
+    try std.testing.expectEqual(Screen.Color.indexed(196), semicolon.fg);
+    try std.testing.expectEqual(Screen.Color.rgbComponents(1, 2, 3), semicolon.bg);
+    try std.testing.expectEqual(Screen.Color.indexed(45), semicolon.underline_color);
+
+    const colon = screen.cellInfoAt(0, 4).attrs;
+    try std.testing.expectEqual(Screen.Color.rgbComponents(10, 20, 30), colon.fg);
+    try std.testing.expectEqual(Screen.Color.indexed(200), colon.bg);
+    try std.testing.expectEqual(Screen.Color.rgbComponents(40, 50, 60), colon.underline_color);
+
+    try std.testing.expect(!screen.cellInfoAt(0, 5).attrs.underline);
+    try std.testing.expectEqual(Screen.UnderlineStyle.straight, screen.cellInfoAt(0, 6).attrs.underline_style);
+    try std.testing.expectEqual(Screen.UnderlineStyle.double, screen.cellInfoAt(0, 7).attrs.underline_style);
+    try std.testing.expectEqual(Screen.UnderlineStyle.dotted, screen.cellInfoAt(1, 0).attrs.underline_style);
+    try std.testing.expectEqual(Screen.UnderlineStyle.dashed, screen.cellInfoAt(1, 1).attrs.underline_style);
+    try std.testing.expectEqual(Screen.UnderlineStyle.curly, screen.cellInfoAt(1, 2).attrs.underline_style);
+    try std.testing.expect(!screen.cellInfoAt(1, 3).attrs.blink);
+    try std.testing.expectEqual(Screen.default_fg, screen.cellInfoAt(1, 3).attrs.fg);
+}
+
 test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
     const allocator = std.testing.allocator;
 

@@ -398,52 +398,84 @@ references:
           - {id: libvterm.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr}}
           - {id: libvterm.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.underline, raw: "CSI 4[:style] m", effect: enable or style underline,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.blink, raw: "CSI 5 m", effect: enable blink, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+            source: howl-vt/src/terminal.zig, symbol: applySgr},
+            conditions: libvterm can also brighten an existing basic foreground when bold-highbright is configured}
+          - {id: libvterm.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {
+            status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.underline, raw: "CSI 4[:style]|21 m", effect: enable or style underline,
+            conditions: styles 0..3 and SGR 21 double underline, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.blink, raw: "CSI 5 m", effect: enable blink, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.font, raw: "CSI 10..19 m", effect: select font slot, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr}}
           - {id: libvterm.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: libvterm.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.fg_basic, raw: "CSI 30..37 m", effect: set basic foreground, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr}}
           - {id: libvterm.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.bg_basic, raw: "CSI 40..47 m", effect: set basic background, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr}}
           - {id: libvterm.sgr.bg_extended, raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
-          - {id: libvterm.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.small_baseline, raw: "CSI 73|74|75 m",
             effect: set small superscript subscript or normal baseline, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: applySgr}}
           - {id: libvterm.sgr.bright, raw: "CSI 90..97|100..107 m", effect: set bright foreground or background,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr}}
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
 
   iterm2:
     revision: 1d6e758a390f7141f6e21b06e2663a53a02409c6
@@ -903,26 +935,68 @@ references:
       - source: VT100GraphicRendition.m
         symbol: VT100GraphicRenditionExecuteSGR
         line: 25
-        census: {semantic_branches: 24, records: 24}
+        census: {semantic_branches: 25, records: 25}
         recognition: implemented
         records:
           - {id: iterm2.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial}}
-          - {id: iterm2.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: partial}}
-          - {id: iterm2.sgr.faint, raw: "CSI 2 m", effect: enable faint, howl: {status: partial}}
-          - {id: iterm2.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {status: partial}}
-          - {id: iterm2.sgr.underline, raw: "CSI 4[:style] m", effect: enable or style underline,
-            howl: {status: partial}}
-          - {id: iterm2.sgr.blink, raw: "CSI 5|6 m", effect: enable blink, howl: {status: partial}}
+          - {id: iterm2.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.faint, raw: "CSI 2 m", effect: enable faint, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.underline, raw: "CSI 4[:style]|21 m", effect: enable or style underline,
+            conditions: styles 0..5 and SGR 21 double underline, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.blink, raw: "CSI 5 m", effect: enable blink, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.rapid_blink, raw: "CSI 6 m", effect: ignore unsupported rapid blink,
+            recognition: accepted_noop, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
+            conditions: Howl enables ordinary blink}
           - {id: iterm2.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: partial}}
-          - {id: iterm2.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: partial}}
-          - {id: iterm2.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: partial}}
-          - {id: iterm2.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold and faint, howl: {status: partial}}
-          - {id: iterm2.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: partial}}
-          - {id: iterm2.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: partial}}
-          - {id: iterm2.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: partial}}
+          - {id: iterm2.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold and faint, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: iterm2.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: partial}}
-          - {id: iterm2.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: partial}}
-          - {id: iterm2.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: partial}}
+          - {id: iterm2.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: iterm2.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: iterm2.sgr.fg_basic, raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {status: partial}}
           - {id: iterm2.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
             howl: {status: partial}}
@@ -1540,26 +1614,72 @@ references:
       - source: vt-parser.c
         symbol: _parse_sgr
         line: 965
-        census: {semantic_branches: 24, records: 24}
+        census: {semantic_branches: 25, records: 25}
         recognition: implemented
         records:
           - {id: kitty.sgr.reset, raw: "CSI 0 m", effect: reset rendition, howl: {status: partial}}
-          - {id: kitty.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: partial}}
-          - {id: kitty.sgr.faint, raw: "CSI 2 m", effect: enable faint, howl: {status: partial}}
-          - {id: kitty.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {status: partial}}
-          - {id: kitty.sgr.underline, raw: "CSI 4[:style] m", effect: enable or style underline,
-            howl: {status: partial}}
-          - {id: kitty.sgr.blink, raw: "CSI 5|6 m", effect: enable blink, howl: {status: partial}}
-          - {id: kitty.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: partial}}
-          - {id: kitty.sgr.conceal, raw: "CSI 8 m", effect: enable conceal, howl: {status: partial}}
-          - {id: kitty.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: partial}}
-          - {id: kitty.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold and faint, howl: {status: partial}}
-          - {id: kitty.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: partial}}
-          - {id: kitty.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: partial}}
-          - {id: kitty.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: partial}}
-          - {id: kitty.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: partial}}
-          - {id: kitty.sgr.conceal_off, raw: "CSI 28 m", effect: disable conceal, howl: {status: partial}}
-          - {id: kitty.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: partial}}
+          - {id: kitty.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.faint, raw: "CSI 2 m", effect: enable faint, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.underline, raw: "CSI 4[:style]|21 m", effect: enable or style underline,
+            conditions: styles 0..5 and SGR 21 double underline, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.blink, raw: "CSI 5 m", effect: enable blink, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.rapid_blink, raw: "CSI 6 m", effect: ignore unsupported rapid blink,
+            recognition: accepted_noop, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
+            conditions: Howl enables ordinary blink}
+          - {id: kitty.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.conceal, raw: "CSI 8 m", effect: ignore unsupported conceal,
+            recognition: accepted_noop, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
+            conditions: Howl retains conceal state}
+          - {id: kitty.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold and faint, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.italic_off, raw: "CSI 23 m", effect: disable italic, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.underline_off, raw: "CSI 24 m", effect: disable underline, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.blink_off, raw: "CSI 25 m", effect: disable blink, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.reverse_off, raw: "CSI 27 m", effect: disable inverse, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
+          - {id: kitty.sgr.conceal_off, raw: "CSI 28 m", effect: ignore unsupported conceal reset,
+            recognition: accepted_noop, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
+            conditions: Howl clears retained conceal state}
+          - {id: kitty.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.fg_basic, raw: "CSI 30..37|90..97 m", effect: set basic foreground, howl: {status: partial}}
           - {id: kitty.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
             howl: {status: partial}}
