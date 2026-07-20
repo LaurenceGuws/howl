@@ -61,6 +61,7 @@ offenders:
       - Terminal.resize routes the compensating PTY failure directly into that transition
 
   - id: vt-history-allocation-loss-is-invisible
+    status: resolved_pending_review
     severity: medium
     class: weak_bound_error_cleanup_invariant
     sites:
@@ -78,6 +79,7 @@ offenders:
       - the caller can distinguish retained history from a dropped row
 
   - id: headless-reply-prefix-is-discarded
+    status: resolved_pending_review
     severity: medium
     class: weak_bound_error_cleanup_invariant
     sites:
@@ -99,5 +101,6 @@ implementation_order:
     offenders: [howl-wake-clear-race, howl-resize-rollback-panics-on-external-failure]
     review_boundary: Cross-thread progress and externally fallible resize are exact without changing APIs broadly.
   - slice: bounded_loss_evidence
+    status: resolved_pending_review
     offenders: [vt-history-allocation-loss-is-invisible, headless-reply-prefix-is-discarded]
     review_boundary: Existing bounded evidence surfaces report retained loss without stopping normal terminal progress.

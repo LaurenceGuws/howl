@@ -76,6 +76,7 @@ pub const Screen = struct {
     output_lines_count: u16,
     output_bytes: usize,
     next_output_id: u64,
+    history_loss_generation: u64,
     last_graphic_codepoint: ?u21,
     current_attrs: CellAttrs,
     dirty_state: DirtyState,
@@ -132,6 +133,7 @@ pub const Screen = struct {
             .output_lines_count = 0,
             .output_bytes = 0,
             .next_output_id = 1,
+            .history_loss_generation = 0,
             .last_graphic_codepoint = null,
             .current_attrs = initial_cell_attrs,
             .dirty_state = dirty_state,
@@ -566,10 +568,16 @@ pub const Screen = struct {
         var next_line = cloneAuthorityLine(
             allocator,
             if (self.open_history_line) |line| line.cells.items else &.{},
-        ) catch return;
+        ) catch {
+            self.recordHistoryLoss();
+            return;
+        };
         defer next_line.deinit(allocator);
 
-        next_line.cells.ensureTotalCapacity(allocator, next_line.cells.items.len + len) catch return;
+        next_line.cells.ensureTotalCapacity(allocator, next_line.cells.items.len + len) catch {
+            self.recordHistoryLoss();
+            return;
+        };
         var col: u16 = 0;
         while (col < len) : (col += 1) {
             next_line.cells.appendAssumeCapacity(self.cellInfoAt(row, col));
@@ -583,10 +591,12 @@ pub const Screen = struct {
         const projected_after_drop = self.history_count -| projected_drop;
         const projected_target = @min(projected_after_drop + 1, @as(u32, self.history_capacity));
         self.ensureProjectedCapacity(allocator, projected_target) catch {
+            self.recordHistoryLoss();
             return;
         };
         if (!wrapped and !replacing_oldest) {
             self.history_lines.ensureTotalCapacity(allocator, self.history_lines.items.len + 1) catch {
+                self.recordHistoryLoss();
                 return;
             };
         }
@@ -607,6 +617,14 @@ pub const Screen = struct {
             self.history_lines.appendAssumeCapacity(next_line);
         }
         next_line = .{};
+    }
+
+    fn recordHistoryLoss(self: *Screen) void {
+        self.history_loss_generation = std.math.add(
+            u64,
+            self.history_loss_generation,
+            1,
+        ) catch @panic("terminal history loss generation exhausted");
     }
 
     fn finalizeOutputLine(
@@ -9198,6 +9216,7 @@ const FeedSummary = struct {
     state_changed: bool,
     title_changed: bool,
     icon_changed: bool,
+    history_lost: bool,
 };
 
 const DcsCapture = struct {
@@ -9354,6 +9373,7 @@ const TerminalStream = struct {
             .state_changed = state_changed,
             .title_changed = title_changed,
             .icon_changed = icon_changed,
+            .history_lost = false,
         };
     }
 
@@ -9363,13 +9383,17 @@ const TerminalStream = struct {
             .state_changed = false,
             .title_changed = false,
             .icon_changed = false,
+            .history_lost = false,
         };
+        const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
         for (bytes) |byte| {
             const byte_summary = try self.nextSummary(byte);
             summary.state_changed = summary.state_changed or byte_summary.state_changed;
             summary.title_changed = summary.title_changed or byte_summary.title_changed;
             summary.icon_changed = summary.icon_changed or byte_summary.icon_changed;
         }
+        summary.history_lost =
+            self.terminal.screen_state.primary.history_loss_generation != history_loss_before;
         return summary;
     }
 
@@ -10179,6 +10203,7 @@ pub const Terminal = struct {
             } else null,
             .shell_mark = self.host.shell_mark,
             .bell_generation = self.host.bell_generation,
+            .history_loss_generation = self.screen_state.primary.history_loss_generation,
             .is_alternate_screen = snapshot.view.is_alternate_screen,
         };
     }
@@ -10521,6 +10546,8 @@ pub const Terminal = struct {
         shell_mark: ShellMark,
         /// Monotonic count of accepted BEL controls; presentation belongs to the embedder.
         bell_generation: u64,
+        /// Monotonic count of history rows dropped after bounded allocation failure.
+        history_loss_generation: u64,
         is_alternate_screen: bool,
     };
 
@@ -10611,6 +10638,75 @@ test "terminal feed preserves scrolled viewport as history grows" {
 
     try std.testing.expect(vt.scrollback_offset > offset_before);
     try std.testing.expectEqual(before, vt.surfaceSnapshot().snapshot.view.cellAt(0, 0));
+}
+
+test "history allocation failures publish loss and preserve paired state" {
+    inline for (0..4) |fail_offset| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+        var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 1, 2, 4);
+        defer screen.deinit(failing.allocator());
+        screen.writeText("x");
+        failing.fail_index = failing.alloc_index + fail_offset;
+
+        screen.storeHistoryRow(0);
+        try std.testing.expect(failing.has_induced_failure);
+        try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+        try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+        try std.testing.expectEqual(@as(usize, 0), screen.history_lines.items.len);
+        try std.testing.expect(screen.open_history_line == null);
+
+        failing.fail_index = std.math.maxInt(usize);
+        screen.storeHistoryRow(0);
+        try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+        try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+        try std.testing.expectEqual(@as(usize, 1), screen.history_lines.items.len);
+    }
+}
+
+test "history clone allocation failure preserves the open wrapped line" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 1, 2, 4);
+    defer screen.deinit(failing.allocator());
+    screen.writeText("x");
+    screen.setRowWrapped(0, true);
+    screen.storeHistoryRow(0);
+    const open_len = screen.open_history_line.?.cells.items.len;
+    const projected_count = screen.history_count;
+    failing.fail_index = failing.alloc_index;
+
+    screen.storeHistoryRow(0);
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+    try std.testing.expectEqual(projected_count, screen.history_count);
+    try std.testing.expectEqual(open_len, screen.open_history_line.?.cells.items.len);
+
+    failing.fail_index = std.math.maxInt(usize);
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(projected_count + 1, screen.history_count);
+    try std.testing.expectEqual(open_len * 2, screen.open_history_line.?.cells.items.len);
+}
+
+test "feed summary and surface publish dropped history" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.initWithHistory(failing.allocator(), 1, 2, 4);
+    defer terminal.deinit();
+    failing.fail_index = failing.alloc_index;
+
+    const dropped = try terminal.feed("\x1b[S");
+    try std.testing.expect(dropped.state_changed);
+    try std.testing.expect(dropped.history_lost);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        terminal.surfaceSnapshot().history_loss_generation,
+    );
+
+    failing.fail_index = std.math.maxInt(usize);
+    const retained = try terminal.feed("\x1b[S");
+    try std.testing.expect(!retained.history_lost);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        terminal.surfaceSnapshot().history_loss_generation,
+    );
 }
 
 test "terminal publishes every bounded bell and remains reusable" {

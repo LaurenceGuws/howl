@@ -149,6 +149,8 @@ pub const Status = struct {
     state: State,
     /// Retains the exact terminal reader failure after a failed state.
     reader_error: ?ReaderError,
+    /// Retains the accepted PTY prefix only when a terminal-reply transfer failed.
+    reply_failure_transferred: ?usize,
     /// Reports that model resize failed and restoring the prior PTY geometry also failed.
     resize_rollback_failed: bool,
     /// Reports the model and PTY column count.
@@ -159,6 +161,8 @@ pub const Status = struct {
     publication: u64,
     /// Identifies the latest model mutation represented by the publication.
     dirty_generation: u64,
+    /// Counts primary history rows dropped after bounded allocation failure.
+    history_loss_generation: u64,
     /// Reports whether the current viewport belongs to the alternate screen.
     alternate_screen: bool,
     /// Identifies the oldest retained finalized primary line.
@@ -216,6 +220,7 @@ pub const Terminal = struct {
     write_lock: std.Io.Mutex = .init,
     state_value: std.atomic.Value(State) = .init(.running),
     reader_failure: std.atomic.Value(ReaderFailure) = .init(.none),
+    reply_failure_transferred: std.atomic.Value(usize) = .init(0),
     wake_generation: std.atomic.Value(u64) = .init(0),
     wake_consumed: std.atomic.Value(u64) = .init(0),
     wake_announced: std.atomic.Value(u64) = .init(0),
@@ -394,14 +399,20 @@ pub const Terminal = struct {
             };
             shell_mark = mark;
         }
+        const reader_error = self.readerError();
         return .{
             .state = self.state(),
-            .reader_error = self.readerError(),
+            .reader_error = reader_error,
+            .reply_failure_transferred = replyFailureTransferred(
+                reader_error,
+                self.reply_failure_transferred.load(.acquire),
+            ),
             .resize_rollback_failed = self.resize_rollback_failed.load(.acquire),
             .cols = self.cols,
             .rows = self.rows,
             .publication = publication.snapshot_seq,
             .dirty_generation = publication.dirty_generation,
+            .history_loss_generation = publication.history_loss_generation,
             .alternate_screen = publication.is_alternate_screen,
             .output_oldest = output.oldest,
             .output_newest = output.newest,
@@ -472,18 +483,18 @@ pub const Terminal = struct {
                 .complete => {},
                 .incomplete => |failure| {
                     self.allocator.free(reply);
-                    return switch (failure.reason) {
-                        .canceled => error.PtyReplyCanceled,
-                        .child_closed, .not_started => error.PtyReplyChildClosed,
-                        .timeout => error.PtyReplyTimedOut,
-                        .wait_failed => error.PtyReplyWaitFailed,
-                        .write_failed => error.PtyReplyWriteFailed,
-                    };
+                    return self.retainReplyTransferFailure(
+                        failure.transferred,
+                        failure.reason,
+                    );
                 },
             }
         }
         self.allocator.free(reply);
-        if (summary.state_changed or summary.title_changed or summary.icon_changed) self.notify();
+        if (summary.state_changed or
+            summary.title_changed or
+            summary.icon_changed or
+            summary.history_lost) self.notify();
     }
 
     fn finish(self: *Terminal, state_value: State, failure: ReaderFailure) void {
@@ -536,6 +547,21 @@ pub const Terminal = struct {
         self.state_value.store(.failed, .release);
         self.transport.cancel();
     }
+
+    fn retainReplyTransferFailure(
+        self: *Terminal,
+        transferred: usize,
+        reason: howl_pty.TransferFailure,
+    ) ReaderError {
+        self.reply_failure_transferred.store(transferred, .release);
+        return switch (reason) {
+            .canceled => error.PtyReplyCanceled,
+            .child_closed, .not_started => error.PtyReplyChildClosed,
+            .timeout => error.PtyReplyTimedOut,
+            .wait_failed => error.PtyReplyWaitFailed,
+            .write_failed => error.PtyReplyWriteFailed,
+        };
+    }
 };
 
 fn validateSize(cols: u16, rows: u16) error{InvalidDimensions}!void {
@@ -579,6 +605,18 @@ fn decodeReaderFailure(failure: ReaderFailure) ?ReaderError {
     };
 }
 
+fn replyFailureTransferred(failure: ?ReaderError, transferred: usize) ?usize {
+    return if (failure) |reader_error| switch (reader_error) {
+        error.PtyReplyCanceled,
+        error.PtyReplyChildClosed,
+        error.PtyReplyTimedOut,
+        error.PtyReplyWaitFailed,
+        error.PtyReplyWriteFailed,
+        => transferred,
+        else => null,
+    } else null;
+}
+
 fn ignoreWake(_: ?*anyopaque) void {}
 
 test "bounds reject invalid terminal ownership" {
@@ -604,6 +642,42 @@ test "reader allocation failures preserve their owner boundary" {
     try std.testing.expectEqual(
         @as(?ReaderError, error.ReplyAllocationFailed),
         decodeReaderFailure(.reply_allocation_failed),
+    );
+}
+
+test "reply failure evidence distinguishes rejection from an accepted prefix" {
+    try std.testing.expectEqual(
+        @as(?usize, 0),
+        replyFailureTransferred(error.PtyReplyTimedOut, 0),
+    );
+    try std.testing.expectEqual(
+        @as(?usize, 7),
+        replyFailureTransferred(error.PtyReplyWriteFailed, 7),
+    );
+    try std.testing.expectEqual(
+        @as(?usize, null),
+        replyFailureTransferred(error.ReplyAllocationFailed, 7),
+    );
+
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{},
+    );
+    defer terminal.deinit();
+    terminal.cancel();
+    const rejected = terminal.retainReplyTransferFailure(0, .timeout);
+    terminal.finish(.failed, readerFailure(rejected));
+    try std.testing.expectEqual(
+        @as(?usize, 0),
+        terminal.status().reply_failure_transferred,
+    );
+    const partial = terminal.retainReplyTransferFailure(7, .write_failed);
+    terminal.finish(.failed, readerFailure(partial));
+    try std.testing.expectEqual(
+        @as(?usize, 7),
+        terminal.status().reply_failure_transferred,
     );
 }
 

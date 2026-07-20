@@ -117,6 +117,8 @@ test "status and logical output form one coherent headless observation" {
     const status = terminal.status();
     try std.testing.expectEqual(headless.State.stopped, status.state);
     try std.testing.expectEqual(@as(?headless.ReaderError, null), status.reader_error);
+    try std.testing.expectEqual(@as(?usize, null), status.reply_failure_transferred);
+    try std.testing.expectEqual(@as(u64, 0), status.history_loss_generation);
     try std.testing.expectEqual(@as(u64, 1), status.output_oldest);
     try std.testing.expectEqual(@as(u64, 2), status.output_newest);
     try std.testing.expectEqual(@as(?headless.ShellMark, null), status.shell_mark);
