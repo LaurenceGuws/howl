@@ -1278,9 +1278,14 @@ references:
           - {id: iterm2.window.report_position, raw: "CSI 13 t", effect: report window position, relevance: query,
             howl: {status: 'false'}}
           - {id: iterm2.window.report_pixels, raw: "CSI 14 t", effect: report window pixel size, relevance: query,
-            howl: {status: partial}}
+            conditions: iTerm2 reports host window pixels while Howl reports host-supplied cell pixels times the grid,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: iterm2.window.report_cells, raw: "CSI 18 t", effect: report terminal cell dimensions, relevance: query,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: iterm2.window.report_screen, raw: "CSI 19 t", effect: report screen dimensions, relevance: query,
             howl: {status: 'false'}}
           - {id: iterm2.window.report_icon_title, raw: "CSI 20 t", effect: report icon title, relevance: query,
@@ -1598,11 +1603,19 @@ references:
           - {id: kitty.csi.save_cursor, raw: "CSI s", effect: save cursor, howl: {status: partial}}
           - {id: kitty.csi.save_modes, raw: "CSI ? Pm s", effect: save DEC modes, howl: {status: partial}}
           - {id: kitty.csi.report_window_pixels, raw: "CSI 14 ; [Ps] t", effect: report window pixel size,
-            relevance: query, howl: {status: partial}}
+            conditions: Howl needs host cell pixels and has no Kitty window-id fact for Ps=2 frame dimensions,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendSizeReport,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: kitty.csi.report_cell_pixels, raw: "CSI 16 ; [Ps] t", effect: report cell pixel size, relevance: query,
-            howl: {status: partial}}
+            conditions: Howl replies only after the embedding host supplies nonzero cell pixels,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: kitty.csi.report_text_cells, raw: "CSI 18 ; [Ps] t", effect: report text area dimensions,
-            relevance: query, howl: {status: partial}}
+            relevance: query, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: kitty.csi.title_push, raw: "CSI 22 ; [Ps] t", effect: push title stack, relevance: host metadata,
             howl: {status: partial}}
           - {id: kitty.csi.title_pop, raw: "CSI 23 ; [Ps] t", effect: pop title stack, relevance: host metadata,

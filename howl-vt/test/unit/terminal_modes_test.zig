@@ -642,6 +642,50 @@ test "S7C1T and S8C1T serialize mixed replies through one bounded owner" {
     try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
 }
 
+test "terminal size reports use exact current cell and pixel facts" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 5);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    try stream.nextSlice("\x1b[1");
+    try stream.nextSlice("8t");
+    try std.testing.expectEqualStrings("\x1b[8;3;5t", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect(!(try terminal.feed("\x1b[14t\x1b[16t")).state_changed);
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+
+    try terminal.setCellPixelSize(9, 17);
+    try terminal.resize(4, 7);
+    clearPendingOutput(&terminal);
+    try stream.nextSlice("\x1b G\x9b14");
+    try stream.nextSlice(";0t\x9b16;0t\x9b18;0t");
+    try std.testing.expectEqualStrings(
+        "\x9b4;68;63t\x9b6;17;9t\x9b8;4;7t",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    try stream.nextSlice("\x1bc");
+    try stream.nextSlice("\x1b[14;2t\x1b[16t\x1b[18t");
+    try std.testing.expectEqualStrings(
+        "\x1b[4;68;63t\x1b[6;17;9t\x1b[8;4;7t",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    try stream.nextSlice("\x1b[14;0;0t\x1b[16;-1t\x1b[19t");
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1b[18t"));
+    try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
+}
+
 test "eight-bit multipart reply limit rolls back every framing byte" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

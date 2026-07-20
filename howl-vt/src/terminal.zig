@@ -6324,6 +6324,13 @@ const TerminalColorControlCommand = struct {
     payload: []const u8,
 };
 
+// Selects one terminal-owned cell or host-supplied pixel size report.
+const SizeReport = enum {
+    window_pixels,
+    cell_pixels,
+    text_cells,
+};
+
 const C0Action = enum {
     bell,
     line_feed,
@@ -6837,6 +6844,16 @@ fn decodeCsi(
             if (intermediates.len != 0) return null;
             const kind = queryParam(params) orelse return null;
             return SemanticEvent{ .parameters_report = kind };
+        },
+        't' => {
+            if (intermediates.len != 0 or params.len == 0 or params.len > 2) return null;
+            if (params.len == 2 and params[1] < 0) return null;
+            return switch (params[0]) {
+                14 => SemanticEvent{ .size_report = .window_pixels },
+                16 => SemanticEvent{ .size_report = .cell_pixels },
+                18 => SemanticEvent{ .size_report = .text_cells },
+                else => null,
+            };
         },
         'n' => {
             if (intermediates.len != 0) return null;
@@ -7547,6 +7564,7 @@ pub const SemanticEvent = union(enum) {
     selected_graphic_rendition_report: RectArea,
     screen_extent_report,
     parameters_report: u16,
+    size_report: SizeReport,
     xtreportcolors,
     locator_reporting: struct { mode: u16, unit: u16 },
     locator_filter: OptionalRectArea,
@@ -8358,6 +8376,26 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
         else => unreachable,
     }
+}
+
+fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) ApplyError!bool {
+    const active = vt.screen_state.activeConst();
+    const payload = switch (kind) {
+        .text_cells => std.fmt.bufPrint(scratch, "8;{d};{d}t", .{ active.rows, active.cols }) catch unreachable,
+        .cell_pixels => blk: {
+            const cell = active.cellPixelSize() orelse return false;
+            break :blk std.fmt.bufPrint(scratch, "6;{d};{d}t", .{ cell.height, cell.width }) catch unreachable;
+        },
+        .window_pixels => blk: {
+            // Without a distinct host frame fact, Ps=2 retains the text-area fallback.
+            const cell = active.cellPixelSize() orelse return false;
+            const height = @as(u64, cell.height) * @as(u64, active.rows);
+            const width = @as(u64, cell.width) * @as(u64, active.cols);
+            break :blk std.fmt.bufPrint(scratch, "4;{d};{d}t", .{ height, width }) catch unreachable;
+        },
+    };
+    try appendCsiReply(&vt.host.pending_output, vt.allocator, .terminal, payload);
+    return true;
 }
 
 fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) ApplyError!void {
@@ -9702,6 +9740,10 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         },
         .exit_alt_screen => |opts| {
             return vt.switchScreenMode(false, false, opts.restore_cursor);
+        },
+        .size_report => |kind| {
+            var scratch: Scratch = .{};
+            return try appendSizeReport(vt, scratch.buf[0..], kind);
         },
         .ansi_mode_query,
         .modify_other_keys_query,
