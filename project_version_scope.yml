@@ -25,6 +25,11 @@ capabilities:
     acceptance: >-
       one curated native owner composes PTY, VT, live input, replies, resize, semantic surfaces, wakes, and cleanup
 
+  - name: local_terminal_control
+    acceptance: >-
+      Howl owns canonical terminal identity, optional same-user endpoint, shared mutation admission, bounded hostile-input-checked
+      server and one-shot client for status, screen, logical output, input batches, resize, and process-group signal
+
   - name: focused_source_audit
     acceptance: one direct root-owned audit enforces settled patterns and exact reviewed uses
 

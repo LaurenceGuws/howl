@@ -1,3 +1,4 @@
+howl-control/src/client.zig|anyerror|fn transportClientError(failure: anyerror, fallback: ClientError) ClientError {
 howl-control/src/howl_control.zig|anyopaque|context: ?*anyopaque = null,
 howl-control/src/howl_control.zig|anyopaque|fn countTestWake(context: ?*anyopaque) void {
 howl-control/src/howl_control.zig|anyopaque|fn ignoreWake(_: ?*anyopaque) void {}

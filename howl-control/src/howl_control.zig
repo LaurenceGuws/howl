@@ -1,22 +1,68 @@
 //! Owns one native PTY child and its concurrent, host-neutral Howl terminal state.
 
+const builtin = @import("builtin");
 const std = @import("std");
 const howl_pty = @import("howl_pty");
 const howl_vt = @import("howl_vt");
+const client = @import("client.zig");
+const net = std.Io.net;
+const posix = std.posix;
+const linux = std.os.linux;
+
+/// Identifies one process-lifetime terminal and its canonical local endpoint.
+pub const TerminalId = client.TerminalId;
+/// Names Howl's endpoint directory beneath the process runtime directory.
+pub const endpoint_directory = client.endpoint_directory;
+/// Bounds one exact remote input batch before transport or PTY transfer.
+pub const max_input_bytes = client.max_input_bytes;
+/// Bounds one copied remote viewport response.
+pub const max_screen_bytes = client.max_screen_bytes;
+/// Bounds events admitted by one remote input batch.
+pub const max_send_events = client.max_send_events;
+/// Bounds delay before one remote input event.
+pub const max_event_delay_ms = client.max_event_delay_ms;
+/// Bounds total scheduled delay held by one remote input batch.
+pub const max_batch_delay_ms = client.max_batch_delay_ms;
+/// Uses Howl VT's host-neutral input vocabulary for local and remote calls.
+pub const Input = client.Input;
+/// Sends typed one-shot requests to one local Howl terminal endpoint.
+pub const Client = client.Client;
+/// Reports exact local construction, transport, decode, or remote rejection failure.
+pub const ClientError = client.ClientError;
+/// Owns one decoded remote status and its optional copied launch directory.
+pub const ClientStatus = client.ClientStatus;
+/// Retains one admitted input event and its bounded delay.
+pub const BatchEvent = client.BatchEvent;
+/// Retains one admitted batch's complete, partial, or rejected outcome.
+pub const SendResult = client.SendResult;
+/// Names exact preparation failure after remote mutation admission.
+pub const SendFailure = client.SendFailure;
+/// Retains complete, partial, or rejected remote input evidence.
+pub const SendOutcome = client.SendOutcome;
+/// Retains one admitted resize and the resulting geometry sequence.
+pub const ResizeResult = client.ResizeResult;
+/// Retains one admitted signal and its exact native outcome.
+pub const SignalResult = client.SignalResult;
+/// Owns one bounded remote viewport text observation.
+pub const Screen = client.Screen;
+/// Copies coherent lifecycle, geometry, sequence, and output facts.
+pub const Status = client.Status;
 
 /// Bounds one terminal surface width before model or PTY construction.
 pub const max_cols: u16 = 512;
 /// Bounds one terminal surface height before model or PTY construction.
 pub const max_rows: u16 = 256;
 /// Bounds retained semantic history independently from the active surface.
-pub const max_history_rows: u16 = 16_384;
+pub const max_history_rows = client.max_history_rows;
 /// Bounds each complete input or terminal-reply transfer.
-pub const max_transfer_bytes: usize = 64 * 1024;
+pub const max_transfer_bytes = client.max_transfer_bytes;
 const transport_buffer_bytes: usize = 4096;
 const default_transfer_timeout_ms: u32 = 2000;
 
 /// Supplies copied child launch values and bounded terminal dimensions.
 pub const Config = struct {
+    /// Enables one local endpoint beneath this absolute runtime directory.
+    runtime_dir: ?[]const u8 = null,
     /// Names the executable copied into PTY launch ownership.
     shell: []const u8 = "/bin/sh",
     /// Runs one optional shell command; null starts an interactive shell.
@@ -43,10 +89,15 @@ pub const Wake = struct {
 
 /// Reports invalid bounds or failure before terminal ownership transfers.
 pub const InitError = howl_vt.Terminal.InitError || std.mem.Allocator.Error ||
-    std.Thread.SpawnError || error{
+    std.Thread.SpawnError || net.UnixAddress.InitError || net.UnixAddress.ListenError || error{
     InvalidDimensions,
     InvalidHistory,
     InvalidTransferTimeout,
+    RuntimeDirectoryInvalid,
+    RuntimeDirectoryCreateFailed,
+    RuntimeDirectoryPermissionFailed,
+    EndpointPermissionFailed,
+    EndpointPathTooLong,
     ChildCwdFailed,
     ChildExecFailed,
     ChildSessionFailed,
@@ -62,48 +113,27 @@ pub const InitError = howl_vt.Terminal.InitError || std.mem.Allocator.Error ||
 };
 
 /// Reports input encoding or transfer-bound rejection before PTY admission.
-pub const InputError = howl_vt.Terminal.InputError || error{InputLimit};
-/// Retains complete or exact partial PTY input transfer truth.
-pub const InputTransfer = howl_pty.Transfer;
+pub const InputError = client.InputError;
+const InputTransfer = client.InputTransfer;
 /// Uses Howl VT's bounded finalized-output copy and cursor outcomes.
-pub const LogicalOutputResult = howl_vt.Terminal.LogicalOutputResult;
+pub const LogicalOutputResult = client.LogicalOutputResult;
 /// Reports invalid output-copy limits or allocation failure.
-pub const LogicalOutputError = howl_vt.Terminal.LogicalOutputError;
+pub const LogicalOutputError = client.LogicalOutputError;
 /// Bounds one retained finalized logical line.
 pub const logical_output_line_max_bytes = howl_vt.Terminal.logical_output_line_max_bytes;
 /// Bounds aggregate retained output and one complete logical-output result.
 pub const logical_output_max_bytes = howl_vt.Terminal.logical_output_max_bytes;
 /// Selects one supported signal for the owned child process group.
-pub const ControlSignal = howl_pty.ControlSignal;
+pub const ControlSignal = client.ControlSignal;
 /// Reports exact child probing and process-group signal outcomes.
-pub const ControlResult = howl_pty.ControlResult;
+pub const ControlResult = client.ControlResult;
 
 /// Reports a resize rejected by the model or native PTY.
-pub const ResizeError = howl_vt.Terminal.ResizeError || error{
-    InvalidDimensions,
-    NotStarted,
-    PtyResizeFailed,
-    ResizeRollbackFailed,
-};
-
+pub const ResizeError = client.ResizeError;
 /// Reports the exact terminal-reader boundary that stopped making progress.
-pub const ReaderError = error{
-    ConsequenceLimit,
-    ModelAllocationFailed,
-    ParsedEventLimit,
-    PtyReadFailed,
-    PtyReplyCanceled,
-    PtyReplyChildClosed,
-    PtyReplyTimedOut,
-    PtyReplyWaitFailed,
-    PtyReplyWriteFailed,
-    PtyWaitFailed,
-    ReplyAllocationFailed,
-    StringControlLimit,
-};
-
+pub const ReaderError = client.ReaderError;
 /// Distinguishes active terminal progress from completion or an exact failed boundary.
-pub const State = enum(u8) { running, stopped, failed };
+pub const State = client.State;
 /// Matches the VT owner's maximum retained bytes for one OSC 133 mark.
 pub const shell_mark_metadata_max_bytes = howl_vt.Terminal.shell_mark_metadata_max_bytes;
 /// Matches the VT owner's maximum retained shell-integration identity.
@@ -114,64 +144,8 @@ comptime {
     std.debug.assert(shell_name_max_bytes <= std.math.maxInt(u8));
 }
 
-/// Copies the latest real OSC 133 mark and any already-retained shell identity.
-pub const ShellMark = struct {
-    /// Identifies this accepted mark monotonically within one terminal.
-    generation: u64,
-    /// Retains the exact OSC 133 A, B, C, or D mark kind.
-    kind: u8,
-    /// Retains the optional status parsed from the mark without inference.
-    status: ?i32,
-    /// Stores bounded metadata bytes; only `metadata_len` bytes are meaningful.
-    metadata: [shell_mark_metadata_max_bytes]u8,
-    /// Bounds the meaningful metadata prefix within the fixed buffer.
-    metadata_len: u16,
-    /// Stores a retained shell identity; only `shell_len` bytes are meaningful.
-    shell: [shell_name_max_bytes]u8,
-    /// Bounds the meaningful shell prefix; zero means no shell identity.
-    shell_len: u8,
-
-    /// Borrows the copied bounded mark metadata.
-    pub fn metadataBytes(self: *const ShellMark) []const u8 {
-        return self.metadata[0..self.metadata_len];
-    }
-
-    /// Borrows the copied shell identity, when the terminal retained one.
-    pub fn shellBytes(self: *const ShellMark) ?[]const u8 {
-        if (self.shell_len == 0) return null;
-        return self.shell[0..self.shell_len];
-    }
-};
-
-/// Copies one coherent terminal status observation under the model and lifecycle locks.
-pub const Status = struct {
-    /// Reports the terminal progress lifecycle observation.
-    state: State,
-    /// Retains the exact terminal reader failure after a failed state.
-    reader_error: ?ReaderError,
-    /// Retains the accepted PTY prefix only when a terminal-reply transfer failed.
-    reply_failure_transferred: ?usize,
-    /// Reports that model resize failed and restoring the prior PTY geometry also failed.
-    resize_rollback_failed: bool,
-    /// Reports the model and PTY column count.
-    cols: u16,
-    /// Reports the model and PTY row count.
-    rows: u16,
-    /// Identifies the surface publication used for terminal metadata.
-    publication: u64,
-    /// Identifies the latest model mutation represented by the publication.
-    dirty_generation: u64,
-    /// Counts primary history rows dropped after bounded allocation failure.
-    history_loss_generation: u64,
-    /// Reports whether the current viewport belongs to the alternate screen.
-    alternate_screen: bool,
-    /// Identifies the oldest retained finalized primary line.
-    output_oldest: u64,
-    /// Identifies the newest finalized primary line, or zero before any line.
-    output_newest: u64,
-    /// Copies the latest accepted OSC 133 mark, or null before any mark.
-    shell_mark: ?ShellMark,
-};
+/// Copies the latest real OSC 133 mark and retained shell identity.
+pub const ShellMark = client.ShellMark;
 
 const ReaderFailure = enum(u8) {
     none,
@@ -216,6 +190,19 @@ pub const Terminal = struct {
     transport: howl_pty.Owned,
     model: howl_vt.Terminal,
     reader: std.Thread,
+    terminal_id: TerminalId,
+    endpoint_path: ?[]u8,
+    server: net.Server,
+    control_thread: std.Thread,
+    endpoint_enabled: bool,
+    admission_lock: std.Io.Mutex = .init,
+    peer_lock: std.Io.Mutex = .init,
+    input_sequence: std.atomic.Value(u64) = .init(0),
+    stopping: std.atomic.Value(bool) = .init(false),
+    active_peer: posix.fd_t = -1,
+    child_cwd: ?[]u8,
+    admission_sequence: u64 = 0,
+    geometry_sequence: u64 = 0,
     lock: std.Io.Mutex = .init,
     write_lock: std.Io.Mutex = .init,
     // Lifecycle publication stays independent from the model lock used by hot surfaces.
@@ -262,6 +249,52 @@ pub const Terminal = struct {
             else => |expected| return expected,
         };
 
+        const terminal_id = TerminalId.random(io);
+        var endpoint_path: ?[]u8 = null;
+        errdefer if (endpoint_path) |path| allocator.free(path);
+        var server: net.Server = undefined;
+        var endpoint_enabled = false;
+        errdefer if (endpoint_enabled) server.deinit(io);
+        errdefer if (endpoint_enabled) std.Io.Dir.deleteFileAbsolute(io, endpoint_path.?) catch
+            @panic("terminal init rollback could not unlink its endpoint");
+        if (config.runtime_dir) |runtime_dir| {
+            if (builtin.os.tag != .linux) return error.UnsupportedPlatform;
+            if (!std.fs.path.isAbsolute(runtime_dir)) return error.RuntimeDirectoryInvalid;
+            const directory = try std.fs.path.join(
+                allocator,
+                &.{ runtime_dir, endpoint_directory },
+            );
+            defer allocator.free(directory);
+            std.Io.Dir.createDirPath(.cwd(), io, directory) catch
+                return error.RuntimeDirectoryCreateFailed;
+            std.Io.Dir.cwd().setFilePermissions(
+                io,
+                directory,
+                .fromMode(0o700),
+                .{},
+            ) catch return error.RuntimeDirectoryPermissionFailed;
+            var filename: [37]u8 = undefined;
+            endpoint_path = try std.fs.path.join(
+                allocator,
+                &.{ directory, terminal_id.formatEndpoint(&filename) },
+            );
+            if (endpoint_path.?.len >= net.UnixAddress.max_len) {
+                return error.EndpointPathTooLong;
+            }
+            const address = try net.UnixAddress.init(endpoint_path.?);
+            server = try address.listen(io, .{ .kernel_backlog = 4 });
+            endpoint_enabled = true;
+            std.Io.Dir.cwd().setFilePermissions(
+                io,
+                endpoint_path.?,
+                .fromMode(0o600),
+                .{},
+            ) catch return error.EndpointPermissionFailed;
+        }
+
+        const child_cwd = if (config.cwd) |cwd| try allocator.dupe(u8, cwd) else null;
+        errdefer if (child_cwd) |cwd| allocator.free(cwd);
+
         const self = try allocator.create(Terminal);
         errdefer allocator.destroy(self);
         self.* = .{
@@ -270,22 +303,48 @@ pub const Terminal = struct {
             .transport = transport,
             .model = model,
             .reader = undefined,
+            .terminal_id = terminal_id,
+            .endpoint_path = endpoint_path,
+            .server = server,
+            .control_thread = undefined,
+            .endpoint_enabled = endpoint_enabled,
+            .child_cwd = child_cwd,
             .wake = wake,
             .cols = config.cols,
             .rows = config.rows,
             .transfer_timeout_ms = config.transfer_timeout_ms,
         };
         self.reader = try .spawn(.{}, readLoop, .{self});
+        errdefer {
+            self.cancel();
+            self.reader.join();
+        }
+        if (endpoint_enabled) self.control_thread = try .spawn(.{}, controlLoop, .{self});
         return self;
     }
 
     /// Stops the reader and child before releasing model and allocation ownership.
     pub fn deinit(self: *Terminal) void {
         self.cancel();
+        self.stopping.store(true, .release);
+        if (self.endpoint_enabled) {
+            client.shutdownSocket(self.server.socket.handle);
+            self.peer_lock.lockUncancelable(self.io);
+            if (self.active_peer >= 0) client.shutdownSocket(self.active_peer);
+            self.peer_lock.unlock(self.io);
+            self.control_thread.join();
+            self.server.deinit(self.io);
+            std.Io.Dir.deleteFileAbsolute(self.io, self.endpoint_path.?) catch |failure| switch (failure) {
+                error.FileNotFound => {},
+                else => @panic("owned terminal endpoint unlink failed"),
+            };
+        }
         self.reader.join();
         self.transport.deinit();
         self.model.deinit();
         const allocator = self.allocator;
+        if (self.child_cwd) |cwd| allocator.free(cwd);
+        if (self.endpoint_path) |path| allocator.free(path);
         self.* = undefined;
         allocator.destroy(self);
     }
@@ -309,6 +368,16 @@ pub const Terminal = struct {
         self.acknowledgeWake(observed);
     }
 
+    /// Returns the stable identity carried by direct and endpoint operations.
+    pub fn id(self: *const Terminal) TerminalId {
+        return self.terminal_id;
+    }
+
+    /// Borrows the endpoint path when local control was enabled at construction.
+    pub fn endpoint(self: *const Terminal) ?[]const u8 {
+        return self.endpoint_path;
+    }
+
     /// Concurrently stops terminal progress and wakes active PTY reads or writes.
     /// The embedder still serializes destructive `deinit` after public calls return.
     pub fn cancel(self: *Terminal) void {
@@ -320,8 +389,68 @@ pub const Terminal = struct {
         self.transport.cancel();
     }
 
+    /// Admits one bounded delayed event batch as one ordered mutation.
+    pub fn send(self: *Terminal, events: []const BatchEvent) InputError!SendResult {
+        if (events.len == 0 or events.len > max_send_events) return error.InputLimit;
+        try client.validateBatchBound(events);
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        for (events) |event| if (!inputGeometryValid(event.input, self.cols, self.rows)) return .{
+            .admission_sequence = self.admission_sequence,
+            .input_sequence = self.input_sequence.load(.acquire),
+            .completed_events = 0,
+            .outcome = .{ .rejected = .{ .transferred = 0, .reason = .invalid_geometry } },
+        };
+        const admission = self.nextAdmission();
+        var transferred: usize = 0;
+        for (events, 0..) |event, index| {
+            if (self.delay(event.delay_ms)) |failure| return .{
+                .admission_sequence = admission,
+                .input_sequence = self.input_sequence.load(.acquire),
+                .completed_events = @intCast(index),
+                .outcome = .{ .rejected = .{ .transferred = transferred, .reason = failure } },
+            };
+            const event_transfer = self.transferInput(event.input) catch |failure| return .{
+                .admission_sequence = admission,
+                .input_sequence = self.input_sequence.load(.acquire),
+                .completed_events = @intCast(index),
+                .outcome = .{ .rejected = .{
+                    .transferred = transferred,
+                    .reason = client.sendFailure(failure),
+                } },
+            };
+            switch (event_transfer) {
+                .complete => |count| {
+                    transferred = std.math.add(usize, transferred, count) catch
+                        @panic("validated terminal batch transfer overflowed");
+                    std.debug.assert(transferred <= max_input_bytes);
+                },
+                .incomplete => |failure| {
+                    const partial = std.math.add(usize, transferred, failure.transferred) catch
+                        @panic("validated terminal batch partial transfer overflowed");
+                    std.debug.assert(partial <= max_input_bytes);
+                    return .{
+                        .admission_sequence = admission,
+                        .input_sequence = self.input_sequence.load(.acquire),
+                        .completed_events = @intCast(index),
+                        .outcome = .{ .incomplete = .{
+                            .transferred = partial,
+                            .reason = failure.reason,
+                        } },
+                    };
+                },
+            }
+        }
+        return .{
+            .admission_sequence = admission,
+            .input_sequence = incrementSequence(&self.input_sequence),
+            .completed_events = @intCast(events.len),
+            .outcome = .{ .complete = transferred },
+        };
+    }
+
     /// Encodes one input event and retains complete or partial PTY transfer truth.
-    pub fn send(self: *Terminal, event: howl_vt.Terminal.InputEvent) InputError!InputTransfer {
+    fn transferInput(self: *Terminal, event: Input) InputError!InputTransfer {
         if (self.state_value.load(.acquire) != .running) {
             return .{ .incomplete = .{ .transferred = 0, .reason = .not_started } };
         }
@@ -339,8 +468,24 @@ pub const Terminal = struct {
         return self.transport.transfer(self.io, encoded.bytes, self.transfer_timeout_ms);
     }
 
+    /// Admits one resize and advances geometry only after an actual change.
+    pub fn resize(self: *Terminal, cols: u16, rows: u16) ResizeError!ResizeResult {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        const admission = self.nextAdmission();
+        const changed = try self.resizeModel(cols, rows);
+        if (changed) self.geometry_sequence = nextSequence(self.geometry_sequence);
+        return .{
+            .admission_sequence = admission,
+            .geometry_sequence = self.geometry_sequence,
+            .changed = changed,
+            .cols = cols,
+            .rows = rows,
+        };
+    }
+
     /// Applies one bounded size and reports whether terminal geometry changed.
-    pub fn resize(self: *Terminal, cols: u16, rows: u16) ResizeError!bool {
+    fn resizeModel(self: *Terminal, cols: u16, rows: u16) ResizeError!bool {
         try validateSize(cols, rows);
         if (self.state_value.load(.acquire) != .running) return error.NotStarted;
         self.lock.lockUncancelable(self.io);
@@ -370,8 +515,19 @@ pub const Terminal = struct {
         return true;
     }
 
+    /// Copies bounded finalized primary output without acknowledging a surface.
+    pub fn output(
+        self: *Terminal,
+        allocator: std.mem.Allocator,
+        cursor: u64,
+        max_lines: u16,
+        max_bytes: usize,
+    ) LogicalOutputError!LogicalOutputResult {
+        return self.copyModelOutput(allocator, cursor, max_lines, max_bytes);
+    }
+
     /// Copies finalized primary output and its publication-scoped open line.
-    pub fn copyLogicalOutput(
+    fn copyModelOutput(
         self: *Terminal,
         allocator: std.mem.Allocator,
         cursor: u64,
@@ -383,14 +539,16 @@ pub const Terminal = struct {
         return self.model.copyLogicalOutput(allocator, cursor, max_lines, max_bytes);
     }
 
-    /// Copies lifecycle, geometry, publication, output, and shell-mark facts coherently.
+    /// Copies coherent lifecycle, geometry, ordering, and output facts.
     pub fn status(self: *Terminal) Status {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
         self.lock.lockUncancelable(self.io);
         defer self.lock.unlock(self.io);
         self.lifecycle_lock.lockUncancelable(self.io);
         defer self.lifecycle_lock.unlock(self.io);
         const publication = self.model.surfaceSnapshot();
-        const output = self.model.logicalOutputRange();
+        const output_range = self.model.logicalOutputRange();
         var shell_mark: ?ShellMark = null;
         if (publication.shell_mark.generation != 0) {
             var mark = ShellMark{
@@ -411,6 +569,7 @@ pub const Terminal = struct {
         }
         const reader_error = decodeReaderFailure(self.reader_failure.load(.monotonic));
         return .{
+            .terminal_id = self.terminal_id,
             .state = self.state_value.load(.monotonic),
             .reader_error = reader_error,
             .reply_failure_transferred = replyFailureTransferred(
@@ -418,24 +577,119 @@ pub const Terminal = struct {
                 self.reply_failure_transferred.load(.monotonic),
             ),
             .resize_rollback_failed = self.resize_rollback_failed.load(.monotonic),
+            .child_cwd = self.child_cwd,
             .cols = self.cols,
             .rows = self.rows,
             .publication = publication.snapshot_seq,
-            .dirty_generation = publication.dirty_generation,
             .history_loss_generation = publication.history_loss_generation,
             .alternate_screen = publication.is_alternate_screen,
-            .output_oldest = output.oldest,
-            .output_newest = output.newest,
+            .admission_sequence = self.admission_sequence,
+            .input_sequence = self.input_sequence.load(.acquire),
+            .geometry_sequence = self.geometry_sequence,
+            .output_oldest = output_range.oldest,
+            .output_newest = output_range.newest,
             .shell_mark = shell_mark,
+        };
+    }
+
+    /// Copies the current viewport without acknowledging its publication.
+    pub fn screen(
+        self: *Terminal,
+        allocator: std.mem.Allocator,
+    ) (std.mem.Allocator.Error || error{ScreenLimit})!Screen {
+        var bytes = try allocator.alloc(u8, max_screen_bytes);
+        errdefer allocator.free(bytes);
+        var surface_value = self.surface();
+        defer surface_value.deinit();
+        const publication = surface_value.publication;
+        const view = publication.snapshot.view;
+        var writer = std.Io.Writer.fixed(bytes);
+        for (0..view.rows) |row_value| {
+            const row: u16 = @intCast(row_value);
+            var end = view.cols;
+            while (end > 0) {
+                const codepoint = view.cellAt(row, end - 1);
+                if (codepoint != 0 and codepoint != ' ') break;
+                end -= 1;
+            }
+            for (0..end) |col_value| {
+                const codepoint = view.cellAt(row, @intCast(col_value));
+                writer.printUnicodeCodepoint(if (codepoint == 0) ' ' else codepoint) catch
+                    return error.ScreenLimit;
+            }
+            if (row_value + 1 < view.rows) writer.writeByte('\n') catch
+                return error.ScreenLimit;
+        }
+        bytes = try allocator.realloc(bytes, writer.buffered().len);
+        return .{
+            .allocator = allocator,
+            .text = bytes,
+            .publication = publication.snapshot_seq,
+            .cols = view.cols,
+            .rows = view.rows,
+            .alternate_screen = publication.is_alternate_screen,
+            .cursor_visible = view.cursor_visible,
+            .cursor_col = view.cursor_col,
+            .cursor_row = view.cursor_row,
+        };
+    }
+
+    /// Admits one process-group signal and returns its exact native outcome.
+    pub fn signal(self: *Terminal, signal_value: ControlSignal) SignalResult {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        return .{
+            .admission_sequence = self.nextAdmission(),
+            .signal = signal_value,
+            .outcome = self.controlProcess(signal_value),
         };
     }
 
     /// Delivers one supported signal to the owned child process group.
     /// Process-group control remains available after terminal progress fails.
-    pub fn control(self: *Terminal, signal: ControlSignal) ControlResult {
+    fn controlProcess(self: *Terminal, signal_value: ControlSignal) ControlResult {
         self.write_lock.lockUncancelable(self.io);
         defer self.write_lock.unlock(self.io);
-        return self.transport.control(signal);
+        return self.transport.control(signal_value);
+    }
+
+    fn nextAdmission(self: *Terminal) u64 {
+        self.admission_sequence = nextSequence(self.admission_sequence);
+        return self.admission_sequence;
+    }
+
+    fn delay(self: *Terminal, delay_ms: u16) ?SendFailure {
+        if (delay_ms == 0) return null;
+        var remaining = delay_ms;
+        while (remaining != 0) {
+            if (self.stopping.load(.acquire)) return .delay_shutdown;
+            if (self.state() != .running) return .delay_terminal_closed;
+            const slice_ms: u16 = @min(remaining, 10);
+            (std.Io.Clock.Duration{
+                .raw = .fromMilliseconds(slice_ms),
+                .clock = .awake,
+            }).sleep(self.io) catch return .delay_canceled;
+            remaining -= slice_ms;
+        }
+        if (self.stopping.load(.acquire)) return .delay_shutdown;
+        if (self.state() != .running) return .delay_terminal_closed;
+        return null;
+    }
+
+    fn inputGeometryValid(input: Input, cols: u16, rows: u16) bool {
+        const mouse = switch (input) {
+            .mouse => |mouse| mouse,
+            else => return true,
+        };
+        if (mouse.row < 0 or mouse.row >= rows or mouse.col >= cols or
+            mouse.buttons_down & ~@as(u8, 0b111) != 0 or
+            mouse.pixel_x != null or mouse.pixel_y != null) return false;
+        return switch (mouse.kind) {
+            .press, .release => mouse.button == .left or
+                mouse.button == .middle or mouse.button == .right,
+            .wheel => mouse.button == .wheel_up or mouse.button == .wheel_down,
+            .move => mouse.button != .wheel_up and mouse.button != .wheel_down,
+        } and (mouse.kind == .move or mouse.buttons_down == 0);
     }
 
     /// Locks and borrows one complete semantic surface publication.
@@ -574,7 +828,235 @@ pub const Terminal = struct {
             .write_failed => error.PtyReplyWriteFailed,
         };
     }
+
+    fn controlLoop(self: *Terminal) void {
+        while (!self.stopping.load(.acquire)) {
+            var peer = self.server.accept(self.io) catch |failure| switch (failure) {
+                error.SocketNotListening, error.Canceled => return,
+                error.ConnectionAborted, error.WouldBlock => continue,
+                else => {
+                    self.stopping.store(true, .release);
+                    client.shutdownSocket(self.server.socket.handle);
+                    return;
+                },
+            };
+            client.setNonblocking(peer.socket.handle) catch {
+                peer.close(self.io);
+                self.stopping.store(true, .release);
+                client.shutdownSocket(self.server.socket.handle);
+                return;
+            };
+            self.peer_lock.lockUncancelable(self.io);
+            if (self.stopping.load(.acquire)) {
+                peer.close(self.io);
+                self.peer_lock.unlock(self.io);
+                return;
+            }
+            self.active_peer = peer.socket.handle;
+            self.peer_lock.unlock(self.io);
+            self.handlePeer(&peer);
+            self.peer_lock.lockUncancelable(self.io);
+            self.active_peer = -1;
+            peer.close(self.io);
+            self.peer_lock.unlock(self.io);
+        }
+    }
+
+    fn handlePeer(self: *Terminal, peer: *net.Stream) void {
+        if (!client.admitUid(linux.geteuid(), client.peerUid(peer.socket.handle) catch null)) {
+            client.writeFailure(self.io, peer, self.terminal_id, .unauthorized) catch {};
+            return;
+        }
+        const started = std.Io.Clock.awake.now(self.io);
+        var header: [client.request_header_bytes]u8 = undefined;
+        client.readExact(
+            self.io,
+            peer.socket.handle,
+            &header,
+            started,
+            client.admission_timeout_ms,
+        ) catch {
+            client.writeFailure(self.io, peer, self.terminal_id, .truncated) catch {};
+            return;
+        };
+        const request = client.decodeRequestHeader(&header) catch |failure| {
+            client.writeFailure(
+                self.io,
+                peer,
+                self.terminal_id,
+                requestFailureStatus(failure),
+            ) catch {};
+            return;
+        };
+        if (!std.mem.eql(u8, &request.terminal_id.bytes, &self.terminal_id.bytes)) {
+            client.writeFailure(self.io, peer, self.terminal_id, .wrong_terminal) catch {};
+            return;
+        }
+        var payload: [client.max_request_bytes]u8 = undefined;
+        const body = payload[0..request.payload_len];
+        client.readExact(
+            self.io,
+            peer.socket.handle,
+            body,
+            started,
+            client.admission_timeout_ms,
+        ) catch {
+            client.writeFailure(self.io, peer, self.terminal_id, .truncated) catch {};
+            return;
+        };
+        self.execute(peer, request.operation, body) catch |failure| {
+            client.writeFailure(
+                self.io,
+                peer,
+                self.terminal_id,
+                operationFailureStatus(failure),
+            ) catch {};
+        };
+    }
+
+    fn execute(
+        self: *Terminal,
+        peer: *net.Stream,
+        operation: client.Operation,
+        payload: []const u8,
+    ) OperationError!void {
+        switch (operation) {
+            .status => {
+                if (payload.len != 0) return error.InvalidPayload;
+                const encoded = try client.encodeStatus(self.allocator, self.status());
+                defer self.allocator.free(encoded);
+                client.writeResponse(self.io, peer, .{
+                    .operation = .status,
+                    .terminal_id = self.terminal_id,
+                    .payload = encoded,
+                }) catch return error.ResponseWriteFailed;
+            },
+            .send => {
+                if (payload.len == 0) return error.InvalidPayload;
+                var batch = try client.decodeBatch(self.allocator, payload);
+                defer batch.deinit();
+                const encoded = client.encodeSendResult(try self.send(batch.events));
+                client.writeResponse(self.io, peer, .{
+                    .operation = .send,
+                    .terminal_id = self.terminal_id,
+                    .payload = &encoded,
+                }) catch return error.ResponseWriteFailed;
+            },
+            .screen => {
+                if (payload.len != 0) return error.InvalidPayload;
+                var value = try self.screen(self.allocator);
+                defer value.deinit();
+                const encoded = try client.encodeScreen(self.allocator, &value);
+                defer self.allocator.free(encoded);
+                client.writeResponse(self.io, peer, .{
+                    .operation = .screen,
+                    .terminal_id = self.terminal_id,
+                    .payload = encoded,
+                }) catch return error.ResponseWriteFailed;
+            },
+            .output => {
+                if (payload.len != 14) return error.InvalidPayload;
+                var result = try self.output(
+                    self.allocator,
+                    std.mem.readInt(u64, payload[0..8], .big),
+                    std.mem.readInt(u16, payload[8..10], .big),
+                    std.mem.readInt(u32, payload[10..14], .big),
+                );
+                defer switch (result) {
+                    .output => |*value| value.deinit(),
+                    else => {},
+                };
+                const encoded = try client.encodeOutputResult(self.allocator, &result);
+                defer self.allocator.free(encoded);
+                client.writeResponse(self.io, peer, .{
+                    .operation = .output,
+                    .terminal_id = self.terminal_id,
+                    .payload = encoded,
+                }) catch return error.ResponseWriteFailed;
+            },
+            .resize => {
+                if (payload.len != 4) return error.InvalidPayload;
+                const result = try self.resize(
+                    std.mem.readInt(u16, payload[0..2], .big),
+                    std.mem.readInt(u16, payload[2..4], .big),
+                );
+                var encoded: [21]u8 = @splat(0);
+                std.mem.writeInt(u64, encoded[0..8], result.admission_sequence, .big);
+                std.mem.writeInt(u64, encoded[8..16], result.geometry_sequence, .big);
+                encoded[16] = @intFromBool(result.changed);
+                std.mem.writeInt(u16, encoded[17..19], result.cols, .big);
+                std.mem.writeInt(u16, encoded[19..21], result.rows, .big);
+                client.writeResponse(self.io, peer, .{
+                    .operation = .resize,
+                    .terminal_id = self.terminal_id,
+                    .payload = &encoded,
+                }) catch return error.ResponseWriteFailed;
+            },
+            .signal => {
+                if (payload.len != 1) return error.InvalidPayload;
+                const signal_value: ControlSignal = switch (payload[0]) {
+                    1 => .hangup,
+                    2 => .interrupt,
+                    15 => .terminate,
+                    9 => .kill,
+                    else => return error.InvalidPayload,
+                };
+                const result = self.signal(signal_value);
+                var encoded: [10]u8 = @splat(0);
+                std.mem.writeInt(u64, encoded[0..8], result.admission_sequence, .big);
+                encoded[8] = payload[0];
+                encoded[9] = client.encodeControlResult(result.outcome);
+                client.writeResponse(self.io, peer, .{
+                    .operation = .signal,
+                    .terminal_id = self.terminal_id,
+                    .payload = &encoded,
+                }) catch return error.ResponseWriteFailed;
+            },
+        }
+    }
 };
+
+const OperationError = InputError || LogicalOutputError || ResizeError || error{
+    InvalidPayload,
+    ResponseWriteFailed,
+    ScreenLimit,
+};
+
+fn requestFailureStatus(failure: client.RequestError) client.ResponseStatus {
+    return switch (failure) {
+        error.BadMagic => .bad_magic,
+        error.WrongVersion => .wrong_version,
+        error.UnknownOperation => .unknown_operation,
+        error.Oversized => .oversized,
+        error.InvalidPayload => .invalid_payload,
+    };
+}
+
+fn operationFailureStatus(failure: OperationError) client.ResponseStatus {
+    return switch (failure) {
+        error.InvalidPayload, error.InvalidLimit, error.InvalidDimensions => .invalid_payload,
+        error.InputLimit => .input_limit,
+        error.InvalidUtf8 => .invalid_utf8,
+        error.InvalidText => .invalid_text,
+        error.KeyTextLimit => .key_text_limit,
+        error.LengthOverflow => .length_overflow,
+        error.OutOfMemory => .out_of_memory,
+        error.ConsequenceLimit => .consequence_limit,
+        error.ScreenLimit => .screen_limit,
+        error.ResizeRollbackFailed => .resize_rollback_failed,
+        error.NotStarted, error.PtyResizeFailed, error.ResponseWriteFailed => .internal_failure,
+    };
+}
+
+fn incrementSequence(sequence: *std.atomic.Value(u64)) u64 {
+    const previous = sequence.fetchAdd(1, .acq_rel);
+    if (previous == std.math.maxInt(u64)) @panic("terminal input sequence exhausted");
+    return previous + 1;
+}
+
+fn nextSequence(sequence: u64) u64 {
+    return std.math.add(u64, sequence, 1) catch @panic("terminal sequence exhausted");
+}
 
 fn validateSize(cols: u16, rows: u16) error{InvalidDimensions}!void {
     if (cols == 0 or rows == 0 or cols > max_cols or rows > max_rows) {
@@ -754,16 +1236,72 @@ test "resize rollback failure transition stops progress and preserves cleanup co
     try std.testing.expectEqual(State.failed, terminal.state());
     try std.testing.expect(terminal.status().resize_rollback_failed);
     try std.testing.expectError(error.NotStarted, terminal.resize(81, 24));
-    const transfer = try terminal.send(.{ .bytes = "ignored" });
-    try std.testing.expectEqual(@as(usize, 0), transfer.transferred());
-    switch (transfer) {
+    const transfer = try terminal.send(&.{.{ .input = .{ .bytes = "ignored" } }});
+    switch (transfer.outcome) {
         .complete => return error.UnexpectedCompleteTransfer,
-        .incomplete => |failure| try std.testing.expectEqual(
-            howl_pty.TransferFailure.not_started,
-            failure.reason,
-        ),
+        .incomplete => |failure| {
+            try std.testing.expectEqual(@as(usize, 0), failure.transferred);
+            try std.testing.expectEqual(howl_pty.TransferFailure.not_started, failure.reason);
+        },
+        .rejected => return error.UnexpectedRejectedTransfer,
     }
-    try std.testing.expectEqual(ControlResult.delivered, terminal.control(.interrupt));
+    try std.testing.expectEqual(ControlResult.delivered, terminal.signal(.interrupt).outcome);
+}
+
+test "endpoint shutdown interrupts a held partial request" {
+    var random: [8]u8 = undefined;
+    std.testing.io.random(&random);
+    const runtime_dir = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "/tmp/howl-control-partial-{x}",
+        .{random},
+    );
+    defer std.testing.allocator.free(runtime_dir);
+    defer std.Io.Dir.cwd().deleteTree(std.testing.io, runtime_dir) catch {};
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .runtime_dir = runtime_dir, .command = "sleep 30" },
+        .{},
+    );
+    const address = try net.UnixAddress.init(terminal.endpoint().?);
+    var peer = try address.connect(std.testing.io);
+    defer peer.close(std.testing.io);
+    var buffer: [1]u8 = undefined;
+    var writer = peer.writer(std.testing.io, &buffer);
+    try writer.interface.writeByte('Q');
+    try writer.interface.flush();
+    try waitForConsumedPartialRequest(terminal);
+    terminal.deinit();
+}
+
+fn waitForConsumedPartialRequest(terminal: *Terminal) !void {
+    for (0..100_000) |_| {
+        terminal.peer_lock.lockUncancelable(std.testing.io);
+        const fd = terminal.active_peer;
+        if (fd >= 0) {
+            var byte: [1]u8 = undefined;
+            const received = linux.recvfrom(
+                fd,
+                &byte,
+                byte.len,
+                linux.MSG.PEEK | linux.MSG.DONTWAIT,
+                null,
+                null,
+            );
+            const receive_error = linux.errno(received);
+            terminal.peer_lock.unlock(std.testing.io);
+            switch (receive_error) {
+                .AGAIN => return,
+                .SUCCESS, .INTR => {},
+                else => return error.RequestReadProbeFailed,
+            }
+        } else {
+            terminal.peer_lock.unlock(std.testing.io);
+        }
+        try std.Thread.yield();
+    }
+    return error.RequestReadPhaseNotReached;
 }
 
 fn countTestWake(context: ?*anyopaque) void {
