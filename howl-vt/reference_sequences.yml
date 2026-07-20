@@ -74,8 +74,14 @@ references:
             source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
-          - {id: libvterm.c1.ss2, raw: "\\x8e", effect: single shift G2, relevance: charset, howl: {status: partial}}
-          - {id: libvterm.c1.ss3, raw: "\\x8f", effect: single shift G3, relevance: charset, howl: {status: partial}}
+          - {id: libvterm.c1.ss2, raw: "ESC N | \\x8e", effect: single shift G2, relevance: charset,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: selectSingleShift, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+          - {id: libvterm.c1.ss3, raw: "ESC O | \\x8f", effect: single shift G3, relevance: charset,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: selectSingleShift, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
       - source: state.c
         symbol: on_escape
         line: 619
@@ -107,9 +113,15 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
           - {id: libvterm.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset, relevance: charset,
-            howl: {status: partial}}
+            conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           - {id: libvterm.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset, relevance: charset,
-            howl: {status: partial}}
+            conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           - {id: libvterm.esc.decsc, raw: "ESC 7", effect: save cursor and pen, relevance: core, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: escProcess}}
           - {id: libvterm.esc.decrc, raw: "ESC 8", effect: restore cursor and pen, relevance: core,
@@ -126,14 +138,26 @@ references:
                 test: application keypad modes affect keypad encoding and DECRQM}}}
           - {id: libvterm.esc.ris, raw: "ESC c", effect: hard terminal reset, relevance: core, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: escProcess}}
-          - {id: libvterm.esc.ls2, raw: "ESC n", effect: select G2 into GL, relevance: charset, howl: {status: partial}}
-          - {id: libvterm.esc.ls3, raw: "ESC o", effect: select G3 into GL, relevance: charset, howl: {status: partial}}
+          - {id: libvterm.esc.ls2, raw: "ESC n", effect: select G2 into GL, relevance: charset, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: selectGl, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+          - {id: libvterm.esc.ls3, raw: "ESC o", effect: select G3 into GL, relevance: charset, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: selectGl, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           - {id: libvterm.esc.ls1r, raw: "ESC ~", effect: select G1 into GR, relevance: charset,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: selectGr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           - {id: libvterm.esc.ls2r, raw: "ESC }", effect: select G2 into GR, relevance: charset,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: selectGr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           - {id: libvterm.esc.ls3r, raw: "ESC |", effect: select G3 into GR, relevance: charset,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: selectGr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
       - source: state.c
         symbol: on_csi
         line: 954
@@ -578,8 +602,16 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
-          - {id: iterm2.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset, howl: {status: partial}}
-          - {id: iterm2.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset, howl: {status: partial}}
+          - {id: iterm2.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset,
+            conditions: iTerm2 treats 0 as line drawing and every other final as normal; Howl accepts only A B and 0,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+          - {id: iterm2.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset,
+            conditions: iTerm2 treats 0 as line drawing and every other final as normal; Howl accepts only A B and 0,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           - {id: iterm2.esc.decfi, raw: "ESC 9", effect: forward index, relevance: compatibility,
             howl: {status: 'false'}}
           - {id: iterm2.esc.decrc, raw: "ESC 8", effect: restore cursor, howl: {status: partial}}

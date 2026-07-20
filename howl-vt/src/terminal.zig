@@ -9760,18 +9760,20 @@ const TerminalStream = struct {
 
     fn applyExecute(self: *TerminalStream, ctrl: u8) FeedError!EventEffect {
         switch (ctrl) {
-            0x0E => {
-                self.terminal.gl_index = 1;
-                return .{
-                    .changed = true,
-                    .title_changed = false,
-                    .icon_changed = false,
+            0x0E, 0x0F, 0x8E, 0x8F => {
+                const slot: u8 = switch (ctrl) {
+                    0x0E => 1,
+                    0x0F => 0,
+                    0x8E => 2,
+                    0x8F => 3,
+                    else => unreachable,
                 };
-            },
-            0x0F => {
-                self.terminal.gl_index = 0;
+                const changed = if (ctrl == 0x8E or ctrl == 0x8F)
+                    selectSingleShift(self.terminal, slot)
+                else
+                    selectGl(self.terminal, slot);
                 return .{
-                    .changed = true,
+                    .changed = changed,
                     .title_changed = false,
                     .icon_changed = false,
                 };
@@ -9783,16 +9785,15 @@ const TerminalStream = struct {
     fn applyEsc(self: *TerminalStream, esc: parser_mod.EscAction) FeedError!EventEffect {
         if (esc.intermediates_len == 1) {
             switch (esc.intermediates[0]) {
-                '(' => {
-                    const changed = configureCharset(self.terminal, 0, esc.final);
-                    return .{
-                        .changed = changed,
-                        .title_changed = false,
-                        .icon_changed = false,
+                '(', ')', '*', '+' => {
+                    const slot: u8 = switch (esc.intermediates[0]) {
+                        '(' => 0,
+                        ')' => 1,
+                        '*' => 2,
+                        '+' => 3,
+                        else => unreachable,
                     };
-                },
-                ')' => {
-                    const changed = configureCharset(self.terminal, 1, esc.final);
+                    const changed = configureCharset(self.terminal, slot, esc.final);
                     return .{
                         .changed = changed,
                         .title_changed = false,
@@ -9801,6 +9802,19 @@ const TerminalStream = struct {
                 },
                 else => {},
             }
+        }
+        if (esc.intermediates_len == 0) {
+            const changed = switch (esc.final) {
+                'n' => selectGl(self.terminal, 2),
+                'o' => selectGl(self.terminal, 3),
+                '~' => selectGr(self.terminal, 1),
+                '}' => selectGr(self.terminal, 2),
+                '|' => selectGr(self.terminal, 3),
+                'N' => selectSingleShift(self.terminal, 2),
+                'O' => selectSingleShift(self.terminal, 3),
+                else => return try self.applyEvent(.{ .esc_dispatch = esc }),
+            };
+            return .{ .changed = changed, .title_changed = false, .icon_changed = false };
         }
         return try self.applyEvent(.{ .esc_dispatch = esc });
     }
@@ -9839,9 +9853,15 @@ const TerminalStream = struct {
         return discardedStringControl();
     }
 
-    fn mapCodepoint(self: *const TerminalStream, cp: u21) u21 {
-        if (cp < 0x20 or cp > 0x7e) return cp;
-        return mapCharset(self.terminal, @intCast(cp));
+    fn mapCodepoint(self: *TerminalStream, cp: u21) u21 {
+        if (cp >= 0x20 and cp <= 0x7e) {
+            const slot = self.terminal.single_shift orelse self.terminal.gl_index;
+            self.terminal.single_shift = null;
+            return mapCharset(self.terminal, slot, @intCast(cp), false);
+        }
+        if (cp >= 0xA0 and cp <= 0xFE)
+            return mapCharset(self.terminal, self.terminal.gr_index, @intCast(cp - 0x80), true);
+        return cp;
     }
 };
 
@@ -9856,27 +9876,47 @@ fn discardedStringControl() EventEffect {
 fn configureCharset(terminal: *Terminal, slot: u8, designation: u8) bool {
     // Unsupported repertoires leave the selected slot unchanged.
     if (designation != '0' and designation != 'A' and designation != 'B') return false;
-    const target = switch (slot) {
-        0 => &terminal.g0_designation,
-        1 => &terminal.g1_designation,
-        else => return false,
-    };
+    if (slot >= terminal.designations.len) return false;
+    const target = &terminal.designations[slot];
     if (target.* == designation) return false;
     target.* = designation;
     return true;
 }
 
-fn mapCharset(terminal: *const Terminal, byte: u8) u21 {
-    const designation = switch (terminal.gl_index) {
-        0 => terminal.g0_designation,
-        1 => terminal.g1_designation,
-        else => return byte,
-    };
+fn selectGl(terminal: *Terminal, slot: u8) bool {
+    std.debug.assert(slot < terminal.designations.len);
+    if (terminal.gl_index == slot and terminal.single_shift == null) return false;
+    terminal.gl_index = slot;
+    terminal.single_shift = null;
+    return true;
+}
+
+fn selectGr(terminal: *Terminal, slot: u8) bool {
+    std.debug.assert(slot > 0 and slot < terminal.designations.len);
+    if (terminal.gr_index == slot) return false;
+    terminal.gr_index = slot;
+    return true;
+}
+
+fn selectSingleShift(terminal: *Terminal, slot: u8) bool {
+    std.debug.assert(slot == 2 or slot == 3);
+    if (terminal.single_shift == slot) return false;
+    terminal.single_shift = slot;
+    return true;
+}
+
+fn mapCharset(terminal: *const Terminal, slot: u8, byte: u8, gr: bool) u21 {
+    std.debug.assert(slot < terminal.designations.len);
+    const designation = terminal.designations[slot];
     return switch (designation) {
         '0' => mapDecSpecial(byte),
-        'A' => if (byte == '#') 0x00A3 else byte,
-        else => byte,
+        'A' => if (byte == '#') 0x00A3 else charsetIdentity(byte, gr),
+        else => charsetIdentity(byte, gr),
     };
+}
+
+fn charsetIdentity(byte: u8, gr: bool) u21 {
+    return if (gr) @as(u21, byte) + 0x80 else byte;
 }
 
 fn mapDecSpecial(byte: u8) u21 {
@@ -10136,8 +10176,9 @@ pub const Terminal = struct {
     xtchecksum_flags: u16 = 0,
     host: HostState,
     gl_index: u8 = 0,
-    g0_designation: u8 = 'B',
-    g1_designation: u8 = 'B',
+    gr_index: u8 = 1,
+    single_shift: ?u8 = null,
+    designations: [4]u8 = .{ 'B', 'B', 'B', 'B' },
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
     dirty_generation: u64 = 1,
@@ -10275,8 +10316,9 @@ pub const Terminal = struct {
         self.primary_savepoint.clear();
         self.alternate_savepoint.clear();
         self.gl_index = 0;
-        self.g0_designation = 'B';
-        self.g1_designation = 'B';
+        self.gr_index = 1;
+        self.single_shift = null;
+        self.designations = .{ 'B', 'B', 'B', 'B' };
         self.kitty.resetTerminalState();
         self.host.resetTerminalState();
     }
@@ -10297,8 +10339,8 @@ pub const Terminal = struct {
             .origin_mode = active.origin_mode,
             .auto_wrap = active.auto_wrap,
             .gl_index = self.gl_index,
-            .g0_designation = self.g0_designation,
-            .g1_designation = self.g1_designation,
+            .gr_index = self.gr_index,
+            .designations = self.designations,
         };
     }
 
@@ -10312,8 +10354,9 @@ pub const Terminal = struct {
             self.modes.reverse_screen_mode = false;
             active.origin_mode = false;
             self.gl_index = 0;
-            self.g0_designation = 'B';
-            self.g1_designation = 'B';
+            self.gr_index = 1;
+            self.single_shift = null;
+            self.designations = .{ 'B', 'B', 'B', 'B' };
             return;
         }
 
@@ -10324,8 +10367,9 @@ pub const Terminal = struct {
         active.cursor.restoreSavedStyle(savepoint.cursor.style);
         restoreCursorPosition(active, savepoint.cursor.row, savepoint.cursor.col);
         self.gl_index = savepoint.gl_index;
-        self.g0_designation = savepoint.g0_designation;
-        self.g1_designation = savepoint.g1_designation;
+        self.gr_index = savepoint.gr_index;
+        self.single_shift = null;
+        self.designations = savepoint.designations;
     }
 
     /// Switches primary or alternate screen with explicit clear and cursor-save behavior.
@@ -11008,8 +11052,8 @@ pub const Terminal = struct {
     pub fn deccirCharsetState(self: *const Terminal) parser_mod.DeccirCharsetState {
         return .{
             .gl_index = self.gl_index,
-            .g0_designation = self.g0_designation,
-            .g1_designation = self.g1_designation,
+            .g0_designation = self.designations[0],
+            .g1_designation = self.designations[1],
         };
     }
 };
@@ -11226,8 +11270,8 @@ const Savepoint = struct {
     origin_mode: bool = false,
     auto_wrap: bool = true,
     gl_index: u8 = 0,
-    g0_designation: u8 = 'B',
-    g1_designation: u8 = 'B',
+    gr_index: u8 = 1,
+    designations: [4]u8 = .{ 'B', 'B', 'B', 'B' },
 
     /// Returns the savepoint to default cursor and charset state.
     pub fn clear(self: *Savepoint) void {

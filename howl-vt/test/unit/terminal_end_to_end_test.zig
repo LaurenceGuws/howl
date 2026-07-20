@@ -113,6 +113,56 @@ test "terminal: G0 G1 designation maps implemented repertoires across split feed
     try std.testing.expectEqual(@as(u21, '_'), screen.cellAt(0, 1));
 }
 
+test "terminal: four charset slots share locking single-shift save and reset ownership" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 32);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b*")).state_changed);
+    try std.testing.expect((try terminal.feed("0\x1b+A")).state_changed);
+    try std.testing.expectEqual(@as(u8, '0'), terminal.designations[2]);
+    try std.testing.expectEqual(@as(u8, 'A'), terminal.designations[3]);
+
+    try std.testing.expect((try terminal.feed("\x1bnq\x1bo#")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.screen_state.activeConst().cellAt(0, 1));
+
+    try std.testing.expect((try terminal.feed("\x0f")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b")).state_changed);
+    try std.testing.expect((try terminal.feed("N\x07qz\x8f#x")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'z'), terminal.screen_state.activeConst().cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.screen_state.activeConst().cellAt(0, 4));
+    try std.testing.expectEqual(@as(u21, 'x'), terminal.screen_state.activeConst().cellAt(0, 5));
+
+    try std.testing.expect((try terminal.feed("\x1bO#\x8eq")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.screen_state.activeConst().cellAt(0, 6));
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 7));
+
+    try std.testing.expect((try terminal.feed("\x1b}ñ")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 8));
+    try std.testing.expect((try terminal.feed("\x1b)A\x1b~£")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.screen_state.activeConst().cellAt(0, 9));
+
+    try std.testing.expect((try terminal.feed("\x1b|ñ")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x00F1), terminal.screen_state.activeConst().cellAt(0, 10));
+
+    try std.testing.expect((try terminal.feed("\x1bo\x1b7\x1b(B\x1b)B\x1b*B\x1b+B\x0f\x1bN")).state_changed);
+    try std.testing.expectEqual(@as(?u8, 2), terminal.single_shift);
+    try std.testing.expect((try terminal.feed("\x1b8")).state_changed);
+    try std.testing.expectEqual(@as(u8, 3), terminal.gl_index);
+    try std.testing.expectEqual(@as(u8, 3), terminal.gr_index);
+    try std.testing.expectEqual(@as(?u8, null), terminal.single_shift);
+    try std.testing.expectEqualSlices(u8, &.{ 'B', 'A', '0', 'A' }, &terminal.designations);
+
+    try std.testing.expect(!(try terminal.feed("\x1b*U\x1b+V")).state_changed);
+    try std.testing.expectEqualSlices(u8, &.{ 'B', 'A', '0', 'A' }, &terminal.designations);
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expectEqual(@as(u8, 0), terminal.gl_index);
+    try std.testing.expectEqual(@as(u8, 1), terminal.gr_index);
+    try std.testing.expectEqual(@as(?u8, null), terminal.single_shift);
+    try std.testing.expectEqualSlices(u8, &.{ 'B', 'B', 'B', 'B' }, &terminal.designations);
+}
+
 test "terminal: tab controls share exact stored-stop and clamping behavior" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 20);

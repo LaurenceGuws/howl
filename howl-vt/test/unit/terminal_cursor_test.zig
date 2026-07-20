@@ -42,8 +42,8 @@ test "terminal cursor: restore without prior save homes and clears charset state
     try std.testing.expect(!active(&terminal).origin_mode);
     try std.testing.expect(!active(&terminal).auto_wrap);
     try std.testing.expectEqual(@as(u8, 0), terminal.gl_index);
-    try std.testing.expectEqual(@as(u8, 'B'), terminal.g0_designation);
-    try std.testing.expectEqual(@as(u8, 'B'), terminal.g1_designation);
+    try std.testing.expectEqual(@as(u8, 'B'), terminal.designations[0]);
+    try std.testing.expectEqual(@as(u8, 'B'), terminal.designations[1]);
 }
 
 test "terminal cursor: alt screen enter resets alt cursor instead of copying primary" {
@@ -89,8 +89,8 @@ test "terminal cursor: savepoint restores Kitty cursor payload and leaves visibi
     active_screen.cursor.cursor_color = .{ .r = 0x11, .g = 0x22, .b = 0x33 };
     active_screen.cursor.cursor_text_color = .{ .r = 0x44, .g = 0x55, .b = 0x66 };
     terminal.gl_index = 1;
-    terminal.g0_designation = '0';
-    terminal.g1_designation = 'A';
+    terminal.designations[0] = '0';
+    terminal.designations[1] = 'A';
     terminal.saveCursor();
 
     active_screen.cursor.setPositionByClient(0, 0);
@@ -103,8 +103,8 @@ test "terminal cursor: savepoint restores Kitty cursor payload and leaves visibi
     active_screen.cursor.cursor_color = .{ .r = 1, .g = 2, .b = 3 };
     active_screen.cursor.cursor_text_color = .{ .r = 4, .g = 5, .b = 6 };
     terminal.gl_index = 0;
-    terminal.g0_designation = 'B';
-    terminal.g1_designation = 'B';
+    terminal.designations[0] = 'B';
+    terminal.designations[1] = 'B';
 
     terminal.restoreCursor();
 
@@ -120,8 +120,8 @@ test "terminal cursor: savepoint restores Kitty cursor payload and leaves visibi
     try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 1, .g = 2, .b = 3 }), active(&terminal).cursor.cursor_color);
     try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 4, .g = 5, .b = 6 }), active(&terminal).cursor.cursor_text_color);
     try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
-    try std.testing.expectEqual(@as(u8, '0'), terminal.g0_designation);
-    try std.testing.expectEqual(@as(u8, 'A'), terminal.g1_designation);
+    try std.testing.expectEqual(@as(u8, '0'), terminal.designations[0]);
+    try std.testing.expectEqual(@as(u8, 'A'), terminal.designations[1]);
 }
 
 test "terminal cursor: 1049 restores primary bank and 47 leaves banks independent" {

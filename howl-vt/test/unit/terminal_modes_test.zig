@@ -1048,7 +1048,7 @@ test "DEC cursor and alternate modes preserve bounded lifecycle truth" {
     try std.testing.expect(restored.origin_mode);
     try std.testing.expect(!restored.auto_wrap);
     try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
-    try std.testing.expectEqual(@as(u8, '0'), terminal.g1_designation);
+    try std.testing.expectEqual(@as(u8, '0'), terminal.designations[1]);
 
     clearPendingOutput(&terminal);
     const query = try terminal.feed("\x1b[?6$p");
