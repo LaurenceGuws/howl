@@ -209,8 +209,10 @@ references:
           - {id: libvterm.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, relevance: query,
+            conditions: libvterm identifies VT100 level with 22 and OSC 52 while Howl identifies VT220 level with 22,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.da2, raw: "CSI > [Ps=0] c", effect: report secondary device attributes, relevance: query,
+            conditions: libvterm reports 0;100;0 while Howl reports its own bounded identity,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
           - {id: libvterm.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row,
             conditions: DECOM resolves against vertical margins, howl: {status: full,
@@ -243,13 +245,17 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.decsgr, raw: "CSI ? Pm m", effect: DEC baseline rendition, conditions: Ps 4|5|24,
             howl: {status: partial}}
-          - {id: libvterm.csi.dsr, raw: "CSI [Ps=0] n", effect: device status or cursor report, conditions: Ps 5|6,
-            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.dsr, raw: "CSI [Ps=0] n", effect: device status or cursor report,
+            conditions: Ps 5|6; libvterm reports absolute CPR while Howl reports from the active DECOM origin,
+            relevance: query,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: DEC status report, relevance: query,
+            conditions: libvterm prefixes status 5 and CPR replies and can report host theme state,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
           - {id: libvterm.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodeCsiIntermediate}}
           - {id: libvterm.csi.decrqm, raw: "CSI ? Ps $ p", effect: report DEC mode state, relevance: query,
+            conditions: supported mode sets differ,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiIntermediate}}
           - {id: libvterm.csi.xtversion, raw: "CSI > [Ps=0] q", effect: report terminal version, relevance: query,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
@@ -620,13 +626,16 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: iterm2.csi.da, raw: "CSI [Ps=0] c", effect: device attributes report, relevance: query,
-            howl: {status: partial}}
+            conditions: iTerm2 identity and optional attributes depend on emulation and host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: iterm2.csi.decstbm, raw: "CSI [top=1] ; [bottom] r", effect: set vertical margins,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: setScrollRegion, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: iterm2.csi.dsr, raw: "CSI [Ps=0] n", effect: status or cursor report, relevance: query,
-            howl: {status: partial}}
+            conditions: "iTerm2 gates reports by host policy and emulation level, supports additional status codes,
+              and directly subtracts active margins where Howl saturates a restored cursor preceding the origin",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: iterm2.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, howl: {status: partial}}
           - {id: iterm2.csi.el, raw: "CSI [Ps=0] K", effect: erase line, howl: {status: partial}}
           - {id: iterm2.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position,
@@ -685,9 +694,12 @@ references:
           - {id: iterm2.csi.restore_cursor, raw: "CSI u", effect: restore cursor, howl: {status: partial}}
           - {id: iterm2.csi.decset, raw: "CSI ? Pm h", effect: set DEC modes, howl: {status: partial}}
           - {id: iterm2.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC modes, howl: {status: partial}}
-          - {id: iterm2.csi.decdsr, raw: "CSI ? Ps n", effect: DEC status report, howl: {status: partial}}
-          - {id: iterm2.csi.decrqm_dec, raw: "CSI ? Ps $ p", effect: query DEC mode, howl: {status: partial}}
-          - {id: iterm2.csi.decrqm_ansi, raw: "CSI Ps $ p", effect: query ANSI mode, howl: {status: partial}}
+          - {id: iterm2.csi.decdsr, raw: "CSI ? Ps n", effect: DEC status report,
+            conditions: iTerm2 gates a wider status set by emulation level, howl: {status: partial}}
+          - {id: iterm2.csi.decrqm_dec, raw: "CSI ? Ps $ p", effect: query DEC mode,
+            conditions: supported mode sets and policy-derived states differ, howl: {status: partial}}
+          - {id: iterm2.csi.decrqm_ansi, raw: "CSI Ps $ p", effect: query ANSI mode,
+            conditions: supported mode sets differ, howl: {status: partial}}
           - {id: iterm2.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial}}
           - {id: iterm2.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style, howl: {status: partial}}
           - {id: iterm2.csi.decsca, raw: "CSI [Ps=0] \" q", effect: select character protection,
@@ -1373,21 +1385,26 @@ references:
           - {id: kitty.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters,
             conditions: multicell boundary repair, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: kitty.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, howl: {status: partial}}
+          - {id: kitty.csi.da1, raw: "CSI [Ps=0] c", effect: delegate primary device attributes to the host,
+            relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: kitty.csi.da2, raw: "CSI > [Ps=0] c", effect: report secondary device attributes,
-            howl: {status: partial}}
-          - {id: kitty.csi.da_private, raw: "CSI ? [Ps=0] c", effect: report private device attributes,
-            howl: {status: partial}}
-          - {id: kitty.csi.da3, raw: "CSI = [Ps=0] c", effect: report tertiary device attributes,
-            howl: {status: partial}}
+            conditions: Kitty reports its compiled version while Howl reports its own bounded identity,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
+          - {id: kitty.csi.da_private, raw: "CSI ? [Ps=0] c", effect: no reply,
+            recognition: recognized_noop, howl: {status: partial}}
+          - {id: kitty.csi.da3, raw: "CSI = [Ps=0] c", effect: no reply,
+            recognition: recognized_noop, howl: {status: partial}}
           - {id: kitty.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stop, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.csi.sm, raw: "CSI Pm h", effect: set modes, howl: {status: partial}}
           - {id: kitty.csi.rm, raw: "CSI Pm l", effect: reset modes, howl: {status: partial}}
-          - {id: kitty.csi.dsr, raw: "CSI [Ps=0] n", effect: report device status, howl: {status: partial}}
-          - {id: kitty.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: report DEC status, howl: {status: partial}}
+          - {id: kitty.csi.dsr, raw: "CSI [Ps=0] n", effect: report device status,
+            conditions: under DECOM Kitty makes only the row origin-relative while Howl also applies the left margin,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: report DEC status,
+            conditions: Kitty additionally delegates private 996 color preference, howl: {status: partial}}
           - {id: kitty.csi.save_cursor, raw: "CSI s", effect: save cursor, howl: {status: partial}}
           - {id: kitty.csi.save_modes, raw: "CSI ? Pm s", effect: save DEC modes, howl: {status: partial}}
           - {id: kitty.csi.report_window_pixels, raw: "CSI 14 ; [Ps] t", effect: report window pixel size,
@@ -1438,7 +1455,8 @@ references:
           - {id: kitty.csi.scrollback_fill, raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
             relevance: extension, howl: {status: partial}}
           - {id: kitty.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial}}
-          - {id: kitty.csi.decrqm, raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state, howl: {status: partial}}
+          - {id: kitty.csi.decrqm, raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state,
+            conditions: supported ANSI and DEC mode sets differ, howl: {status: partial}}
           - {id: kitty.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {status: partial}}
           - {id: kitty.csi.modify_other_keys, raw: "CSI > Ps ; Ps m", effect: set modifyOtherKeys, relevance: input,
             howl: {status: partial}}

@@ -531,6 +531,58 @@ test "report queries append pending host output" {
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
 }
 
+test "device and status queries retain exact scalar transcripts and origin coordinates" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 6, 10);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    try stream.nextSlice("\x1b[");
+    try stream.nextSlice("c\x1b[>0");
+    try stream.nextSlice("c\x1b[=c\x1b[5n");
+    try std.testing.expectEqualStrings(
+        "\x1b[?62;22c\x1b[>1;10;0c\x1bP!|00000000\x1b\\\x1b[0n",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    write(&stream, "\x1b[2;5r\x1b[?69h\x1b[3;8s\x1b[?6h\x1b[2;3H\x1b[6n\x1b[?5n\x1b[?6n");
+    try std.testing.expectEqualStrings("\x1b[2;3R\x1b[0n\x1b[?2;3R", pendingOutput(&terminal));
+    const view = visibleView(&terminal, 0);
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 4), view.cursor_col);
+
+    clearPendingOutput(&terminal);
+    const malformed = try terminal.feed(
+        "\x1b[1c\x1b[>1c\x1b[=1c\x1b[5;6n\x1b[?6;7n\x1b[6;7$p\x1b[?6;7$p\x1b[0;1x\x1b[?9999n" ++
+            "\x1b[0$c\x1b[>0$c\x1b[=0$c\x1b[5$n\x1b[?6$n\x1b[?6$#p\x1b[0$x",
+    );
+    try std.testing.expect(!malformed.state_changed);
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+
+    const unknown = try terminal.feed("\x1b[?9999$p\x1b[0x\x1b[1x\x1b[2x");
+    try std.testing.expect(unknown.state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b[?9999;0$y\x1b[2;1;1;128;128;1;0x\x1b[3;1;1;128;128;1;0x",
+        pendingOutput(&terminal),
+    );
+}
+
+test "cursor reports bound restored positions against changed origin margins" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 8, 12);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    write(&stream, "\x1b[?69h\x1b[2;6r\x1b[2;8s\x1b[?6h\x1b[2;2H\x1b7");
+    write(&stream, "\x1b[5;8r\x1b[7;12s\x1b8\x1b[6n\x1b[?6n");
+
+    const view = visibleView(&terminal, 0);
+    try std.testing.expectEqual(@as(u16, 4), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+    try std.testing.expectEqualStrings("\x1b[1;1R\x1b[?1;1R", pendingOutput(&terminal));
+}
+
 test "report query limit fails without partial pending output" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
@@ -545,6 +597,21 @@ test "report query limit fails without partial pending output" {
 
     try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1b[5n"));
     try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
+
+    clearPendingOutput(&terminal);
+    try stream.nextSlice("\x1b[");
+    try stream.nextSlice("5n");
+    try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1bP$qr\x1b\\"));
+    try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
+
+    clearPendingOutput(&terminal);
+    try stream.nextSlice("\x1bP$q");
+    try stream.nextSlice("r\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1$r1;4r\x1b\\", pendingOutput(&terminal));
 }
 
 test "ENQ default answerback is empty and printable space remains text" {

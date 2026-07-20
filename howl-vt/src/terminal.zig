@@ -6094,7 +6094,7 @@ fn processQuote(final: u8, params: []const i32) ?SemanticEvent {
 
 fn processDollar(final: u8, params: []const i32) ?SemanticEvent {
     return switch (final) {
-        'p' => SemanticEvent{ .ansi_mode_query = paramAtOrDefault0(params, 0) },
+        'p' => if (queryParam(params)) |mode| SemanticEvent{ .ansi_mode_query = mode } else null,
         'r' => rectAttrsChange(params, false),
         't' => rectAttrsChange(params, true),
         'v' => rectCopy(params),
@@ -6207,7 +6207,10 @@ fn rectErase(params: []const i32, selective: bool) ?SemanticEvent {
 fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []const u8) ?SemanticEvent {
     return switch (leader) {
         '>' => switch (final) {
-            'c' => SemanticEvent.secondary_device_attributes,
+            'c' => if (intermediates.len == 0 and zeroQuery(params))
+                SemanticEvent.secondary_device_attributes
+            else
+                null,
             'f' => keyFormatChange(params),
             'q' => if (!intermediatesHas(intermediates, ' ') and
                 paramAtOrDefault0(params, 0) == 0)
@@ -6226,7 +6229,10 @@ fn decodeCsiLeader(final: u8, params: []const i32, leader: u8, intermediates: []
             else => null,
         },
         '=' => switch (final) {
-            'c' => SemanticEvent.tertiary_device_attributes,
+            'c' => if (intermediates.len == 0 and zeroQuery(params))
+                SemanticEvent.tertiary_device_attributes
+            else
+                null,
             'u' => decodeKittyKeyboardSet(params),
             else => null,
         },
@@ -6446,13 +6452,23 @@ fn decodeCsi(
         'J' => return decodeEraseDisplay(eraseMode(paramAtOrDefault0(params, 0)), false),
         'K' => return SemanticEvent{ .erase_line = eraseMode(paramAtOrDefault0(params, 0)) },
         'X' => return SemanticEvent{ .erase_chars = paramAtOrDefault1(params, 0) },
-        'x' => return SemanticEvent{ .parameters_report = paramAtOrDefault0(params, 0) },
-        'n' => switch (paramAtOrDefault0(params, 0)) {
-            5 => return SemanticEvent.device_status_report,
-            6 => return SemanticEvent.cursor_position_report,
-            else => return null,
+        'x' => {
+            if (intermediates.len != 0) return null;
+            const kind = queryParam(params) orelse return null;
+            return SemanticEvent{ .parameters_report = kind };
         },
-        'c' => return SemanticEvent.primary_device_attributes,
+        'n' => {
+            if (intermediates.len != 0) return null;
+            return switch (queryParam(params) orelse return null) {
+                5 => SemanticEvent.device_status_report,
+                6 => SemanticEvent.cursor_position_report,
+                else => null,
+            };
+        },
+        'c' => {
+            if (intermediates.len != 0 or !zeroQuery(params)) return null;
+            return SemanticEvent.primary_device_attributes;
+        },
         'p' => {
             if (params.len == 0 and intermediates.len == 1 and intermediates[0] == '!') {
                 return SemanticEvent.reset_screen;
@@ -6475,15 +6491,17 @@ fn decodeEraseDisplay(mode: ScreenEraseMode, protected: bool) SemanticEvent {
 // Decodes one private CSI sequence; unsupported forms return null.
 fn decodePrivateCsi(final: u8, params: []const i32, leader: u8, intermediates: []const u8) ?SemanticEvent {
     if (leader != '?') return null;
-    if (directQuery(final, params)) |event| return event;
+    if (directQuery(final, params, intermediates)) |event| return event;
     if (params.len == 0) return null;
     if (modeReport(final, params, intermediates)) |event| return event;
     if (saveRestore(final, params, intermediates)) |event| return event;
-    if (report(final, params)) |event| return event;
+    if (report(final, params, intermediates)) |event| return event;
+    if (intermediates.len != 0) return null;
     return modeToggle(final, params[0]);
 }
 
-fn directQuery(final: u8, params: []const i32) ?SemanticEvent {
+fn directQuery(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
+    if (intermediates.len != 0) return null;
     switch (final) {
         'u' => return SemanticEvent.kitty_keyboard_query,
         'g' => return SemanticEvent{ .key_format_query = keyFormatParamAtOrDefault0(params, 0) },
@@ -6506,8 +6524,9 @@ fn decodePrivateEraseDisplay(mode: ScreenEraseMode, protected: bool) SemanticEve
 
 fn modeReport(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
     if (final == 'm' and paramAtOrDefault0(params, 0) == 4) return SemanticEvent.modify_other_keys_query;
-    if (final == 'p' and intermediatesHas(intermediates, '$')) {
-        return SemanticEvent{ .dec_mode_query = paramAtOrDefault0(params, 0) };
+    if (final == 'p' and intermediates.len == 1 and intermediates[0] == '$') {
+        const mode = queryParam(params) orelse return null;
+        return SemanticEvent{ .dec_mode_query = mode };
     }
     return null;
 }
@@ -6521,17 +6540,29 @@ fn saveRestore(final: u8, params: []const i32, intermediates: []const u8) ?Seman
     };
 }
 
-fn report(final: u8, params: []const i32) ?SemanticEvent {
-    const param = paramAtOrDefault0(params, 0);
+fn report(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
+    if (intermediates.len != 0) return null;
+    const param = queryParam(params) orelse return null;
     return switch (final) {
         'i' => SemanticEvent{ .media_copy_request = param },
         'n' => switch (param) {
+            5 => SemanticEvent.device_status_report,
             6 => SemanticEvent.dec_cursor_position_report,
             55, 56 => |status| SemanticEvent{ .dec_device_status_report = status },
             else => null,
         },
         else => null,
     };
+}
+
+// Returns one default-zero scalar and rejects trailing query parameters.
+fn queryParam(params: []const i32) ?u16 {
+    if (params.len > 1) return null;
+    return paramAtOrDefault0(params, 0);
+}
+
+fn zeroQuery(params: []const i32) bool {
+    return (queryParam(params) orelse return false) == 0;
 }
 
 fn modeToggle(final: u8, mode: i32) ?SemanticEvent {
@@ -7814,6 +7845,9 @@ const CursorReportView = struct {
     cols: u16,
     cursor_row: u16,
     cursor_col: u16,
+    origin_mode: bool = false,
+    origin_top: u16 = 0,
+    origin_left: u16 = 0,
 };
 
 const RectChecksumRequest = struct {
@@ -7832,6 +7866,9 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .cols = active.cols,
         .cursor_row = active.cursor.row,
         .cursor_col = active.cursor.col,
+        .origin_mode = active.origin_mode,
+        .origin_top = active.scroll_top,
+        .origin_left = if (active.left_right_margin_mode) active.left_margin else 0,
     };
     const ansi_modes = AnsiView{
         .keyboard_action_mode = vt.modes.keyboard_action_mode,
@@ -8041,10 +8078,12 @@ fn appendCursorPositionReport(
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
+    const row = reportCursorCoordinate(render_view.cursor_row, render_view.origin_top, render_view.origin_mode);
+    const col = reportCursorCoordinate(render_view.cursor_col, render_view.origin_left, render_view.origin_mode);
     const text = formatTerminalReport(
         encode_buf,
         "\x1b[{d};{d}R",
-        .{ render_view.cursor_row + 1, render_view.cursor_col + 1 },
+        .{ row, col },
     );
     try appendOutput(output, allocator, text);
 }
@@ -8055,12 +8094,26 @@ fn appendDecCursorPositionReport(
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
+    const row = reportCursorCoordinate(render_view.cursor_row, render_view.origin_top, render_view.origin_mode);
+    const col = reportCursorCoordinate(render_view.cursor_col, render_view.origin_left, render_view.origin_mode);
     const text = formatTerminalReport(
         encode_buf,
         "\x1b[?{d};{d}R",
-        .{ render_view.cursor_row + 1, render_view.cursor_col + 1 },
+        .{ row, col },
     );
     try appendOutput(output, allocator, text);
+}
+
+// A restored cursor may precede current margins; relative reports clamp that
+// valid cross-savepoint state to the first addressable origin coordinate.
+fn reportCursorCoordinate(position: u16, origin: u16, relative: bool) u32 {
+    const zero_based: u32 = if (relative) position -| origin else position;
+    return zero_based + 1;
+}
+
+test "cursor report coordinate saturates origin and preserves one-based u16 extent" {
+    try std.testing.expectEqual(@as(u32, 1), reportCursorCoordinate(2, 6, true));
+    try std.testing.expectEqual(@as(u32, 65_536), reportCursorCoordinate(std.math.maxInt(u16), 0, false));
 }
 
 fn appendDecModeReport(
