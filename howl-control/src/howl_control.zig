@@ -49,9 +49,9 @@ pub const Screen = client.Screen;
 pub const Status = client.Status;
 
 /// Bounds one terminal surface width before model or PTY construction.
-pub const max_cols: u16 = 512;
+pub const max_cols = client.max_cols;
 /// Bounds one terminal surface height before model or PTY construction.
-pub const max_rows: u16 = 256;
+pub const max_rows = client.max_rows;
 /// Bounds retained semantic history independently from the active surface.
 pub const max_history_rows = client.max_history_rows;
 /// Bounds each complete input or terminal-reply transfer.

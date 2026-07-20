@@ -15,6 +15,10 @@ pub const max_transfer_bytes: usize = 64 * 1024;
 pub const max_input_bytes = max_transfer_bytes;
 /// Bounds one copied current viewport response.
 pub const max_screen_bytes: usize = 256 * 1024;
+/// Bounds one terminal surface width in direct and remote observations.
+pub const max_cols: u16 = 512;
+/// Bounds one terminal surface height in direct and remote observations.
+pub const max_rows: u16 = 256;
 /// Bounds retained semantic history and output-loss response records.
 pub const max_history_rows: u16 = 16_384;
 /// Bounds one admitted input batch.
@@ -391,14 +395,14 @@ pub const Client = struct {
         std.mem.writeInt(u16, payload[2..4], rows, .big);
         var response = try self.request(.resize, &payload, transfer_timeout_ms);
         defer response.deinit();
-        return decodeResize(response.payload);
+        return decodeResize(response.payload, cols, rows);
     }
 
     /// Delivers one fixed signal to the owned child process group.
     pub fn signal(self: *Client, value: ControlSignal) ClientError!SignalResult {
         var response = try self.request(.signal, &.{encodeControlSignal(value)}, transfer_timeout_ms);
         defer response.deinit();
-        return decodeSignal(response.payload);
+        return decodeSignal(response.payload, value);
     }
 
     fn request(
@@ -838,7 +842,9 @@ fn decodeStatus(
     }
     const cols = std.mem.readInt(u16, payload[2..4], .big);
     const rows = std.mem.readInt(u16, payload[4..6], .big);
-    if (cols == 0 or rows == 0) return error.InvalidResponse;
+    if (cols == 0 or rows == 0 or cols > max_cols or rows > max_rows) {
+        return error.InvalidResponse;
+    }
     var offset: usize = 90;
     const cwd = if (cwd_len == 0) null else try allocator.dupe(u8, payload[offset..][0..cwd_len]);
     errdefer if (cwd) |owned| allocator.free(owned);
@@ -935,7 +941,9 @@ fn decodeScreen(allocator: std.mem.Allocator, payload: []const u8) ClientError!S
     const rows = std.mem.readInt(u16, payload[10..12], .big);
     const cursor_col = std.mem.readInt(u16, payload[14..16], .big);
     const cursor_row = std.mem.readInt(u16, payload[16..18], .big);
-    if (cols == 0 or rows == 0) return error.InvalidResponse;
+    if (cols == 0 or rows == 0 or cols > max_cols or rows > max_rows) {
+        return error.InvalidResponse;
+    }
     if (payload[13] == 1 and (cursor_col >= cols or cursor_row >= rows)) return error.InvalidResponse;
     return .{
         .allocator = allocator,
@@ -950,15 +958,22 @@ fn decodeScreen(allocator: std.mem.Allocator, payload: []const u8) ClientError!S
     };
 }
 
-fn decodeResize(payload: []const u8) ClientError!ResizeResult {
+fn decodeResize(payload: []const u8, requested_cols: u16, requested_rows: u16) ClientError!ResizeResult {
     if (payload.len != 21 or payload[16] > 1) return error.InvalidResponse;
-    return .{
+    const result = ResizeResult{
         .admission_sequence = std.mem.readInt(u64, payload[0..8], .big),
         .geometry_sequence = std.mem.readInt(u64, payload[8..16], .big),
         .changed = payload[16] == 1,
         .cols = std.mem.readInt(u16, payload[17..19], .big),
         .rows = std.mem.readInt(u16, payload[19..21], .big),
     };
+    if (result.cols == 0 or result.rows == 0 or
+        result.cols > max_cols or result.rows > max_rows or
+        result.cols != requested_cols or result.rows != requested_rows)
+    {
+        return error.InvalidResponse;
+    }
+    return result;
 }
 
 fn encodeControlSignal(value: ControlSignal) u8 {
@@ -971,9 +986,9 @@ fn encodeControlSignal(value: ControlSignal) u8 {
     };
 }
 
-fn decodeSignal(payload: []const u8) ClientError!SignalResult {
+fn decodeSignal(payload: []const u8, requested: ControlSignal) ClientError!SignalResult {
     if (payload.len != 10) return error.InvalidResponse;
-    return .{
+    const result = SignalResult{
         .admission_sequence = std.mem.readInt(u64, payload[0..8], .big),
         .signal = switch (payload[8]) {
             1 => .hangup,
@@ -991,6 +1006,8 @@ fn decodeSignal(payload: []const u8) ClientError!SignalResult {
             else => return error.InvalidResponse,
         },
     };
+    if (result.signal != requested) return error.InvalidResponse;
+    return result;
 }
 
 fn decodeOutput(allocator: std.mem.Allocator, payload: []const u8) ClientError!LogicalOutputResult {
@@ -2030,6 +2047,94 @@ test "status wire validates lifecycle and bounded loss evidence" {
     try std.testing.expectError(
         error.InvalidResponse,
         decodeStatus(std.testing.allocator, id, payload),
+    );
+}
+
+test "hostile observations reject dimensions outside the owned surface bounds" {
+    const id = TerminalId{ .bytes = .{0x51} ** 16 };
+    const status_payload = try encodeStatus(std.testing.allocator, .{
+        .terminal_id = id,
+        .state = .running,
+        .reader_error = null,
+        .reply_failure_transferred = null,
+        .resize_rollback_failed = false,
+        .child_cwd = null,
+        .cols = 80,
+        .rows = 24,
+        .publication = 0,
+        .history_loss_generation = 0,
+        .alternate_screen = false,
+        .admission_sequence = 0,
+        .input_sequence = 0,
+        .geometry_sequence = 0,
+        .output_oldest = 1,
+        .output_newest = 0,
+        .shell_mark = null,
+    });
+    defer std.testing.allocator.free(status_payload);
+    inline for (.{
+        .{ @as(u16, 0), @as(u16, 24) },
+        .{ @as(u16, 80), @as(u16, 0) },
+        .{ max_cols + 1, @as(u16, 24) },
+        .{ @as(u16, 80), max_rows + 1 },
+    }) |dimensions| {
+        std.mem.writeInt(u16, status_payload[2..4], dimensions[0], .big);
+        std.mem.writeInt(u16, status_payload[4..6], dimensions[1], .big);
+        try std.testing.expectError(
+            error.InvalidResponse,
+            decodeStatus(std.testing.allocator, id, status_payload),
+        );
+    }
+
+    var screen_payload: [22]u8 = @splat(0);
+    inline for (.{
+        .{ @as(u16, 0), @as(u16, 24) },
+        .{ @as(u16, 80), @as(u16, 0) },
+        .{ max_cols + 1, @as(u16, 24) },
+        .{ @as(u16, 80), max_rows + 1 },
+    }) |dimensions| {
+        std.mem.writeInt(u16, screen_payload[8..10], dimensions[0], .big);
+        std.mem.writeInt(u16, screen_payload[10..12], dimensions[1], .big);
+        try std.testing.expectError(
+            error.InvalidResponse,
+            decodeScreen(std.testing.allocator, &screen_payload),
+        );
+    }
+}
+
+test "hostile mutation responses must match bounded request facts" {
+    var resize_payload: [21]u8 = @splat(0);
+    std.mem.writeInt(u16, resize_payload[17..19], 80, .big);
+    std.mem.writeInt(u16, resize_payload[19..21], 24, .big);
+    const resize = try decodeResize(&resize_payload, 80, 24);
+    try std.testing.expectEqual(@as(u16, 80), resize.cols);
+    try std.testing.expectEqual(@as(u16, 24), resize.rows);
+    try std.testing.expectError(error.InvalidResponse, decodeResize(&resize_payload, 81, 24));
+    try std.testing.expectError(error.InvalidResponse, decodeResize(&resize_payload, 80, 25));
+    std.mem.writeInt(u16, resize_payload[17..19], 0, .big);
+    try std.testing.expectError(error.InvalidResponse, decodeResize(&resize_payload, 0, 24));
+    std.mem.writeInt(u16, resize_payload[17..19], max_cols + 1, .big);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeResize(&resize_payload, max_cols + 1, 24),
+    );
+    std.mem.writeInt(u16, resize_payload[17..19], 80, .big);
+    std.mem.writeInt(u16, resize_payload[19..21], 0, .big);
+    try std.testing.expectError(error.InvalidResponse, decodeResize(&resize_payload, 80, 0));
+    std.mem.writeInt(u16, resize_payload[19..21], max_rows + 1, .big);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeResize(&resize_payload, 80, max_rows + 1),
+    );
+
+    var signal_payload: [10]u8 = @splat(0);
+    signal_payload[8] = encodeControlSignal(.interrupt);
+    signal_payload[9] = encodeControlResult(.delivered);
+    const signal_result = try decodeSignal(&signal_payload, .interrupt);
+    try std.testing.expectEqual(ControlSignal.interrupt, signal_result.signal);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeSignal(&signal_payload, .terminate),
     );
 }
 

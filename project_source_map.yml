@@ -15,4 +15,4 @@ sources:
   howl-control/src/test.zig: live PTY and semantic control proofs
   howl-host/src: current Wayland, terminal-thread, layout, and GLES host implementation
   howl-host/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host
-  tools/audit_source.sh: settled VT source policy and reviewed construct uses
+  tools/audit_source.sh: maintained non-vendor Zig source policy and reviewed construct uses
