@@ -152,25 +152,12 @@ fn addControl(
         .optimize = optimize,
     });
     tests_module.addImport("howl_control", control);
-    const executable_module = b.createModule(.{
-        .root_source_file = b.path("howl-control/src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    executable_module.addImport("howl_control", control);
-    const executable = b.addExecutable(.{ .name = "howl-control", .root_module = executable_module });
-    executable.use_llvm = true;
     const api = addTest(b, "howl-control-api", control);
     const tests = addTest(b, "howl-control", tests_module);
     check.dependOn(&api.step);
-    check.dependOn(&executable.step);
     check.dependOn(&tests.step);
     test_step.dependOn(&addTestRun(b, api).step);
     test_step.dependOn(&addTestRun(b, tests).step);
-    b.installArtifact(executable);
-    const run = b.addRunArtifact(executable);
-    if (b.args) |arguments| run.addArgs(arguments);
-    b.step("run:control", "Run the terminal control example").dependOn(&run.step);
 }
 
 fn addHost(

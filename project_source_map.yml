@@ -11,7 +11,6 @@ sources:
     curated PTY and terminal-model lifecycle, optional local endpoint server, shared mutation admission, primitive operations,
     and exact shutdown ownership
   howl-control/src/client.zig: terminal identity, endpoint facts, private protocol codec, Linux socket mechanics, and one-shot client
-  howl-control/src/main.zig: thin snapshot example over the native control owner
   howl-control/src/test.zig: live PTY and semantic control proofs
   howl-host/src: current Wayland, terminal-thread, layout, and GLES host implementation
   howl-host/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host

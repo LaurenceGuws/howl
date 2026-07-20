@@ -3,8 +3,6 @@ howl-control/src/howl_control.zig|anyopaque|context: ?*anyopaque = null,
 howl-control/src/howl_control.zig|anyopaque|fn countTestWake(context: ?*anyopaque) void {
 howl-control/src/howl_control.zig|anyopaque|fn ignoreWake(_: ?*anyopaque) void {}
 howl-control/src/howl_control.zig|anyopaque|notify: *const fn (?*anyopaque) void = ignoreWake,
-howl-control/src/main.zig|anytype|fn rowContentEnd(view: anytype, row: u16) u16 {
-howl-control/src/main.zig|anytype|fn writeSnapshot(writer: *std.Io.Writer, view: anytype) std.Io.Writer.Error!void {
 howl-control/src/test.zig|anyopaque|fn countWake(context: ?*anyopaque) void {
 howl-control/src/test.zig|anytype|fn rowStartsWith(view: anytype, expected: []const u8) bool {
 howl-control/src/test.zig|anytype|fn viewContains(view: anytype, expected: []const u8) bool {
