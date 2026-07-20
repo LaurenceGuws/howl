@@ -1,7 +1,7 @@
 //! Proves the reusable native terminal owner against bounded live PTY children.
 
 const std = @import("std");
-const headless = @import("howl_headless");
+const control = @import("howl_control");
 
 const wait_ms: i64 = 10;
 const wait_turns_max: u16 = 500;
@@ -10,7 +10,7 @@ const transfer_wait_turns_max: u16 = 2000;
 const SendState = enum(u8) { pending, complete, incomplete, failed };
 
 const SendContext = struct {
-    terminal: *headless.Terminal,
+    terminal: *control.Terminal,
     bytes: []const u8,
     started: std.atomic.Value(bool) = .init(false),
     state: std.atomic.Value(SendState) = .init(.pending),
@@ -36,7 +36,7 @@ fn countWake(context: ?*anyopaque) void {
     std.debug.assert(previous < std.math.maxInt(u32));
 }
 
-fn wait(io: std.Io, terminal: *headless.Terminal) !void {
+fn wait(io: std.Io, terminal: *control.Terminal) !void {
     var turns: u16 = 0;
     while (terminal.state() == .running and turns < wait_turns_max) : (turns += 1) {
         try (std.Io.Clock.Duration{
@@ -68,7 +68,7 @@ fn viewContains(view: anytype, expected: []const u8) bool {
     return false;
 }
 
-fn waitForPrefix(io: std.Io, terminal: *headless.Terminal, expected: []const u8) !void {
+fn waitForPrefix(io: std.Io, terminal: *control.Terminal, expected: []const u8) !void {
     var turns: u16 = 0;
     while (turns < wait_turns_max) : (turns += 1) {
         var surface = terminal.surface();
@@ -86,7 +86,7 @@ fn waitForPrefix(io: std.Io, terminal: *headless.Terminal, expected: []const u8)
 
 test "owner captures one child semantic surface" {
     var wake_count: std.atomic.Value(u32) = .init(0);
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = "printf headless" },
@@ -104,8 +104,8 @@ test "owner captures one child semantic surface" {
     terminal.consumeWake();
 }
 
-test "status and logical output form one coherent headless observation" {
-    const terminal = try headless.Terminal.init(
+test "status and logical output form one coherent control observation" {
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = "printf 'one\\r\\ntwo\\r\\nopen'" },
@@ -115,13 +115,13 @@ test "status and logical output form one coherent headless observation" {
     try wait(std.testing.io, terminal);
 
     const status = terminal.status();
-    try std.testing.expectEqual(headless.State.stopped, status.state);
-    try std.testing.expectEqual(@as(?headless.ReaderError, null), status.reader_error);
+    try std.testing.expectEqual(control.State.stopped, status.state);
+    try std.testing.expectEqual(@as(?control.ReaderError, null), status.reader_error);
     try std.testing.expectEqual(@as(?usize, null), status.reply_failure_transferred);
     try std.testing.expectEqual(@as(u64, 0), status.history_loss_generation);
     try std.testing.expectEqual(@as(u64, 1), status.output_oldest);
     try std.testing.expectEqual(@as(u64, 2), status.output_newest);
-    try std.testing.expectEqual(@as(?headless.ShellMark, null), status.shell_mark);
+    try std.testing.expectEqual(@as(?control.ShellMark, null), status.shell_mark);
 
     var output = switch (try terminal.copyLogicalOutput(std.testing.allocator, 0, 8, 128)) {
         .output => |value| value,
@@ -134,7 +134,7 @@ test "status and logical output form one coherent headless observation" {
 }
 
 test "status copies retained shell mark facts and shell identity" {
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = "printf '\\033]1337;ShellIntegrationVersion=20;shell=bash\\a" ++
@@ -151,8 +151,8 @@ test "status copies retained shell mark facts and shell identity" {
     try std.testing.expectEqualStrings("bash", mark.shellBytes().?);
 }
 
-test "headless forwards exact process-group control outcomes" {
-    const terminal = try headless.Terminal.init(
+test "control forwards exact process-group control outcomes" {
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = "printf ready; sleep 30" },
@@ -160,13 +160,13 @@ test "headless forwards exact process-group control outcomes" {
     );
     defer terminal.deinit();
     try waitForPrefix(std.testing.io, terminal, "ready");
-    try std.testing.expectEqual(headless.ControlResult.delivered, terminal.control(.interrupt));
+    try std.testing.expectEqual(control.ControlResult.delivered, terminal.control(.interrupt));
     try wait(std.testing.io, terminal);
-    try std.testing.expectEqual(headless.ControlResult.target_missing, terminal.control(.interrupt));
+    try std.testing.expectEqual(control.ControlResult.target_missing, terminal.control(.interrupt));
 }
 
 test "live input reaches the child and mutates terminal truth" {
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = "read line; printf '%s' \"$line\"" },
@@ -185,7 +185,7 @@ test "live input reaches the child and mutates terminal truth" {
 
 test "terminal replies return to a querying child" {
     const command = "stty raw -echo; printf '\\033[c'; dd bs=1 count=9 2>/dev/null | od -An -tx1";
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = command },
@@ -209,7 +209,7 @@ test "waiting input transfer leaves the model available to drain child output" {
         "dd iflag=fullblock of=/dev/null bs=4096 count=16 2>/dev/null; " ++
         "dd iflag=fullblock of=/dev/null bs=1 count=9 2>/dev/null; " ++
         "printf transfer-complete";
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = command },
@@ -218,7 +218,7 @@ test "waiting input transfer leaves the model available to drain child output" {
     defer terminal.deinit();
     try waitForPrefix(std.testing.io, terminal, "ready");
 
-    var input: [headless.max_transfer_bytes]u8 = .{'x'} ** headless.max_transfer_bytes;
+    var input: [control.max_transfer_bytes]u8 = .{'x'} ** control.max_transfer_bytes;
     var send_context = SendContext{ .terminal = terminal, .bytes = &input };
     const sender = try std.Thread.spawn(.{}, sendBytes, .{&send_context});
 
@@ -248,7 +248,7 @@ test "waiting input transfer leaves the model available to drain child output" {
 }
 
 test "resize publishes only changed dimensions" {
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = "sleep 1" },
@@ -279,7 +279,7 @@ test "resize publishes only changed dimensions" {
 
 test "model resize allocation failure restores prior PTY geometry" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         failing.allocator(),
         std.testing.io,
         .{ .command = "sleep 30" },
@@ -291,14 +291,14 @@ test "model resize allocation failure restores prior PTY geometry" {
     try std.testing.expectError(error.OutOfMemory, terminal.resize(100, 40));
     try std.testing.expect(failing.has_induced_failure);
     const status = terminal.status();
-    try std.testing.expectEqual(headless.State.running, status.state);
+    try std.testing.expectEqual(control.State.running, status.state);
     try std.testing.expect(!status.resize_rollback_failed);
     try std.testing.expectEqual(@as(u16, 80), status.cols);
     try std.testing.expectEqual(@as(u16, 24), status.rows);
 }
 
 test "deinit stops one live child and reader" {
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = "sleep 30" },
@@ -308,7 +308,7 @@ test "deinit stops one live child and reader" {
 }
 
 test "cancellation ends a saturated input transfer before ordered deinit" {
-    const terminal = try headless.Terminal.init(
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
         .{ .command = "stty raw -echo; printf ready; kill -STOP $$", .transfer_timeout_ms = 10_000 },
@@ -317,7 +317,7 @@ test "cancellation ends a saturated input transfer before ordered deinit" {
     errdefer terminal.deinit();
     try waitForPrefix(std.testing.io, terminal, "ready");
 
-    var input: [headless.max_transfer_bytes]u8 = .{'x'} ** headless.max_transfer_bytes;
+    var input: [control.max_transfer_bytes]u8 = .{'x'} ** control.max_transfer_bytes;
     var send_context = SendContext{ .terminal = terminal, .bytes = &input };
     const sender = try std.Thread.spawn(.{}, sendBytes, .{&send_context});
     while (!send_context.started.load(.acquire)) std.atomic.spinLoopHint();

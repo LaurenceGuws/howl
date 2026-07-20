@@ -27,14 +27,14 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     pty.addCMacro("_FORTIFY_SOURCE", "0");
-    const headless = b.addModule("howl_headless", .{
-        .root_source_file = b.path("howl-headless/src/howl_headless.zig"),
+    const control = b.addModule("howl_control", .{
+        .root_source_file = b.path("howl-control/src/howl_control.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    headless.addImport("howl_vt", vt);
-    headless.addImport("howl_pty", pty);
+    control.addImport("howl_vt", vt);
+    control.addImport("howl_pty", pty);
 
-    if (b.dep_prefix.len == 0) dev.add(b, target, optimize, vt, text, pty, headless);
+    if (b.dep_prefix.len == 0) dev.add(b, target, optimize, vt, text, pty, control);
 }

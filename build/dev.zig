@@ -9,7 +9,7 @@ pub fn add(
     vt: *std.Build.Module,
     text: *std.Build.Module,
     pty: *std.Build.Module,
-    headless: *std.Build.Module,
+    control: *std.Build.Module,
 ) void {
     const check = b.step("check", "Compile every active Howl component and proof");
     const test_step = b.step("test", "Run every active Howl correctness proof");
@@ -19,7 +19,7 @@ pub fn add(
     addVt(b, target, optimize, vt, check, test_step);
     addText(b, target, optimize, check, test_step);
     addPty(b, pty, check, test_step);
-    addHeadless(b, target, optimize, headless, check, test_step);
+    addControl(b, target, optimize, control, check, test_step);
     addHost(b, target, optimize, vt, text, check, test_step);
     b.default_step = check;
 }
@@ -138,30 +138,30 @@ fn addPty(
     test_step.dependOn(&addTestRun(b, tests).step);
 }
 
-fn addHeadless(
+fn addControl(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    headless: *std.Build.Module,
+    control: *std.Build.Module,
     check: *std.Build.Step,
     test_step: *std.Build.Step,
 ) void {
     const tests_module = b.createModule(.{
-        .root_source_file = b.path("howl-headless/src/test.zig"),
+        .root_source_file = b.path("howl-control/src/test.zig"),
         .target = target,
         .optimize = optimize,
     });
-    tests_module.addImport("howl_headless", headless);
+    tests_module.addImport("howl_control", control);
     const executable_module = b.createModule(.{
-        .root_source_file = b.path("howl-headless/src/main.zig"),
+        .root_source_file = b.path("howl-control/src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    executable_module.addImport("howl_headless", headless);
-    const executable = b.addExecutable(.{ .name = "howl-headless", .root_module = executable_module });
+    executable_module.addImport("howl_control", control);
+    const executable = b.addExecutable(.{ .name = "howl-control", .root_module = executable_module });
     executable.use_llvm = true;
-    const api = addTest(b, "howl-headless-api", headless);
-    const tests = addTest(b, "howl-headless", tests_module);
+    const api = addTest(b, "howl-control-api", control);
+    const tests = addTest(b, "howl-control", tests_module);
     check.dependOn(&api.step);
     check.dependOn(&executable.step);
     check.dependOn(&tests.step);
@@ -170,7 +170,7 @@ fn addHeadless(
     b.installArtifact(executable);
     const run = b.addRunArtifact(executable);
     if (b.args) |arguments| run.addArgs(arguments);
-    b.step("run:headless", "Run the headless terminal emulator").dependOn(&run.step);
+    b.step("run:control", "Run the terminal control example").dependOn(&run.step);
 }
 
 fn addHost(

@@ -1,7 +1,7 @@
-//! Runs the reusable headless terminal and prints one final semantic surface.
+//! Runs the reusable terminal control owner and prints one final semantic surface.
 
 const std = @import("std");
-const howl_headless = @import("howl_headless");
+const howl_control = @import("howl_control");
 
 const output_buffer_bytes: usize = 4096;
 
@@ -12,7 +12,7 @@ pub fn main(init: std.process.Init) !void {
         return error.InvalidArguments;
     }
 
-    const terminal = try howl_headless.Terminal.init(
+    const terminal = try howl_control.Terminal.init(
         init.gpa,
         init.io,
         .{ .command = args[1] },

@@ -5,7 +5,7 @@ capabilities:
     acceptance: one version, package URL, dependency graph, build command surface, and atomic history
 
   - name: public_module_graph
-    acceptance: the root package exports curated howl_vt, howl_text, howl_pty, and howl_headless modules
+    acceptance: the root package exports curated howl_vt, howl_text, howl_pty, and howl_control modules
 
   - name: development_orchestration
     acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig
@@ -21,7 +21,7 @@ capabilities:
       one curated Linux module owns PTY creation, copied launch values, child process groups, exact partial transfers,
       resize, concurrent cancellation, native errors, and cleanup
 
-  - name: reusable_headless_terminal
+  - name: reusable_terminal_control
     acceptance: >-
       one curated native owner composes PTY, VT, live input, replies, resize, semantic surfaces, wakes, and cleanup
 
@@ -39,5 +39,5 @@ gates:
   - active YAML parses
   - root and module build graphs use Zig 0.16
   - all accepted VT tests, simulations, fuzzing, and benchmarks pass in four optimization modes
-  - headless, text, host, and QAgent embedding checks pass
+  - control, text, host, and QAgent embedding checks pass
   - source audit and git diff checks pass

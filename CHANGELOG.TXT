@@ -1,6 +1,6 @@
 0.1.0-dev
 
-- Narrowed the active terminal family to VT, text, headless, and native host.
+- Narrowed the active terminal family to VT, text, control, and native host.
 - Made the native Zig VT model the sole embedding surface until its public
   shape earns a separately designed ABI.
 - Established bounded vterm, iTerm, and Kitty behavior with deterministic
@@ -8,7 +8,7 @@
 
 0.1.1-dev
 
-- Made headless lifecycle publication coherent across cancellation, reader
+- Made control lifecycle publication coherent across cancellation, reader
   failure, resize rollback, wake delivery, and bounded loss evidence.
 - Hardened PTY cleanup, partial transfer, and deterministic shutdown proofs.
 - Extended exact sensitive-source auditing across every maintained non-vendor

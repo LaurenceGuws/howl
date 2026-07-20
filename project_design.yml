@@ -13,7 +13,7 @@ components:
   - name: pty
     role: Linux PTY creation, child process-group lifecycle, bounded transfer outcomes, resize, cancellation, and cleanup
 
-  - name: headless
+  - name: control
     role: bounded composition of one native PTY and one semantic terminal model
 
   - name: host
@@ -23,7 +23,7 @@ relationships:
   - vt owns terminal truth and accepts host facts through native Zig values
   - text owns terminal text preparation without owning terminal state or presentation
   - pty owns copied launch values and exact Linux process, descriptor, cancellation, and bounded I/O mechanics
-  - headless composes pty and vt to exercise arbitrary applications without a graphical host
+  - control composes pty and vt to exercise arbitrary applications without a graphical host
   - host embeds vt and text while owning platform, thread, window, GPU, and PTY lifecycles
   - qagent is the first real embedder and supplies integration pressure without Howl policy
 
@@ -34,4 +34,4 @@ package:
     - howl_vt
     - howl_text
     - howl_pty
-    - howl_headless
+    - howl_control

@@ -77,8 +77,11 @@ while IFS=: read -r file line text; do
 done < <(grep -RnE '^[[:space:]]*_[[:space:]]*=' howl-vt/src --include='*.zig' || true)
 
 diff -u tools/source_audit.allow <(
-    git ls-files -z '*.zig' |
-        grep -zv '/vendor/' |
+    git ls-files --cached --others --exclude-standard -z -- '*.zig' |
+        while IFS= read -r -d '' file; do
+            if [[ -f "$file" ]]; then printf '%s\0' "$file"; fi
+        done |
+        grep -zEv '(^|/)vendor/' |
         xargs -0 perl -ne '
             $raw=$_; chomp $raw; $code=$raw;
             $code =~ s/"(?:\\.|[^"\\])*"//g; $code =~ s{//.*$}{};

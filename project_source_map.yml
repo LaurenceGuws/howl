@@ -7,7 +7,7 @@ sources:
   howl-pty/src/howl_pty.zig: >-
     Linux PTY creation, copied launch values, process-group lifecycle, bounded transfer outcomes, resize,
     concurrent cancellation, exact native errors, and cleanup
-  howl-headless/src: current bounded PTY host and semantic observation implementation
+  howl-control/src: current bounded PTY host and semantic observation implementation
   howl-host/src: current Wayland, terminal-thread, layout, and GLES host implementation
   howl-host/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host
   tools/audit_source.sh: settled VT source policy and reviewed construct uses

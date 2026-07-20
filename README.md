@@ -9,12 +9,12 @@ The active projects are:
   rasterization.
 - `howl-pty`: bounded native PTY, child process-group, I/O, resize, wake, and
   cleanup ownership.
-- `howl-headless`: one live composition of `howl-pty` and `howl-vt`.
+- `howl-control`: one live composition of `howl-pty` and `howl-vt`.
 - `howl-host`: a native Wayland host with bounded terminal, layout, and text
   owners.
 
 The root package exports `howl_vt`, `howl_text`, `howl_pty`, and
-`howl_headless`. Native hosts and development proofs remain root workspace
+`howl_control`. Native hosts and development proofs remain root workspace
 operations.
 
 Compile every active component and proof:
