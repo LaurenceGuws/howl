@@ -133,23 +133,30 @@ references:
         records:
           - {id: libvterm.csi.ich, raw: "CSI [Ps=1] @", effect: insert characters, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
+            conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down,
+            conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward,
+            conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward,
+            conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line,
+            conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line,
+            conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column,
+            conditions: libvterm clamps to the current logical row width, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: absolute cursor position,
-            conditions: origin and margin modes, howl: {status: partial, source: howl-vt/src/terminal.zig,
-            symbol: decodeCsi}}
+            conditions: origin/margins and target logical row width, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -180,22 +187,29 @@ references:
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
-          - {id: libvterm.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column,
+            conditions: libvterm clamps to the current logical row width, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward,
+            conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, relevance: query,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.da2, raw: "CSI > [Ps=0] c", effect: report secondary device attributes, relevance: query,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
-          - {id: libvterm.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row,
+            conditions: DECOM resolves against vertical margins, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds", line: 145}}}
+          - {id: libvterm.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down,
+            conditions: libvterm constrains margins only in origin mode, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: absolute cursor position,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: origin/margins and target logical row width, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, conditions: Ps 0|3|5,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -518,14 +532,28 @@ references:
         census: {semantic_branches: 64, records: 64}
         recognition: implemented
         records:
-          - {id: iterm2.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward, howl: {status: partial}}
+          - {id: iterm2.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward,
+            conditions: double-width line stepping, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: iterm2.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial}}
-          - {id: iterm2.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down, howl: {status: partial}}
-          - {id: iterm2.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward, howl: {status: partial}}
-          - {id: iterm2.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up, howl: {status: partial}}
-          - {id: iterm2.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line, howl: {status: partial}}
-          - {id: iterm2.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line, howl: {status: partial}}
-          - {id: iterm2.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position, howl: {status: partial}}
+          - {id: iterm2.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down,
+            conditions: iTerm2 clamps from above the vertical region into its bottom, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: iterm2.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward,
+            conditions: double-width line stepping, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: iterm2.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
+            conditions: iTerm2 clamps from below the vertical region into its top, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: iterm2.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line,
+            conditions: iTerm2 always returns to the active left margin, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: iterm2.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line,
+            conditions: iTerm2 always returns to the active left margin, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: iterm2.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position,
+            conditions: double-width target-line column addressing, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: iterm2.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -538,7 +566,9 @@ references:
             howl: {status: partial}}
           - {id: iterm2.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, howl: {status: partial}}
           - {id: iterm2.csi.el, raw: "CSI [Ps=0] K", effect: erase line, howl: {status: partial}}
-          - {id: iterm2.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position, howl: {status: partial}}
+          - {id: iterm2.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position,
+            conditions: double-width target-line column addressing, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: iterm2.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, howl: {status: partial}}
           - {id: iterm2.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {status: partial}}
           - {id: iterm2.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, howl: {status: partial}}
@@ -557,10 +587,20 @@ references:
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
-          - {id: iterm2.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column, howl: {status: partial}}
-          - {id: iterm2.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward, howl: {status: partial}}
-          - {id: iterm2.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row, howl: {status: partial}}
-          - {id: iterm2.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down, howl: {status: partial}}
+          - {id: iterm2.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column,
+            conditions: double-width current-line column addressing, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: iterm2.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward,
+            conditions: double-width line stepping, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: iterm2.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row,
+            conditions: DECOM resolves against vertical margins, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds", line: 145}}}
+          - {id: iterm2.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down,
+            conditions: iTerm2 clamps from above the vertical region into its bottom, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: iterm2.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters, howl: {status: partial}}
           - {id: iterm2.csi.media_copy, raw: "CSI [Ps=0] i", effect: media copy request, relevance: host consequence,
             howl: {status: partial}}
@@ -1109,17 +1149,41 @@ references:
         records:
           - {id: kitty.csi.ich, raw: "CSI [Ps=1] @", effect: insert characters, howl: {status: partial}}
           - {id: kitty.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character, howl: {status: partial}}
-          - {id: kitty.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up, howl: {status: partial}}
-          - {id: kitty.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down, howl: {status: partial}}
-          - {id: kitty.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down, howl: {status: partial}}
-          - {id: kitty.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward, howl: {status: partial}}
-          - {id: kitty.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward, howl: {status: partial}}
-          - {id: kitty.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward, howl: {status: partial}}
-          - {id: kitty.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line, howl: {status: partial}}
-          - {id: kitty.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line, howl: {status: partial}}
-          - {id: kitty.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column, howl: {status: partial}}
-          - {id: kitty.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column, howl: {status: partial}}
-          - {id: kitty.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row, howl: {status: partial}}
+          - {id: kitty.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
+            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down,
+            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down,
+            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward,
+            conditions: Kitty ignores horizontal margins for relative movement, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward,
+            conditions: Kitty ignores horizontal margins for relative movement, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward,
+            conditions: Kitty ignores horizontal margins for relative movement, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line,
+            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line,
+            conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column,
+            conditions: Kitty ignores horizontal margins under DECOM, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column,
+            conditions: Kitty ignores horizontal margins under DECOM, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row,
+            conditions: DECOM resolves against vertical margins and preserves column, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds", line: 145}}}
           - {id: kitty.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1128,8 +1192,12 @@ references:
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
-          - {id: kitty.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position, howl: {status: partial}}
-          - {id: kitty.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position, howl: {status: partial}}
+          - {id: kitty.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position,
+            conditions: Kitty applies DECOM only to rows and ignores horizontal margins, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: kitty.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position,
+            conditions: Kitty applies DECOM only to rows and ignores horizontal margins, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: kitty.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, howl: {status: partial}}
           - {id: kitty.csi.decsed, raw: "CSI ? [Ps=0] J", effect: selective erase display, howl: {status: partial}}
           - {id: kitty.csi.el, raw: "CSI [Ps=0] K", effect: erase line, howl: {status: partial}}

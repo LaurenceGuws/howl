@@ -1172,19 +1172,22 @@ pub const Screen = struct {
     fn applyCursorMove(self: *Screen, event: SemanticEvent) void {
         self.wrap_pending = false;
         switch (event) {
-            .cursor_up => |n| self.cursor.setRowByClient(self.cursor.row -| n),
-            .cursor_down => |n| self.cursor.setRowByClient(@min(self.cursor.row +| n, self.rows -| 1)),
-            .cursor_forward => |n| self.cursor.setColByClient(@min(self.cursor.col +| n, self.rightBoundary())),
-            .cursor_back => |n| self.cursor.setColByClient(@max(self.cursor.col -| n, self.leftBoundary())),
+            .cursor_up => |n| self.cursor.setRowByClient(@max(self.cursor.row -| n, self.cursorTopBoundary())),
+            .cursor_down => |n| self.cursor.setRowByClient(@min(self.cursor.row +| n, self.cursorBottomBoundary())),
+            .cursor_forward => |n| self.cursor.setColByClient(@min(self.cursor.col +| n, self.cursorRightBoundary())),
+            .cursor_back => |n| self.cursor.setColByClient(@max(self.cursor.col -| n, self.cursorLeftBoundary())),
             .cursor_next_line => |n| self.cursor.setPositionByClient(
-                @min(self.cursor.row +| n, self.rows -| 1),
-                self.lineHomeCol(),
+                @min(self.cursor.row +| n, self.cursorBottomBoundary()),
+                self.relativeLineHomeCol(),
             ),
-            .cursor_prev_line => |n| self.cursor.setPositionByClient(self.cursor.row -| n, self.lineHomeCol()),
+            .cursor_prev_line => |n| self.cursor.setPositionByClient(
+                @max(self.cursor.row -| n, self.cursorTopBoundary()),
+                self.relativeLineHomeCol(),
+            ),
             .cursor_horizontal_absolute => |col| self.cursor.setColByClient(
                 @min(self.resolveAbsoluteCol(col), self.rightBoundary()),
             ),
-            .cursor_vertical_absolute => |row| self.cursor.setRowByClient(@min(row, self.rows -| 1)),
+            .cursor_vertical_absolute => |row| self.cursor.setRowByClient(self.resolveAbsoluteRow(row)),
             .cursor_position => |pos| self.cursor.setPositionByClient(
                 @min(self.resolveAbsoluteRow(pos.row), self.rows -| 1),
                 @min(self.resolveAbsoluteCol(pos.col), self.rightBoundary()),
@@ -1409,6 +1412,32 @@ pub const Screen = struct {
     /// Return the line-home column selected by origin and horizontal-margin modes.
     fn lineHomeCol(self: *const Screen) u16 {
         return if (self.origin_mode and self.left_right_margin_mode) self.left_margin else 0;
+    }
+
+    fn relativeLineHomeCol(self: *const Screen) u16 {
+        return if (self.left_right_margin_mode) self.left_margin else 0;
+    }
+
+    // Relative movement follows iTerm2's directional margin rule: movement toward an active
+    // margin stops there even when starting beyond the opposite margin.
+    fn cursorTopBoundary(self: *const Screen) u16 {
+        return if (self.cursor.row >= self.scroll_top) self.scroll_top else 0;
+    }
+
+    fn cursorBottomBoundary(self: *const Screen) u16 {
+        const bottom = self.scrollBottom();
+        return if (self.cursor.row <= bottom) bottom else self.rows -| 1;
+    }
+
+    fn cursorLeftBoundary(self: *const Screen) u16 {
+        if (!self.left_right_margin_mode) return 0;
+        if (self.cursor.col >= self.left_margin) return self.left_margin;
+        return 0;
+    }
+
+    fn cursorRightBoundary(self: *const Screen) u16 {
+        if (!self.left_right_margin_mode) return self.cols -| 1;
+        return if (self.cursor.col <= self.right_margin) self.right_margin else self.cols -| 1;
     }
 
     /// Clears visible cells and marks the complete screen dirty.

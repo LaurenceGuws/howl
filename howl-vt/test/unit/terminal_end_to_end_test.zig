@@ -142,6 +142,65 @@ test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
     }
 }
 
+test "terminal: CSI cursor positioning shares parameter, margin, and origin bounds" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 8, 12);
+    defer terminal.deinit();
+
+    const cursor = &terminal.screen_state.active().cursor;
+    try std.testing.expect(!(try terminal.feed("\x1b[4;6H\x1b[A\x1b[0B\x1b[999999C")).history_lost);
+    try std.testing.expectEqual(@as(u16, 3), cursor.row);
+    try std.testing.expectEqual(@as(u16, 11), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[0D\x1b[999999D\x1b[0E")).history_lost);
+    try std.testing.expectEqual(@as(u16, 4), cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[999999F\x1b[999999B")).history_lost);
+    try std.testing.expectEqual(@as(u16, 7), cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), cursor.col);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[0G\x1b[999999`\x1b[0d\x1b[999999e")).history_lost);
+    try std.testing.expectEqual(@as(u16, 7), cursor.row);
+    try std.testing.expectEqual(@as(u16, 11), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[0;0f\x1b[999999;999999H")).history_lost);
+    try std.testing.expectEqual(@as(u16, 7), cursor.row);
+    try std.testing.expectEqual(@as(u16, 11), cursor.col);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[3;6r\x1b[?69h\x1b[4;9s\x1b[?6h")).history_lost);
+    try std.testing.expectEqual(@as(u16, 2), cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[999999B\x1b[999999C")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), cursor.row);
+    try std.testing.expectEqual(@as(u16, 8), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[999999A\x1b[999999D")).history_lost);
+    try std.testing.expectEqual(@as(u16, 2), cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[2;2H\x1b[999999d")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[0d\x1b[d")).history_lost);
+    try std.testing.expectEqual(@as(u16, 2), cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[2;2H\x1b[0E\x1b[0F")).history_lost);
+    try std.testing.expectEqual(@as(u16, 3), cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[999999d\x1b[999999G")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), cursor.row);
+    try std.testing.expectEqual(@as(u16, 8), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[0;0H\x1b[999999;999999f")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), cursor.row);
+    try std.testing.expectEqual(@as(u16, 8), cursor.col);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?6l\x1b[1;1H\x1b[999999B\x1b[999999C")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), cursor.row);
+    try std.testing.expectEqual(@as(u16, 8), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[8;12H\x1b[999999A\x1b[999999D")).history_lost);
+    try std.testing.expectEqual(@as(u16, 2), cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[4;6H\x1b[E")).history_lost);
+    try std.testing.expectEqual(@as(u16, 4), cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+}
+
 test "terminal: OSC cursor colors route into semantic cursor owner" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
