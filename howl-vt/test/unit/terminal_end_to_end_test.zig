@@ -71,6 +71,77 @@ test "terminal: C0 controls retain exact stream effects" {
     }
 }
 
+test "terminal: tab controls share exact stored-stop and clamping behavior" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 20);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[3g\x1b[6G\x1bH\x1b[11G\x1bH\r\x1b[I")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[0I")).history_lost);
+    try std.testing.expectEqual(@as(u16, 10), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[0Z")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[999999I")).history_lost);
+    try std.testing.expectEqual(@as(u16, 19), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[2Z")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.activeConst().cursor.col);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[g\r\x09")).history_lost);
+    try std.testing.expectEqual(@as(u16, 10), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[5g\r\x09")).history_lost);
+    try std.testing.expectEqual(@as(u16, 19), terminal.screen_state.activeConst().cursor.col);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[6G\x1bH\x1b[3g\r\x09")).history_lost);
+    try std.testing.expectEqual(@as(u16, 19), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[?5W\r\x09\x1b[I\x1b[999999Z")).history_lost);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[6G\x88\r\x09")).history_lost);
+    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.activeConst().cursor.col);
+}
+
+test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
+    const allocator = std.testing.allocator;
+    const controls = [_]struct {
+        ind: []const u8,
+        nel: []const u8,
+        ri: []const u8,
+    }{
+        .{ .ind = "\x1bD", .nel = "\x1bE", .ri = "\x1bM" },
+        .{ .ind = "\x84", .nel = "\x85", .ri = "\x8d" },
+    };
+
+    for (controls) |control| {
+        var terminal = try Terminal.init(allocator, 4, 8);
+        defer terminal.deinit();
+
+        try std.testing.expect(!(try terminal.feed("\x1b[2;3r\x1b[2;1HA\x1b[3;1HB\x1b[3;6H")).history_lost);
+        try std.testing.expect(!(try terminal.feed(control.ind)).history_lost);
+        const after_ind = terminal.screen_state.activeConst();
+        try std.testing.expectEqual(@as(u21, 'B'), after_ind.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 0), after_ind.cellAt(2, 0));
+        try std.testing.expectEqual(@as(u16, 2), after_ind.cursor.row);
+        try std.testing.expectEqual(@as(u16, 5), after_ind.cursor.col);
+
+        try std.testing.expect(!(try terminal.feed("\x1b[2;6H")).history_lost);
+        try std.testing.expect(!(try terminal.feed(control.ri)).history_lost);
+        const after_ri = terminal.screen_state.activeConst();
+        try std.testing.expectEqual(@as(u21, 0), after_ri.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), after_ri.cellAt(2, 0));
+        try std.testing.expectEqual(@as(u16, 1), after_ri.cursor.row);
+        try std.testing.expectEqual(@as(u16, 5), after_ri.cursor.col);
+
+        try std.testing.expect(!(try terminal.feed("\x1b[3;6H")).history_lost);
+        try std.testing.expect(!(try terminal.feed(control.nel)).history_lost);
+        const after_nel = terminal.screen_state.activeConst();
+        try std.testing.expectEqual(@as(u21, 'B'), after_nel.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 0), after_nel.cellAt(2, 0));
+        try std.testing.expectEqual(@as(u16, 2), after_nel.cursor.row);
+        try std.testing.expectEqual(@as(u16, 0), after_nel.cursor.col);
+    }
+}
+
 test "terminal: OSC cursor colors route into semantic cursor owner" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

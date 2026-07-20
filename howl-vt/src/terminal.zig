@@ -5880,6 +5880,17 @@ fn c0Process(control: C0) ?SemanticEvent {
     };
 }
 
+// Selects the 7-bit ESC alias for implemented C1 bytes; all other bytes retain C0 handling.
+fn controlProcess(control: u8) ?SemanticEvent {
+    return switch (control) {
+        0x84 => escProcess('D'),
+        0x85 => escProcess('E'),
+        0x88 => escProcess('H'),
+        0x8D => escProcess('M'),
+        else => c0Process(fromByte(control)),
+    };
+}
+
 test "c0 handled controls keep protocol values" {
     try std.testing.expectEqual(@as(u8, 0x07), @intFromEnum(C0.bell));
     try std.testing.expectEqual(@as(u8, 0x08), @intFromEnum(C0.backspace));
@@ -6260,7 +6271,7 @@ fn decodeCsi(
         'I' => return SemanticEvent{ .horizontal_tab_forward = paramAtOrDefault1(params, 0) },
         'g' => switch (paramAtOrDefault0(params, 0)) {
             0 => return SemanticEvent.tab_clear_current,
-            3 => return SemanticEvent.tab_clear_all,
+            3, 5 => return SemanticEvent.tab_clear_all,
             else => return null,
         },
         'Z' => return SemanticEvent{ .horizontal_tab_back = paramAtOrDefault1(params, 0) },
@@ -8976,7 +8987,7 @@ pub fn process(event: parser_mod.Event) ?SemanticEvent {
         .invoke_charset, .configure_charset => return null,
         .text => |s| return SemanticEvent{ .write_text = s },
         .codepoint => |cp| return SemanticEvent{ .write_codepoint = cp },
-        .control => |c| return c0Process(fromByte(c)),
+        .control => |c| return controlProcess(c),
         .osc => |osc_event| return processOscEvent(osc_event),
         .esc_dispatch => |esc_dispatch| return escProcess(esc_dispatch.final),
         .apc => return null,

@@ -145,6 +145,7 @@ test "csi mapping: positioning, tab, erase, and reset semantics" {
     try std.testing.expect(process(makeStyleChangeWithIntermediate('p', '!')).? == .reset_screen);
     try std.testing.expect(process(makeStyleChange('g', 0, 0, 0)).? == .tab_clear_current);
     try std.testing.expect(process(makeStyleChange('g', 3, 0, 1)).? == .tab_clear_all);
+    try std.testing.expect(process(makeStyleChange('g', 5, 0, 1)).? == .tab_clear_all);
     try std.testing.expect(process(makePrivateStyleChange('W', &.{5})).? == .reset_default_tab_stops);
     try std.testing.expect(!process(makeStyleChange('J', 0, 0, 0)).?.erase_display_below);
     try std.testing.expect(!process(makeStyleChange('J', 1, 0, 1)).?.erase_display_above);

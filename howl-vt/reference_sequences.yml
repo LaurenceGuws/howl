@@ -58,14 +58,22 @@ references:
             source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
-          - {id: libvterm.c1.ind, raw: "\\x84", effect: index, relevance: compatibility, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: escProcess}}
-          - {id: libvterm.c1.nel, raw: "\\x85", effect: next line, relevance: core, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: escProcess}}
-          - {id: libvterm.c1.hts, raw: "\\x88", effect: set tab stop, relevance: core, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: escProcess}}
-          - {id: libvterm.c1.ri, raw: "\\x8d", effect: reverse index, relevance: core, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.c1.ind, raw: "\\x84", effect: index, relevance: compatibility, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
+          - {id: libvterm.c1.nel, raw: "\\x85", effect: next line, relevance: core, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
+          - {id: libvterm.c1.hts, raw: "\\x88", effect: set tab stop, relevance: core, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
+          - {id: libvterm.c1.ri, raw: "\\x8d", effect: reverse index, relevance: core, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: controlProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
           - {id: libvterm.c1.ss2, raw: "\\x8e", effect: single shift G2, relevance: charset, howl: {status: partial}}
           - {id: libvterm.c1.ss3, raw: "\\x8f", effect: single shift G3, relevance: charset, howl: {status: partial}}
       - source: state.c
@@ -142,8 +150,10 @@ references:
           - {id: libvterm.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: absolute cursor position,
             conditions: origin and margin modes, howl: {status: partial, source: howl-vt/src/terminal.zig,
             symbol: decodeCsi}}
-          - {id: libvterm.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: libvterm.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, conditions: Ps 0|1|2|3,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.decsel_display, raw: "CSI ? [Ps=0] J", effect: selective erase display,
@@ -166,8 +176,10 @@ references:
             source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: libvterm.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+          - {id: libvterm.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: libvterm.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward, howl: {status: partial,
@@ -185,7 +197,9 @@ references:
           - {id: libvterm.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: absolute cursor position,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, conditions: Ps 0|3|5,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: libvterm.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, conditions: modes 4|20,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.decset, raw: "CSI ? Pm h", effect: set DEC private modes, howl: {status: partial,
@@ -477,10 +491,22 @@ references:
           - {id: iterm2.esc.decsc, raw: "ESC 7", effect: save cursor, howl: {status: partial}}
           - {id: iterm2.esc.decbi, raw: "ESC 6", effect: backward index, relevance: compatibility,
             howl: {status: 'false'}}
-          - {id: iterm2.esc.ind, raw: "ESC D", effect: index, howl: {status: partial}}
-          - {id: iterm2.esc.nel, raw: "ESC E", effect: next line, howl: {status: partial}}
-          - {id: iterm2.esc.hts, raw: "ESC H", effect: set tab stop, howl: {status: partial}}
-          - {id: iterm2.esc.ri, raw: "ESC M", effect: reverse index, howl: {status: partial}}
+          - {id: iterm2.esc.ind, raw: "ESC D", effect: index, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
+          - {id: iterm2.esc.nel, raw: "ESC E", effect: next line, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
+          - {id: iterm2.esc.hts, raw: "ESC H", effect: set tab stop, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
+          - {id: iterm2.esc.ri, raw: "ESC M", effect: reverse index, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
           - {id: iterm2.esc.decid, raw: "ESC Z", effect: primary device attributes report, relevance: query,
             howl: {status: partial}}
           - {id: iterm2.esc.ris, raw: "ESC c", effect: hard reset, howl: {status: partial}}
@@ -500,7 +526,10 @@ references:
           - {id: iterm2.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line, howl: {status: partial}}
           - {id: iterm2.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line, howl: {status: partial}}
           - {id: iterm2.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position, howl: {status: partial}}
-          - {id: iterm2.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: partial}}
+          - {id: iterm2.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: iterm2.csi.da, raw: "CSI [Ps=0] c", effect: device attributes report, relevance: query,
             howl: {status: partial}}
           - {id: iterm2.csi.decstbm, raw: "CSI [top=1] ; [bottom] r", effect: set vertical margins,
@@ -513,7 +542,10 @@ references:
           - {id: iterm2.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, howl: {status: partial}}
           - {id: iterm2.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {status: partial}}
           - {id: iterm2.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, howl: {status: partial}}
-          - {id: iterm2.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, howl: {status: partial}}
+          - {id: iterm2.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: iterm2.csi.il, raw: "CSI [Ps=1] L", effect: insert lines, howl: {status: partial}}
           - {id: iterm2.csi.dch, raw: "CSI [Ps=1] P", effect: delete characters, howl: {status: partial}}
           - {id: iterm2.csi.dl, raw: "CSI [Ps=1] M", effect: delete lines, howl: {status: partial}}
@@ -521,7 +553,10 @@ references:
             recognition: delegated, relevance: host consequence, howl: {status: partial}}
           - {id: iterm2.csi.su, raw: "CSI [Ps=1] S", effect: scroll up, howl: {status: partial}}
           - {id: iterm2.csi.sd, raw: "CSI [Ps=1] T", effect: scroll down, howl: {status: partial}}
-          - {id: iterm2.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: partial}}
+          - {id: iterm2.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: iterm2.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column, howl: {status: partial}}
           - {id: iterm2.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward, howl: {status: partial}}
           - {id: iterm2.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row, howl: {status: partial}}
@@ -983,10 +1018,22 @@ references:
               path: howl-vt/test/unit/parser/string_control_test.zig,
               symbol: "parser string controls: PM with ST terminator", line: 109}}}
           - {id: kitty.esc.ris, raw: "ESC c", effect: hard reset, howl: {status: partial}}
-          - {id: kitty.esc.ind, raw: "ESC D", effect: index, howl: {status: partial}}
-          - {id: kitty.esc.nel, raw: "ESC E", effect: next line, howl: {status: partial}}
-          - {id: kitty.esc.ri, raw: "ESC M", effect: reverse index, howl: {status: partial}}
-          - {id: kitty.esc.hts, raw: "ESC H", effect: set tab stop, howl: {status: partial}}
+          - {id: kitty.esc.ind, raw: "ESC D", effect: index, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
+          - {id: kitty.esc.nel, raw: "ESC E", effect: next line, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
+          - {id: kitty.esc.ri, raw: "ESC M", effect: reverse index, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
+          - {id: kitty.esc.hts, raw: "ESC H", effect: set tab stop, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.esc.decsc, raw: "ESC 7", effect: save cursor, howl: {status: partial}}
           - {id: kitty.esc.decrc, raw: "ESC 8", effect: restore cursor, howl: {status: partial}}
           - {id: kitty.esc.deckpnm, raw: "ESC >", effect: numeric keypad, howl: {status: partial}}
@@ -1073,8 +1120,14 @@ references:
           - {id: kitty.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column, howl: {status: partial}}
           - {id: kitty.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column, howl: {status: partial}}
           - {id: kitty.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row, howl: {status: partial}}
-          - {id: kitty.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: partial}}
-          - {id: kitty.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: partial}}
+          - {id: kitty.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
+          - {id: kitty.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position, howl: {status: partial}}
           - {id: kitty.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position, howl: {status: partial}}
           - {id: kitty.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, howl: {status: partial}}
@@ -1087,7 +1140,10 @@ references:
           - {id: kitty.csi.push_colors, raw: "CSI [Ps=0] # P", effect: push color stack, howl: {status: partial}}
           - {id: kitty.csi.pop_colors, raw: "CSI [Ps=0] # Q", effect: pop color stack, howl: {status: partial}}
           - {id: kitty.csi.report_colors, raw: "CSI # R", effect: report color stack, howl: {status: partial}}
-          - {id: kitty.csi.reset_tabs, raw: "CSI ? 5 W", effect: reset default tab stops, howl: {status: partial}}
+          - {id: kitty.csi.reset_tabs, raw: "CSI ? 5 W", effect: reset default tab stops, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters, howl: {status: partial}}
           - {id: kitty.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, howl: {status: partial}}
           - {id: kitty.csi.da2, raw: "CSI > [Ps=0] c", effect: report secondary device attributes,
@@ -1096,7 +1152,10 @@ references:
             howl: {status: partial}}
           - {id: kitty.csi.da3, raw: "CSI = [Ps=0] c", effect: report tertiary device attributes,
             howl: {status: partial}}
-          - {id: kitty.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stop, howl: {status: partial}}
+          - {id: kitty.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stop, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.csi.sm, raw: "CSI Pm h", effect: set modes, howl: {status: partial}}
           - {id: kitty.csi.rm, raw: "CSI Pm l", effect: reset modes, howl: {status: partial}}
           - {id: kitty.csi.dsr, raw: "CSI [Ps=0] n", effect: report device status, howl: {status: partial}}
