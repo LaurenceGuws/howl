@@ -21,6 +21,66 @@ test "OSC title updates terminal title under stream path" {
     try std.testing.expectEqualStrings("My Title", terminal.host.current_title.?);
 }
 
+test "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    const prefix = try terminal.feed("\x1b]7;file://host");
+    try std.testing.expect(!prefix.state_changed);
+    const uri = try terminal.feed("/work\x1b\\");
+    try std.testing.expect(uri.state_changed);
+    var directory = terminal.surfaceSnapshot().working_directory.?;
+    try std.testing.expect(directory.kind == .uri);
+    try std.testing.expectEqualStrings("file://host/work", directory.value);
+
+    const repeated_uri = try terminal.feed("\x1b]7;file://host/work\x07");
+    try std.testing.expect(!repeated_uri.state_changed);
+    const path = try terminal.feed("\x1b]1337;CurrentDir=file://host/work\x07");
+    try std.testing.expect(path.state_changed);
+    directory = terminal.surfaceSnapshot().working_directory.?;
+    try std.testing.expect(directory.kind == .path);
+    try std.testing.expectEqualStrings("file://host/work", directory.value);
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;CurrentDir=file://host/work\x1b\\")).state_changed);
+
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;CurrentDir\x07")).state_changed);
+    directory = terminal.surfaceSnapshot().working_directory.?;
+    try std.testing.expect(directory.kind == .path);
+    try std.testing.expectEqualStrings("file://host/work", directory.value);
+
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().working_directory == null);
+}
+
+test "working-directory report limit preserves the prior complete fact" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]7;file://host/stable\x07")).state_changed);
+
+    const payload = try allocator.alloc(u8, HostState.max_metadata_bytes + 1);
+    defer allocator.free(payload);
+    @memset(payload, 'x');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+    try sequence.appendSlice(allocator, "\x1b]7;");
+    try sequence.appendSlice(allocator, payload[0..HostState.max_metadata_bytes]);
+    try sequence.append(allocator, 0x07);
+    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    var retained = terminal.surfaceSnapshot().working_directory.?;
+    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), retained.value.len);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]7;");
+    try sequence.appendSlice(allocator, payload);
+    try sequence.append(allocator, 0x07);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+
+    retained = terminal.surfaceSnapshot().working_directory.?;
+    try std.testing.expect(retained.kind == .uri);
+    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), retained.value.len);
+}
+
 test "OSC 0 1 and 2 match libvterm title and icon properties" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();

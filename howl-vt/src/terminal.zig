@@ -5658,6 +5658,12 @@ const ShellIntegration = struct {
     shell: ?[]u8,
 };
 
+// Borrows one child-reported directory and preserves whether its bytes are a URI or path.
+const WorkingDirectoryReport = struct {
+    kind: enum { uri, path },
+    value: []const u8,
+};
+
 const TitleStackEffect = struct {
     changed: bool = false,
     title_changed: bool = false,
@@ -5728,6 +5734,7 @@ pub const HostState = struct {
     pending_clipboard: ?ClipboardRequest = null,
     current_title: ?[]u8 = null,
     current_icon: ?[]u8 = null,
+    working_directory_report: ?WorkingDirectoryReport = null,
     title_stack: [title_stack_limit]?[]u8 = [_]?[]u8{null} ** title_stack_limit,
     title_stack_len: u8 = 0,
     shell_integration: ?ShellIntegration = null,
@@ -5754,6 +5761,7 @@ pub const HostState = struct {
         if (self.pending_clipboard) |req| self.allocator.free(req.raw);
         if (self.current_title) |title| self.allocator.free(title);
         if (self.current_icon) |icon| self.allocator.free(icon);
+        if (self.working_directory_report) |directory| self.allocator.free(directory.value);
         for (self.title_stack[0..self.title_stack_len]) |title| self.allocator.free(title.?);
         if (self.shell_integration) |integration|
             if (integration.shell) |shell| self.allocator.free(shell);
@@ -5765,6 +5773,8 @@ pub const HostState = struct {
     /// Reset host-observed state governed by terminal reset.
     pub fn resetTerminalState(self: *HostState) void {
         self.locator = .{};
+        if (self.working_directory_report) |directory| self.allocator.free(directory.value);
+        self.working_directory_report = null;
     }
 
     /// Borrow pending terminal reply bytes until the next HostState mutation.
@@ -5785,6 +5795,21 @@ pub const HostState = struct {
     /// Replace the bounded icon name transactionally and report whether it changed.
     pub fn replaceIcon(self: *HostState, icon: []const u8) ApplyError!bool {
         return replaceMetadata(self, &self.current_icon, icon);
+    }
+
+    // Replaces one bounded child-reported URI or path transactionally and reports exact mutation.
+    fn replaceWorkingDirectoryReport(
+        self: *HostState,
+        directory: WorkingDirectoryReport,
+    ) ApplyError!bool {
+        try ensureRetainedBound(byteCount(directory.value), max_metadata_bytes);
+        if (self.working_directory_report) |current| {
+            if (current.kind == directory.kind and std.mem.eql(u8, current.value, directory.value)) return false;
+        }
+        const owned = try self.allocator.dupe(u8, directory.value);
+        if (self.working_directory_report) |current| self.allocator.free(current.value);
+        self.working_directory_report = .{ .kind = directory.kind, .value = owned };
+        return true;
     }
 
     /// Pushes one nonempty current title, dropping the oldest only after allocation succeeds.
@@ -6010,6 +6035,46 @@ fn replaceMetadata(
 
 fn optionalBytesEqual(current: ?[]const u8, replacement: []const u8) bool {
     return if (current) |bytes| std.mem.eql(u8, bytes, replacement) else false;
+}
+
+test "working-directory replacement is bounded transactional and distinguishes representation" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        replaceWorkingDirectoryAllocation,
+        .{},
+    );
+
+    var state = HostState.init(std.testing.allocator);
+    defer state.deinit();
+    const oversized = [_]u8{'x'} ** (max_metadata_bytes + 1);
+    try std.testing.expectError(error.ConsequenceLimit, state.replaceWorkingDirectoryReport(.{
+        .kind = .path,
+        .value = &oversized,
+    }));
+    try std.testing.expect(state.working_directory_report == null);
+}
+
+fn replaceWorkingDirectoryAllocation(allocator: std.mem.Allocator) !void {
+    var state = HostState.init(allocator);
+    defer state.deinit();
+    const first_changed = state.replaceWorkingDirectoryReport(.{
+        .kind = .uri,
+        .value = "file://host/work",
+    }) catch |failure| {
+        try std.testing.expect(state.working_directory_report == null);
+        return failure;
+    };
+    try std.testing.expect(first_changed);
+    const second_changed = state.replaceWorkingDirectoryReport(.{ .kind = .path, .value = "/work" }) catch |failure| {
+        const retained = state.working_directory_report.?;
+        try std.testing.expect(retained.kind == .uri);
+        try std.testing.expectEqualStrings("file://host/work", retained.value);
+        return failure;
+    };
+    try std.testing.expect(second_changed);
+    const retained = state.working_directory_report.?;
+    try std.testing.expect(retained.kind == .path);
+    try std.testing.expectEqualStrings("/work", retained.value);
 }
 
 test "shell mark replacement is bounded transactional and reusable" {
@@ -6354,6 +6419,7 @@ const ItermCommand = union(enum) {
     report_cell_size,
     set_colors: []const u8,
     shell_integration: ItermShellIntegration,
+    current_directory: []const u8,
 };
 
 // Decodes one borrowed OSC 50 or 1337 payload under its exact command family.
@@ -6378,6 +6444,7 @@ fn parse1337(payload: []const u8) ?ItermCommand {
     if (std.mem.eql(u8, key, "ReportCellSize")) return .report_cell_size;
     if (std.mem.eql(u8, key, "CursorShape")) return parseCursorShape(payload);
     if (std.mem.eql(u8, key, "SetColors")) return .{ .set_colors = value };
+    if (std.mem.eql(u8, key, "CurrentDir")) return .{ .current_directory = value };
     if (std.mem.eql(u8, key, "ShellIntegrationVersion"))
         return .{ .shell_integration = parseShellIntegration(value) orelse return null };
     return null;
@@ -6444,6 +6511,7 @@ test "iTerm safe controls decode without accepting policy commands" {
     try std.testing.expectEqual(ScreenCursorShape.bar, parse(50, "CursorShape=1").?.cursor_shape);
     try std.testing.expectEqual(ScreenCursorShape.bar, parse(1337, "CursorShape=1").?.cursor_shape);
     try std.testing.expectEqualStrings("fg=fff", parse(1337, "SetColors=fg=fff").?.set_colors);
+    try std.testing.expectEqualStrings("/work/tree", parse(1337, "CurrentDir=/work/tree").?.current_directory);
     const integration = parse(1337, "ShellIntegrationVersion=20;shell=bash").?.shell_integration;
     try std.testing.expectEqual(@as(u32, 20), integration.version);
     try std.testing.expectEqualStrings("bash", integration.shell.?);
@@ -6455,7 +6523,6 @@ test "iTerm safe controls decode without accepting policy commands" {
     try std.testing.expect(parse(50, "ShellIntegrationVersion=20;shell=bash") == null);
     try std.testing.expect(parse(50, "ReportCellSize") == null);
     try std.testing.expect(parse(49, "CursorShape=1") == null);
-    try std.testing.expect(parse(1337, "CurrentDir=/tmp") == null);
 }
 
 const KittyColorState = TerminalColorState;
@@ -7760,11 +7827,15 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .dynamic_color => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
         .dynamic_reset => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
         .kitty_color => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
+        .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
         .shell_mark => |v| if (parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
         .iterm2 => |v| if (parse(v.command, v.payload)) |command| switch (command) {
             .cursor_shape => |shape| SemanticEvent{ .cursor_shape = shape },
             .report_cell_size => SemanticEvent.iterm_report_cell_size,
             .set_colors => |payload| SemanticEvent{ .iterm_set_colors = payload },
+            .current_directory => |value| SemanticEvent{
+                .working_directory_report = .{ .kind = .path, .value = value },
+            },
             .shell_integration => |integration| SemanticEvent{
                 .shell_integration_set = integration,
             },
@@ -8039,6 +8110,7 @@ pub const SemanticEvent = union(enum) {
     title_set: []const u8,
     icon_set: []const u8,
     shell_integration_set: ItermShellIntegration,
+    working_directory_report: WorkingDirectoryReport,
     iterm_report_cell_size,
     iterm_set_colors: []const u8,
     color_control: TerminalColorControlCommand,
@@ -8695,6 +8767,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .title_set => |title| return vt.host.replaceTitle(title),
         .icon_set => |icon| return vt.host.replaceIcon(icon),
         .shell_integration_set => |integration| try vt.host.replaceShellIntegration(integration),
+        .working_directory_report => |directory| return vt.host.replaceWorkingDirectoryReport(directory),
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
         .color_control => |cmd| {
             const before = vt.host.colors;
@@ -10406,6 +10479,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .title_set,
         .icon_set,
         .shell_integration_set,
+        .working_directory_report,
         .shell_mark,
         .hyperlink_set,
         .hyperlink_clear,
@@ -11071,6 +11145,8 @@ pub const Terminal = struct {
     };
     /// Borrows validated shell-integration identity from one surface publication.
     pub const ShellIntegration = ItermShellIntegration;
+    /// Borrows the latest child-reported directory bytes and their URI-or-path interpretation.
+    pub const WorkingDirectory = WorkingDirectoryReport;
     /// Bounds the optional copied shell name in shell-integration metadata.
     pub const shell_name_max_bytes = max_shell_name_bytes;
     /// Bounds copied OSC 133 metadata retained by one shell mark.
@@ -11791,6 +11867,7 @@ pub const Terminal = struct {
             },
             .title = self.host.current_title,
             .icon = self.host.current_icon,
+            .working_directory = self.host.working_directory_report,
             .shell_integration = if (self.host.shell_integration) |integration| .{
                 .version = integration.version,
                 .shell = integration.shell,
@@ -12136,6 +12213,8 @@ pub const Terminal = struct {
         presentation: Presentation,
         title: ?[]const u8,
         icon: ?[]const u8,
+        /// Borrows the latest OSC 7 URI or iTerm CurrentDir path until terminal mutation.
+        working_directory: ?Terminal.WorkingDirectory,
         shell_integration: ?Terminal.ShellIntegration,
         shell_mark: ShellMark,
         /// Monotonic count of accepted BEL controls; presentation belongs to the embedder.

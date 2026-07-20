@@ -1130,7 +1130,11 @@ references:
           - {id: iterm2.osc.eterm, raw: "OSC 6 ; Pt (BEL|ST)", effect: Eterm extension, relevance: compatibility,
             howl: {status: 'false'}}
           - {id: iterm2.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
-            relevance: host metadata, howl: {status: partial}}
+            conditions: "iTerm2 delegates only for a trusted terminal while Howl retains a host-neutral URI
+              up to 1 KiB",
+            relevance: host metadata, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: replaceWorkingDirectoryReport, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
           - {id: iterm2.osc.hyperlink, raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
             conditions: "iTerm2 validates a 2 MiB URL and retains target= while Howl bounds the packet to 2 KiB
               and retains id=",
@@ -1225,7 +1229,11 @@ references:
           - {id: iterm2.osc1337.clear_scrollback, raw: "OSC 1337 ; ClearScrollback (BEL|ST)", effect: clear scrollback,
             relevance: host consequence, howl: {status: partial}}
           - {id: iterm2.osc1337.current_dir, raw: "OSC 1337 ; CurrentDir=Pt (BEL|ST)", effect: report working directory,
-            relevance: host metadata, howl: {status: partial}}
+            conditions: "iTerm2 delegates only for a trusted terminal while Howl retains a host-neutral path
+              up to 1 KiB",
+            relevance: host metadata, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: replaceWorkingDirectoryReport, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
           - {id: iterm2.osc1337.remote_host, raw: "OSC 1337 ; RemoteHost=user@host (BEL|ST)",
             effect: report remote host, relevance: host metadata, howl: {status: 'false'}}
           - {id: iterm2.osc1337.set_profile, raw: "OSC 1337 ; SetProfile=Pt (BEL|ST)", effect: switch profile,
@@ -2145,7 +2153,12 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: resetXtermPalette, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC palette and dynamic resets own exact bounds mutation and lifetime"}}
-          - {id: kitty.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory, howl: {status: partial}}
+          - {id: kitty.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
+            conditions: "Kitty retains parser-sized raw bytes while Howl rejects reports above its fixed 1 KiB
+              metadata bound",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: replaceWorkingDirectoryReport, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
           - {id: kitty.osc.hyperlink, raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
             conditions: "Kitty truncates identifiers and garbage-collects its pool while Howl rejects overflow at fixed
               packet and pool bounds",
