@@ -1449,9 +1449,11 @@ pub const Screen = struct {
         return true;
     }
 
-    /// Sets the hyperlink identity copied into subsequently written cells.
-    pub fn setCurrentLinkId(self: *Screen, link_id: u32) void {
+    /// Set the hyperlink identity copied into subsequent cells and report exact mutation.
+    pub fn setCurrentLinkId(self: *Screen, link_id: u32) bool {
+        if (self.current_attrs.link_id == link_id) return false;
         self.current_attrs.link_id = link_id;
+        return true;
     }
 
     /// Resolve a zero-based row against the active origin region, saturating at its bottom.
@@ -5633,7 +5635,7 @@ pub const pending_output_max_bytes: u32 = 64 * 1024;
 const clipboard_max_bytes: u32 = 1024 * 1024;
 /// Retained DCS families are metadata protocols bounded by parser acceptance.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
-/// One hyperlink URI shares the ordinary OSC metadata scale.
+/// One retained OSC 8 URI and optional identity share the ordinary metadata scale.
 const hyperlink_target_max_bytes: u32 = 2 * 1024;
 /// Each retained title or icon name follows the 1 KiB parser metadata scale.
 pub const max_metadata_bytes: u32 = 1024;
@@ -5663,6 +5665,7 @@ const TitleStackEffect = struct {
 
 comptime {
     std.debug.assert(max_metadata_bytes <= hyperlink_target_max_bytes);
+    std.debug.assert(hyperlink_target_max_bytes <= std.math.maxInt(u16));
     std.debug.assert(dcs_payload_max_bytes <= pending_output_max_bytes);
     std.debug.assert(hyperlink_target_max_count > 0);
 }
@@ -5673,10 +5676,38 @@ fn byteCount(bytes: []const u8) u32 {
     return @intCast(bytes.len);
 }
 
-fn hyperlinkCount(items: []const []u8) u32 {
+fn hyperlinkCount(items: []const HyperlinkTarget) u32 {
     std.debug.assert(items.len <= std.math.maxInt(u32));
     return @intCast(items.len);
 }
+
+// Borrows one parsed OSC 8 hyperlink until the parser dispatch returns.
+const HyperlinkSpec = struct {
+    uri: []const u8,
+    id: ?[]const u8,
+};
+
+// Owns one bounded URI and optional explicit identity in a single allocation.
+const HyperlinkTarget = struct {
+    storage: []u8,
+    uri_len: u16,
+
+    fn uri(self: HyperlinkTarget) []const u8 {
+        return self.storage[0..self.uri_len];
+    }
+
+    fn id(self: HyperlinkTarget) ?[]const u8 {
+        if (self.storage.len == self.uri_len) return null;
+        return self.storage[self.uri_len..];
+    }
+
+    fn matches(self: HyperlinkTarget, spec: HyperlinkSpec) bool {
+        if (!std.mem.eql(u8, self.uri(), spec.uri)) return false;
+        const retained_id = self.id();
+        if (retained_id == null or spec.id == null) return retained_id == null and spec.id == null;
+        return std.mem.eql(u8, retained_id.?, spec.id.?);
+    }
+};
 
 /// Retains bounded terminal consequences for later host inspection or drain.
 ///
@@ -5693,7 +5724,7 @@ pub const HostState = struct {
     allocator: std.mem.Allocator,
     colors: TerminalColorState = .{},
     pending_output: PendingOutput,
-    hyperlink_targets: std.ArrayList([]u8),
+    hyperlink_targets: std.ArrayList(HyperlinkTarget),
     pending_clipboard: ?ClipboardRequest = null,
     current_title: ?[]u8 = null,
     current_icon: ?[]u8 = null,
@@ -5712,13 +5743,13 @@ pub const HostState = struct {
         return .{
             .allocator = allocator,
             .pending_output = PendingOutput.init(),
-            .hyperlink_targets = std.ArrayList([]u8).empty,
+            .hyperlink_targets = std.ArrayList(HyperlinkTarget).empty,
         };
     }
 
     /// Release every retained allocation through the initializer allocator.
     pub fn deinit(self: *HostState) void {
-        for (self.hyperlink_targets.items) |uri| self.allocator.free(uri);
+        for (self.hyperlink_targets.items) |target| self.allocator.free(target.storage);
         self.hyperlink_targets.deinit(self.allocator);
         if (self.pending_clipboard) |req| self.allocator.free(req.raw);
         if (self.current_title) |title| self.allocator.free(title);
@@ -5858,16 +5889,24 @@ pub const HostState = struct {
         self.dcs_payload = .{ .kind = payload.kind, .payload = owned };
     }
 
-    /// Return a stable nonzero URI identity, preserving existing identities on failure.
-    pub fn internHyperlink(self: *HostState, uri: []const u8) ApplyError!u32 {
+    // Returns a stable nonzero hyperlink identity, preserving existing identities on failure.
+    fn internHyperlink(self: *HostState, spec: HyperlinkSpec) ApplyError!u32 {
         for (self.hyperlink_targets.items, 0..) |existing, idx| {
-            if (std.mem.eql(u8, existing, uri)) return @intCast(idx + 1);
+            if (existing.matches(spec)) return @intCast(idx + 1);
         }
-        try ensureRetainedBound(byteCount(uri), hyperlink_target_max_bytes);
+        const id_len = if (spec.id) |id| id.len else 0;
+        const storage_len = std.math.add(usize, spec.uri.len, id_len) catch return error.ConsequenceLimit;
+        if (storage_len > hyperlink_target_max_bytes or spec.uri.len > std.math.maxInt(u16))
+            return error.ConsequenceLimit;
         if (hyperlinkCount(self.hyperlink_targets.items) >= hyperlink_target_max_count) return error.ConsequenceLimit;
-        const owned = try self.allocator.dupe(u8, uri);
+        const owned = try self.allocator.alloc(u8, storage_len);
         errdefer self.allocator.free(owned);
-        try self.hyperlink_targets.append(self.allocator, owned);
+        @memcpy(owned[0..spec.uri.len], spec.uri);
+        if (spec.id) |id| @memcpy(owned[spec.uri.len..], id);
+        try self.hyperlink_targets.append(self.allocator, .{
+            .storage = owned,
+            .uri_len = @intCast(spec.uri.len),
+        });
         return hyperlinkCount(self.hyperlink_targets.items);
     }
 
@@ -5889,7 +5928,7 @@ pub const HostState = struct {
         if (link_id == 0) return null;
         const idx = link_id - 1;
         if (idx >= self.hyperlink_targets.items.len) return null;
-        return self.hyperlink_targets.items[idx];
+        return self.hyperlink_targets.items[idx].uri();
     }
 
     /// Borrow the pending raw clipboard request until the next HostState mutation.
@@ -6195,8 +6234,8 @@ test "hyperlink interning preserves prior identities on allocation failure" {
 fn internHyperlinkAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
-    try std.testing.expectEqual(@as(u32, 1), try state.internHyperlink("https://one.example"));
-    const second_id = state.internHyperlink("https://two.example") catch |err| {
+    try std.testing.expectEqual(@as(u32, 1), try state.internHyperlink(.{ .uri = "https://one.example", .id = null }));
+    const second_id = state.internHyperlink(.{ .uri = "https://two.example", .id = "second" }) catch |err| {
         try std.testing.expectEqualStrings("https://one.example", state.hyperlinkUriForId(1).?);
         try std.testing.expectEqual(@as(?[]const u8, null), state.hyperlinkUriForId(2));
         return err;
@@ -6226,9 +6265,18 @@ test "retained host consequences enforce owner-specific boundaries" {
     const hyperlink = try allocator.alloc(u8, hyperlink_target_max_bytes + 1);
     defer allocator.free(hyperlink);
     @memset(hyperlink, 'h');
-    try std.testing.expectEqual(@as(u32, 1), try state.internHyperlink(hyperlink[0 .. hyperlink_target_max_bytes - 1]));
-    try std.testing.expectEqual(@as(u32, 2), try state.internHyperlink(hyperlink[0..hyperlink_target_max_bytes]));
-    try std.testing.expectError(error.ConsequenceLimit, state.internHyperlink(hyperlink));
+    try std.testing.expectEqual(@as(u32, 1), try state.internHyperlink(.{
+        .uri = hyperlink[0 .. hyperlink_target_max_bytes - 1],
+        .id = null,
+    }));
+    try std.testing.expectEqual(@as(u32, 2), try state.internHyperlink(.{
+        .uri = hyperlink[0 .. hyperlink_target_max_bytes - 1],
+        .id = hyperlink[0..1],
+    }));
+    try std.testing.expectError(error.ConsequenceLimit, state.internHyperlink(.{
+        .uri = hyperlink[0..hyperlink_target_max_bytes],
+        .id = hyperlink[0..1],
+    }));
     try std.testing.expectEqual(@as(u32, 2), hyperlinkCount(state.hyperlink_targets.items));
 
     const dcs = try allocator.alloc(u8, dcs_payload_max_bytes + 1);
@@ -7723,15 +7771,26 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         } else null,
         .kitty_color_stack_push => SemanticEvent{ .kitty_color_stack = .{ .push = 0 } },
         .kitty_color_stack_pop => SemanticEvent{ .kitty_color_stack = .{ .pop = 0 } },
-        .hyperlink => |v| blk: {
-            const separator = std.mem.indexOfScalar(u8, v.payload, ';') orelse break :blk null;
-            const uri = v.payload[separator + 1 ..];
-            if (uri.len == 0) break :blk SemanticEvent.hyperlink_clear;
-            break :blk SemanticEvent{ .hyperlink_set = uri };
-        },
+        .hyperlink => |v| parseHyperlink(v.payload),
         .clipboard => |v| SemanticEvent{ .clipboard_set = v.payload },
         else => null,
     };
+}
+
+// Parses one OSC 8 URI and its first nonempty `id=` parameter without retaining parser memory.
+fn parseHyperlink(payload: []const u8) ?SemanticEvent {
+    const separator = std.mem.indexOfScalar(u8, payload, ';') orelse return null;
+    const uri = payload[separator + 1 ..];
+    if (uri.len == 0) return SemanticEvent.hyperlink_clear;
+    var id: ?[]const u8 = null;
+    var params = std.mem.splitScalar(u8, payload[0..separator], ':');
+    while (params.next()) |param| {
+        if (param.len > 3 and std.mem.startsWith(u8, param, "id=")) {
+            id = param[3..];
+            break;
+        }
+    }
+    return SemanticEvent{ .hyperlink_set = .{ .uri = uri, .id = id } };
 }
 
 // Allocates and decodes one base64 OSC 52 payload into caller-owned memory.
@@ -7842,13 +7901,12 @@ test "OSC title commands retain exact title and icon semantics" {
 }
 
 test "OSC hyperlink actions map to semantic events" {
-    try std.testing.expectEqualStrings(
-        "https://example.com",
-        oscProcess(.{ .hyperlink = .{
-            .payload = ";https://example.com",
-            .term = .bel,
-        } }).?.hyperlink_set,
-    );
+    const explicit = oscProcess(.{ .hyperlink = .{
+        .payload = "target=_blank:id=build;https://example.com",
+        .term = .bel,
+    } }).?.hyperlink_set;
+    try std.testing.expectEqualStrings("https://example.com", explicit.uri);
+    try std.testing.expectEqualStrings("build", explicit.id.?);
     try std.testing.expect(oscProcess(.{ .hyperlink = .{ .payload = ";", .term = .bel } }).? == .hyperlink_clear);
 }
 
@@ -7984,7 +8042,7 @@ pub const SemanticEvent = union(enum) {
     iterm_report_cell_size,
     iterm_set_colors: []const u8,
     color_control: TerminalColorControlCommand,
-    hyperlink_set: []const u8,
+    hyperlink_set: HyperlinkSpec,
     hyperlink_clear,
     clipboard_set: []const u8,
     dec_mode_query: u16,
@@ -8679,8 +8737,8 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             }
             return !std.meta.eql(before, vt.host.colors) or output_before != vt.host.pending_output.bytes.items.len;
         },
-        .hyperlink_set => |uri| vt.screen_state.active().setCurrentLinkId(try vt.host.internHyperlink(uri)),
-        .hyperlink_clear => vt.screen_state.active().setCurrentLinkId(0),
+        .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.host.internHyperlink(spec)),
+        .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
         .clipboard_set => |payload| try vt.host.replaceClipboard(payload),
         .locator_reporting => |cfg| setReporting(&vt.host.locator, cfg.mode, cfg.unit),
         .locator_filter => |area| setFilter(&vt.host.locator, area),

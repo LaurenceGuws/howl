@@ -1132,7 +1132,11 @@ references:
           - {id: iterm2.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
             relevance: host metadata, howl: {status: partial}}
           - {id: iterm2.osc.hyperlink, raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
-            howl: {status: partial}}
+            conditions: "iTerm2 validates a 2 MiB URL and retains target= while Howl bounds the packet to 2 KiB
+              and retains id=",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parseHyperlink, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           - {id: iterm2.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             howl: {status: partial}}
           - {id: iterm2.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
@@ -2143,7 +2147,11 @@ references:
               symbol: "OSC palette and dynamic resets own exact bounds mutation and lifetime"}}
           - {id: kitty.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory, howl: {status: partial}}
           - {id: kitty.osc.hyperlink, raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
-            howl: {status: partial}}
+            conditions: "Kitty truncates identifiers and garbage-collects its pool while Howl rejects overflow at fixed
+              packet and pool bounds",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parseHyperlink, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           - {id: kitty.osc.notify_9, raw: "OSC 9 ; Pt (BEL|ST)", effect: display notification,
             relevance: host consequence, howl: {status: 'false'}}
           - {id: kitty.osc.notify_99, raw: "OSC 99 ; Pt (BEL|ST)", effect: display notification,

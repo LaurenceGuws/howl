@@ -178,24 +178,30 @@ fn oscZeroAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("both", publication.icon.?);
 }
 
-test "OSC 8 assigns link ids and preserves URI lookup" {
+test "OSC 8 retains explicit identity separately from URI and exact active mutation" {
     const allocator = std.testing.allocator;
-    var terminal = try Terminal.init(allocator, 3, 16);
+    var terminal = try Terminal.init(allocator, 3, 20);
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]8;;https://example.com\x07abc\x1b]8;;\x07z");
+    try stream.nextSlice("\x1b]8;id=one;https://example.com\x07a");
+    try stream.nextSlice("\x1b]8;id=two;https://example.com\x1b\\b");
+    try stream.nextSlice("\x1b]8;target=_blank:id=one;https://example.com\x07c");
 
     const screen = terminal.screen_state.activeConst();
     const first = screen.cellInfoAt(0, 0).attrs.link_id;
     const second = screen.cellInfoAt(0, 1).attrs.link_id;
     const third = screen.cellInfoAt(0, 2).attrs.link_id;
-    const trailing = screen.cellInfoAt(0, 3).attrs.link_id;
     try std.testing.expect(first != 0);
-    try std.testing.expectEqual(first, second);
+    try std.testing.expect(first != second);
     try std.testing.expectEqual(first, third);
-    try std.testing.expectEqual(@as(u32, 0), trailing);
     try std.testing.expectEqualStrings("https://example.com", terminal.host.hyperlinkUriForId(first).?);
+    try std.testing.expectEqualStrings("https://example.com", terminal.host.hyperlinkUriForId(second).?);
+
+    try std.testing.expect(!(try terminal.feed("\x1b]8;id=one;https://example.com\x07")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]8;;\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]8;;\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]8;missing-separator\x07")).state_changed);
 }
 
 test "OSC 52 produces pending clipboard request" {
