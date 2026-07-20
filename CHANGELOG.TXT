@@ -13,3 +13,10 @@
 - Hardened PTY cleanup, partial transfer, and deterministic shutdown proofs.
 - Extended exact sensitive-source auditing across every maintained non-vendor
   Zig owner.
+
+0.1.2-dev
+
+- Renamed the headless terminal owner to Howl Control and made its embedded
+  endpoint optional.
+- Moved terminal identity, same-user admission, bounded wire operations, and
+  hostile response validation into the reusable terminal owner.
