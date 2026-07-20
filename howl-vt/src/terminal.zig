@@ -1210,8 +1210,6 @@ pub const Screen = struct {
             => self.applyLineEdit(event),
             .shift_left_columns,
             .shift_right_columns,
-            .insert_columns,
-            .delete_columns,
             => self.applyGridEdit(event),
             .rect_erase, .rect_selective_erase, .rect_fill, .rect_copy, .rect_attrs_change => self.applyRectEdit(event),
             else => unreachable,
@@ -1364,14 +1362,6 @@ pub const Screen = struct {
             .shift_right_columns => |count| {
                 self.wrap_pending = false;
                 self.shiftColumnsRight(count);
-            },
-            .insert_columns => |count| {
-                self.wrap_pending = false;
-                self.insertColumns(count);
-            },
-            .delete_columns => |count| {
-                self.wrap_pending = false;
-                self.deleteColumns(count);
             },
             else => unreachable,
         }
@@ -1725,20 +1715,30 @@ pub const Screen = struct {
         }
     }
 
-    /// Insert columns at the cursor across the active vertical scroll region.
-    fn insertColumns(self: *Screen, count: u16) void {
+    /// Inserts columns from the cursor through the active right margin across the vertical region.
+    /// Returns exact cell, continuation, or pending-wrap mutation; an outside cursor changes no rows.
+    pub fn insertColumns(self: *Screen, count: u16) bool {
+        var changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
-        if (self.cursor.col >= self.cols or self.scroll_top > bottom) return;
+        if (self.rows == 0 or self.cols == 0 or self.scroll_top > bottom) return changed;
+        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return changed;
+        if (!self.cursorWithinHorizontalMargins()) return changed;
         var row = self.scroll_top;
-        while (row <= bottom) : (row += 1) self.insertColumnsInRow(row, count);
+        while (row <= bottom) : (row += 1) changed = self.insertColumnsInRow(row, count) or changed;
+        return changed;
     }
 
-    /// Delete columns at the cursor across the active vertical scroll region.
-    fn deleteColumns(self: *Screen, count: u16) void {
+    /// Deletes columns from the cursor through the active right margin across the vertical region.
+    /// Returns exact cell, continuation, or pending-wrap mutation; an outside cursor changes no rows.
+    pub fn deleteColumns(self: *Screen, count: u16) bool {
+        var changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
-        if (self.cursor.col >= self.cols or self.scroll_top > bottom) return;
+        if (self.rows == 0 or self.cols == 0 or self.scroll_top > bottom) return changed;
+        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return changed;
+        if (!self.cursorWithinHorizontalMargins()) return changed;
         var row = self.scroll_top;
-        while (row <= bottom) : (row += 1) self.deleteColumnsInRow(row, count);
+        while (row <= bottom) : (row += 1) changed = self.deleteColumnsInRow(row, count) or changed;
+        return changed;
     }
 
     /// Shift active scroll-region rows left within current horizontal boundaries.
@@ -1822,23 +1822,33 @@ pub const Screen = struct {
         self.setRowWrapped(self.cursor.row, false);
     }
 
-    fn insertColumnsInRow(self: *Screen, row: u16, count: u16) void {
+    fn insertColumnsInRow(self: *Screen, row: u16, count: u16) bool {
         const line_cols = self.lineColumnCount(row);
-        if (self.cursor.col >= line_cols) return;
-        const amount = @min(@max(count, 1), line_cols - self.cursor.col);
-        const cells = self.rowCells(row) orelse return;
+        const line_right = line_cols - 1;
+        const right = if (self.left_right_margin_mode) @min(self.right_margin, line_right) else line_right;
+        if (self.cursor.col > right) return false;
+        const amount = @min(@max(count, 1), right - self.cursor.col + 1);
+        const amount_cols = screenColCount(amount);
+        const cells = self.rowCells(row) orelse return false;
         const cursor_col = screenColCount(self.cursor.col);
-        const dst_col = cursor_col + screenColCount(amount);
-        const move_len = screenColCount(line_cols) - dst_col;
+        const dst_col = cursor_col + amount_cols;
+        const end = screenColCount(right + 1);
+        const move_len = end - dst_col;
+        const erase = self.eraseCell();
+        var changed = false;
+        var col = cursor_col;
+        while (col < end) : (col += 1) {
+            const replacement = if (col < dst_col) erase else cells[@intCast(col - amount_cols)];
+            if (!std.meta.eql(cells[@intCast(col)], replacement)) changed = true;
+        }
 
         std.debug.assert(cursor_col <= dst_col);
-        std.debug.assert(dst_col <= screenColCount(line_cols));
-        std.debug.assert(dst_col + move_len == screenColCount(line_cols));
+        std.debug.assert(dst_col <= end);
+        std.debug.assert(dst_col + move_len == end);
         std.debug.assert(cursor_col + move_len <= cells.len);
         std.debug.assert(dst_col + move_len <= cells.len);
-        std.debug.assert(cursor_col + screenColCount(amount) <= cells.len);
+        std.debug.assert(cursor_col + amount_cols <= cells.len);
 
-        self.markDirtyCols(row, self.cursor.col, line_cols -| 1);
         if (move_len > 0) {
             std.mem.copyBackwards(
                 Cell,
@@ -1846,27 +1856,39 @@ pub const Screen = struct {
                 cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)],
             );
         }
-        @memset(cells[@intCast(cursor_col)..@intCast(cursor_col + screenColCount(amount))], self.eraseCell());
-        self.setRowWrapped(row, false);
+        @memset(cells[@intCast(cursor_col)..@intCast(cursor_col + amount_cols)], erase);
+        changed = self.clearRowContinuation(row) or changed;
+        if (changed) self.markDirtyCols(row, self.cursor.col, right);
+        return changed;
     }
 
-    fn deleteColumnsInRow(self: *Screen, row: u16, count: u16) void {
+    fn deleteColumnsInRow(self: *Screen, row: u16, count: u16) bool {
         const line_cols = self.lineColumnCount(row);
-        if (self.cursor.col >= line_cols) return;
-        const amount = @min(@max(count, 1), line_cols - self.cursor.col);
-        const cells = self.rowCells(row) orelse return;
+        const line_right = line_cols - 1;
+        const right = if (self.left_right_margin_mode) @min(self.right_margin, line_right) else line_right;
+        if (self.cursor.col > right) return false;
+        const amount = @min(@max(count, 1), right - self.cursor.col + 1);
+        const amount_cols = screenColCount(amount);
+        const cells = self.rowCells(row) orelse return false;
         const cursor_col = screenColCount(self.cursor.col);
-        const src_col = @min(cursor_col + screenColCount(amount), screenColCount(line_cols));
-        const move_len = screenColCount(line_cols) - src_col;
+        const end = screenColCount(right + 1);
+        const src_col = cursor_col + amount_cols;
+        const move_len = end - src_col;
+        const tail_start = end - amount_cols;
+        const erase = self.eraseCell();
+        var changed = false;
+        var col = cursor_col;
+        while (col < end) : (col += 1) {
+            const replacement = if (col < tail_start) cells[@intCast(col + amount_cols)] else erase;
+            if (!std.meta.eql(cells[@intCast(col)], replacement)) changed = true;
+        }
 
         std.debug.assert(cursor_col <= src_col);
-        std.debug.assert(src_col <= screenColCount(line_cols));
-        std.debug.assert(src_col + move_len == screenColCount(line_cols));
+        std.debug.assert(src_col <= end);
+        std.debug.assert(src_col + move_len == end);
         std.debug.assert(cursor_col + move_len <= cells.len);
         std.debug.assert(src_col + move_len <= cells.len);
-        std.debug.assert(screenColCount(line_cols) - screenColCount(amount) <= screenColCount(line_cols));
 
-        self.markDirtyCols(row, self.cursor.col, line_cols -| 1);
         if (move_len > 0) {
             std.mem.copyForwards(
                 Cell,
@@ -1875,10 +1897,12 @@ pub const Screen = struct {
             );
         }
         @memset(
-            cells[@intCast(screenColCount(line_cols) - screenColCount(amount))..@intCast(screenColCount(line_cols))],
-            self.eraseCell(),
+            cells[@intCast(tail_start)..@intCast(end)],
+            erase,
         );
-        self.setRowWrapped(row, false);
+        changed = self.clearRowContinuation(row) or changed;
+        if (changed) self.markDirtyCols(row, self.cursor.col, right);
+        return changed;
     }
 
     fn shiftRowLeft(self: *Screen, row: u16, count: u16) void {
@@ -10283,6 +10307,12 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .erase_chars => |count| {
             return vt.screen_state.active().eraseChars(count);
         },
+        .insert_columns => |count| {
+            return vt.screen_state.active().insertColumns(count);
+        },
+        .delete_columns => |count| {
+            return vt.screen_state.active().deleteColumns(count);
+        },
         .auto_wrap => |enabled| return vt.setDecMode(7, enabled),
         .origin_mode => |enabled| return vt.setDecMode(6, enabled),
 
@@ -10325,8 +10355,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .rect_fill,
         .rect_copy,
         .rect_attrs_change,
-        .insert_columns,
-        .delete_columns,
         .attr_change_extent_rect,
         .set_left_right_margins,
         .reset_default_tab_stops,

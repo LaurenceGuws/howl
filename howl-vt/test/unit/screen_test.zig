@@ -545,16 +545,16 @@ test "screen: DECIC and DECDC shift columns inside scroll region" {
     apply(&s, SemanticEvent{ .write_text = "KLMNO" });
 
     apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 2 } });
-    s.cursor.setColByClient(1);
+    s.cursor.setPositionByClient(1, 1);
     s.current_attrs.bg = Grid.Color.rgbComponents(40, 44, 52);
-    apply(&s, SemanticEvent{ .insert_columns = 2 });
+    try std.testing.expect(s.insertColumns(2));
 
     try std.testing.expectEqual(@as(u21, 'B'), s.cellAt(0, 1));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(1, 1));
     try std.testing.expectEqual(@as(u21, 'G'), s.cellAt(1, 3));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(2, 1));
 
-    apply(&s, SemanticEvent{ .delete_columns = 1 });
+    try std.testing.expect(s.deleteColumns(1));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(1, 1));
     try std.testing.expectEqual(@as(u21, 'G'), s.cellAt(1, 2));
     try std.testing.expectEqual(@as(u21, 'L'), s.cellAt(2, 2));

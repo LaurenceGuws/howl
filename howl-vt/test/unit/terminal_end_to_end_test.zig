@@ -1074,6 +1074,80 @@ test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
     }
 }
 
+test "terminal: DEC column edits require cursor regions and retain exact bounded mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[1;1Habcdefgh\x1b[2;1Hijklmnop" ++
+            "\x1b[3;1Hqrstuvwx\x1b[4;1HABCDEFGH" ++
+            "\x1b[2;3r\x1b[?69h\x1b[3;6s",
+    )).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;4H")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[2'}")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;2H")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b['~")).state_changed);
+
+    terminal.screen_state.active().clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[48;2;40;44;52m\x1b[2;4H\x1b[2'}")).state_changed);
+    const screen = terminal.screen_state.active();
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expectEqual(@as(u21, 'a'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'h'), screen.cellAt(0, 7));
+    try std.testing.expectEqual(@as(u21, 'k'), screen.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 3));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 4));
+    try std.testing.expectEqual(@as(u21, 'l'), screen.cellAt(1, 5));
+    try std.testing.expectEqual(@as(u21, 'o'), screen.cellAt(1, 6));
+    try std.testing.expectEqual(@as(u21, 's'), screen.cellAt(2, 2));
+    try std.testing.expectEqual(@as(u21, 't'), screen.cellAt(2, 5));
+    for (1..3) |row| {
+        for (3..5) |col| {
+            try std.testing.expectEqual(
+                Terminal.Color.rgbComponents(40, 44, 52),
+                screen.cellInfoAt(@intCast(row), @intCast(col)).attrs.bg,
+            );
+        }
+    }
+    const inserted_dirty = screen.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 1), inserted_dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 2), inserted_dirty.end_row);
+    for (1..3) |row| {
+        try std.testing.expectEqual(@as(u16, 3), inserted_dirty.dirty_cols_start[row]);
+        try std.testing.expectEqual(@as(u16, 5), inserted_dirty.dirty_cols_end[row]);
+    }
+
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[999999'~")).state_changed);
+    for (1..3) |row| {
+        for (3..6) |col| {
+            try std.testing.expectEqual(@as(u21, 0), screen.cellAt(@intCast(row), @intCast(col)));
+        }
+    }
+    const dirty = screen.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 1), dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 2), dirty.end_row);
+    for (1..3) |row| {
+        try std.testing.expectEqual(@as(u16, 3), dirty.dirty_cols_start[row]);
+        try std.testing.expectEqual(@as(u16, 5), dirty.dirty_cols_end[row]);
+    }
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b[999999'~")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+
+    try std.testing.expect((try terminal.feed("\x1b[2;4HZ\x1b[2;4H\x1b[0'}")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 3));
+    try std.testing.expectEqual(@as(u21, 'Z'), screen.cellAt(1, 4));
+    try std.testing.expect((try terminal.feed("\x1b['~")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'Z'), screen.cellAt(1, 3));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 4));
+    try std.testing.expectEqual(@as(u21, 'p'), screen.cellAt(1, 7));
+    try std.testing.expectEqual(@as(u21, 'x'), screen.cellAt(2, 7));
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(3, 0));
+}
+
 test "terminal: OSC cursor colors route into semantic cursor owner" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

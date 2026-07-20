@@ -368,9 +368,15 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: libvterm.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: processTick}}
+            source: howl-vt/src/terminal.zig, symbol: Screen.insertColumns, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}},
+            conditions: libvterm's callback path can repair multi-column glyph boundaries that Howl cannot yet produce}
           - {id: libvterm.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: processTick}}
+            source: howl-vt/src/terminal.zig, symbol: Screen.deleteColumns, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}},
+            conditions: libvterm's callback path can repair multi-column glyph boundaries that Howl cannot yet produce}
       - source: state.c
         symbol: set_mode
         line: 760
@@ -970,8 +976,16 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: eraseLine, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
-          - {id: iterm2.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {status: partial}}
-          - {id: iterm2.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns, howl: {status: partial}}
+          - {id: iterm2.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns,
+            conditions: iTerm2 repairs double-width cells and external attributes that Howl cannot yet produce,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Screen.insertColumns, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
+          - {id: iterm2.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns,
+            conditions: iTerm2 repairs double-width cells and external attributes that Howl cannot yet produce,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Screen.deleteColumns, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
           - id: iterm2.csi.xtpushcolors
             raw: "CSI [Ps=0] # P"
             effect: push color stack
