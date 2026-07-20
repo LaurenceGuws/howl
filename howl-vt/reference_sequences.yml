@@ -922,12 +922,19 @@ references:
           - {id: iterm2.csi.xtsmgraphics, raw: "CSI ? Pm S", effect: set or query graphics attributes,
             relevance: host consequence, howl: {status: 'false'}}
           - {id: iterm2.csi.kitty_set, raw: "CSI = flags ; [mode=1] u", effect: set Kitty keyboard flags,
-            howl: {status: partial}}
+            conditions: iTerm2 clears the active stack and retains unbounded integer flags while Howl mutates the
+              active eight-slot stack entry and retains seven protocol bits,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.set}}
           - {id: iterm2.csi.kitty_push, raw: "CSI > [flags=0] u", effect: push Kitty keyboard flags,
-            howl: {status: partial}}
+            conditions: iTerm2 retains 1024 entries while Howl follows Kitty's eight-slot stack,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.push}}
           - {id: iterm2.csi.kitty_pop, raw: "CSI < [count=1] u", effect: pop Kitty keyboard flags,
-            howl: {status: partial}}
-          - {id: iterm2.csi.kitty_query, raw: "CSI ? u", effect: report Kitty keyboard flags, howl: {status: partial}}
+            conditions: iTerm2's root flags remain after its dynamic stack empties while Howl pops Kitty's active
+              eight-slot stack to zero,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.pop}}
+          - {id: iterm2.csi.kitty_query, raw: "CSI ? u", effect: report Kitty keyboard flags,
+            conditions: iTerm2 gates reports through host policy while Howl always queues the bounded terminal reply,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.appendReport}}
       - source: VT100XtermParser.m
         symbol: tokenTypeForMode
         line: 263
@@ -1704,11 +1711,25 @@ references:
             effect: reject application cell resize, recognition: rejected_known, relevance: host consequence,
             howl: {status: 'false'}}
           - {id: kitty.csi.restore_cursor, raw: "CSI u", effect: restore cursor, howl: {status: partial}}
-          - {id: kitty.csi.kitty_query, raw: "CSI ? u", effect: report keyboard flags, howl: {status: partial}}
+          - {id: kitty.csi.kitty_query, raw: "CSI ? u", effect: report keyboard flags,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.appendReport, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
           - {id: kitty.csi.kitty_set, raw: "CSI = flags ; [mode=1] u", effect: set keyboard flags,
-            howl: {status: partial}}
-          - {id: kitty.csi.kitty_push, raw: "CSI > [flags=0] u", effect: push keyboard flags, howl: {status: partial}}
-          - {id: kitty.csi.kitty_pop, raw: "CSI < [count=1] u", effect: pop keyboard flags, howl: {status: partial}}
+            conditions: retains seven protocol bits and mutates the current per-screen stack slot,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.set, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
+          - {id: kitty.csi.kitty_push, raw: "CSI > [flags=0] u", effect: push keyboard flags,
+            conditions: eight per-screen slots; the oldest slot is dropped when full,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.push, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
+          - {id: kitty.csi.kitty_pop, raw: "CSI < [count=1] u", effect: pop keyboard flags,
+            conditions: popping past the active stack restores zero flags,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.pop, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
           - {id: kitty.csi.decstbm, raw: "CSI [top] ; [bottom] r", effect: set vertical margins,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: setScrollRegion, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,

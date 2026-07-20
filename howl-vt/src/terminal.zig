@@ -6278,29 +6278,34 @@ fn appendKittyQueryReply(
 }
 
 const key_report_max_bytes = 16;
-// Howl implements every defined Kitty progressive keyboard flag.
-const supported_flags: u8 = 1 | 2 | 4 | 8 | 16;
+const kitty_keyboard_flag_mask: u8 = 0x7f;
+const kitty_keyboard_stack_capacity = 8;
 
-// Stores current Kitty keyboard flags and at most sixteen prior flag sets.
+// Stores Kitty's current keyboard flags and seven predecessors: eight active
+// protocol stack slots in total.
 const KittyKeyStack = struct {
     flags: u8 = 0,
-    stack: [16]u8 = [_]u8{0} ** 16,
+    stack: [kitty_keyboard_stack_capacity - 1]u8 =
+        [_]u8{0} ** (kitty_keyboard_stack_capacity - 1),
     len: u8 = 0,
 
-    /// Replaces, sets, or clears current keyboard flags according to Kitty mode semantics.
-    pub fn set(self: *KittyKeyStack, requested: u8, mode: u8) void {
-        const flags = requested & supported_flags;
+    /// Replaces, sets, or clears the current seven-bit Kitty flag set.
+    pub fn set(self: *KittyKeyStack, requested: u8, mode: u8) bool {
+        const before = self.flags;
+        const flags = requested & kitty_keyboard_flag_mask;
         switch (mode) {
             1 => self.flags = flags,
             2 => self.flags |= flags,
             3 => self.flags &= ~flags,
-            else => return,
+            else => return false,
         }
+        return self.flags != before;
     }
 
-    /// Pushes current flags and installs new flags, dropping the oldest entry at capacity.
-    pub fn push(self: *KittyKeyStack, requested: u8) void {
-        const flags = requested & supported_flags;
+    /// Pushes flags into Kitty's eight-slot stack, dropping the oldest at capacity.
+    pub fn push(self: *KittyKeyStack, requested: u8) bool {
+        const before = self.*;
+        const flags = requested & kitty_keyboard_flag_mask;
         if (self.len == self.stack.len) {
             std.mem.copyForwards(u8, self.stack[0 .. self.stack.len - 1], self.stack[1..self.stack.len]);
             self.len -= 1;
@@ -6308,16 +6313,19 @@ const KittyKeyStack = struct {
         self.stack[self.len] = self.flags;
         self.len += 1;
         self.flags = flags;
+        return !std.meta.eql(before, self.*);
     }
 
-    /// Restores up to count prior flag sets and clears flags when count exceeds stack depth.
-    pub fn pop(self: *KittyKeyStack, count: u16) void {
+    /// Pops up to count active slots; exhausting the stack restores zero flags.
+    pub fn pop(self: *KittyKeyStack, count: u16) bool {
+        const before = self.*;
         var remaining = count;
         while (remaining > 0 and self.len > 0) : (remaining -= 1) {
             self.len -= 1;
             self.flags = self.stack[self.len];
         }
         if (remaining > 0) self.flags = 0;
+        return !std.meta.eql(before, self.*);
     }
 
     /// Appends the current keyboard flags as one bounded Kitty reply.
@@ -6333,19 +6341,19 @@ const KittyKeyStack = struct {
     }
 };
 
-test "keyboard stack reports only implemented flags and restores bounded state" {
+test "keyboard stack retains seven-bit flags and reports exact mutation" {
     var stack: KittyKeyStack = .{};
-    stack.set(0x7f, 1);
-    try std.testing.expectEqual(supported_flags, stack.flags);
-    stack.push(8);
+    try std.testing.expect(stack.set(0x7f, 1));
+    try std.testing.expectEqual(@as(u8, 0x7f), stack.flags);
+    try std.testing.expect(stack.push(8));
     try std.testing.expectEqual(@as(u8, 8), stack.flags);
-    stack.pop(1);
-    try std.testing.expectEqual(supported_flags, stack.flags);
-    stack.set(8, 3);
-    try std.testing.expectEqual(@as(u8, 23), stack.flags);
-    stack.set(0, 4);
-    try std.testing.expectEqual(@as(u8, 23), stack.flags);
-    stack.pop(1);
+    try std.testing.expect(stack.pop(1));
+    try std.testing.expectEqual(@as(u8, 0x7f), stack.flags);
+    try std.testing.expect(stack.set(8, 3));
+    try std.testing.expectEqual(@as(u8, 0x77), stack.flags);
+    try std.testing.expect(!stack.set(0, 4));
+    try std.testing.expectEqual(@as(u8, 0x77), stack.flags);
+    try std.testing.expect(stack.pop(1));
     try std.testing.expectEqual(@as(u8, 0), stack.flags);
 }
 
@@ -6735,7 +6743,8 @@ fn decodeKittyKeyboardSet(params: []const i32) ?SemanticEvent {
 }
 
 fn keyboardFlags(params: []const i32) u8 {
-    return @intCast(@min(@max(if (params.len != 0) params[0] else 0, 0), 0x7f));
+    const raw: u32 = @intCast(@max(if (params.len != 0) params[0] else 0, 0));
+    return @intCast(raw & kitty_keyboard_flag_mask);
 }
 
 fn keyFormatChange(params: []const i32) SemanticEvent {
@@ -9793,24 +9802,25 @@ test "cursor color control mutates semantic cursor owner through screen apply" {
     try std.testing.expectEqual(@as(?Rgb, null), screen.cursor.cursor_color);
 }
 
-// Apply one Kitty-directed semantic event to terminal-owned Kitty state.
-fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
+// Apply one Kitty-directed semantic event and report exact state or output mutation.
+fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
     var scratch: Scratch = .{};
     const allocator = vt.allocator;
     const active_screen = vt.kitty.activeScreen(vt.screen_state.alt_active);
     const active_screen_const = vt.kitty.activeScreenConst(vt.screen_state.alt_active);
     switch (event) {
         .kitty_keyboard_set => |req| {
-            active_screen.keyboard.set(req.flags, req.mode);
+            return active_screen.keyboard.set(req.flags, req.mode);
         },
         .kitty_keyboard_query => {
             try active_screen_const.keyboard.appendReport(allocator, &vt.host.pending_output, scratch.buf[0..]);
+            return true;
         },
         .kitty_keyboard_push => |flags| {
-            active_screen.keyboard.push(flags);
+            return active_screen.keyboard.push(flags);
         },
         .kitty_keyboard_pop => |count| {
-            active_screen.keyboard.pop(count);
+            return active_screen.keyboard.pop(count);
         },
         else => unreachable,
     }
@@ -9959,7 +9969,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .kitty_keyboard_query,
         .kitty_keyboard_push,
         .kitty_keyboard_pop,
-        => try applyKittyEvent(vt, event),
+        => return try applyKittyEvent(vt, event),
 
         .kitty_color_stack => |command| return applyKittyColorStack(vt, command),
         .sgr_stack_push => |params| return vt.pushSgr(params),

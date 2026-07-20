@@ -228,22 +228,39 @@ test "application cursor mode changes arrow key encoding" {
     try std.testing.expectEqualStrings("\x1b[A", encodeKey(&terminal, .{ .named = .up }, .{}));
 }
 
-test "kitty keyboard set query push and pop flags" {
+test "kitty keyboard stack has exact flags depth mutation and replies" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    write(&stream, "\x1b[=5u\x1b[?u");
-    try std.testing.expectEqualStrings("\x1b[?5u", pendingOutput(&terminal));
+    try std.testing.expect(!(try terminal.feed("\x1b[=128u")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?u")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?0u", pendingOutput(&terminal));
     clearPendingOutput(&terminal);
 
-    write(&stream, "\x1b[>1u\x1b[?u");
+    try std.testing.expect(!(try terminal.feed("\x1b[=127;1")).state_changed);
+    try std.testing.expect((try terminal.feed("u")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[=127u")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?")).state_changed);
+    try std.testing.expect((try terminal.feed("u")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?127u", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+
+    try std.testing.expect((try terminal.feed("\x1b[=8;3u\x1b[=3;2u\x1b[?u")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?119u", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[>1u\x1b[>2u\x1b[>3u\x1b[>4u\x1b[>5u\x1b[>6u\x1b[>7u\x1b[>8u",
+    )).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[<7u\x1b[?u")).state_changed);
     try std.testing.expectEqualStrings("\x1b[?1u", pendingOutput(&terminal));
     clearPendingOutput(&terminal);
 
-    write(&stream, "\x1b[<u\x1b[?u");
-    try std.testing.expectEqualStrings("\x1b[?5u", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed("\x1b[<u\x1b[?u")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?0u", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    try std.testing.expect(!(try terminal.feed("\x1b[<u")).state_changed);
 }
 
 test "invalid Kitty keyboard set mode preserves state" {
@@ -268,6 +285,29 @@ test "kitty keyboard flags stay separate across alternate screen" {
     write(&stream, "\x1b[?1049l");
     write(&stream, "\x1b[?u");
     try std.testing.expectEqualStrings("\x1b[?1u", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+
+    write(&stream, "\x1b[?1049h\x1b[=7u\x1bc\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?0u", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    write(&stream, "\x1b[?1049h\x1b[?u");
+    try std.testing.expectEqualStrings("\x1b[?0u", pendingOutput(&terminal));
+}
+
+test "kitty keyboard query preserves full pending output on failure" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    const fill_len = HostState.pending_output_max_bytes - 4;
+    const fill = try allocator.alloc(u8, fill_len);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[?u"));
+    try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
+    for (pendingOutput(&terminal)) |byte| try std.testing.expectEqual(@as(u8, 'x'), byte);
 }
 
 test "kitty keyboard mode switches existing keys to CSI-u family" {
