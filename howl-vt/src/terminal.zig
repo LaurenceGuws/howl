@@ -4110,9 +4110,9 @@ fn encodeNamedKey(
     application_keypad: bool,
 ) []const u8 {
     if (encodeKeypadKey(buf, key, application_keypad)) |encoded| return encoded;
-    if (encodeControlKey(buf, key, mod.shift)) |encoded| return encoded;
+    if (encodeControlKey(buf, key, mod)) |encoded| return encoded;
     if (encodeCursorKey(buf, key, mod, application_cursor_keys)) |encoded| return encoded;
-    if (encodeHomeEndKey(buf, key, mod)) |encoded| return encoded;
+    if (encodeHomeEndKey(buf, key, mod, application_cursor_keys)) |encoded| return encoded;
     if (encodeTildeKey(buf, key, mod)) |encoded| return encoded;
     if (encodeFunctionKey(buf, key, mod)) |encoded| return encoded;
     return buf[0..0];
@@ -4229,14 +4229,18 @@ fn encodeKittyKey(buf: []u8, key: InputKey, mod: Modifier) ?[]const u8 {
     };
 }
 
-fn encodeControlKey(buf: []u8, key: KeyName, shift_active: bool) ?[]const u8 {
-    return switch (key) {
-        .enter => singleByte(buf, '\r'),
-        .tab => if (shift_active) fixed3(buf, '\x1b', '[', 'Z') else singleByte(buf, '\t'),
-        .backspace => singleByte(buf, '\x7f'),
-        .escape => singleByte(buf, '\x1b'),
+fn encodeControlKey(buf: []u8, key: KeyName, mod: Modifier) ?[]const u8 {
+    const bytes = switch (key) {
+        .enter => "\r",
+        .tab => if (mod.shift) "\x1b[Z" else "\t",
+        .backspace => "\x7f",
+        .escape => "\x1b",
         else => null,
-    };
+    } orelse return null;
+    if (!mod.alt) return writeBytes(buf, bytes);
+    buf[0] = '\x1b';
+    @memcpy(buf[1 .. bytes.len + 1], bytes);
+    return buf[0 .. bytes.len + 1];
 }
 
 fn encodeCursorKey(buf: []u8, key: KeyName, mod: Modifier, application_cursor_keys: bool) ?[]const u8 {
@@ -4255,7 +4259,7 @@ fn encodeCursorKey(buf: []u8, key: KeyName, mod: Modifier, application_cursor_ke
         fixed3(buf, '\x1b', '[', final);
 }
 
-fn encodeHomeEndKey(buf: []u8, key: KeyName, mod: Modifier) ?[]const u8 {
+fn encodeHomeEndKey(buf: []u8, key: KeyName, mod: Modifier, application_cursor_keys: bool) ?[]const u8 {
     const final: u8 = switch (key) {
         .home => 'H',
         .end => 'F',
@@ -4263,6 +4267,8 @@ fn encodeHomeEndKey(buf: []u8, key: KeyName, mod: Modifier) ?[]const u8 {
     };
     return if (!mod.none())
         csi1ModifiedFinal(buf, final, mod)
+    else if (application_cursor_keys)
+        fixed3(buf, '\x1b', 'O', final)
     else
         fixed3(buf, '\x1b', '[', final);
 }
@@ -4300,7 +4306,7 @@ fn encodeFunctionKey(buf: []u8, key: KeyName, mod: Modifier) ?[]const u8 {
     return if (!mod.none())
         csi1ModifiedFinal(buf, final, mod)
     else
-        fixed3(buf, '\x1b', '[', final);
+        fixed3(buf, '\x1b', 'O', final);
 }
 
 fn encodeTextKey(buf: []u8, codepoint: u21, mod: Modifier, modify_other_keys: i8, format_other_keys: u16) []const u8 {
@@ -4308,18 +4314,29 @@ fn encodeTextKey(buf: []u8, codepoint: u21, mod: Modifier, modify_other_keys: i8
         if (encodeModifyOtherKey(buf, codepoint, mod, modify_other_keys, format_other_keys)) |encoded| return encoded;
     }
     if (mod.control) if (legacyControlByte(codepoint)) |byte| {
-        buf[0] = byte;
-        return buf[0..1];
+        if (!mod.alt) return writeBytes(buf, &.{byte});
+        buf[0] = '\x1b';
+        buf[1] = byte;
+        return buf[0..2];
     };
+    const prefix_len: usize = @intFromBool(mod.alt);
+    if (mod.alt) buf[0] = '\x1b';
     if (codepoint > 31 and codepoint < 127) {
-        return singleByte(buf, @intCast(codepoint)).?;
+        buf[prefix_len] = @intCast(codepoint);
+        return buf[0 .. prefix_len + 1];
     }
     if (codepoint > 127) {
-        const len = std.unicode.utf8Encode(codepoint, buf[0..]) catch unreachable;
-        std.debug.assert(len <= buf.len);
-        return buf[0..len];
+        const len = std.unicode.utf8Encode(codepoint, buf[prefix_len..]) catch unreachable;
+        std.debug.assert(prefix_len + len <= buf.len);
+        return buf[0 .. prefix_len + len];
     }
     return buf[0..0];
+}
+
+fn writeBytes(buf: []u8, bytes: []const u8) []const u8 {
+    std.debug.assert(bytes.len <= buf.len);
+    @memcpy(buf[0..bytes.len], bytes);
+    return buf[0..bytes.len];
 }
 
 // ASCII control chords are legacy byte semantics; lock state has already been
@@ -4438,7 +4455,7 @@ test "named key classes retain exact legacy encodings" {
     try std.testing.expectEqualStrings("\t", encodeKey(&buf, .{ .named = .tab }, none, false, false, 0, 0, 0));
     try std.testing.expectEqualStrings("\x1b[H", encodeKey(&buf, .{ .named = .home }, none, false, false, 0, 0, 0));
     try std.testing.expectEqualStrings("\x1b[3~", encodeKey(&buf, .{ .named = .delete }, none, false, false, 0, 0, 0));
-    try std.testing.expectEqualStrings("\x1b[P", encodeKey(&buf, .{ .named = .f1 }, none, false, false, 0, 0, 0));
+    try std.testing.expectEqualStrings("\x1bOP", encodeKey(&buf, .{ .named = .f1 }, none, false, false, 0, 0, 0));
     try std.testing.expectEqualStrings("\x1b[24~", encodeKey(&buf, .{ .named = .f12 }, none, false, false, 0, 0, 0));
     try std.testing.expectEqualStrings("+", encodeKey(&buf, .{ .named = .keypad_add }, none, false, false, 0, 0, 0));
     try std.testing.expectEqualStrings(
@@ -4462,6 +4479,32 @@ test "named key classes retain exact legacy encodings" {
         encodeKey(&buf, .{ .named = .keypad_equal }, none, false, true, 0, 0, 0),
     );
     try std.testing.expectEqualStrings("", encodeKey(&buf, .{ .named = .left_shift }, none, false, false, 0, 0, 0));
+}
+
+test "legacy keys preserve application modes modifiers and text boundaries" {
+    var buf: [max_encoded_len]u8 = undefined;
+    const none = Modifier{};
+
+    try std.testing.expectEqualStrings("\x1bOA", encodeKey(&buf, .{ .named = .up }, none, true, false, 0, 0, 0));
+    try std.testing.expectEqualStrings("\x1bOH", encodeKey(&buf, .{ .named = .home }, none, true, false, 0, 0, 0));
+    try std.testing.expectEqualStrings("\x1bOF", encodeKey(&buf, .{ .named = .end }, none, true, false, 0, 0, 0));
+    try std.testing.expectEqualStrings("\x1bOQ", encodeKey(&buf, .{ .named = .f2 }, none, false, false, 0, 0, 0));
+    try std.testing.expectEqualStrings(
+        "\x1b\x03",
+        encodeKey(&buf, try InputKey.initUnicode('c'), .{ .alt = true, .control = true }, false, false, 0, 0, 0),
+    );
+    try std.testing.expectEqualStrings(
+        "\x1b\u{e9}",
+        encodeKey(&buf, try InputKey.initUnicode('é'), .{ .alt = true }, false, false, 0, 0, 0),
+    );
+    try std.testing.expectEqualStrings(
+        "\x1b\x1b[Z",
+        encodeKey(&buf, .{ .named = .tab }, .{ .shift = true, .alt = true }, false, false, 0, 0, 0),
+    );
+    try std.testing.expectEqualStrings(
+        "\x1b\x1b",
+        encodeKey(&buf, .{ .named = .escape }, .{ .alt = true }, false, false, 0, 0, 0),
+    );
 }
 
 test "every modifier combination has one Kitty parameter" {
@@ -4597,25 +4640,40 @@ fn wouldEncodeMouse(event: MouseEvent, tracking: MouseTrackingMode, protocol: Mo
     };
     if (!emit) return false;
 
-    if (protocol == .sgr or protocol == .urxvt or protocol == .utf8) return true;
-    const row1 = if (event.row < 0) 1 else event.row + 1;
+    const row1 = mouseRow1(event.row);
     const col1 = @as(u32, event.col) + 1;
     const cb = mouseCode(event, tracking);
-    return cb <= 223 and col1 <= 223 and @as(u32, @intCast(row1)) <= 223;
+    if (protocol == .sgr or protocol == .urxvt) return true;
+    if (protocol == .utf8) {
+        return validMouseCodepoint(cb + 32) and
+            validMouseCodepoint(col1 + 32) and
+            validMouseCodepoint(row1 + 32);
+    }
+    return cb <= 223 and col1 <= 223 and row1 <= 223;
+}
+
+// Host rows are signed so callers can report positions above the viewport.
+// Normalizing in u32 preserves that policy and makes maxInt(i32) + 1 exact.
+fn mouseRow1(row: i32) u32 {
+    return if (row < 0) 1 else @as(u32, @intCast(row)) + 1;
+}
+
+fn validMouseCodepoint(value: u32) bool {
+    return value <= 0x10FFFF and std.unicode.utf8ValidCodepoint(@intCast(value));
 }
 
 /// Encode one host mouse event for the active terminal mouse protocol.
 pub fn encodeMouse(buf: []u8, event: MouseEvent, tracking: MouseTrackingMode, protocol: MouseProtocol) []const u8 {
     if (!wouldEncodeMouse(event, tracking, protocol)) return buf[0..0];
 
-    const row1 = if (event.row < 0) 1 else event.row + 1;
+    const row1 = mouseRow1(event.row);
     const col1 = @as(u32, event.col) + 1;
     const cb = mouseCode(event, tracking);
     return switch (protocol) {
-        .sgr => encodeSgrMouse(buf, cb, col1, @intCast(row1), event.kind == .release),
-        .urxvt => encodeUrxvtMouse(buf, cb, col1, @intCast(row1)),
-        .utf8 => encodeCsiMMouse(buf, cb, col1, @intCast(row1), true),
-        .none => encodeCsiMMouse(buf, cb, col1, @intCast(row1), false),
+        .sgr => encodeSgrMouse(buf, cb, col1, row1, event.kind == .release),
+        .urxvt => encodeUrxvtMouse(buf, cb, col1, row1),
+        .utf8 => encodeCsiMMouse(buf, cb, col1, row1, true),
+        .none => encodeCsiMMouse(buf, cb, col1, row1, false),
     };
 }
 
@@ -4691,6 +4749,56 @@ fn moveBaseCode(event: MouseEvent) u16 {
     if ((event.buttons_down & 0x02) != 0) return 1;
     if ((event.buttons_down & 0x04) != 0) return 2;
     return 3;
+}
+
+test "mouse protocols encode boundaries without partial sequences" {
+    var buf: [max_encoded_len]u8 = undefined;
+    const base: MouseEvent = .{
+        .kind = .press,
+        .button = .left,
+        .row = 4,
+        .col = 6,
+        .mod = .{ .shift = true, .alt = true, .control = true },
+        .buttons_down = 1,
+    };
+
+    try std.testing.expectEqualStrings("\x1b[<28;7;5M", encodeMouse(&buf, base, .normal, .sgr));
+    try std.testing.expectEqualStrings("\x1b[60;7;5M", encodeMouse(&buf, base, .normal, .urxvt));
+    try std.testing.expectEqualStrings("\x1b[M#\"!", encodeMouse(
+        &buf,
+        .{ .kind = .release, .button = .left, .row = 0, .col = 1, .mod = .{}, .buttons_down = 0 },
+        .normal,
+        .none,
+    ));
+    try std.testing.expectEqualStrings("", encodeMouse(
+        &buf,
+        .{ .kind = .press, .button = .left, .row = 223, .col = 0, .mod = .{}, .buttons_down = 1 },
+        .normal,
+        .none,
+    ));
+
+    // A UTF-8 mouse field must be a Unicode scalar; rejecting the whole event
+    // prevents an ESC [ M prefix from escaping without all three fields.
+    try std.testing.expectEqualStrings("", encodeMouse(
+        &buf,
+        .{ .kind = .press, .button = .left, .row = 0xD800 - 33, .col = 0, .mod = .{}, .buttons_down = 1 },
+        .normal,
+        .utf8,
+    ));
+
+    const last_row: MouseEvent = .{
+        .kind = .press,
+        .button = .left,
+        .row = std.math.maxInt(i32),
+        .col = 0,
+        .mod = .{},
+        .buttons_down = 1,
+    };
+    try std.testing.expectEqualStrings("\x1b[<0;1;2147483648M", encodeMouse(&buf, last_row, .normal, .sgr));
+    try std.testing.expectEqualStrings("\x1b[32;1;2147483648M", encodeMouse(&buf, last_row, .normal, .urxvt));
+    try std.testing.expectEqualStrings("", encodeMouse(&buf, last_row, .normal, .utf8));
+    try std.testing.expectEqualStrings("", encodeMouse(&buf, last_row, .normal, .none));
+    try std.testing.expectEqual(@as(u32, 1), mouseRow1(std.math.minInt(i32)));
 }
 
 // Carries Kitty keyboard flags and the set, add, or remove operation mode.

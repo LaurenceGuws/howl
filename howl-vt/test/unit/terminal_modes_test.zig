@@ -1097,7 +1097,11 @@ test "modifyOtherKeys set query disable and encoding" {
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{ .alt = true }));
+    try std.testing.expectEqualStrings("\x1ba", encodeKey(
+        &terminal,
+        try input_keyboard.InputKey.initUnicode('a'),
+        .{ .alt = true },
+    ));
     write(&stream, "\x1b[>4;2m\x1b[?4m");
     try std.testing.expectEqualStrings("\x1b[>4;2m", pendingOutput(&terminal));
     try std.testing.expectEqualStrings("\x1b[27;3;97~", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{ .alt = true }));
@@ -1107,7 +1111,11 @@ test "modifyOtherKeys set query disable and encoding" {
     try std.testing.expectEqualStrings("\x1b[27;1;97~", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{}));
 
     write(&stream, "\x1b[>4n");
-    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('a'), .{ .alt = true }));
+    try std.testing.expectEqualStrings("\x1ba", encodeKey(
+        &terminal,
+        try input_keyboard.InputKey.initUnicode('a'),
+        .{ .alt = true },
+    ));
 }
 
 test "xterm key format query reset and other-key encoding" {

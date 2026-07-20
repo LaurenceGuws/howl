@@ -117,9 +117,13 @@ references:
           - {id: libvterm.esc.vt52_exit, raw: "ESC <", effect: accepted no-op for VT52 exit,
             recognition: recognized_noop, relevance: compatibility, howl: {status: 'false'}}
           - {id: libvterm.esc.deckpam, raw: "ESC =", effect: application keypad, relevance: input,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: escProcess}}
-          - {id: libvterm.esc.deckpnm, raw: "ESC >", effect: numeric keypad, relevance: input, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application keypad modes affect keypad encoding and DECRQM}}}
+          - {id: libvterm.esc.deckpnm, raw: "ESC >", effect: numeric keypad, relevance: input,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application keypad modes affect keypad encoding and DECRQM}}}
           - {id: libvterm.esc.ris, raw: "ESC c", effect: hard terminal reset, relevance: core, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: escProcess}}
           - {id: libvterm.esc.ls2, raw: "ESC n", effect: select G2 into GL, relevance: charset, howl: {status: partial}}
@@ -292,7 +296,9 @@ references:
         recognition: implemented
         records:
           - {id: libvterm.mode.decckm, raw: "CSI ? 1 h|l", effect: toggle application cursor keys,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application cursor mode changes arrow key encoding}}}
           - {id: libvterm.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
           - {id: libvterm.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
           - {id: libvterm.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
@@ -321,7 +327,9 @@ references:
           - {id: libvterm.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: alternate screen with cursor save,
             howl: {status: partial}}
           - {id: libvterm.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: terminal paste encoding is gated by DECSET 2004}}}
       - source: state.c
         symbol: on_osc
         line: 1805
@@ -550,8 +558,14 @@ references:
           - {id: iterm2.esc.decswl, raw: "ESC # 5", effect: single-width line, howl: {status: partial}}
           - {id: iterm2.esc.decdwl, raw: "ESC # 6", effect: double-width line, howl: {status: partial}}
           - {id: iterm2.esc.decaln, raw: "ESC # 8", effect: fill screen with E, howl: {status: partial}}
-          - {id: iterm2.esc.deckpam, raw: "ESC =", effect: application keypad, howl: {status: partial}}
-          - {id: iterm2.esc.deckpnm, raw: "ESC >", effect: numeric keypad, howl: {status: partial}}
+          - {id: iterm2.esc.deckpam, raw: "ESC =", effect: application keypad,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application keypad modes affect keypad encoding and DECRQM}}}
+          - {id: iterm2.esc.deckpnm, raw: "ESC >", effect: numeric keypad,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application keypad modes affect keypad encoding and DECRQM}}}
           - {id: iterm2.esc.strict_ansi, raw: "ESC <", effect: enter strict ANSI mode, relevance: compatibility,
             howl: {status: 'false'}}
           - {id: iterm2.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset,
@@ -1031,7 +1045,9 @@ references:
         recognition: implemented
         records:
           - {id: iterm2.mode.decckm, raw: "CSI ? 1 h|l", effect: toggle application cursor keys,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application cursor mode changes arrow key encoding}}}
           - {id: iterm2.mode.ansi_vt52, raw: "CSI ? 2 h|l", effect: ignore emulation switch,
             recognition: recognized_noop, relevance: compatibility, howl: {status: 'false'}}
           - {id: iterm2.mode.deccolm, raw: "CSI ? 3 h|l", effect: toggle 80 or 132 columns, conditions: allowColumnMode,
@@ -1092,7 +1108,9 @@ references:
           - {id: iterm2.mode.key_up_1337, raw: "CSI ? 1337 h|l", effect: toggle key-release reports, relevance: input,
             howl: {status: 'false'}}
           - {id: iterm2.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: terminal paste encoding is gated by DECSET 2004}}}
           - {id: iterm2.mode.synchronized_output, raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
             howl: {status: partial}}
           - {id: iterm2.mode.dark_mode_dsr, raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report,
@@ -1227,8 +1245,14 @@ references:
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.esc.decsc, raw: "ESC 7", effect: save cursor, howl: {status: partial}}
           - {id: kitty.esc.decrc, raw: "ESC 8", effect: restore cursor, howl: {status: partial}}
-          - {id: kitty.esc.deckpnm, raw: "ESC >", effect: numeric keypad, howl: {status: partial}}
-          - {id: kitty.esc.deckpam, raw: "ESC =", effect: application keypad, howl: {status: partial}}
+          - {id: kitty.esc.deckpnm, raw: "ESC >", effect: numeric keypad,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application keypad modes affect keypad encoding and DECRQM}}}
+          - {id: kitty.esc.deckpam, raw: "ESC =", effect: application keypad,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application keypad modes affect keypad encoding and DECRQM}}}
           - {id: kitty.esc.latin1, raw: "ESC % @", effect: select legacy decoding, howl: {status: partial}}
           - {id: kitty.esc.utf8, raw: "ESC % G", effect: select UTF-8 decoding, howl: {status: partial}}
           - {id: kitty.esc.decaln, raw: "ESC # 8", effect: fill screen with E, howl: {status: partial}}
@@ -1250,7 +1274,10 @@ references:
         census: {semantic_branches: 31, records: 31}
         recognition: implemented
         records:
-          - {id: kitty.mode.decckm, raw: "CSI ? 1 h|l", effect: toggle application cursor keys, howl: {status: partial}}
+          - {id: kitty.mode.decckm, raw: "CSI ? 1 h|l", effect: toggle application cursor keys,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: application cursor mode changes arrow key encoding}}}
           - {id: kitty.mode.irm, raw: "CSI 4 h|l", effect: toggle insert mode, howl: {status: partial}}
           - {id: kitty.mode.lnm, raw: "CSI 20 h|l", effect: toggle newline mode, howl: {status: partial}}
           - {id: kitty.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
@@ -1289,7 +1316,9 @@ references:
             conditions: clear and save or restore occur only on an actual screen transition,
             howl: {status: partial}}
           - {id: kitty.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: terminal paste encoding is gated by DECSET 2004}}}
           - {id: kitty.mode.synchronized_output, raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
             howl: {status: partial}}
           - {id: kitty.mode.color_preference, raw: "CSI ? 2031 h|l", effect: toggle color-preference notifications,
