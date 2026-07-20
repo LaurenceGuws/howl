@@ -85,6 +85,6 @@ test "screen history: ED 3 clears scrollback history" {
     defer s.deinit(gpa);
     apply(&s, SemanticEvent{ .write_text = "AAAA\nBBBB\nCCCC" });
     try std.testing.expect(s.historyCount() > 0);
-    apply(&s, SemanticEvent{ .erase_display_scrollback = false });
+    try std.testing.expect(s.eraseDisplay(.scrollback, false));
     try std.testing.expectEqual(@as(u32, 0), s.historyCount());
 }

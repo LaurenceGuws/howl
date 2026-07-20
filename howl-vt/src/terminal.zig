@@ -1206,14 +1206,6 @@ pub const Screen = struct {
             .set_scroll_region,
             .hard_reset,
             => self.applyLineEdit(event),
-            .erase_display_below,
-            .erase_display_above,
-            .erase_display_complete,
-            .erase_display_scrollback,
-            .erase_display_scroll_complete,
-            .erase_line,
-            .selective_erase_line,
-            .erase_chars,
             .shift_left_columns,
             .shift_right_columns,
             .insert_columns,
@@ -1362,20 +1354,23 @@ pub const Screen = struct {
     }
 
     fn applyGridEdit(self: *Screen, event: SemanticEvent) void {
-        self.wrap_pending = false;
         switch (event) {
-            .erase_display_below => |protected| self.eraseDisplay(.cursor_to_end, protected),
-            .erase_display_above => |protected| self.eraseDisplay(.start_to_cursor, protected),
-            .erase_display_complete => |protected| self.eraseDisplay(.all, protected),
-            .erase_display_scrollback => |protected| self.eraseDisplay(.scrollback, protected),
-            .erase_display_scroll_complete => |protected| self.eraseDisplay(.all, protected),
-            .erase_line => |mode| self.eraseLine(mode),
-            .selective_erase_line => |mode| self.selectiveEraseLine(mode),
-            .erase_chars => |count| self.eraseChars(count),
-            .shift_left_columns => |count| self.shiftColumnsLeft(count),
-            .shift_right_columns => |count| self.shiftColumnsRight(count),
-            .insert_columns => |count| self.insertColumns(count),
-            .delete_columns => |count| self.deleteColumns(count),
+            .shift_left_columns => |count| {
+                self.wrap_pending = false;
+                self.shiftColumnsLeft(count);
+            },
+            .shift_right_columns => |count| {
+                self.wrap_pending = false;
+                self.shiftColumnsRight(count);
+            },
+            .insert_columns => |count| {
+                self.wrap_pending = false;
+                self.insertColumns(count);
+            },
+            .delete_columns => |count| {
+                self.wrap_pending = false;
+                self.deleteColumns(count);
+            },
             else => unreachable,
         }
     }
@@ -1403,60 +1398,94 @@ pub const Screen = struct {
         right: u16,
     };
 
-    /// Erase display content according to `mode`, optionally preserving protected cells.
-    fn eraseDisplay(self: *Screen, mode: EraseMode, protected: bool) void {
-        const cells = self.cells orelse return;
-        if (self.rows == 0 or self.cols == 0) return;
+    /// Erases one display mode, preserving protected cells when requested.
+    /// Returns whether cells, row facts, history, or pending wrap changed; it cannot fail.
+    pub fn eraseDisplay(self: *Screen, mode: EraseMode, protected: bool) bool {
+        var changed = self.cancelPendingWrap();
+        const cells = self.cells orelse return changed;
+        if (self.rows == 0 or self.cols == 0) return changed;
         switch (mode) {
             .cursor_to_end => {
-                self.markDirtyRows(self.cursor.row, self.rows -| 1);
-                self.clearDisplayRowRange(
+                changed = self.clearDisplayRowRange(
                     protected,
                     self.cursor.row,
                     self.cursor.col,
                     self.lineColumnCount(self.cursor.row),
-                );
+                ) or changed;
+                if (self.cursor.col < self.lineColumnCount(self.cursor.row)) {
+                    changed = self.clearRowContinuation(self.cursor.row) or changed;
+                }
                 var row = self.cursor.row + 1;
                 while (row < self.rows) : (row += 1) {
-                    self.clearDisplayRowRange(protected, row, 0, self.lineColumnCount(row));
-                    self.setRowWrapped(row, false);
-                    self.resetLineGeometry(row);
+                    changed = self.eraseFullDisplayRow(row, protected) or changed;
                 }
             },
             .start_to_cursor => {
-                self.markDirtyRows(0, self.cursor.row);
                 var row: u16 = 0;
                 while (row < self.cursor.row) : (row += 1) {
-                    self.clearDisplayRowRange(protected, row, 0, self.lineColumnCount(row));
-                    self.setRowWrapped(row, false);
-                    self.resetLineGeometry(row);
+                    changed = self.eraseFullDisplayRow(row, protected) or changed;
                 }
-                self.clearDisplayRowRange(protected, self.cursor.row, 0, self.cursor.col + 1);
+                changed = self.clearDisplayRowRange(protected, self.cursor.row, 0, self.cursor.col + 1) or changed;
             },
             .all => {
-                self.markAllRowsDirty();
                 if (protected) {
                     var row: u16 = 0;
                     while (row < self.rows) : (row += 1) {
-                        self.clearDisplayRowRange(true, row, 0, self.lineColumnCount(row));
-                        self.resetLineGeometry(row);
+                        changed = self.eraseFullDisplayRow(row, true) or changed;
                     }
                 } else {
                     const erase_cell = self.eraseCell();
+                    var display_changed = false;
+                    for (cells) |cell| {
+                        if (!std.meta.eql(cell, erase_cell)) {
+                            display_changed = true;
+                            break;
+                        }
+                    }
+                    if (self.row_flags) |flags| for (flags) |flag| {
+                        if (flag != 0) {
+                            display_changed = true;
+                            break;
+                        }
+                    };
                     @memset(cells, erase_cell);
                     if (self.row_flags) |buf| @memset(buf, 0);
+                    if (display_changed) self.markAllRowsDirty();
+                    changed = display_changed or changed;
                 }
             },
-            .scrollback => self.clearScrollback(),
+            .scrollback => return self.clearScrollback() or changed,
         }
+        return changed;
     }
 
-    fn clearDisplayRowRange(self: *Screen, protected: bool, row: u16, start_col: u16, end_col_exclusive: u16) void {
-        if (protected) {
-            self.selectiveClearRowRange(row, start_col, end_col_exclusive);
-        } else {
-            self.clearRowRange(row, start_col, end_col_exclusive);
+    fn clearDisplayRowRange(self: *Screen, protected: bool, row: u16, start_col: u16, end_col_exclusive: u16) bool {
+        return self.eraseRowRange(row, start_col, end_col_exclusive, protected);
+    }
+
+    fn eraseFullDisplayRow(self: *Screen, row: u16, protected: bool) bool {
+        var changed = self.clearDisplayRowRange(protected, row, 0, self.lineColumnCount(row));
+        changed = self.clearRowContinuation(row) or changed;
+        if (self.lineGeometry(row) != .single_width) {
+            self.resetLineGeometry(row);
+            self.markDirtyRow(row);
+            changed = true;
         }
+        return changed;
+    }
+
+    fn cancelPendingWrap(self: *Screen) bool {
+        const changed = self.wrap_pending;
+        self.wrap_pending = false;
+        return changed;
+    }
+
+    // Row continuation is published metadata, so changing it dirties the complete row.
+    fn clearRowContinuation(self: *Screen, row: u16) bool {
+        if (!self.rowWrapped(row)) return false;
+        self.setRowWrapped(row, false);
+        self.markDirtyRow(row);
+        return true;
     }
 
     /// Sets the hyperlink identity copied into subsequently written cells.
@@ -1546,13 +1575,15 @@ pub const Screen = struct {
         self.cursor.setPositionByClient(row, @min(self.cursor.col, self.lineRightBoundary(row)));
     }
 
-    fn clearScrollback(self: *Screen) void {
-        const allocator = self.allocator orelse return;
+    fn clearScrollback(self: *Screen) bool {
+        const allocator = self.allocator orelse return false;
+        const changed = self.history_count != 0 or self.history_lines.items.len != 0 or self.open_history_line != null;
         self.history_row_base += self.history_count;
         self.clearHistoryAuthority(allocator);
         self.history_count = 0;
         self.history_write_idx = 0;
-        self.markAllRowsDirty();
+        if (changed) self.markAllRowsDirty();
+        return changed;
     }
 
     /// Stores one nonzero host cell-pixel fact for terminal protocol reports.
@@ -1567,37 +1598,41 @@ pub const Screen = struct {
         return self.cell_pixel_size;
     }
 
-    /// Erase the active line range selected by `mode`.
-    fn eraseLine(self: *Screen, mode: EraseMode) void {
-        if (self.cells == null) return;
-        if (self.rows == 0 or self.cols == 0) return;
-        switch (mode) {
-            .cursor_to_end => {
-                const line_cols = self.lineColumnCount(self.cursor.row);
-                self.markDirtyCols(self.cursor.row, self.cursor.col, line_cols -| 1);
-                self.clearRowRange(self.cursor.row, self.cursor.col, line_cols);
-            },
-            .start_to_cursor => {
-                self.markDirtyCols(self.cursor.row, 0, self.cursor.col);
-                self.clearRowRange(self.cursor.row, 0, self.cursor.col + 1);
-            },
-            .all => {
-                self.markDirtyRow(self.cursor.row);
-                self.clearRowRange(self.cursor.row, 0, self.lineColumnCount(self.cursor.row));
-                self.setRowWrapped(self.cursor.row, false);
-            },
-            .scrollback => {},
+    /// Erases one active-line mode, preserving protected cells when `selective` is set.
+    /// Returns whether cells, continuation, or pending wrap changed; it cannot fail.
+    pub fn eraseLine(self: *Screen, mode: EraseMode, selective: bool) bool {
+        var changed = self.cancelPendingWrap();
+        if (self.cells == null) return changed;
+        if (self.rows == 0 or self.cols == 0) return changed;
+        const line_cols = self.lineColumnCount(self.cursor.row);
+        const range: [2]u16 = switch (mode) {
+            .cursor_to_end => .{ self.cursor.col, line_cols },
+            .start_to_cursor => .{ @as(u16, 0), self.cursor.col + 1 },
+            .all => .{ @as(u16, 0), line_cols },
+            .scrollback => return changed,
+        };
+        changed = self.eraseRowRange(self.cursor.row, range[0], range[1], selective) or changed;
+        if (mode == .all or mode == .cursor_to_end) {
+            if (range[1] == line_cols) {
+                changed = self.clearRowContinuation(self.cursor.row) or changed;
+            }
         }
+        return changed;
     }
 
-    /// Erase at least one character from the cursor through the screen edge.
-    pub fn eraseChars(self: *Screen, count: u16) void {
-        if (self.rows == 0 or self.cols == 0) return;
+    /// Erases at least one character through the logical row edge.
+    /// Returns whether cells, continuation, or pending wrap changed; it cannot fail.
+    pub fn eraseChars(self: *Screen, count: u16) bool {
+        var changed = self.cancelPendingWrap();
+        if (self.rows == 0 or self.cols == 0) return changed;
         const line_cols = self.lineColumnCount(self.cursor.row);
-        if (self.cursor.col >= line_cols) return;
+        if (self.cursor.col >= line_cols) return changed;
         const amount = @min(@max(count, 1), line_cols - self.cursor.col);
-        self.markDirtyCols(self.cursor.row, self.cursor.col, self.cursor.col + amount - 1);
-        self.clearRowRange(self.cursor.row, self.cursor.col, self.cursor.col + amount);
+        changed = self.eraseRowRange(self.cursor.row, self.cursor.col, self.cursor.col + amount, false) or changed;
+        if (self.cursor.col + amount == line_cols) {
+            changed = self.clearRowContinuation(self.cursor.row) or changed;
+        }
+        return changed;
     }
 
     /// Change attributes in the clipped rectangle using rectangular or stream extent.
@@ -1616,21 +1651,6 @@ pub const Screen = struct {
                 const idx = row_start + @as(u32, col);
                 applyRectAttrOps(&cells[@intCast(idx)].attrs, attrs, reverse);
             }
-        }
-    }
-
-    /// Erase unprotected cells on the active line according to `mode`.
-    fn selectiveEraseLine(self: *Screen, mode: EraseMode) void {
-        if (self.rows == 0 or self.cols == 0) return;
-        const line_cols = self.lineColumnCount(self.cursor.row);
-        switch (mode) {
-            .cursor_to_end => self.selectiveClearRowRange(self.cursor.row, self.cursor.col, line_cols),
-            .start_to_cursor => self.selectiveClearRowRange(self.cursor.row, 0, self.cursor.col + 1),
-            .all => {
-                self.selectiveClearRowRange(self.cursor.row, 0, line_cols);
-                self.setRowWrapped(self.cursor.row, false);
-            },
-            .scrollback => {},
         }
     }
 
@@ -2493,6 +2513,30 @@ pub const Screen = struct {
             cells[@intCast(start + @as(u32, start_col))..@intCast(start + @as(u32, end_col_exclusive))],
             erase_cell,
         );
+    }
+
+    // Erases one bounded row range and reports exact cell mutation.
+    fn eraseRowRange(
+        self: *Screen,
+        row: u16,
+        start_col: u16,
+        end_col_exclusive: u16,
+        selective: bool,
+    ) bool {
+        const cells = self.cells orelse return false;
+        const start = self.rowStart(row);
+        const erase_cell = self.eraseCell();
+        var changed = false;
+        var col = start_col;
+        while (col < end_col_exclusive) : (col += 1) {
+            const cell = &cells[@intCast(start + @as(u32, col))];
+            if (selective and cell.attrs.protected) continue;
+            if (std.meta.eql(cell.*, erase_cell)) continue;
+            cell.* = erase_cell;
+            self.markDirtyCols(row, col, col);
+            changed = true;
+        }
+        return changed;
     }
 
     /// Fill unprotected cells in an assumed in-bounds row range with the erase cell.
@@ -6929,13 +6973,19 @@ fn keyFormatParamAtOrDefault0(params: []const i32, idx: u8) u8 {
 }
 
 // Maps a numeric erase parameter to the terminal erase domain.
-fn eraseMode(v: i32) ScreenEraseMode {
+fn eraseMode(v: i32) ?ScreenEraseMode {
     return switch (v) {
+        0 => .cursor_to_end,
         1 => .start_to_cursor,
         2 => .all,
         3 => .scrollback,
-        else => .cursor_to_end,
+        else => null,
     };
+}
+
+fn lineEraseMode(v: i32) ?ScreenEraseMode {
+    const mode = eraseMode(v) orelse return null;
+    return if (mode == .scrollback) null else mode;
 }
 
 // Maps DECSCUSR parameters to an explicit cursor-style command.
@@ -7030,8 +7080,10 @@ fn decodeCsi(
             .top = paramAtOrDefault1(params, 0) - 1,
             .bottom = if (params.len >= 2 and params[1] > 0) paramAtOrDefault1(params, 1) - 1 else null,
         } },
-        'J' => return decodeEraseDisplay(eraseMode(paramAtOrDefault0(params, 0)), false),
-        'K' => return SemanticEvent{ .erase_line = eraseMode(paramAtOrDefault0(params, 0)) },
+        'J' => return decodeEraseDisplay(eraseMode(paramAtOrDefault0(params, 0)) orelse return null, false),
+        'K' => return SemanticEvent{
+            .erase_line = lineEraseMode(paramAtOrDefault0(params, 0)) orelse return null,
+        },
         'X' => return SemanticEvent{ .erase_chars = paramAtOrDefault1(params, 0) },
         'x' => {
             if (intermediates.len != 0) return null;
@@ -7107,8 +7159,13 @@ fn directQuery(final: u8, params: []const i32, intermediates: []const u8) ?Seman
     switch (final) {
         'u' => return SemanticEvent.kitty_keyboard_query,
         'g' => return SemanticEvent{ .key_format_query = keyFormatParamAtOrDefault0(params, 0) },
-        'J' => return decodePrivateEraseDisplay(eraseMode(paramAtOrDefault0(params, 0)), true),
-        'K' => return SemanticEvent{ .selective_erase_line = eraseMode(paramAtOrDefault0(params, 0)) },
+        'J' => return decodePrivateEraseDisplay(
+            eraseMode(paramAtOrDefault0(params, 0)) orelse return null,
+            true,
+        ),
+        'K' => return SemanticEvent{
+            .selective_erase_line = lineEraseMode(paramAtOrDefault0(params, 0)) orelse return null,
+        },
         'W' => if (paramAtOrDefault0(params, 0) == 5) return SemanticEvent.reset_default_tab_stops,
         else => {},
     }
@@ -10108,6 +10165,28 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             );
         },
 
+        .erase_display_below => |protected| {
+            return vt.screen_state.active().eraseDisplay(.cursor_to_end, protected);
+        },
+        .erase_display_above => |protected| {
+            return vt.screen_state.active().eraseDisplay(.start_to_cursor, protected);
+        },
+        .erase_display_complete, .erase_display_scroll_complete => |protected| {
+            return vt.screen_state.active().eraseDisplay(.all, protected);
+        },
+        .erase_display_scrollback => |protected| {
+            return vt.screen_state.active().eraseDisplay(.scrollback, protected);
+        },
+        .erase_line => |mode| {
+            return vt.screen_state.active().eraseLine(mode, false);
+        },
+        .selective_erase_line => |mode| {
+            return vt.screen_state.active().eraseLine(mode, true);
+        },
+        .erase_chars => |count| {
+            return vt.screen_state.active().eraseChars(count);
+        },
+
         .cursor_up,
         .cursor_down,
         .cursor_forward,
@@ -10142,14 +10221,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .scroll_up_lines,
         .scroll_down_lines,
         .set_scroll_region,
-        .erase_display_below,
-        .erase_display_above,
-        .erase_display_complete,
-        .erase_display_scrollback,
-        .erase_display_scroll_complete,
-        .erase_line,
-        .selective_erase_line,
-        .erase_chars,
         .shift_left_columns,
         .shift_right_columns,
         .character_protection,

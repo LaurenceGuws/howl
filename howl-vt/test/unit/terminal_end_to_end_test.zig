@@ -27,6 +27,170 @@ test "terminal: stream applies bytes to grid state deterministically" {
     try std.testing.expectEqual(@as(u16, 2), s.cursor.col);
 }
 
+test "terminal: erase families retain exact ranges protection geometry and mutation" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("ABCDEFGH" ++ "I")).state_changed);
+    var screen = terminal.screen_state.active();
+    try std.testing.expect(screen.rowWrapped(0));
+
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[1\"qP\x1b[0\"qqrs")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[48;2;40;44;52m\x1b[2;2H")).state_changed);
+    const cursor_before = screen.cursor;
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b[?0")).state_changed);
+    try std.testing.expect((try terminal.feed("K")).state_changed);
+    try std.testing.expectEqual(cursor_before, screen.cursor);
+    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(1, 0));
+    for (1..8) |col| {
+        const cell = screen.cellInfoAt(1, @intCast(col));
+        try std.testing.expectEqual(@as(u21, 0), cell.codepoint);
+        try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 44, 52), cell.attrs.bg);
+    }
+    const selective_dirty = screen.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 1), selective_dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 1), selective_dirty.end_row);
+    try std.testing.expectEqual(@as(u16, 1), selective_dirty.dirty_cols_start[1]);
+    try std.testing.expectEqual(@as(u16, 7), selective_dirty.dirty_cols_end[1]);
+
+    try std.testing.expect((try terminal.feed("\x1b[2;2Hqr\x1b[2;2H\x1b[?1K")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'r'), screen.cellAt(1, 2));
+    try std.testing.expect((try terminal.feed("\x1b[?2K")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 2));
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b[?2K")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+
+    try std.testing.expect((try terminal.feed("\x1b[2K")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
+    try std.testing.expect(!(try terminal.feed("\x1b[2K")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;4H\x1b[0K")).state_changed);
+    try std.testing.expect(!screen.rowWrapped(0));
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 3));
+
+    try std.testing.expect((try terminal.feed("\x1b[2;1Habc\x1b[2;2H\x1b[1K")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'c'), screen.cellAt(1, 2));
+    try std.testing.expect((try terminal.feed("\x1b[1;1HZ\x1b[2;1Habc\x1b[2;2H\x1b[1J")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'c'), screen.cellAt(1, 2));
+
+    try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#6WXYZ\x1b[3;2H")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(2));
+    const ech_cursor = screen.cursor;
+    try std.testing.expect(!(try terminal.feed("\x1b[999")).state_changed);
+    try std.testing.expect((try terminal.feed("X")).state_changed);
+    try std.testing.expectEqual(ech_cursor, screen.cursor);
+    try std.testing.expectEqual(@as(u21, 'W'), screen.cellAt(2, 0));
+    for (1..4) |col| {
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(2, @intCast(col)));
+    }
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(2));
+    try std.testing.expect((try terminal.feed("Q\x1b[3;2H\x1b[X")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(2, 1));
+    try std.testing.expect(!(try terminal.feed("\x1b[X")).state_changed);
+
+    const invalid_cursor = screen.cursor;
+    try std.testing.expect(!(try terminal.feed("\x1b[9K\x1b[?9K\x1b[9J\x1b[?9J")).state_changed);
+    try std.testing.expectEqual(invalid_cursor, screen.cursor);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b#6L\x1b[2;1Hline\x1b[2;3H\x1b[0J")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(0));
+    try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(2));
+    try std.testing.expectEqual(@as(u21, 'l'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'i'), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 2));
+    try std.testing.expect(!(try terminal.feed("\x1b[0J")).state_changed);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[2J\x1b[1;1H\x1b[1\"qA\x1b[0\"qB" ++
+            "\x1b[2;1H\x1b[1\"qC\x1b[0\"qD\x1b[1;2H\x1b[?0J",
+    )).state_changed);
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expect((try terminal.feed("\x1b[1;2HB\x1b[2;2HD\x1b[2;2H\x1b[?1J")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expect(!(try terminal.feed("\x1b[?2J")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;2HT\x1b[?2J")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
+    try std.testing.expect((try terminal.feed("\x1b[2J")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[2J")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[1\"qS\x1b[0\"qT\x1b[?2J")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'S'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
+    try std.testing.expect((try terminal.feed("\x1b[2J")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[2J")).state_changed);
+
+    try std.testing.expect((try terminal.feed("one\r\ntwo\r\nthree\r\nfour")).state_changed);
+    try std.testing.expect(screen.historyCount() > 0);
+    try std.testing.expect((try terminal.feed("\x1b[3J")).state_changed);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expect(!(try terminal.feed("\x1b[3J")).state_changed);
+    try std.testing.expect((try terminal.feed("five\r\nsix\r\nseven\r\neight")).state_changed);
+    try std.testing.expect(screen.historyCount() > 0);
+    try std.testing.expect((try terminal.feed("\x1b[?3J")).state_changed);
+    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+}
+
+test "terminal: erase mutation owns pending wrap and published continuation" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    const screen = terminal.screen_state.active();
+
+    screen.clearDirtyRows();
+    screen.wrap_pending = true;
+    try std.testing.expect((try terminal.feed("\x1b[0J")).state_changed);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!(try terminal.feed("\x1b[0J")).state_changed);
+
+    screen.wrap_pending = true;
+    try std.testing.expect((try terminal.feed("\x1b[0K")).state_changed);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!(try terminal.feed("\x1b[0K")).state_changed);
+
+    screen.wrap_pending = true;
+    try std.testing.expect((try terminal.feed("\x1b[X")).state_changed);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!(try terminal.feed("\x1b[X")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[1\"qABCDE\x1b[1;1H")).state_changed);
+    try std.testing.expect(screen.rowWrapped(0));
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[?2K")).state_changed);
+    try std.testing.expect(!screen.rowWrapped(0));
+    const dirty = screen.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 0), dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 0), dirty.end_row);
+    try std.testing.expectEqual(@as(u16, 0), dirty.dirty_cols_start[0]);
+    try std.testing.expectEqual(@as(u16, 3), dirty.dirty_cols_end[0]);
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(0, 3));
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b[?2K")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+}
+
 test "terminal: ANSI insert and newline modes retain exact global lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
