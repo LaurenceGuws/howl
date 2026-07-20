@@ -10160,8 +10160,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
     switch (event) {
         .hard_reset => vt.hardReset(),
         .soft_reset => return vt.softReset(),
-        .save_cursor => vt.saveCursor(),
-        .restore_cursor => vt.restoreCursor(),
+        .save_cursor => return vt.saveCursor(),
+        .restore_cursor => return vt.restoreCursor(),
         .enter_alt_screen => |opts| {
             return vt.switchScreenMode(true, opts.clear, opts.save_cursor);
         },
@@ -11187,7 +11187,7 @@ pub const Terminal = struct {
         self.screen_state.reset();
         self.screen_state.primary.insert_mode = false;
         self.screen_state.alternate.insert_mode = false;
-        self.modes.newline_mode = false;
+        self.modes = .{};
         self.primary_savepoint.clear();
         self.alternate_savepoint.clear();
         self.gl_index = 0;
@@ -11250,11 +11250,20 @@ pub const Terminal = struct {
         return true;
     }
 
-    /// Saves cursor, charset, origin, and wrap state into the active screen slot.
-    pub fn saveCursor(self: *Terminal) void {
-        const active = self.screen_state.activeConst();
+    /// Saves cursor, rendition, charset, origin, and wrap state into the active screen slot.
+    ///
+    /// The result reports whether the bank-local savepoint changed.
+    pub fn saveCursor(self: *Terminal) bool {
+        const next = self.captureSavepoint();
         const savepoint = self.activeSavepoint();
-        savepoint.* = .{
+        if (std.meta.eql(savepoint.*, next)) return false;
+        savepoint.* = next;
+        return true;
+    }
+
+    fn captureSavepoint(self: *const Terminal) Savepoint {
+        const active = self.screen_state.activeConst();
+        return .{
             .valid = true,
             .cursor = .{
                 .row = active.cursor.row,
@@ -11265,14 +11274,43 @@ pub const Terminal = struct {
             .reverse_screen_mode = self.modes.reverse_screen_mode,
             .origin_mode = active.origin_mode,
             .auto_wrap = active.auto_wrap,
+            .wrap_pending = active.wrap_pending,
             .gl_index = self.gl_index,
             .gr_index = self.gr_index,
             .designations = self.designations,
         };
     }
 
-    /// Restores the active screen savepoint and clamps position to current bounds.
-    pub fn restoreCursor(self: *Terminal) void {
+    /// Restores the active bank savepoint and reports exact retained-state mutation.
+    ///
+    /// Position is clamped to current dimensions and a saved pending wrap survives
+    /// only when the restored position remains at the active right boundary.
+    pub fn restoreCursor(self: *Terminal) bool {
+        const active = self.screen_state.active();
+        const cursor_before = active.cursor;
+        const attrs_before = active.current_attrs;
+        const wrap_pending_before = active.wrap_pending;
+        const auto_wrap_before = active.auto_wrap;
+        const origin_before = active.origin_mode;
+        const reverse_before = self.modes.reverse_screen_mode;
+        const gl_before = self.gl_index;
+        const gr_before = self.gr_index;
+        const single_shift_before = self.single_shift;
+        const designations_before = self.designations;
+
+        self.restoreCursorState();
+        return !std.meta.eql(cursor_before, active.cursor) or
+            !std.meta.eql(attrs_before, active.current_attrs) or
+            wrap_pending_before != active.wrap_pending or
+            auto_wrap_before != active.auto_wrap or
+            origin_before != active.origin_mode or
+            reverse_before != self.modes.reverse_screen_mode or
+            gl_before != self.gl_index or gr_before != self.gr_index or
+            single_shift_before != self.single_shift or
+            !std.mem.eql(u8, designations_before[0..], self.designations[0..]);
+    }
+
+    fn restoreCursorState(self: *Terminal) void {
         const active = self.screen_state.active();
         const savepoint = self.activeSavepointConst();
         active.wrap_pending = false;
@@ -11293,6 +11331,7 @@ pub const Terminal = struct {
         active.current_attrs = savepoint.current_attrs;
         active.cursor.restoreSavedStyle(savepoint.cursor.style);
         restoreCursorPosition(active, savepoint.cursor.row, savepoint.cursor.col);
+        active.wrap_pending = savepoint.wrap_pending and active.cursor.col == active.rightBoundary();
         self.gl_index = savepoint.gl_index;
         self.gr_index = savepoint.gr_index;
         self.single_shift = null;
@@ -11303,7 +11342,7 @@ pub const Terminal = struct {
     pub fn switchScreenMode(self: *Terminal, enable_alt: bool, clear_alt: bool, save_restore_cursor: bool) bool {
         if (enable_alt) {
             if (self.screen_state.alt_active) return false;
-            if (save_restore_cursor) self.saveCursor();
+            if (save_restore_cursor) self.activeSavepoint().* = self.captureSavepoint();
             self.screen_state.alt_active = true;
             self.scrollback_offset = 0;
             self.screen_state.activeSelection().clear();
@@ -11317,7 +11356,7 @@ pub const Terminal = struct {
         self.screen_state.alt_active = false;
         self.clampScrollbackOffset();
         self.screen_state.activeSelection().clear();
-        if (save_restore_cursor) self.restoreCursor();
+        if (save_restore_cursor) self.restoreCursorState();
         self.screen_state.primary.markAllRowsDirty();
         return true;
     }
@@ -12204,7 +12243,7 @@ const CursorSavepoint = struct {
     style: Screen.CursorStyle = Screen.default_cursor_style,
 };
 
-// Stores cursor, charset, origin, and wrap state for one terminal save slot.
+// Stores cursor, rendition, charset, origin, and wrap state for one screen-bank save slot.
 const Savepoint = struct {
     valid: bool = false,
     cursor: CursorSavepoint = .{},
@@ -12212,6 +12251,7 @@ const Savepoint = struct {
     reverse_screen_mode: bool = false,
     origin_mode: bool = false,
     auto_wrap: bool = true,
+    wrap_pending: bool = false,
     gl_index: u8 = 0,
     gr_index: u8 = 1,
     designations: [4]u8 = .{ 'B', 'B', 'B', 'B' },

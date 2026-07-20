@@ -61,6 +61,78 @@ test "terminal: REP retains bounded glyph state and exact lifetime" {
     try std.testing.expect(!(try terminal.feed("\x1b[b")).state_changed);
 }
 
+test "terminal: cursor savepoints retain exact bank reset and resize state" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b8")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[31;1m\x1b)0\x0e\x1b[?5h\x1b[3;4H")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b8")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(terminal.screen_state.activeConst().current_attrs.bold);
+    try std.testing.expectEqual(
+        Terminal.Color.indexed(1),
+        terminal.screen_state.activeConst().current_attrs.fg,
+    );
+    try std.testing.expect(!terminal.modes.reverse_screen_mode);
+    try std.testing.expectEqual(@as(u8, 0), terminal.gl_index);
+    try std.testing.expectEqual([4]u8{ 'B', 'B', 'B', 'B' }, terminal.designations);
+    try std.testing.expect((try terminal.feed(
+        "\x1b[31;1;3m" ++
+            "\x1b[1\"q" ++
+            "\x1b)0\x0e" ++
+            "\x1b[?5h\x1b[?6h\x1b[?7h" ++
+            "\x1b[2;8HZ",
+    )).state_changed);
+    try std.testing.expect(terminal.screen_state.activeConst().wrap_pending);
+    try std.testing.expect(!(try terminal.feed("\x1b")).state_changed);
+    try std.testing.expect((try terminal.feed("7")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b7")).state_changed);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[0m\x1b[0\"q\x0f\x1b[?5l\x1b[?6l\x1b[?7l\x1b[1;1H",
+    )).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
+    try std.testing.expect((try terminal.feed("u")).state_changed);
+
+    const primary = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u16, 1), primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 7), primary.cursor.col);
+    try std.testing.expect(primary.wrap_pending);
+    try std.testing.expect(primary.auto_wrap);
+    try std.testing.expect(primary.origin_mode);
+    try std.testing.expect(terminal.modes.reverse_screen_mode);
+    try std.testing.expect(primary.current_attrs.bold);
+    try std.testing.expect(primary.current_attrs.italic);
+    try std.testing.expect(primary.current_attrs.protected);
+    try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
+    try std.testing.expectEqual(@as(u8, '0'), terminal.designations[1]);
+    try std.testing.expect(!(try terminal.feed("\x1b[s")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[u")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?47hB\x1b[s\x1b[1;4HC\x1b[u")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expectEqual(@as(u16, 7), terminal.screen_state.activeConst().cursor.col);
+
+    try terminal.resize(4, 5);
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[u")).state_changed);
+    try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(terminal.screen_state.activeConst().wrap_pending);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1;1000;1004;1006;2004h\x1b[2;4;20h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect(!terminal.modes.application_cursor_keys);
+    try std.testing.expect(!terminal.modes.focus_reporting);
+    try std.testing.expect(!terminal.modes.bracketed_paste);
+    try std.testing.expect(terminal.modes.mouse_tracking == .off);
+    try std.testing.expect(terminal.modes.mouse_protocol == .none);
+    try std.testing.expect(!terminal.modes.keyboard_action_mode);
+    try std.testing.expect(!terminal.modes.newline_mode);
+    try std.testing.expect(!(try terminal.feed("\x1b8")).state_changed);
+}
+
 test "terminal: erase families retain exact ranges protection geometry and mutation" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
     defer terminal.deinit();

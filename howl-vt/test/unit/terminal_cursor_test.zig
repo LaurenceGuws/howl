@@ -91,7 +91,7 @@ test "terminal cursor: savepoint restores Kitty cursor payload and leaves visibi
     terminal.gl_index = 1;
     terminal.designations[0] = '0';
     terminal.designations[1] = 'A';
-    terminal.saveCursor();
+    try std.testing.expect(terminal.saveCursor());
 
     active_screen.cursor.setPositionByClient(0, 0);
     active_screen.cursor.setProgramStyle(.{ .shape = .block, .blink = true });
@@ -106,7 +106,7 @@ test "terminal cursor: savepoint restores Kitty cursor payload and leaves visibi
     terminal.designations[0] = 'B';
     terminal.designations[1] = 'B';
 
-    terminal.restoreCursor();
+    try std.testing.expect(terminal.restoreCursor());
 
     try std.testing.expectEqual(@as(u16, 2), active(&terminal).cursor.row);
     try std.testing.expectEqual(@as(u16, 5), active(&terminal).cursor.col);
