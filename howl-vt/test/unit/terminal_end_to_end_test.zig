@@ -243,6 +243,159 @@ test "terminal: CSI cursor positioning shares parameter, margin, and origin boun
     try std.testing.expectEqual(@as(u16, 3), cursor.col);
 }
 
+test "terminal: DEC margins bound rectangles and reject inverted coordinates" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 5, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b[1;1HABCDEFGH\x1b[2;1HIJKLMNOP\x1b[3;1HQRSTUVWX" ++
+            "\x1b[4;1HYZabcdef\x1b[5;1Hghijklmn",
+    )).history_lost);
+    try std.testing.expect(!(try terminal.feed("\x1b[3;3H\x1b[1\"qP\x1b[2\"q")).history_lost);
+    try std.testing.expect(!(try terminal.feed("\x1b[2;4r\x1b[?69h\x1b[2;7s\x1b[?6h")).history_lost);
+
+    const screen = terminal.screen_state.active();
+    try std.testing.expectEqual(@as(u16, 1), screen.scroll_top);
+    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
+    try std.testing.expectEqual(@as(u16, 1), screen.left_margin);
+    try std.testing.expectEqual(@as(u16, 6), screen.right_margin);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[4;2r\x1b[999;999r\x1b[7;2s\x1b[999;999s")).history_lost);
+    try std.testing.expectEqual(@as(u16, 1), screen.scroll_top);
+    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
+    try std.testing.expectEqual(@as(u16, 1), screen.left_margin);
+    try std.testing.expectEqual(@as(u16, 6), screen.right_margin);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[r")).history_lost);
+    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
+    try std.testing.expectEqual(@as(u16, 4), screen.scroll_bottom);
+    try std.testing.expect(!(try terminal.feed("\x1b[0;0s")).history_lost);
+    try std.testing.expectEqual(@as(u16, 0), screen.left_margin);
+    try std.testing.expectEqual(@as(u16, 7), screen.right_margin);
+    try std.testing.expect(!(try terminal.feed("\x1b[2;4r\x1b[2;7s\x1b[2;3H")).history_lost);
+
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[1;1;2;2${")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(2, 2));
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    const selective_dirty = screen.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 1), selective_dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 2), selective_dirty.end_row);
+    for (1..3) |row| {
+        try std.testing.expectEqual(@as(u16, 1), selective_dirty.dirty_cols_start[row]);
+        try std.testing.expectEqual(@as(u16, 2), selective_dirty.dirty_cols_end[row]);
+    }
+
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b[999;999;998;998$z")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(2, 2));
+
+    try std.testing.expect(!(try terminal.feed("\x1b[48;2;40;44;52m")).history_lost);
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[88;0;0;999;999$x")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'X'), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'X'), screen.cellAt(3, 6));
+    try std.testing.expectEqual(@as(u21, 'I'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 44, 52), screen.cellInfoAt(1, 1).attrs.bg);
+    const fill_dirty = screen.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 1), fill_dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 3), fill_dirty.end_row);
+    for (1..4) |row| {
+        try std.testing.expectEqual(@as(u16, 1), fill_dirty.dirty_cols_start[row]);
+        try std.testing.expectEqual(@as(u16, 6), fill_dirty.dirty_cols_end[row]);
+    }
+
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[$z")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 6));
+    try std.testing.expectEqual(@as(u21, 'I'), screen.cellAt(1, 0));
+    try std.testing.expect((try terminal.feed("\x1b[2*x")).state_changed);
+    try std.testing.expect(screen.attr_change_extent_rect);
+    try std.testing.expect(!(try terminal.feed("\x1b[3*x")).history_lost);
+    try std.testing.expect(screen.attr_change_extent_rect);
+    try std.testing.expect((try terminal.feed("\x1b[0*x")).state_changed);
+    try std.testing.expect(!screen.attr_change_extent_rect);
+
+    try terminal.resize(4, 6);
+    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
+    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
+    try std.testing.expect(!screen.left_right_margin_mode);
+    try std.testing.expectEqual(@as(u16, 0), screen.left_margin);
+    try std.testing.expectEqual(@as(u16, 5), screen.right_margin);
+    try std.testing.expect(!(try terminal.feed("\x1b[2;3r\x1b[?69h\x1b[2;5s")).history_lost);
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
+    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
+    try std.testing.expect(!screen.left_right_margin_mode);
+}
+
+test "terminal: DECCRA preserves cursor and overlapping source bytes" {
+    const allocator = std.testing.allocator;
+    {
+        var terminal = try Terminal.init(allocator, 4, 6);
+        defer terminal.deinit();
+
+        try std.testing.expect(!(try terminal.feed(
+            "\x1b[1;1HABCDEF\x1b[2;1HGHIJKL\x1b[3;1HMNOPQR\x1b[4;1HSTUVWX\x1b[4;6H",
+        )).history_lost);
+        const screen = terminal.screen_state.active();
+        screen.clearDirtyRows();
+        try std.testing.expect((try terminal.feed("\x1b[1;1;2;3;1;2;2;1$v")).state_changed);
+        try std.testing.expectEqual(@as(u16, 3), screen.cursor.row);
+        try std.testing.expectEqual(@as(u16, 5), screen.cursor.col);
+        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(1, 3));
+        try std.testing.expectEqual(@as(u21, 'G'), screen.cellAt(2, 1));
+        try std.testing.expectEqual(@as(u21, 'I'), screen.cellAt(2, 3));
+        const dirty = screen.peekDirtyRows().?;
+        try std.testing.expectEqual(@as(u16, 1), dirty.start_row);
+        try std.testing.expectEqual(@as(u16, 2), dirty.end_row);
+        for (1..3) |row| {
+            try std.testing.expectEqual(@as(u16, 1), dirty.dirty_cols_start[row]);
+            try std.testing.expectEqual(@as(u16, 3), dirty.dirty_cols_end[row]);
+        }
+    }
+
+    {
+        var terminal = try Terminal.init(allocator, 5, 8);
+        defer terminal.deinit();
+
+        try std.testing.expect(!(try terminal.feed(
+            "abcdefgh\r\nABCDEFGH\r\nIJKLMNOP\r\nQRSTUVWX\r\nyz012345" ++
+                "\x1b[2;4r\x1b[?69h\x1b[2;7s\x1b[?6h\x1b[3;6H",
+        )).history_lost);
+        const screen = terminal.screen_state.active();
+        screen.clearDirtyRows();
+        try std.testing.expect((try terminal.feed("\x1b[1;1;3;3;1;2;5;1$v")).state_changed);
+
+        try std.testing.expectEqual(@as(u16, 3), screen.cursor.row);
+        try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
+        try std.testing.expectEqual(@as(u21, 'M'), screen.cellAt(2, 4));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 5));
+        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 6));
+        try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(2, 7));
+        try std.testing.expectEqual(@as(u21, 'J'), screen.cellAt(3, 5));
+        try std.testing.expectEqual(@as(u21, 'K'), screen.cellAt(3, 6));
+        try std.testing.expectEqual(@as(u21, '3'), screen.cellAt(4, 5));
+        const dirty = screen.peekDirtyRows().?;
+        try std.testing.expectEqual(@as(u16, 2), dirty.start_row);
+        try std.testing.expectEqual(@as(u16, 3), dirty.end_row);
+        for (2..4) |row| {
+            try std.testing.expectEqual(@as(u16, 5), dirty.dirty_cols_start[row]);
+            try std.testing.expectEqual(@as(u16, 6), dirty.dirty_cols_end[row]);
+        }
+    }
+}
+
 test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
     const allocator = std.testing.allocator;
 

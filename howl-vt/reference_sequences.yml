@@ -258,9 +258,15 @@ references:
           - {id: libvterm.csi.decsca, raw: "CSI [Ps=0] \" q", effect: set character protection, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: processQuote}}
           - {id: libvterm.csi.decstbm, raw: "CSI [top=1] ; [bottom] r", effect: set vertical margins,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: libvterm resets invalid regions to full screen while Howl preserves the prior region,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: setScrollRegion, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: libvterm.csi.decslrm, raw: "CSI [left=1] ; [right] s", effect: set horizontal margins,
-            conditions: DECLRMM, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: libvterm stores margins before DECLRMM while Howl applies them only when enabled,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: setLeftRightMargins, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: libvterm.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: processTick}}
           - {id: libvterm.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns, howl: {status: partial,
@@ -582,7 +588,9 @@ references:
           - {id: iterm2.csi.da, raw: "CSI [Ps=0] c", effect: device attributes report, relevance: query,
             howl: {status: partial}}
           - {id: iterm2.csi.decstbm, raw: "CSI [top=1] ; [bottom] r", effect: set vertical margins,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: setScrollRegion, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: iterm2.csi.dsr, raw: "CSI [Ps=0] n", effect: status or cursor report, relevance: query,
             howl: {status: partial}}
           - {id: iterm2.csi.ed, raw: "CSI [Ps=0] J", effect: erase display, howl: {status: partial}}
@@ -638,7 +646,8 @@ references:
           - {id: iterm2.csi.media_copy, raw: "CSI [Ps=0] i", effect: media copy request, relevance: host consequence,
             howl: {status: partial}}
           - {id: iterm2.csi.save_or_margins, raw: "CSI Pm s", effect: save cursor or set horizontal margins,
-            conditions: parameter and DECLRMM dependent, howl: {status: partial}}
+            conditions: iTerm2 treats parameterless CSI s as DECSLRM under DECLRMM while Howl saves the cursor,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: iterm2.csi.restore_cursor, raw: "CSI u", effect: restore cursor, howl: {status: partial}}
           - {id: iterm2.csi.decset, raw: "CSI ? Pm h", effect: set DEC modes, howl: {status: partial}}
           - {id: iterm2.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC modes, howl: {status: partial}}
@@ -650,18 +659,36 @@ references:
           - {id: iterm2.csi.decsca, raw: "CSI [Ps=0] \" q", effect: select character protection,
             howl: {status: partial}}
           - {id: iterm2.csi.deccara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ r", effect: change rectangle attributes,
-            howl: {status: partial}}
+            conditions: wide and multicell boundary repair remains unproved,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: changeRectAttrs, proof: {
+              path: howl-vt/test/unit/screen_test.zig, symbol: "screen: DECCARA stream mode spans full middle rows"}}}
           - {id: iterm2.csi.decrara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ t", effect: reverse rectangle attributes,
-            howl: {status: partial}}
+            conditions: wide and multicell boundary repair remains unproved,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: changeRectAttrs, proof: {
+              path: howl-vt/test/unit/screen_test.zig, symbol: "screen: DECRARA toggles supported attrs"}}}
           - {id: iterm2.csi.decsace, raw: "CSI [Ps=0] * x", effect: set rectangle attribute extent,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: processStar, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: iterm2.csi.deccra, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt2 ; Pl2 ; Pp2 $ v", effect: copy rectangle,
-            howl: {status: partial}}
+            conditions: "iTerm2 keeps destination page-relative while Howl resolves it against DECOM origin;
+              clipped wide and multicell boundary repair remains unproved",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: copyRect, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DECCRA preserves cursor and overlapping source bytes"}}}
           - {id: iterm2.csi.decfra, raw: "CSI Pc ; Pt ; Pl ; Pb ; Pr $ x", effect: fill rectangle,
-            howl: {status: partial}}
-          - {id: iterm2.csi.decera, raw: "CSI Pt ; Pl ; Pb ; Pr $ z", effect: erase rectangle, howl: {status: partial}}
+            conditions: iTerm2 maps Pc through active line drawing and applies only current colors,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: fillRect, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
+          - {id: iterm2.csi.decera, raw: "CSI Pt ; Pl ; Pb ; Pr $ z", effect: erase rectangle,
+            conditions: iTerm2 erases with its grid default cell while Howl uses current erase attributes,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: eraseRect}}
           - {id: iterm2.csi.decsera, raw: "CSI Pt ; Pl ; Pb ; Pr $ {", effect: selective erase rectangle,
-            howl: {status: partial}}
+            conditions: iTerm2 preserves cell attributes while Howl applies current erase attributes,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: eraseRect, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: iterm2.csi.decsed, raw: "CSI ? [Ps=0] J", effect: selective erase display, howl: {status: partial}}
           - {id: iterm2.csi.decsel, raw: "CSI ? [Ps=0] K", effect: selective erase line, howl: {status: partial}}
           - {id: iterm2.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {status: partial}}
@@ -1304,11 +1331,17 @@ references:
           - {id: kitty.csi.kitty_push, raw: "CSI > [flags=0] u", effect: push keyboard flags, howl: {status: partial}}
           - {id: kitty.csi.kitty_pop, raw: "CSI < [count=1] u", effect: pop keyboard flags, howl: {status: partial}}
           - {id: kitty.csi.decstbm, raw: "CSI [top] ; [bottom] r", effect: set vertical margins,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: setScrollRegion, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: kitty.csi.restore_modes, raw: "CSI ? Pm r", effect: restore DEC modes, howl: {status: partial}}
-          - {id: kitty.csi.report_sgr, raw: "CSI Pm $ r", effect: report rectangle rendition, howl: {status: partial}}
+          - {id: kitty.csi.deccara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ r",
+            effect: change rectangle rendition,
+            conditions: Kitty supports full SGR colors and subparameters while Howl supports bounded basic attributes,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: changeRectAttrs}}
           - {id: kitty.csi.decsace, raw: "CSI [Ps=0] * x", effect: set rectangle attribute extent,
-            howl: {status: partial}}
+            conditions: Kitty maps every value other than 2 to stream mode while Howl ignores values above 2,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: processStar}}
           - {id: kitty.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style, howl: {status: partial}}
           - {id: kitty.csi.multi_cursor, raw: "CSI > Pm SP q", effect: set multiple cursor shapes, relevance: extension,
             howl: {status: partial}}

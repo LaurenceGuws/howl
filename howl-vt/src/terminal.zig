@@ -1521,7 +1521,7 @@ pub const Screen = struct {
         const cells = self.cells orelse return;
         if (attrs.len == 0) return;
         const bounds = self.rectBounds(area) orelse return;
-        self.markDirtyRows(bounds.top, bounds.bottom);
+        self.markDirtyRect(bounds);
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
             const row_start = self.rowStart(row);
@@ -1552,7 +1552,7 @@ pub const Screen = struct {
     /// Erase a clipped rectangle, optionally preserving protected cells.
     fn eraseRect(self: *Screen, area: RectArea, selective: bool) void {
         const bounds = self.rectBounds(area) orelse return;
-        self.markDirtyRows(bounds.top, bounds.bottom);
+        self.markDirtyRect(bounds);
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
             if (selective) {
@@ -1568,7 +1568,7 @@ pub const Screen = struct {
     fn fillRect(self: *Screen, area: RectArea, codepoint: u21) void {
         const cells = self.cells orelse return;
         const bounds = self.rectBounds(area) orelse return;
-        self.markDirtyRows(bounds.top, bounds.bottom);
+        self.markDirtyRect(bounds);
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
             const start = self.rowStart(row);
@@ -1586,18 +1586,23 @@ pub const Screen = struct {
         const cells = self.cells orelse return;
         if (request.source_page != 1 or request.dest_page != 1) return;
         const source = self.rectBounds(request.area) orelse return;
-        const row_base: u16 = if (self.origin_mode) self.scroll_top else 0;
-        const row_limit: u16 = if (self.origin_mode) self.scrollBottom() else self.rows -| 1;
-        const dest_top = row_base + @min(request.dest_top, row_limit -| row_base);
-        const dest_left = @min(request.dest_left, self.cols -| 1);
+        const origin = self.activeOriginBounds();
+        const dest_top = origin.top + @min(request.dest_top, origin.bottom - origin.top);
+        const dest_left = origin.left + @min(request.dest_left, origin.right - origin.left);
         const height: u16 = source.bottom - source.top + 1;
         const width: u16 = source.right - source.left + 1;
-        if (dest_top >= self.rows or dest_left >= self.cols) return;
-        const copy_height = @min(height, self.rows - dest_top);
-        const copy_width = @min(width, self.cols - dest_left);
+        const copy_height = @min(height, origin.bottom - dest_top + 1);
+        const copy_width = @min(width, origin.right - dest_left + 1);
         if (copy_height == 0 or copy_width == 0) return;
 
-        self.markDirtyRows(dest_top, dest_top + copy_height - 1);
+        const dest_bottom = dest_top + copy_height - 1;
+        const dest_right = dest_left + copy_width - 1;
+        self.markDirtyRect(.{
+            .top = dest_top,
+            .left = dest_left,
+            .bottom = dest_bottom,
+            .right = dest_right,
+        });
         var copied_rows: u16 = 0;
         while (copied_rows < copy_height) : (copied_rows += 1) {
             const row = if (dest_top > source.top) copy_height - copied_rows - 1 else copied_rows;
@@ -2122,6 +2127,8 @@ pub const Screen = struct {
     /// Set ordered horizontal margins and home the cursor after a valid change.
     fn setLeftRightMargins(self: *Screen, left: u16, right: ?u16) void {
         if (!self.left_right_margin_mode or self.cols < 2) return;
+        if (left >= self.cols - 1) return;
+        if (right) |value| if (left >= value) return;
         const new_left = @min(left, self.cols - 2);
         const new_right = if (right) |value| @min(value, self.cols - 1) else self.cols - 1;
         if (new_left >= new_right) return;
@@ -2309,18 +2316,38 @@ pub const Screen = struct {
         }
     }
 
-    /// Clamps a protocol rectangle to this screen, returning null when empty.
+    /// Reject an inverted rectangle, then clamp it to the active origin bounds.
     pub fn rectBounds(self: *const Screen, area: RectArea) ?RectBounds {
         if (self.rows == 0 or self.cols == 0) return null;
-        const row_base: u16 = if (self.origin_mode) self.scroll_top else 0;
-        const row_limit: u16 = if (self.origin_mode) self.scrollBottom() else self.rows - 1;
-        const row_span = row_limit -| row_base;
-        const top = row_base + @min(area.top, row_span);
-        const bottom = row_base + @min(area.bottom orelse row_span, row_span);
-        const left = @min(area.left, self.cols - 1);
-        const right = @min(area.right orelse self.cols - 1, self.cols - 1);
+        if (area.bottom) |bottom| if (area.top > bottom) return null;
+        if (area.right) |right| if (area.left > right) return null;
+        const origin = self.activeOriginBounds();
+        const row_span = origin.bottom - origin.top;
+        const col_span = origin.right - origin.left;
+        const top = origin.top + @min(area.top, row_span);
+        const bottom = origin.top + @min(area.bottom orelse row_span, row_span);
+        const left = origin.left + @min(area.left, col_span);
+        const right = origin.left + @min(area.right orelse col_span, col_span);
         if (top > bottom or left > right) return null;
         return .{ .top = top, .left = left, .bottom = bottom, .right = right };
+    }
+
+    // Returns the page bounds used to resolve origin-relative rectangle coordinates.
+    fn activeOriginBounds(self: *const Screen) RectBounds {
+        std.debug.assert(self.rows > 0 and self.cols > 0);
+        const horizontal = self.origin_mode and self.left_right_margin_mode;
+        return .{
+            .top = if (self.origin_mode) self.scroll_top else 0,
+            .left = if (horizontal) self.left_margin else 0,
+            .bottom = if (self.origin_mode) self.scrollBottom() else self.rows - 1,
+            .right = if (horizontal) self.right_margin else self.cols - 1,
+        };
+    }
+
+    fn markDirtyRect(self: *Screen, bounds: RectBounds) void {
+        var row = bounds.top;
+        while (row <= bounds.bottom) : (row += 1)
+            self.markDirtyCols(row, bounds.left, bounds.right);
     }
 
     /// Construct an empty cell carrying the current erase attributes.
@@ -6017,8 +6044,8 @@ fn processDollar(final: u8, params: []const i32) ?SemanticEvent {
         't' => rectAttrsChange(params, true),
         'v' => rectCopy(params),
         'x' => rectFill(params),
-        'z' => SemanticEvent{ .rect_erase = rectArea(params, 0) },
-        '{' => SemanticEvent{ .rect_selective_erase = rectArea(params, 0) },
+        'z' => rectErase(params, false),
+        '{' => rectErase(params, true),
         else => null,
     };
 }
@@ -6032,10 +6059,11 @@ fn processStar(final: u8, params: []const i32) ?SemanticEvent {
         };
     }
     if (final != 'y') return null;
+    const area = rectArea(params, 2) orelse return null;
     return SemanticEvent{ .rect_checksum_request = .{
         .request_id = paramAtOrDefault0(params, 0),
         .page = paramAtOrDefault1(params, 1),
-        .area = rectArea(params, 2),
+        .area = area,
     } };
 }
 
@@ -6053,7 +6081,10 @@ fn processHash(final: u8, params: []const i32) ?SemanticEvent {
         'S' => SemanticEvent.xttitlepos,
         'y' => SemanticEvent{ .xtchecksum = paramAtOrDefault0(params, 0) },
         'R' => SemanticEvent.xtreportcolors,
-        '|' => SemanticEvent{ .selected_graphic_rendition_report = rectArea(params, 0) },
+        '|' => if (rectArea(params, 0)) |area|
+            SemanticEvent{ .selected_graphic_rendition_report = area }
+        else
+            null,
         else => null,
     };
 }
@@ -6081,17 +6112,20 @@ fn processSpace(final: u8, params: []const i32) ?SemanticEvent {
     };
 }
 
-fn rectAttrsChange(params: []const i32, reverse: bool) SemanticEvent {
+fn rectAttrsChange(params: []const i32, reverse: bool) ?SemanticEvent {
+    if (params.len < 5) return null;
+    const area = rectArea(params, 0) orelse return null;
     return .{ .rect_attrs_change = .{
-        .area = rectArea(params, 0),
+        .area = area,
         .attrs = attrParams(params, 4),
         .reverse = reverse,
     } };
 }
 
-fn rectCopy(params: []const i32) SemanticEvent {
+fn rectCopy(params: []const i32) ?SemanticEvent {
+    const area = rectArea(params, 0) orelse return null;
     return .{ .rect_copy = .{
-        .area = rectArea(params, 0),
+        .area = area,
         .source_page = paramAtOrDefault1(params, 4),
         .dest_top = paramAtOrDefault1(params, 5) - 1,
         .dest_left = paramAtOrDefault1(params, 6) - 1,
@@ -6102,7 +6136,16 @@ fn rectCopy(params: []const i32) SemanticEvent {
 fn rectFill(params: []const i32) ?SemanticEvent {
     const ch = paramAtOrDefault0(params, 0);
     if (!isValidRectFillChar(ch)) return null;
-    return .{ .rect_fill = .{ .area = rectArea(params, 1), .ch = ch } };
+    const area = rectArea(params, 1) orelse return null;
+    return .{ .rect_fill = .{ .area = area, .ch = ch } };
+}
+
+fn rectErase(params: []const i32, selective: bool) ?SemanticEvent {
+    const area = rectArea(params, 0) orelse return null;
+    return if (selective)
+        SemanticEvent{ .rect_selective_erase = area }
+    else
+        SemanticEvent{ .rect_erase = area };
 }
 
 // Decodes one leader-qualified CSI sequence; unsupported forms return null.
@@ -6193,16 +6236,19 @@ fn optionalRectArea(params: []const i32) OptionalRectArea {
     };
 }
 
-// Projects a parameter suffix into a zero-based rectangle with open bottom and right defaults.
-fn rectArea(params: []const i32, start_idx: u8) RectArea {
+// Projects a parameter suffix into an ordered zero-based rectangle with open lower defaults.
+fn rectArea(params: []const i32, start_idx: u8) ?RectArea {
     const start = @as(u32, start_idx);
     const param_len = paramCount32(params);
-    return .{
+    const area: RectArea = .{
         .top = if (param_len > start) paramOrDefault1(params[@intCast(start)]) - 1 else 0,
         .left = if (param_len > start + 1) paramOrDefault1(params[@intCast(start + 1)]) - 1 else 0,
         .bottom = if (param_len > start + 2) paramOrDefault1(params[@intCast(start + 2)]) - 1 else null,
         .right = if (param_len > start + 3) paramOrDefault1(params[@intCast(start + 3)]) - 1 else null,
     };
+    if (area.bottom) |bottom| if (area.top > bottom) return null;
+    if (area.right) |right| if (area.left > right) return null;
+    return area;
 }
 
 // Copies a bounded parameter suffix into rectangular attribute storage.
