@@ -142,7 +142,7 @@ test "csi mapping: positioning, tab, erase, and reset semantics" {
     try std.testing.expectEqual(@as(u16, 0), process(makeStyleChange('H', 0, 0, 0)).?.cursor_position.row);
     try std.testing.expectEqual(@as(u16, 0), process(makeStyleChange('H', 0, 0, 0)).?.cursor_position.col);
     try std.testing.expectEqual(@as(?SemanticEvent, null), process(makeStyleChange('Y', 1, 0, 1)));
-    try std.testing.expect(process(makeStyleChangeWithIntermediate('p', '!')).? == .reset_screen);
+    try std.testing.expect(process(makeStyleChangeWithIntermediate('p', '!')).? == .soft_reset);
     try std.testing.expect(process(makeStyleChange('g', 0, 0, 0)).? == .tab_clear_current);
     try std.testing.expect(process(makeStyleChange('g', 3, 0, 1)).? == .tab_clear_all);
     try std.testing.expect(process(makeStyleChange('g', 5, 0, 1)).? == .tab_clear_all);

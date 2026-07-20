@@ -181,8 +181,10 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: application keypad modes affect keypad encoding and DECRQM}}}
-          - {id: libvterm.esc.ris, raw: "ESC c", effect: hard terminal reset, relevance: core, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: escProcess}}
+          - {id: libvterm.esc.ris, raw: "ESC c", effect: hard terminal reset, relevance: core,
+            conditions: libvterm resets the active state and erases its grid; Howl retains broader host facts,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: hardReset, proof: {
+              path: howl-vt/test/unit/terminal_test.zig, symbol: "terminal RIS delegates hard-reset owners"}}}
           - {id: libvterm.esc.ls2, raw: "ESC n", effect: select G2 into GL, relevance: charset, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: selectGl, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -331,8 +333,11 @@ references:
           - {id: libvterm.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: DEC status report, relevance: query,
             conditions: libvterm prefixes status 5 and CPR replies and can report host theme state,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
-          - {id: libvterm.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeCsiIntermediate}}
+          - {id: libvterm.csi.decstr, raw: "CSI ! p", effect: soft reset,
+            conditions: libvterm also exits alternate screen while Howl preserves the selected screen,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
+              path: howl-vt/test/unit/terminal_test.zig,
+              symbol: "terminal DECSTR preserves text and position while resetting terminal state"}}}
           - {id: libvterm.csi.decrqm, raw: "CSI ? Ps $ p", effect: report DEC mode state, relevance: query,
             conditions: supported mode sets differ,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiIntermediate}}
@@ -738,7 +743,10 @@ references:
               symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
           - {id: iterm2.esc.decid, raw: "ESC Z", effect: primary device attributes report, relevance: query,
             howl: {status: partial}}
-          - {id: iterm2.esc.ris, raw: "ESC c", effect: hard reset, howl: {status: partial}}
+          - {id: iterm2.esc.ris, raw: "ESC c", effect: hard reset,
+            conditions: iTerm2 reset includes application delegate and parser policy outside Howl VT state,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: hardReset, proof: {
+              path: howl-vt/test/unit/terminal_test.zig, symbol: "terminal RIS delegates hard-reset owners"}}}
           - {id: iterm2.esc.screen_title, raw: "ESC k Pt (CR|LF|ST)", effect: set GNU Screen title,
             relevance: compatibility, howl: {status: 'false'}}
       - source: VT100CSIParser.m
@@ -848,7 +856,11 @@ references:
             conditions: supported mode sets and policy-derived states differ, howl: {status: partial}}
           - {id: iterm2.csi.decrqm_ansi, raw: "CSI Ps $ p", effect: query ANSI mode,
             conditions: supported mode sets differ, howl: {status: partial}}
-          - {id: iterm2.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial}}
+          - {id: iterm2.csi.decstr, raw: "CSI ! p", effect: soft reset,
+            conditions: iTerm2 resets additional product input and resize-notification policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
+              path: howl-vt/test/unit/terminal_test.zig,
+              symbol: "terminal DECSTR preserves text and position while resetting terminal state"}}}
           - {id: iterm2.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style, howl: {status: partial}}
           - {id: iterm2.csi.decsca, raw: "CSI [Ps=0] \" q", effect: select character protection,
             howl: {status: partial}}
@@ -1483,7 +1495,10 @@ references:
             source: howl-vt/src/parser.zig, symbol: fillEscape, proof: {
               path: howl-vt/test/unit/parser/string_control_test.zig,
               symbol: "parser string controls: PM with ST terminator", line: 109}}}
-          - {id: kitty.esc.ris, raw: "ESC c", effect: hard reset, howl: {status: partial}}
+          - {id: kitty.esc.ris, raw: "ESC c", effect: hard reset,
+            conditions: Kitty also clears history hyperlinks graphics and product progress state,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: hardReset, proof: {
+              path: howl-vt/test/unit/terminal_test.zig, symbol: "terminal RIS delegates hard-reset owners"}}}
           - {id: kitty.esc.ind, raw: "ESC D", effect: index, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1806,7 +1821,11 @@ references:
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: kitty.csi.scrollback_fill, raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
             relevance: extension, howl: {status: partial}}
-          - {id: kitty.csi.decstr, raw: "CSI ! p", effect: soft reset, howl: {status: partial}}
+          - {id: kitty.csi.decstr, raw: "CSI ! p", effect: reject unsupported DECSTR,
+            conditions: Kitty recognizes the final but rejects the unsupported intermediate while Howl applies DECSTR,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
+              path: howl-vt/test/unit/terminal_test.zig,
+              symbol: "terminal DECSTR preserves text and position while resetting terminal state"}}}
           - {id: kitty.csi.decrqm, raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state,
             conditions: supported ANSI and DEC mode sets differ, howl: {status: partial}}
           - {id: kitty.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {status: partial}}

@@ -1048,6 +1048,37 @@ pub const Screen = struct {
         if (self.tab_stops) |stops| setDefaultTabStops(stops);
     }
 
+    // Applies DECSTR's bank-local defaults without erasing cells or moving the cursor.
+    fn softReset(self: *Screen) bool {
+        const cursor_before = self.cursor;
+        var changed = self.wrap_pending or !self.auto_wrap or self.origin_mode or
+            self.attr_change_extent_rect or self.scroll_top != 0 or self.scroll_bottom != self.rows -| 1 or
+            !std.meta.eql(self.current_attrs, initial_cell_attrs);
+
+        self.wrap_pending = false;
+        self.auto_wrap = true;
+        self.origin_mode = false;
+        self.attr_change_extent_rect = false;
+        self.scroll_top = 0;
+        self.scroll_bottom = self.rows -| 1;
+        self.current_attrs = initial_cell_attrs;
+        self.cursor.restoreDefaultStyle();
+        changed = !std.meta.eql(cursor_before, self.cursor) or changed;
+
+        if (self.tab_stops) |stops| {
+            for (stops, 0..) |stop, col| {
+                if (stop != (col != 0 and col % 8 == 0)) changed = true;
+            }
+            setDefaultTabStops(stops);
+        }
+        var row: u16 = 0;
+        while (row < self.rows) : (row += 1) {
+            if (self.lineGeometry(row) != .single_width) changed = true;
+            self.resetLineGeometry(row);
+        }
+        return changed;
+    }
+
     /// Replaces the configured cursor default on this screen.
     pub fn setDefaultCursorStyle(self: *Screen, style: CursorStyle) void {
         self.cursor.setDefaultStyle(style);
@@ -1173,7 +1204,7 @@ pub const Screen = struct {
             .scroll_up_lines,
             .scroll_down_lines,
             .set_scroll_region,
-            .reset_screen,
+            .hard_reset,
             => self.applyLineEdit(event),
             .erase_display_below,
             .erase_display_above,
@@ -1325,7 +1356,7 @@ pub const Screen = struct {
                 self.wrap_pending = false;
                 self.setScrollRegion(region.top, region.bottom);
             },
-            .reset_screen => self.reset(),
+            .hard_reset => self.reset(),
             else => unreachable,
         }
     }
@@ -7042,7 +7073,7 @@ fn decodeCsi(
         },
         'p' => {
             if (params.len == 0 and intermediates.len == 1 and intermediates[0] == '!') {
-                return SemanticEvent.reset_screen;
+                return SemanticEvent.soft_reset;
             }
             return null;
         },
@@ -7341,7 +7372,7 @@ const EscAction = union(enum) {
     reverse_index,
     primary_device_attributes,
     horizontal_tab_set,
-    reset_screen,
+    hard_reset,
     save_cursor,
     restore_cursor,
     application_keypad: bool,
@@ -7354,7 +7385,7 @@ fn escAction(final: u8) ?EscAction {
         'M' => .reverse_index,
         'Z' => .primary_device_attributes,
         'H' => .horizontal_tab_set,
-        'c' => .reset_screen,
+        'c' => .hard_reset,
         '7' => .save_cursor,
         '8' => .restore_cursor,
         '=' => EscAction{ .application_keypad = true },
@@ -7379,7 +7410,7 @@ fn escProcess(final: u8) ?SemanticEvent {
         .reverse_index => SemanticEvent.reverse_index,
         .primary_device_attributes => SemanticEvent.primary_device_attributes,
         .horizontal_tab_set => SemanticEvent.horizontal_tab_set,
-        .reset_screen => SemanticEvent.reset_screen,
+        .hard_reset => SemanticEvent.hard_reset,
         .save_cursor => SemanticEvent.save_cursor,
         .restore_cursor => SemanticEvent.restore_cursor,
         .application_keypad => |enabled| SemanticEvent{ .application_keypad = enabled },
@@ -7396,7 +7427,7 @@ test "esc maps C1 7-bit aliases and cursor save restore" {
 
 test "esc maps DECID RIS and application keypad" {
     try std.testing.expect(escProcess('Z').? == .primary_device_attributes);
-    try std.testing.expect(escProcess('c').? == .reset_screen);
+    try std.testing.expect(escProcess('c').? == .hard_reset);
     try std.testing.expect(escProcess('=').?.application_keypad);
     try std.testing.expect(!escProcess('>').?.application_keypad);
 }
@@ -7769,7 +7800,8 @@ pub const SemanticEvent = union(enum) {
         top: u16,
         bottom: ?u16,
     },
-    reset_screen,
+    hard_reset,
+    soft_reset,
     erase_display_below: bool,
     erase_display_above: bool,
     erase_display_complete: bool,
@@ -9938,7 +9970,8 @@ pub fn apply(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
 
 fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
     switch (event) {
-        .reset_screen => vt.resetScreen(),
+        .hard_reset => vt.hardReset(),
+        .soft_reset => return vt.softReset(),
         .save_cursor => vt.saveCursor(),
         .restore_cursor => vt.restoreCursor(),
         .enter_alt_screen => |opts| {
@@ -10931,8 +10964,8 @@ pub const Terminal = struct {
         return .{ .width = value.width, .height = value.height };
     }
 
-    /// Applies terminal reset while preserving dimensions and owned allocations.
-    pub fn resetScreen(self: *Terminal) void {
+    /// Applies RIS while preserving dimensions and owned allocations.
+    pub fn hardReset(self: *Terminal) void {
         self.screen_state.reset();
         self.screen_state.primary.insert_mode = false;
         self.screen_state.alternate.insert_mode = false;
@@ -10946,6 +10979,37 @@ pub const Terminal = struct {
         self.host.pending_output.eight_bit_controls = false;
         self.kitty.resetTerminalState();
         self.host.resetTerminalState();
+    }
+
+    // Applies DECSTR to active-bank state and terminal-global modes without erasing text or moving the cursor.
+    fn softReset(self: *Terminal) bool {
+        const active = self.screen_state.active();
+        var changed = active.softReset();
+
+        changed = replaceBool(&self.screen_state.primary.insert_mode, false) or changed;
+        changed = replaceBool(&self.screen_state.alternate.insert_mode, false) or changed;
+        changed = self.screen_state.primary.setLeftRightMarginMode(false) or changed;
+        changed = self.screen_state.alternate.setLeftRightMarginMode(false) or changed;
+        changed = replaceBool(&self.screen_state.primary.cursor.visible, true) or changed;
+        changed = replaceBool(&self.screen_state.alternate.cursor.visible, true) or changed;
+
+        changed = replaceBool(&self.modes.application_cursor_keys, false) or changed;
+        changed = replaceBool(&self.modes.application_keypad, false) or changed;
+        changed = replaceBool(&self.modes.newline_mode, false) or changed;
+        changed = replaceBool(&self.modes.focus_reporting, false) or changed;
+        changed = replaceBool(&self.modes.bracketed_paste, false) or changed;
+        if (self.modes.mouse_tracking != .off) changed = true;
+        self.modes.mouse_tracking = .off;
+        if (self.modes.mouse_protocol != .none) changed = true;
+        self.modes.mouse_protocol = .none;
+        changed = replaceBool(&self.host.pending_output.eight_bit_controls, false) or changed;
+        if (self.gl_index != 0 or self.gr_index != 1 or self.single_shift != null or
+            !std.mem.eql(u8, self.designations[0..], &.{ 'B', 'B', 'B', 'B' })) changed = true;
+        self.gl_index = 0;
+        self.gr_index = 1;
+        self.single_shift = null;
+        self.designations = .{ 'B', 'B', 'B', 'B' };
+        return changed;
     }
 
     // Pushes selected active rendition attributes onto the fixed iTerm2-compatible stack.

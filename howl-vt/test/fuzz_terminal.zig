@@ -75,7 +75,7 @@ fn fuzzTerminal(_: void, smith: *std.testing.Smith) !void {
                 _ = try terminal.feed("R");
             },
             .reset_and_reuse => {
-                terminal.resetScreen();
+                terminal.hardReset();
                 _ = try terminal.feed("R");
             },
             .input_bytes => try encodeBytes(&terminal, smith),

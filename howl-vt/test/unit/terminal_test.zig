@@ -404,7 +404,7 @@ test "terminal visible view projects scrollback rows" {
     try std.testing.expectEqual(1, scrolled.rowDepth(1));
 }
 
-test "terminal reset screen delegates owner resets" {
+test "terminal RIS delegates hard-reset owners" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();
     var stream = try stream_harness.Harness.init(&vt);
@@ -418,4 +418,75 @@ test "terminal reset screen delegates owner resets" {
     try std.testing.expectEqual(@as(u21, 0), vt.screen_state.activeConst().cellAt(0, 0));
     try std.testing.expect(vt.host.locator.mode == .disabled);
     try std.testing.expectEqual(@as(u16, 0), vt.host.locator.coordinate_unit);
+}
+
+test "terminal DECSTR preserves text and position while resetting terminal state" {
+    var vt = try Terminal.init(std.testing.allocator, 4, 16);
+    defer vt.deinit();
+    var stream = try stream_harness.Harness.init(&vt);
+
+    try stream.nextSlice("kept\x1b[2;9H\x1b#6\x1b[3g\x1b[?1;6;25;1000;1004;1006;2004h");
+    try stream.nextSlice("\x1b[4;20h\x1b(B\x1b)0\x1b G");
+    const row_before = vt.screen_state.activeConst().cursor.row;
+    const col_before = vt.screen_state.activeConst().cursor.col;
+    try std.testing.expect(vt.screen_state.activeConst().lineGeometry(row_before) == .double_width);
+    try std.testing.expect(!vt.screen_state.activeConst().tabStopAt(8));
+    try std.testing.expect(vt.host.pending_output.eight_bit_controls);
+
+    const prefix = try vt.feed("\x1b[!");
+    try std.testing.expect(!prefix.state_changed);
+    const reset = try vt.feed("p");
+    try std.testing.expect(reset.state_changed);
+
+    const active = vt.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u21, 'k'), active.cellAt(0, 0));
+    try std.testing.expectEqual(row_before, active.cursor.row);
+    try std.testing.expectEqual(col_before, active.cursor.col);
+    try std.testing.expect(active.lineGeometry(row_before) == .single_width);
+    try std.testing.expect(active.tabStopAt(8));
+    try std.testing.expect(active.auto_wrap);
+    try std.testing.expect(!active.origin_mode);
+    try std.testing.expect(!active.insert_mode);
+    try std.testing.expect(active.cursor.visible);
+    try std.testing.expect(!vt.modes.application_cursor_keys);
+    try std.testing.expect(!vt.modes.application_keypad);
+    try std.testing.expect(!vt.modes.newline_mode);
+    try std.testing.expect(!vt.modes.focus_reporting);
+    try std.testing.expect(!vt.modes.bracketed_paste);
+    try std.testing.expect(vt.modes.mouse_tracking == .off);
+    try std.testing.expect(vt.modes.mouse_protocol == .none);
+    try std.testing.expect(!vt.host.pending_output.eight_bit_controls);
+    try std.testing.expectEqual(@as(u8, 0), vt.gl_index);
+    try std.testing.expectEqual(@as(u8, 1), vt.gr_index);
+    try std.testing.expectEqual([_]u8{ 'B', 'B', 'B', 'B' }, vt.designations);
+
+    const repeated = try vt.feed("\x1b[!p");
+    try std.testing.expect(!repeated.state_changed);
+}
+
+test "terminal DECSTR resets mirrored modes across alternate-screen banks" {
+    var vt = try Terminal.init(std.testing.allocator, 3, 12);
+    defer vt.deinit();
+
+    try std.testing.expect((try vt.feed("\x1b[4h\x1b[?69h\x1b[?25l\x1b[?47h")).state_changed);
+    try std.testing.expect(vt.screen_state.primary.insert_mode);
+    try std.testing.expect(vt.screen_state.alternate.insert_mode);
+    try std.testing.expect(vt.screen_state.primary.left_right_margin_mode);
+    try std.testing.expect(vt.screen_state.alternate.left_right_margin_mode);
+    try std.testing.expect(!vt.screen_state.primary.cursor.visible);
+    try std.testing.expect(!vt.screen_state.alternate.cursor.visible);
+
+    try std.testing.expect((try vt.feed("\x1b[!p")).state_changed);
+    try std.testing.expect(!vt.screen_state.primary.insert_mode);
+    try std.testing.expect(!vt.screen_state.alternate.insert_mode);
+    try std.testing.expect(!vt.screen_state.primary.left_right_margin_mode);
+    try std.testing.expect(!vt.screen_state.alternate.left_right_margin_mode);
+    try std.testing.expect(vt.screen_state.primary.cursor.visible);
+    try std.testing.expect(vt.screen_state.alternate.cursor.visible);
+    try std.testing.expect(!(try vt.feed("\x1b[!p")).state_changed);
+
+    try std.testing.expect((try vt.feed("\x1b[?47l")).state_changed);
+    try std.testing.expect(!vt.screen_state.activeConst().insert_mode);
+    try std.testing.expect(!vt.screen_state.activeConst().left_right_margin_mode);
+    try std.testing.expect(vt.screen_state.activeConst().cursor.visible);
 }
