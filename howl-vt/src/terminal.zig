@@ -8351,7 +8351,11 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
         .color_control => |cmd| {
             const before = vt.host.colors;
-            const output_before = vt.host.pending_output.bytes.items.len;
+            const output_before = byteCount(vt.host.pending_output.bytes.items);
+            errdefer {
+                vt.host.colors = before;
+                restorePendingOutput(&vt.host.pending_output, output_before);
+            }
             switch (cmd.command) {
                 21 => try handleKittyControl(allocator, &vt.host.colors, &vt.host.pending_output, cmd.payload),
                 4 => try handleXtermPaletteControl(
@@ -9220,7 +9224,7 @@ fn resetXtermPalette(colors: *TerminalColorState, payload: []const u8) void {
     }
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
-        const idx = std.fmt.parseUnsigned(u16, idx_text, 10) catch continue;
+        const idx = std.fmt.parseUnsigned(u8, idx_text, 10) catch continue;
         resetPaletteTarget(colors, idx);
     }
 }
@@ -9405,14 +9409,8 @@ fn setPaletteTarget(colors: *TerminalColorState, idx: u16, color: Rgb) void {
     colors.special_palette[special_idx] = color;
 }
 
-fn resetPaletteTarget(colors: *TerminalColorState, idx: u16) void {
-    if (idx < 256) {
-        colors.palette[@intCast(idx)] = paletteColor(@intCast(idx));
-        return;
-    }
-    const special_idx = idx - 256;
-    if (special_idx >= colors.special_palette.len) return;
-    colors.special_palette[special_idx] = null;
+fn resetPaletteTarget(colors: *TerminalColorState, idx: u8) void {
+    colors.palette[idx] = paletteColor(idx);
 }
 
 fn dynamicKeyForCommand(command: u16) ?DynamicKey {
@@ -9996,13 +9994,20 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         => return vt.applyModeEvent(event),
 
         .color_control => |control| {
-            const cursor_before = vt.screen_state.activeConst().cursor;
+            const primary_before = vt.screen_state.primary.cursor;
+            const alternate_before = vt.screen_state.alternate.cursor;
+            errdefer {
+                vt.screen_state.primary.cursor = primary_before;
+                vt.screen_state.alternate.cursor = alternate_before;
+            }
             if (cursorColorEvent(control)) |cursor_event| {
-                vt.screen_state.active().applyScreen(cursor_event);
+                vt.screen_state.primary.applyScreen(cursor_event);
+                vt.screen_state.alternate.applyScreen(cursor_event);
             }
             const host_changed = try applyHostEvent(vt, event);
-            const cursor_after = vt.screen_state.activeConst().cursor;
-            return host_changed or !std.meta.eql(cursor_before, cursor_after);
+            return host_changed or
+                !std.meta.eql(primary_before, vt.screen_state.primary.cursor) or
+                !std.meta.eql(alternate_before, vt.screen_state.alternate.cursor);
         },
         .iterm_set_colors => |payload| {
             const before = vt.host.colors;

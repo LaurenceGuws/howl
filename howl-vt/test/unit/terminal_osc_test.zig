@@ -561,8 +561,81 @@ test "xterm special colors via OSC 5 and OSC 4 special offsets" {
     terminal.host.clearPendingOutput();
     try stream.nextSlice("\x1b]104;258;260\x1b\\");
     const reset = terminal.host.terminalColorState();
-    try std.testing.expectEqual(@as(?Rgb, null), reset.special_palette[2]);
-    try std.testing.expectEqual(@as(?Rgb, null), reset.special_palette[4]);
+    try std.testing.expectEqual(Rgb{ .r = 7, .g = 8, .b = 9 }, reset.special_palette[2].?);
+    try std.testing.expectEqual(Rgb{ .r = 10, .g = 11, .b = 12 }, reset.special_palette[4].?);
+}
+
+test "OSC palette and dynamic resets own exact bounds mutation and lifetime" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b]4;0;#010203;255;#040506\x1b\\" ++
+            "\x1b]10;#070809;#0a0b0c;#0d0e0f\x1b\\" ++
+            "\x1b]17;#101112;;#131415\x1b\\",
+    )).state_changed);
+    try std.testing.expectEqual(
+        terminal.screen_state.primary.cursor.cursor_color,
+        terminal.screen_state.alternate.cursor.cursor_color,
+    );
+    try std.testing.expect(!(try terminal.feed("\x1b]104;256;999;bad\x07")).state_changed);
+
+    try std.testing.expect(!(try terminal.feed("\x1b]104;0;")).state_changed);
+    try std.testing.expect((try terminal.feed("255\x1b\\")).state_changed);
+    var colors = terminal.host.terminalColorState();
+    try std.testing.expectEqual(Terminal.default_presentation.palette[0], colors.palette[0]);
+    try std.testing.expectEqual(Terminal.default_presentation.palette[255], colors.palette[255]);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b]110\x07\x1b]111\x1b\\\x1b]112\x07\x1b]117\x1b\\\x1b]119\x07",
+    )).state_changed);
+    colors = terminal.host.terminalColorState();
+    try std.testing.expectEqual(Terminal.default_presentation.foreground, colors.foreground);
+    try std.testing.expectEqual(Terminal.default_presentation.background, colors.background);
+    try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.primary.cursor.cursor_color);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.alternate.cursor.cursor_color);
+    try std.testing.expectEqual(@as(?Rgb, null), colors.selection_background);
+    try std.testing.expectEqual(@as(?Rgb, null), colors.selection_foreground);
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b]110\x07\x1b]111\x1b\\\x1b]112\x07\x1b]117\x1b\\\x1b]119\x07",
+    )).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b]4;1;#212223\x1b\\\x1b]10;#313233\x1b\\")).state_changed);
+    try terminal.resize(4, 12);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h\x1bc\x1b[?1049l")).state_changed);
+    colors = terminal.host.terminalColorState();
+    try std.testing.expectEqual(Rgb{ .r = 33, .g = 34, .b = 35 }, colors.palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 49, .g = 50, .b = 51 }, colors.foreground);
+
+    try std.testing.expect((try terminal.feed("\x1b]104\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]104\x07")).state_changed);
+}
+
+test "OSC color set and query failure rolls back the complete command" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 4);
+    defer terminal.deinit();
+
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    const before = terminal.host.terminalColorState();
+
+    try std.testing.expectError(
+        error.ConsequenceLimit,
+        terminal.feed("\x1b]4;1;#010203;2;?\x1b\\"),
+    );
+    try std.testing.expectEqual(before, terminal.host.terminalColorState());
+    try std.testing.expectEqual(fill.len, terminal.host.pendingOutput().len);
+    try std.testing.expectEqual(@as(u8, 'x'), terminal.host.pendingOutput()[fill.len - 1]);
+
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]12;#010203;?\x1b\\"));
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.primary.cursor.cursor_color);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.alternate.cursor.cursor_color);
+    try std.testing.expectEqual(fill.len, terminal.host.pendingOutput().len);
 }
 
 test "kitty color stack restores terminal color snapshots" {
