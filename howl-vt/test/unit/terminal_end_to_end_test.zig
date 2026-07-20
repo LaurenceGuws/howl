@@ -952,6 +952,40 @@ test "terminal: SGR color mutation is exact fragmented and malformed-transaction
     try std.testing.expect(!(try terminal.feed("\x1b[m")).state_changed);
 }
 
+test "terminal: SGR font and baseline retain exact cell save resize and bank state" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[19;7")).state_changed);
+    try std.testing.expect((try terminal.feed("3mA")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[19;73m")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b7\x1b[10;74mB\x1b8\x1b[1;3HC")).state_changed);
+    const primary = terminal.screen_state.activeConst();
+    const raised = primary.cellInfoAt(0, 0).attrs;
+    const lowered = primary.cellInfoAt(0, 1).attrs;
+    const restored = primary.cellInfoAt(0, 2).attrs;
+    try std.testing.expectEqual(@as(u4, 9), raised.font);
+    try std.testing.expectEqual(Terminal.Baseline.raised, raised.baseline);
+    try std.testing.expectEqual(@as(u4, 0), lowered.font);
+    try std.testing.expectEqual(Terminal.Baseline.lowered, lowered.baseline);
+    try std.testing.expectEqual(raised, restored);
+
+    try terminal.resize(3, 8);
+    try std.testing.expectEqual(raised, terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs);
+    try std.testing.expect((try terminal.feed("\x1b[?47hD")).state_changed);
+    const alternate = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
+    try std.testing.expectEqual(@as(u4, 0), alternate.font);
+    try std.testing.expectEqual(Terminal.Baseline.normal, alternate.baseline);
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expectEqual(raised, terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs);
+
+    try std.testing.expect((try terminal.feed("\x1b[75m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[75m")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[0m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[0m")).state_changed);
+}
+
 test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
     const allocator = std.testing.allocator;
 

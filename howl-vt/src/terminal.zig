@@ -17,6 +17,8 @@ pub const Screen = struct {
     pub const Color = ScreenColor;
     /// Uses the canonical terminal underline style.
     pub const UnderlineStyle = ScreenUnderlineStyle;
+    /// Uses the canonical terminal baseline displacement.
+    pub const Baseline = ScreenBaseline;
     /// Uses the canonical complete cell attribute value.
     pub const CellAttrs = ScreenCellAttrs;
     /// Uses the canonical terminal cell value.
@@ -2049,6 +2051,7 @@ pub const Screen = struct {
             7 => self.current_attrs.reverse = true,
             8 => self.current_attrs.invisible = true,
             9 => self.current_attrs.strikethrough = true,
+            10...19 => self.current_attrs.font = @intCast(param - 10),
             21 => self.setUnderline(.double),
             22 => {
                 self.current_attrs.bold = false;
@@ -2065,6 +2068,9 @@ pub const Screen = struct {
             40...47 => self.current_attrs.bg = screenAnsi16Color(@intCast(param - 40)),
             49 => self.current_attrs.bg = initial_cell_attrs.bg,
             59 => self.current_attrs.underline_color = default_cell_underline_color,
+            73 => self.current_attrs.baseline = .raised,
+            74 => self.current_attrs.baseline = .lowered,
+            75 => self.current_attrs.baseline = .normal,
             90...97 => self.current_attrs.fg = screenAnsi16Color(@intCast((param - 90) + 8)),
             100...107 => self.current_attrs.bg = screenAnsi16Color(@intCast((param - 100) + 8)),
             else => {},
@@ -2962,10 +2968,19 @@ const ScreenUnderlineStyle = enum(u3) {
     dashed,
 };
 
-// Stores one cell’s style, colors, protection, and hyperlink identity.
+// Identifies the baseline displacement retained for one terminal cell.
+const ScreenBaseline = enum(u2) {
+    normal,
+    raised,
+    lowered,
+};
+
+// Stores one cell's font, baseline, style, colors, protection, and hyperlink identity.
 const ScreenCellAttrs = struct {
     fg: ScreenColor,
     bg: ScreenColor,
+    font: u4,
+    baseline: ScreenBaseline,
     bold: bool,
     dim: bool,
     italic: bool,
@@ -3010,6 +3025,8 @@ fn isCellContinuation(cell: ScreenCell) bool {
 const initial_cell_attrs = ScreenCellAttrs{
     .fg = default_cell_foreground,
     .bg = default_cell_background,
+    .font = 0,
+    .baseline = .normal,
     .bold = false,
     .dim = false,
     .italic = false,
@@ -9032,10 +9049,19 @@ fn appendSgrAttrs(
     if (attrs.reverse) try appendSgrParam(allocator, output, &first, "7");
     if (attrs.invisible) try appendSgrParam(allocator, output, &first, "8");
     if (attrs.strikethrough) try appendSgrParam(allocator, output, &first, "9");
+    if (attrs.font != 0) {
+        const font = formatTerminalReport(encode_buf, "{d}", .{@as(u8, 10) + attrs.font});
+        try appendSgrParam(allocator, output, &first, font);
+    }
     try appendColorParam(allocator, output, encode_buf, &first, true, attrs.fg, Screen.default_cell_attrs.fg);
     try appendColorParam(allocator, output, encode_buf, &first, false, attrs.bg, Screen.default_cell_attrs.bg);
     if (attrs.underline and !colorEq(attrs.underline_color, Screen.default_underline_color)) {
         try appendExtendedColorParam(allocator, output, encode_buf, &first, 58, attrs.underline_color);
+    }
+    switch (attrs.baseline) {
+        .normal => {},
+        .raised => try appendSgrParam(allocator, output, &first, "73"),
+        .lowered => try appendSgrParam(allocator, output, &first, "74"),
     }
     try appendOutput(output, allocator, "m");
 }
@@ -9067,6 +9093,8 @@ fn computeRectChecksum(screen: *const Screen, xtchecksum_flags: u16, page: u16, 
 }
 
 const CommonAttrs = struct {
+    font: u4,
+    baseline: Screen.Baseline,
     bold: bool,
     dim: bool,
     italic: bool,
@@ -9085,6 +9113,8 @@ const CommonAttrs = struct {
 fn currentAttrs(screen: *const Screen) CommonAttrs {
     const attrs = screen.current_attrs;
     return .{
+        .font = attrs.font,
+        .baseline = attrs.baseline,
         .bold = attrs.bold,
         .dim = attrs.dim,
         .italic = attrs.italic,
@@ -9104,6 +9134,8 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
     const bounds = screen.rectBounds(area) orelse return null;
     const first_cell = screen.cellInfoAt(bounds.top, bounds.left);
     var common = CommonAttrs{
+        .font = first_cell.attrs.font,
+        .baseline = first_cell.attrs.baseline,
         .bold = first_cell.attrs.bold,
         .dim = first_cell.attrs.dim,
         .italic = first_cell.attrs.italic,
@@ -9123,6 +9155,8 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
         var col = bounds.left;
         while (col <= bounds.right) : (col += 1) {
             const attrs = screen.cellInfoAt(row, col).attrs;
+            if (attrs.font != common.font) common.font = 0;
+            if (attrs.baseline != common.baseline) common.baseline = .normal;
             if (attrs.bold != common.bold) common.bold = false;
             if (attrs.dim != common.dim) common.dim = false;
             if (attrs.italic != common.italic) common.italic = false;
@@ -10866,6 +10900,8 @@ pub const Terminal = struct {
     pub const CellAttrs = Screen.CellAttrs;
     /// Uses the canonical terminal underline style.
     pub const UnderlineStyle = Screen.UnderlineStyle;
+    /// Uses the canonical terminal baseline displacement.
+    pub const Baseline = Screen.Baseline;
     /// Uses the canonical resolved cursor shape.
     pub const CursorShape = Screen.CursorShape;
     /// Provides the canonical default terminal cell attributes.

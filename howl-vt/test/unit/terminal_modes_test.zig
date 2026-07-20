@@ -1137,14 +1137,14 @@ test "DECRQSS replies for owned state and invalid requests" {
     write(
         &stream,
         "\x1b[2;3r\x1b[?69h\x1b[2;7s\x1b[3 q\x1b[1\"q" ++
-            "\x1b[2*x\x1b[1;3;4:3;5;7;8;9;38;5;200;48;2;1;2;3;58;2;4;5;6m\x1b7" ++
+            "\x1b[2*x\x1b[19;1;3;4:3;5;7;8;9;38;5;200;48;2;1;2;3;58;2;4;5;6;73m\x1b7" ++
             "\x1b[0m\x1b[0\"q\x1b[6 q\x1b8\x1b G",
     );
     try stream.nextSlice("\x90$q");
     try stream.nextSlice("r\x9c\x90$qs\x9c\x90$q q\x9c\x90$q\"q\x9c\x90$q*x\x9c\x90$qm\x9c");
     try std.testing.expectEqualStrings(
         "\x901$r2;3r\x9c\x901$r2;7s\x9c\x901$r3 q\x9c\x901$r1\"q\x9c\x901$r2*x\x9c" ++
-            "\x901$r0;1;3;4:3;5;7;8;9;38;5;200;48;2;1;2;3;58;2;4;5;6m\x9c",
+            "\x901$r0;1;3;4:3;5;7;8;9;19;38;5;200;48;2;1;2;3;58;2;4;5;6;73m\x9c",
         pendingOutput(&terminal),
     );
 

@@ -493,8 +493,7 @@ references:
             raw: "DCS $ q m ST"
             effect: report current graphic rendition
             conditions: >-
-              Howl prefixes canonical reset and reports retained dim and underline variants but lacks libvterm font or
-              baseline
+              Howl reports retained dim, additional underline styles, and underline color that pinned libvterm ignores
             relevance: query
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendSgrAttrs, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -588,8 +587,10 @@ references:
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
-          - {id: libvterm.sgr.font, raw: "CSI 10..19 m", effect: select font slot, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+          - {id: libvterm.sgr.font, raw: "CSI 10..19 m", effect: select font slot, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR font and baseline retain exact cell save resize and bank state"}}}
           - {id: libvterm.sgr.normal_intensity, raw: "CSI 22 m", effect: disable bold, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -643,8 +644,10 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: libvterm.sgr.small_baseline, raw: "CSI 73|74|75 m",
-            effect: set small superscript subscript or normal baseline, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr}}
+            effect: set small superscript subscript or normal baseline, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR font and baseline retain exact cell save resize and bank state"}}}
           - {id: libvterm.sgr.bright, raw: "CSI 90..97|100..107 m", effect: set bright foreground or background,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
