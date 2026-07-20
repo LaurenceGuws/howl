@@ -10186,6 +10186,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .erase_chars => |count| {
             return vt.screen_state.active().eraseChars(count);
         },
+        .auto_wrap => |enabled| return vt.setDecMode(7, enabled),
+        .origin_mode => |enabled| return vt.setDecMode(6, enabled),
 
         .cursor_up,
         .cursor_down,
@@ -10210,8 +10212,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .tab_clear_all,
         .cursor_color,
         .cursor_text_color,
-        .auto_wrap,
-        .origin_mode,
         .insert_mode,
         .sgr,
         .insert_lines,
@@ -11180,7 +11180,7 @@ pub const Terminal = struct {
         switch (event) {
             .application_cursor_keys => |enabled| return replaceBool(&self.modes.application_cursor_keys, enabled),
             .application_keypad => |enabled| return replaceBool(&self.modes.application_keypad, enabled),
-            .reverse_screen_mode => |enabled| return replaceBool(&self.modes.reverse_screen_mode, enabled),
+            .reverse_screen_mode => |enabled| return self.setDecMode(5, enabled),
             .eight_bit_controls => |enabled| {
                 const changed = self.host.pending_output.eight_bit_controls != enabled;
                 self.host.pending_output.eight_bit_controls = enabled;
@@ -11301,22 +11301,22 @@ pub const Terminal = struct {
 
     fn setDecMode(self: *Terminal, mode_number: u16, enabled: bool) bool {
         const active = self.screen_state.active();
-        switch (mode_number) {
-            1 => return replaceBool(&self.modes.application_cursor_keys, enabled),
-            5 => return replaceBool(&self.modes.reverse_screen_mode, enabled),
-            6 => {
-                const before = .{ active.origin_mode, active.cursor.row, active.cursor.col, active.wrap_pending };
+        const pending_changed = active.cancelPendingWrap();
+        const mode_changed = switch (mode_number) {
+            1 => replaceBool(&self.modes.application_cursor_keys, enabled),
+            5 => replaceBool(&self.modes.reverse_screen_mode, enabled),
+            6 => changed: {
+                const before = .{ active.origin_mode, active.cursor.row, active.cursor.col };
                 active.applyScreen(.{ .origin_mode = enabled });
-                const after = .{ active.origin_mode, active.cursor.row, active.cursor.col, active.wrap_pending };
-                return !std.meta.eql(before, after);
+                break :changed !std.meta.eql(before, .{ active.origin_mode, active.cursor.row, active.cursor.col });
             },
-            7 => {
-                const before = .{ active.auto_wrap, active.wrap_pending };
+            7 => changed: {
+                const before = active.auto_wrap;
                 active.applyScreen(.{ .auto_wrap = enabled });
-                return !std.meta.eql(before, .{ active.auto_wrap, active.wrap_pending });
+                break :changed before != active.auto_wrap;
             },
-            12 => return active.cursor.setBlink(enabled),
-            69 => {
+            12 => active.cursor.setBlink(enabled),
+            69 => result: {
                 const inactive = if (self.screen_state.alt_active)
                     &self.screen_state.primary
                 else
@@ -11329,29 +11329,30 @@ pub const Terminal = struct {
                     inactive.left_margin = 0;
                     inactive.right_margin = inactive.cols -| 1;
                 }
-                return changed;
+                break :result changed;
             },
-            25 => {
+            25 => result: {
                 var changed = replaceBool(&self.screen_state.primary.cursor.visible, enabled);
                 changed = replaceBool(&self.screen_state.alternate.cursor.visible, enabled) or changed;
-                return changed;
+                break :result changed;
             },
-            66 => return replaceBool(&self.modes.application_keypad, enabled),
-            47 => return self.switchScreenMode(enabled, false, false),
-            1047 => return self.switchScreenMode(enabled, true, false),
-            1049 => return self.switchScreenMode(enabled, true, true),
-            9 => return self.setMouseTracking(if (enabled) .x10 else .off),
-            1000 => return self.setMouseTracking(if (enabled) .normal else .off),
-            1002 => return self.setMouseTracking(if (enabled) .button_event else .off),
-            1003 => return self.setMouseTracking(if (enabled) .any_event else .off),
-            1004 => return replaceBool(&self.modes.focus_reporting, enabled),
-            1005 => return self.setMouseProtocol(if (enabled) .utf8 else .none),
-            1006 => return self.setMouseProtocol(if (enabled) .sgr else .none),
-            1015 => return self.setMouseProtocol(if (enabled) .urxvt else .none),
-            2004 => return replaceBool(&self.modes.bracketed_paste, enabled),
-            2026 => return replaceBool(&self.modes.synchronized_output, enabled),
-            else => return false,
-        }
+            66 => replaceBool(&self.modes.application_keypad, enabled),
+            47 => self.switchScreenMode(enabled, false, false),
+            1047 => self.switchScreenMode(enabled, true, false),
+            1049 => self.switchScreenMode(enabled, true, true),
+            9 => self.setMouseTracking(if (enabled) .x10 else .off),
+            1000 => self.setMouseTracking(if (enabled) .normal else .off),
+            1002 => self.setMouseTracking(if (enabled) .button_event else .off),
+            1003 => self.setMouseTracking(if (enabled) .any_event else .off),
+            1004 => replaceBool(&self.modes.focus_reporting, enabled),
+            1005 => self.setMouseProtocol(if (enabled) .utf8 else .none),
+            1006 => self.setMouseProtocol(if (enabled) .sgr else .none),
+            1015 => self.setMouseProtocol(if (enabled) .urxvt else .none),
+            2004 => replaceBool(&self.modes.bracketed_paste, enabled),
+            2026 => replaceBool(&self.modes.synchronized_output, enabled),
+            else => false,
+        };
+        return mode_changed or pending_changed;
     }
 
     fn setAnsiModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) bool {

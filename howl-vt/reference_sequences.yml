@@ -395,9 +395,20 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: application cursor mode changes arrow key encoding}}}
-          - {id: libvterm.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
-          - {id: libvterm.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
-          - {id: libvterm.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
+          - {id: libvterm.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+          - {id: libvterm.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode,
+            conditions: homes to the active vertical and horizontal origin, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+          - {id: libvterm.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap,
+            conditions: CSI also cancels a pending wrap, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: libvterm.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Howl retains blink with each screen cursor while libvterm owns one terminal mode across banks,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
@@ -407,7 +418,11 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
-          - {id: libvterm.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle left-right margins, howl: {status: partial}}
+          - {id: libvterm.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle left-right margins,
+            conditions: libvterm retains stored margins on reset while Howl restores full-width defaults,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: libvterm.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
             howl: {status: partial}}
           - {id: libvterm.mode.mouse_button, raw: "CSI ? 1002 h|l", effect: toggle drag tracking,
@@ -1324,9 +1339,20 @@ references:
             howl: {status: partial}}
           - {id: iterm2.mode.decsclm, raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
             recognition: recognized_noop, howl: {status: 'false'}}
-          - {id: iterm2.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse video, howl: {status: partial}}
-          - {id: iterm2.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
-          - {id: iterm2.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
+          - {id: iterm2.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse video,
+            conditions: Howl additionally cancels pending wrap at the CSI boundary, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+          - {id: iterm2.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode and home the cursor,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+          - {id: iterm2.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap,
+            conditions: Howl additionally cancels pending wrap at the CSI boundary, howl: {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: iterm2.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat, howl: {status: partial}}
           - {id: iterm2.mode.mouse_x10, raw: "CSI ? 9 h|l", effect: accept legacy mouse mode without implementation,
             recognition: recognized_noop, howl: {status: 'false'}}
@@ -1351,7 +1377,9 @@ references:
             howl: {status: partial}}
           - {id: iterm2.mode.deckpam, raw: "CSI ? 66 h|l", effect: toggle application keypad, howl: {status: partial}}
           - {id: iterm2.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle horizontal margins, conditions: VT level 400+,
-            howl: {status: partial}}
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: iterm2.mode.decsdm, raw: "CSI ? 80 h|l", effect: toggle Sixel display mode, howl: {status: 'false'}}
           - {id: iterm2.mode.decncsm, raw: "CSI ? 95 h|l", effect: preserve screen on column-mode change,
             conditions: VT level 500+, howl: {status: 'false'}}
@@ -1602,9 +1630,20 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
-          - {id: kitty.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen, howl: {status: partial}}
-          - {id: kitty.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode, howl: {status: partial}}
-          - {id: kitty.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap, howl: {status: partial}}
+          - {id: kitty.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen,
+            conditions: Kitty retains its beyond-edge cursor while Howl cancels pending wrap at the CSI boundary,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+          - {id: kitty.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode and home the cursor,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+          - {id: kitty.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap,
+            conditions: Kitty retains its beyond-edge cursor while Howl cancels pending wrap at the CSI boundary,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: kitty.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Kitty resets its shared cursor on alternate entry while Howl retains per-screen cursor style,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {

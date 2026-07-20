@@ -1276,6 +1276,62 @@ test "DEC cursor and alternate modes preserve bounded lifecycle truth" {
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor.col);
 }
 
+test "DEC screen origin and autowrap modes own exact repeated command effects" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    const screen = terminal.screen_state.active();
+
+    try std.testing.expect((try terminal.feed("\x1b[1;8HX")).state_changed);
+    try std.testing.expect(screen.wrap_pending);
+    try std.testing.expect(!(try terminal.feed("\x1b[?7")).state_changed);
+    try std.testing.expect((try terminal.feed("h")).state_changed);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(!(try terminal.feed("\x1b[?7h")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?5h")).state_changed);
+    try std.testing.expect(terminal.modes.reverse_screen_mode);
+    try std.testing.expect(!(try terminal.feed("\x1b[?5h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?5l")).state_changed);
+    try std.testing.expect(!terminal.modes.reverse_screen_mode);
+    try std.testing.expect(!(try terminal.feed("\x1b[?5l")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[?69h\x1b[3;6s\x1b[4;7H")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?6h")).state_changed);
+    try std.testing.expect(screen.origin_mode);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[?6h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;2H\x1b[?6h")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[?6l")).state_changed);
+    try std.testing.expect(!screen.origin_mode);
+    try std.testing.expectEqual(@as(u16, 0), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[?6l")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?69l\x1b[?47h\x1b#6\x1b[?47l\x1b[?69h\x1b[?47h")).state_changed);
+    const alternate = terminal.screen_state.active();
+    try std.testing.expectEqual(.double_width, alternate.lineGeometry(0));
+    try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
+    try std.testing.expectEqual(.single_width, alternate.lineGeometry(0));
+    try std.testing.expect(!(try terminal.feed("\x1b[?69h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?47l\x1b[?69l")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), screen.left_margin);
+    try std.testing.expectEqual(@as(u16, 7), screen.right_margin);
+    try std.testing.expect(!(try terminal.feed("\x1b[?69l")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;8HA\x1b[?7l")).state_changed);
+    try std.testing.expect(!screen.auto_wrap);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(!(try terminal.feed("\x1b[?7l")).state_changed);
+    try std.testing.expect((try terminal.feed("B")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 7));
+    try std.testing.expect((try terminal.feed("\x1b[?7h")).state_changed);
+    try std.testing.expect(screen.auto_wrap);
+    try std.testing.expect(!(try terminal.feed("\x1b[?7h")).state_changed);
+}
+
 test "application keypad modes affect keypad encoding and DECRQM" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
