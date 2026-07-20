@@ -218,6 +218,8 @@ pub const Terminal = struct {
     reader: std.Thread,
     lock: std.Io.Mutex = .init,
     write_lock: std.Io.Mutex = .init,
+    // Lifecycle publication stays independent from the model lock used by hot surfaces.
+    lifecycle_lock: std.Io.Mutex = .init,
     state_value: std.atomic.Value(State) = .init(.running),
     reader_failure: std.atomic.Value(ReaderFailure) = .init(.none),
     reply_failure_transferred: std.atomic.Value(usize) = .init(0),
@@ -294,8 +296,10 @@ pub const Terminal = struct {
     }
 
     /// Returns the reader failure after state becomes `failed`.
-    pub fn readerError(self: *const Terminal) ?ReaderError {
-        return decodeReaderFailure(self.reader_failure.load(.acquire));
+    pub fn readerError(self: *Terminal) ?ReaderError {
+        self.lifecycle_lock.lockUncancelable(self.io);
+        defer self.lifecycle_lock.unlock(self.io);
+        return decodeReaderFailure(self.reader_failure.load(.monotonic));
     }
 
     /// Acknowledges every mutation published before this call.
@@ -308,7 +312,11 @@ pub const Terminal = struct {
     /// Concurrently stops terminal progress and wakes active PTY reads or writes.
     /// The embedder still serializes destructive `deinit` after public calls return.
     pub fn cancel(self: *Terminal) void {
-        if (self.state_value.swap(.stopped, .acq_rel) == .running) self.notify();
+        self.lifecycle_lock.lockUncancelable(self.io);
+        const changed = self.state_value.load(.monotonic) == .running;
+        if (changed) self.state_value.store(.stopped, .release);
+        self.lifecycle_lock.unlock(self.io);
+        if (changed) self.notify();
         self.transport.cancel();
     }
 
@@ -379,6 +387,8 @@ pub const Terminal = struct {
     pub fn status(self: *Terminal) Status {
         self.lock.lockUncancelable(self.io);
         defer self.lock.unlock(self.io);
+        self.lifecycle_lock.lockUncancelable(self.io);
+        defer self.lifecycle_lock.unlock(self.io);
         const publication = self.model.surfaceSnapshot();
         const output = self.model.logicalOutputRange();
         var shell_mark: ?ShellMark = null;
@@ -399,15 +409,15 @@ pub const Terminal = struct {
             };
             shell_mark = mark;
         }
-        const reader_error = self.readerError();
+        const reader_error = decodeReaderFailure(self.reader_failure.load(.monotonic));
         return .{
-            .state = self.state(),
+            .state = self.state_value.load(.monotonic),
             .reader_error = reader_error,
             .reply_failure_transferred = replyFailureTransferred(
                 reader_error,
-                self.reply_failure_transferred.load(.acquire),
+                self.reply_failure_transferred.load(.monotonic),
             ),
-            .resize_rollback_failed = self.resize_rollback_failed.load(.acquire),
+            .resize_rollback_failed = self.resize_rollback_failed.load(.monotonic),
             .cols = self.cols,
             .rows = self.rows,
             .publication = publication.snapshot_seq,
@@ -498,20 +508,18 @@ pub const Terminal = struct {
     }
 
     fn finish(self: *Terminal, state_value: State, failure: ReaderFailure) void {
-        if (failure != .none) {
-            self.reader_failure.store(failure, .release);
-            self.state_value.store(.failed, .release);
-        } else {
-            if (self.state_value.cmpxchgStrong(
-                .running,
-                state_value,
-                .release,
-                .monotonic,
-            )) |actual| {
-                std.debug.assert(actual != .running);
-                return;
-            }
+        std.debug.assert(
+            (state_value == .stopped and failure == .none) or
+                (state_value == .failed and failure != .none),
+        );
+        self.lifecycle_lock.lockUncancelable(self.io);
+        if (self.state_value.load(.monotonic) != .running) {
+            self.lifecycle_lock.unlock(self.io);
+            return;
         }
+        if (failure != .none) self.reader_failure.store(failure, .monotonic);
+        self.state_value.store(state_value, .release);
+        self.lifecycle_lock.unlock(self.io);
         self.notify();
     }
 
@@ -543,8 +551,12 @@ pub const Terminal = struct {
     }
 
     fn stopAfterResizeRollbackFailure(self: *Terminal) void {
-        self.resize_rollback_failed.store(true, .release);
-        self.state_value.store(.failed, .release);
+        self.lifecycle_lock.lockUncancelable(self.io);
+        if (self.state_value.load(.monotonic) == .running) {
+            self.resize_rollback_failed.store(true, .monotonic);
+            self.state_value.store(.failed, .release);
+        }
+        self.lifecycle_lock.unlock(self.io);
         self.transport.cancel();
     }
 
@@ -666,19 +678,45 @@ test "reply failure evidence distinguishes rejection from an accepted prefix" {
         .{},
     );
     defer terminal.deinit();
-    terminal.cancel();
     const rejected = terminal.retainReplyTransferFailure(0, .timeout);
     terminal.finish(.failed, readerFailure(rejected));
     try std.testing.expectEqual(
         @as(?usize, 0),
         terminal.status().reply_failure_transferred,
     );
-    const partial = terminal.retainReplyTransferFailure(7, .write_failed);
-    terminal.finish(.failed, readerFailure(partial));
+
+    const partial_terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{},
+    );
+    defer partial_terminal.deinit();
+    const partial = partial_terminal.retainReplyTransferFailure(7, .write_failed);
+    partial_terminal.finish(.failed, readerFailure(partial));
     try std.testing.expectEqual(
         @as(?usize, 7),
-        terminal.status().reply_failure_transferred,
+        partial_terminal.status().reply_failure_transferred,
     );
+}
+
+test "cancellation remains terminal after a prepared reader failure" {
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{},
+    );
+    defer terminal.deinit();
+
+    const prepared = terminal.retainReplyTransferFailure(7, .write_failed);
+    terminal.cancel();
+    terminal.finish(.failed, readerFailure(prepared));
+    const status_value = terminal.status();
+    try std.testing.expectEqual(State.stopped, status_value.state);
+    try std.testing.expectEqual(@as(?ReaderError, null), status_value.reader_error);
+    try std.testing.expectEqual(@as(?usize, null), status_value.reply_failure_transferred);
+    try std.testing.expect(!status_value.resize_rollback_failed);
 }
 
 test "wake mutation between observation and acknowledgement is announced" {
