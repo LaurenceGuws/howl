@@ -850,9 +850,30 @@ references:
           - {id: iterm2.csi.decsel, raw: "CSI ? [Ps=0] K", effect: selective erase line, howl: {status: partial}}
           - {id: iterm2.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {status: partial}}
           - {id: iterm2.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns, howl: {status: partial}}
-          - {id: iterm2.csi.xtpushcolors, raw: "CSI [Ps=0] # P", effect: push color stack, howl: {status: partial}}
-          - {id: iterm2.csi.xtpopcolors, raw: "CSI [Ps=0] # Q", effect: pop color stack, howl: {status: partial}}
-          - {id: iterm2.csi.xtreportcolors, raw: "CSI # R", effect: report color stack, howl: {status: partial}}
+          - id: iterm2.csi.xtpushcolors
+            raw: "CSI [Ps=0] # P"
+            effect: push color stack
+            conditions: >-
+              iTerm2 owns 256 sparse slots and distinct used and largest-used counters; Howl follows Kitty's ten slots
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: pushState, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}
+          - id: iterm2.csi.xtpopcolors
+            raw: "CSI [Ps=0] # Q"
+            effect: pop color stack
+            conditions: >-
+              iTerm2 indexed pop rewinds its used counter while Kitty and Howl leave sequential depth unchanged
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: popState, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}
+          - id: iterm2.csi.xtreportcolors
+            raw: "CSI # R"
+            effect: report color stack
+            conditions: >-
+              iTerm2 reports used and persistent largest-used while Howl reports Kitty's current index and count
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendColorStackReport, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}
           - {id: iterm2.csi.xtpushsgr, raw: "CSI Pm # {", effect: push selected rendition state,
             howl: {status: partial}}
           - {id: iterm2.csi.xtpopsgr_brace, raw: "CSI [Ps=0] # }", effect: pop rendition state, howl: {status: partial}}
@@ -1523,9 +1544,18 @@ references:
           - {id: kitty.csi.dch, raw: "CSI [Ps=1] P", effect: delete characters,
             conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: kitty.csi.push_colors, raw: "CSI [Ps=0] # P", effect: push color stack, howl: {status: partial}}
-          - {id: kitty.csi.pop_colors, raw: "CSI [Ps=0] # Q", effect: pop color stack, howl: {status: partial}}
-          - {id: kitty.csi.report_colors, raw: "CSI # R", effect: report color stack, howl: {status: partial}}
+          - {id: kitty.csi.push_colors, raw: "CSI [Ps=0] # P", effect: push color stack, conditions: ten slots,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: pushState, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
+          - {id: kitty.csi.pop_colors, raw: "CSI [Ps=0] # Q", effect: pop color stack, conditions: ten slots,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: popState, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
+          - {id: kitty.csi.report_colors, raw: "CSI # R", effect: report current stack index and count,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: appendColorStackReport, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
           - {id: kitty.csi.reset_tabs, raw: "CSI ? 5 W", effect: reset default tab stops, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1670,8 +1700,14 @@ references:
             effect: update shell integration mark, howl: {status: partial}}
           - {id: kitty.osc.file_transfer, raw: "OSC FILE_TRANSFER_CODE ; Pt (BEL|ST)", effect: transfer file,
             relevance: host consequence, howl: {status: 'false'}}
-          - {id: kitty.osc.color_push, raw: "OSC 30001 (BEL|ST)", effect: push color stack, howl: {status: partial}}
-          - {id: kitty.osc.color_pop, raw: "OSC 30101 (BEL|ST)", effect: pop color stack, howl: {status: partial}}
+          - {id: kitty.osc.color_push, raw: "OSC 30001 (BEL|ST)", effect: sequential color-stack push,
+            conditions: ten slots, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: pushState, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
+          - {id: kitty.osc.color_pop, raw: "OSC 30101 (BEL|ST)", effect: sequential color-stack pop,
+            conditions: ten slots, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: popState, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
           - {id: kitty.osc.metadata, raw: "OSC 3008 ; Pt (BEL|ST)", effect: update terminal metadata,
             relevance: host metadata, howl: {status: partial}}
       - source: vt-parser.c

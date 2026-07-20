@@ -695,7 +695,7 @@ test "ANSI mode queries and XTREPORTCOLORS append host output" {
     var stream = try StreamHarness.init(&terminal);
 
     write(&stream, "\x1b[2h\x1b[4h\x1b[12h\x1b[20h\x1b]30001\x1b\\\x1b[2$p\x1b[4$p\x1b[12$p\x1b[20$p\x1b[#R");
-    try std.testing.expectEqualStrings("\x1b[2;1$y\x1b[4;1$y\x1b[12;1$y\x1b[20;1$y\x1b[1;1#Q", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[2;1$y\x1b[4;1$y\x1b[12;1$y\x1b[20;1$y\x1b[0;1#Q", pendingOutput(&terminal));
 }
 
 test "XTREPORTSGR reports common rectangle attrs conservatively" {

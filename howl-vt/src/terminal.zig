@@ -6089,30 +6089,59 @@ test "iTerm safe controls decode without accepting policy commands" {
 
 const KittyColorState = TerminalColorState;
 
-// Selects one terminal-owned Kitty color-stack operation.
-const KittyColorCommand = enum { push, pop };
-
-// Stores at most sixteen complete terminal color states for Kitty push and pop.
-const KittyColorStack = struct {
-    stack: [16]KittyColorState = undefined,
-    len: u8 = 0,
+// Selects one terminal-owned Kitty color-stack operation and its zero-based stack convention.
+const KittyColorCommand = union(enum) {
+    push: u16,
+    pop: u16,
 };
 
-// Pushes a color state, dropping the oldest entry when the stack is full.
-fn pushState(stack: *KittyColorStack, colors: *const KittyColorState) void {
+// Stores Kitty's ten bounded color slots, sequential depth, and initialized slot extent.
+const KittyColorStack = struct {
+    stack: [10]KittyColorState = undefined,
+    len: u8 = 0,
+    slot_count: u8 = 0,
+};
+
+// Saves current colors sequentially or by one-based slot and reports exact stack mutation.
+fn pushState(stack: *KittyColorStack, colors: *const KittyColorState, index: u16) bool {
+    if (index > stack.stack.len) return false;
+    if (index != 0) {
+        const required: u8 = @intCast(index);
+        const expanded = required > stack.slot_count;
+        while (stack.slot_count < required) : (stack.slot_count += 1) {
+            stack.stack[stack.slot_count] = .{};
+        }
+        if (!expanded and std.meta.eql(stack.stack[required - 1], colors.*)) return false;
+        stack.stack[required - 1] = colors.*;
+        return true;
+    }
+
+    if (stack.len == stack.slot_count and stack.slot_count < stack.stack.len) stack.slot_count += 1;
     if (stack.len == stack.stack.len) {
-        std.mem.copyForwards(KittyColorState, stack.stack[0 .. stack.stack.len - 1], stack.stack[1..stack.stack.len]);
+        std.mem.copyForwards(KittyColorState, stack.stack[0 .. stack.stack.len - 1], stack.stack[1..]);
         stack.len -= 1;
     }
+
     stack.stack[stack.len] = colors.*;
     stack.len += 1;
+    return true;
 }
 
-// Restores the newest color state when present and decrements the exposed depth.
-fn popState(stack: *KittyColorStack, colors: *KittyColorState) void {
-    if (stack.len == 0) return;
+// Restores sequentially or from one initialized one-based slot and reports exact mutation.
+fn popState(stack: *KittyColorStack, colors: *KittyColorState, index: u16) bool {
+    if (index > stack.stack.len) return false;
+    if (index != 0) {
+        const slot: u8 = @intCast(index - 1);
+        if (slot >= stack.slot_count) return false;
+        if (std.meta.eql(colors.*, stack.stack[slot])) return false;
+        colors.* = stack.stack[slot];
+        return true;
+    }
+    if (stack.len == 0) return false;
     stack.len -= 1;
     colors.* = stack.stack[stack.len];
+    stack.stack[stack.len] = .{};
+    return true;
 }
 
 // Applies one Kitty color control or appends its bounded query reply.
@@ -6259,6 +6288,7 @@ const KittyState = struct {
         self.main.keyboard = .{};
         self.alt.keyboard = .{};
         self.color_stack.len = 0;
+        for (self.color_stack.stack[0..self.color_stack.slot_count]) |*slot| slot.* = .{};
     }
 };
 
@@ -6482,8 +6512,8 @@ fn processPlus(final: u8, params: []const i32) ?SemanticEvent {
 
 fn processHash(final: u8, params: []const i32) ?SemanticEvent {
     return switch (final) {
-        'P' => if (params.len == 0) SemanticEvent{ .kitty_color_stack = .push } else null,
-        'Q' => if (params.len == 0) SemanticEvent{ .kitty_color_stack = .pop } else null,
+        'P' => SemanticEvent{ .kitty_color_stack = .{ .push = queryParam(params) orelse return null } },
+        'Q' => SemanticEvent{ .kitty_color_stack = .{ .pop = queryParam(params) orelse return null } },
         'S' => SemanticEvent.xttitlepos,
         'y' => SemanticEvent{ .xtchecksum = paramAtOrDefault0(params, 0) },
         'R' => SemanticEvent.xtreportcolors,
@@ -7236,8 +7266,8 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
                 .shell_integration_set = integration,
             },
         } else null,
-        .kitty_color_stack_push => SemanticEvent{ .kitty_color_stack = .push },
-        .kitty_color_stack_pop => SemanticEvent{ .kitty_color_stack = .pop },
+        .kitty_color_stack_push => SemanticEvent{ .kitty_color_stack = .{ .push = 0 } },
+        .kitty_color_stack_pop => SemanticEvent{ .kitty_color_stack = .{ .pop = 0 } },
         .hyperlink => |v| blk: {
             const separator = std.mem.indexOfScalar(u8, v.payload, ';') orelse break :blk null;
             const uri = v.payload[separator + 1 ..];
@@ -7404,8 +7434,8 @@ test "OSC Kitty policy payloads remain parser facts without semantic effects" {
     } }) == null);
     const push = oscProcess(.{ .kitty_color_stack_push = .st }).?;
     const pop = oscProcess(.{ .kitty_color_stack_pop = .st }).?;
-    try std.testing.expect(push.kitty_color_stack == .push);
-    try std.testing.expect(pop.kitty_color_stack == .pop);
+    try std.testing.expectEqual(@as(u16, 0), push.kitty_color_stack.push);
+    try std.testing.expectEqual(@as(u16, 0), pop.kitty_color_stack.pop);
     try std.testing.expect(oscProcess(.{ .kitty_clipboard = .{
         .payload = "type=write",
         .term = .st,
@@ -8324,7 +8354,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         ),
         .screen_extent_report => try appendScreenExtentReport(allocator, pending_output, encode_buf, render_view),
         .parameters_report => |kind| try appendTerminalParametersReport(allocator, pending_output, encode_buf, kind),
-        .xtreportcolors => try appendColorStackReport(allocator, pending_output, encode_buf, vt.kitty.color_stack.len),
+        .xtreportcolors => try appendColorStackReport(allocator, pending_output, encode_buf, &vt.kitty.color_stack),
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
         else => unreachable,
     }
@@ -8514,10 +8544,11 @@ fn appendColorStackReport(
     allocator: std.mem.Allocator,
     output: *PendingOutput,
     encode_buf: []u8,
-    depth: u8,
+    stack: *const KittyColorStack,
 ) ApplyError!void {
-    const payload = formatTerminalReport(encode_buf, "{d};{d}#Q", .{ depth, depth });
-    try appendCsiReply(output, allocator, .terminal, payload);
+    const index = if (stack.len == 0) 0 else stack.len - 1;
+    const payload = formatTerminalReport(encode_buf, "{d};{d}#Q", .{ index, stack.len });
+    try appendCsiReply(output, allocator, .kitty, payload);
 }
 
 fn appendTabStopReport(
@@ -9531,14 +9562,16 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .kitty_keyboard_pop => |count| {
             active_screen.keyboard.pop(count);
         },
-        .kitty_color_stack => |cmd| {
-            switch (cmd) {
-                .push => pushState(&vt.kitty.color_stack, &vt.host.colors),
-                .pop => popState(&vt.kitty.color_stack, &vt.host.colors),
-            }
-        },
         else => unreachable,
     }
+}
+
+// Applies one bounded color-stack mutation and reports rejected or empty operations as unchanged.
+fn applyKittyColorStack(vt: *Terminal, command: KittyColorCommand) bool {
+    return switch (command) {
+        .push => |index| pushState(&vt.kitty.color_stack, &vt.host.colors, index),
+        .pop => |index| popState(&vt.kitty.color_stack, &vt.host.colors, index),
+    };
 }
 
 // Observable terminal mutations produced while applying one parser event.
@@ -9662,8 +9695,9 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .kitty_keyboard_query,
         .kitty_keyboard_push,
         .kitty_keyboard_pop,
-        .kitty_color_stack,
         => try applyKittyEvent(vt, event),
+
+        .kitty_color_stack => |command| return applyKittyColorStack(vt, command),
 
         .application_cursor_keys,
         .application_keypad,

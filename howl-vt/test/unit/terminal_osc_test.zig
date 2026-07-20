@@ -592,3 +592,73 @@ test "kitty tui CSI save and restore colors use the same stack" {
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.host.terminalColorState().foreground);
     try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.host.terminalColorState().palette[1]);
 }
+
+test "kitty color stack owns indexed sequential bounded and report semantics" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b]21;foreground=#010203\x1b\\\x1b[3")).state_changed);
+    try std.testing.expect((try terminal.feed("#P")).state_changed);
+    try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
+    try std.testing.expectEqual(@as(u8, 3), terminal.kitty.color_stack.slot_count);
+    try std.testing.expect(!(try terminal.feed("\x1b[3#P")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[3#Q")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b]21;foreground=#111213\x1b\\\x1b[1#Q")).state_changed);
+    try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.host.terminalColorState().foreground);
+    try std.testing.expect((try terminal.feed("\x1b[3#Q")).state_changed);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.host.terminalColorState().foreground);
+    try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
+
+    try std.testing.expect((try terminal.feed("\x1b]21;foreground=#212223\x1b\\\x1b[#P")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]21;foreground=#313233\x1b\\\x1b[#P")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]21;foreground=#414243\x1b\\")).state_changed);
+    terminal.host.clearPendingOutput();
+    try std.testing.expect((try terminal.feed("\x1b G\x1b[#R")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[1;2#Q", terminal.host.pendingOutput());
+
+    try std.testing.expect((try terminal.feed("\x1b[3#Q\x1b[#Q")).state_changed);
+    try std.testing.expectEqual(Rgb{ .r = 49, .g = 50, .b = 51 }, terminal.host.terminalColorState().foreground);
+    try std.testing.expectEqual(@as(u8, 1), terminal.kitty.color_stack.len);
+
+    const rejected = try terminal.feed("\x1b[11#P\x1b[11#Q");
+    try std.testing.expect(!rejected.state_changed);
+    try std.testing.expectEqual(@as(u8, 1), terminal.kitty.color_stack.len);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1bc" ++
+            "\x1b]21;foreground=#000001\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#000002\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#000003\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#000004\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#000005\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#000006\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#000007\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#000008\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#000009\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#00000a\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#00000b\x1b\\\x1b]30001\x1b\\",
+    )).state_changed);
+    try std.testing.expectEqual(@as(u8, 10), terminal.kitty.color_stack.len);
+    try std.testing.expectEqual(@as(u8, 10), terminal.kitty.color_stack.slot_count);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\" ++
+            "\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\",
+    )).state_changed);
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 0, .b = 2 }, terminal.host.terminalColorState().foreground);
+
+    terminal.host.clearPendingOutput();
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[#R")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[0;0#Q", terminal.host.pendingOutput());
+
+    terminal.host.clearPendingOutput();
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[#R"));
+    try std.testing.expectEqual(fill.len, terminal.host.pendingOutput().len);
+    try std.testing.expectEqual(@as(u8, 'x'), terminal.host.pendingOutput()[fill.len - 1]);
+}
