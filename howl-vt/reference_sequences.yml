@@ -28,24 +28,36 @@ references:
         census: {semantic_branches: 15, records: 15}
         recognition: implemented
         records:
-          - {id: libvterm.c0.bel, raw: BEL, effect: ring bell, relevance: core, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
-          - {id: libvterm.c0.bs, raw: "\\x08", effect: cursor left, relevance: core, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
-          - {id: libvterm.c0.ht, raw: "\\x09", effect: next tab stop, relevance: core, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.bel, raw: BEL, effect: ring bell, relevance: core, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: libvterm.c0.bs, raw: "\\x08", effect: cursor left, relevance: core, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: libvterm.c0.ht, raw: "\\x09", effect: next tab stop, relevance: core, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
           - {id: libvterm.c0.lf, raw: "\\x0a", effect: line feed, conditions: LNM also returns carriage,
             relevance: core, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
           - {id: libvterm.c0.vt, raw: "\\x0b", effect: line feed, conditions: LNM also returns carriage,
             relevance: compatibility, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
           - {id: libvterm.c0.ff, raw: "\\x0c", effect: line feed, conditions: LNM also returns carriage,
             relevance: compatibility, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyExecute}}
-          - {id: libvterm.c0.cr, raw: "\\x0d", effect: carriage return, relevance: core, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
-          - {id: libvterm.c0.so, raw: "\\x0e", effect: select G1 into GL, relevance: charset, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
-          - {id: libvterm.c0.si, raw: "\\x0f", effect: select G0 into GL, relevance: charset, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute}}
+          - {id: libvterm.c0.cr, raw: "\\x0d", effect: carriage return, relevance: core, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: libvterm.c0.so, raw: "\\x0e", effect: select G1 into GL, relevance: charset, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: libvterm.c0.si, raw: "\\x0f", effect: select G0 into GL, relevance: charset, howl: {status: full,
+            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
           - {id: libvterm.c1.ind, raw: "\\x84", effect: index, relevance: compatibility, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: escProcess}}
           - {id: libvterm.c1.nel, raw: "\\x85", effect: next line, relevance: core, howl: {status: partial,

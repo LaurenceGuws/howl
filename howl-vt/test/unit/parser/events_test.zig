@@ -244,13 +244,19 @@ const ParsedEvents = struct {
             .apc_start => self.apc_bytes.clearRetainingCapacity(),
             .apc_put => |byte| try self.apcBytesAppend(byte),
             .apc_end => try self.appendBufferedBytes(.apc, &self.apc_bytes),
+            .apc_cancel => self.apc_bytes.clearRetainingCapacity(),
             .dcs_hook => |hook| self.captureDcsHook(hook),
             .dcs_put => |byte| try self.dcsBytesAppend(byte),
             .dcs_unhook => try self.appendDcs(),
+            .dcs_cancel => {
+                self.dcs_bytes.clearRetainingCapacity();
+                self.dcs_hook = null;
+            },
             .pm_start => self.pm_bytes.clearRetainingCapacity(),
             .pm_put => |byte| try self.pmBytesAppend(byte),
             .pm_end => try self.appendBufferedBytes(.pm, &self.pm_bytes),
-            .sos_start, .sos_put, .sos_end => {},
+            .pm_cancel => self.pm_bytes.clearRetainingCapacity(),
+            .sos_start, .sos_put, .sos_end, .sos_cancel => {},
             .esc_dispatch => |esc| try self.appendEscDispatch(esc),
         }
     }

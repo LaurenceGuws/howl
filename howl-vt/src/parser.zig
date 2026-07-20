@@ -222,15 +222,19 @@ pub const Action = union(enum) {
     apc_start,
     apc_put: u8,
     apc_end,
+    apc_cancel,
     dcs_hook: DcsHook,
     dcs_put: u8,
     dcs_unhook,
+    dcs_cancel,
     pm_start,
     pm_put: u8,
     pm_end,
+    pm_cancel,
     sos_start,
     sos_put: u8,
     sos_end,
+    sos_cancel,
     esc_dispatch: EscAction,
 };
 
@@ -435,30 +439,33 @@ pub const Parser = struct {
                 const term = switch (byte) {
                     0x07 => OscTerminator.bel,
                     '\\', 0x9C => OscTerminator.st,
-                    else => break :exit null,
+                    else => {
+                        self.osc.reset();
+                        break :exit null;
+                    },
                 };
                 break :exit .{ .osc_dispatch = self.osc.snapshot(term) };
             },
             .dcs_passthrough => dcs: {
                 self.dcs.reset();
                 std.debug.assert(!self.dcs.active());
-                break :dcs .dcs_unhook;
+                break :dcs if (stringControlCompleted(byte)) .dcs_unhook else .dcs_cancel;
             },
             .sos_pm_apc_string => switch (sos_kind orelse self.sosPmApcKind()) {
                 .apc => apc: {
                     self.apc.reset();
                     std.debug.assert(!self.apc.active());
-                    break :apc .apc_end;
+                    break :apc if (stringControlCompleted(byte)) .apc_end else .apc_cancel;
                 },
                 .pm => pm: {
                     self.pm.reset();
                     std.debug.assert(!self.pm.active());
-                    break :pm .pm_end;
+                    break :pm if (stringControlCompleted(byte)) .pm_end else .pm_cancel;
                 },
                 .sos => sos: {
                     self.sos.reset();
                     std.debug.assert(!self.sos.active());
-                    break :sos .sos_end;
+                    break :sos if (stringControlCompleted(byte)) .sos_end else .sos_cancel;
                 },
             },
             else => null,
@@ -726,6 +733,10 @@ pub const Parser = struct {
     }
 };
 
+fn stringControlCompleted(byte: u8) bool {
+    return byte == '\\' or byte == 0x9C;
+}
+
 fn expectPhaseTags(
     phases: PhaseActions,
     exit_tag: ?std.meta.Tag(Action),
@@ -758,7 +769,7 @@ test "parser control spine orders populated phase slots in one next call" {
     try std.testing.expectEqual(ParseState.dcs_passthrough, parser.state);
 
     const apc_start = parser.next(0x9F);
-    try expectPhaseTags(apc_start, .dcs_unhook, null, .apc_start);
+    try expectPhaseTags(apc_start, .dcs_cancel, null, .apc_start);
     try std.testing.expectEqual(ParseState.sos_pm_apc_string, parser.state);
     try std.testing.expectEqual(@as(u3, 1), parser.activeControlCount());
     try std.testing.expect(parser.apc.active());
@@ -1011,7 +1022,10 @@ fn fillGround(result: *OptionalTable) void {
     single(result, 0x19, .ground, .ground, .execute);
     range(result, 0x1C, 0x1F, .ground, .ground, .execute);
     range(result, 0x20, 0x7F, .ground, .ground, .print);
-    range(result, 0x80, 0xFF, .ground, .ground, .ground);
+    // An incomplete UTF-8 sequence consumes continuation bytes before table
+    // lookup. Standalone C1 bytes therefore retain their anywhere transitions,
+    // while non-C1 high bytes still enter the UTF-8 decoder.
+    range(result, 0xA0, 0xFF, .ground, .ground, .ground);
 }
 
 fn fillEscapeIntermediate(result: *OptionalTable) void {

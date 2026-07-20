@@ -123,6 +123,24 @@ test "parser: split input - partial UTF-8 then completion" {
     try std.testing.expectEqual(@as(u21, 0x20AC), output.actions.items[0].print);
 }
 
+test "parser: UTF-8 continuation bytes do not become standalone C1 controls" {
+    const gpa = std.testing.allocator;
+    var parser = try Parser.init(gpa);
+    defer parser.deinit();
+    var output = try Output.init(gpa);
+    defer output.deinit(gpa);
+
+    for ("\xc2\x9b") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expect(output.actions.items[0] == .print);
+    try std.testing.expectEqual(@as(u21, 0x9B), output.actions.items[0].print);
+
+    output.clear();
+    for ("\x9b31m") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expect(output.actions.items[0] == .csi_dispatch);
+}
+
 test "parser: split input - partial CSI then final byte" {
     const gpa = std.testing.allocator;
     var parser = try Parser.init(gpa);
@@ -215,7 +233,7 @@ test "parser: C1 string controls replace active DCS passthrough control" {
     try std.testing.expectEqual(Action.dcs_hook, std.meta.activeTag(dcs_hook[2].?));
 
     const apc_start = parser.next(0x9F);
-    try std.testing.expectEqual(Action.dcs_unhook, apc_start[0].?);
+    try std.testing.expectEqual(Action.dcs_cancel, apc_start[0].?);
     try std.testing.expectEqual(Action.apc_start, apc_start[2].?);
 
     parser.reset();
@@ -226,6 +244,6 @@ test "parser: C1 string controls replace active DCS passthrough control" {
     try std.testing.expectEqual(Action.dcs_hook, std.meta.activeTag(second_dcs_hook[2].?));
 
     const pm_start = parser.next(0x9E);
-    try std.testing.expectEqual(Action.dcs_unhook, pm_start[0].?);
+    try std.testing.expectEqual(Action.dcs_cancel, pm_start[0].?);
     try std.testing.expectEqual(Action.pm_start, pm_start[2].?);
 }

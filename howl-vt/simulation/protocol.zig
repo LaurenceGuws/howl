@@ -70,6 +70,7 @@ const Event = union(enum) {
     apc_start,
     apc_put: u8,
     apc_end,
+    apc_cancel,
     dcs_hook: struct {
         final: u8,
         params: [parser_mod.max_params]i32,
@@ -79,12 +80,15 @@ const Event = union(enum) {
     },
     dcs_put: u8,
     dcs_unhook,
+    dcs_cancel,
     pm_start,
     pm_put: u8,
     pm_end,
+    pm_cancel,
     sos_start,
     sos_put: u8,
     sos_end,
+    sos_cancel,
     esc_dispatch: parser_mod.EscAction,
 };
 
@@ -131,6 +135,7 @@ const Harness = struct {
             .apc_start => try self.events.append(self.allocator, .apc_start),
             .apc_put => |byte| try self.events.append(self.allocator, Event{ .apc_put = byte }),
             .apc_end => try self.events.append(self.allocator, .apc_end),
+            .apc_cancel => try self.events.append(self.allocator, .apc_cancel),
             .dcs_hook => |hook| try self.events.append(self.allocator, Event{ .dcs_hook = .{
                 .final = hook.final,
                 .params = copyFixedI32(hook.params),
@@ -140,12 +145,15 @@ const Harness = struct {
             } }),
             .dcs_put => |byte| try self.events.append(self.allocator, Event{ .dcs_put = byte }),
             .dcs_unhook => try self.events.append(self.allocator, .dcs_unhook),
+            .dcs_cancel => try self.events.append(self.allocator, .dcs_cancel),
             .pm_start => try self.events.append(self.allocator, .pm_start),
             .pm_put => |byte| try self.events.append(self.allocator, Event{ .pm_put = byte }),
             .pm_end => try self.events.append(self.allocator, .pm_end),
+            .pm_cancel => try self.events.append(self.allocator, .pm_cancel),
             .sos_start => try self.events.append(self.allocator, .sos_start),
             .sos_put => |byte| try self.events.append(self.allocator, Event{ .sos_put = byte }),
             .sos_end => try self.events.append(self.allocator, .sos_end),
+            .sos_cancel => try self.events.append(self.allocator, .sos_cancel),
             .esc_dispatch => |esc| try self.events.append(self.allocator, Event{ .esc_dispatch = esc }),
         };
     }

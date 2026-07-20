@@ -143,10 +143,106 @@ test "parser string controls: SOS forms remain distinct and terminate" {
     for ("\x1bPq\x98t\x9c") |byte| output.appendPhases(parser.next(byte));
     try expectActionCount(output.actions.items, 5);
     try std.testing.expect(output.actions.items[0] == .dcs_hook);
-    try std.testing.expect(output.actions.items[1] == .dcs_unhook);
+    try std.testing.expect(output.actions.items[1] == .dcs_cancel);
     try std.testing.expect(output.actions.items[2] == .sos_start);
     try std.testing.expectEqual(@as(u8, 't'), output.actions.items[3].sos_put);
     try std.testing.expect(output.actions.items[4] == .sos_end);
+}
+
+test "parser string controls: cancellation discards partial controls and permits restart" {
+    const gpa = std.testing.allocator;
+    var parser = try Parser.init(gpa);
+    defer parser.deinit();
+    var output = try Output.init(gpa);
+    defer output.deinit(gpa);
+
+    for ("\x1b]0;drop\x18\x1b]0;keep\x07") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 2);
+    try std.testing.expectEqual(@as(u8, 0x18), output.actions.items[0].execute);
+    try std.testing.expect(output.actions.items[1] == .osc_dispatch);
+    try std.testing.expectEqualStrings("keep", output.actions.items[1].osc_dispatch.payload());
+
+    output.actions.clearRetainingCapacity();
+    for ("\x1bP1$qdrop\x1a\x1bP2$qkeep\x1b\\") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 13);
+    try std.testing.expect(output.actions.items[0] == .dcs_hook);
+    try std.testing.expect(output.actions.items[5] == .dcs_cancel);
+    try std.testing.expectEqual(@as(u8, 0x1A), output.actions.items[6].execute);
+    try std.testing.expect(output.actions.items[7] == .dcs_hook);
+    try std.testing.expect(output.actions.items[12] == .dcs_unhook);
+
+    output.actions.clearRetainingCapacity();
+    for ("\x1b_A\x18\x1b_B\x1b\\") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 7);
+    try std.testing.expect(output.actions.items[0] == .apc_start);
+    try std.testing.expect(output.actions.items[2] == .apc_cancel);
+    try std.testing.expectEqual(@as(u8, 0x18), output.actions.items[3].execute);
+    try std.testing.expect(output.actions.items[4] == .apc_start);
+    try std.testing.expectEqual(@as(u8, 'B'), output.actions.items[5].apc_put);
+    try std.testing.expect(output.actions.items[6] == .apc_end);
+
+    output.actions.clearRetainingCapacity();
+    for ("\x1b^A\x1a\x1b^B\x1b\\") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 7);
+    try std.testing.expect(output.actions.items[2] == .pm_cancel);
+    try std.testing.expectEqual(@as(u8, 0x1A), output.actions.items[3].execute);
+    try std.testing.expect(output.actions.items[6] == .pm_end);
+
+    output.actions.clearRetainingCapacity();
+    for ("\x1bXA\x9b31m") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 4);
+    try std.testing.expect(output.actions.items[0] == .sos_start);
+    try std.testing.expect(output.actions.items[2] == .sos_cancel);
+    try std.testing.expect(output.actions.items[3] == .csi_dispatch);
+}
+
+test "parser string controls: C1 introducers frame every control family" {
+    const gpa = std.testing.allocator;
+    var parser = try Parser.init(gpa);
+    defer parser.deinit();
+    var output = try Output.init(gpa);
+    defer output.deinit(gpa);
+
+    for ("\x9b31m") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expect(output.actions.items[0] == .csi_dispatch);
+
+    output.actions.clearRetainingCapacity();
+    for ("\x9d0;title\x9c") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expect(output.actions.items[0] == .osc_dispatch);
+    try std.testing.expectEqual(OscTerminator.st, output.actions.items[0].osc_dispatch.term());
+
+    output.actions.clearRetainingCapacity();
+    for ("\x90$qm\x9c") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 3);
+    try std.testing.expect(output.actions.items[0] == .dcs_hook);
+    try std.testing.expectEqual(@as(u8, 'm'), output.actions.items[1].dcs_put);
+    try std.testing.expect(output.actions.items[2] == .dcs_unhook);
+
+    output.actions.clearRetainingCapacity();
+    for ("\x9fkeep\x9c") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 6);
+    try std.testing.expect(output.actions.items[0] == .apc_start);
+    try std.testing.expectEqual(@as(u8, 'k'), output.actions.items[1].apc_put);
+    try std.testing.expectEqual(@as(u8, 'e'), output.actions.items[2].apc_put);
+    try std.testing.expectEqual(@as(u8, 'e'), output.actions.items[3].apc_put);
+    try std.testing.expectEqual(@as(u8, 'p'), output.actions.items[4].apc_put);
+    try std.testing.expect(output.actions.items[5] == .apc_end);
+
+    output.actions.clearRetainingCapacity();
+    for ("\x9eP\x9c") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 3);
+    try std.testing.expect(output.actions.items[0] == .pm_start);
+    try std.testing.expectEqual(@as(u8, 'P'), output.actions.items[1].pm_put);
+    try std.testing.expect(output.actions.items[2] == .pm_end);
+
+    output.actions.clearRetainingCapacity();
+    for ("\x98S\x9c") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 3);
+    try std.testing.expect(output.actions.items[0] == .sos_start);
+    try std.testing.expectEqual(@as(u8, 'S'), output.actions.items[1].sos_put);
+    try std.testing.expect(output.actions.items[2] == .sos_end);
 }
 
 test "parser string controls: stray ESC in OSC appends byte to payload" {

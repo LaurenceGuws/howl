@@ -9413,12 +9413,13 @@ const TerminalStream = struct {
                 .intermediates_len = csi.intermediates_len,
             } }),
             .osc_dispatch => |osc| try self.applyEvent(.{ .osc = osc }),
-            .apc_start, .apc_put, .apc_end => discardedStringControl(),
+            .apc_start, .apc_put, .apc_end, .apc_cancel => discardedStringControl(),
             .dcs_hook => |hook| self.startDcs(hook),
             .dcs_put => |byte| self.putDcs(byte),
             .dcs_unhook => self.endDcs(),
-            .pm_start, .pm_put, .pm_end => discardedStringControl(),
-            .sos_start, .sos_put, .sos_end => discardedStringControl(),
+            .dcs_cancel => self.cancelDcs(),
+            .pm_start, .pm_put, .pm_end, .pm_cancel => discardedStringControl(),
+            .sos_start, .sos_put, .sos_end, .sos_cancel => discardedStringControl(),
             .esc_dispatch => |esc| self.applyEsc(esc),
         };
     }
@@ -9506,6 +9507,11 @@ const TerminalStream = struct {
         const event = state.dcs.event();
         defer state.dcs.reset();
         return try apply(self.terminal, event);
+    }
+
+    fn cancelDcs(self: *TerminalStream) EventEffect {
+        self.terminal.stream_state.dcs.reset();
+        return discardedStringControl();
     }
 
     fn mapCodepoint(self: *const TerminalStream, cp: u21) u21 {

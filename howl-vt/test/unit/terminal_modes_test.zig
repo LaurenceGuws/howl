@@ -883,6 +883,21 @@ test "DCS legacy payload protocols retain latest host-neutral payload across sli
     try std.testing.expectEqualStrings("436F=7661", dcsPayload(&terminal).?);
 }
 
+test "canceled DCS discards its partial consequence before the next complete DCS" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    try stream.nextSlice("\x1bP+p436F=drop\x18");
+    try std.testing.expectEqual(@as(?dcs_payload.DcsPayloadKind, null), dcsPayloadKind(&terminal));
+    try std.testing.expectEqual(@as(?[]const u8, null), dcsPayload(&terminal));
+
+    try stream.nextSlice("\x1bP+p436F=keep\x1b\\");
+    try std.testing.expectEqual(dcs_payload.DcsPayloadKind.xtsettcap, dcsPayloadKind(&terminal).?);
+    try std.testing.expectEqualStrings("436F=keep", dcsPayload(&terminal).?);
+}
+
 test "legacy Tektronix C0 and ESC controls retain latest host-neutral state" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
