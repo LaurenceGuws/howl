@@ -2290,8 +2290,17 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.SurfacePublication, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
-          - {id: kitty.mode.application_escape, raw: "CSI ? 7727 h|l", effect: reject application escape mode,
-            recognition: rejected_known, relevance: compatibility, howl: {status: 'false'}}
+          - id: kitty.mode.application_escape
+            raw: "CSI ? 7727 h|l"
+            effect: reject application escape mode
+            recognition: rejected_known
+            relevance: compatibility
+            conditions: >-
+              Kitty recognizes and logs rejection; Howl silently rejects it through the unknown-mode path while
+              preserving pending wrap, grid, and subsequent input. Neither terminal mutates application-escape state.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "ignored and unknown DEC modes preserve pending wrap and grid state"}}
           - id: kitty.mode.termios_signals
             raw: "CSI ? 19997 h|l"
             effect: toggle terminal-generated termios signals

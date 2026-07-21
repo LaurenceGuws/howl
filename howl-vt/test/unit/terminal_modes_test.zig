@@ -2479,7 +2479,7 @@ test "DEC screen origin and autowrap modes own exact repeated command effects" {
 }
 
 test "ignored and unknown DEC modes preserve pending wrap and grid state" {
-    const modes = [_]u16{ 2, 4, 20, 42, std.math.maxInt(u16) };
+    const modes = [_]u16{ 2, 4, 20, 42, 7727, std.math.maxInt(u16) };
     const finals = [_]u8{ 'h', 'l' };
 
     for (modes) |mode| for (finals) |final| {
