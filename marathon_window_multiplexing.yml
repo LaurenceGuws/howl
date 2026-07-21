@@ -1,0 +1,67 @@
+marathon:
+  name: window_multiplexing
+  status: active
+
+objective: >-
+  Replace the fixed demonstration tabs and panes with a bounded native host workspace that feels familiar to terminal
+  veterans, preserves Howl's current presentation, and establishes pane-local scrollback viewport ownership.
+
+references:
+  behavior: zellij interaction vocabulary and lifecycle evidence
+  defaults: /home/home/personal/bash_engine/dots/kitty
+  directness: /home/home/personal/projects/dev_references/terminals/foot
+  defensiveness: /home/home/personal/projects/dev_references/zig_maturity/tigerbeetle
+
+boundaries:
+  - Howl owns its model; qtui contributes lessons, not a shared UI abstraction.
+  - One current host session contains tabs; session CRUD and persistence remain later work.
+  - Tabs own bounded pane layouts and one focused pane.
+  - Panes own stable identity, one terminal, and independent viewport state.
+  - Selection, copy, search, floating panes, layouts, detach/attach, and plugins remain outside this cut.
+  - The label-cell surface owns bounded presentation and hit geometry, never tab or session policy.
+  - VT owns retained history and logical rows; the window owns viewport offset, follow state, scrollbar geometry, and input.
+
+categories:
+  - id: workspace_model
+    status: queued
+    goal: >-
+      Establish stable session, tab, pane, and split identities; real resource bounds; transactional tab and pane CRUD;
+      deterministic focus fallback; and geometry independent from Wayland, GLES, PTY, and rendering types.
+    gate: >-
+      Create, close, rename, reorder, switch, horizontal/vertical split, directional focus, and resize either commit one
+      valid tree or preserve the prior workspace exactly under invalid input, capacity, and allocation failure.
+
+  - id: host_adoption
+    status: queued
+    goal: >-
+      Replace fixed terminals and layouts with the workspace model, create and retire terminal owners with panes,
+      transactionally resize affected PTYs, and retain unavailable-pane isolation and clean shutdown.
+    gate: >-
+      Recognizable tab and pane commands work through real xkb input; release and repeat cannot leak into terminals;
+      close fallback, failed terminal state, renderer reconciliation, and process cleanup are exact.
+
+  - id: labels_and_defaults
+    status: queued
+    goal: >-
+      Add one small bounded label-cell surface for the top tab bar and apply deliberate Kitty-informed defaults without
+      importing Kitty configuration machinery.
+    gate: >-
+      Labels truncate deterministically, active/focused/unavailable facts remain legible, hit regions match painted
+      cells, narrow windows remain valid, and the existing Howl visual language is preserved.
+
+  - id: viewport_scrollbar
+    status: queued
+    goal: >-
+      Give every pane independent bounded history navigation, follow behavior, wheel and keyboard scrolling, and a
+      proportional scrollbar over the terminal's retained logical history.
+    gate: >-
+      Live output, resize/reflow, alternate-screen entry and exit, tab switching, pane focus, history eviction, drag,
+      wheel bursts, and terminal mouse-reporting mode have explicit deterministic behavior; viewport state never
+      changes another pane and never addresses evicted rows.
+
+completion:
+  - all model mutation and geometry proofs run without Wayland or GLES
+  - the native host demonstrates real tab and split CRUD with practical bounds
+  - every visible pane has independent viewport and scrollbar state
+  - the full root build, tests, simulation, fuzzing, benchmark, source audit, and protocol validation pass
+  - visual behavior is reviewed with operator screenshots only when semantic proof cannot establish the claim
