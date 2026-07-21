@@ -108,6 +108,117 @@ categories:
       compositor focus, iTerm key-up delivery, Kitty paste exchange, and color-scheme observation to howl-window.
       Active partial howl-vt obligations fell from 125 to 112; no input-classified active gap remains.
 
+  - id: mode_dispatch_lifecycle
+    status: queued
+    owner: howl-vt
+    records: 29
+    mechanism: ANSI and DEC mode dispatch, mirrored or bank-local state, query/save/reset, reply framing, and resize
+    membership: >-
+      generic SM/RM/DECSET/DECRST; DECAWM, DECCOLM permission/preservation, DECSCNM, more-fix, cursor blink,
+      synchronized update, resize notifications, and S7C1T/S8C1T
+    gate: >-
+      every compact mode table is mechanically preserved; repeated assignment, pending-wrap, bank scope, RIS,
+      DECSTR, resize, save/restore, query, and host-pixel handoff are exact; conflicting dirty/default/timeout policy
+      is excluded and completed presentation or resize handoffs are delegated only with current consumer proof
+    why_next: >-
+      This is the largest residual group and settles shared lifecycle vocabulary used by later cursor, geometry, and
+      compatibility decisions.
+
+  - id: charset_line_geometry
+    status: queued
+    owner: howl-vt
+    records: 19
+    mechanism: ISO-2022 G0-G3 designation, UTF-8/Latin-1 transport mode, and DEC physical-row geometry
+    membership: >-
+      libvterm and iTerm2 SCS G0-G3; Kitty G0/G1 plus UTF-8/Latin-1 controls; DECSWL, DECDWL, and DECDHL top/bottom
+    gate: >-
+      exact accepted designation tables, GL/GR mapping boundaries, split transport, save/reset, logical row width,
+      cursor clamping, scroll/copy, and resize-reset policy; unsupported charset tables and incompatible reference
+      remapping or resize association are explicit exclusions rather than guessed mappings
+    why_next: >-
+      Row geometry and charset transport are prerequisites for truthful erase, repetition, and legacy cursor claims.
+
+  - id: erase_repeat_alignment
+    status: queued
+    owner: howl-vt
+    records: 15
+    mechanism: Screen erase owners, protected cells, retained glyph repetition, DECALN, scrollback, and row damage
+    membership: >-
+      ED, EL, DECSED, DECSEL, REP, DECALN, and iTerm ClearScrollback across the three pinned references
+    gate: >-
+      parameter defaults and rejection, pending-wrap mutation, protection provenance, logical-width rows, retained
+      attributes, cursor/margin preservation, scrollback and logical-output lifetime, minimum changed spans, and
+      allocation-free repetition are exact; Kitty graphics-plane consequences become deferred howl-vt residuals
+      while conflicting multicell/selection/reference policy is settled separately
+    why_next: >-
+      It consumes the completed row-geometry contract and closes the remaining high-frequency grid mutations.
+
+  - id: cursor_compatibility_and_restore
+    status: queued
+    owner: howl-vt
+    records: 13
+    mechanism: legacy cursor movement, cursor presentation, savepoint restoration, and bounded tab-stop replacement
+    membership: >-
+      BS, DECBI, DECFI, HPB, VPB, CSI-s ambiguity, DECSCUSR, Kitty multiple cursor request, iTerm CursorShape, and
+      DECRSPS DECCIR/DECTABSR
+    gate: >-
+      exact region entry, wrap and logical-row boundaries, VT-level-independent policy, cursor-shape defaults,
+      strict transactional payload parsing, G0 restoration, tab replacement, resize bounds, and malformed rollback;
+      multiple-cursor and permissive/unbounded reference behavior is explicitly excluded
+    why_next: >-
+      It reuses the settled mode and geometry facts, then closes the remaining cursor/save-state compatibility edge.
+
+  - id: metadata_shell_integration
+    status: queued
+    owner: howl-vt
+    records: 15
+    mechanism: bounded latest metadata, hyperlink pool, shell marks, title/icon facts, and semantic publication
+    membership: >-
+      GNU Screen title; OSC 0/1/2/7/8/133 and iTerm OSC 1337 CurrentDir, RemoteHost, SetMark, and
+      ShellIntegrationVersion; Kitty OSC 3008 metadata
+    gate: >-
+      BEL/ST fragmentation, exact replacement/no-op mutation, byte and pool bounds, allocation rollback, reset and
+      screen lifetime, shell-mark generation, and publication are exact; trust, sanitization, structured session,
+      scrollback UI, and presentation residuals are either permanent policy or delegated to an existing named owner
+      only after the VT fact is proven consumable
+    why_next: >-
+      These commands share retained host-neutral facts and can be settled without mixing host execution into VT.
+
+  - id: compatibility_string_controls
+    status: queued
+    owner: howl-vt
+    records: 21
+    mechanism: bounded DCS transport occurrences, known ignored OSC selectors, and APC-family diagnostic payloads
+    membership: >-
+      iTerm tmux/SSH DCS hooks; sixteen Kitty ignored OSC command families; Kitty unsupported PM and SOS payloads
+    gate: >-
+      fragmented framing, ESC unescaping policy, cancellation/restart, FIFO identity, aggregate and per-payload
+      bounds, saturation rollback, acknowledgement, reset lifetime, and cross-family ordering are exact; recursive
+      tmux/SSH execution, product logging, and diagnostic policy are explicitly excluded unless an existing owner has
+      a concrete completed handoff
+    why_next: >-
+      This last category resolves compatibility transport and no-op policy after terminal state owners are settled.
+
+residual_accounting:
+  revision: 2a5635a
+  normalized_query: protocol gaps filtered to disposition active and owner howl-vt
+  total: 112
+  categories:
+    mode_dispatch_lifecycle: 29
+    charset_line_geometry: 19
+    erase_repeat_alignment: 15
+    cursor_compatibility_and_restore: 13
+    metadata_shell_integration: 15
+    compatibility_string_controls: 21
+  partition: exact; categories are disjoint and counts sum to 112
+  graphics_boundary: >-
+    No active record is wholly graphics-owned. Kitty erase records include a terminal graphics-plane residual; after
+    their non-graphics policy is settled, that remainder is deferred to howl-vt's later graphics milestone.
+  other_owner_boundary: >-
+    Host pixels, cursor presentation, resize notifications, and metadata presentation move only to howl-window when
+    the category proves both a complete VT handoff and a current host obligation; product-only behavior is excluded,
+    not delegated.
+
 completion:
   - every indexed non-graphics record is full or has an explicit maintained disposition
   - every full claim points at exact implementation and behavior proof
