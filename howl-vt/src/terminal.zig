@@ -2139,7 +2139,7 @@ pub const Screen = struct {
             1 => self.current_attrs.bold = true,
             2 => self.current_attrs.dim = true,
             3 => self.current_attrs.italic = true,
-            5, 6 => self.current_attrs.blink = true,
+            5 => self.current_attrs.blink = true,
             7 => self.current_attrs.reverse = true,
             8 => self.current_attrs.invisible = true,
             9 => self.current_attrs.strikethrough = true,

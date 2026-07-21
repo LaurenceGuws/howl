@@ -1302,6 +1302,25 @@ test "terminal: SGR color mutation is exact fragmented and malformed-transaction
     try std.testing.expect(!(try terminal.feed("\x1b[m")).state_changed);
 }
 
+test "terminal: SGR rapid blink is an exact fragmented no-op" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
+    try std.testing.expect(!(try terminal.feed("6m")).state_changed);
+    try std.testing.expect(!terminal.screen_state.activeConst().current_attrs.blink);
+    try std.testing.expect(!terminal.screen_state.activeConst().current_attrs.blink_fast);
+
+    try std.testing.expect((try terminal.feed("\x1b[5m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[6m")).state_changed);
+    try std.testing.expect(terminal.screen_state.activeConst().current_attrs.blink);
+    try std.testing.expect(!terminal.screen_state.activeConst().current_attrs.blink_fast);
+
+    try std.testing.expect((try terminal.feed("\x1b[25m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[6m")).state_changed);
+}
+
 test "terminal: SGR font and baseline retain exact cell save resize and bank state" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

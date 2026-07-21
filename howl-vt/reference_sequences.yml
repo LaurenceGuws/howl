@@ -1525,8 +1525,9 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: iterm2.sgr.rapid_blink, raw: "CSI 6 m", effect: ignore unsupported rapid blink,
-            recognition: accepted_noop, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
-            conditions: Howl enables ordinary blink}
+            recognition: accepted_noop, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: SGR rapid blink is an exact fragmented no-op"}}}
           - {id: iterm2.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -2756,8 +2757,9 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.rapid_blink, raw: "CSI 6 m", effect: ignore unsupported rapid blink,
-            recognition: accepted_noop, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
-            conditions: Howl enables ordinary blink}
+            recognition: accepted_noop, howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: SGR rapid blink is an exact fragmented no-op"}}}
           - {id: kitty.sgr.reverse, raw: "CSI 7 m", effect: enable inverse, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
