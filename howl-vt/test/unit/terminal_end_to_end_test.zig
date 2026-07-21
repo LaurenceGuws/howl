@@ -423,6 +423,44 @@ test "terminal: rectangle erase owns exact pending wrap mutation" {
     try std.testing.expect(screen.peekDirtyRows() == null);
 }
 
+test "terminal: rendition protection and rectangle owners report exact mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 4);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[31m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[31m")).state_changed);
+    try std.testing.expect((try terminal.feed("ABCD\x1b[2;1HEFGH\x1b[3;1HIJKL")).state_changed);
+
+    var screen = terminal.screen_state.active();
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[1;1;2;2;1$r")).state_changed);
+    try std.testing.expect(screen.cellInfoAt(0, 0).attrs.bold);
+    try std.testing.expect(screen.cellInfoAt(1, 1).attrs.bold);
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b[1;1;2;2;1$r")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+
+    try std.testing.expect((try terminal.feed("\x1b[2*x")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[2*x")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[1\"q")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[1\"q")).state_changed);
+
+    screen.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b[88;1;1;1")).state_changed == false);
+    try std.testing.expect((try terminal.feed(";2$x")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'X'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'X'), screen.cellAt(0, 1));
+    screen.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b[88;1;1;1;2$x")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[1;1;1;2;1;1;1;1$v")).state_changed);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    const before = screen.cellInfoAt(2, 3);
+    try std.testing.expect(!(try terminal.feed("\x1b[3;4;2;1;1$r")).state_changed);
+    try std.testing.expectEqualDeep(before, screen.cellInfoAt(2, 3));
+}
+
 test "terminal: ANSI insert and newline modes retain exact global lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();

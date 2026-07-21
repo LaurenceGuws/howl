@@ -69,10 +69,17 @@ categories:
       remain explicitly deferred. Active partial howl-vt obligations fell from 228 to 205.
 
   - id: rendition_color_protection_rectangles
-    status: queued
+    status: accepted
     owner: howl-vt
     mechanism: cell attributes, color transactions, protection provenance, and rectangle mutation
     gate: exact cell mutation and rollback with unsupported multicell residuals kept explicit
+    result: >-
+      SGR, DECFRA, DECCRA, DECCARA, DECRARA, and DECSACE now bypass void Screen facades and report exact retained,
+      pending-wrap, cell, attribute, and minimum changed column spans per row. Dense fragmented proofs cover repetition, malformed color
+      groups, protection provenance, clipping, overlap, and invalid rectangles. Forty-seven active obligations are
+      now explicit: one unsupported DEC rendition is excluded, 34 conflicting reference policies are excluded, one
+      Kitty graphics-color remainder stays deferred to howl-vt, and 11 completed VT color handoffs delegate
+      presentation and damage to howl-window. Active partial howl-vt obligations fell from 205 to 158.
 
   - id: reports_replies
     status: queued

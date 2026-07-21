@@ -20,6 +20,26 @@ classifications:
   structural_policy_difference: &howl_structural_policy_difference >-
     Howl edits its bounded cell, row-geometry, continuation, history, and damage model exactly; reference-only
     multicell, selection, callback, or external-attribute consequences are outside the complete Howl family.
+  rendition_policy_difference: &howl_rendition_policy_difference >-
+    Howl retains one bounded cell-rendition model with exact group-local malformed-color handling; reference-only
+    rendering configuration and conflicting whole-command rejection are outside the complete Howl family.
+  rectangle_policy_difference: &howl_rectangle_policy_difference >-
+    Howl mutates its bounded cell, protection, origin, and damage model exactly; reference-only multicell repair,
+    external attributes, graphics, and conflicting erase or destination policy are outside the complete Howl family.
+  color_policy_difference: &howl_color_policy_difference >-
+    Howl retains bounded host-neutral palette and terminal-color facts with fixed exact replies; reference-specific
+    parser breadth, reply formatting, logging, opacity, and presentation policy are outside the complete Howl family.
+  protection_policy_difference: &howl_protection_policy_difference >-
+    Howl retains ISO and DEC protection provenance per cell so ordinary and selective erase remain unambiguous;
+    reference models that collapse provenance are outside the complete Howl family.
+  ignored_color_policy: &howl_ignored_color_policy {support: partial, disposition: excluded,
+    rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+      path: howl-vt/test/unit/terminal_osc_test.zig,
+      symbol: "Kitty ignored OSC selectors remain bounded exact no-ops"}}
+  ignored_osc_active: &kitty_ignored_osc_howl {support: partial,
+    source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+      path: howl-vt/test/unit/terminal_osc_test.zig,
+      symbol: "Kitty ignored OSC selectors remain bounded exact no-ops"}}
   missing_deferred_graphics: &howl_missing_deferred_graphics {
     support: missing, disposition: deferred, owner: howl-vt, milestone: graphics}
   missing_excluded_iterm: &howl_missing_excluded_iterm {
@@ -435,9 +455,13 @@ references:
           - {id: libvterm.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC private modes, howl: {support: partial, residual: Howl implements only the individually indexed DEC modes.,
             source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
           - {id: libvterm.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, bounds: indexed and RGB forms,
-            howl: {support: partial, residual: Howl implements only the individually indexed SGR parameters., source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              residual: Howl implements the indexed bounded rendition subset proved below.,
+              source: howl-vt/src/terminal.zig, symbol: Screen.applySgr, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           - {id: libvterm.csi.decsgr, raw: "CSI ? Pm m", effect: DEC baseline rendition, conditions: Ps 4|5|24,
-            howl: {support: partial}}
+            howl: {support: missing, disposition: excluded, rationale: *howl_rendition_policy_difference}}
           - {id: libvterm.csi.dsr, raw: "CSI [Ps=0] n", effect: device status or cursor report,
             conditions: Ps 5|6; libvterm reports absolute CPR while Howl reports from the active DECOM origin,
             relevance: query,
@@ -623,7 +647,8 @@ references:
             conditions: >-
               Howl reports retained dim, additional underline styles, and underline color that pinned libvterm ignores
             relevance: query
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendSgrAttrs, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendSgrAttrs, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECRQSS replies for owned state and invalid requests"}}
           - {id: libvterm.dcs.decrqss_decstbm, raw: "DCS $ q r ST", effect: report vertical margins,
@@ -697,7 +722,10 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: libvterm.sgr.bold, raw: "CSI 1 m", effect: enable bold, howl: {support: partial,
-            source: howl-vt/src/terminal.zig, symbol: applySgr},
+            disposition: excluded, rationale: *howl_rendition_policy_difference,
+            source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: SGR retains exact rendition and colon color state"}},
             conditions: libvterm can also brighten an existing basic foreground when bold-highbright is configured}
           - {id: libvterm.sgr.italic, raw: "CSI 3 m", effect: enable italic, howl: {
             support: full, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
@@ -844,12 +872,14 @@ references:
         records:
           - {id: iterm2.esc.spa, raw: "ESC V", effect: start protected area, relevance: compatibility,
             conditions: iTerm2 ordinary erase protection follows the current ISO mode while Howl retains ISO provenance,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_protection_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: ISO and DEC protection retain distinct erase semantics"}}}
           - {id: iterm2.esc.epa, raw: "ESC W", effect: end protected area, relevance: compatibility,
             conditions: iTerm2 ordinary erase protection follows the current ISO mode while Howl retains ISO provenance,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_protection_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: ISO and DEC protection retain distinct erase semantics"}}}
           - {id: iterm2.esc.latin1, raw: "ESC % @", effect: select Latin-1 decoding, relevance: charset,
@@ -1064,7 +1094,12 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
-          - {id: iterm2.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial, residual: Howl implements only the individually indexed SGR parameters.}}
+          - {id: iterm2.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial,
+            disposition: excluded, rationale: *howl_rendition_policy_difference,
+            residual: Howl implements the indexed bounded rendition subset proved below.,
+            source: howl-vt/src/terminal.zig, symbol: Screen.applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           - {id: iterm2.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
           - {id: iterm2.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
@@ -1206,11 +1241,13 @@ references:
               symbol: "terminal: ISO and DEC protection retain distinct erase semantics"}}}
           - {id: iterm2.csi.deccara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ r", effect: change rectangle attributes,
             conditions: wide and multicell boundary repair remains unproved,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: changeRectAttrs, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: changeRectAttrs, proof: {
               path: howl-vt/test/unit/screen_test.zig, symbol: "screen: DECCARA stream mode spans full middle rows"}}}
           - {id: iterm2.csi.decrara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ t", effect: reverse rectangle attributes,
             conditions: wide and multicell boundary repair remains unproved,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: changeRectAttrs, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: changeRectAttrs, proof: {
               path: howl-vt/test/unit/screen_test.zig, symbol: "screen: DECRARA toggles supported attrs"}}}
           - {id: iterm2.csi.decsace, raw: "CSI [Ps=0] * x", effect: set rectangle attribute extent,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: processStar, proof: {
@@ -1219,20 +1256,26 @@ references:
           - {id: iterm2.csi.deccra, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt2 ; Pl2 ; Pp2 $ v", effect: copy rectangle,
             conditions: "iTerm2 keeps destination page-relative while Howl resolves it against DECOM origin;
               clipped wide and multicell boundary repair remains unproved",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: copyRect, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: copyRect, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DECCRA preserves cursor and overlapping source bytes"}}}
           - {id: iterm2.csi.decfra, raw: "CSI Pc ; Pt ; Pl ; Pb ; Pr $ x", effect: fill rectangle,
             conditions: iTerm2 maps Pc through active line drawing and applies only current colors,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: fillRect, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: fillRect, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: iterm2.csi.decera, raw: "CSI Pt ; Pl ; Pb ; Pr $ z", effect: erase rectangle,
             conditions: iTerm2 erases with its grid default cell while Howl uses current erase attributes,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: eraseRect}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: eraseRect, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           - {id: iterm2.csi.decsera, raw: "CSI Pt ; Pl ; Pb ; Pr $ {", effect: selective erase rectangle,
             conditions: iTerm2 preserves cell attributes while Howl applies current erase attributes,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: eraseRect, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: eraseRect, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: iterm2.csi.decsed, raw: "CSI ? [Ps=0] J", effect: selective erase display,
@@ -1262,7 +1305,8 @@ references:
             effect: push color stack
             conditions: >-
               iTerm2 owns 256 sparse slots and distinct used and largest-used counters; Howl follows Kitty's ten slots
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: pushState, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: pushState, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}
           - id: iterm2.csi.xtpopcolors
@@ -1270,7 +1314,8 @@ references:
             effect: pop color stack
             conditions: >-
               iTerm2 indexed pop rewinds its used counter while Kitty and Howl leave sequential depth unchanged
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: popState, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: popState, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}
           - id: iterm2.csi.xtreportcolors
@@ -1278,7 +1323,8 @@ references:
             effect: report color stack
             conditions: >-
               iTerm2 reports used and persistent largest-used while Howl reports Kitty's current index and count
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendColorStackReport, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendColorStackReport, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}
           - id: iterm2.csi.xtpushsgr
@@ -1351,7 +1397,8 @@ references:
             conditions: >-
               Howl owns indexes 0..255 plus xterm special indexes 256..260 and fixed 16-bit rgb replies, but omits
               iTerm2 selectable 8-bit replies, preferred-color-space, and tmux report policy.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: handleXtermPaletteControl, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: handleXtermPaletteControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC color grammar scales short components and rejects trailing components"}}
           - {id: iterm2.osc.eterm, raw: "OSC 6 ; Pt (BEL|ST)", effect: Eterm extension, relevance: compatibility,
@@ -1371,7 +1418,9 @@ references:
           - {id: iterm2.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &iterm2_dynamic_color_condition "Howl retains host-neutral RGB state and emits fixed 16-bit
               replies but omits iTerm2 selectable 8-bit replies and its broader platform color parser.",
-            howl: &iterm2_dynamic_color_howl {support: partial, source: howl-vt/src/terminal.zig,
+            howl: &iterm2_dynamic_color_howl {support: partial, disposition: delegated, owner: howl-window,
+              residual: Only host presentation and damage for the retained terminal-color fact remain.,
+              rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig,
               symbol: handleXtermDynamicColor, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
           - {id: iterm2.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
@@ -1566,7 +1615,12 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "iTerm safe controls mutate presentation metadata and exact replies"}}
           - {id: iterm2.osc1337.set_colors, raw: "OSC 1337 ; SetColors=Pt (BEL|ST)", effect: set terminal colors,
-            howl: {support: partial, residual: Howl retains terminal colors without iTerm2 host presentation policy., source: howl-vt/src/terminal.zig, symbol: parse}}
+            howl: {support: partial, disposition: delegated, owner: howl-window,
+              residual: Only host presentation and damage for the retained terminal-color fact remain.,
+              rationale: *howl_color_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: handleItermSetColors, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "iTerm SetColors resets represented domains and ignores malformed pairs independently"}}}
           - {id: iterm2.osc1337.shell_integration, raw: "OSC 1337 ; ShellIntegrationVersion=Pt (BEL|ST)",
             effect: report shell integration identity, relevance: host metadata, howl: {support: partial, residual: Howl retains bounded shell identity metadata without iTerm2 session policy.,
             source: howl-vt/src/terminal.zig, symbol: parse}}
@@ -2747,10 +2801,16 @@ references:
           - {id: kitty.csi.deccara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ r",
             effect: change rectangle rendition,
             conditions: Kitty supports full SGR colors and subparameters while Howl supports bounded basic attributes,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: changeRectAttrs}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: changeRectAttrs, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           - {id: kitty.csi.decsace, raw: "CSI [Ps=0] * x", effect: set rectangle attribute extent,
             conditions: Kitty maps every value other than 2 to stream mode while Howl ignores values above 2,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: processStar}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_rectangle_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: processStar, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           - {id: kitty.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style,
             conditions: Kitty maps values above 6 to host-default shape with parameter-selected blink while Howl
               rejects them,
@@ -2785,7 +2845,12 @@ references:
               symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
           - {id: kitty.csi.decrqm, raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state,
             conditions: supported ANSI and DEC mode sets differ, howl: {support: partial}}
-          - {id: kitty.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial, residual: Howl implements only the individually indexed SGR parameters.}}
+          - {id: kitty.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial,
+            disposition: excluded, rationale: *howl_rendition_policy_difference,
+            residual: Howl implements the indexed bounded rendition subset proved below.,
+            source: howl-vt/src/terminal.zig, symbol: Screen.applySgr, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           - {id: kitty.csi.modify_other_keys, raw: "CSI > Ps ; Ps m", effect: set modifyOtherKeys, relevance: input,
             howl: {support: partial, residual: Howl implements the supported modifyOtherKeys levels and rejects unsupported values.}}
       - source: vt-parser.c
@@ -2812,7 +2877,8 @@ references:
             conditions: >-
               Shared indexes 0..255 and 16-bit replies agree; Howl additionally owns xterm special indexes and
               accepts a narrower deterministic color grammar than Kitty's color parser.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: handleXtermPaletteControl, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_color_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: handleXtermPaletteControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC color grammar scales short components and rejects trailing components"}}
           - id: kitty.osc.palette_reset
@@ -2858,7 +2924,9 @@ references:
           - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB fact and exact reply but
               omits Kitty host dirtiness policy and accepts a narrower deterministic color grammar.",
-            howl: &kitty_dynamic_color_howl {support: partial, source: howl-vt/src/terminal.zig,
+            howl: &kitty_dynamic_color_howl {support: partial, disposition: delegated, owner: howl-window,
+              residual: Only host presentation and damage for the retained terminal-color fact remain.,
+              rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig,
               symbol: handleXtermDynamicColor, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
           - {id: kitty.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
@@ -2916,7 +2984,8 @@ references:
             conditions: >-
               Howl owns palette plus foreground/background/cursor/cursor-text/selection RGB facts; transparent
               backgrounds, visual-bell color, opacity, and Kitty host refresh policy remain outside this subset.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: handleKittyControl, proof: {
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
+              source: howl-vt/src/terminal.zig, symbol: handleKittyControl, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty OSC 21 sets queries and resets terminal colors"}}
           - {id: kitty.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard transfer,
@@ -2980,28 +3049,25 @@ references:
             conditions: &kitty_ignored_osc_condition "Howl silently drops the command within its 2 KiB ordinary OSC
               bound and rejects overflow with StringControlLimit; Kitty recognizes the selector and may log its
               ignored status",
-            relevance: compatibility, howl: &kitty_ignored_osc_howl {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
-                path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "Kitty ignored OSC selectors remain bounded exact no-ops"}}}
+            relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.special_colors_105, raw: "OSC 105 ; Pt (BEL|ST)", effect: ignore xterm special colors,
-            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.special_enable_6, raw: "OSC 6 ; Pt (BEL|ST)",
             effect: ignore xterm special-color enablement, conditions: *kitty_ignored_osc_condition,
-            relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.special_enable_106, raw: "OSC 106 ; Pt (BEL|ST)",
             effect: ignore xterm special-color enablement, conditions: *kitty_ignored_osc_condition,
-            relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.color_report_13, raw: "OSC 13 ; Pt (BEL|ST)", effect: ignore color report,
-            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.color_report_14, raw: "OSC 14 ; Pt (BEL|ST)", effect: ignore color report,
-            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.color_report_15, raw: "OSC 15 ; Pt (BEL|ST)", effect: ignore color report,
-            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.color_report_16, raw: "OSC 16 ; Pt (BEL|ST)", effect: ignore color report,
-            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.color_report_18, raw: "OSC 18 ; Pt (BEL|ST)", effect: ignore color report,
-            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *howl_ignored_color_policy}
           - {id: kitty.osc_ignore.logging, raw: "OSC 46 ; Pt (BEL|ST)", effect: ignore xterm logging,
             conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.font, raw: "OSC 50 ; Pt (BEL|ST)", effect: ignore xterm font selection,
@@ -3201,7 +3267,10 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.conceal, raw: "CSI 8 m", effect: ignore unsupported conceal,
-            recognition: accepted_noop, howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
+            recognition: accepted_noop, howl: {support: partial, disposition: excluded,
+              rationale: *howl_rendition_policy_difference, source: howl-vt/src/terminal.zig, symbol: applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: SGR retains exact rendition and colon color state"}},
             conditions: Howl retains conceal state}
           - {id: kitty.sgr.strike, raw: "CSI 9 m", effect: enable strike, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
@@ -3228,7 +3297,10 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.conceal_off, raw: "CSI 28 m", effect: ignore unsupported conceal reset,
-            recognition: accepted_noop, howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applySgr},
+            recognition: accepted_noop, howl: {support: partial, disposition: excluded,
+              rationale: *howl_rendition_policy_difference, source: howl-vt/src/terminal.zig, symbol: applySgr,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: SGR retains exact rendition and colon color state"}},
             conditions: Howl clears retained conceal state}
           - {id: kitty.sgr.strike_off, raw: "CSI 29 m", effect: disable strike, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
@@ -3240,7 +3312,8 @@ references:
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.fg_extended, raw: "CSI 38 ; 2|5 ; Pm m", effect: set RGB or indexed foreground,
             conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: kitty.sgr.fg_default, raw: "CSI 39 m", effect: reset foreground, howl: {support: full,
@@ -3253,7 +3326,8 @@ references:
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.bg_extended, raw: "CSI 48 ; 2|5 ; Pm m", effect: set RGB or indexed background,
             conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: kitty.sgr.bg_default, raw: "CSI 49 m", effect: reset background, howl: {support: full,
@@ -3262,7 +3336,8 @@ references:
               symbol: "terminal: SGR color mutation is exact fragmented and malformed-transactional"}}}
           - {id: kitty.sgr.underline_color, raw: "CSI 58 ; 2|5 ; Pm m", effect: set underline color,
             conditions: Kitty rejects the complete SGR on malformed color fields while Howl rejects that color group,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: SGR retains exact rendition and colon color state"}}}
           - {id: kitty.sgr.underline_color_default, raw: "CSI 59 m", effect: reset underline color,

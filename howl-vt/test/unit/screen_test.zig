@@ -397,9 +397,9 @@ test "screen: DECSCA protects cells from selective erase" {
     defer s.deinit(gpa);
 
     apply(&s, SemanticEvent{ .write_text = "A" });
-    apply(&s, SemanticEvent{ .character_protection = .dec });
+    try std.testing.expect(s.setCharacterProtection(.dec));
     apply(&s, SemanticEvent{ .write_text = "B" });
-    apply(&s, SemanticEvent{ .character_protection = .none });
+    try std.testing.expect(s.setCharacterProtection(.none));
     apply(&s, SemanticEvent{ .write_text = "CDEF" });
 
     s.cursor.setPositionByClient(1, 2);
@@ -441,9 +441,9 @@ test "screen: DECSERA preserves protected cells" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "D" });
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 1 } });
-    apply(&s, SemanticEvent{ .character_protection = .dec });
+    try std.testing.expect(s.setCharacterProtection(.dec));
     apply(&s, SemanticEvent{ .write_text = "E" });
-    apply(&s, SemanticEvent{ .character_protection = .none });
+    try std.testing.expect(s.setCharacterProtection(.none));
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 2 } });
     apply(&s, SemanticEvent{ .write_text = "FGHI" });
 
@@ -458,7 +458,7 @@ test "screen: DECFRA fills clipped rectangle with current attrs" {
     defer s.deinit(gpa);
 
     s.current_attrs.bg = Grid.Color.rgbComponents(40, 44, 52);
-    apply(&s, SemanticEvent{ .rect_fill = .{ .area = .{ .top = 1, .left = 1, .bottom = 9, .right = 9 }, .ch = 'X' } });
+    try std.testing.expect(s.fillRect(.{ .top = 1, .left = 1, .bottom = 9, .right = 9 }, 'X'));
 
     try std.testing.expectEqual(@as(u21, 'X'), s.cellAt(1, 1));
     try std.testing.expectEqual(@as(u21, 'X'), s.cellAt(2, 2));
@@ -481,23 +481,23 @@ test "screen: DECCRA copies overlapping rectangles without allocation" {
     apply(&s, SemanticEvent{ .write_text = "MNOP" });
 
     failing.fail_index = failing.alloc_index;
-    apply(&s, SemanticEvent{ .rect_copy = .{
+    try std.testing.expect(s.copyRect(.{
         .area = .{ .top = 0, .left = 0, .bottom = 2, .right = 2 },
         .source_page = 1,
         .dest_top = 1,
         .dest_left = 1,
         .dest_page = 1,
-    } });
+    }));
 
     try expectRows(&s, "ABCDEABCIEFGMIJK");
 
-    apply(&s, SemanticEvent{ .rect_copy = .{
+    try std.testing.expect(s.copyRect(.{
         .area = .{ .top = 1, .left = 1, .bottom = 3, .right = 3 },
         .source_page = 1,
         .dest_top = 0,
         .dest_left = 0,
         .dest_page = 1,
-    } });
+    }));
     try expectRows(&s, "ABCDEFGCIJKGMIJK");
     try std.testing.expect(!failing.has_induced_failure);
 }
@@ -537,11 +537,11 @@ test "screen: DECCARA stream mode spans full middle rows" {
 
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 0, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "ABCDEFGHI" });
-    apply(&s, SemanticEvent{ .rect_attrs_change = .{
-        .area = .{ .top = 0, .left = 1, .bottom = 2, .right = 1 },
-        .attrs = .{ .params = .{1} ++ [_]u16{0} ** (csi_max_params - 1), .param_count = 1 },
-        .reverse = false,
-    } });
+    try std.testing.expect(s.changeRectAttrs(
+        .{ .top = 0, .left = 1, .bottom = 2, .right = 1 },
+        &.{1},
+        false,
+    ));
 
     try std.testing.expect(!s.cellInfoAt(0, 0).attrs.bold);
     try std.testing.expect(s.cellInfoAt(0, 1).attrs.bold);
@@ -558,12 +558,12 @@ test "screen: DECSACE rectangle mode constrains DECCARA to exact bounds" {
     defer s.deinit(gpa);
 
     apply(&s, SemanticEvent{ .write_text = "ABCDEFGHI" });
-    apply(&s, SemanticEvent{ .attr_change_extent_rect = true });
-    apply(&s, SemanticEvent{ .rect_attrs_change = .{
-        .area = .{ .top = 0, .left = 0, .bottom = 1, .right = 1 },
-        .attrs = .{ .params = .{1} ++ [_]u16{0} ** (csi_max_params - 1), .param_count = 1 },
-        .reverse = false,
-    } });
+    try std.testing.expect(s.setRectAttrExtent(true));
+    try std.testing.expect(s.changeRectAttrs(
+        .{ .top = 0, .left = 0, .bottom = 1, .right = 1 },
+        &.{1},
+        false,
+    ));
 
     try std.testing.expect(s.cellInfoAt(0, 0).attrs.bold);
     try std.testing.expect(s.cellInfoAt(1, 1).attrs.bold);
@@ -577,13 +577,13 @@ test "screen: DECRARA toggles supported attrs" {
     defer s.deinit(gpa);
 
     const underline_params = [_]i32{4};
-    apply(&s, SemanticEvent{ .sgr = .{ .params = underline_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(s.applySgr(underline_params[0..], emptySeparators()));
     apply(&s, SemanticEvent{ .write_text = "ABCDEF" });
-    apply(&s, SemanticEvent{ .rect_attrs_change = .{
-        .area = .{ .top = 0, .left = 0, .bottom = 1, .right = 1 },
-        .attrs = .{ .params = .{ 1, 4 } ++ [_]u16{0} ** (csi_max_params - 2), .param_count = 2 },
-        .reverse = true,
-    } });
+    try std.testing.expect(s.changeRectAttrs(
+        .{ .top = 0, .left = 0, .bottom = 1, .right = 1 },
+        &.{ 1, 4 },
+        true,
+    ));
 
     try std.testing.expect(s.cellInfoAt(0, 0).attrs.bold);
     try std.testing.expect(!s.cellInfoAt(0, 0).attrs.underline);

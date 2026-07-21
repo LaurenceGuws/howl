@@ -60,9 +60,9 @@ test "screen write: sgr applies colors and resets for later writes" {
     defer s.deinit(gpa);
 
     const fg_params = [_]i32{ 38, 5, 196 };
-    apply(&s, SemanticEvent{ .sgr = .{ .params = fg_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(s.applySgr(fg_params[0..], emptySeparators()));
     const bg_params = [_]i32{ 48, 5, 23 };
-    apply(&s, SemanticEvent{ .sgr = .{ .params = bg_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(s.applySgr(bg_params[0..], emptySeparators()));
     apply(&s, SemanticEvent{ .write_text = "X" });
     const cell = s.cellInfoAt(0, 0);
     try std.testing.expectEqual(Grid.Color.indexed(196), cell.attrs.fg);
@@ -71,10 +71,10 @@ test "screen write: sgr applies colors and resets for later writes" {
     var r = try Grid.initWithCells(gpa, 2, 4);
     defer r.deinit(gpa);
     const red_params = [_]i32{31};
-    apply(&r, SemanticEvent{ .sgr = .{ .params = red_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(r.applySgr(red_params[0..], emptySeparators()));
     apply(&r, SemanticEvent{ .write_text = "A" });
     const reset_params = [_]i32{0};
-    apply(&r, SemanticEvent{ .sgr = .{ .params = reset_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(r.applySgr(reset_params[0..], emptySeparators()));
     apply(&r, SemanticEvent{ .write_text = "B" });
     try std.testing.expectEqual(Grid.Color.indexed(1), r.cellInfoAt(0, 0).attrs.fg);
     try std.testing.expectEqual(Screen.default_fg, r.cellInfoAt(0, 1).attrs.fg);
@@ -85,10 +85,10 @@ test "screen write: style attrs and kitty underline forms apply correctly" {
     var s = try Grid.initWithCells(gpa, 1, 2);
     defer s.deinit(gpa);
     const set_params = [_]i32{ 1, 2, 3, 8, 9 };
-    apply(&s, SemanticEvent{ .sgr = .{ .params = set_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(s.applySgr(set_params[0..], emptySeparators()));
     apply(&s, SemanticEvent{ .write_text = "A" });
     const reset_params = [_]i32{ 22, 23, 28, 29 };
-    apply(&s, SemanticEvent{ .sgr = .{ .params = reset_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(s.applySgr(reset_params[0..], emptySeparators()));
     apply(&s, SemanticEvent{ .write_text = "B" });
     try std.testing.expect(s.cellInfoAt(0, 0).attrs.bold);
     try std.testing.expect(!s.cellInfoAt(0, 1).attrs.bold);
@@ -96,10 +96,10 @@ test "screen write: style attrs and kitty underline forms apply correctly" {
     var u = try Screen.initWithCells(gpa, 2, 4);
     defer u.deinit(gpa);
     const colon_params = [_]i32{ 4, 3 };
-    apply(&u, SemanticEvent{ .sgr = .{ .params = colon_params[0..], .separators = colonSeparator(0) } });
+    try std.testing.expect(u.applySgr(colon_params[0..], colonSeparator(0)));
     apply(&u, SemanticEvent{ .write_text = "C" });
     const semicolon_params = [_]i32{ 4, 5 };
-    apply(&u, SemanticEvent{ .sgr = .{ .params = semicolon_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(u.applySgr(semicolon_params[0..], emptySeparators()));
     apply(&u, SemanticEvent{ .write_text = "S" });
     try std.testing.expectEqual(Grid.UnderlineStyle.curly, u.cellInfoAt(0, 0).attrs.underline_style);
     try std.testing.expectEqual(Grid.UnderlineStyle.straight, u.cellInfoAt(0, 1).attrs.underline_style);
@@ -107,10 +107,10 @@ test "screen write: style attrs and kitty underline forms apply correctly" {
     var c = try Grid.initWithCells(gpa, 2, 4);
     defer c.deinit(gpa);
     const color_params = [_]i32{ 4, 58, 2, 1, 2, 3 };
-    apply(&c, SemanticEvent{ .sgr = .{ .params = color_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(c.applySgr(color_params[0..], emptySeparators()));
     apply(&c, SemanticEvent{ .write_text = "C" });
     const reset_underline_params = [_]i32{59};
-    apply(&c, SemanticEvent{ .sgr = .{ .params = reset_underline_params[0..], .separators = emptySeparators() } });
+    try std.testing.expect(c.applySgr(reset_underline_params[0..], emptySeparators()));
     apply(&c, SemanticEvent{ .write_text = "R" });
     try std.testing.expectEqual(Grid.Color.rgbComponents(1, 2, 3), c.cellInfoAt(0, 0).attrs.underline_color);
     try std.testing.expectEqual(Grid.default_underline_color, c.cellInfoAt(0, 1).attrs.underline_color);
@@ -120,17 +120,17 @@ test "screen write: SGR clamps colors and consumes malformed color operands" {
     var screen = Screen.init(1, 1);
 
     const rgb_params = [_]i32{ 38, 2, -1, 300, 42 };
-    screen.applySgr(rgb_params[0..], emptySeparators());
+    try std.testing.expect(screen.applySgr(rgb_params[0..], emptySeparators()));
     try std.testing.expectEqual(Grid.Color.rgbComponents(0, 255, 42), screen.current_attrs.fg);
 
     const malformed_params = [_]i32{ 31, 38, 5 };
-    screen.applySgr(malformed_params[0..], emptySeparators());
+    try std.testing.expect(screen.applySgr(malformed_params[0..], emptySeparators()));
     try std.testing.expectEqual(Grid.Color.indexed(1), screen.current_attrs.fg);
     try std.testing.expect(!screen.current_attrs.blink);
 
     screen.current_attrs.blink_fast = true;
     const clear_blink_params = [_]i32{25};
-    screen.applySgr(clear_blink_params[0..], emptySeparators());
+    try std.testing.expect(screen.applySgr(clear_blink_params[0..], emptySeparators()));
     try std.testing.expect(!screen.current_attrs.blink);
     try std.testing.expect(!screen.current_attrs.blink_fast);
 }

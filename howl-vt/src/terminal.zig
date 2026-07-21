@@ -1173,7 +1173,7 @@ pub const Screen = struct {
             .cursor_vertical_absolute,
             .cursor_position,
             => self.applyCursorMove(event),
-            .write_text, .write_codepoint, .sgr => self.applyRetainedState(event),
+            .write_text, .write_codepoint => self.applyRetainedState(event),
             .line_feed,
             .next_line,
             .carriage_return,
@@ -1195,12 +1195,9 @@ pub const Screen = struct {
             .auto_wrap,
             .origin_mode,
             .insert_mode,
-            .character_protection,
-            .attr_change_extent_rect,
             .left_right_margin_mode,
             => self.applyScreenState(event),
             .hard_reset => self.applyLineEdit(event),
-            .rect_fill, .rect_copy, .rect_attrs_change => self.applyRectEdit(event),
             else => unreachable,
         }
     }
@@ -1247,7 +1244,6 @@ pub const Screen = struct {
         switch (event) {
             .write_text => |text| self.writeText(text),
             .write_codepoint => |codepoint| self.writeCell(codepoint),
-            .sgr => |sgr| self.applySgr(sgr.params, sgr.separators),
             else => unreachable,
         }
     }
@@ -1341,8 +1337,6 @@ pub const Screen = struct {
                 self.cursor.setPositionByClient(if (enabled) self.scroll_top else 0, self.lineHomeCol());
             },
             .insert_mode => |enabled| self.insert_mode = enabled,
-            .character_protection => |protection| self.current_attrs.protected = protection,
-            .attr_change_extent_rect => |enabled| self.attr_change_extent_rect = enabled,
             .left_right_margin_mode => |enabled| {
                 if (self.setLeftRightMarginMode(enabled)) return;
             },
@@ -1353,20 +1347,6 @@ pub const Screen = struct {
     fn applyLineEdit(self: *Screen, event: SemanticEvent) void {
         switch (event) {
             .hard_reset => self.reset(),
-            else => unreachable,
-        }
-    }
-
-    fn applyRectEdit(self: *Screen, event: SemanticEvent) void {
-        self.wrap_pending = false;
-        switch (event) {
-            .rect_fill => |request| self.fillRect(request.area, request.ch),
-            .rect_copy => |request| self.copyRect(request),
-            .rect_attrs_change => |request| self.changeRectAttrs(
-                request.area,
-                request.attrs.params[0..request.attrs.param_count],
-                request.reverse,
-            ),
             else => unreachable,
         }
     }
@@ -1596,12 +1576,29 @@ pub const Screen = struct {
         return changed;
     }
 
+    /// Select ISO, DEC, or unprotected provenance for subsequently written cells.
+    /// Returns false when the retained protection fact is already identical.
+    pub fn setCharacterProtection(self: *Screen, protection: Protection) bool {
+        if (self.current_attrs.protected == protection) return false;
+        self.current_attrs.protected = protection;
+        return true;
+    }
+
+    /// Select rectangular or stream extent for subsequent rectangle-attribute changes.
+    /// Returns false when the retained extent fact is already identical.
+    pub fn setRectAttrExtent(self: *Screen, rectangular: bool) bool {
+        if (self.attr_change_extent_rect == rectangular) return false;
+        self.attr_change_extent_rect = rectangular;
+        return true;
+    }
+
     /// Change attributes in the clipped rectangle using rectangular or stream extent.
-    fn changeRectAttrs(self: *Screen, area: RectArea, attrs: []const u16, reverse: bool) void {
-        const cells = self.cells orelse return;
-        if (attrs.len == 0) return;
-        const bounds = self.rectBounds(area) orelse return;
-        self.markDirtyRect(bounds);
+    /// Returns exact cell-attribute or pending-wrap mutation.
+    pub fn changeRectAttrs(self: *Screen, area: RectArea, attrs: []const u16, reverse: bool) bool {
+        var changed = self.cancelPendingWrap();
+        const cells = self.cells orelse return changed;
+        if (attrs.len == 0) return changed;
+        const bounds = self.rectBounds(area) orelse return changed;
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
             const row_start = self.rowStart(row);
@@ -1610,9 +1607,13 @@ pub const Screen = struct {
             var col = start_col;
             while (col <= end_col) : (col += 1) {
                 const idx = row_start + @as(u32, col);
-                applyRectAttrOps(&cells[@intCast(idx)].attrs, attrs, reverse);
+                if (applyRectAttrOps(&cells[@intCast(idx)].attrs, attrs, reverse)) {
+                    self.markDirtyCols(row, col, col);
+                    changed = true;
+                }
             }
         }
+        return changed;
     }
 
     /// Erase one clipped rectangle under ISO or DEC protection rules.
@@ -1631,27 +1632,36 @@ pub const Screen = struct {
     }
 
     /// Fill a clipped rectangle with `codepoint` and the current write attributes.
-    fn fillRect(self: *Screen, area: RectArea, codepoint: u21) void {
-        const cells = self.cells orelse return;
-        const bounds = self.rectBounds(area) orelse return;
-        self.markDirtyRect(bounds);
+    /// Returns exact cell or pending-wrap mutation.
+    pub fn fillRect(self: *Screen, area: RectArea, codepoint: u21) bool {
+        var changed = self.cancelPendingWrap();
+        const cells = self.cells orelse return changed;
+        const bounds = self.rectBounds(area) orelse return changed;
+        const fill = Cell{ .codepoint = codepoint, .attrs = self.current_attrs };
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
             const start = self.rowStart(row);
             var col = bounds.left;
             while (col <= bounds.right) : (col += 1) {
-                cells[start + col] = .{ .codepoint = codepoint, .attrs = self.current_attrs };
+                const cell = &cells[start + col];
+                if (std.meta.eql(cell.*, fill)) continue;
+                cell.* = fill;
+                self.markDirtyCols(row, col, col);
+                changed = true;
             }
         }
+        return changed;
     }
 
     /// Copy one clipped page-one rectangle in overlap-safe row and column order.
     ///
     /// Unsupported pages and missing storage leave the destination unchanged.
-    fn copyRect(self: *Screen, request: RectCopy) void {
-        const cells = self.cells orelse return;
-        if (request.source_page != 1 or request.dest_page != 1) return;
-        const source = self.rectBounds(request.area) orelse return;
+    /// Returns exact destination-cell or pending-wrap mutation.
+    pub fn copyRect(self: *Screen, request: RectCopy) bool {
+        var changed = self.cancelPendingWrap();
+        const cells = self.cells orelse return changed;
+        if (request.source_page != 1 or request.dest_page != 1) return changed;
+        const source = self.rectBounds(request.area) orelse return changed;
         const origin = self.activeOriginBounds();
         const dest_top = origin.top + @min(request.dest_top, origin.bottom - origin.top);
         const dest_left = origin.left + @min(request.dest_left, origin.right - origin.left);
@@ -1659,16 +1669,8 @@ pub const Screen = struct {
         const width: u16 = source.right - source.left + 1;
         const copy_height = @min(height, origin.bottom - dest_top + 1);
         const copy_width = @min(width, origin.right - dest_left + 1);
-        if (copy_height == 0 or copy_width == 0) return;
+        if (copy_height == 0 or copy_width == 0) return changed;
 
-        const dest_bottom = dest_top + copy_height - 1;
-        const dest_right = dest_left + copy_width - 1;
-        self.markDirtyRect(.{
-            .top = dest_top,
-            .left = dest_left,
-            .bottom = dest_bottom,
-            .right = dest_right,
-        });
         var copied_rows: u16 = 0;
         while (copied_rows < copy_height) : (copied_rows += 1) {
             const row = if (dest_top > source.top) copy_height - copied_rows - 1 else copied_rows;
@@ -1676,12 +1678,25 @@ pub const Screen = struct {
             const dest_start = self.rowStart(dest_top + row) + dest_left;
             const source_cells = cells[@intCast(source_start)..@intCast(source_start + copy_width)];
             const dest_cells = cells[@intCast(dest_start)..@intCast(dest_start + copy_width)];
+            var first_changed: ?u16 = null;
+            var last_changed: u16 = 0;
+            for (dest_cells, source_cells, 0..) |dest, source_cell, offset| {
+                if (std.meta.eql(dest, source_cell)) continue;
+                const col: u16 = @intCast(offset);
+                if (first_changed == null) first_changed = col;
+                last_changed = col;
+            }
             if (dest_start > source_start) {
                 std.mem.copyBackwards(Cell, dest_cells, source_cells);
             } else {
                 std.mem.copyForwards(Cell, dest_cells, source_cells);
             }
+            if (first_changed) |first| {
+                self.markDirtyCols(dest_top + row, dest_left + first, dest_left + last_changed);
+                changed = true;
+            }
         }
+        return changed;
     }
 
     /// Inserts columns from the cursor through the active right margin across the vertical region.
@@ -2084,10 +2099,11 @@ pub const Screen = struct {
     }
 
     /// Apply SGR parameters to the retained attributes used by subsequent writes.
-    pub fn applySgr(self: *Screen, params: []const i32, separators: parser_mod.CsiSeparatorList) void {
+    pub fn applySgr(self: *Screen, params: []const i32, separators: parser_mod.CsiSeparatorList) bool {
+        const before = self.current_attrs;
         if (params.len == 0) {
             self.resetRendition();
-            return;
+            return !std.meta.eql(before, self.current_attrs);
         }
 
         std.debug.assert(params.len <= std.math.maxInt(u8));
@@ -2103,6 +2119,7 @@ pub const Screen = struct {
                 else => self.applyBasicSgr(param),
             }
         }
+        return !std.meta.eql(before, self.current_attrs);
     }
 
     // SGR does not own ISO or DEC character protection.
@@ -2818,12 +2835,6 @@ pub const Screen = struct {
             .bottom = if (self.origin_mode) self.scrollBottom() else self.rows - 1,
             .right = if (horizontal) self.right_margin else self.cols - 1,
         };
-    }
-
-    fn markDirtyRect(self: *Screen, bounds: RectBounds) void {
-        var row = bounds.top;
-        while (row <= bounds.bottom) : (row += 1)
-            self.markDirtyCols(row, bounds.left, bounds.right);
     }
 
     /// Construct an empty cell carrying the current erase attributes.
@@ -4016,7 +4027,8 @@ fn screenResizeColCount(cols: u16) u32 {
 }
 
 // Applies bounded rectangular attribute operations to one cell in protocol order.
-fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool) void {
+fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool) bool {
+    const before = target.*;
     for (attrs) |attr| {
         switch (attr) {
             0 => if (!reverse) {
@@ -4094,6 +4106,7 @@ fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool)
             else => {},
         }
     }
+    return !std.meta.eql(before, target.*);
 }
 
 // Allocates one tab-stop flag per column and installs default stops.
@@ -11736,12 +11749,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .dec_mode_restore,
         => return vt.applyModeEvent(event),
 
-        .sgr => {
-            const screen = vt.screen_state.active();
-            const before = screen.current_attrs;
-            screen.applyScreen(event);
-            return !std.meta.eql(before, screen.current_attrs);
-        },
+        .sgr => |sgr| return vt.screen_state.active().applySgr(sgr.params, sgr.separators),
 
         .cursor_style,
         .cursor_shape,
@@ -11851,11 +11859,18 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .rect_selective_erase => |area| {
             return vt.screen_state.active().eraseRect(area, true);
         },
+        .rect_fill => |request| return vt.screen_state.active().fillRect(request.area, request.ch),
+        .rect_copy => |request| return vt.screen_state.active().copyRect(request),
+        .rect_attrs_change => |request| return vt.screen_state.active().changeRectAttrs(
+            request.area,
+            request.attrs.params[0..request.attrs.param_count],
+            request.reverse,
+        ),
+        .attr_change_extent_rect => |enabled| {
+            return vt.screen_state.active().setRectAttrExtent(enabled);
+        },
         .character_protection => |protection| {
-            const active = vt.screen_state.active();
-            if (active.current_attrs.protected == protection) return false;
-            active.current_attrs.protected = protection;
-            return true;
+            return vt.screen_state.active().setCharacterProtection(protection);
         },
         .repeat_preceding => |count| {
             return vt.screen_state.active().repeatPreceding(count);
@@ -11914,10 +11929,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .cursor_color,
         .cursor_text_color,
         .insert_mode,
-        .rect_fill,
-        .rect_copy,
-        .rect_attrs_change,
-        .attr_change_extent_rect,
         .reset_default_tab_stops,
         => vt.screen_state.active().applyScreen(event),
     }
