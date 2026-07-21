@@ -846,6 +846,59 @@ test "terminal size reports use exact current cell and pixel facts" {
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
 
+test "in-band resize mode emits transactional iTerm2 and Kitty reports" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 5);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[?20")).state_changed == false);
+    try std.testing.expect((try terminal.feed("48h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?2048h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2048$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?2048;1$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+
+    try terminal.setCellPixelSize(9, 17);
+    try terminal.resize(4, 7);
+    try std.testing.expectEqualStrings("\x1b[48;4;7;68;63t", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b G")).state_changed);
+    try terminal.resize(2, 3);
+    try std.testing.expectEqualStrings("\x9b48;2;3;34;27t", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?2048s\x1b[?2048l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2048r")).state_changed);
+    try terminal.resize(3, 4);
+    try std.testing.expectEqualStrings("\x9b48;3;4;51;36t", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[!p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2048$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?2048;2$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    try terminal.resize(4, 5);
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+}
+
+test "in-band resize report saturation preserves dimensions and pending output" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 5);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(std.math.maxInt(u32), std.math.maxInt(u32));
+    try std.testing.expect((try terminal.feed("\x1b[?2048h")).state_changed);
+
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.resize(std.math.maxInt(u16), std.math.maxInt(u16)));
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.rows);
+    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.primary.cols);
+    try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
+}
+
 test "title stack retains exact bounded title lifecycle and report bytes" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 5);

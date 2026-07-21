@@ -1609,7 +1609,10 @@ references:
           - {id: iterm2.mode.dark_mode_dsr, raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report,
             relevance: extension, howl: {status: 'false'}}
           - {id: iterm2.mode.resize_notifications, raw: "CSI ? 2048 h|l", effect: toggle resize notifications,
-            relevance: extension, howl: {status: 'false'}}
+            conditions: resize reports require host-provided cell pixel facts, relevance: extension,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
       - source: VT100Terminal.m
         symbol: XTERMCC_WINDOWSIZE
         line: 2730
@@ -1921,7 +1924,10 @@ references:
           - {id: kitty.mode.color_preference, raw: "CSI ? 2031 h|l", effect: toggle color-preference notifications,
             relevance: extension, howl: {status: 'false'}}
           - {id: kitty.mode.inband_resize, raw: "CSI ? 2048 h|l", effect: toggle in-band resize notifications,
-            relevance: extension, howl: {status: 'false'}}
+            conditions: resize reports require host-provided cell pixel facts, relevance: extension,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
           - {id: kitty.mode.paste_events, raw: "CSI ? 5522 h|l", effect: toggle extended paste events, relevance: input,
             howl: {status: 'false'}}
           - {id: kitty.mode.application_escape, raw: "CSI ? 7727 h|l", effect: reject application escape mode,

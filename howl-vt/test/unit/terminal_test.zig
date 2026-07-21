@@ -275,6 +275,25 @@ fn fullHistoryRetentionFailure(fail_index: usize) !void {
 test "terminal resize is transactional in both active-screen modes" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{false});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{true});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeWithNotificationTransaction, .{});
+}
+
+fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(9, 17);
+    const enabled = try terminal.feed("\x1b[?2048h");
+    try std.testing.expect(enabled.state_changed);
+
+    terminal.resize(3, 5) catch |failure| {
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
+        try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+        return failure;
+    };
+    try std.testing.expectEqualStrings("\x1b[48;3;5;51;45t", terminal.host.pendingOutput());
 }
 
 fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: bool) !void {

@@ -5269,6 +5269,7 @@ const ModeState = struct {
     focus_reporting: bool = false,
     bracketed_paste: bool = false,
     synchronized_output: bool = false,
+    inband_resize_notifications: bool = false,
     reverse_wraparound_mode: bool = false,
     extended_reverse_wraparound_mode: bool = false,
     mouse_tracking: MouseTrackingMode = .off,
@@ -5301,6 +5302,7 @@ const DecView = struct {
     focus_reporting: bool,
     bracketed_paste: bool,
     synchronized_output: bool,
+    inband_resize_notifications: bool,
     reverse_wraparound: bool,
     extended_reverse_wraparound: bool,
 };
@@ -5338,6 +5340,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         1015 => boolToDecModeState(view.mouse_protocol == .urxvt),
         2004 => boolToDecModeState(view.bracketed_paste),
         2026 => boolToDecModeState(view.synchronized_output),
+        2048 => boolToDecModeState(view.inband_resize_notifications),
         1045 => boolToDecModeState(view.extended_reverse_wraparound),
         else => 0,
     };
@@ -5417,6 +5420,7 @@ fn canSetDecMode(mode: u16) bool {
         1016,
         2004,
         2026,
+        2048,
         => true,
         else => false,
     };
@@ -7585,6 +7589,11 @@ fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
         1004 => boolEvent(final, .{ .focus_reporting = true }, .{ .focus_reporting = false }),
         2004 => boolEvent(final, .{ .bracketed_paste = true }, .{ .bracketed_paste = false }),
         2026 => boolEvent(final, .{ .synchronized_output = true }, .{ .synchronized_output = false }),
+        2048 => boolEvent(
+            final,
+            .{ .inband_resize_notifications = true },
+            .{ .inband_resize_notifications = false },
+        ),
         1045 => boolEvent(
             final,
             .{ .extended_reverse_wraparound_mode = true },
@@ -8174,6 +8183,7 @@ pub const SemanticEvent = union(enum) {
     focus_reporting: bool,
     bracketed_paste: bool,
     synchronized_output: bool,
+    inband_resize_notifications: bool,
     mouse_tracking_off,
     mouse_tracking_x10,
     mouse_tracking_normal,
@@ -8973,6 +8983,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .focus_reporting = vt.modes.focus_reporting,
         .bracketed_paste = vt.modes.bracketed_paste,
         .synchronized_output = vt.modes.synchronized_output,
+        .inband_resize_notifications = vt.modes.inband_resize_notifications,
         .reverse_wraparound = vt.modes.reverse_wraparound_mode,
         .extended_reverse_wraparound = vt.modes.extended_reverse_wraparound_mode,
     };
@@ -10643,6 +10654,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .extended_reverse_wraparound_mode,
         .bracketed_paste,
         .synchronized_output,
+        .inband_resize_notifications,
         .dec_mode_save,
         .dec_mode_restore,
         => return vt.applyModeEvent(event),
@@ -11417,8 +11429,8 @@ pub const Terminal = struct {
     pub const Stream = TerminalStream;
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
-    /// Reports invalid zero dimensions or allocation failure before resize mutation.
-    pub const ResizeError = error{InvalidDimensions} || std.mem.Allocator.Error;
+    /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
+    pub const ResizeError = error{ InvalidDimensions, ConsequenceLimit } || std.mem.Allocator.Error;
     /// Reports a zero cell-pixel dimension before any screen mutation.
     pub const CellPixelSizeError = error{InvalidDimensions};
     /// Copies one nonzero host-provided terminal cell size in logical pixels.
@@ -11659,12 +11671,29 @@ pub const Terminal = struct {
     /// failure leave both screens and terminal publication state unchanged.
     pub fn resize(self: *Terminal, rows: u16, cols: u16) ResizeError!void {
         try validateDimensions(rows, cols);
+        const output_before = byteCount(self.host.pending_output.bytes.items);
+        errdefer restorePendingOutput(&self.host.pending_output, output_before);
+        if (self.modes.inband_resize_notifications) try self.appendInbandResizeReport(rows, cols);
         try self.screen_state.resize(self.allocator, rows, cols);
         self.screen_state.activeSelection().clearIfInvalidatedByGrid(
             self.screen_state.activeConst(),
         );
         self.clampScrollbackOffset();
         self.dirty_generation +%= 1;
+    }
+
+    // Appends one exact iTerm2/Kitty mode-2048 resize report when host pixel facts are known.
+    fn appendInbandResizeReport(self: *Terminal, rows: u16, cols: u16) ResizeError!void {
+        const cell = self.cellPixelSize() orelse return;
+        const pixel_height = @as(u64, cell.height) * @as(u64, rows);
+        const pixel_width = @as(u64, cell.width) * @as(u64, cols);
+        var scratch: [96]u8 = undefined;
+        const payload = std.fmt.bufPrint(
+            scratch[0..],
+            "48;{d};{d};{d};{d}t",
+            .{ rows, cols, pixel_height, pixel_width },
+        ) catch unreachable;
+        try appendCsiReply(&self.host.pending_output, self.allocator, .terminal, payload);
     }
 
     /// Sets nonzero cell pixels on both screens; zero dimensions are rejected unchanged.
@@ -11723,6 +11752,7 @@ pub const Terminal = struct {
         changed = replaceBool(&self.modes.newline_mode, false) or changed;
         changed = replaceBool(&self.modes.focus_reporting, false) or changed;
         changed = replaceBool(&self.modes.bracketed_paste, false) or changed;
+        changed = replaceBool(&self.modes.inband_resize_notifications, false) or changed;
         changed = replaceBool(&self.modes.reverse_wraparound_mode, false) or changed;
         changed = replaceBool(&self.modes.extended_reverse_wraparound_mode, false) or changed;
         if (self.modes.mouse_tracking != .off) changed = true;
@@ -11977,6 +12007,7 @@ pub const Terminal = struct {
             },
             .bracketed_paste => |enabled| return replaceBool(&self.modes.bracketed_paste, enabled),
             .synchronized_output => |enabled| return replaceBool(&self.modes.synchronized_output, enabled),
+            .inband_resize_notifications => |enabled| return self.setDecMode(2048, enabled),
             .dec_mode_save => |modes| return self.saveDecModes(modes.params[0..modes.param_count]),
             .dec_mode_restore => |modes| return self.restoreDecModes(modes.params[0..modes.param_count]),
             else => unreachable,
@@ -12001,6 +12032,7 @@ pub const Terminal = struct {
             .focus_reporting = self.modes.focus_reporting,
             .bracketed_paste = self.modes.bracketed_paste,
             .synchronized_output = self.modes.synchronized_output,
+            .inband_resize_notifications = self.modes.inband_resize_notifications,
             .reverse_wraparound = self.modes.reverse_wraparound_mode,
             .extended_reverse_wraparound = self.modes.extended_reverse_wraparound_mode,
         }, mode_number);
@@ -12099,6 +12131,7 @@ pub const Terminal = struct {
             1016 => self.setMouseProtocol(if (enabled) .sgr_pixel else .none),
             2004 => replaceBool(&self.modes.bracketed_paste, enabled),
             2026 => replaceBool(&self.modes.synchronized_output, enabled),
+            2048 => replaceBool(&self.modes.inband_resize_notifications, enabled),
             else => false,
         };
         return mode_changed or pending_changed;
