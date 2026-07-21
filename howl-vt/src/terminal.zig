@@ -7121,6 +7121,24 @@ test "generic string retention preserves identity on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, retainStringAllocation, .{});
 }
 
+test "DCS retention preserves identity on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDcsAllocation, .{});
+}
+
+fn retainDcsAllocation(allocator: std.mem.Allocator) !void {
+    var state = HostState.init(allocator);
+    defer state.deinit();
+    state.retainDcsPayload(.{ .kind = .iterm_tmux_wrap, .payload = "first" }) catch |failure| {
+        try std.testing.expectEqual(@as(u64, 0), state.dcs_payload_generation);
+        try std.testing.expectEqual(@as(u8, 0), state.dcs_payloads_count);
+        try std.testing.expectEqual(@as(u32, 0), state.dcs_retained_bytes);
+        return failure;
+    };
+    const occurrence = state.dcsPayloadHead().?;
+    try std.testing.expectEqual(@as(u64, 1), occurrence.generation);
+    try std.testing.expectEqualStrings("first", occurrence.payload);
+}
+
 fn retainStringAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();

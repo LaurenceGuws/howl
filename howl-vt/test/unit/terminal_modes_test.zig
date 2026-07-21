@@ -2173,27 +2173,33 @@ test "DCS configuration commands retain bounded cross-family order" {
     try std.testing.expect(terminal.surfaceSnapshot().dcs_payload == null);
 }
 
-test "iTerm2 DCS transport commands retain exact delegated bytes in order" {
+test "iTerm2 DCS transports retain bounded unescaped occurrences in order" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
 
-    const commands = [_]struct { introducer: []const u8, payload: []const u8 }{
-        .{ .introducer = "\x1bP1000p", .payload = "tmux-client" },
-        .{ .introducer = "\x1bP2000p", .payload = "ssh-client" },
-        .{ .introducer = "\x1bPt", .payload = "tmux;wrapped-bytes" },
+    try std.testing.expect(!(try terminal.feed("\x1bP1000pdiscard\x18")).state_changed);
+
+    const commands = [_]struct {
+        introducer: []const u8,
+        payload: []const u8,
+        terminator: []const u8,
+    }{
+        .{ .introducer = "\x1bP1000p", .payload = "tmux-client", .terminator = "\x1b\\" },
+        .{ .introducer = "\x90" ++ "2000p", .payload = "ssh-client", .terminator = "\x9c" },
+        .{ .introducer = "\x1bPt", .payload = "tmux;wrapped\x1b\x1b[31m", .terminator = "\x1b\\" },
     };
     for (commands) |command| {
         try std.testing.expect(!(try terminal.feed(command.introducer)).state_changed);
         const split = command.payload.len / 2;
         try std.testing.expect(!(try terminal.feed(command.payload[0..split])).state_changed);
         try std.testing.expect(!(try terminal.feed(command.payload[split..])).state_changed);
-        try std.testing.expect((try terminal.feed("\x1b\\")).state_changed);
+        try std.testing.expect((try terminal.feed(command.terminator)).state_changed);
     }
 
     const expected = [_]struct { kind: dcs_payload.DcsPayloadKind, payload: []const u8 }{
         .{ .kind = .iterm_tmux_hook, .payload = "tmux-client" },
         .{ .kind = .iterm_ssh_hook, .payload = "ssh-client" },
-        .{ .kind = .iterm_tmux_wrap, .payload = "wrapped-bytes" },
+        .{ .kind = .iterm_tmux_wrap, .payload = "wrapped\x1b[31m" },
     };
     for (expected, 1..) |wanted, generation| {
         const occurrence = terminal.surfaceSnapshot().dcs_payload.?;
@@ -2320,10 +2326,11 @@ test "APC PM and SOS retain bounded ordered fallback payloads" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
 
+    try std.testing.expect(!(try terminal.feed("\x1b_drop\x18")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b_A")).state_changed);
-    try std.testing.expect((try terminal.feed("PC\x1b\\\x9ePM\x9c\x1bXSOS\x1b\\")).state_changed);
+    try std.testing.expect((try terminal.feed("P\x1b\x1bC\x1b\\\x9ePM\x9c\x1bXSOS\x1b\\")).state_changed);
     const expected = [_]struct { kind: terminal_mod.StringPayloadKind, payload: []const u8 }{
-        .{ .kind = .apc, .payload = "APC" },
+        .{ .kind = .apc, .payload = "AP\x1bC" },
         .{ .kind = .pm, .payload = "PM" },
         .{ .kind = .sos, .payload = "SOS" },
     };

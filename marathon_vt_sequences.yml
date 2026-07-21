@@ -227,7 +227,7 @@ categories:
       21.
 
   - id: compatibility_string_controls
-    status: queued
+    status: accepted
     owner: howl-vt
     records: 21
     mechanism: bounded DCS transport occurrences, known ignored OSC selectors, and APC-family diagnostic payloads
@@ -240,6 +240,13 @@ categories:
       a concrete completed handoff
     why_next: >-
       This last category resolves compatibility transport and no-op policy after terminal state owners are settled.
+    result: >-
+      Existing bounded DCS and APC/PM/SOS owners plus dense adversarial transcripts prove fragmented C0/C1 framing,
+      doubled-ESC unescaping, cancellation and restart, independent family FIFO identity, per-payload and aggregate
+      byte bounds, count saturation rollback, exact acknowledgement, allocation rollback, and reset, screen, and
+      resize lifetime. All 21 remaining obligations are explicit exclusions: iTerm2 recursive tmux/SSH execution and
+      Kitty product logging or unsupported-control diagnostics are outside the host-neutral Howl family. Active
+      partial howl-vt obligations fall from 21 to zero.
 
 residual_accounting:
   revision: 2a5635a

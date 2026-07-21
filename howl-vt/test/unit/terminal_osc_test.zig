@@ -184,6 +184,8 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
         try std.testing.expect(!(try terminal.feed(sequence[0..split])).state_changed);
         try std.testing.expect(!(try terminal.feed(sequence[split..])).state_changed);
     }
+    try std.testing.expect(!(try terminal.feed("\x1b]46;canceled\x18")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]50;restart\x07")).state_changed);
     try std.testing.expectEqual(@as(?[]const u8, null), terminal.surfaceSnapshot().title);
     try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
 

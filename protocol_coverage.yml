@@ -81,6 +81,12 @@ classifications:
     Howl retains monotonic bounded A/B/C/D shell facts and positional exit status without choosing scrollback UI;
     reference-specific mark kinds, nesting, prompt, line-attribute, command-output, and session policy is outside the
     complete Howl family.
+  compatibility_transport_difference: &howl_compatibility_transport_difference >-
+    Howl retains exact bounded ordered transport occurrences without entering a product-specific recursive tmux or
+    SSH execution mode; those product integration runtimes are outside the complete Howl family.
+  compatibility_diagnostic_difference: &howl_compatibility_diagnostic_difference >-
+    Howl keeps compatibility strings bounded and host-neutral without emitting product logs or unsupported-command
+    diagnostics; reference-specific logging and diagnostic presentation are outside the complete Howl family.
   erase_display_excluded: &howl_erase_display_excluded {support: partial, disposition: excluded,
     rationale: *howl_erase_policy_difference, source: howl-vt/src/terminal.zig, symbol: Screen.eraseDisplay,
     proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -169,7 +175,8 @@ classifications:
     rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
       path: howl-vt/test/unit/terminal_osc_test.zig,
       symbol: "Kitty ignored OSC selectors remain bounded exact no-ops"}}
-  ignored_osc_active: &kitty_ignored_osc_howl {support: partial,
+  ignored_osc_active: &kitty_ignored_osc_howl {support: partial, disposition: excluded,
+    rationale: *howl_compatibility_diagnostic_difference,
     source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
       path: howl-vt/test/unit/terminal_osc_test.zig,
       symbol: "Kitty ignored OSC selectors remain bounded exact no-ops"}}
@@ -1877,23 +1884,26 @@ references:
           - {id: iterm2.dcs.tmux_hook, raw: "DCS 1000 p Pb ST", effect: enter tmux passthrough parser,
             recognition: delegated, relevance: transport,
             conditions: Howl retains exact bounded completed hook bytes but does not stream or execute the tmux parser,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_compatibility_transport_difference,
+              source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "iTerm2 DCS transport commands retain exact delegated bytes in order"}}}
+              symbol: "iTerm2 DCS transports retain bounded unescaped occurrences in order"}}}
           - {id: iterm2.dcs.ssh_hook, raw: "DCS 2000 p Pb ST", effect: enter SSH conductor parser,
             recognition: delegated, relevance: transport,
             conditions: Howl retains exact bounded completed hook bytes but does not stream or execute the SSH parser,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_compatibility_transport_difference,
+              source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "iTerm2 DCS transport commands retain exact delegated bytes in order"}}}
+              symbol: "iTerm2 DCS transports retain bounded unescaped occurrences in order"}}}
           - {id: iterm2.dcs.sixel, raw: "DCS Pm q Pb ST", effect: decode Sixel image, recognition: delegated,
             relevance: graphics, howl: *howl_missing_deferred_graphics}
           - {id: iterm2.dcs.tmux_wrap, raw: "DCS t tmux;Pb ST", effect: unwrap tmux terminal bytes,
             relevance: transport,
-            conditions: Howl retains bounded bytes after tmux; without iTerm2's ESC unescaping or recursive parsing,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+            conditions: Howl unescapes doubled ESC and retains bounded bytes after tmux; without recursive parsing,
+            howl: {support: partial, disposition: excluded, rationale: *howl_compatibility_transport_difference,
+              source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "iTerm2 DCS transport commands retain exact delegated bytes in order"}}}
+              symbol: "iTerm2 DCS transports retain bounded unescaped occurrences in order"}}}
           - id: iterm2.dcs.sync_begin
             raw: "DCS = 1 s ST"
             effect: begin synchronized update
@@ -3489,7 +3499,8 @@ references:
         records:
           - {id: kitty.pm.unsupported, raw: "PM Pt ST", effect: report unsupported PM payload,
             conditions: Howl retains the bounded payload for its host instead of issuing Kitty's diagnostic,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.acknowledgeStringPayload,
+            howl: {support: partial, disposition: excluded, rationale: *howl_compatibility_diagnostic_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.acknowledgeStringPayload,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: vt-parser.c
@@ -3500,7 +3511,8 @@ references:
         records:
           - {id: kitty.sos.unsupported, raw: "SOS Pt ST", effect: report unsupported SOS payload,
             conditions: Howl retains the bounded payload for its host instead of issuing Kitty's diagnostic,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.acknowledgeStringPayload,
+            howl: {support: partial, disposition: excluded, rationale: *howl_compatibility_diagnostic_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.acknowledgeStringPayload,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: vt-parser.c
