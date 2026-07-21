@@ -1870,33 +1870,43 @@ references:
               Howl retains every accepted request in a 32-entry FIFO; execution remains host policy. Operations are
               acknowledged at the live head; queries require a matching head identity and exact host-supplied fact.
             relevance: host consequence
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
+            howl: &iterm2_window_operation_howl {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: decodeWindowRequest, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "window controls retain ordered bounded host requests and lifetime"}}
+              symbol: "iTerm2 window operations retain exact bounded host intent"}}
           - <<: *iterm2_window_request
             id: iterm2.window.iconify
             raw: "CSI 2 t"
             effect: iconify window
+            howl: *iterm2_window_operation_howl
           - <<: *iterm2_window_request
             id: iterm2.window.move
             raw: "CSI 3 ; x ; y t"
             effect: move window
+            howl: *iterm2_window_operation_howl
           - <<: *iterm2_window_request
             id: iterm2.window.resize_pixels
             raw: "CSI 4 ; height ; width t"
             effect: resize window in pixels
+            howl: *iterm2_window_operation_howl
           - <<: *iterm2_window_request
             id: iterm2.window.raise
             raw: "CSI 5 t"
             effect: raise window
+            howl: *iterm2_window_operation_howl
           - <<: *iterm2_window_request
             id: iterm2.window.lower
             raw: "CSI 6 t"
             effect: lower window
+            howl: *iterm2_window_operation_howl
           - <<: *iterm2_window_request
             id: iterm2.window.resize_cells
             raw: "CSI 8 ; rows ; cols t"
             effect: resize terminal in cells
+            conditions: >-
+              iTerm2 clamps rows and columns to its screen maxima before execution; Howl retains the exact nonnegative
+              values in its bounded FIFO and leaves execution and policy bounds to the host.
+            howl: *iterm2_window_operation_howl
           - <<: *iterm2_window_request
             id: iterm2.window.report_state
             raw: "CSI 11 t"

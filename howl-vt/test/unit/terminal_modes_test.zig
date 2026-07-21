@@ -1191,6 +1191,69 @@ test "window controls retain ordered bounded host requests and lifetime" {
     try std.testing.expectEqual(.iconify, std.meta.activeTag(occurrence.request));
 }
 
+test "iTerm2 window operations retain exact bounded host intent" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 5);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    const first = "\x1b[1t\x9b2t\x1b[3;2147483647;";
+    const second = "0t\x1b[4;42;84t\x1b[5t\x9b6t\x1b[8;100;200t\x1b[3t";
+    try stream.nextSlice(first);
+    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().window_request_count);
+    try stream.nextSlice(second);
+
+    const expected = [_]terminal_mod.WindowRequest{
+        .deiconify,
+        .iconify,
+        .{ .move = .{ .x = 2147483647, .y = 0 } },
+        .{ .resize_pixels = .{ .height = 42, .width = 84 } },
+        .raise,
+        .lower,
+        .{ .resize_cells = .{ .rows = 100, .cols = 200 } },
+        .{ .move = .{ .x = 0, .y = 0 } },
+    };
+    try std.testing.expectEqual(@as(u8, expected.len), terminal.surfaceSnapshot().window_request_count);
+
+    // Repetition creates new ordered occurrences; terminal-state lifetime never consumes host intent.
+    try stream.nextSlice(first);
+    try stream.nextSlice(second);
+    try std.testing.expectEqual(@as(u8, expected.len * 2), terminal.surfaceSnapshot().window_request_count);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(4, 7);
+    for (0..2) |repetition| {
+        for (expected, 1..) |request, offset| {
+            const occurrence = terminal.surfaceSnapshot().window_request.?;
+            const generation = repetition * expected.len + offset;
+            try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+            try std.testing.expectEqualDeep(request, occurrence.request);
+            try terminal.acknowledgeWindowRequest(occurrence.generation);
+        }
+    }
+
+    // The shared FIFO bound rejects the whole next occurrence without changing identity or queue state.
+    for (0..Terminal.window_request_max_count) |_| try stream.nextSlice("\x1b[1t");
+    const full = terminal.surfaceSnapshot();
+    const generation_before_overflow = terminal.host.window_request_generation;
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[6t"));
+    try std.testing.expectEqual(generation_before_overflow, terminal.host.window_request_generation);
+    try std.testing.expectEqual(full.window_request_count, terminal.surfaceSnapshot().window_request_count);
+    try std.testing.expectEqual(
+        full.window_request.?.generation,
+        terminal.surfaceSnapshot().window_request.?.generation,
+    );
+    for (0..Terminal.window_request_max_count) |_| {
+        const occurrence = terminal.surfaceSnapshot().window_request.?;
+        try std.testing.expectEqual(.deiconify, std.meta.activeTag(occurrence.request));
+        try terminal.acknowledgeWindowRequest(occurrence.generation);
+    }
+
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b[1;0t\x1b[2;0t\x1b[3;-1;2t\x1b[5;0t\x1b[6;0t\x1b[8;1t",
+    )).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
+}
+
 test "application resize requests retain exact ordered host intent" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 24, 80);
