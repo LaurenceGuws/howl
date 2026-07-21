@@ -29,3 +29,5 @@
   window intents, compatibility controls, and exact reset lifetime.
 - Reached 242 full, 352 partial, 68 absent, and zero unassessed reference
   records before the root catalogue schema migration.
+- Closed every active non-graphics VT residual through exact implementation,
+  delegation, deferral, or deliberate exclusion; 258 records are fully proved.
