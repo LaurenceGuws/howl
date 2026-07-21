@@ -32,6 +32,13 @@ classifications:
   protection_policy_difference: &howl_protection_policy_difference >-
     Howl retains ISO and DEC protection provenance per cell so ordinary and selective erase remain unambiguous;
     reference models that collapse provenance are outside the complete Howl family.
+  report_identity_difference: &howl_report_identity_difference >-
+    Howl emits one stable bounded terminal identity; reference-specific product names, versions, emulation levels,
+    delegated identity, and optional capability advertisements are outside the complete Howl family.
+  report_policy_difference: &howl_report_policy_difference >-
+    Howl reports only its bounded owned terminal state and curated capability set; reference-specific host gates,
+    additional state domains, mode sets, reply formatting, and permissive query grammar are outside the complete
+    Howl family.
   ignored_color_policy: &howl_ignored_color_policy {support: partial, disposition: excluded,
     rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
       path: howl-vt/test/unit/terminal_osc_test.zig,
@@ -406,10 +413,16 @@ references:
               symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
           - {id: libvterm.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, relevance: query,
             conditions: libvterm identifies VT100 level with 22 and OSC 52 while Howl identifies VT220 level with 22,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - {id: libvterm.csi.da2, raw: "CSI > [Ps=0] c", effect: report secondary device attributes, relevance: query,
             conditions: libvterm reports 0;100;0 while Howl reports its own bounded identity,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: libvterm.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row,
             conditions: DECOM resolves against vertical margins, howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
@@ -465,10 +478,16 @@ references:
           - {id: libvterm.csi.dsr, raw: "CSI [Ps=0] n", effect: device status or cursor report,
             conditions: Ps 5|6; libvterm reports absolute CPR while Howl reports from the active DECOM origin,
             relevance: query,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: libvterm.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: DEC status report, relevance: query,
             conditions: libvterm prefixes status 5 and CPR replies and can report host theme state,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: libvterm.csi.decstr, raw: "CSI ! p", effect: soft reset,
             conditions: libvterm also exits alternate screen while Howl preserves the selected screen,
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
@@ -476,9 +495,15 @@ references:
               symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
           - {id: libvterm.csi.decrqm, raw: "CSI ? Ps $ p", effect: report DEC mode state, relevance: query,
             conditions: supported mode sets differ,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiIntermediate}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendDecModeReport, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig, symbol: "DEC mode queries append DECRPM replies"}}}
           - {id: libvterm.csi.xtversion, raw: "CSI > [Ps=0] q", effect: report terminal version, relevance: query,
-            howl: {support: partial, residual: Howl reports its own terminal identity rather than libvterm identity., source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
+              residual: Howl reports its own terminal identity rather than libvterm identity.,
+              source: howl-vt/src/terminal.zig, symbol: appendXtVersionReport, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - {id: libvterm.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor shape and blink,
             conditions: parameter 0 selects a blinking block while Howl restores the configured host default,
             howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: cursorStyle, proof: {
@@ -661,7 +686,8 @@ references:
             symbol: "DECRQSS replies for owned state and invalid requests"}}}
           - {id: libvterm.dcs.decrqss_decscusr, raw: "DCS $ q SP q ST", effect: report cursor style,
             conditions: Howl's host-configurable hidden cursor has no distinct libvterm DECSCUSR report value,
-            relevance: query, howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
+            relevance: query, howl: {support: partial, disposition: excluded,
+            rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig, symbol: decrqssPayload,
             proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
             symbol: "DECRQSS replies for owned state and invalid requests"}}}
           - {id: libvterm.dcs.decrqss_decsca, raw: 'DCS $ q " q ST', effect: report character protection,
@@ -675,7 +701,8 @@ references:
               Pt is not recognized; libvterm retains three request bytes while Howl bounds and compares the full payload
             recognition: rejected_known
             relevance: query
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECRQSS replies for owned state and invalid requests"}}
       - source: state.c
@@ -1000,7 +1027,10 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: 7-bit and C1 index controls preserve scroll-region effects", line: 102}}}
           - {id: iterm2.esc.decid, raw: "ESC Z", effect: primary device attributes report, relevance: query,
-            howl: {support: partial, residual: Howl reports its own primary device attributes.}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
+              residual: Howl reports its own primary device attributes., source: howl-vt/src/terminal.zig,
+              symbol: escProcess, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - {id: iterm2.esc.ris, raw: "ESC c", effect: hard reset,
             conditions: iTerm2 reset includes application delegate and parser policy outside Howl VT state,
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: hardReset, proof: {
@@ -1068,7 +1098,10 @@ references:
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: iterm2.csi.da, raw: "CSI [Ps=0] c", effect: device attributes report, relevance: query,
             conditions: iTerm2 identity and optional attributes depend on emulation and host policy,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - {id: iterm2.csi.decstbm, raw: "CSI [top=1] ; [bottom] r", effect: set vertical margins,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: setScrollRegion, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1076,7 +1109,10 @@ references:
           - {id: iterm2.csi.dsr, raw: "CSI [Ps=0] n", effect: status or cursor report, relevance: query,
             conditions: "iTerm2 gates reports by host policy and emulation level, supports additional status codes,
               and directly subtracts active margins where Howl saturates a restored cursor preceding the origin",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: iterm2.csi.ed, raw: "CSI [Ps=0] J", effect: erase display,
             conditions: iTerm2 treats unsupported Ps as 0 while Howl rejects it, howl: {support: partial,
               source: howl-vt/src/terminal.zig, symbol: eraseDisplay, proof: {
@@ -1220,11 +1256,20 @@ references:
           - {id: iterm2.csi.decset, raw: "CSI ? Pm h", effect: set DEC modes, howl: {support: partial, residual: Howl implements only the individually indexed DEC modes.}}
           - {id: iterm2.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC modes, howl: {support: partial, residual: Howl implements only the individually indexed DEC modes.}}
           - {id: iterm2.csi.decdsr, raw: "CSI ? Ps n", effect: DEC status report,
-            conditions: iTerm2 gates a wider status set by emulation level, howl: {support: partial}}
+            conditions: iTerm2 gates a wider status set by emulation level, howl: {support: partial,
+              disposition: excluded, rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig,
+              symbol: applyReportEvent, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: iterm2.csi.decrqm_dec, raw: "CSI ? Ps $ p", effect: query DEC mode,
-            conditions: supported mode sets and policy-derived states differ, howl: {support: partial}}
+            conditions: supported mode sets and policy-derived states differ, howl: {support: partial,
+              disposition: excluded, rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig,
+              symbol: appendDecModeReport, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DEC mode queries append DECRPM replies"}}}
           - {id: iterm2.csi.decrqm_ansi, raw: "CSI Ps $ p", effect: query ANSI mode,
-            conditions: supported mode sets differ, howl: {support: partial}}
+            conditions: supported mode sets differ, howl: {support: partial, disposition: excluded,
+              rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig,
+              symbol: appendAnsiModeReport, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "ANSI mode queries and XTREPORTCOLORS append host output"}}}
           - {id: iterm2.csi.decstr, raw: "CSI ! p", effect: soft reset,
             conditions: iTerm2 resets additional product input and resize-notification policy,
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
@@ -1375,7 +1420,10 @@ references:
             howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.pop}}
           - {id: iterm2.csi.kitty_query, raw: "CSI ? u", effect: report Kitty keyboard flags,
             conditions: iTerm2 gates reports through host policy while Howl always queues the bounded terminal reply,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.appendReport}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.appendReport, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
       - source: VT100XtermParser.m
         symbol: tokenTypeForMode
         line: 263
@@ -1603,8 +1651,13 @@ references:
           - {id: iterm2.osc1337.end_file, raw: "OSC 1337 ; EndFile=Pt (BEL|ST)", effect: reject deprecated file command,
             recognition: rejected_known, relevance: compatibility, howl: *howl_missing_excluded_iterm}
           - {id: iterm2.osc1337.report_cell_size, raw: "OSC 1337 ; ReportCellSize (BEL|ST)",
-            effect: report cell dimensions, relevance: query, howl: {support: partial, residual: Howl retains the query but host geometry supplies the reply., source: howl-vt/src/terminal.zig,
-            symbol: parse}}
+            effect: report cell dimensions, relevance: query,
+            conditions: iTerm2 gates the reply and reports host point size plus scale while Howl reports admitted
+              integer cell pixels with scale one,
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendItermCellSizeReport, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - id: iterm2.osc1337.cursor_shape
             raw: "OSC 1337 ; CursorShape=Ps (BEL|ST)"
             effect: set cursor shape
@@ -1721,7 +1774,8 @@ references:
           - {id: iterm2.dcs.decrqss, raw: "DCS $ q Pt ST", effect: request terminal state string, relevance: query,
             conditions: "Howl reports iTerm2's seven request families including VT220 DECSCL and minimum-24-row
               DECSLPP; DECSLRM availability and retained SGR/cursor domains differ",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECRQSS reports conformance and page length across framing modes"}}}
           - {id: iterm2.dcs.decrsps_deccir, raw: "DCS 1 $ t Pt ST", effect: restore cursor information,
@@ -1748,7 +1802,8 @@ references:
           - {id: iterm2.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
             conditions: "Howl answers Co, colors, RGB, Tc, and Su without exposing term identity, profile, key mapping,
               or arbitrary terminfo",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "XTGETTCAP replies preserve ordered names values failures and C1 serialization"}}}
       - source: VT100GraphicRendition.m
@@ -2051,7 +2106,10 @@ references:
           - {id: iterm2.mode.dark_mode_dsr, raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report,
             conditions: "The host supplies each observed dark or light fact; Howl retains, reports, saves, resets, and
               transactionally serializes the mode but additionally cancels pending wrap at its boundary",
-            relevance: extension, howl: {support: partial, source: howl-vt/src/terminal.zig,
+            relevance: extension, howl: {support: partial, disposition: delegated, owner: howl-window,
+              rationale: *howl_report_policy_difference,
+              residual: The Wayland host does not yet observe and submit current color-scheme changes.,
+              source: howl-vt/src/terminal.zig,
               symbol: Terminal.reportColorSchemePreference, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}}
@@ -2671,14 +2729,29 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
           - {id: kitty.csi.da1, raw: "CSI [Ps=0] c", effect: delegate primary device attributes to the host,
-            relevance: query, howl: {support: partial, residual: Howl emits its own primary device attributes instead of delegating identity., source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            relevance: query, howl: {support: partial, disposition: excluded,
+              rationale: *howl_report_identity_difference,
+              residual: Howl emits its own primary device attributes instead of delegating identity.,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - {id: kitty.csi.da2, raw: "CSI > [Ps=0] c", effect: report secondary device attributes,
             conditions: Kitty reports its compiled version while Howl reports its own bounded identity,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: kitty.csi.da_private, raw: "CSI ? [Ps=0] c", effect: no reply,
-            recognition: recognized_noop, howl: {support: partial, residual: Howl emits its own secondary device attributes instead of Kitty no-reply policy.}}
+            recognition: recognized_noop, howl: {support: full, source: howl-vt/src/terminal.zig,
+              symbol: report, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - {id: kitty.csi.da3, raw: "CSI = [Ps=0] c", effect: no reply,
-            recognition: recognized_noop, howl: {support: partial, residual: Howl emits its own tertiary device attributes instead of Kitty no-reply policy.}}
+            recognition: recognized_noop, howl: {support: partial, disposition: excluded,
+              rationale: *howl_report_identity_difference,
+              residual: Howl emits its own tertiary device attributes instead of Kitty no-reply policy.,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - {id: kitty.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stop, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -2687,11 +2760,17 @@ references:
           - {id: kitty.csi.rm, raw: "CSI Pm l", effect: reset modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
           - {id: kitty.csi.dsr, raw: "CSI [Ps=0] n", effect: report device status,
             conditions: under DECOM Kitty makes only the row origin-relative while Howl also applies the left margin,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: applyReportEvent, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: kitty.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: report DEC status,
             conditions: "Howl retains up to 16 ordered private 996 queries for exact host replies and also supports DEC
               locator statuses 55 and 56, which Kitty ignores",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.replyColorSchemePreference,
+            howl: {support: partial, disposition: delegated, owner: howl-window,
+              rationale: *howl_report_policy_difference,
+              residual: The Wayland host does not yet answer retained private 996 color-preference queries.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.replyColorSchemePreference,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "Kitty color-preference queries retain ordered intent and transactional replies"}}}
           - {id: kitty.csi.save_cursor, raw: "CSI s", effect: save cursor,
@@ -2713,12 +2792,14 @@ references:
               symbol: "Kitty parameterless mode save restores the exact curated mode set"}}
           - {id: kitty.csi.report_window_pixels, raw: "CSI 14 ; [Ps] t", effect: report window pixel size,
             conditions: Howl needs host cell pixels and has no Kitty window-id fact for Ps=2 frame dimensions,
-            relevance: query, howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendSizeReport,
+            relevance: query, howl: {support: partial, disposition: excluded,
+              rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig, symbol: appendSizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: kitty.csi.report_cell_pixels, raw: "CSI 16 ; [Ps] t", effect: report cell pixel size, relevance: query,
             conditions: Howl replies only after the embedding host supplies nonzero cell pixels,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: kitty.csi.report_text_cells, raw: "CSI 18 ; [Ps] t", effect: report text area dimensions,
@@ -2820,7 +2901,11 @@ references:
           - {id: kitty.csi.multi_cursor, raw: "CSI > Pm SP q", effect: set multiple cursor shapes, relevance: extension,
             howl: {support: partial, residual: Howl retains one terminal cursor rather than Kitty multiple cursors.}}
           - {id: kitty.csi.xtversion, raw: "CSI > [Ps=0] q", effect: report version, relevance: query,
-            howl: {support: partial, residual: Howl reports its own terminal identity rather than Kitty identity.}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
+              residual: Howl reports its own terminal identity rather than Kitty identity.,
+              source: howl-vt/src/terminal.zig, symbol: appendXtVersionReport, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "fragmented mixed report families preserve order and per-query rollback"}}}
           - {id: kitty.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: Kitty shifts full rows plus graphics and history references, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,
@@ -2844,7 +2929,10 @@ references:
               path: howl-vt/test/unit/terminal_test.zig,
               symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
           - {id: kitty.csi.decrqm, raw: "CSI [ ? ] [Ps=0] $ p", effect: report mode state,
-            conditions: supported ANSI and DEC mode sets differ, howl: {support: partial}}
+            conditions: supported ANSI and DEC mode sets differ, howl: {support: partial,
+              disposition: excluded, rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig,
+              symbol: appendDecModeReport, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DEC mode queries append DECRPM replies"}}}
           - {id: kitty.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial,
             disposition: excluded, rationale: *howl_rendition_policy_difference,
             residual: Howl implements the indexed bounded rendition subset proved below.,
@@ -3075,9 +3163,17 @@ references:
           - {id: kitty.osc_ignore.emacs, raw: "OSC 51 ; Pt (BEL|ST)", effect: ignore Emacs shell command,
             conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.xterm_query_60, raw: "OSC 60 ; Pt (BEL|ST)", effect: ignore xterm query control,
-            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility,
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "Kitty ignored OSC selectors remain bounded exact no-ops"}}}
           - {id: kitty.osc_ignore.xterm_query_61, raw: "OSC 61 ; Pt (BEL|ST)", effect: ignore xterm query control,
-            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility,
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "Kitty ignored OSC selectors remain bounded exact no-ops"}}}
           - {id: kitty.osc_ignore.mintty_audio, raw: "OSC 440 ; Pt (BEL|ST)", effect: ignore audio command,
             conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.vscode, raw: "OSC 633 ; Pt (BEL|ST)", effect: ignore VS Code shell integration,
@@ -3113,13 +3209,15 @@ references:
           - {id: kitty.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap values, relevance: query,
             conditions: "Howl answers Co, colors, RGB, Tc, and Su without term identity, dimensions, key strings,
               OS queries, or Kitty queries",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendTermcapReports, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "XTGETTCAP replies preserve ordered names values failures and C1 serialization"}}}
           - {id: kitty.dcs.decrqss, raw: "DCS $ q Pt ST", effect: query terminal state string, relevance: query,
             conditions: "Howl recognizes Kitty's four requests; retained SGR fields, hidden cursor mapping, and
               DECSACE report value differ",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECRQSS replies for owned state and invalid requests"}}}
           - id: kitty.dcs.sync

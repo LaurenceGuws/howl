@@ -1099,6 +1099,46 @@ test "S7C1T and S8C1T serialize mixed replies through one bounded owner" {
     try std.testing.expectEqualStrings("\x1b[0n", pendingOutput(&terminal));
 }
 
+test "fragmented mixed report families preserve order and per-query rollback" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+    try terminal.setCellPixelSize(9, 18);
+
+    write(&stream, "\x1b[2;3H\x1b G");
+    clearPendingOutput(&terminal);
+    const request =
+        "\x1bZ\x9b?c\x9b=c\x9b5n\x9b6n\x9b?6n\x9b?7$p\x9b4$p" ++
+        "\x90$qr\x9c\x90+q436f\x9c\x9b>0q\x9b18t" ++
+        "\x9d1337;ReportCellSize\x9c";
+    var offset: usize = 0;
+    var completed_queries: usize = 0;
+    while (offset < request.len) : (offset += 1) {
+        const summary = try terminal.feed(request[offset .. offset + 1]);
+        if (summary.state_changed) completed_queries += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 12), completed_queries);
+    try std.testing.expectEqualStrings(
+        "\x9b?62;22c\x90!|00000000\x9c" ++
+            "\x9b0n\x9b2;3R\x9b?2;3R\x9b?7;1$y\x9b4;2$y" ++
+            "\x901$r1;4r\x9c\x901+r436f=323536\x9c" ++
+            "\x90>|howl-vt dev\x9c\x9b8;4;8t" ++
+            "\x1b]1337;ReportCellSize=18;9;1\x1b\\",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    const fill = try allocator.alloc(u8, host_state.pending_output_max_bytes - 6);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x9b5n\x9b6n"));
+    try std.testing.expectEqual(fill.len + 3, pendingOutput(&terminal).len);
+    try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal)[0..fill.len]);
+    try std.testing.expectEqualStrings("\x9b0n", pendingOutput(&terminal)[fill.len..]);
+}
+
 test "terminal size reports use exact current cell and pixel facts" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 5);

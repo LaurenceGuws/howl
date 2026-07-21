@@ -82,10 +82,17 @@ categories:
       presentation and damage to howl-window. Active partial howl-vt obligations fell from 205 to 158.
 
   - id: reports_replies
-    status: queued
+    status: accepted
     owner: howl-vt
     mechanism: bounded pending output, query serialization, mode facts, and host-supplied dimensions
     gate: exact bytes, rollback, identity policy, and delegated host facts
+    result: >-
+      One byte-fragmented mixed transcript now proves C0/C1 DA, DSR/CPR, DECRQM, DECRQSS, XTGETTCAP, XTVersion,
+      terminal dimensions, and iTerm cell-size replies preserve exact order through the shared bounded serializer;
+      a later query failure preserves the prior complete reply without appending a partial response. Kitty private DA
+      no-reply is now full, 30 permanent identity/state-policy differences are deliberate exclusions, and two exact
+      color-preference handoffs remain delegated to howl-window. Active partial howl-vt obligations fell from 158 to
+      125.
 
   - id: input_modes
     status: queued
