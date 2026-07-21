@@ -272,7 +272,10 @@ test "OSC 52 produces pending clipboard request" {
 
     try stream.nextSlice("\x1b]52;c;Zm9v\x07");
     try std.testing.expectEqualStrings("c;Zm9v", terminal.host.pendingClipboardSet().?);
-    terminal.host.clearPendingClipboardSet();
+    try std.testing.expect(terminal.pendingClipboardRequest().?.kind == .set);
+    try std.testing.expectEqualStrings("c", terminal.pendingClipboardRequest().?.selection);
+    const clipboard = (try terminal.drainPendingClipboard(allocator)).?;
+    defer allocator.free(clipboard);
     try std.testing.expectEqual(@as(?[]const u8, null), terminal.host.pendingClipboardSet());
 }
 
@@ -290,16 +293,72 @@ test "OSC 52 decoded clipboard drain clears pending request" {
     try std.testing.expectEqual(@as(?[]const u8, null), terminal.host.pendingClipboardSet());
 }
 
-test "OSC 52 query clipboard drain clears without request" {
+test "OSC 52 query is retained for exact transactional host reply" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
-
-    try stream.nextSlice("\x1b]52;c;?\x07");
-
+    try std.testing.expect(!(try terminal.feed("\x1b]52;cp")).state_changed);
+    try std.testing.expect((try terminal.feed(";?\x1b\\")).state_changed);
     try std.testing.expectEqual(@as(?[]u8, null), try terminal.host.drainPendingClipboardSet(allocator));
+    try std.testing.expect(terminal.pendingClipboardRequest().?.kind == .query);
+    try std.testing.expectEqualStrings("cp", terminal.pendingClipboardRequest().?.selection);
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expectEqualStrings("cp", terminal.pendingClipboardRequest().?.selection);
+    try std.testing.expect(try terminal.replyPendingClipboard("A\x00B"));
+    try std.testing.expectEqualStrings("\x1b]52;cp;QQBC\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqual(@as(?Terminal.ClipboardRequest, null), terminal.pendingClipboardRequest());
+    try std.testing.expect(!(try terminal.replyPendingClipboard("unused")));
+
+    terminal.host.clearPendingOutput();
+    try std.testing.expect((try terminal.feed("\x1b G\x9d52;;?\x9c")).state_changed);
+    try std.testing.expectEqualStrings("", terminal.pendingClipboardRequest().?.selection);
+    try std.testing.expect(try terminal.replyPendingClipboard(""));
+    try std.testing.expectEqualStrings("\x9d52;;\x9c", terminal.host.pendingOutput());
     try std.testing.expectEqual(@as(?[]const u8, null), terminal.host.pendingClipboardSet());
+}
+
+test "OSC 52 rejects malformed selections and base64 without replacing a request" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 16);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b]52;c;b2xk\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]52;c;b2xk\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]52;x;bmV3\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]52;c;!!!!\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]52;c;?trailing\x07")).state_changed);
+    try std.testing.expectEqualStrings("c;b2xk", terminal.host.pendingClipboardSet().?);
+
+    const decoded = (try terminal.drainPendingClipboard(allocator)).?;
+    defer allocator.free(decoded);
+    try std.testing.expectEqualStrings("old", decoded);
+}
+
+test "OSC 52 reply bounds preserve query and prior pending output" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 16);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]52;p;?\x07")).state_changed);
+
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.replyPendingClipboard("Howl"));
+    try std.testing.expectEqualStrings("p", terminal.pendingClipboardRequest().?.selection);
+    try std.testing.expectEqualSlices(u8, fill, terminal.host.pendingOutput());
+
+    terminal.host.clearPendingOutput();
+    const oversized = try allocator.alloc(u8, Terminal.clipboard_reply_max_bytes + 1);
+    defer allocator.free(oversized);
+    @memset(oversized, 'z');
+    try std.testing.expectError(error.ConsequenceLimit, terminal.replyPendingClipboard(oversized));
+    try std.testing.expectEqualStrings("p", terminal.pendingClipboardRequest().?.selection);
+    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+
+    try std.testing.expect(try terminal.replyPendingClipboard(oversized[0..Terminal.clipboard_reply_max_bytes]));
+    try std.testing.expect(terminal.host.pendingOutput().len <= HostState.pending_output_max_bytes);
+    try std.testing.expectEqual(@as(?Terminal.ClipboardRequest, null), terminal.pendingClipboardRequest());
 }
 
 test "shell integration OSC 133 records latest mark" {

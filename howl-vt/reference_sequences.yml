@@ -503,10 +503,12 @@ references:
             source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
             symbol: "OSC 0 1 and 2 match libvterm title and icon properties", line: 24}}}
           - {id: libvterm.osc.clipboard, raw: "OSC 52 ; Pc ; Pd ST", effect: clipboard set or query,
-            bounds: unchunked payload, relevance: host consequence, howl: {status: partial,
-            source: howl-vt/src/terminal.zig, symbol: decodeClipboardSet,
+            bounds: caller-provided decode buffer with set data delivered in fragments,
+            conditions: Howl retains one bounded whole request while libvterm streams selection fragments,
+            relevance: host consequence, howl: {status: partial,
+            source: howl-vt/src/terminal.zig, symbol: HostState.replyPendingClipboardQuery,
             proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-            symbol: "OSC 52 decoded clipboard drain clears pending request", line: 190}}}
+              symbol: "OSC 52 query is retained for exact transactional host reply"}}}
       - source: state.c
         symbol: on_dcs
         line: 1925
@@ -1157,7 +1159,10 @@ references:
           - {id: iterm2.osc.kvp_50, raw: "OSC 50 ; key=value (BEL|ST)", effect: legacy iTerm key-value command,
             howl: {status: partial}}
           - {id: iterm2.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard or base64 paste,
-            relevance: host consequence, howl: {status: partial}}
+            conditions: iTerm2 ignores Pc, sanitizes text, and fixes ESC framing; Howl preserves bytes and S7/S8 state,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.replyPendingClipboardQuery, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 52 query is retained for exact transactional host reply"}}}
           - id: iterm2.osc.palette_reset
             raw: "OSC 104 ; Pm (BEL|ST)"
             effect: reset palette entries
@@ -2257,7 +2262,10 @@ references:
           - {id: kitty.osc.kitty_color, raw: "OSC 21 ; Pt (BEL|ST)", effect: query set or reset terminal colors,
             howl: {status: partial}}
           - {id: kitty.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard transfer,
-            relevance: host consequence, howl: {status: partial}}
+            conditions: Kitty chunks writes, owns policy, and fixes ESC framing; Howl retains one bounded S7/S8 request,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.replyPendingClipboardQuery, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 52 query is retained for exact transactional host reply"}}}
           - {id: kitty.osc.clipboard_5522, raw: "OSC 5522 ; Pc ; Pd (BEL|ST)", effect: Kitty clipboard extension,
             relevance: host consequence, howl: {status: 'false'}}
           - {id: kitty.osc.text_size, raw: "OSC TEXT_SIZE_CODE ; Pt (BEL|ST)", effect: control text sizing,
