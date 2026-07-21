@@ -1191,6 +1191,49 @@ test "window controls retain ordered bounded host requests and lifetime" {
     try std.testing.expectEqual(.iconify, std.meta.activeTag(occurrence.request));
 }
 
+test "application resize requests retain exact ordered host intent" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 24, 80);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    try stream.nextSlice("\x1b[4;2147483647;");
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
+    try stream.nextSlice("0t\x9b8;0;2147483647t\x1b[4;7;9t");
+    try std.testing.expectEqual(@as(u8, 3), terminal.surfaceSnapshot().window_request_count);
+
+    const expected = [_]terminal_mod.WindowRequest{
+        .{ .resize_pixels = .{ .height = 2147483647, .width = 0 } },
+        .{ .resize_cells = .{ .rows = 0, .cols = 2147483647 } },
+        .{ .resize_pixels = .{ .height = 7, .width = 9 } },
+    };
+    for (expected, 1..) |request, generation| {
+        const occurrence = terminal.surfaceSnapshot().window_request.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqualDeep(request, occurrence.request);
+        try terminal.acknowledgeWindowRequest(occurrence.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
+
+    // Repeated occurrences remain distinct, and terminal state lifetime does not consume host intent.
+    try stream.nextSlice("\x1b[8;12;34t\x1b[8;12;34t");
+    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().window_request_count);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(30, 100);
+    for (4..6) |generation| {
+        const occurrence = terminal.surfaceSnapshot().window_request.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqual(@as(u32, 12), occurrence.request.resize_cells.rows);
+        try std.testing.expectEqual(@as(u32, 34), occurrence.request.resize_cells.cols);
+        try terminal.acknowledgeWindowRequest(occurrence.generation);
+    }
+
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b[4;1t\x1b[4;-1;2t\x1b[4;1;2;3t\x1b[8;1t\x1b[8;1;-2t\x1b[8;1;2;3t",
+    )).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
+}
+
 test "DEC cell dimension requests retain exact ordered host intent" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 24, 80);

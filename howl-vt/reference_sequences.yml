@@ -2457,12 +2457,28 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "title stack retains exact bounded title lifecycle and report bytes"}}}
-          - {id: kitty.csi.resize_pixels_unsupported, raw: "CSI 4 ; height ; width t",
-            effect: reject application pixel resize, recognition: rejected_known, relevance: host consequence,
-            howl: {status: 'false'}}
-          - {id: kitty.csi.resize_cells_unsupported, raw: "CSI 8 ; rows ; cols t",
-            effect: reject application cell resize, recognition: rejected_known, relevance: host consequence,
-            howl: {status: 'false'}}
+          - id: kitty.csi.resize_pixels_unsupported
+            raw: "CSI 4 ; height ; width t"
+            effect: reject application pixel resize
+            recognition: rejected_known
+            relevance: host consequence
+            conditions: >-
+              Kitty rejects this request; Howl instead retains each complete nonnegative request in its bounded ordered
+              host-intent FIFO, including zero and repeated values, without executing resize policy.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "application resize requests retain exact ordered host intent"}}
+          - id: kitty.csi.resize_cells_unsupported
+            raw: "CSI 8 ; rows ; cols t"
+            effect: reject application cell resize
+            recognition: rejected_known
+            relevance: host consequence
+            conditions: >-
+              Kitty rejects this request; Howl instead retains each complete nonnegative request in its bounded ordered
+              host-intent FIFO, including zero and repeated values, without executing resize policy.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "application resize requests retain exact ordered host intent"}}
           - {id: kitty.csi.restore_cursor, raw: "CSI u", effect: restore cursor,
             conditions: "Howl additionally restores cursor visibility plus cell-domain protection, hyperlink, font,
               and baseline rendition",
