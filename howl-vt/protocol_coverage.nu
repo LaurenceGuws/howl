@@ -64,6 +64,16 @@ def complete-record-id [] {
     protocol-records | get id | sort
 }
 
+# Show help for Howl's protocol tooling.
+def protocol [] {
+    protocol coverage help
+}
+
+# Show help for Howl's protocol tooling.
+def "protocol help" [] {
+    protocol coverage help
+}
+
 # Show the protocol coverage help page.
 def "protocol coverage" [] {
     protocol coverage help
