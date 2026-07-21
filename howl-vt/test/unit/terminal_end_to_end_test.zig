@@ -1088,6 +1088,79 @@ test "terminal: CSI cursor positioning shares parameter, margin, and origin boun
     try std.testing.expectEqual(@as(u16, 3), cursor.col);
 }
 
+test "terminal: cursor origin margins own exact aliases geometry wrap and resize" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 6, 12);
+    defer terminal.deinit();
+
+    const screen = terminal.screen_state.active();
+
+    // Missing and zero counts are one; aliases share the same directional owner.
+    try std.testing.expect((try terminal.feed("\x1b[4;7H\x1b[A\x1b[0B\x1b[a\x1b[0D")).state_changed);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[k\x1b[e\x1b[0C\x1b[j")).state_changed);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
+
+    // A cursor command cancels pending wrap even when its resolved position is unchanged.
+    try std.testing.expect((try terminal.feed("\x1b[1;12HX")).state_changed);
+    try std.testing.expect(screen.wrap_pending);
+    try std.testing.expect((try terminal.feed("\x1b[999999C")).state_changed);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(!(try terminal.feed("\x1b[999999C")).state_changed);
+
+    // Invalid margins preserve the complete cursor/margin/wrap state.
+    try std.testing.expect((try terminal.feed("Y")).state_changed);
+    try std.testing.expect(screen.wrap_pending);
+    const cursor_before = screen.cursor;
+    try std.testing.expect(!(try terminal.feed("\x1b[6;2r\x1b[12;2s")).state_changed);
+    try std.testing.expect(std.meta.eql(cursor_before, screen.cursor));
+    try std.testing.expect(screen.wrap_pending);
+    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
+    try std.testing.expectEqual(@as(u16, 5), screen.scroll_bottom);
+
+    // Fragmented valid margins home once. Directional aliases clamp into a region from
+    // either side, and line-relative movement returns to the active left margin.
+    try std.testing.expect(!(try terminal.feed("\x1b[2;")).state_changed);
+    try std.testing.expect((try terminal.feed("5r\x1b[?69h\x1b[4;9s")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[1;12H\x1b[999B\x1b[0E")).state_changed);
+    try std.testing.expectEqual(@as(u16, 4), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[6;12H\x1b[999A\x1b[0F")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[?6h")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[2;5r\x1b[4;9s")).state_changed);
+
+    // Line geometry and horizontal margins are mutually exclusive; absolute aliases still
+    // resolve vertical origin and clamp against the addressed row's logical width.
+    try std.testing.expect((try terminal.feed("\x1b[?69l\x1b[2;2H\x1b#6")).state_changed);
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(2));
+    try std.testing.expect((try terminal.feed("\x1b[2;999999f")).state_changed);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 5), screen.cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[0G\x1b[0d")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+
+    // Resize is transactional at Terminal and resets physical margins and row geometry.
+    try terminal.resize(4, 7);
+    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
+    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
+    try std.testing.expect(!screen.left_right_margin_mode);
+    try std.testing.expectEqual(@as(u16, 0), screen.left_margin);
+    try std.testing.expectEqual(@as(u16, 6), screen.right_margin);
+    try std.testing.expect(screen.cursor.row < 4);
+    try std.testing.expect(screen.cursor.col < 7);
+    for (0..4) |row| try std.testing.expectEqual(
+        Screen.LineGeometry.single_width,
+        screen.lineGeometry(@intCast(row)),
+    );
+}
+
 test "terminal: DEC margins bound rectangles and reject inverted coordinates" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 5, 8);

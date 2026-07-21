@@ -29,7 +29,7 @@ test "screen cursor: visibility and auto-wrap modes do not move cursor" {
 
 test "screen cursor: origin mode makes cursor positioning relative to scroll region" {
     var s = Screen.init(6, 10);
-    apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 2, .bottom = 4 } });
+    try std.testing.expect(s.setScrollRegion(2, 4));
     apply(&s, SemanticEvent{ .origin_mode = true });
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 0, .col = 1 } });
     try std.testing.expectEqual(@as(u16, 2), s.cursor.row);

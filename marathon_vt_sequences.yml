@@ -45,10 +45,16 @@ categories:
       excluded without adding production source; active partial howl-vt obligations fell from 293 to 267
 
   - id: cursor_origin_margins
-    status: queued
+    status: accepted
     owner: howl-vt
     mechanism: Screen cursor resolution, row geometry, DECOM, DECSTBM, and DECSLRM
     gate: exact per-command bounds with reference-specific margin and logical-row differences retained
+    result: >-
+      exact margin owners now reject invalid coordinates without cursor or pending-wrap mutation and report repeated
+      commands truthfully; one dense fragmented transcript proves all cursor aliases, directional region entry,
+      DECOM plus both margin axes, double-width logical columns, pending-wrap cancellation, and resize reset. Nine
+      exact records became full and 30 conflicting pinned-reference policies became deliberate exclusions, reducing
+      active partial howl-vt obligations from 267 to 228.
 
   - id: structural_edits_scrolling
     status: queued

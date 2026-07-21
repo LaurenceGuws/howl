@@ -185,7 +185,7 @@ test "screen: DECSTBM and IL shift rows down inside region" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 3, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "DDDD" });
 
-    apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 3 } });
+    try std.testing.expect(s.setScrollRegion(1, 3));
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
     apply(&s, SemanticEvent{ .insert_lines = 1 });
 
@@ -209,7 +209,7 @@ test "screen: DECSTBM and DL shift rows up inside region" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 3, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "DDDD" });
 
-    apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 3 } });
+    try std.testing.expect(s.setScrollRegion(1, 3));
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
     apply(&s, SemanticEvent{ .delete_lines = 1 });
 
@@ -295,7 +295,7 @@ test "screen: RI scrolls region down at top margin" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 2, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "CCCC" });
 
-    apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 2 } });
+    try std.testing.expect(s.setScrollRegion(1, 2));
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
     apply(&s, SemanticEvent.reverse_index);
 
@@ -363,7 +363,7 @@ test "screen: SL shifts scroll-region rows left" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 2, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "KLMNO" });
 
-    apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 2 } });
+    try std.testing.expect(s.setScrollRegion(1, 2));
     try std.testing.expect(s.shiftColumnsLeft(2));
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
@@ -386,7 +386,7 @@ test "screen: SR respects horizontal margins" {
 
     apply(&s, SemanticEvent{ .write_text = "ABCDE" });
     apply(&s, SemanticEvent{ .left_right_margin_mode = true });
-    apply(&s, SemanticEvent{ .set_left_right_margins = .{ .left = 1, .right = 3 } });
+    try std.testing.expect(s.setLeftRightMargins(1, 3));
     try std.testing.expect(s.shiftColumnsRight(1));
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
@@ -519,7 +519,7 @@ test "screen: DECIC and DECDC shift columns inside scroll region" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 2, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "KLMNO" });
 
-    apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 2 } });
+    try std.testing.expect(s.setScrollRegion(1, 2));
     s.cursor.setPositionByClient(1, 1);
     s.current_attrs.bg = Grid.Color.rgbComponents(40, 44, 52);
     try std.testing.expect(s.insertColumns(2));
@@ -603,7 +603,7 @@ test "screen: DECLRMM and DECSLRM wrap inside horizontal margins" {
     defer s.deinit(gpa);
 
     apply(&s, SemanticEvent{ .left_right_margin_mode = true });
-    apply(&s, SemanticEvent{ .set_left_right_margins = .{ .left = 1, .right = null } });
+    try std.testing.expect(s.setLeftRightMargins(1, null));
     apply(&s, SemanticEvent{ .write_text = "ABCDEFG" });
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
@@ -619,10 +619,10 @@ test "screen: DECLRMM and DECSLRM wrap inside horizontal margins" {
 
 test "screen: DECOM with DECSLRM makes cursor addressing margin-relative" {
     var s = Grid.init(4, 4);
-    apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 2 } });
+    try std.testing.expect(s.setScrollRegion(1, 2));
     apply(&s, SemanticEvent{ .origin_mode = true });
     apply(&s, SemanticEvent{ .left_right_margin_mode = true });
-    apply(&s, SemanticEvent{ .set_left_right_margins = .{ .left = 1, .right = 2 } });
+    try std.testing.expect(s.setLeftRightMargins(1, 2));
 
     try std.testing.expectEqual(@as(u16, 1), s.cursor.row);
     try std.testing.expectEqual(@as(u16, 1), s.cursor.col);
@@ -672,7 +672,7 @@ test "screen: SU scrolls only within configured region" {
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 3, .col = 0 } });
     apply(&s, SemanticEvent{ .write_text = "DDDD" });
 
-    apply(&s, SemanticEvent{ .set_scroll_region = .{ .top = 1, .bottom = 3 } });
+    try std.testing.expect(s.setScrollRegion(1, 3));
     apply(&s, SemanticEvent{ .scroll_up_lines = 1 });
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
@@ -694,8 +694,8 @@ test "screen: vertical scrolling preserves columns outside horizontal margins" {
     apply(&screen, .{ .cursor_position = .{ .row = 3, .col = 0 } });
     apply(&screen, .{ .write_text = "DDDDD" });
     apply(&screen, .{ .left_right_margin_mode = true });
-    apply(&screen, .{ .set_left_right_margins = .{ .left = 1, .right = 3 } });
-    apply(&screen, .{ .set_scroll_region = .{ .top = 1, .bottom = 3 } });
+    try std.testing.expect(screen.setLeftRightMargins(1, 3));
+    try std.testing.expect(screen.setScrollRegion(1, 3));
     apply(&screen, .{ .scroll_up_lines = 1 });
 
     try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));

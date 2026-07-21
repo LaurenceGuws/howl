@@ -1199,7 +1199,6 @@ pub const Screen = struct {
             .character_protection,
             .attr_change_extent_rect,
             .left_right_margin_mode,
-            .set_left_right_margins,
             => self.applyScreenState(event),
             .insert_lines,
             .delete_lines,
@@ -1208,7 +1207,6 @@ pub const Screen = struct {
             .scroll_up_lines,
             .scroll_down_lines,
             .scroll_down_from_history,
-            .set_scroll_region,
             .hard_reset,
             => self.applyLineEdit(event),
             .rect_fill, .rect_copy, .rect_attrs_change => self.applyRectEdit(event),
@@ -1358,7 +1356,6 @@ pub const Screen = struct {
             .left_right_margin_mode => |enabled| {
                 if (self.setLeftRightMarginMode(enabled)) return;
             },
-            .set_left_right_margins => |margins| self.setLeftRightMargins(margins.left, margins.right),
             else => unreachable,
         }
     }
@@ -1392,10 +1389,6 @@ pub const Screen = struct {
             .scroll_down_from_history => |count| {
                 self.wrap_pending = false;
                 self.scrollDownFromHistory(count);
-            },
-            .set_scroll_region => |region| {
-                self.wrap_pending = false;
-                self.setScrollRegion(region.top, region.bottom);
             },
             .hard_reset => self.reset(),
             else => unreachable,
@@ -2351,22 +2344,34 @@ pub const Screen = struct {
         return if (self.rows == 0) 0 else @min(self.scroll_bottom, self.rows - 1);
     }
 
-    /// Set the vertical scrolling region when its clamped endpoints remain ordered.
-    fn setScrollRegion(self: *Screen, top: u16, bottom: ?u16) void {
+    /// Set zero-based vertical margins after clamping them to the grid.
+    ///
+    /// An unordered result changes nothing. A valid command homes the cursor,
+    /// cancels pending wrap, and reports whether any retained fact changed.
+    pub fn setScrollRegion(self: *Screen, top: u16, bottom: ?u16) bool {
         if (self.rows == 0) {
+            const changed = self.scroll_top != 0 or self.scroll_bottom != 0 or
+                self.cursor.row != 0 or self.cursor.col != 0 or self.wrap_pending;
             self.scroll_top = 0;
             self.scroll_bottom = 0;
             self.cursor.setPositionByClient(0, 0);
-            return;
+            self.wrap_pending = false;
+            return changed;
         }
 
         const new_top = @min(top, self.rows - 1);
         const new_bottom = if (bottom) |value| @min(value, self.rows - 1) else self.rows - 1;
-        if (new_top >= new_bottom) return;
+        if (new_top >= new_bottom) return false;
 
+        const home_row = if (self.origin_mode) new_top else 0;
+        const home_col = self.lineHomeCol();
+        const changed = self.scroll_top != new_top or self.scroll_bottom != new_bottom or
+            self.cursor.row != home_row or self.cursor.col != home_col or self.wrap_pending;
         self.scroll_top = new_top;
         self.scroll_bottom = new_bottom;
-        self.cursor.setPositionByClient(if (self.origin_mode) self.scroll_top else 0, self.lineHomeCol());
+        self.cursor.setPositionByClient(home_row, home_col);
+        self.wrap_pending = false;
+        return changed;
     }
 
     /// Enable horizontal margins, or disable them and restore full-width defaults.
@@ -2392,18 +2397,26 @@ pub const Screen = struct {
         return changed;
     }
 
-    /// Set ordered horizontal margins and home the cursor after a valid change.
-    fn setLeftRightMargins(self: *Screen, left: u16, right: ?u16) void {
-        if (!self.left_right_margin_mode or self.cols < 2) return;
-        if (left >= self.cols - 1) return;
-        if (right) |value| if (left >= value) return;
+    /// Set zero-based horizontal margins while left-right margin mode is active.
+    ///
+    /// Disabled, undersized, or unordered input changes nothing. A valid command
+    /// homes the cursor, cancels pending wrap, and reports exact retained mutation.
+    pub fn setLeftRightMargins(self: *Screen, left: u16, right: ?u16) bool {
+        if (!self.left_right_margin_mode or self.cols < 2) return false;
+        if (left >= self.cols - 1) return false;
+        if (right) |value| if (left >= value) return false;
         const new_left = @min(left, self.cols - 2);
         const new_right = if (right) |value| @min(value, self.cols - 1) else self.cols - 1;
-        if (new_left >= new_right) return;
+        if (new_left >= new_right) return false;
+        const home_row = if (self.origin_mode) self.scroll_top else 0;
+        const home_col = if (self.origin_mode) new_left else 0;
+        const changed = self.left_margin != new_left or self.right_margin != new_right or
+            self.cursor.row != home_row or self.cursor.col != home_col or self.wrap_pending;
         self.left_margin = new_left;
         self.right_margin = new_right;
         self.wrap_pending = false;
-        self.cursor.setPositionByClient(if (self.origin_mode) self.scroll_top else 0, self.lineHomeCol());
+        self.cursor.setPositionByClient(home_row, home_col);
+        return changed;
     }
 
     /// Insert lines at the cursor within the active vertical scroll region.
@@ -11843,6 +11856,12 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .cursor_vertical_absolute,
         .cursor_position,
         => return vt.screen_state.active().moveCursor(event),
+        .set_scroll_region => |region| {
+            return vt.screen_state.active().setScrollRegion(region.top, region.bottom);
+        },
+        .set_left_right_margins => |margins| {
+            return vt.screen_state.active().setLeftRightMargins(margins.left, margins.right);
+        },
         .auto_wrap => |enabled| return vt.setDecMode(7, enabled),
         .origin_mode => |enabled| return vt.setDecMode(6, enabled),
 
@@ -11865,12 +11884,10 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .scroll_up_lines,
         .scroll_down_lines,
         .scroll_down_from_history,
-        .set_scroll_region,
         .rect_fill,
         .rect_copy,
         .rect_attrs_change,
         .attr_change_extent_rect,
-        .set_left_right_margins,
         .reset_default_tab_stops,
         => vt.screen_state.active().applyScreen(event),
     }

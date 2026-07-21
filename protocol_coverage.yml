@@ -14,6 +14,9 @@ classifications:
   lifecycle_difference: &howl_lifecycle_difference >-
     Howl keeps one coherent terminal reset, savepoint, and screen-bank lifecycle; exact parity with the pinned
     reference's additional or conflicting lifecycle policy is outside the complete Howl family.
+  cursor_policy_difference: &howl_cursor_policy_difference >-
+    Howl keeps one coherent cursor, origin, margin, and logical-row policy; exact parity with a pinned reference's
+    conflicting directional or margin policy is outside the complete Howl family.
   missing_deferred_graphics: &howl_missing_deferred_graphics {
     support: missing, disposition: deferred, owner: howl-vt, milestone: graphics}
   missing_excluded_iterm: &howl_missing_excluded_iterm {
@@ -258,28 +261,50 @@ references:
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: libvterm.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column,
-            conditions: libvterm clamps to the current logical row width, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: clamps to the current logical row width, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: absolute cursor position,
-            conditions: origin/margins and target logical row width, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: origin/margins and target logical row width, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -327,11 +352,16 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: libvterm.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column,
-            conditions: libvterm clamps to the current logical row width, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: clamps to the current logical row width, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
             conditions: libvterm clamps complete glyph repetition to the logical row while Howl wraps through the grid,
             howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
@@ -350,10 +380,15 @@ references:
                 symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds", line: 145}}}
           - {id: libvterm.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: absolute cursor position,
-            conditions: origin/margins and target logical row width, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: origin/margins and target logical row width, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, conditions: Ps 0|3|5,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -414,14 +449,16 @@ references:
               symbol: "terminal: ISO and DEC protection retain distinct erase semantics"}}}
           - {id: libvterm.csi.decstbm, raw: "CSI [top=1] ; [bottom] r", effect: set vertical margins,
             conditions: libvterm resets invalid regions to full screen while Howl preserves the prior region,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: setScrollRegion, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.setScrollRegion, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
+              symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.decslrm, raw: "CSI [left=1] ; [right] s", effect: set horizontal margins,
             conditions: libvterm stores margins before DECLRMM while Howl applies them only when enabled,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: setLeftRightMargins, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.setLeftRightMargins, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
+              symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {support: partial,
             source: howl-vt/src/terminal.zig, symbol: Screen.insertColumns, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -481,9 +518,10 @@ references:
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: libvterm.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle left-right margins,
             conditions: libvterm retains stored margins on reset while Howl restores full-width defaults,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -934,30 +972,47 @@ references:
         records:
           - {id: iterm2.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward,
             conditions: double-width line stepping, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
             conditions: iTerm2 includes double-width and external-attribute behavior absent from Howl,
             howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
           - {id: iterm2.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down,
-            conditions: iTerm2 clamps from above the vertical region into its bottom, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: clamps from above the vertical region into its bottom, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward,
             conditions: double-width line stepping, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
-            conditions: iTerm2 clamps from below the vertical region into its top, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: clamps from below the vertical region into its top, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line,
-            conditions: iTerm2 always returns to the active left margin, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: returns to the active left margin, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line,
-            conditions: iTerm2 always returns to the active left margin, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: returns to the active left margin, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position,
             conditions: double-width target-line column addressing, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.cht, raw: "CSI [Ps=1] I", effect: forward tabs, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -985,7 +1040,10 @@ references:
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
           - {id: iterm2.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position,
             conditions: double-width target-line column addressing, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
           - {id: iterm2.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial, residual: Howl implements only the individually indexed SGR parameters.}}
           - {id: iterm2.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
@@ -1045,18 +1103,26 @@ references:
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: iterm2.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column,
             conditions: double-width current-line column addressing, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward,
             conditions: double-width line stepping, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row,
             conditions: DECOM resolves against vertical margins, howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: CSI cursor positioning shares parameter, margin, and origin bounds", line: 145}}}
           - {id: iterm2.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down,
-            conditions: iTerm2 clamps from above the vertical region into its bottom, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: clamps from above the vertical region into its bottom, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters,
             conditions: double-width rows and ISO protected-mode erase, howl: {support: partial,
               source: howl-vt/src/terminal.zig, symbol: eraseChars, proof: {
@@ -1804,9 +1870,10 @@ references:
                 symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
           - {id: iterm2.mode.deckpam, raw: "CSI ? 66 h|l", effect: toggle application keypad, howl: {support: partial, residual: Howl encodes application keypad mode through its owned key model, not iTerm2 key events.}}
           - {id: iterm2.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle horizontal margins, conditions: VT level 400+,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.mode.decsdm, raw: "CSI ? 80 h|l", effect: toggle Sixel display mode, howl: *howl_missing_deferred_graphics}
           - id: iterm2.mode.decncsm
             raw: "CSI ? 95 h|l"
@@ -2366,34 +2433,64 @@ references:
               symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
           - {id: kitty.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
             conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down,
             conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.vpr, raw: "CSI [Ps=1] e", effect: cursor down,
             conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.cuf, raw: "CSI [Ps=1] C", effect: cursor forward,
             conditions: Kitty ignores horizontal margins for relative movement, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.hpr, raw: "CSI [Ps=1] a", effect: cursor forward,
             conditions: Kitty ignores horizontal margins for relative movement, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward,
             conditions: Kitty ignores horizontal margins for relative movement, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.cnl, raw: "CSI [Ps=1] E", effect: cursor next line,
             conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.cpl, raw: "CSI [Ps=1] F", effect: cursor previous line,
             conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.cha, raw: "CSI [Ps=1] G", effect: absolute column,
             conditions: Kitty ignores horizontal margins under DECOM, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.hpa, raw: "CSI [Ps=1] `", effect: absolute column,
             conditions: Kitty ignores horizontal margins under DECOM, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.vpa, raw: "CSI [Ps=1] d", effect: absolute row,
             conditions: DECOM resolves against vertical margins and preserves column, howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
@@ -2409,10 +2506,16 @@ references:
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.csi.cup, raw: "CSI [row=1] ; [col=1] H", effect: cursor position,
             conditions: Kitty applies DECOM only to rows and ignores horizontal margins, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position,
             conditions: Kitty applies DECOM only to rows and ignores horizontal margins, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_cursor_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.ed, raw: "CSI [Ps=0] J", effect: erase display,
             conditions: Kitty additionally owns Ps 22 and graphics/multicell/selection consequences,
             howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: eraseDisplay, proof: {
