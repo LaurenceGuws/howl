@@ -34,6 +34,10 @@ fn expectActionCount(actions: []const Action, count: usize) !void {
     try std.testing.expectEqual(count, actions.len);
 }
 
+fn expectNoActions(phases: parser_mod.PhaseActions) !void {
+    for (phases) |phase| try std.testing.expect(phase == null);
+}
+
 test "parser string controls: OSC with BEL terminator" {
     const gpa = std.testing.allocator;
     var parser = try Parser.init(gpa);
@@ -64,6 +68,52 @@ test "parser string controls: OSC with ST terminator" {
     try std.testing.expectEqual(std.meta.Tag(OscAction).raw_title, std.meta.activeTag(output.actions.items[0].osc_dispatch));
     try std.testing.expectEqual(@as(?u16, null), output.actions.items[0].osc_dispatch.command());
     try std.testing.expectEqualSlices(u8, "url", output.actions.items[0].osc_dispatch.payload());
+}
+
+test "parser string controls: GNU Screen title owns exact fragmented terminators and reset" {
+    const gpa = std.testing.allocator;
+    var parser = try Parser.init(gpa);
+    defer parser.deinit();
+    var output = try Output.init(gpa);
+    defer output.deinit(gpa);
+
+    for ("\x1bkone\x07two\x1bxthree\x1b\\") |byte| output.appendPhases(parser.next(byte));
+    try expectActionCount(output.actions.items, 1);
+    try std.testing.expect(output.actions.items[0] == .screen_title);
+    try std.testing.expectEqualStrings("one\x07two\x1bxthree", output.actions.items[0].screen_title);
+
+    for ([_][]const u8{ "\x1bkcr\r", "\x1bklf\n", "\x1bkc1\x9c" }) |sequence| {
+        for (sequence) |byte| output.appendPhases(parser.next(byte));
+    }
+    try expectActionCount(output.actions.items, 4);
+    try std.testing.expectEqualStrings("cr", output.actions.items[1].screen_title);
+    try std.testing.expectEqualStrings("lf", output.actions.items[2].screen_title);
+    try std.testing.expectEqualStrings("c1", output.actions.items[3].screen_title);
+
+    for ("\x1bkdiscard") |byte| output.appendPhases(parser.next(byte));
+    parser.reset();
+    output.appendPhases(parser.next('Z'));
+    try expectActionCount(output.actions.items, 5);
+    try std.testing.expectEqual(@as(u21, 'Z'), output.actions.items[4].print);
+}
+
+test "parser string controls: GNU Screen title shares the exact metadata bound" {
+    var parser = try Parser.init(std.testing.allocator);
+    defer parser.deinit();
+
+    try expectNoActions(parser.next(0x1B));
+    try expectNoActions(parser.next('k'));
+    for (0..parser_mod.max_metadata_control_bytes) |_| try expectNoActions(parser.next('x'));
+    try std.testing.expectEqual(
+        @as(?(error{ OutOfMemory, StringControlLimit }), null),
+        parser.takeStringControlFailed(),
+    );
+
+    try expectNoActions(parser.next('x'));
+    try std.testing.expectEqual(error.StringControlLimit, parser.takeStringControlFailed().?);
+    parser.reset();
+    const phases = parser.next('A');
+    try std.testing.expectEqual(@as(u21, 'A'), phases[1].?.print);
 }
 
 test "parser string controls: APC with ST terminator" {

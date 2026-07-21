@@ -21,6 +21,48 @@ test "OSC title updates terminal title under stream path" {
     try std.testing.expectEqualStrings("My Title", terminal.host.current_title.?);
 }
 
+test "GNU Screen title retains bounded title and icon with exact mutation" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b]0;old\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bknew")).state_changed);
+    const completed = try terminal.feed(" title\x1b\\");
+    try std.testing.expect(completed.state_changed);
+    try std.testing.expect(completed.title_changed);
+    try std.testing.expect(completed.icon_changed);
+    try std.testing.expectEqualStrings("new title", terminal.host.current_title.?);
+    try std.testing.expectEqualStrings("new title", terminal.host.current_icon.?);
+
+    const repeated = try terminal.feed("\x1bknew title\r");
+    try std.testing.expect(!repeated.state_changed);
+    try std.testing.expect(!repeated.title_changed);
+    try std.testing.expect(!repeated.icon_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bk\n")).state_changed);
+
+    const payload = try allocator.alloc(u8, HostState.max_metadata_bytes + 1);
+    defer allocator.free(payload);
+    @memset(payload, 't');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+    try sequence.appendSlice(allocator, "\x1bk");
+    try sequence.appendSlice(allocator, payload[0..HostState.max_metadata_bytes]);
+    try sequence.append(allocator, '\r');
+    const maximum = try terminal.feed(sequence.items);
+    try std.testing.expect(maximum.state_changed and maximum.title_changed and maximum.icon_changed);
+    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), terminal.host.current_title.?.len);
+    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), terminal.host.current_icon.?.len);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1bk");
+    try sequence.appendSlice(allocator, payload);
+    try sequence.append(allocator, '\r');
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), terminal.host.current_title.?.len);
+    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), terminal.host.current_icon.?.len);
+}
+
 test "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

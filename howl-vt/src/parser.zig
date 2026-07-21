@@ -219,6 +219,7 @@ pub const Action = union(enum) {
     invalid,
     csi_dispatch: CsiAction,
     osc_dispatch: OscAction,
+    screen_title: []const u8,
     apc_start,
     apc_put: u8,
     apc_end,
@@ -243,7 +244,7 @@ pub const PhaseActions = [3]?Action;
 
 /// Stateful parser for terminal input streams.
 pub const Parser = struct {
-    /// Parser initialization can fail only while allocating its reusable OSC buffer.
+    /// Parser initialization can fail only while allocating its reusable string-control buffer.
     pub const InitError = error{OutOfMemory};
 
     utf8: Utf8Decoder,
@@ -261,7 +262,7 @@ pub const Parser = struct {
     pm: PassthroughControl,
     sos: PassthroughControl,
 
-    /// Initialize parser state and its allocator-owned reusable OSC buffer.
+    /// Initialize parser state and its allocator-owned reusable string-control buffer.
     pub fn init(allocator: std.mem.Allocator) InitError!Parser {
         const osc = try OscControl.init(
             allocator,
@@ -323,7 +324,7 @@ pub const Parser = struct {
         self.latin1 = false;
     }
 
-    /// Returns and clears the pending OSC allocation or bound failure.
+    /// Returns and clears the pending buffered string-control allocation or bound failure.
     pub fn takeStringControlFailed(self: *Parser) ?error{ OutOfMemory, StringControlLimit } {
         if (self.osc.takeFailure()) |failure| return failure;
         return null;
@@ -335,6 +336,12 @@ pub const Parser = struct {
         if (self.state == .ground and self.utf8.needed > 0) {
             const action = self.consumeGroundByte(byte);
             return .{ null, action, null };
+        }
+
+        if (self.state == .escape and self.intermediates_len == 0 and byte == 'k') {
+            self.osc.startScreenTitle();
+            self.state = .screen_title_string;
+            return .{ null, null, null };
         }
 
         const transition = table[byte][@intFromEnum(self.state)];
@@ -352,6 +359,7 @@ pub const Parser = struct {
 
     fn nextActive(self: *Parser, byte: u8, transition: Transition) PhaseActions {
         const current_state = self.state;
+        if (current_state == .screen_title_string) return self.nextScreenTitle(byte);
         const sos_kind = if (current_state == .sos_pm_apc_string) self.sosPmApcKind() else null;
         const finishing_escape = byte == '\\' and switch (current_state) {
             .osc_string => self.osc.escaping(),
@@ -377,6 +385,17 @@ pub const Parser = struct {
         const next_state, const action = self.feedActiveByte(current_state, sos_kind, byte);
         defer self.state = next_state;
         return self.buildPhases(current_state, next_state, action, byte, sos_kind);
+    }
+
+    fn nextScreenTitle(self: *Parser, byte: u8) PhaseActions {
+        const result = self.osc.feedScreenTitle(byte) orelse return .{ null, null, null };
+        return switch (result) {
+            .put => .{ null, null, null },
+            .finish => finish: {
+                self.state = .ground;
+                break :finish .{ .{ .screen_title = self.osc.payload() }, null, null };
+            },
+        };
     }
 
     fn feedActiveByte(
@@ -644,7 +663,7 @@ pub const Parser = struct {
 
     fn isActiveState(self: *const Parser) bool {
         return switch (self.state) {
-            .osc_string, .dcs_passthrough, .sos_pm_apc_string => true,
+            .osc_string, .screen_title_string, .dcs_passthrough, .sos_pm_apc_string => true,
             else => false,
         };
     }
@@ -924,6 +943,7 @@ pub const Event = union(enum) {
     configure_charset: struct { slot: u8, designation: u8 },
     style_change: StyleChange,
     osc: OscAction,
+    screen_title: []const u8,
     apc: []const u8,
     dcs: DcsEvent,
     pm: []const u8,
@@ -941,6 +961,7 @@ const ParseState = enum {
     csi_intermediate,
     csi_ignore,
     osc_string,
+    screen_title_string,
     dcs_entry,
     dcs_param,
     dcs_intermediate,
@@ -1248,6 +1269,8 @@ const ByteLimit = u32;
 pub const Finish = enum {
     bel,
     st,
+    cr,
+    lf,
 };
 
 const FeedResult = union(enum) {
@@ -1261,7 +1284,7 @@ const DelimitedState = enum {
     esc,
 };
 
-/// Owns bounded incremental OSC parsing and its reusable payload allocation.
+/// Owns bounded OSC parsing and lends its mutually exclusive payload allocation to ESC k titles.
 pub const OscControl = struct {
     const Failure = error{ OutOfMemory, StringControlLimit };
     const prefix_max_bytes = 8;
@@ -1317,6 +1340,8 @@ pub const OscControl = struct {
         payload_esc,
         raw,
         raw_esc,
+        screen_title,
+        screen_title_esc,
     };
 
     const BodyKind = enum {
@@ -1422,17 +1447,28 @@ pub const OscControl = struct {
         self.state = .prefix;
     }
 
+    // Begins GNU Screen's ESC k title control using the ordinary metadata bound.
+    fn startScreenTitle(self: *OscControl) void {
+        self.reset();
+        self.policy = .{ .command = null, .class = .raw_title, .max_len = self.metadata_max_len };
+        self.state = .screen_title;
+    }
+
     /// Reports whether an OSC delimiter has started and not finished.
     pub fn active(self: *const OscControl) bool {
         return self.state != .idle;
     }
 
-    /// Reports whether OSC has consumed ESC while awaiting ST or payload continuation.
+    /// Reports whether a buffered control consumed ESC while awaiting ST or payload continuation.
     pub fn escaping(self: *const OscControl) bool {
         return switch (self.state) {
-            .prefix_esc, .payload_esc, .raw_esc => true,
+            .prefix_esc, .payload_esc, .raw_esc, .screen_title_esc => true,
             else => false,
         };
+    }
+
+    fn payload(self: *const OscControl) []const u8 {
+        return self.buffer.items;
     }
 
     /// Borrows the completed OSC action until reset, start, feed, or deinit.
@@ -1517,7 +1553,48 @@ pub const OscControl = struct {
             .prefix_esc => self.feedPrefixEsc(byte),
             .payload, .payload_esc => self.feedPayload(byte),
             .raw, .raw_esc => self.feedRaw(byte),
+            .screen_title, .screen_title_esc => unreachable,
         };
+    }
+
+    // Screen titles end at CR, LF, C1 ST, or ESC ST; any other ESC remains payload.
+    fn feedScreenTitle(self: *OscControl, byte: u8) ?FeedResult {
+        return switch (self.state) {
+            .screen_title => switch (byte) {
+                '\r' => self.finishScreenTitle(.cr),
+                '\n' => self.finishScreenTitle(.lf),
+                0x9C => self.finishScreenTitle(.st),
+                0x1B => title_escape: {
+                    self.state = .screen_title_esc;
+                    break :title_escape null;
+                },
+                else => title_put: {
+                    self.append(byte);
+                    break :title_put .{ .put = byte };
+                },
+            },
+            .screen_title_esc => if (byte == '\\')
+                self.finishScreenTitle(.st)
+            else title_continue: {
+                self.state = .screen_title;
+                self.append(0x1B);
+                if (byte == '\r') break :title_continue self.finishScreenTitle(.cr);
+                if (byte == '\n') break :title_continue self.finishScreenTitle(.lf);
+                if (byte == 0x9C) break :title_continue self.finishScreenTitle(.st);
+                if (byte == 0x1B) {
+                    self.state = .screen_title_esc;
+                    break :title_continue null;
+                }
+                self.append(byte);
+                break :title_continue .{ .put = byte };
+            },
+            else => unreachable,
+        };
+    }
+
+    fn finishScreenTitle(self: *OscControl, terminator: Finish) FeedResult {
+        self.state = .idle;
+        return .{ .finish = terminator };
     }
 
     fn feedPrefix(self: *OscControl, byte: u8) ?FeedResult {
@@ -2200,6 +2277,10 @@ fn appendOwnedAction(
                 .kitty_file_transfer => .{ .kitty_file_transfer = .{ .payload = owned, .term = osc.term() } },
                 .kitty_clipboard => .{ .kitty_clipboard = .{ .payload = owned, .term = osc.term() } },
             } });
+        },
+        .screen_title => |title| {
+            const owned = try arena.dupe(u8, title);
+            try actions.append(allocator, .{ .screen_title = owned });
         },
         else => try actions.append(allocator, action),
     }

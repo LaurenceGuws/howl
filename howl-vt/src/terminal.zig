@@ -11194,6 +11194,10 @@ pub fn process(event: parser_mod.Event) ?SemanticEvent {
         .codepoint => |cp| return SemanticEvent{ .write_codepoint = cp },
         .control => |c| return controlProcess(c),
         .osc => |osc_event| return processOscEvent(osc_event),
+        .screen_title => |title| return if (title.len == 0)
+            null
+        else
+            SemanticEvent{ .title_and_icon_set = title },
         .esc_dispatch => |esc_dispatch| return escDispatchProcess(
             esc_dispatch.final,
             esc_dispatch.intermediates[0..esc_dispatch.intermediates_len],
@@ -11728,6 +11732,7 @@ const TerminalStream = struct {
                 .intermediates_len = csi.intermediates_len,
             } }),
             .osc_dispatch => |osc| try self.applyEvent(.{ .osc = osc }),
+            .screen_title => |title| try self.applyEvent(.{ .screen_title = title }),
             .apc_start, .apc_put, .apc_end, .apc_cancel => discardedStringControl(),
             .dcs_hook => |hook| self.startDcs(hook),
             .dcs_put => |byte| self.putDcs(byte),

@@ -66,6 +66,7 @@ const ParsedEvents = struct {
             payload_len: u32,
             terminator: parser_mod.OscTerminator,
         },
+        screen_title: u32,
         apc: u32,
         dcs: struct {
             body_len: u32,
@@ -241,6 +242,10 @@ const ParsedEvents = struct {
             .invalid => try self.appendMeta(.invalid_sequence),
             .csi_dispatch => |csi| try self.appendCsi(csi),
             .osc_dispatch => |osc| try self.appendOsc(osc),
+            .screen_title => |title| {
+                try self.bytes.appendSlice(self.allocator, title);
+                try self.appendMeta(.{ .screen_title = paramCount32(title) });
+            },
             .apc_start => self.apc_bytes.clearRetainingCapacity(),
             .apc_put => |byte| try self.apcBytesAppend(byte),
             .apc_end => try self.appendBufferedBytes(.apc, &self.apc_bytes),
@@ -448,6 +453,9 @@ const ParsedEvents = struct {
                 .intermediates_len = sc.intermediates_len,
             } },
             .osc => |osc| .{ .osc = oscActionFromMeta(osc, self.bytes.items[@intCast(byte_start)..@intCast(byte_start + osc.payload_len)]) },
+            .screen_title => |len| .{
+                .screen_title = self.bytes.items[@intCast(byte_start)..@intCast(byte_start + len)],
+            },
             .apc => |len| .{ .apc = self.bytes.items[@intCast(byte_start)..@intCast(byte_start + len)] },
             .dcs => |dcs| .{ .dcs = .{
                 .body = self.bytes.items[@intCast(byte_start)..@intCast(byte_start + dcs.body_len)],
@@ -473,6 +481,7 @@ fn advanceCursor(meta: ParsedEvents.EventMeta, byte_idx: *u32, int_idx: *u32, au
             aux_idx.* += sc.intermediates_len;
         },
         .osc => |osc| byte_idx.* += osc.payload_len,
+        .screen_title => |len| byte_idx.* += len,
         .apc => |len| byte_idx.* += len,
         .dcs => |dcs| {
             byte_idx.* += dcs.body_len;

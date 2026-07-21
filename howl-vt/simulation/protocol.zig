@@ -67,6 +67,7 @@ const Event = union(enum) {
         intermediates_len: u8,
     },
     osc: parser_mod.OscAction,
+    screen_title: []u8,
     apc_start,
     apc_put: u8,
     apc_end,
@@ -107,6 +108,7 @@ const Harness = struct {
         for (self.events.items) |event| {
             switch (event) {
                 .osc => |osc| self.allocator.free(osc.payload()),
+                .screen_title => |title| self.allocator.free(title),
                 else => {},
             }
         }
@@ -131,6 +133,11 @@ const Harness = struct {
                 const owned = try self.allocator.dupe(u8, osc.payload());
                 errdefer self.allocator.free(owned);
                 try self.events.append(self.allocator, Event{ .osc = cloneOscAction(osc, owned) });
+            },
+            .screen_title => |title| {
+                const owned = try self.allocator.dupe(u8, title);
+                errdefer self.allocator.free(owned);
+                try self.events.append(self.allocator, .{ .screen_title = owned });
             },
             .apc_start => try self.events.append(self.allocator, .apc_start),
             .apc_put => |byte| try self.events.append(self.allocator, Event{ .apc_put = byte }),
@@ -299,6 +306,10 @@ fn eventsEqual(a: []const Event, b: []const Event) bool {
             {
                 return false;
             }
+            continue;
+        }
+        if (left == .screen_title) {
+            if (!std.mem.eql(u8, left.screen_title, right.screen_title)) return false;
             continue;
         }
         if (!std.meta.eql(left, right)) return false;

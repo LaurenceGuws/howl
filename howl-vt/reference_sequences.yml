@@ -876,8 +876,13 @@ references:
             conditions: iTerm2 reset includes application delegate and parser policy outside Howl VT state,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: hardReset, proof: {
               path: howl-vt/test/unit/terminal_test.zig, symbol: "terminal RIS delegates hard-reset owners"}}}
-          - {id: iterm2.esc.screen_title, raw: "ESC k Pt (CR|LF|ST)", effect: set GNU Screen title,
-            relevance: compatibility, howl: {status: 'false'}}
+          - {id: iterm2.esc.screen_title, raw: "ESC k Pt (CR|LF|ST)", effect: set GNU Screen title and icon,
+            relevance: compatibility,
+            conditions: "empty titles are ignored; Howl retains exact bounded bytes and additionally accepts C1 ST
+              while iTerm2 decodes text, replaces controls, and applies its subtitle convention",
+            howl: {status: partial, source: howl-vt/src/parser.zig, symbol: OscControl.feedScreenTitle, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "GNU Screen title retains bounded title and icon with exact mutation"}}}
       - source: VT100CSIParser.m
         symbol: decodeFromContext
         line: 353
