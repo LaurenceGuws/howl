@@ -20,6 +20,13 @@ Read only the authority relevant to the work:
 
 `README.md` is the project landing page, not mandatory agent onboarding.
 
+## Protocol coverage
+
+`howl-vt/reference_sequences.yml` is the protocol census. From Nushell, source
+`howl-vt/protocol_coverage.nu` and use the `protocol coverage` command family
+for summaries, filtered records, gaps, proof review, and census-aware tab
+completion.
+
 ## Development flow
 
 Ordinary work uses a disposable marathon scratch for the objective, review
