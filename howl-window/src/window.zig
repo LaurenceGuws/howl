@@ -5,9 +5,13 @@ const howl_control = @import("howl_control");
 const howl_vt = @import("howl_vt");
 const renderer = @import("renderer.zig");
 const c = @import("native.zig").c;
+const MouseInput = @FieldType(howl_control.Input, "mouse");
+const MouseButton = @FieldType(MouseInput, "button");
+const MouseKind = @FieldType(MouseInput, "kind");
 
 const initial_size = renderer.Size{ .width = 960, .height = 600 };
 const terminal_count: usize = 3;
+const max_wheel_steps: usize = 32;
 
 const TabId = enum(u8) { split = 1, full = 2 };
 const PaneId = enum(u8) { left = 1, right = 2, full = 3 };
@@ -47,6 +51,155 @@ const Workspace = struct {
     }
 };
 
+const Repeat = struct {
+    interval_ns: ?u64 = null,
+    delay_ns: u64 = 1,
+    key: ?u32 = null,
+
+    fn configure(self: *Repeat, rate: i32, delay_ms: i32) error{InvalidRepeat}!void {
+        if (rate < 0 or delay_ms < 0) return error.InvalidRepeat;
+        self.key = null;
+        if (rate == 0) {
+            self.interval_ns = null;
+            return;
+        }
+        self.interval_ns = @max(@as(u64, 1), std.time.ns_per_s / @as(u64, @intCast(rate)));
+        self.delay_ns = @max(@as(u64, 1), @as(u64, @intCast(delay_ms)) * std.time.ns_per_ms);
+    }
+
+    fn press(self: *Repeat, key: u32, repeatable: bool) ?u64 {
+        self.key = null;
+        if (!repeatable or self.interval_ns == null) return null;
+        self.key = key;
+        return self.delay_ns;
+    }
+
+    fn release(self: *Repeat, key: u32) bool {
+        if (self.key != key) return false;
+        self.key = null;
+        return true;
+    }
+
+    fn fire(self: *const Repeat) ?struct { key: u32, next_ns: u64 } {
+        return .{ .key = self.key orelse return null, .next_ns = self.interval_ns orelse return null };
+    }
+
+    fn cancel(self: *Repeat) void {
+        self.key = null;
+    }
+};
+
+const HostKeys = struct {
+    values: [3]u32 = undefined,
+    count: u8 = 0,
+
+    fn capture(self: *HostKeys, code: u32) bool {
+        for (self.values[0..self.count]) |value| if (value == code) return true;
+        if (self.count == self.values.len) return false;
+        self.values[self.count] = code;
+        self.count += 1;
+        return true;
+    }
+
+    fn release(self: *HostKeys, code: u32) bool {
+        for (self.values[0..self.count], 0..) |value, index| if (value == code) {
+            self.count -= 1;
+            if (index != self.count) self.values[index] = self.values[self.count];
+            return true;
+        };
+        return false;
+    }
+
+    fn clear(self: *HostKeys) void {
+        self.count = 0;
+    }
+};
+
+const HostAction = enum { first_tab, second_tab, next_pane };
+
+const PointerTarget = struct {
+    terminal: u8,
+    row: i32,
+    col: u16,
+    pixel_x: u32,
+    pixel_y: u32,
+};
+
+const ButtonTransition = struct {
+    index: usize,
+    target: PointerTarget,
+    buttons_down: u8,
+};
+
+const PointerState = struct {
+    position: ?struct { x: u32, y: u32 } = null,
+    pressed: [3]?PointerTarget = @splat(null),
+    buttons_down: u8 = 0,
+
+    fn preparePress(self: *const PointerState, index: usize, target: PointerTarget) ?ButtonTransition {
+        if (index >= self.pressed.len or self.pressed[index] != null) return null;
+        return .{
+            .index = index,
+            .target = target,
+            .buttons_down = self.buttons_down | (@as(u8, 1) << @intCast(index)),
+        };
+    }
+
+    fn commitPress(self: *PointerState, transition: ButtonTransition) void {
+        std.debug.assert(self.pressed[transition.index] == null);
+        std.debug.assert(transition.buttons_down ==
+            self.buttons_down | (@as(u8, 1) << @intCast(transition.index)));
+        self.pressed[transition.index] = transition.target;
+        self.buttons_down = transition.buttons_down;
+    }
+
+    fn prepareRelease(self: *const PointerState, index: usize) ?ButtonTransition {
+        if (index >= self.pressed.len) return null;
+        const target = self.pressed[index] orelse return null;
+        return .{
+            .index = index,
+            .target = target,
+            .buttons_down = self.buttons_down & ~(@as(u8, 1) << @intCast(index)),
+        };
+    }
+
+    fn commitRelease(self: *PointerState, transition: ButtonTransition) void {
+        std.debug.assert(std.meta.eql(self.pressed[transition.index].?, transition.target));
+        std.debug.assert(transition.buttons_down ==
+            self.buttons_down & ~(@as(u8, 1) << @intCast(transition.index)));
+        self.pressed[transition.index] = null;
+        self.buttons_down = transition.buttons_down;
+    }
+
+    fn move(self: *PointerState, target: PointerTarget) bool {
+        for (self.pressed) |pressed| if (pressed) |value|
+            if (value.terminal != target.terminal) return false;
+        for (&self.pressed) |*pressed| {
+            if (pressed.* != null) pressed.* = target;
+        }
+        return true;
+    }
+};
+
+const Ready = packed struct(u8) {
+    display_read: bool,
+    display_write: bool,
+    terminal: bool,
+    render: bool,
+    repeat: bool,
+    padding: u3 = 0,
+
+    fn from(fds: [4]std.posix.pollfd) Ready {
+        return .{
+            .display_read = fds[0].revents & std.posix.POLL.IN != 0,
+            .display_write = fds[0].revents & std.posix.POLL.OUT != 0,
+            .terminal = fds[1].revents & std.posix.POLL.IN != 0,
+            .render = fds[2].revents & std.posix.POLL.IN != 0,
+            .repeat = fds[3].revents & std.posix.POLL.IN != 0,
+        };
+    }
+};
+
 const WakeContext = struct { owner: ?*anyopaque = null, index: u3 = 0 };
 
 pub const Error = renderer.StartError || renderer.Error || howl_control.InitError ||
@@ -59,6 +212,9 @@ pub const Error = renderer.StartError || renderer.Error || howl_control.InitErro
     KeyboardContext,
     KeyboardMap,
     KeyboardState,
+    KeyboardRepeat,
+    HostKeyLimit,
+    Pointer,
     TerminalSignal,
     Poll,
     InputIncomplete,
@@ -78,10 +234,15 @@ const Loop = struct {
     toplevel: ?*c.struct_xdg_toplevel = null,
     seat: ?*c.struct_wl_seat = null,
     keyboard: ?*c.struct_wl_keyboard = null,
+    pointer: ?*c.struct_wl_pointer = null,
     xkb_context: ?*c.struct_xkb_context = null,
     xkb_keymap: ?*c.struct_xkb_keymap = null,
     xkb_state: ?*c.struct_xkb_state = null,
     terminal_signal: c_int,
+    repeat_fd: c_int,
+    repeat: Repeat = .{},
+    host_keys: HostKeys = .{},
+    pointer_state: PointerState = .{},
     wake_bits: std.atomic.Value(u8) = .init(0),
     wake_contexts: [terminal_count]WakeContext = @splat(.{}),
     terminals: [terminal_count]?*howl_control.Terminal = @splat(null),
@@ -108,6 +269,9 @@ const Loop = struct {
         const terminal_signal = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (terminal_signal < 0) return error.TerminalSignal;
         errdefer closeOwned(terminal_signal);
+        const repeat_fd = c.timerfd_create(c.CLOCK_MONOTONIC, c.TFD_CLOEXEC | c.TFD_NONBLOCK);
+        if (repeat_fd < 0) return error.KeyboardRepeat;
+        errdefer closeOwned(repeat_fd);
         const self = try allocator.create(Loop);
         errdefer allocator.destroy(self);
         self.* = .{
@@ -116,6 +280,7 @@ const Loop = struct {
             .display = display,
             .registry = registry,
             .terminal_signal = terminal_signal,
+            .repeat_fd = repeat_fd,
         };
         for (&self.wake_contexts, 0..) |*context, index| context.* = .{
             .owner = self,
@@ -168,6 +333,10 @@ const Loop = struct {
                 .shell = "/bin/bash",
                 .cols = geometry.cols,
                 .rows = geometry.rows,
+                .cell_pixels = .{
+                    .width = render.metrics().cell_width,
+                    .height = render.metrics().cell_height,
+                },
             }, .{ .context = &self.wake_contexts[index], .notify = terminalWake });
             self.terminal_geometry[index] = geometry;
         }
@@ -179,26 +348,37 @@ const Loop = struct {
         try self.submitVisible(visibleMask(self.workspace.tab));
         while (!self.closed and self.failure == null) {
             if (c.wl_display_dispatch_pending(self.display) < 0) return error.WaylandDispatch;
+            if (self.closed or self.failure != null) continue;
             if (!std.meta.eql(self.pending_size, self.size) and
                 self.completed_generation == self.render_generation) try self.resizeAll();
-            if (c.wl_display_flush(self.display) < 0 and std.posix.errno(-1) != .AGAIN)
-                return error.WaylandFlush;
+            const flush = c.wl_display_flush(self.display);
+            const flush_blocked = flush < 0 and std.posix.errno(flush) == .AGAIN;
+            if (flush < 0 and !flush_blocked) return error.WaylandFlush;
             var fds = [_]std.posix.pollfd{
-                .{ .fd = c.wl_display_get_fd(self.display), .events = std.posix.POLL.IN, .revents = 0 },
+                .{
+                    .fd = c.wl_display_get_fd(self.display),
+                    .events = @as(i16, std.posix.POLL.IN) |
+                        if (flush_blocked) @as(i16, std.posix.POLL.OUT) else 0,
+                    .revents = 0,
+                },
                 .{ .fd = self.terminal_signal, .events = std.posix.POLL.IN, .revents = 0 },
                 .{ .fd = self.render.?.signalFd(), .events = std.posix.POLL.IN, .revents = 0 },
+                .{ .fd = self.repeat_fd, .events = std.posix.POLL.IN, .revents = 0 },
             };
             const ready = std.posix.poll(&fds, -1) catch return error.Poll;
             std.debug.assert(ready != 0);
             const faults = std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL;
             if (fds[2].revents & faults != 0) return error.Signal;
-            if (fds[2].revents & std.posix.POLL.IN != 0) {
+            if (fds[1].revents & faults != 0) return error.TerminalSignal;
+            if (fds[3].revents & faults != 0) return error.KeyboardRepeat;
+            if (fds[0].revents & faults != 0) return error.WaylandDispatch;
+            const sources = Ready.from(fds);
+            if (sources.render) {
                 self.completed_generation = try self.render.?.completed();
                 std.debug.assert(self.completed_generation != 0);
                 if (!std.meta.eql(self.pending_size, self.size)) try self.resizeAll();
             }
-            if (fds[1].revents & faults != 0) return error.TerminalSignal;
-            if (fds[1].revents & std.posix.POLL.IN != 0) {
+            if (sources.terminal) {
                 try drainEvent(self.terminal_signal);
                 const changed = self.wake_bits.swap(0, .acq_rel);
                 for (&self.terminals, 0..) |*terminal, index| if (changed & (@as(u8, 1) << @intCast(index)) != 0) {
@@ -210,9 +390,14 @@ const Loop = struct {
                 const visible_changed = changed & visibleMask(self.workspace.tab);
                 if (visible_changed != 0) try self.submitVisible(visible_changed);
             }
-            if (fds[0].revents & faults != 0) return error.WaylandDispatch;
-            if (fds[0].revents & std.posix.POLL.IN != 0 and
+            if (sources.repeat) try self.repeatKey();
+            if (sources.display_read and
                 c.wl_display_dispatch(self.display) < 0) return error.WaylandDispatch;
+            if (sources.display_write) {
+                const resumed = c.wl_display_flush(self.display);
+                if (resumed < 0 and std.posix.errno(resumed) != .AGAIN)
+                    return error.WaylandFlush;
+            }
         }
         if (self.failure) |failure| return failure;
     }
@@ -348,13 +533,43 @@ const Loop = struct {
     }
 
     fn key(self: *Loop, code: u32, state_value: u32) void {
-        if (state_value != c.WL_KEYBOARD_KEY_STATE_PRESSED) return;
-        const state = self.xkb_state orelse return;
+        const action: @FieldType(@FieldType(howl_control.Input, "key"), "action") = switch (state_value) {
+            c.WL_KEYBOARD_KEY_STATE_PRESSED => .press,
+            c.WL_KEYBOARD_KEY_STATE_RELEASED => .release,
+            else => return,
+        };
+        if (action == .release) {
+            if (self.host_keys.release(code)) return;
+            if (self.repeat.release(code)) self.armRepeat(null) catch |failure| {
+                self.failure = failure;
+            };
+        } else {
+            self.repeat.cancel();
+            self.armRepeat(null) catch |failure| {
+                self.failure = failure;
+                return;
+            };
+        }
+        const routed = self.routeKey(code, action);
+        if (action != .press or !routed or self.failure != null) return;
+        const keymap = self.xkb_keymap orelse return;
+        const delay = self.repeat.press(code, c.xkb_keymap_key_repeats(keymap, code + 8) == 1);
+        self.armRepeat(delay) catch |failure| {
+            self.failure = failure;
+        };
+    }
+
+    fn routeKey(
+        self: *Loop,
+        code: u32,
+        action: @FieldType(@FieldType(howl_control.Input, "key"), "action"),
+    ) bool {
+        const state = self.xkb_state orelse return false;
         const symbol = c.xkb_state_key_get_one_sym(state, code + 8);
         var bytes: [64]u8 = undefined;
         const count = c.xkb_state_key_get_utf8(state, code + 8, &bytes, bytes.len);
-        if (count < 0 or count >= bytes.len) return;
-        const text = bytes[0..@intCast(count)];
+        if (count < 0 or count >= bytes.len) return false;
+        const text = if (action == .release) bytes[0..0] else bytes[0..@intCast(count)];
         const mods: @FieldType(@FieldType(howl_control.Input, "key"), "mods") = .{
             .shift = modifierActive(state, c.XKB_MOD_NAME_SHIFT),
             .alt = modifierActive(state, c.XKB_MOD_NAME_ALT),
@@ -363,19 +578,30 @@ const Loop = struct {
             .caps_lock = modifierActive(state, c.XKB_MOD_NAME_CAPS),
             .num_lock = modifierActive(state, c.XKB_MOD_NAME_NUM),
         };
-        if (mods.control and mods.shift) {
-            const changed = switch (symbol) {
-                c.XKB_KEY_F1 => self.workspace.switchTab(0),
-                c.XKB_KEY_F2 => self.workspace.switchTab(1),
-                c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => self.workspace.focusNext(),
-                else => false,
+        if (action == .press and mods.control and mods.shift) {
+            const host_action: ?HostAction = switch (symbol) {
+                c.XKB_KEY_F1 => .first_tab,
+                c.XKB_KEY_F2 => .second_tab,
+                c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => .next_pane,
+                else => null,
             };
-            if (changed) {
-                self.updateTitle();
-                self.submitVisible(visibleMask(self.workspace.tab)) catch |failure| {
-                    self.failure = failure;
+            if (host_action) |host| {
+                if (!self.host_keys.capture(code)) {
+                    self.failure = error.HostKeyLimit;
+                    return false;
+                }
+                const changed = switch (host) {
+                    .first_tab => self.workspace.switchTab(0),
+                    .second_tab => self.workspace.switchTab(1),
+                    .next_pane => self.workspace.focusNext(),
                 };
-                return;
+                if (changed) {
+                    self.updateTitle();
+                    self.submitVisible(visibleMask(self.workspace.tab)) catch |failure| {
+                        self.failure = failure;
+                    };
+                }
+                return false;
             }
         }
         const named: ?howl_vt.Terminal.NamedKey = switch (symbol) {
@@ -408,41 +634,230 @@ const Loop = struct {
             else => null,
         };
         const input: howl_control.Input = if (named) |value|
-            .{ .key = .{ .key = .{ .named = value }, .mods = mods, .text = text } }
+            .{ .key = .{ .key = .{ .named = value }, .mods = mods, .action = action, .text = text } }
         else unicode: {
             const scalar = c.xkb_keysym_to_utf32(symbol);
-            if (scalar == 0 or scalar > std.math.maxInt(u21)) return;
+            if (scalar == 0 or scalar > std.math.maxInt(u21)) return false;
             const codepoint: u21 = @intCast(scalar);
-            if (!std.unicode.utf8ValidCodepoint(codepoint)) return;
+            if (!std.unicode.utf8ValidCodepoint(codepoint)) return false;
             break :unicode .{ .key = .{
-                .key = howl_vt.Terminal.Key.initUnicode(codepoint) catch return,
+                .key = howl_vt.Terminal.Key.initUnicode(codepoint) catch return false,
                 .mods = mods,
+                .action = action,
                 .text = text,
             } };
         };
-        const focused = focusedAvailable(self.workspace, self.unavailable) orelse return;
+        const focused = focusedAvailable(self.workspace, self.unavailable) orelse return false;
         const result = self.terminals[focused].?.send(&.{.{ .input = input }}) catch |failure| {
             self.failure = failure;
-            return;
+            return false;
         };
         switch (result.outcome) {
             .complete => {},
             .incomplete, .rejected => self.failure = error.InputIncomplete,
         }
+        return self.failure == null;
+    }
+
+    fn repeatKey(self: *Loop) Error!void {
+        var expirations: u64 = 0;
+        while (true) {
+            const count = c.read(self.repeat_fd, &expirations, @sizeOf(u64));
+            if (count == @sizeOf(u64)) break;
+            if (count < 0 and std.posix.errno(count) == .INTR) continue;
+            return error.KeyboardRepeat;
+        }
+        if (expirations == 0) return error.KeyboardRepeat;
+        const firing = self.repeat.fire() orelse return;
+        // Delayed dispatch coalesces timer expirations into one repeat so a
+        // stalled window loop cannot flood the bounded terminal admission.
+        if (self.routeKey(firing.key, .repeat)) try self.armRepeat(firing.next_ns);
+    }
+
+    fn armRepeat(self: *Loop, duration_ns: ?u64) error{KeyboardRepeat}!void {
+        try setRepeatTimer(self.repeat_fd, duration_ns);
+    }
+
+    fn pointerMotion(self: *Loop, surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) void {
+        if (surface_x < 0 or surface_y < 0) {
+            self.pointer_state.position = null;
+            return;
+        }
+        self.pointer_state.position = .{
+            .x = @intCast(c.wl_fixed_to_int(surface_x)),
+            .y = @intCast(c.wl_fixed_to_int(surface_y)),
+        };
+        if (self.pointerMoveTarget()) |target| if (self.sendMouse(
+            target,
+            .move,
+            .none,
+            self.pointer_state.buttons_down,
+        )) std.debug.assert(self.pointer_state.move(target));
+    }
+
+    fn pointerButton(self: *Loop, button_code: u32, state_value: u32) void {
+        const button: MouseButton = switch (button_code) {
+            c.BTN_LEFT => .left,
+            c.BTN_MIDDLE => .middle,
+            c.BTN_RIGHT => .right,
+            else => return,
+        };
+        const index = mouseButtonIndex(button).?;
+        switch (state_value) {
+            c.WL_POINTER_BUTTON_STATE_PRESSED => {
+                const target = self.pointerTarget() orelse return;
+                const transition = self.pointer_state.preparePress(index, target) orelse return;
+                if (!self.sendMouse(target, .press, button, transition.buttons_down)) return;
+                self.pointer_state.commitPress(transition);
+            },
+            c.WL_POINTER_BUTTON_STATE_RELEASED => {
+                const transition = self.pointer_state.prepareRelease(index) orelse return;
+                if (!self.sendMouse(
+                    transition.target,
+                    .release,
+                    button,
+                    transition.buttons_down,
+                )) return;
+                self.pointer_state.commitRelease(transition);
+            },
+            else => {},
+        }
+    }
+
+    fn pointerWheel(self: *Loop, discrete: i32) void {
+        if (discrete == 0) return;
+        const magnitude: u32 = if (discrete < 0)
+            @intCast(-@as(i64, discrete))
+        else
+            @intCast(discrete);
+        if (magnitude > max_wheel_steps) {
+            self.failure = error.Pointer;
+            return;
+        }
+        const target = self.pointerTarget() orelse return;
+        var events: [max_wheel_steps]howl_control.BatchEvent = undefined;
+        for (events[0..magnitude]) |*event| event.* = .{ .input = .{ .mouse = .{
+            .kind = .wheel,
+            .button = if (discrete < 0) .wheel_up else .wheel_down,
+            .row = target.row,
+            .col = target.col,
+            .pixel_x = target.pixel_x,
+            .pixel_y = target.pixel_y,
+            .mod = self.mouseModifiers(),
+            .buttons_down = self.pointer_state.buttons_down,
+        } } };
+        if (!self.sendBatch(target.terminal, events[0..magnitude])) return;
+    }
+
+    fn pointerTarget(self: *Loop) ?PointerTarget {
+        const position = self.pointer_state.position orelse return null;
+        return resolvePointerTarget(
+            self.workspace,
+            self.size,
+            self.render.?.metrics(),
+            self.terminal_geometry,
+            self.unavailable,
+            position.x,
+            position.y,
+        );
+    }
+
+    fn pointerMoveTarget(self: *Loop) ?PointerTarget {
+        const target = self.pointerTarget() orelse return null;
+        for (self.pointer_state.pressed) |pressed| if (pressed) |value|
+            if (value.terminal != target.terminal) return null;
+        return target;
+    }
+
+    fn cancelPointer(self: *Loop) void {
+        // Teardown commits each release only after admission and stops at the
+        // first failure, preserving retained state and the prior loop failure.
+        for (0..self.pointer_state.pressed.len) |index| {
+            const transition = self.pointer_state.prepareRelease(index) orelse continue;
+            const button: MouseButton = switch (index) {
+                0 => .left,
+                1 => .middle,
+                2 => .right,
+                else => unreachable,
+            };
+            if (!self.sendMouse(
+                transition.target,
+                .release,
+                button,
+                transition.buttons_down,
+            )) break;
+            self.pointer_state.commitRelease(transition);
+        }
+        self.pointer_state.position = null;
+    }
+
+    fn sendMouse(
+        self: *Loop,
+        target: PointerTarget,
+        kind: MouseKind,
+        button: MouseButton,
+        buttons_down: u8,
+    ) bool {
+        return self.sendBatch(target.terminal, &.{.{ .input = .{ .mouse = .{
+            .kind = kind,
+            .button = button,
+            .row = target.row,
+            .col = target.col,
+            .pixel_x = target.pixel_x,
+            .pixel_y = target.pixel_y,
+            .mod = self.mouseModifiers(),
+            .buttons_down = buttons_down,
+        } } }});
+    }
+
+    fn mouseModifiers(self: *Loop) @FieldType(MouseInput, "mod") {
+        const state = self.xkb_state orelse return .{};
+        return .{
+            .shift = modifierActive(state, c.XKB_MOD_NAME_SHIFT),
+            .alt = modifierActive(state, c.XKB_MOD_NAME_ALT),
+            .control = modifierActive(state, c.XKB_MOD_NAME_CTRL),
+            .super = modifierActive(state, c.XKB_MOD_NAME_LOGO),
+            .caps_lock = modifierActive(state, c.XKB_MOD_NAME_CAPS),
+            .num_lock = modifierActive(state, c.XKB_MOD_NAME_NUM),
+        };
+    }
+
+    fn sendBatch(self: *Loop, terminal: u8, events: []const howl_control.BatchEvent) bool {
+        if (self.unavailable[terminal]) return false;
+        const result = self.terminals[terminal].?.send(events) catch |failure| {
+            retainFirstFailure(&self.failure, failure);
+            return false;
+        };
+        switch (result.outcome) {
+            .complete => return true,
+            .incomplete, .rejected => {
+                retainFirstFailure(&self.failure, error.InputIncomplete);
+                return false;
+            },
+        }
     }
 
     fn deinit(self: *Loop) Error!void {
+        self.repeat.cancel();
+        self.armRepeat(null) catch |failure| if (self.failure == null) {
+            self.failure = failure;
+        };
+        self.cancelPointer();
+        const interaction_failure = self.failure;
         if (self.render) |render| render.deinit() catch |failure| {
             self.deinitTerminals();
             self.destroyWayland();
             const allocator = self.allocator;
             allocator.destroy(self);
+            if (interaction_failure) |prior| if (prior != failure)
+                @panic("window interaction and render cleanup failed distinctly");
             return failure;
         };
         self.deinitTerminals();
         self.destroyWayland();
         const allocator = self.allocator;
         allocator.destroy(self);
+        if (interaction_failure) |failure| return failure;
     }
 
     fn deinitTerminals(self: *Loop) void {
@@ -454,6 +869,8 @@ const Loop = struct {
 
     fn destroyWayland(self: *Loop) void {
         self.destroyKeyboard();
+        if (self.pointer) |value| c.wl_pointer_destroy(value);
+        self.pointer = null;
         if (self.seat) |value| c.wl_seat_destroy(value);
         if (self.toplevel) |value| c.xdg_toplevel_destroy(value);
         if (self.xdg_surface) |value| c.xdg_surface_destroy(value);
@@ -462,10 +879,12 @@ const Loop = struct {
         if (self.compositor) |value| c.wl_compositor_destroy(value);
         c.wl_registry_destroy(self.registry);
         c.wl_display_disconnect(self.display);
+        closeOwned(self.repeat_fd);
         closeOwned(self.terminal_signal);
     }
 
     fn destroyKeyboard(self: *Loop) void {
+        self.host_keys.clear();
         if (self.keyboard) |value| c.wl_keyboard_destroy(value);
         self.keyboard = null;
         self.clearKeymap();
@@ -548,6 +967,64 @@ fn terminalGeometry(index: u8, size: renderer.Size, metrics: @import("howl_text"
         .cols = @intCast(@max(1, width / metrics.cell_width)),
         .rows = @intCast(@max(1, size.height / metrics.cell_height)),
     };
+}
+
+fn resolvePointerTarget(
+    workspace: Workspace,
+    size: renderer.Size,
+    metrics: @import("howl_text").Metrics,
+    geometry: [terminal_count]Geometry,
+    unavailable: [terminal_count]bool,
+    x: u32,
+    y: u32,
+) ?PointerTarget {
+    const pane_index = workspace.focus[workspace.tab];
+    const pane = tabs[workspace.tab].panes[pane_index];
+    if (unavailable[pane.terminal]) return null;
+    const left: u32 = if (workspace.tab == 0 and pane_index == 1) size.width / 2 else 0;
+    const width: u32 = if (workspace.tab == 0)
+        if (pane_index == 0) size.width / 2 else size.width - size.width / 2
+    else
+        size.width;
+    if (x < left or x >= left + width or y >= size.height) return null;
+    const local_x = x - left;
+    const used_width = @as(u32, geometry[pane.terminal].cols) * metrics.cell_width;
+    const used_height = @as(u32, geometry[pane.terminal].rows) * metrics.cell_height;
+    if (local_x >= used_width or y >= used_height) return null;
+    return .{
+        .terminal = pane.terminal,
+        .row = @intCast(y / metrics.cell_height),
+        .col = @intCast(local_x / metrics.cell_width),
+        .pixel_x = local_x,
+        .pixel_y = y,
+    };
+}
+
+fn mouseButtonIndex(button: MouseButton) ?usize {
+    return switch (button) {
+        .left => 0,
+        .middle => 1,
+        .right => 2,
+        else => null,
+    };
+}
+
+fn setRepeatTimer(fd: c_int, duration_ns: ?u64) error{KeyboardRepeat}!void {
+    var timer: c.struct_itimerspec = std.mem.zeroes(c.struct_itimerspec);
+    if (c.timerfd_settime(fd, 0, &timer, null) != 0) return error.KeyboardRepeat;
+    while (true) {
+        var expirations: u64 = 0;
+        const count = c.read(fd, &expirations, @sizeOf(u64));
+        if (count == @sizeOf(u64)) continue;
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        if (count < 0 and std.posix.errno(count) == .AGAIN) break;
+        return error.KeyboardRepeat;
+    }
+    if (duration_ns) |duration| {
+        timer.it_value.tv_sec = @intCast(duration / std.time.ns_per_s);
+        timer.it_value.tv_nsec = @intCast(duration % std.time.ns_per_s);
+        if (c.timerfd_settime(fd, 0, &timer, null) != 0) return error.KeyboardRepeat;
+    }
 }
 
 fn visibleMask(tab: u8) u8 {
@@ -651,7 +1128,21 @@ fn seatCapabilities(data: ?*anyopaque, seat: ?*c.struct_wl_seat, capabilities: u
         if (c.wl_keyboard_add_listener(self.keyboard, &keyboard_listener, self) != 0)
             self.failure = error.KeyboardContext;
     } else if (capabilities & c.WL_SEAT_CAPABILITY_KEYBOARD == 0) {
+        self.repeat.cancel();
+        self.armRepeat(null) catch |failure| {
+            self.failure = failure;
+        };
         self.destroyKeyboard();
+    }
+    if (capabilities & c.WL_SEAT_CAPABILITY_POINTER != 0 and self.pointer == null) {
+        self.pointer = c.wl_seat_get_pointer(seat);
+        if (self.pointer == null or
+            c.wl_pointer_add_listener(self.pointer, &pointer_listener, self) != 0)
+            self.failure = error.Pointer;
+    } else if (capabilities & c.WL_SEAT_CAPABILITY_POINTER == 0) {
+        self.cancelPointer();
+        if (self.pointer) |pointer| c.wl_pointer_destroy(pointer);
+        self.pointer = null;
     }
 }
 fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}
@@ -694,6 +1185,15 @@ fn keyboardKeymap(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, format: u32, fd:
         self.failure = error.KeyboardState;
         return;
     };
+    self.repeat.cancel();
+    self.host_keys.clear();
+    self.armRepeat(null) catch |failure| {
+        c.xkb_state_unref(state);
+        c.xkb_keymap_unref(keymap);
+        c.xkb_context_unref(context);
+        self.failure = failure;
+        return;
+    };
     self.clearKeymap();
     self.xkb_context = context;
     self.xkb_keymap = keymap;
@@ -706,7 +1206,14 @@ fn keyboardEnter(
     _: ?*c.struct_wl_surface,
     _: ?*c.struct_wl_array,
 ) callconv(.c) void {}
-fn keyboardLeave(_: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {}
+fn keyboardLeave(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {
+    const self = loop(data);
+    self.repeat.cancel();
+    self.host_keys.clear();
+    self.armRepeat(null) catch |failure| {
+        self.failure = failure;
+    };
+}
 fn keyboardKey(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: u32, code: u32, state: u32) callconv(.c) void {
     loop(data).key(code, state);
 }
@@ -728,7 +1235,17 @@ fn keyboardModifiers(
         if (changed & ~known != 0) loop(data).failure = error.KeyboardState;
     }
 }
-fn keyboardRepeat(_: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: i32, _: i32) callconv(.c) void {}
+fn keyboardRepeat(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
+    const self = loop(data);
+    self.repeat.configure(rate, delay) catch {
+        self.repeat.cancel();
+        self.failure = error.KeyboardRepeat;
+        return;
+    };
+    self.armRepeat(null) catch |failure| {
+        self.failure = failure;
+    };
+}
 const keyboard_listener = c.struct_wl_keyboard_listener{
     .keymap = keyboardKeymap,
     .enter = keyboardEnter,
@@ -736,6 +1253,74 @@ const keyboard_listener = c.struct_wl_keyboard_listener{
     .key = keyboardKey,
     .modifiers = keyboardModifiers,
     .repeat_info = keyboardRepeat,
+};
+
+fn pointerEnter(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_pointer,
+    _: u32,
+    surface: ?*c.struct_wl_surface,
+    x: c.wl_fixed_t,
+    y: c.wl_fixed_t,
+) callconv(.c) void {
+    const self = loop(data);
+    if (surface != self.surface) {
+        self.pointer_state.position = null;
+        return;
+    }
+    self.pointerMotion(x, y);
+}
+
+fn pointerLeave(data: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {
+    loop(data).cancelPointer();
+}
+
+fn pointerMotion(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_pointer,
+    _: u32,
+    x: c.wl_fixed_t,
+    y: c.wl_fixed_t,
+) callconv(.c) void {
+    loop(data).pointerMotion(x, y);
+}
+
+fn pointerButton(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_pointer,
+    _: u32,
+    _: u32,
+    button: u32,
+    state: u32,
+) callconv(.c) void {
+    loop(data).pointerButton(button, state);
+}
+
+fn pointerAxis(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: u32, _: c.wl_fixed_t) callconv(.c) void {}
+fn pointerFrame(_: ?*anyopaque, _: ?*c.struct_wl_pointer) callconv(.c) void {}
+fn pointerAxisSource(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32) callconv(.c) void {}
+fn pointerAxisStop(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: u32) callconv(.c) void {}
+fn pointerAxisDiscrete(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_pointer,
+    axis: u32,
+    discrete: i32,
+) callconv(.c) void {
+    if (axis == c.WL_POINTER_AXIS_VERTICAL_SCROLL) loop(data).pointerWheel(discrete);
+}
+
+const pointer_listener = c.struct_wl_pointer_listener{
+    .enter = pointerEnter,
+    .leave = pointerLeave,
+    .motion = pointerMotion,
+    .button = pointerButton,
+    .axis = pointerAxis,
+    .frame = pointerFrame,
+    .axis_source = pointerAxisSource,
+    .axis_stop = pointerAxisStop,
+    .axis_discrete = pointerAxisDiscrete,
+    .axis_value120 = null,
+    .axis_relative_direction = null,
 };
 
 fn closeOwned(fd: c_int) void {
@@ -751,6 +1336,10 @@ fn closeCallback(fd: c_int) bool {
 
 fn modifierActive(state: *c.struct_xkb_state, name: [*c]const u8) bool {
     return c.xkb_state_mod_name_is_active(state, name, c.XKB_STATE_MODS_EFFECTIVE) == 1;
+}
+
+fn retainFirstFailure(current: *?Error, failure: Error) void {
+    if (current.* == null) current.* = failure;
 }
 
 test "pixel geometry admits at least one bounded cell" {
@@ -782,6 +1371,173 @@ test "hidden terminal wakes stay outside visible work until tab switch" {
     const hidden_wake: u8 = 0b100;
     try std.testing.expectEqual(@as(u8, 0), hidden_wake & visibleMask(0));
     try std.testing.expectEqual(hidden_wake, hidden_wake & visibleMask(1));
+}
+
+test "keyboard repeat replaces and cancels one bounded physical key" {
+    var repeat = Repeat{};
+    try repeat.configure(25, 400);
+    try std.testing.expectEqual(@as(?u64, 400 * std.time.ns_per_ms), repeat.press(30, true));
+    try std.testing.expectEqual(@as(u32, 30), repeat.fire().?.key);
+    try std.testing.expectEqual(@as(u64, 40 * std.time.ns_per_ms), repeat.fire().?.next_ns);
+    try std.testing.expectEqual(@as(?u64, 400 * std.time.ns_per_ms), repeat.press(31, true));
+    try std.testing.expect(!repeat.release(30));
+    try std.testing.expectEqual(@as(u32, 31), repeat.fire().?.key);
+    try std.testing.expect(repeat.release(31));
+    try std.testing.expectEqual(null, repeat.fire());
+
+    try repeat.configure(0, 0);
+    try std.testing.expectEqual(null, repeat.press(32, true));
+    try std.testing.expectError(error.InvalidRepeat, repeat.configure(-1, 0));
+}
+
+test "host chords capture three concurrent physical releases exactly" {
+    var captures = HostKeys{};
+    try std.testing.expect(captures.capture(10));
+    try std.testing.expect(captures.capture(11));
+    try std.testing.expect(captures.capture(12));
+    try std.testing.expect(captures.capture(10));
+    try std.testing.expectEqual(@as(u8, 3), captures.count);
+    try std.testing.expect(!captures.capture(13));
+    try std.testing.expect(captures.release(11));
+    try std.testing.expect(!captures.release(11));
+    try std.testing.expect(captures.release(10));
+    try std.testing.expect(captures.release(12));
+    try std.testing.expectEqual(@as(u8, 0), captures.count);
+
+    try std.testing.expect(captures.capture(20));
+    captures.clear();
+    try std.testing.expect(!captures.release(20));
+}
+
+test "one poll result preserves every simultaneous ready source" {
+    const input = [_]std.posix.pollfd{
+        .{ .fd = 1, .events = 0, .revents = std.posix.POLL.IN | std.posix.POLL.OUT },
+        .{ .fd = 2, .events = 0, .revents = std.posix.POLL.IN },
+        .{ .fd = 3, .events = 0, .revents = std.posix.POLL.IN },
+        .{ .fd = 4, .events = 0, .revents = std.posix.POLL.IN },
+    };
+    const ready = Ready.from(input);
+    try std.testing.expect(ready.display_read);
+    try std.testing.expect(ready.display_write);
+    try std.testing.expect(ready.terminal);
+    try std.testing.expect(ready.render);
+    try std.testing.expect(ready.repeat);
+}
+
+test "pointer translation admits only focused available pane cell pixels" {
+    const metrics = testMetrics();
+    const size = renderer.Size{ .width = 101, .height = 61 };
+    const geometry = [_]Geometry{
+        .{ .cols = 5, .rows = 3 },
+        .{ .cols = 5, .rows = 3 },
+        .{ .cols = 10, .rows = 3 },
+    };
+    var unavailable: [terminal_count]bool = @splat(false);
+    var workspace = Workspace{};
+    try std.testing.expectEqual(PointerTarget{
+        .terminal = 0,
+        .row = 1,
+        .col = 2,
+        .pixel_x = 20,
+        .pixel_y = 20,
+    }, resolvePointerTarget(workspace, size, metrics, geometry, unavailable, 20, 20).?);
+    try std.testing.expectEqual(null, resolvePointerTarget(
+        workspace,
+        size,
+        metrics,
+        geometry,
+        unavailable,
+        60,
+        20,
+    ));
+
+    try std.testing.expect(workspace.focusNext());
+    try std.testing.expectEqual(PointerTarget{
+        .terminal = 1,
+        .row = 1,
+        .col = 1,
+        .pixel_x = 10,
+        .pixel_y = 20,
+    }, resolvePointerTarget(workspace, size, metrics, geometry, unavailable, 60, 20).?);
+    unavailable[1] = true;
+    try std.testing.expectEqual(null, resolvePointerTarget(
+        workspace,
+        size,
+        metrics,
+        geometry,
+        unavailable,
+        60,
+        20,
+    ));
+    unavailable[1] = false;
+    try std.testing.expect(workspace.switchTab(1));
+    try std.testing.expectEqual(@as(u8, 2), resolvePointerTarget(
+        workspace,
+        size,
+        metrics,
+        geometry,
+        unavailable,
+        60,
+        20,
+    ).?.terminal);
+}
+
+test "pointer button transitions commit only after successful admission" {
+    const target = PointerTarget{
+        .terminal = 1,
+        .row = 2,
+        .col = 3,
+        .pixel_x = 30,
+        .pixel_y = 40,
+    };
+    var state = PointerState{};
+    const pending_press = state.preparePress(0, target).?;
+    // A failed send performs no commit, so the prospective press changes no local button fact.
+    try std.testing.expectEqual(@as(u8, 0b001), pending_press.buttons_down);
+    try std.testing.expectEqual(@as(u8, 0), state.buttons_down);
+    try std.testing.expectEqual(null, state.pressed[0]);
+    state.commitPress(pending_press);
+    try std.testing.expectEqual(@as(u8, 0b001), state.buttons_down);
+    try std.testing.expectEqual(null, state.preparePress(0, target));
+
+    const middle = state.preparePress(1, target).?;
+    try std.testing.expectEqual(@as(u8, 0b011), middle.buttons_down);
+    state.commitPress(middle);
+    const moved = PointerTarget{
+        .terminal = 1,
+        .row = 4,
+        .col = 5,
+        .pixel_x = 50,
+        .pixel_y = 60,
+    };
+    try std.testing.expect(state.move(moved));
+    const pending_release = state.prepareRelease(0).?;
+    try std.testing.expectEqual(moved, pending_release.target);
+    try std.testing.expectEqual(@as(u8, 0b010), pending_release.buttons_down);
+    try std.testing.expectEqual(@as(u8, 0b011), state.buttons_down);
+    try std.testing.expectEqual(moved, state.pressed[0].?);
+    // The same uncommitted state is the retryable release fact after failure.
+    state.commitRelease(pending_release);
+    try std.testing.expectEqual(@as(u8, 0b010), state.buttons_down);
+    try std.testing.expectEqual(null, state.pressed[0]);
+    state.commitRelease(state.prepareRelease(1).?);
+    try std.testing.expectEqual(@as(u8, 0), state.buttons_down);
+    try std.testing.expectEqual(null, state.prepareRelease(0));
+
+    state.commitPress(state.preparePress(0, target).?);
+    var other = moved;
+    other.terminal = 2;
+    try std.testing.expect(!state.move(other));
+    try std.testing.expectEqual(target, state.prepareRelease(0).?.target);
+}
+
+test "pointer cleanup retains the first exact loop failure" {
+    var failure: ?Error = error.WaylandDispatch;
+    retainFirstFailure(&failure, error.InputIncomplete);
+    try std.testing.expectEqual(@as(?Error, error.WaylandDispatch), failure);
+    failure = null;
+    retainFirstFailure(&failure, error.InputIncomplete);
+    try std.testing.expectEqual(@as(?Error, error.InputIncomplete), failure);
 }
 
 test "one failed pane rejects only its focused input" {

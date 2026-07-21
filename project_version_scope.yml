@@ -30,6 +30,11 @@ capabilities:
       transactionally resize available terminals from pane layout, and share one render thread, text owner,
       mask cache, and GLES device
 
+  - name: window_interaction
+    acceptance: >-
+      the Wayland loop owns bounded cancellable keyboard repeat, routes cell/pixel mouse facts only to the focused
+      available pane, and processes compositor, terminal, renderer, and timer readiness without hiding simultaneous facts
+
   - name: development_orchestration
     acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig
 

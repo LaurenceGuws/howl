@@ -125,12 +125,21 @@ howl-window/src/window.zig|anyopaque|const WakeContext = struct { owner: ?*anyop
 howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-window/src/window.zig|anyopaque|fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
 howl-window/src/window.zig|anyopaque|fn keyboardKey(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: u32, code: u32, state: u32) callconv(.c) void {
 howl-window/src/window.zig|anyopaque|fn keyboardKeymap(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn keyboardLeave(_: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {}
-howl-window/src/window.zig|anyopaque|fn keyboardRepeat(_: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: i32, _: i32) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn keyboardLeave(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {
+howl-window/src/window.zig|anyopaque|fn keyboardRepeat(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
 howl-window/src/window.zig|anyopaque|fn loop(data: ?*anyopaque) *Loop {
+howl-window/src/window.zig|anyopaque|fn pointerAxis(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: u32, _: c.wl_fixed_t) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn pointerAxisSource(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn pointerAxisStop(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: u32) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn pointerFrame(_: ?*anyopaque, _: ?*c.struct_wl_pointer) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn pointerLeave(data: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {
 howl-window/src/window.zig|anyopaque|fn registryRemove(_: ?*anyopaque, _: ?*c.struct_wl_registry, _: u32) callconv(.c) void {}
 howl-window/src/window.zig|anyopaque|fn seatCapabilities(data: ?*anyopaque, seat: ?*c.struct_wl_seat, capabilities: u32) callconv(.c) void {
 howl-window/src/window.zig|anyopaque|fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}

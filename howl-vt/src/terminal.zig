@@ -3474,7 +3474,8 @@ const ScreenSemanticCursor = struct {
     }
 };
 
-// Borrows the dirty row interval and optional per-row column bounds.
+// Borrows the outer dirty-row interval and one column range per screen row.
+// An untouched row inside the outer interval has start=screen cols and end=0.
 const ScreenDirtyRows = struct {
     start_row: u16,
     end_row: u16,

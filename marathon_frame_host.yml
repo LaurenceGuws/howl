@@ -85,7 +85,7 @@ slices:
       coalesced render mailbox, and exact completion wake
 
   - id: pane_composition
-    status: implemented_pending_review
+    status: accepted
     outcome: >-
       compose at least one split across two tabs with stable identities, focus, resize coalescing, and live hidden terminals
     reference: >-
@@ -97,9 +97,20 @@ slices:
       simultaneous readiness loses no facts and operator input is not required for output progress
 
   - id: interaction_closure
+    status: accepted
     outcome: >-
       prove damage mapping, expose without VT mutation, mode-aware keys, composed text, paste, mouse, resize storms,
       coherent generations, and FIFO consequence acknowledgement
+    deferred:
+      - >-
+        clipboard paste requires a bounded Wayland data-device owner; the replacement host currently binds no
+        data-device protocol and does not infer clipboard bytes
+      - >-
+        TERM requires copied child-environment ownership at the PTY launch boundary; the host does not mutate ambient
+        process environment or claim Kitty compatibility
+      - >-
+        primary-screen wheel scrollback requires a bounded host viewport owner; alternate-screen applications already
+        receive mode-aware wheel input, while shells that do not request mouse tracking leave wheel policy to the host
 
   - id: dogfood_delete
     outcome: >-

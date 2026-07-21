@@ -48,6 +48,8 @@ pub const SignalResult = client.SignalResult;
 pub const Screen = client.Screen;
 /// Copies coherent lifecycle, geometry, sequence, and output facts.
 pub const Status = client.Status;
+/// Copies one nonzero host-provided terminal cell extent in logical pixels.
+pub const CellPixelSize = howl_frame.CellPixelSize;
 /// Borrows one immutable complete visual generation until exact release.
 pub const Frame = howl_frame.Borrow;
 /// Reports stale frame release or exact pending-publication failure.
@@ -80,6 +82,8 @@ pub const Config = struct {
     rows: u16 = 24,
     /// Sets retained scrollback rows within `max_history_rows`.
     history_rows: u16 = 2000,
+    /// Supplies fixed nonzero cell pixels for terminal reports and mouse input.
+    cell_pixels: ?CellPixelSize = null,
     /// Bounds each PTY input and terminal-reply transfer.
     transfer_timeout_ms: u32 = default_transfer_timeout_ms,
 };
@@ -234,6 +238,7 @@ pub const Terminal = struct {
     wake: Wake,
     cols: u16,
     rows: u16,
+    cell_pixels: ?CellPixelSize,
     transfer_timeout_ms: u32,
 
     /// Constructs every resource before returning a stable pointer, including
@@ -262,6 +267,8 @@ pub const Terminal = struct {
             config.history_rows,
         );
         errdefer model.deinit();
+        if (config.cell_pixels) |pixels|
+            model.setCellPixelSize(pixels.width, pixels.height) catch return error.InvalidDimensions;
         var frames = howl_frame.Publisher.init(
             allocator,
             io,
@@ -341,6 +348,7 @@ pub const Terminal = struct {
             .wake = wake,
             .cols = config.cols,
             .rows = config.rows,
+            .cell_pixels = config.cell_pixels,
             .transfer_timeout_ms = config.transfer_timeout_ms,
         };
         switch (try self.publishFrameLocked()) {
@@ -430,7 +438,12 @@ pub const Terminal = struct {
         try client.validateBatchBound(events);
         self.admission_lock.lockUncancelable(self.io);
         defer self.admission_lock.unlock(self.io);
-        for (events) |event| if (!inputGeometryValid(event.input, self.cols, self.rows)) return .{
+        for (events) |event| if (!inputGeometryValid(
+            event.input,
+            self.cols,
+            self.rows,
+            self.cell_pixels,
+        )) return .{
             .admission_sequence = self.admission_sequence,
             .input_sequence = self.input_sequence.load(.acquire),
             .completed_events = 0,
@@ -727,20 +740,40 @@ pub const Terminal = struct {
         return null;
     }
 
-    fn inputGeometryValid(input: Input, cols: u16, rows: u16) bool {
+    fn inputGeometryValid(
+        input: Input,
+        cols: u16,
+        rows: u16,
+        cell_pixels: ?CellPixelSize,
+    ) bool {
         const mouse = switch (input) {
             .mouse => |mouse| mouse,
             else => return true,
         };
         if (mouse.row < 0 or mouse.row >= rows or mouse.col >= cols or
             mouse.buttons_down & ~@as(u8, 0b111) != 0 or
-            mouse.pixel_x != null or mouse.pixel_y != null) return false;
+            (mouse.pixel_x == null) != (mouse.pixel_y == null)) return false;
+        if (mouse.pixel_x) |x| {
+            const pixels = cell_pixels orelse return false;
+            if (@as(u64, x) >= @as(u64, cols) * pixels.width or
+                @as(u64, mouse.pixel_y.?) >= @as(u64, rows) * pixels.height) return false;
+        }
         return switch (mouse.kind) {
-            .press, .release => mouse.button == .left or
-                mouse.button == .middle or mouse.button == .right,
+            .press => mouseButtonDown(mouse.button, mouse.buttons_down) orelse false,
+            .release => if (mouseButtonDown(mouse.button, mouse.buttons_down)) |down| !down else false,
             .wheel => mouse.button == .wheel_up or mouse.button == .wheel_down,
-            .move => mouse.button != .wheel_up and mouse.button != .wheel_down,
-        } and (mouse.kind == .move or mouse.buttons_down == 0);
+            .move => mouse.button == .none,
+        };
+    }
+
+    fn mouseButtonDown(button: @FieldType(@FieldType(Input, "mouse"), "button"), buttons: u8) ?bool {
+        const mask: u8 = switch (button) {
+            .left => 0b001,
+            .middle => 0b010,
+            .right => 0b100,
+            else => return null,
+        };
+        return buttons & mask != 0;
     }
 
     /// Borrows the newest complete visual generation without retaining the
@@ -787,7 +820,7 @@ pub const Terminal = struct {
         const result = try self.frames.publish(
             surface_value,
             self.geometry_sequence,
-            null,
+            self.cell_pixels,
         );
         switch (result) {
             .published => {
@@ -1434,6 +1467,84 @@ test "frame saturation recovers newest complete state through exact release" {
     try std.testing.expect(wake_count.load(.acquire) != 0);
     try terminal.releaseFrame(&second);
     try terminal.releaseFrame(&recovered);
+}
+
+test "alternate-screen sparse frame damage preserves terminal progress" {
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 4, .rows = 3 },
+        .{},
+    );
+    defer terminal.deinit();
+
+    var initial = terminal.borrowFrame().?;
+    try terminal.releaseFrame(&initial);
+    try terminal.consume("\x1b[?1049h");
+    var alternate = terminal.borrowFrame().?;
+    try std.testing.expect(alternate.frame.alternate_screen);
+    try terminal.releaseFrame(&alternate);
+
+    try terminal.consume("\x1b[1;1HA\x1b[3;4HZ");
+    try std.testing.expectEqual(State.running, terminal.state());
+    try std.testing.expectEqual(@as(?ReaderError, null), terminal.readerError());
+    var sparse = terminal.borrowFrame().?;
+    try std.testing.expectEqual(@as(u21, 'A'), sparse.frame.cells[0].codepoint);
+    try std.testing.expectEqual(@as(u21, 'Z'), sparse.frame.cells[11].codepoint);
+    try std.testing.expect(sparse.frame.damage.rows[0].dirty);
+    try std.testing.expect(!sparse.frame.damage.rows[1].dirty);
+    try std.testing.expect(sparse.frame.damage.rows[2].dirty);
+    try terminal.releaseFrame(&sparse);
+}
+
+test "cell pixels publish and bound mouse coordinates with exact button state" {
+    const pixels = CellPixelSize{ .width = 8, .height = 16 };
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 4, .rows = 2, .cell_pixels = pixels },
+        .{},
+    );
+    defer terminal.deinit();
+
+    var frame = terminal.borrowFrame().?;
+    try std.testing.expectEqual(pixels, frame.frame.cell_pixels.?);
+    try terminal.releaseFrame(&frame);
+
+    const press: Input = .{ .mouse = .{
+        .kind = .press,
+        .button = .left,
+        .row = 1,
+        .col = 3,
+        .pixel_x = 31,
+        .pixel_y = 31,
+        .mod = .{},
+        .buttons_down = 0b001,
+    } };
+    try std.testing.expect(Terminal.inputGeometryValid(press, 4, 2, pixels));
+    var invalid = press;
+    invalid.mouse.pixel_x = 32;
+    try std.testing.expect(!Terminal.inputGeometryValid(invalid, 4, 2, pixels));
+    invalid = press;
+    invalid.mouse.buttons_down = 0;
+    try std.testing.expect(!Terminal.inputGeometryValid(invalid, 4, 2, pixels));
+    invalid = press;
+    invalid.mouse.pixel_y = null;
+    try std.testing.expect(!Terminal.inputGeometryValid(invalid, 4, 2, pixels));
+
+    var released = press;
+    released.mouse.kind = .release;
+    released.mouse.buttons_down = 0;
+    try std.testing.expect(Terminal.inputGeometryValid(released, 4, 2, pixels));
+}
+
+test "zero cell pixels reject terminal construction before child launch" {
+    try std.testing.expectError(error.InvalidDimensions, Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cell_pixels = .{ .width = 0, .height = 16 } },
+        .{},
+    ));
 }
 
 test "frame publication failures retain exact reader meanings" {

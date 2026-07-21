@@ -14,8 +14,8 @@ sources:
   howl-render/src/howl_render.zig: >-
     shared font ownership, bounded cross-terminal glyph-mask cache, pane/frame validation, and damage-aware draw preparation
   howl-window/src: >-
-    replacement Wayland/xkb loop, bounded tabs/panes/focus, terminal wake bits, one EGL/GLES render thread,
-    shared pane backings and texture representation, and live host route
+    replacement Wayland/xkb loop, bounded tabs/panes/focus, keyboard repeat, focused-pane pointer routing,
+    terminal wake bits, one EGL/GLES render thread, shared pane backings and texture representation, and live host route
   howl-pty/src/howl_pty.zig: >-
     Linux PTY creation, copied launch values, process-group lifecycle, bounded transfer outcomes, resize,
     concurrent cancellation, exact native errors, and cleanup

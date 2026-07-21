@@ -8,6 +8,8 @@ pub const c = @cImport({
     @cInclude("poll.h");
     @cInclude("sys/eventfd.h");
     @cInclude("sys/mman.h");
+    @cInclude("sys/timerfd.h");
+    @cInclude("linux/input-event-codes.h");
     @cInclude("unistd.h");
     @cInclude("wayland-client.h");
     @cInclude("wayland-egl.h");

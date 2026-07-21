@@ -471,8 +471,12 @@ pub const Publisher = struct {
                 return error.InvalidDamage;
             var row = dirty.start_row;
             while (row <= dirty.end_row) : (row += 1) {
-                if (dirty.dirty_cols_start[row] > dirty.dirty_cols_end[row] or
-                    dirty.dirty_cols_end[row] >= view.cols)
+                const start = dirty.dirty_cols_start[row];
+                const end = dirty.dirty_cols_end[row];
+                // VT bounds the outer dirty-row interval, while untouched
+                // rows inside it retain this exact empty sentinel.
+                if (start == view.cols and end == 0) continue;
+                if (start > end or end >= view.cols)
                     return error.InvalidDamage;
             }
         }
@@ -494,6 +498,8 @@ pub const Publisher = struct {
         const dirty = surface.snapshot.dirty orelse return;
         var row = dirty.start_row;
         while (row <= dirty.end_row) : (row += 1) {
+            if (dirty.dirty_cols_start[row] == surface.snapshot.view.cols and
+                dirty.dirty_cols_end[row] == 0) continue;
             const next = RowDamage{
                 .dirty = true,
                 .start = dirty.dirty_cols_start[row],
@@ -760,6 +766,41 @@ test "skipped publications retain cumulative damage until newest release" {
     try std.testing.expect(!after_ack.frame.damage.rows[0].dirty);
     try std.testing.expect(after_ack.frame.damage.rows[1].dirty);
     try std.testing.expect(!try after_ack.release());
+}
+
+test "alternate-screen sparse dirty rows publish without inventing middle damage" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 3, 4);
+    defer terminal.deinit();
+    var publisher = try Publisher.init(std.testing.allocator, std.testing.io, 3, 4);
+    defer publisher.deinit();
+
+    var source = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u64, 1), try expectPublished(try publisher.publish(source, 0, null)));
+    try std.testing.expect(terminal.ackSurface(source.snapshot_seq));
+    var initial = publisher.borrowNewest().?;
+    try std.testing.expect(!try initial.release());
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
+    source = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u64, 2), try expectPublished(try publisher.publish(source, 0, null)));
+    try std.testing.expect(terminal.ackSurface(source.snapshot_seq));
+    var alternate = publisher.borrowNewest().?;
+    try std.testing.expect(alternate.frame.alternate_screen);
+    try std.testing.expect(!try alternate.release());
+
+    try std.testing.expect((try terminal.feed("\x1b[1;1HA\x1b[3;4HZ")).state_changed);
+    source = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u16, 0), source.snapshot.dirty.?.start_row);
+    try std.testing.expectEqual(@as(u16, 2), source.snapshot.dirty.?.end_row);
+    try std.testing.expectEqual(source.snapshot.view.cols, source.snapshot.dirty.?.dirty_cols_start[1]);
+    try std.testing.expectEqual(@as(u16, 0), source.snapshot.dirty.?.dirty_cols_end[1]);
+    try std.testing.expectEqual(@as(u64, 3), try expectPublished(try publisher.publish(source, 0, null)));
+    try std.testing.expect(terminal.ackSurface(source.snapshot_seq));
+    var sparse = publisher.borrowNewest().?;
+    try std.testing.expect(sparse.frame.damage.rows[0].dirty);
+    try std.testing.expect(!sparse.frame.damage.rows[1].dirty);
+    try std.testing.expect(sparse.frame.damage.rows[2].dirty);
+    try std.testing.expect(!try sparse.release());
 }
 
 test "new publication replaces only the unread ready generation" {
