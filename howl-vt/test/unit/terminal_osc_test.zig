@@ -416,6 +416,45 @@ test "OSC 8 retains explicit identity separately from URI and exact active mutat
     try std.testing.expect(!(try terminal.feed("\x1b]8;missing-separator\x07")).state_changed);
 }
 
+test "terminal metadata owns exact screen resize and reset lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b]0;name\x07" ++
+            "\x1b]7;file://host/work\x1b\\" ++
+            "\x1b]1337;RemoteHost=user@host\x07" ++
+            "\x1b]1337;ShellIntegrationVersion=20;shell=bash\x1b\\" ++
+            "\x1b]133;A;prompt\x07" ++
+            "\x1b]8;id=docs;https://example.com\x07",
+    )).state_changed);
+    const link_id = terminal.screen_state.primary.current_attrs.link_id;
+    try std.testing.expect(link_id != 0);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(3, 10);
+    var publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqualStrings("name", publication.title.?);
+    try std.testing.expectEqualStrings("name", publication.icon.?);
+    try std.testing.expectEqualStrings("file://host/work", publication.working_directory.?.value);
+    try std.testing.expectEqualStrings("user@host", publication.remote_host.?);
+    try std.testing.expectEqual(@as(u32, 20), publication.shell_integration.?.version);
+    try std.testing.expectEqualStrings("bash", publication.shell_integration.?.shell.?);
+    try std.testing.expectEqual(@as(u64, 1), publication.shell_mark.generation);
+    try std.testing.expectEqual(link_id, terminal.screen_state.primary.current_attrs.link_id);
+
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqualStrings("name", publication.title.?);
+    try std.testing.expectEqualStrings("name", publication.icon.?);
+    try std.testing.expect(publication.working_directory == null);
+    try std.testing.expectEqualStrings("user@host", publication.remote_host.?);
+    try std.testing.expectEqual(@as(u32, 20), publication.shell_integration.?.version);
+    try std.testing.expectEqual(@as(u64, 1), publication.shell_mark.generation);
+    try std.testing.expectEqual(@as(u32, 0), terminal.screen_state.primary.current_attrs.link_id);
+    try std.testing.expectEqualStrings("https://example.com", terminal.host.hyperlinkUriForId(link_id).?);
+}
+
 test "OSC 52 produces pending clipboard request" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);
@@ -1224,13 +1263,35 @@ test "iTerm metadata replacement preserves prior state on allocation failure" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
     var state = HostState.HostState.init(failing.allocator());
     defer state.deinit();
-    try state.replaceShellIntegration(.{ .version = 19, .shell = "bash" });
+    try std.testing.expect(try state.replaceShellIntegration(.{ .version = 19, .shell = "bash" }));
+    try std.testing.expect(!(try state.replaceShellIntegration(.{ .version = 19, .shell = "bash" })));
     try std.testing.expectError(
         error.OutOfMemory,
         state.replaceShellIntegration(.{ .version = 20, .shell = "zsh" }),
     );
     try std.testing.expectEqual(@as(u32, 19), state.shell_integration.?.version);
     try std.testing.expectEqualStrings("bash", state.shell_integration.?.shell.?);
+}
+
+test "unsupported SetMark and Kitty context metadata remain exact no-ops" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;SetMark=lab")).state_changed);
+    try std.testing.expect(!(try terminal.feed("el\x1b\\")).state_changed);
+    try std.testing.expectEqual(@as(u64, 0), terminal.surfaceSnapshot().shell_mark.generation);
+    try std.testing.expect(!(try terminal.feed("\x9d3008;key=value\x9c")).state_changed);
+
+    const payload = try std.testing.allocator.alloc(u8, parser_mod.max_metadata_control_bytes);
+    defer std.testing.allocator.free(payload);
+    @memset(payload, 'm');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(std.testing.allocator);
+    try sequence.appendSlice(std.testing.allocator, "\x1b]3008;");
+    try sequence.appendSlice(std.testing.allocator, payload);
+    try sequence.append(std.testing.allocator, 0x07);
+    try std.testing.expect(!(try terminal.feed(sequence.items)).state_changed);
+    try std.testing.expectEqual(@as(u64, 0), terminal.surfaceSnapshot().shell_mark.generation);
 }
 
 test "iTerm shell integration rejects malformed duplicate and oversized metadata" {

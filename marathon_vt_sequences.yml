@@ -202,7 +202,7 @@ categories:
       host presentation. Active partial howl-vt obligations fall from 49 to 36 with no production growth.
 
   - id: metadata_shell_integration
-    status: queued
+    status: accepted
     owner: howl-vt
     records: 15
     mechanism: bounded latest metadata, hyperlink pool, shell marks, title/icon facts, and semantic publication
@@ -216,6 +216,15 @@ categories:
       only after the VT fact is proven consumable
     why_next: >-
       These commands share retained host-neutral facts and can be settled without mixing host execution into VT.
+    result: >-
+      Exact retained owners and dense fragmented proofs cover title/icon, working directory, remote host, typed shell
+      identity, monotonic A/B/C/D shell marks, and hyperlink identity/pool lifetime through screen switches, resize,
+      RIS, fixed bounds, allocation rollback, and repeated no-op mutation. Identical shell-integration reports no
+      longer allocate or falsely publish mutation. Thirteen trust, sanitization, structure, pool, session, and shell-UI
+      differences are explicit partial exclusions. iTerm SetMark and Kitty's intentionally empty OSC 3008 context
+      handler are explicit missing exclusions with exact no-op evidence. No presentation work is delegated because
+      no category residual names an unfinished current consumer. Active partial howl-vt obligations fall from 36 to
+      21.
 
   - id: compatibility_string_controls
     status: queued

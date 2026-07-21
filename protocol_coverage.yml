@@ -73,6 +73,14 @@ classifications:
     Howl keeps one VT-level-independent bounded cursor, savepoint, presentation, and tab-stop model; conflicting
     emulation gates, row crossing, command ambiguity, permissive parsing, unbounded retention, and multiple-cursor
     policy are outside the complete Howl family.
+  metadata_policy_difference: &howl_metadata_policy_difference >-
+    Howl retains exact bounded host-neutral title, icon, directory, remote-host, shell identity, and hyperlink facts;
+    reference-specific trust, sanitization, decoding, structured-session, pool-reclamation, and presentation policy is
+    outside the complete Howl family.
+  shell_mark_policy_difference: &howl_shell_mark_policy_difference >-
+    Howl retains monotonic bounded A/B/C/D shell facts and positional exit status without choosing scrollback UI;
+    reference-specific mark kinds, nesting, prompt, line-attribute, command-output, and session policy is outside the
+    complete Howl family.
   erase_display_excluded: &howl_erase_display_excluded {support: partial, disposition: excluded,
     rationale: *howl_erase_policy_difference, source: howl-vt/src/terminal.zig, symbol: Screen.eraseDisplay,
     proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1141,7 +1149,8 @@ references:
             relevance: compatibility,
             conditions: "empty titles are ignored; Howl retains exact bounded bytes and additionally accepts C1 ST
               while iTerm2 decodes text, replaces controls, and applies its subtitle convention",
-            howl: {support: partial, source: howl-vt/src/parser.zig, symbol: OscControl.feedScreenTitle, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/parser.zig, symbol: OscControl.feedScreenTitle, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "GNU Screen title retains bounded title and icon with exact mutation"}}}
       - source: VT100CSIParser.m
@@ -1536,13 +1545,22 @@ references:
         records:
           - {id: iterm2.osc.title_icon, raw: "OSC 0 ; Pt (BEL|ST)", effect: set title and icon,
             conditions: iTerm2 truncates at newline, sanitizes controls, and may derive a subtitle from the icon title,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: oscProcess}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
           - {id: iterm2.osc.icon, raw: "OSC 1 ; Pt (BEL|ST)", effect: set icon,
             conditions: iTerm2 truncates at newline, sanitizes controls, and may derive a subtitle,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: oscProcess}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
           - {id: iterm2.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title,
             conditions: iTerm2 truncates at newline and sanitizes control characters,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: oscProcess}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 0 1 and 2 match libvterm title and icon properties"}}}
           - id: iterm2.osc.palette
             raw: "OSC 4 ; Pt (BEL|ST)"
             effect: set or query palette
@@ -1558,13 +1576,15 @@ references:
           - {id: iterm2.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
             conditions: "iTerm2 delegates only for a trusted terminal while Howl retains a host-neutral URI
               up to 1 KiB",
-            relevance: host metadata, howl: {support: partial, source: howl-vt/src/terminal.zig,
+            relevance: host metadata, howl: {support: partial, disposition: excluded,
+              rationale: *howl_metadata_policy_difference, source: howl-vt/src/terminal.zig,
               symbol: replaceWorkingDirectoryReport, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
           - {id: iterm2.osc.hyperlink, raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
             conditions: "iTerm2 validates a 2 MiB URL and retains target= while Howl bounds the packet to 2 KiB
               and retains id=",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: parseHyperlink, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: parseHyperlink, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           - {id: iterm2.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
@@ -1645,7 +1665,8 @@ references:
             conditions: >-
               Howl retains bounded A/B/C/D facts and the first positional D exit status; iTerm2 additionally owns
               N/P marks, aid nesting, prompt kinds, fresh-line behavior, and host shell state.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: parseShellMark, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_shell_mark_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: parseShellMark, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 133 retains exact metadata and finds positional exit status"}}
           - {id: iterm2.osc.framer, raw: "OSC 134 ; Pt (BEL|ST)", effect: frame wrapped terminal data,
@@ -1678,7 +1699,11 @@ references:
           - {id: iterm2.osc1337.set_badge, raw: "OSC 1337 ; SetBadgeFormat=base64 (BEL|ST)", effect: set session badge,
             relevance: host metadata, howl: *howl_missing_excluded_iterm}
           - {id: iterm2.osc1337.set_mark, raw: "OSC 1337 ; SetMark[=Pt] (BEL|ST)", effect: create scrollback mark,
-            relevance: host metadata, howl: {support: partial, residual: Howl retains shell marks without iTerm2 scrollback UI policy.}}
+            relevance: host metadata, howl: {support: missing, disposition: excluded,
+              rationale: *howl_shell_mark_policy_difference,
+              residual: iTerm2 scroll-position marks are outside Howl's bounded A/B/C/D shell-fact model., proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "unsupported SetMark and Kitty context metadata remain exact no-ops"}}}
           - id: iterm2.osc1337.steal_focus
             raw: "OSC 1337 ; StealFocus[=Pt] (BEL|ST)"
             effect: request application focus
@@ -1701,7 +1726,8 @@ references:
           - {id: iterm2.osc1337.current_dir, raw: "OSC 1337 ; CurrentDir=Pt (BEL|ST)", effect: report working directory,
             conditions: "iTerm2 delegates only for a trusted terminal while Howl retains a host-neutral path
               up to 1 KiB",
-            relevance: host metadata, howl: {support: partial, source: howl-vt/src/terminal.zig,
+            relevance: host metadata, howl: {support: partial, disposition: excluded,
+              rationale: *howl_metadata_policy_difference, source: howl-vt/src/terminal.zig,
               symbol: replaceWorkingDirectoryReport, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
           - id: iterm2.osc1337.remote_host
@@ -1712,7 +1738,8 @@ references:
               trusted input only, strips controls, splits at the final @, and associates structured host locality with
               a logical line.
             relevance: host metadata
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: replaceRemoteHostReport, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: replaceRemoteHostReport, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "iTerm RemoteHost retains bounded metadata across terminal screen lifetime"}}
           - {id: iterm2.osc1337.set_profile, raw: "OSC 1337 ; SetProfile=Pt (BEL|ST)", effect: switch profile,
@@ -1779,8 +1806,12 @@ references:
                 path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "iTerm SetColors resets represented domains and ignores malformed pairs independently"}}}
           - {id: iterm2.osc1337.shell_integration, raw: "OSC 1337 ; ShellIntegrationVersion=Pt (BEL|ST)",
-            effect: report shell integration identity, relevance: host metadata, howl: {support: partial, residual: Howl retains bounded shell identity metadata without iTerm2 session policy.,
-            source: howl-vt/src/terminal.zig, symbol: parse}}
+            effect: report shell integration identity, relevance: host metadata,
+            conditions: Howl retains bounded typed identity without iTerm2 session policy.,
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: HostState.replaceShellIntegration, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "iTerm safe controls mutate presentation metadata and exact replies"}}}
           - id: iterm2.osc1337.request_attention
             raw: "OSC 1337 ; RequestAttention[=Ps] (BEL|ST)"
             effect: request user attention
@@ -3117,13 +3148,15 @@ references:
           - {id: kitty.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
             conditions: "Kitty retains parser-sized raw bytes while Howl rejects reports above its fixed 1 KiB
               metadata bound",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: replaceWorkingDirectoryReport, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: replaceWorkingDirectoryReport, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
           - {id: kitty.osc.hyperlink, raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
             conditions: "Kitty truncates identifiers and garbage-collects its pool while Howl rejects overflow at fixed
               packet and pool bounds",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: parseHyperlink, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: parseHyperlink, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           - {id: kitty.osc.notify_9, raw: "OSC 9 ; Pt (BEL|ST)", effect: display notification,
@@ -3241,7 +3274,8 @@ references:
             conditions: >-
               Howl retains bounded A/B/C/D facts and a typed first positional D exit status; Kitty owns line
               attributes and command-output marks while forwarding D payload policy to its host.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: parseShellMark, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_shell_mark_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: parseShellMark, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 133 retains exact metadata and finds positional exit status"}}
           - id: kitty.osc.file_transfer
@@ -3264,7 +3298,12 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "kitty color stack owns indexed sequential bounded and report semantics"}}}
           - {id: kitty.osc.metadata, raw: "OSC 3008 ; Pt (BEL|ST)", effect: update terminal metadata,
-            relevance: host metadata, howl: {support: partial, residual: Howl retains bounded host-neutral metadata without Kitty window policy.}}
+            conditions: Kitty dispatches to an intentionally empty host handler., recognition: recognized_noop,
+            relevance: host metadata, howl: {support: missing, disposition: excluded,
+              rationale: *howl_metadata_policy_difference,
+              residual: Howl streams and discards systemd context bytes without retaining metadata., proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "unsupported SetMark and Kitty context metadata remain exact no-ops"}}}
       - source: vt-parser.c
         symbol: dispatch_osc
         line: 514

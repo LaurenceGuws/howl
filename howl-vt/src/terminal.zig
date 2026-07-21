@@ -6294,11 +6294,21 @@ pub const HostState = struct {
         return .{ .changed = true, .title_changed = title_changed };
     }
 
-    /// Replaces typed shell integration after optional shell allocation succeeds.
+    /// Replace typed shell integration transactionally and report exact identity mutation.
+    ///
+    /// An identical value is allocation-free. An oversized shell or allocation failure
+    /// preserves the prior borrowed publication.
     pub fn replaceShellIntegration(
         self: *HostState,
         integration: ItermShellIntegration,
-    ) ApplyError!void {
+    ) ApplyError!bool {
+        if (self.shell_integration) |current| {
+            const same_shell = if (current.shell) |current_shell|
+                if (integration.shell) |next_shell| std.mem.eql(u8, current_shell, next_shell) else false
+            else
+                integration.shell == null;
+            if (current.version == integration.version and same_shell) return false;
+        }
         const shell = if (integration.shell) |value| blk: {
             if (value.len > max_shell_name_bytes) return error.ConsequenceLimit;
             break :blk try self.allocator.dupe(u8, value);
@@ -6309,6 +6319,7 @@ pub const HostState = struct {
             .version = integration.version,
             .shell = shell,
         };
+        return true;
     }
 
     /// Replaces one bounded shell mark without disturbing the prior mark on failure.
@@ -9818,7 +9829,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .title_and_icon_set => |value| return vt.host.replaceTitleAndIcon(value),
         .title_set => |title| return vt.host.replaceTitle(title),
         .icon_set => |icon| return vt.host.replaceIcon(icon),
-        .shell_integration_set => |integration| try vt.host.replaceShellIntegration(integration),
+        .shell_integration_set => |integration| return vt.host.replaceShellIntegration(integration),
         .working_directory_report => |directory| return vt.host.replaceWorkingDirectoryReport(directory),
         .remote_host_report => |remote_host| return vt.host.replaceRemoteHostReport(remote_host),
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
