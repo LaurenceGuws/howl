@@ -847,13 +847,15 @@ test "terminal size reports use exact current cell and pixel facts" {
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
 
-test "window controls retain exact bounded host requests and lifetime" {
+test "window controls retain ordered bounded host requests and lifetime" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 5);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1b[3;2147483647;")).state_changed);
-    try std.testing.expect((try terminal.feed("42t")).state_changed);
+    try std.testing.expect((try terminal.feed(
+        "\x1b[3;2147483647;42t\x1b[8;80;132t\x1b[11t\x1b[13t",
+    )).state_changed);
+    try std.testing.expectEqual(@as(u8, 4), terminal.surfaceSnapshot().window_request_count);
     var occurrence = terminal.surfaceSnapshot().window_request.?;
     try std.testing.expectEqual(@as(u64, 1), occurrence.generation);
     switch (occurrence.request) {
@@ -863,21 +865,15 @@ test "window controls retain exact bounded host requests and lifetime" {
         },
         else => return error.TestUnexpectedResult,
     }
+    try std.testing.expectError(error.StaleWindowRequest, terminal.acknowledgeWindowRequest(2));
+    try std.testing.expectError(
+        error.WindowReplyMismatch,
+        terminal.replyWindowRequest(1, .{ .position = .{ .x = 1, .y = 2 } }),
+    );
+    try terminal.acknowledgeWindowRequest(1);
 
-    const requests = [_]struct { bytes: []const u8, tag: std.meta.Tag(terminal_mod.WindowRequest) }{
-        .{ .bytes = "\x1b[1t", .tag = .deiconify },
-        .{ .bytes = "\x1b[2t", .tag = .iconify },
-        .{ .bytes = "\x1b[4;0;4096t", .tag = .resize_pixels },
-        .{ .bytes = "\x1b[5t", .tag = .raise },
-        .{ .bytes = "\x1b[6t", .tag = .lower },
-        .{ .bytes = "\x1b[8;80;132t", .tag = .resize_cells },
-    };
-    for (requests, 2..) |request, generation| {
-        try std.testing.expect((try terminal.feed(request.bytes)).state_changed);
-        occurrence = terminal.surfaceSnapshot().window_request.?;
-        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
-        try std.testing.expectEqual(request.tag, std.meta.activeTag(occurrence.request));
-    }
+    occurrence = terminal.surfaceSnapshot().window_request.?;
+    try std.testing.expectEqual(@as(u64, 2), occurrence.generation);
     switch (occurrence.request) {
         .resize_cells => |size| {
             try std.testing.expectEqual(@as(u32, 80), size.rows);
@@ -885,28 +881,141 @@ test "window controls retain exact bounded host requests and lifetime" {
         },
         else => return error.TestUnexpectedResult,
     }
+    try terminal.acknowledgeWindowRequest(2);
+    try std.testing.expectError(error.WindowReplyRequired, terminal.acknowledgeWindowRequest(3));
+    try terminal.replyWindowRequest(3, .{ .state = .normal });
+    clearPendingOutput(&terminal);
+    occurrence = terminal.surfaceSnapshot().window_request.?;
+    try std.testing.expectEqual(@as(u64, 4), occurrence.generation);
+    try std.testing.expectEqual(.report_position, std.meta.activeTag(occurrence.request));
+    try std.testing.expectEqual(@as(u8, 1), terminal.surfaceSnapshot().window_request_count);
+    try terminal.replyWindowRequest(4, .{ .position = .{ .x = 9, .y = 7 } });
+    clearPendingOutput(&terminal);
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
 
-    try std.testing.expect((try terminal.feed("\x1b[8;80;132t")).state_changed);
-    try std.testing.expectEqual(@as(u64, 8), terminal.surfaceSnapshot().window_request.?.generation);
+    // Consume enough entries to wrap the fixed ring, then fill it exactly.
+    for (0..20) |_| {
+        try std.testing.expect((try terminal.feed("\x1b[1t")).state_changed);
+        try terminal.acknowledgeWindowRequest(terminal.surfaceSnapshot().window_request.?.generation);
+    }
+    for (0..Terminal.window_request_max_count) |index| {
+        const x: u32 = @intCast(index + 1);
+        var bytes: [32]u8 = undefined;
+        const request = try std.fmt.bufPrint(&bytes, "\x1b[3;{d};{d}t", .{ x, x + 100 });
+        try std.testing.expect((try terminal.feed(request)).state_changed);
+    }
+    const full = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Terminal.window_request_max_count, full.window_request_count);
+    const generation_before_full = terminal.host.window_request_generation;
+    const head_before_full = full.window_request.?;
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[2t"));
+    try std.testing.expectEqual(generation_before_full, terminal.host.window_request_generation);
+    try std.testing.expectEqual(
+        head_before_full.generation,
+        terminal.surfaceSnapshot().window_request.?.generation,
+    );
+    for (0..Terminal.window_request_max_count) |index| {
+        occurrence = terminal.surfaceSnapshot().window_request.?;
+        const x: u32 = @intCast(index + 1);
+        switch (occurrence.request) {
+            .move => |position| {
+                try std.testing.expectEqual(x, position.x);
+                try std.testing.expectEqual(x + 100, position.y);
+            },
+            else => return error.TestUnexpectedResult,
+        }
+        try terminal.acknowledgeWindowRequest(occurrence.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
 
-    try std.testing.expect(!(try terminal.feed("\x1b[4;10t\x1b[8;10;20;30t\x1b[3;-1;2t")).state_changed);
-    try std.testing.expectEqual(@as(u64, 8), terminal.surfaceSnapshot().window_request.?.generation);
+    try std.testing.expect(
+        !(try terminal.feed("\x1b[4;10t\x1b[8;10;20;30t\x1b[3;-1;2t")).state_changed,
+    );
     try std.testing.expect(!(try terminal.feed("\x1b[4;10")).state_changed);
     try std.testing.expect((try terminal.feed("\x18;20t")).state_changed);
-    try std.testing.expectEqual(@as(u64, 8), terminal.surfaceSnapshot().window_request.?.generation);
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
 
-    terminal.host.window_request.?.generation = std.math.maxInt(u64);
+    terminal.host.window_request_generation = std.math.maxInt(u64);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[1t"));
-    occurrence = terminal.surfaceSnapshot().window_request.?;
-    try std.testing.expectEqual(std.math.maxInt(u64), occurrence.generation);
-    try std.testing.expectEqual(.resize_cells, std.meta.activeTag(occurrence.request));
-    terminal.host.window_request.?.generation = 8;
+    try std.testing.expectEqual(std.math.maxInt(u64), terminal.host.window_request_generation);
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
 
+    terminal.host.window_request_generation = generation_before_full;
+    try std.testing.expect((try terminal.feed("\x1b[2t")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     try terminal.resize(4, 7);
     occurrence = terminal.surfaceSnapshot().window_request.?;
-    try std.testing.expectEqual(@as(u64, 8), occurrence.generation);
-    try std.testing.expectEqual(.resize_cells, std.meta.activeTag(occurrence.request));
+    try std.testing.expectEqual(.iconify, std.meta.activeTag(occurrence.request));
+}
+
+test "window query replies require matching live intent and serialize transactionally" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 5);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[11t\x1b[13t")).state_changed);
+    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().window_request_count);
+    try std.testing.expectError(
+        error.StaleWindowRequest,
+        terminal.replyWindowRequest(2, .{ .state = .normal }),
+    );
+    try std.testing.expectError(
+        error.WindowReplyMismatch,
+        terminal.replyWindowRequest(1, .{ .position = .{ .x = 1, .y = 2 } }),
+    );
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    const publication_before_reply = terminal.surfaceSnapshot().snapshot_seq;
+    try terminal.replyWindowRequest(1, .{ .state = .iconified });
+    try std.testing.expectEqualStrings("\x1b[2t", pendingOutput(&terminal));
+    const publication_after_reply = terminal.surfaceSnapshot();
+    try std.testing.expect(publication_after_reply.snapshot_seq != publication_before_reply);
+    try std.testing.expectEqual(@as(u64, 2), publication_after_reply.window_request.?.generation);
+    try std.testing.expectEqual(@as(u8, 1), publication_after_reply.window_request_count);
+    try std.testing.expectError(
+        error.StaleWindowRequest,
+        terminal.replyWindowRequest(1, .{ .state = .normal }),
+    );
+
+    clearPendingOutput(&terminal);
+    try terminal.replyWindowRequest(2, .{ .position = .{ .x = std.math.maxInt(u32), .y = 42 } });
+    try std.testing.expectEqualStrings("\x1b[3;4294967295;42t", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b G\x1b[19t")).state_changed);
+    try terminal.replyWindowRequest(3, .{ .screen_cells = .{ .rows = 2160, .cols = 3840 } });
+    try std.testing.expectEqualStrings("\x1b[9;2160;3840t", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[20t")).state_changed);
+    try terminal.replyWindowRequest(4, .{ .icon_title = "build" });
+    try std.testing.expectEqualStrings("\x1b]Lbuild\x1b\\", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[19t")).state_changed);
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(
+        error.ConsequenceLimit,
+        terminal.replyWindowRequest(5, .{ .screen_cells = .{ .rows = 1, .cols = 1 } }),
+    );
+    try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
+    try std.testing.expectEqual(@as(u64, 5), terminal.surfaceSnapshot().window_request.?.generation);
+
+    clearPendingOutput(&terminal);
+    try terminal.replyWindowRequest(5, .{ .screen_cells = .{ .rows = 1, .cols = 1 } });
+    clearPendingOutput(&terminal);
+    const oversized = try allocator.alloc(u8, Terminal.metadata_max_bytes + 1);
+    defer allocator.free(oversized);
+    @memset(oversized, 'x');
+    try std.testing.expect((try terminal.feed("\x1b[20t")).state_changed);
+    try std.testing.expectError(
+        error.ConsequenceLimit,
+        terminal.replyWindowRequest(6, .{ .icon_title = oversized }),
+    );
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expectEqual(@as(u64, 6), terminal.surfaceSnapshot().window_request.?.generation);
 }
 
 test "in-band resize mode emits transactional iTerm2 and Kitty reports" {

@@ -935,13 +935,13 @@ references:
             raw: "CSI Pm t"
             effect: dispatch window operation by first parameter
             conditions: >-
-              Howl retains operations 1-6 and 8, answers 14/16/18/21, and owns its bounded title stack; remaining
-              report and host-policy operations stay unsupported.
+              Howl retains operations 1-6, 8, 11, 13, 19, and 20; serializes matching host facts for retained queries;
+              answers 14/16/18/21 from owned facts; and owns its bounded title stack. Host execution remains policy.
             recognition: delegated
             relevance: host consequence
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "window controls retain exact bounded host requests and lifetime"}}
+              symbol: "window controls retain ordered bounded host requests and lifetime"}}
           - {id: iterm2.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: line-buffer history and selection consequences, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
@@ -1650,11 +1650,13 @@ references:
             id: iterm2.window.deiconify
             raw: "CSI 1 t"
             effect: deiconify window
-            conditions: Howl retains the exact bounded occurrence while execution and authorization remain host policy
+            conditions: >-
+              Howl retains every accepted request in a 32-entry FIFO; execution remains host policy. Operations are
+              acknowledged at the live head; queries require a matching head identity and exact host-supplied fact.
             relevance: host consequence
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "window controls retain exact bounded host requests and lifetime"}}
+              symbol: "window controls retain ordered bounded host requests and lifetime"}}
           - <<: *iterm2_window_request
             id: iterm2.window.iconify
             raw: "CSI 2 t"
@@ -1679,10 +1681,20 @@ references:
             id: iterm2.window.resize_cells
             raw: "CSI 8 ; rows ; cols t"
             effect: resize terminal in cells
-          - {id: iterm2.window.report_state, raw: "CSI 11 t", effect: report iconified state, relevance: query,
-            howl: {status: 'false'}}
-          - {id: iterm2.window.report_position, raw: "CSI 13 t", effect: report window position, relevance: query,
-            howl: {status: 'false'}}
+          - <<: *iterm2_window_request
+            id: iterm2.window.report_state
+            raw: "CSI 11 t"
+            effect: report iconified state
+            relevance: query
+            howl: &iterm2_window_query_howl {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: Terminal.replyWindowRequest, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "window query replies require matching live intent and serialize transactionally"}}
+          - <<: *iterm2_window_request
+            id: iterm2.window.report_position
+            raw: "CSI 13 t"
+            effect: report window position
+            relevance: query
+            howl: *iterm2_window_query_howl
           - {id: iterm2.window.report_pixels, raw: "CSI 14 t", effect: report window pixel size, relevance: query,
             conditions: iTerm2 reports host window pixels while Howl reports host-supplied cell pixels times the grid,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
@@ -1692,10 +1704,18 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "terminal size reports use exact current cell and pixel facts"}}}
-          - {id: iterm2.window.report_screen, raw: "CSI 19 t", effect: report screen dimensions, relevance: query,
-            howl: {status: 'false'}}
-          - {id: iterm2.window.report_icon_title, raw: "CSI 20 t", effect: report icon title, relevance: query,
-            howl: {status: 'false'}}
+          - <<: *iterm2_window_request
+            id: iterm2.window.report_screen
+            raw: "CSI 19 t"
+            effect: report screen dimensions
+            relevance: query
+            howl: *iterm2_window_query_howl
+          - <<: *iterm2_window_request
+            id: iterm2.window.report_icon_title
+            raw: "CSI 20 t"
+            effect: report icon title
+            relevance: query
+            howl: *iterm2_window_query_howl
           - {id: iterm2.window.report_window_title, raw: "CSI 21 t", effect: report window title, relevance: query,
             conditions: iTerm2 gates and sanitizes the host window title while Howl reports its bounded child title,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendWindowTitleReport, proof: {

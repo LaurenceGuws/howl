@@ -5794,14 +5794,29 @@ pub const WindowRequest = union(enum) {
     raise,
     lower,
     resize_cells: struct { rows: u32, cols: u32 },
+    report_state,
+    report_position,
+    report_screen_cells,
+    report_icon_title,
 };
 
-/// Borrows the latest accepted window request until terminal mutation.
+// Bounds one FIFO burst while a host applies policy or supplies query facts.
+const window_request_capacity: u8 = 32;
+
+/// Borrows one accepted window request until head consumption.
 pub const WindowRequestOccurrence = struct {
     /// Monotonic identity advancing for every accepted request, including repeated values.
     generation: u64,
     /// Exact bounded operation and arguments; execution and authorization belong to the host.
     request: WindowRequest,
+};
+
+/// Supplies one host-owned fact requested by a retained window query.
+pub const WindowReply = union(enum) {
+    state: enum { normal, iconified },
+    position: struct { x: u32, y: u32 },
+    screen_cells: struct { rows: u32, cols: u32 },
+    icon_title: []const u8,
 };
 
 // Owns validated shell-integration identity until replacement or deinit.
@@ -5895,7 +5910,10 @@ pub const HostState = struct {
     notification: HostPayload = .{},
     notification_command: u16 = 0,
     pointer_shape: HostPayload = .{},
-    window_request: ?WindowRequestOccurrence = null,
+    window_request_generation: u64 = 0,
+    window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
+    window_requests_start: u8 = 0,
+    window_requests_count: u8 = 0,
     bell_generation: u64 = 0,
     locator: Locator = .{},
     media_copy_request: ?u16 = null,
@@ -6046,9 +6064,23 @@ pub const HostState = struct {
 
     /// Retain one window request occurrence without executing host policy.
     pub fn retainWindowRequest(self: *HostState, request: WindowRequest) ApplyError!void {
-        const generation = if (self.window_request) |current| current.generation else 0;
-        if (generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
-        self.window_request = .{ .generation = generation + 1, .request = request };
+        if (self.window_requests_count == window_request_capacity) return error.ConsequenceLimit;
+        if (self.window_request_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        self.window_request_generation += 1;
+        const index = (self.window_requests_start + self.window_requests_count) % window_request_capacity;
+        self.window_requests[index] = .{ .generation = self.window_request_generation, .request = request };
+        self.window_requests_count += 1;
+    }
+
+    fn windowRequestHead(self: *const HostState) ?WindowRequestOccurrence {
+        if (self.window_requests_count == 0) return null;
+        return self.window_requests[self.window_requests_start];
+    }
+
+    fn consumeWindowRequestHead(self: *HostState) void {
+        std.debug.assert(self.window_requests_count > 0);
+        self.window_requests_start = (self.window_requests_start + 1) % window_request_capacity;
+        self.window_requests_count -= 1;
     }
 
     fn notificationView(self: *const HostState) ?Notification {
@@ -7709,6 +7741,10 @@ fn decodeWindowRequest(params: []const i32) ?WindowRequest {
             .rows = nonnegativeParam(params[1]) orelse return null,
             .cols = nonnegativeParam(params[2]) orelse return null,
         } } else null,
+        11 => if (params.len == 1) .report_state else null,
+        13 => if (params.len == 1) .report_position else null,
+        19 => if (params.len == 1) .report_screen_cells else null,
+        20 => if (params.len == 1) .report_icon_title else null,
         else => null,
     };
 }
@@ -11758,6 +11794,12 @@ pub const Terminal = struct {
         error{ InvalidUtf8, InvalidText, KeyTextLimit };
     /// Reports allocation or 64 KiB pending-output saturation without consuming a clipboard query.
     pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit };
+    /// Reports stale or mismatched host facts, allocation failure, or bounded reply saturation.
+    pub const WindowReplyError = ApplyError || error{ StaleWindowRequest, WindowReplyMismatch };
+    /// Reports stale identity or an attempt to acknowledge a query without its required reply.
+    pub const WindowAcknowledgeError = error{ StaleWindowRequest, WindowReplyRequired };
+    /// Exposes the fixed pending-window-intent capacity to embedding hosts.
+    pub const window_request_max_count = window_request_capacity;
     /// Bounds host clipboard bytes accepted by one query reply in every framing mode.
     pub const clipboard_reply_max_bytes = clipboard_reply_bytes_max;
     /// Exposes one borrowed OSC 52 operation and its exact host-policy selection bytes.
@@ -12558,7 +12600,8 @@ pub const Terminal = struct {
             .shell_mark = self.host.shell_mark,
             .notification = self.host.notificationView(),
             .pointer_shape = self.host.pointerShapeView(),
-            .window_request = self.host.window_request,
+            .window_request = self.host.windowRequestHead(),
+            .window_request_count = self.host.window_requests_count,
             .bell_generation = self.host.bell_generation,
             .history_loss_generation = self.screen_state.primary.history_loss_generation,
             .is_alternate_screen = snapshot.view.is_alternate_screen,
@@ -12870,6 +12913,63 @@ pub const Terminal = struct {
         return self.host.replyPendingClipboardQuery(bytes);
     }
 
+    /// Queue one exact reply for the matching FIFO-head query, consuming it only after serialization.
+    pub fn replyWindowRequest(
+        self: *Terminal,
+        generation: u64,
+        reply: WindowReply,
+    ) WindowReplyError!void {
+        const occurrence = self.host.windowRequestHead() orelse return error.StaleWindowRequest;
+        if (occurrence.generation != generation) return error.StaleWindowRequest;
+        if (!windowReplyMatches(occurrence.request, reply)) return error.WindowReplyMismatch;
+
+        const output = &self.host.pending_output;
+        const start = byteCount(output.bytes.items);
+        errdefer restorePendingOutput(output, start);
+        var scratch: Scratch = .{};
+        switch (reply) {
+            .state => |state| try appendCsiReply(
+                output,
+                self.allocator,
+                .iterm,
+                if (state == .normal) "1t" else "2t",
+            ),
+            .position => |position| try appendCsiReply(
+                output,
+                self.allocator,
+                .iterm,
+                std.fmt.bufPrint(scratch.buf[0..], "3;{d};{d}t", .{ position.x, position.y }) catch unreachable,
+            ),
+            .screen_cells => |size| try appendCsiReply(
+                output,
+                self.allocator,
+                .iterm,
+                std.fmt.bufPrint(scratch.buf[0..], "9;{d};{d}t", .{ size.rows, size.cols }) catch unreachable,
+            ),
+            .icon_title => |title| {
+                try ensureRetainedBound(byteCount(title), max_metadata_bytes);
+                try appendReplyControl(output, self.allocator, .iterm, .osc);
+                try appendOutput(output, self.allocator, "L");
+                try appendOutput(output, self.allocator, title);
+                try appendReplyControl(output, self.allocator, .iterm, .st);
+            },
+        }
+        self.host.consumeWindowRequestHead();
+        self.dirty_generation +%= 1;
+    }
+
+    /// Consume the matching FIFO-head operation after host handling; queries require an exact reply instead.
+    pub fn acknowledgeWindowRequest(
+        self: *Terminal,
+        generation: u64,
+    ) WindowAcknowledgeError!void {
+        const occurrence = self.host.windowRequestHead() orelse return error.StaleWindowRequest;
+        if (occurrence.generation != generation) return error.StaleWindowRequest;
+        if (isWindowQuery(occurrence.request)) return error.WindowReplyRequired;
+        self.host.consumeWindowRequestHead();
+        self.dirty_generation +%= 1;
+    }
+
     fn noteSelectionChanged(self: *Terminal) void {
         self.screen_state.active().markAllRowsDirty();
         self.dirty_generation +%= 1;
@@ -12918,8 +13018,10 @@ pub const Terminal = struct {
         notification: ?Notification,
         /// Borrows the latest OSC 22 request until terminal mutation.
         pointer_shape: ?PointerShapeRequest,
-        /// Borrows the latest host-neutral CSI `t` request until terminal mutation.
+        /// Borrows the next FIFO host-neutral CSI `t` request until terminal mutation.
         window_request: ?WindowRequestOccurrence,
+        /// Reports the bounded number of pending FIFO window requests, including the exposed head.
+        window_request_count: u8,
         /// Monotonic count of accepted BEL controls; presentation belongs to the embedder.
         bell_generation: u64,
         /// Monotonic count of history rows dropped after bounded allocation failure.
@@ -12969,6 +13071,23 @@ pub const Terminal = struct {
         };
     }
 };
+
+fn windowReplyMatches(request: WindowRequest, reply: WindowReply) bool {
+    return switch (request) {
+        .report_state => reply == .state,
+        .report_position => reply == .position,
+        .report_screen_cells => reply == .screen_cells,
+        .report_icon_title => reply == .icon_title,
+        else => false,
+    };
+}
+
+fn isWindowQuery(request: WindowRequest) bool {
+    return switch (request) {
+        .report_state, .report_position, .report_screen_cells, .report_icon_title => true,
+        else => false,
+    };
+}
 
 fn validateDimensions(rows: u16, cols: u16) error{InvalidDimensions}!void {
     if (rows == 0 or cols == 0) return error.InvalidDimensions;
