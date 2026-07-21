@@ -11703,7 +11703,7 @@ fn discardedStringControl() EventEffect {
 
 fn configureCharset(terminal: *Terminal, slot: u8, designation: u8) bool {
     // Unsupported repertoires leave the selected slot unchanged.
-    if (designation != '0' and designation != 'A' and designation != 'B') return false;
+    if (std.mem.indexOfScalar(u8, "0ABUV", designation) == null) return false;
     if (slot >= terminal.designations.len) return false;
     const target = &terminal.designations[slot];
     if (target.* == designation) return false;
@@ -11739,12 +11739,52 @@ fn mapCharset(terminal: *const Terminal, slot: u8, byte: u8, gr: bool) u21 {
     return switch (designation) {
         '0' => mapDecSpecial(byte),
         'A' => if (byte == '#') 0x00A3 else charsetIdentity(byte, gr),
+        'U' => mapCp437(byte, gr),
+        'V' => mapVax42(byte, gr),
         else => charsetIdentity(byte, gr),
     };
 }
 
 fn charsetIdentity(byte: u8, gr: bool) u21 {
     return if (gr) @as(u21, byte) + 0x80 else byte;
+}
+
+// Maps the printable GR range shared by Kitty's CP437 and VAX-42 tables.
+// CP437 GL is identity; C0 and C1 remain parser transport rather than glyphs.
+const cp437_printable_gr = [95]u21{
+    0x00E1, 0x00ED, 0x00F3, 0x00FA, 0x00F1, 0x00D1, 0x00AA, 0x00BA,
+    0x00BF, 0x2310, 0x00AC, 0x00BD, 0x00BC, 0x00A1, 0x00AB, 0x00BB,
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556,
+    0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B, 0x2510,
+    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F,
+    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567,
+    0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B,
+    0x256A, 0x2518, 0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580,
+    0x03B1, 0x00DF, 0x0393, 0x03C0, 0x03A3, 0x03C3, 0x00B5, 0x03C4,
+    0x03A6, 0x0398, 0x03A9, 0x03B4, 0x221E, 0x03C6, 0x03B5, 0x2229,
+    0x2261, 0x00B1, 0x2265, 0x2264, 0x2320, 0x2321, 0x00F7, 0x2248,
+    0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x25A0,
+};
+
+fn mapCp437(byte: u8, gr: bool) u21 {
+    if (!gr) return byte;
+    std.debug.assert(byte >= 0x20 and byte <= 0x7E);
+    return cp437_printable_gr[byte - 0x20];
+}
+
+fn mapVax42(byte: u8, gr: bool) u21 {
+    if (gr) return mapCp437(byte, true);
+    return switch (byte) {
+        '!' => 0x043B,
+        '?' => 0x0435,
+        'a' => 0x0441,
+        'h' => 0x0435,
+        'o' => 0x043A,
+        'r' => 0x0442,
+        't' => 0x043B,
+        'u' => 0x0435,
+        else => byte,
+    };
 }
 
 fn mapDecSpecial(byte: u8) u21 {

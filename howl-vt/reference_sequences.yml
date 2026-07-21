@@ -1876,15 +1876,15 @@ references:
             conditions: Kitty also homes the cursor and resets margins,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay}}
           - {id: kitty.esc.scs_g0, raw: "ESC ( A|B|0|U|V", effect: designate G0 charset,
-            conditions: Howl implements A B 0 and leaves Kitty CP437 U and VAX42 V unchanged,
+            conditions: Howl maps A B 0 U V through ISO GL/GR; Kitty also remaps decoded C1 scalars and U+00FF,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
+              symbol: "terminal: Kitty CP437 and VAX42 share existing charset lifetime"}}}
           - {id: kitty.esc.scs_g1, raw: "ESC ) A|B|0|U|V", effect: designate G1 charset,
-            conditions: Howl implements A B 0 and leaves Kitty CP437 U and VAX42 V unchanged,
+            conditions: Howl maps A B 0 U V through ISO GL/GR; Kitty also remaps decoded C1 scalars and U+00FF,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
+              symbol: "terminal: Kitty CP437 and VAX42 share existing charset lifetime"}}}
           - id: kitty.esc.s7c1t
             raw: "ESC SP F"
             effect: select 7-bit C1 transmission

@@ -587,8 +587,8 @@ test "terminal: G0 G1 designation maps implemented repertoires across split feed
     try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 38));
     try std.testing.expectEqual(@as(u21, '#'), screen.cellAt(0, 39));
 
-    try std.testing.expect(!(try terminal.feed("\x1b(U")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b(0")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b(U")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b(0")).state_changed);
     try std.testing.expect((try terminal.feed("_")).state_changed);
     try std.testing.expectEqual(@as(u21, 0x00A0), screen.cellAt(0, 40));
 
@@ -642,12 +642,49 @@ test "terminal: four charset slots share locking single-shift save and reset own
     try std.testing.expectEqual(@as(?u8, null), terminal.single_shift);
     try std.testing.expectEqualSlices(u8, &.{ 'B', 'A', '0', 'A' }, &terminal.designations);
 
-    try std.testing.expect(!(try terminal.feed("\x1b*U\x1b+V")).state_changed);
-    try std.testing.expectEqualSlices(u8, &.{ 'B', 'A', '0', 'A' }, &terminal.designations);
+    try std.testing.expect((try terminal.feed("\x1b*U\x1b+V")).state_changed);
+    try std.testing.expectEqualSlices(u8, &.{ 'B', 'A', 'U', 'V' }, &terminal.designations);
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
     try std.testing.expectEqual(@as(u8, 0), terminal.gl_index);
     try std.testing.expectEqual(@as(u8, 1), terminal.gr_index);
     try std.testing.expectEqual(@as(?u8, null), terminal.single_shift);
+    try std.testing.expectEqualSlices(u8, &.{ 'B', 'B', 'B', 'B' }, &terminal.designations);
+}
+
+test "terminal: Kitty CP437 and VAX42 share existing charset lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 32);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b)")).state_changed);
+    try std.testing.expect((try terminal.feed("U")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b)U")).state_changed);
+    try std.testing.expect((try terminal.feed("\xC2\xA0³àþÿ")).state_changed);
+    var screen = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u21, 0x00E1), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0x2502), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 0x03B1), screen.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 0x25A0), screen.cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 0x00FF), screen.cellAt(0, 4));
+
+    try std.testing.expect((try terminal.feed("\x1b*V\x1bN!?")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x043B), screen.cellAt(0, 5));
+    try std.testing.expectEqual(@as(u21, '?'), screen.cellAt(0, 6));
+
+    try std.testing.expect((try terminal.feed("\x1b(V\x1b7\x1b(B\x1b8!?ahortu")).state_changed);
+    const vax = [_]u21{ 0x043B, 0x0435, 0x0441, 0x0435, 0x043A, 0x0442, 0x043B, 0x0435 };
+    for (vax, 0..) |expected, index|
+        try std.testing.expectEqual(expected, screen.cellAt(0, @intCast(index + 7)));
+    try std.testing.expectEqual(@as(u8, 'V'), terminal.designations[0]);
+    try std.testing.expectEqual(@as(u8, 'U'), terminal.designations[1]);
+    try std.testing.expectEqual(@as(u8, 'V'), terminal.designations[2]);
+    try std.testing.expect((try terminal.feed("\x1b)V³")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x2502), screen.cellAt(0, 15));
+
+    try std.testing.expect(!(try terminal.feed("\x1b(X")).state_changed);
+    try std.testing.expectEqual(@as(u8, 'V'), terminal.designations[0]);
+    try std.testing.expect((try terminal.feed("\x1bc!")).state_changed);
+    screen = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u21, '!'), screen.cellAt(0, 0));
     try std.testing.expectEqualSlices(u8, &.{ 'B', 'B', 'B', 'B' }, &terminal.designations);
 }
 
