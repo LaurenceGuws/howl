@@ -8336,6 +8336,9 @@ fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
     if (dcs.final == '|') return SemanticEvent{ .dcs_payload = .{ .kind = .decudk, .payload = dcs.body } };
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '!' and dcs.final == 'u')
         return SemanticEvent{ .dcs_payload = .{ .kind = .decaupss, .payload = dcs.body } };
+    if (dcs.intermediates_len == 0 and dcs.param_count == 0 and dcs.final == '@' and
+        std.mem.startsWith(u8, dcs.payload, "kitty-restore-cursor-appearance|"))
+        return .restore_cursor_appearance;
     return null;
 }
 
@@ -8925,6 +8928,7 @@ pub const SemanticEvent = union(enum) {
     dcs_request_resource: []const u8,
     restore_cursor_information: []const u8,
     restore_tab_stops: []const u8,
+    restore_cursor_appearance,
     dcs_payload: DcsPayload,
     device_status_report,
     dec_device_status_report: u16,
@@ -11347,6 +11351,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .sgr_stack_pop => return vt.popSgr(),
         .restore_cursor_information => |payload| return vt.restoreCursorInformation(payload),
         .restore_tab_stops => |payload| return vt.restoreTabStops(payload),
+        .restore_cursor_appearance => return vt.restoreCursorAppearance(),
 
         .focus_reporting => |enabled| return vt.setDecMode(1004, enabled),
         .mouse_tracking_off => return vt.setMouseTracking(.off),
@@ -12599,6 +12604,23 @@ pub const Terminal = struct {
         self.gr_index = 1;
         self.single_shift = null;
         self.designations = .{ 'B', 'B', 'B', 'B' };
+        return changed;
+    }
+
+    // Restores Kitty's configured cursor appearance without changing cursor position.
+    fn restoreCursorAppearance(self: *Terminal) bool {
+        const active = &self.screen_state.active().cursor;
+        const active_before = active.*;
+        active.restoreDefaultStyle();
+
+        var changed = !std.meta.eql(active_before, active.*);
+        changed = replaceBool(&self.screen_state.primary.cursor.visible, true) or changed;
+        changed = replaceBool(&self.screen_state.alternate.cursor.visible, true) or changed;
+        if (self.screen_state.primary.cursor.cursor_color != null or
+            self.screen_state.alternate.cursor.cursor_color != null or self.host.colors.cursor != null) changed = true;
+        self.screen_state.primary.cursor.cursor_color = null;
+        self.screen_state.alternate.cursor.cursor_color = null;
+        self.host.colors.cursor = null;
         return changed;
     }
 

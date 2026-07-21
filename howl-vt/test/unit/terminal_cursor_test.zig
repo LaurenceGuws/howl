@@ -92,6 +92,45 @@ test "terminal cursor: DECSCUSR restores host default and rejects unsupported va
     try std.testing.expectEqualStrings("\x1bP1$r4 q\x1b\\", terminal.host.pendingOutput());
 }
 
+test "terminal cursor: Kitty DCS restores configured appearance across fragmented input" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    terminal.screen_state.primary.setDefaultCursorStyle(.{ .shape = .underline, .blink = false });
+    terminal.screen_state.alternate.setDefaultCursorStyle(.{ .shape = .bar, .blink = true });
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[1 q\x1b[?25l\x1b]12;#112233\x1b\\\x1b]21;cursor_text=#445566\x1b\\" ++
+            "\x1b[?47h\x1b[2;3H\x1b[4 q",
+    )).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor\x18")).state_changed);
+    try std.testing.expectEqual(.underline, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(!active(&terminal).cursor.visible);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appe")).state_changed);
+    try std.testing.expect((try terminal.feed("arance|ignored\x1b\\")).state_changed);
+
+    try std.testing.expectEqual(.bar, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(active(&terminal).cursor.blink_intent);
+    try std.testing.expectEqual(@as(u16, 1), active(&terminal).cursor.row);
+    try std.testing.expectEqual(@as(u16, 2), active(&terminal).cursor.col);
+    try std.testing.expect(terminal.screen_state.primary.cursor.visible);
+    try std.testing.expect(terminal.screen_state.alternate.cursor.visible);
+    try std.testing.expectEqual(@as(?Screen.Rgb, null), terminal.screen_state.primary.cursor.cursor_color);
+    try std.testing.expectEqual(@as(?Screen.Rgb, null), terminal.screen_state.alternate.cursor.cursor_color);
+    try std.testing.expectEqual(@as(?Screen.Rgb, null), terminal.host.terminalColorState().cursor);
+    try std.testing.expectEqual(
+        @as(?Screen.Rgb, .{ .r = 0x44, .g = 0x55, .b = 0x66 }),
+        active(&terminal).cursor.cursor_text_color,
+    );
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|\x1b\\")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expectEqual(.block, active(&terminal).cursor.effective_shape);
+    try std.testing.expect((try terminal.feed("\x90@kitty-restore-cursor-appearance|x\x9c")).state_changed);
+    try std.testing.expectEqual(.underline, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(!active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|x\x1b\\")).state_changed);
+}
+
 test "terminal cursor: savepoint restores presentation while host colors remain current" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

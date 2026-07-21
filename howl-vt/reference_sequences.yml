@@ -1386,8 +1386,15 @@ references:
           - {id: iterm2.osc1337.report_cell_size, raw: "OSC 1337 ; ReportCellSize (BEL|ST)",
             effect: report cell dimensions, relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig,
             symbol: parse}}
-          - {id: iterm2.osc1337.cursor_shape, raw: "OSC 1337 ; CursorShape=Ps (BEL|ST)", effect: set cursor shape,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parse}}
+          - id: iterm2.osc1337.cursor_shape
+            raw: "OSC 1337 ; CursorShape=Ps (BEL|ST)"
+            effect: set cursor shape
+            conditions: >-
+              Howl accepts exactly one decimal byte 0 through 2 while iTerm2 also treats empty or nonnumeric values
+              as zero; both preserve the current blink intent.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parseCursorShape, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "iTerm safe controls mutate presentation metadata and exact replies"}}
           - {id: iterm2.osc1337.set_colors, raw: "OSC 1337 ; SetColors=Pt (BEL|ST)", effect: set terminal colors,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parse}}
           - {id: iterm2.osc1337.shell_integration, raw: "OSC 1337 ; ShellIntegrationVersion=Pt (BEL|ST)",
@@ -2712,8 +2719,13 @@ references:
             relevance: host consequence, howl: {status: 'false'}}
           - {id: kitty.dcs.remote_edit, raw: "DCS @kitty-edit|Pb ST", effect: dispatch remote edit request,
             relevance: host consequence, howl: {status: 'false'}}
-          - {id: kitty.dcs.restore_cursor, raw: "DCS @kitty-restore-cursor-appearance|Pb ST",
-            effect: restore cursor appearance, relevance: presentation, howl: {status: 'false'}}
+          - id: kitty.dcs.restore_cursor
+            raw: "DCS @kitty-restore-cursor-appearance|Pb ST"
+            effect: restore configured cursor shape blink visibility and color
+            relevance: presentation
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.restoreCursorAppearance, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: Kitty DCS restores configured appearance across fragmented input"}}
       - source: vt-parser.c
         symbol: dispatch_apc
         line: 1416
