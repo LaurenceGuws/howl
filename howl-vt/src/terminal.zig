@@ -5347,9 +5347,9 @@ const KeyFormatChange = struct {
 // Enumerates DEC modes whose state participates in parameterized XTSAVE and XTRESTORE.
 const savable_dec_modes = [_]u16{
     1,    3,    5,    6,    7,    8,    9,    12,   25,   40,
-    45,   47,   66,   69,   95,   1045, 1047, 1049, 1000, 1002,
-    1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026, 2031, 2048,
-    5522,
+    41,   45,   47,   66,   69,   95,   1045, 1047, 1049, 1000,
+    1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026, 2031,
+    2048, 5522,
 };
 
 // Stores terminal modes that affect screen mutation, input encoding, and reports.
@@ -5361,6 +5361,7 @@ const ModeState = struct {
     // Howl historically admits DECCOLM while the embedding host owns physical geometry.
     allow_column_mode: bool = true,
     preserve_screen_on_column_mode: bool = false,
+    more_fix: bool = false,
     auto_repeat: bool = true,
     reverse_screen_mode: bool = false,
     send_receive_mode: bool = false,
@@ -5411,6 +5412,7 @@ const DecView = struct {
     column_mode_132: bool,
     allow_column_mode: bool,
     preserve_screen_on_column_mode: bool,
+    more_fix: bool,
     auto_repeat: bool,
     reverse_screen_mode: bool,
     origin_mode: bool,
@@ -5448,6 +5450,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         1 => boolToDecModeState(view.application_cursor_keys),
         3 => boolToDecModeState(view.allow_column_mode and view.column_mode_132),
         40 => boolToDecModeState(view.allow_column_mode),
+        41 => boolToDecModeState(view.more_fix),
         95 => boolToDecModeState(view.preserve_screen_on_column_mode),
         5 => boolToDecModeState(view.reverse_screen_mode),
         6 => boolToDecModeState(view.origin_mode),
@@ -8407,6 +8410,7 @@ fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
         1 => boolEvent(final, .{ .application_cursor_keys = true }, .{ .application_cursor_keys = false }),
         3 => boolEvent(final, .{ .column_mode_132 = true }, .{ .column_mode_132 = false }),
         40 => boolEvent(final, .{ .allow_column_mode = true }, .{ .allow_column_mode = false }),
+        41 => boolEvent(final, .{ .more_fix = true }, .{ .more_fix = false }),
         95 => boolEvent(
             final,
             .{ .preserve_screen_on_column_mode = true },
@@ -9130,6 +9134,7 @@ pub const SemanticEvent = union(enum) {
     column_mode_132: bool,
     allow_column_mode: bool,
     preserve_screen_on_column_mode: bool,
+    more_fix: bool,
     ansi_mode_set: ModeParams,
     ansi_mode_reset: ModeParams,
     ansi_mode_query: u16,
@@ -9960,6 +9965,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .column_mode_132 = vt.modes.column_mode_132,
         .allow_column_mode = vt.modes.allow_column_mode,
         .preserve_screen_on_column_mode = vt.modes.preserve_screen_on_column_mode,
+        .more_fix = vt.modes.more_fix,
         .auto_repeat = vt.modes.auto_repeat,
         .reverse_screen_mode = vt.modes.reverse_screen_mode,
         .origin_mode = active.origin_mode,
@@ -11646,6 +11652,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .column_mode_132,
         .allow_column_mode,
         .preserve_screen_on_column_mode,
+        .more_fix,
         .auto_repeat,
         .reverse_screen_mode,
         .eight_bit_controls,
@@ -11745,6 +11752,19 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             );
         },
         .backspace => return vt.screen_state.active().backspace(vt.modes.reverse_wraparound_mode),
+        .horizontal_tab => {
+            const active = vt.screen_state.active();
+            if (vt.modes.more_fix and active.wrap_pending) {
+                if (!vt.screen_state.alt_active) {
+                    try vt.screen_state.primary.finalizeOutputLine(vt.allocator);
+                }
+                active.applyScreen(.next_line);
+                active.applyScreen(.horizontal_tab);
+                return true;
+            }
+            active.applyScreen(event);
+            return true;
+        },
 
         .erase_display_below => |protected| {
             return vt.screen_state.active().eraseDisplay(.cursor_to_end, protected);
@@ -11809,7 +11829,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .write_codepoint,
         .reverse_index,
         .carriage_return,
-        .horizontal_tab,
         .horizontal_tab_forward,
         .horizontal_tab_back,
         .horizontal_tab_set,
@@ -12975,6 +12994,7 @@ pub const Terminal = struct {
         changed = replaceBool(&self.modes.application_keypad, false) or changed;
         changed = replaceBool(&self.modes.column_mode_132, false) or changed;
         changed = replaceBool(&self.modes.preserve_screen_on_column_mode, false) or changed;
+        changed = replaceBool(&self.modes.more_fix, false) or changed;
         changed = replaceBool(&self.modes.newline_mode, false) or changed;
         changed = replaceBool(&self.modes.focus_reporting, false) or changed;
         changed = replaceBool(&self.modes.bracketed_paste, false) or changed;
@@ -13217,6 +13237,7 @@ pub const Terminal = struct {
             .column_mode_132 => |enabled| return self.setDecMode(3, enabled),
             .allow_column_mode => |enabled| return self.setDecMode(40, enabled),
             .preserve_screen_on_column_mode => |enabled| return self.setDecMode(95, enabled),
+            .more_fix => |enabled| return self.setDecMode(41, enabled),
             .auto_repeat => |enabled| return self.setDecMode(8, enabled),
             .reverse_screen_mode => |enabled| return self.setDecMode(5, enabled),
             .eight_bit_controls => |enabled| {
@@ -13285,6 +13306,7 @@ pub const Terminal = struct {
             .column_mode_132 = self.modes.column_mode_132,
             .allow_column_mode = self.modes.allow_column_mode,
             .preserve_screen_on_column_mode = self.modes.preserve_screen_on_column_mode,
+            .more_fix = self.modes.more_fix,
             .auto_repeat = self.modes.auto_repeat,
             .reverse_screen_mode = self.modes.reverse_screen_mode,
             .origin_mode = active.origin_mode,
@@ -13400,6 +13422,7 @@ pub const Terminal = struct {
                 break :result screen_changed or changed;
             },
             40 => replaceBool(&self.modes.allow_column_mode, enabled),
+            41 => replaceBool(&self.modes.more_fix, enabled),
             95 => replaceBool(&self.modes.preserve_screen_on_column_mode, enabled),
             5 => replaceBool(&self.modes.reverse_screen_mode, enabled),
             6 => changed: {

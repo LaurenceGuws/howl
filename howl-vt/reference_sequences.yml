@@ -1725,8 +1725,16 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
-          - {id: iterm2.mode.more_fix, raw: "CSI ? 41 h|l", effect: toggle more compatibility fix,
-            relevance: compatibility, howl: {status: 'false'}}
+          - id: iterm2.mode.more_fix
+            raw: "CSI ? 41 h|l"
+            effect: toggle pending-wrap tab compatibility
+            conditions: >-
+              Howl matches pending-wrap HT movement, query, parameterized save/restore, DECSTR, RIS, and
+              alternate-screen lifetime; iTerm2 also dirties its delegate on byte-identical mode assignment.
+            relevance: compatibility
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC more-fix owns pending-wrap tab query save and reset lifetime"}}
           - {id: iterm2.mode.reverse_wrap, raw: "CSI ? 45 h|l", effect: toggle reverse wraparound,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Screen.backspace, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,

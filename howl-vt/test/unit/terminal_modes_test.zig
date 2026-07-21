@@ -2582,3 +2582,45 @@ test "DEC column modes own permission preservation query save and reset lifetime
     try std.testing.expect((try terminal.feed("\x1b[?40$p\x1b[?95$p")).state_changed);
     try std.testing.expectEqualStrings("\x1b[?40;1$y\x1b[?95;2$y", pendingOutput(&terminal));
 }
+
+test "DEC more-fix owns pending-wrap tab query save and reset lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 10);
+    defer terminal.deinit();
+    const primary = &terminal.screen_state.primary;
+
+    try std.testing.expect((try terminal.feed("0123456789")).state_changed);
+    try std.testing.expect(primary.wrap_pending);
+    try std.testing.expect((try terminal.feed("\t")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 9), primary.cursor.col);
+    try std.testing.expect(!primary.wrap_pending);
+
+    try std.testing.expect((try terminal.feed("\r\x1b[?41")).state_changed);
+    try std.testing.expect((try terminal.feed("h0123456789")).state_changed);
+    try std.testing.expect(terminal.modes.more_fix);
+    try std.testing.expect(primary.wrap_pending);
+    try std.testing.expect((try terminal.feed("\t")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 8), primary.cursor.col);
+    try std.testing.expectEqual(@as(u21, '0'), primary.cellAt(0, 0));
+    try std.testing.expect(!(try terminal.feed("\x1b[?41h")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?41$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?41;1$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?1002h\x1b[?41;1002s\x1b[?41l\x1b[?1000h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?41$p\x1b[?1002$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?41;2$y\x1b[?1002;2$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?41;1002r\x1b[?1049h\x1b[?41$p\x1b[?1002$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?41;1$y\x1b[?1002;1$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[!p\x1b[?41$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?41;2$y", pendingOutput(&terminal));
+    try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
+
+    terminal.hardReset();
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?41$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?41;2$y", pendingOutput(&terminal));
+}
