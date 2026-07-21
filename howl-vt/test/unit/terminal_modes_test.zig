@@ -654,6 +654,59 @@ test "terminal paste encoding is gated by DECSET 2004" {
     try std.testing.expectEqualStrings("paste", plain_again.bytes);
 }
 
+test "Kitty host-coordinated modes retain exact state reports and color notifications" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.reportColorSchemePreference(.dark)));
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+
+    try std.testing.expect((try terminal.feed("\x1b[?2031h\x1b[?5522h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?199")).state_changed);
+    try std.testing.expect((try terminal.feed("97h")).state_changed);
+    var publication = terminal.surfaceSnapshot();
+    try std.testing.expect(publication.color_preference_notifications);
+    try std.testing.expect(publication.paste_events);
+    try std.testing.expect(publication.termios_signals);
+    try std.testing.expect(!(try terminal.feed("\x1b[?2031h\x1b[?5522h\x1b[?19997h")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?2031$p\x1b[?5522$p\x1b[?19997$p")).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b[?2031;1$y\x1b[?5522;1$y\x1b[?19997;0$y",
+        pendingOutput(&terminal),
+    );
+    clearPendingOutput(&terminal);
+
+    try std.testing.expect((try terminal.feed("\x1b G")).state_changed);
+    try std.testing.expect(try terminal.reportColorSchemePreference(.dark));
+    try std.testing.expect(try terminal.reportColorSchemePreference(.light));
+    try std.testing.expectEqualStrings("\x1b[?997;1n\x1b[?997;2n", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+
+    try std.testing.expect((try terminal.feed("\x1b[?2031;5522;19997s")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2031l\x1b[?5522l\x1b[?19997l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2031;5522;19997r")).state_changed);
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expect(publication.color_preference_notifications);
+    try std.testing.expect(publication.paste_events);
+    try std.testing.expect(!publication.termios_signals);
+
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.reportColorSchemePreference(.dark));
+    try std.testing.expectEqual(fill.len, pendingOutput(&terminal).len);
+    try std.testing.expect(terminal.surfaceSnapshot().color_preference_notifications);
+
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expect(!publication.color_preference_notifications);
+    try std.testing.expect(!publication.paste_events);
+    try std.testing.expect(!publication.termios_signals);
+}
+
 test "paste encoding distinguishes borrowed and owned results" {
     const text = "paste";
     var no_storage: [0]u8 = .{};

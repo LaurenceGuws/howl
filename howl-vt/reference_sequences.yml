@@ -2013,19 +2013,47 @@ references:
                 test: terminal paste encoding is gated by DECSET 2004}}}
           - {id: kitty.mode.synchronized_output, raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
             howl: {status: partial}}
-          - {id: kitty.mode.color_preference, raw: "CSI ? 2031 h|l", effect: toggle color-preference notifications,
-            relevance: extension, howl: {status: 'false'}}
+          - id: kitty.mode.color_preference
+            raw: "CSI ? 2031 h|l"
+            effect: toggle color-preference notifications
+            conditions: >-
+              The embedder supplies each observed dark or light fact; Howl gates and transactionally serializes the
+              fixed Kitty reply, reports mode state, saves and restores it, and clears it on RIS. Howl additionally
+              cancels pending wrap at the DECSET or DECRST boundary.
+            relevance: extension
+            howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: Terminal.reportColorSchemePreference, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
           - {id: kitty.mode.inband_resize, raw: "CSI ? 2048 h|l", effect: toggle in-band resize notifications,
             conditions: resize reports require host-provided cell pixel facts, relevance: extension,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
-          - {id: kitty.mode.paste_events, raw: "CSI ? 5522 h|l", effect: toggle extended paste events, relevance: input,
-            howl: {status: 'false'}}
+          - id: kitty.mode.paste_events
+            raw: "CSI ? 5522 h|l"
+            effect: toggle extended paste events
+            conditions: >-
+              Howl retains, publishes, reports, saves, restores, and resets the mode; the embedder still owns Kitty's
+              permission-sensitive multipart OSC 5522 clipboard exchange; Howl also cancels pending wrap at the mode
+              boundary.
+            relevance: input
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.SurfacePublication, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
           - {id: kitty.mode.application_escape, raw: "CSI ? 7727 h|l", effect: reject application escape mode,
             recognition: rejected_known, relevance: compatibility, howl: {status: 'false'}}
-          - {id: kitty.mode.termios_signals, raw: "CSI ? 19997 h|l", effect: toggle terminal-generated termios signals,
-            relevance: input, howl: {status: 'false'}}
+          - id: kitty.mode.termios_signals
+            raw: "CSI ? 19997 h|l"
+            effect: toggle terminal-generated termios signals
+            conditions: >-
+              Howl retains and publishes the host-neutral mode through RIS lifetime; PTY signal generation remains
+              host policy, and Kitty neither reports nor saves this mode. Howl additionally cancels pending wrap at
+              the mode boundary.
+            relevance: input
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.SurfacePublication, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
       - source: vt-parser.c
         symbol: dispatch_csi
         line: 1114

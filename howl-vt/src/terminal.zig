@@ -5270,6 +5270,9 @@ const ModeState = struct {
     bracketed_paste: bool = false,
     synchronized_output: bool = false,
     inband_resize_notifications: bool = false,
+    color_preference_notifications: bool = false,
+    paste_events: bool = false,
+    termios_signals: bool = false,
     reverse_wraparound_mode: bool = false,
     extended_reverse_wraparound_mode: bool = false,
     mouse_tracking: MouseTrackingMode = .off,
@@ -5303,6 +5306,8 @@ const DecView = struct {
     bracketed_paste: bool,
     synchronized_output: bool,
     inband_resize_notifications: bool,
+    color_preference_notifications: bool,
+    paste_events: bool,
     reverse_wraparound: bool,
     extended_reverse_wraparound: bool,
 };
@@ -5341,6 +5346,8 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         2004 => boolToDecModeState(view.bracketed_paste),
         2026 => boolToDecModeState(view.synchronized_output),
         2048 => boolToDecModeState(view.inband_resize_notifications),
+        2031 => boolToDecModeState(view.color_preference_notifications),
+        5522 => boolToDecModeState(view.paste_events),
         1045 => boolToDecModeState(view.extended_reverse_wraparound),
         else => 0,
     };
@@ -5421,6 +5428,8 @@ fn canSetDecMode(mode: u16) bool {
         2004,
         2026,
         2048,
+        2031,
+        5522,
         => true,
         else => false,
     };
@@ -7953,6 +7962,13 @@ fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
             .{ .inband_resize_notifications = true },
             .{ .inband_resize_notifications = false },
         ),
+        2031 => boolEvent(
+            final,
+            .{ .color_preference_notifications = true },
+            .{ .color_preference_notifications = false },
+        ),
+        5522 => boolEvent(final, .{ .paste_events = true }, .{ .paste_events = false }),
+        19997 => boolEvent(final, .{ .termios_signals = true }, .{ .termios_signals = false }),
         1045 => boolEvent(
             final,
             .{ .extended_reverse_wraparound_mode = true },
@@ -8586,6 +8602,9 @@ pub const SemanticEvent = union(enum) {
     bracketed_paste: bool,
     synchronized_output: bool,
     inband_resize_notifications: bool,
+    color_preference_notifications: bool,
+    paste_events: bool,
+    termios_signals: bool,
     mouse_tracking_off,
     mouse_tracking_x10,
     mouse_tracking_normal,
@@ -9392,6 +9411,8 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .bracketed_paste = vt.modes.bracketed_paste,
         .synchronized_output = vt.modes.synchronized_output,
         .inband_resize_notifications = vt.modes.inband_resize_notifications,
+        .color_preference_notifications = vt.modes.color_preference_notifications,
+        .paste_events = vt.modes.paste_events,
         .reverse_wraparound = vt.modes.reverse_wraparound_mode,
         .extended_reverse_wraparound = vt.modes.extended_reverse_wraparound_mode,
     };
@@ -11068,6 +11089,9 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .bracketed_paste,
         .synchronized_output,
         .inband_resize_notifications,
+        .color_preference_notifications,
+        .paste_events,
+        .termios_signals,
         .dec_mode_save,
         .dec_mode_restore,
         => return vt.applyModeEvent(event),
@@ -11854,6 +11878,11 @@ pub const Terminal = struct {
         width: u32,
         height: u32,
     };
+    /// Selects one host-observed color-scheme preference for a Kitty notification.
+    pub const ColorSchemePreference = enum {
+        dark,
+        light,
+    };
     /// Borrows validated shell-integration identity from one surface publication.
     pub const ShellIntegration = ItermShellIntegration;
     /// Borrows the latest child-reported directory bytes and their URI-or-path interpretation.
@@ -12159,6 +12188,25 @@ pub const Terminal = struct {
         return .{ .width = value.width, .height = value.height };
     }
 
+    /// Appends one Kitty color-preference notification when mode 2031 is enabled.
+    ///
+    /// Disabled mode returns false without mutation. Allocation or output-bound
+    /// failure preserves pending output and the enabled mode.
+    pub fn reportColorSchemePreference(
+        self: *Terminal,
+        preference: ColorSchemePreference,
+    ) ApplyError!bool {
+        if (!self.modes.color_preference_notifications) return false;
+        try appendCsiReply(
+            &self.host.pending_output,
+            self.allocator,
+            .kitty,
+            if (preference == .dark) "?997;1n" else "?997;2n",
+        );
+        self.dirty_generation +%= 1;
+        return true;
+    }
+
     /// Applies RIS while preserving dimensions and owned allocations.
     pub fn hardReset(self: *Terminal) void {
         self.screen_state.reset();
@@ -12450,6 +12498,9 @@ pub const Terminal = struct {
             .bracketed_paste => |enabled| return replaceBool(&self.modes.bracketed_paste, enabled),
             .synchronized_output => |enabled| return replaceBool(&self.modes.synchronized_output, enabled),
             .inband_resize_notifications => |enabled| return self.setDecMode(2048, enabled),
+            .color_preference_notifications => |enabled| return self.setDecMode(2031, enabled),
+            .paste_events => |enabled| return self.setDecMode(5522, enabled),
+            .termios_signals => |enabled| return self.setDecMode(19997, enabled),
             .dec_mode_save => |modes| return self.saveDecModes(modes.params[0..modes.param_count]),
             .dec_mode_restore => |modes| return self.restoreDecModes(modes.params[0..modes.param_count]),
             else => unreachable,
@@ -12475,6 +12526,8 @@ pub const Terminal = struct {
             .bracketed_paste = self.modes.bracketed_paste,
             .synchronized_output = self.modes.synchronized_output,
             .inband_resize_notifications = self.modes.inband_resize_notifications,
+            .color_preference_notifications = self.modes.color_preference_notifications,
+            .paste_events = self.modes.paste_events,
             .reverse_wraparound = self.modes.reverse_wraparound_mode,
             .extended_reverse_wraparound = self.modes.extended_reverse_wraparound_mode,
         }, mode_number);
@@ -12574,6 +12627,9 @@ pub const Terminal = struct {
             2004 => replaceBool(&self.modes.bracketed_paste, enabled),
             2026 => replaceBool(&self.modes.synchronized_output, enabled),
             2048 => replaceBool(&self.modes.inband_resize_notifications, enabled),
+            2031 => replaceBool(&self.modes.color_preference_notifications, enabled),
+            5522 => replaceBool(&self.modes.paste_events, enabled),
+            19997 => replaceBool(&self.modes.termios_signals, enabled),
             else => false,
         };
         return mode_changed or pending_changed;
@@ -12703,6 +12759,9 @@ pub const Terminal = struct {
             .pointer_shape_count = self.host.pointer_shapes_count,
             .window_request = self.host.windowRequestHead(),
             .window_request_count = self.host.window_requests_count,
+            .color_preference_notifications = self.modes.color_preference_notifications,
+            .paste_events = self.modes.paste_events,
+            .termios_signals = self.modes.termios_signals,
             .bell_generation = self.host.bell_generation,
             .history_loss_generation = self.screen_state.primary.history_loss_generation,
             .is_alternate_screen = snapshot.view.is_alternate_screen,
@@ -13167,6 +13226,12 @@ pub const Terminal = struct {
         window_request: ?WindowRequestOccurrence,
         /// Reports the bounded number of pending FIFO window requests, including the exposed head.
         window_request_count: u8,
+        /// Reports whether mode 2031 asks the host to publish color-scheme changes.
+        color_preference_notifications: bool,
+        /// Reports whether mode 5522 asks the host to use Kitty's extended paste path.
+        paste_events: bool,
+        /// Reports whether mode 19997 delegates terminal-generated signal handling to the host.
+        termios_signals: bool,
         /// Monotonic count of accepted BEL controls; presentation belongs to the embedder.
         bell_generation: u64,
         /// Monotonic count of history rows dropped after bounded allocation failure.
