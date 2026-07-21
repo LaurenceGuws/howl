@@ -5222,6 +5222,7 @@ const ModeState = struct {
     keyboard_action_mode: bool = false,
     application_cursor_keys: bool = false,
     application_keypad: bool = false,
+    auto_repeat: bool = true,
     reverse_screen_mode: bool = false,
     send_receive_mode: bool = false,
     newline_mode: bool = false,
@@ -5249,6 +5250,7 @@ const SavedDecMode = struct {
 const DecView = struct {
     application_cursor_keys: bool,
     application_keypad: bool,
+    auto_repeat: bool,
     reverse_screen_mode: bool,
     origin_mode: bool,
     auto_wrap: bool,
@@ -5278,6 +5280,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         5 => boolToDecModeState(view.reverse_screen_mode),
         6 => boolToDecModeState(view.origin_mode),
         7 => boolToDecModeState(view.auto_wrap),
+        8 => boolToDecModeState(view.auto_repeat),
         12 => boolToDecModeState(view.cursor_blink),
         69 => boolToDecModeState(view.left_right_margin_mode),
         66 => boolToDecModeState(view.application_keypad),
@@ -5347,7 +5350,30 @@ fn savedDecModeState(saved_modes: []const SavedDecMode, saved_count: SavedDecMod
 // Reports whether a DEC mode has implemented set and reset behavior.
 fn canSetDecMode(mode: u16) bool {
     return switch (mode) {
-        1, 5, 6, 7, 9, 12, 25, 47, 66, 69, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026 => true,
+        1,
+        5,
+        6,
+        7,
+        8,
+        9,
+        12,
+        25,
+        47,
+        66,
+        69,
+        1047,
+        1049,
+        1000,
+        1002,
+        1003,
+        1004,
+        1005,
+        1006,
+        1015,
+        1016,
+        2004,
+        2026,
+        => true,
         else => false,
     };
 }
@@ -7506,6 +7532,7 @@ fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
         12 => boolEvent(final, .{ .cursor_blink = true }, .{ .cursor_blink = false }),
         25 => boolEvent(final, .{ .cursor_visible = true }, .{ .cursor_visible = false }),
         7 => boolEvent(final, .{ .auto_wrap = true }, .{ .auto_wrap = false }),
+        8 => boolEvent(final, .{ .auto_repeat = true }, .{ .auto_repeat = false }),
         6 => boolEvent(final, .{ .origin_mode = true }, .{ .origin_mode = false }),
         1 => boolEvent(final, .{ .application_cursor_keys = true }, .{ .application_cursor_keys = false }),
         66 => boolEvent(final, .{ .application_keypad = true }, .{ .application_keypad = false }),
@@ -8084,6 +8111,7 @@ pub const SemanticEvent = union(enum) {
     reverse_screen_mode: bool,
     eight_bit_controls: bool,
     auto_wrap: bool,
+    auto_repeat: bool,
     origin_mode: bool,
     insert_mode: bool,
     application_cursor_keys: bool,
@@ -8888,6 +8916,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     const dec_modes = DecView{
         .application_cursor_keys = vt.modes.application_cursor_keys,
         .application_keypad = vt.modes.application_keypad,
+        .auto_repeat = vt.modes.auto_repeat,
         .reverse_screen_mode = vt.modes.reverse_screen_mode,
         .origin_mode = active.origin_mode,
         .auto_wrap = active.auto_wrap,
@@ -10500,6 +10529,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
 
         .application_cursor_keys,
         .application_keypad,
+        .auto_repeat,
         .reverse_screen_mode,
         .eight_bit_controls,
         .left_right_margin_mode,
@@ -11800,6 +11830,7 @@ pub const Terminal = struct {
         switch (event) {
             .application_cursor_keys => |enabled| return replaceBool(&self.modes.application_cursor_keys, enabled),
             .application_keypad => |enabled| return replaceBool(&self.modes.application_keypad, enabled),
+            .auto_repeat => |enabled| return self.setDecMode(8, enabled),
             .reverse_screen_mode => |enabled| return self.setDecMode(5, enabled),
             .eight_bit_controls => |enabled| {
                 const changed = self.host.pending_output.eight_bit_controls != enabled;
@@ -11857,6 +11888,7 @@ pub const Terminal = struct {
         return decModeStateForView(.{
             .application_cursor_keys = self.modes.application_cursor_keys,
             .application_keypad = self.modes.application_keypad,
+            .auto_repeat = self.modes.auto_repeat,
             .reverse_screen_mode = self.modes.reverse_screen_mode,
             .origin_mode = active.origin_mode,
             .auto_wrap = active.auto_wrap,
@@ -11926,6 +11958,7 @@ pub const Terminal = struct {
                 active.applyScreen(.{ .auto_wrap = enabled });
                 break :changed before != active.auto_wrap;
             },
+            8 => replaceBool(&self.modes.auto_repeat, enabled),
             12 => active.cursor.setBlink(enabled),
             69 => result: {
                 const inactive = if (self.screen_state.alt_active)
@@ -12312,6 +12345,7 @@ pub const Terminal = struct {
         event: KeyEvent,
     ) error{ InvalidUtf8, InvalidText, KeyTextLimit }![]const u8 {
         if (self.modes.keyboard_action_mode) return scratch.buf[0..0];
+        if (!self.modes.auto_repeat and event.action == .repeat) return scratch.buf[0..0];
         const kitty_flags = self.kitty.activeScreenConst(
             self.screen_state.alt_active,
         ).keyboard.flags;

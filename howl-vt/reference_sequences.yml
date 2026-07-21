@@ -1511,7 +1511,12 @@ references:
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
-          - {id: iterm2.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat, howl: {status: partial}}
+          - {id: iterm2.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat,
+            conditions: "Howl additionally cancels pending wrap at the CSI boundary; physical repeat suppression,
+              default-on lifetime, mode query, and save or restore match",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
           - {id: iterm2.mode.mouse_x10, raw: "CSI ? 9 h|l", effect: accept legacy mouse mode without implementation,
             recognition: recognized_noop, howl: {status: 'false'}}
           - {id: iterm2.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
@@ -1847,7 +1852,12 @@ references:
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: kitty.mode.deccolm, raw: "CSI ? 3 h|l", effect: toggle 80 or 132 column mode and home screen,
             howl: {status: partial}}
-          - {id: kitty.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat, howl: {status: partial}}
+          - {id: kitty.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat,
+            conditions: "Howl additionally cancels pending wrap at the CSI boundary; physical repeat suppression,
+              press and release preservation, default-on lifetime, mode query, and save or restore match",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
           - {id: kitty.mode.decsclm, raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
             recognition: recognized_noop, howl: {status: 'false'}}
           - {id: kitty.mode.decnrcm, raw: "CSI ? 42 h|l", effect: ignore national replacement charset mode,

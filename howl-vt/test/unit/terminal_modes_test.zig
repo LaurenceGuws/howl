@@ -441,6 +441,78 @@ test "Kitty key events retain action alternates and bounded associated text" {
     ));
 }
 
+test "DECARM owns repeat encoding query save and reset lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+
+    var default_repeat = try terminal.encodeInput(std.testing.allocator, &scratch, .{
+        .key = .{
+            .key = try Terminal.Key.initUnicode('a'),
+            .action = .repeat,
+            .legacy_text = "a",
+        },
+    });
+    defer default_repeat.deinit();
+    try std.testing.expectEqualStrings("a", default_repeat.bytes);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?8")).state_changed);
+    try std.testing.expect((try terminal.feed("l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?8l")).state_changed);
+    var suppressed = try terminal.encodeInput(std.testing.allocator, &scratch, .{
+        .key = .{
+            .key = try Terminal.Key.initUnicode('a'),
+            .action = .repeat,
+            .text = "\xff",
+        },
+    });
+    defer suppressed.deinit();
+    try std.testing.expectEqualStrings("", suppressed.bytes);
+
+    try std.testing.expect((try terminal.feed("xxxx\x1b[?8l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?8l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[=31u")).state_changed);
+    var press = try terminal.encodeInput(std.testing.allocator, &scratch, .{
+        .key = .{ .key = try Terminal.Key.initUnicode('a') },
+    });
+    defer press.deinit();
+    try std.testing.expectEqualStrings("\x1b[97u", press.bytes);
+    var release = try terminal.encodeInput(std.testing.allocator, &scratch, .{
+        .key = .{
+            .key = try Terminal.Key.initUnicode('a'),
+            .action = .release,
+        },
+    });
+    defer release.deinit();
+    try std.testing.expectEqualStrings("\x1b[97;1:3u", release.bytes);
+
+    try std.testing.expect((try terminal.feed("\x1b[?8s\x1b[?8h")).state_changed);
+    var enabled_repeat = try terminal.encodeInput(std.testing.allocator, &scratch, .{
+        .key = .{ .key = try Terminal.Key.initUnicode('a'), .action = .repeat },
+    });
+    defer enabled_repeat.deinit();
+    try std.testing.expectEqualStrings("\x1b[97;1:2u", enabled_repeat.bytes);
+    try std.testing.expect((try terminal.feed("\x1b[?8r")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?8$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?8;2$y", pendingOutput(&terminal));
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    var reset_repeat = try terminal.encodeInput(std.testing.allocator, &scratch, .{
+        .key = .{
+            .key = try Terminal.Key.initUnicode('a'),
+            .action = .repeat,
+            .legacy_text = "a",
+        },
+    });
+    defer reset_repeat.deinit();
+    try std.testing.expectEqualStrings("a", reset_repeat.bytes);
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?8$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?8;1$y", pendingOutput(&terminal));
+}
+
 test "Kitty key fields preserve empty alternates locks and committed text" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
