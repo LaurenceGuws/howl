@@ -5666,14 +5666,25 @@ fn buttonsMask(buttons_down: u8) u16 {
 }
 
 const ClipboardRequestOwned = struct {
+    generation: u64,
     raw: []u8,
     selection_len: u8,
     kind: ClipboardRequestKind,
+
+    fn view(self: *const ClipboardRequestOwned) ClipboardRequestView {
+        return .{
+            .generation = self.generation,
+            .selection = self.raw[0..self.selection_len],
+            .kind = self.kind,
+        };
+    }
 };
 
 const ClipboardRequestKind = enum { set, query };
 
 const ClipboardRequestView = struct {
+    /// Monotonic identity advancing for every accepted operation, including repeated bytes.
+    generation: u64,
     /// Borrows exact OSC 52 selection bytes; empty selection leaves the choice to host policy.
     selection: []const u8,
     /// Distinguishes clipboard replacement from a host-approved reply request.
@@ -5691,12 +5702,7 @@ const CopyIntoResult = union(enum) {
     short: u64,
 };
 
-const ClipboardDrainResult = union(enum) {
-    none,
-    copied: u64,
-    short: u64,
-    failed,
-};
+const ClipboardHostReplyError = ApplyError || error{StaleClipboardRequest};
 
 // Reports allocation failure or rejection by a concrete retained-consequence bound.
 const ApplyError = error{
@@ -5724,6 +5730,8 @@ const PendingOutput = struct {
 pub const pending_output_max_bytes: u32 = 64 * 1024;
 /// OSC 52 is unchunked; retain at most the parser's 1 MiB clipboard packet.
 const clipboard_max_bytes: u32 = 1024 * 1024;
+/// Bounds one ordered clipboard burst while the host applies access policy.
+const clipboard_capacity: u8 = 8;
 /// OSC 52 names four standard selections and eight numbered cut buffers.
 const clipboard_selection_max_bytes: u8 = 12;
 /// One query reply fits regardless of selection length and 7-bit framing.
@@ -5856,6 +5864,7 @@ comptime {
     std.debug.assert(hyperlink_target_max_bytes <= std.math.maxInt(u16));
     std.debug.assert(notification_capacity > 0);
     std.debug.assert(pointer_shape_capacity > 0);
+    std.debug.assert(clipboard_capacity > 0);
     std.debug.assert(@sizeOf(NotificationOwned) <= max_metadata_bytes + 16);
     std.debug.assert(@sizeOf(PointerShapeOwned) <= max_metadata_bytes + 16);
     std.debug.assert(dcs_payload_max_bytes <= pending_output_max_bytes);
@@ -5918,7 +5927,11 @@ pub const HostState = struct {
     colors: TerminalColorState = .{},
     pending_output: PendingOutput,
     hyperlink_targets: std.ArrayList(HyperlinkTarget),
-    pending_clipboard: ?ClipboardRequestOwned = null,
+    clipboard_generation: u64 = 0,
+    clipboard_requests: [clipboard_capacity]ClipboardRequestOwned = undefined,
+    clipboard_requests_start: u8 = 0,
+    clipboard_requests_count: u8 = 0,
+    clipboard_retained_bytes: u32 = 0,
     current_title: ?[]u8 = null,
     current_icon: ?[]u8 = null,
     working_directory_report: ?WorkingDirectoryReport = null,
@@ -5957,7 +5970,10 @@ pub const HostState = struct {
     pub fn deinit(self: *HostState) void {
         for (self.hyperlink_targets.items) |target| self.allocator.free(target.storage);
         self.hyperlink_targets.deinit(self.allocator);
-        if (self.pending_clipboard) |req| self.allocator.free(req.raw);
+        for (0..self.clipboard_requests_count) |offset| {
+            const index = (@as(usize, self.clipboard_requests_start) + offset) % clipboard_capacity;
+            self.allocator.free(self.clipboard_requests[index].raw);
+        }
         if (self.current_title) |title| self.allocator.free(title);
         if (self.current_icon) |icon| self.allocator.free(icon);
         if (self.working_directory_report) |directory| self.allocator.free(directory.value);
@@ -6169,19 +6185,26 @@ pub const HostState = struct {
         self.bell_generation += 1;
     }
 
-    /// Replace one valid clipboard request transactionally and report exact retained mutation.
-    pub fn replaceClipboard(self: *HostState, payload: []const u8) ApplyError!bool {
+    /// Retain one valid clipboard occurrence transactionally without choosing host access policy.
+    pub fn retainClipboard(self: *HostState, payload: []const u8) ApplyError!bool {
         try ensureRetainedBound(byteCount(payload), clipboard_max_bytes);
         const parsed = parseClipboardRequest(payload) orelse return false;
-        if (self.pending_clipboard) |request|
-            if (std.mem.eql(u8, request.raw, payload)) return false;
+        if (self.clipboard_requests_count == clipboard_capacity) return error.ConsequenceLimit;
+        if (self.clipboard_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const retained_bytes = std.math.add(u32, self.clipboard_retained_bytes, byteCount(payload)) catch
+            return error.ConsequenceLimit;
+        if (retained_bytes > clipboard_max_bytes) return error.ConsequenceLimit;
         const owned = try self.allocator.dupe(u8, payload);
-        if (self.pending_clipboard) |req| self.allocator.free(req.raw);
-        self.pending_clipboard = .{
+        const index = (self.clipboard_requests_start + self.clipboard_requests_count) % clipboard_capacity;
+        self.clipboard_generation += 1;
+        self.clipboard_requests[index] = .{
+            .generation = self.clipboard_generation,
             .raw = owned,
             .selection_len = @intCast(parsed.selection.len),
             .kind = parsed.kind,
         };
+        self.clipboard_requests_count += 1;
+        self.clipboard_retained_bytes = retained_bytes;
         return true;
     }
 
@@ -6235,45 +6258,61 @@ pub const HostState = struct {
         return self.hyperlink_targets.items[idx].uri();
     }
 
-    /// Borrow the pending raw clipboard request until the next HostState mutation.
+    /// Borrow the FIFO-head raw clipboard set until terminal mutation.
     pub fn pendingClipboardSet(self: *const HostState) ?[]const u8 {
-        if (self.pending_clipboard) |req|
-            if (req.kind == .set) return req.raw;
+        const request = self.clipboardRequestHead() orelse return null;
+        if (request.kind == .set) return request.raw;
         return null;
     }
 
-    /// Borrow one pending OSC 52 operation and its exact host-policy selection bytes.
+    /// Borrow the FIFO-head OSC 52 operation and its exact host-policy selection bytes.
     pub fn pendingClipboardRequest(self: *const HostState) ?ClipboardRequestView {
-        const request = self.pending_clipboard orelse return null;
-        return .{
-            .selection = request.raw[0..request.selection_len],
-            .kind = request.kind,
-        };
+        const request = self.clipboardRequestHead() orelse return null;
+        return request.view();
     }
 
-    /// Consume and release the pending raw clipboard request.
-    fn clearPendingClipboard(self: *HostState) void {
-        if (self.pending_clipboard) |req| self.allocator.free(req.raw);
-        self.pending_clipboard = null;
+    fn clipboardRequestHead(self: *const HostState) ?*const ClipboardRequestOwned {
+        if (self.clipboard_requests_count == 0) return null;
+        return &self.clipboard_requests[self.clipboard_requests_start];
+    }
+
+    // Release and consume only the FIFO head after its host operation completes.
+    fn consumeClipboardRequest(self: *HostState) void {
+        std.debug.assert(self.clipboard_requests_count > 0);
+        const request = &self.clipboard_requests[self.clipboard_requests_start];
+        const request_len = byteCount(request.raw);
+        std.debug.assert(request_len <= self.clipboard_retained_bytes);
+        self.clipboard_retained_bytes -= request_len;
+        self.allocator.free(request.raw);
+        self.clipboard_requests_start = (self.clipboard_requests_start + 1) % clipboard_capacity;
+        self.clipboard_requests_count -= 1;
     }
 
     /// Decode into caller-owned memory; allocation failure preserves the request.
-    pub fn drainPendingClipboardSet(self: *HostState, allocator: std.mem.Allocator) error{OutOfMemory}!?[]u8 {
+    pub fn drainPendingClipboardSet(
+        self: *HostState,
+        generation: u64,
+        allocator: std.mem.Allocator,
+    ) error{ OutOfMemory, StaleClipboardRequest }!?[]u8 {
+        const request = self.clipboardRequestHead() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation) return error.StaleClipboardRequest;
         const pending = self.pendingClipboardSet() orelse return null;
         const decoded = decodeClipboardSet(allocator, pending) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => {
-                self.clearPendingClipboard();
-                return null;
-            },
+            else => unreachable,
         };
-        self.clearPendingClipboard();
+        self.consumeClipboardRequest();
         return decoded;
     }
 
     /// Serialize one host-approved OSC 52 query reply and consume the query only on success.
-    pub fn replyPendingClipboardQuery(self: *HostState, bytes: []const u8) ApplyError!bool {
-        const request = self.pendingClipboardRequest() orelse return false;
+    pub fn replyPendingClipboardQuery(
+        self: *HostState,
+        generation: u64,
+        bytes: []const u8,
+    ) ClipboardHostReplyError!bool {
+        const request = self.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation) return error.StaleClipboardRequest;
         if (request.kind != .query) return false;
         const selection = request.selection;
         if (bytes.len > clipboard_reply_bytes_max) return error.ConsequenceLimit;
@@ -6291,18 +6330,8 @@ pub const HostState = struct {
         const encoded = std.base64.standard.Encoder.encode(payload[prefix_len..], bytes);
         std.debug.assert(encoded.len == encoded_len);
         try appendStringReply(&self.pending_output, self.allocator, .terminal, .osc, payload);
-        self.clearPendingClipboard();
+        self.consumeClipboardRequest();
         return true;
-    }
-
-    /// Decode into caller memory and consume only after a complete copy.
-    fn drainPendingClipboardSetInto(self: *HostState, out: []u8) ClipboardDrainResult {
-        const pending = self.pendingClipboardSet() orelse return .none;
-        const decoded_len = decodedClipboardSetSize(pending) catch return .failed;
-        if (out.len < decoded_len) return .{ .short = decoded_len };
-        const written = decodeClipboardSetInto(pending, out) catch return .failed;
-        self.clearPendingClipboard();
-        return .{ .copied = written };
     }
 
     /// Return the most recently retained media-copy request.
@@ -6514,8 +6543,8 @@ fn ensureRetainedBound(len: u32, max_len: u32) ApplyError!void {
     if (len > max_len) return error.ConsequenceLimit;
 }
 
-test "clipboard replacement preserves the retained request on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, replaceClipboardAllocation, .{});
+test "clipboard enqueue preserves the retained FIFO on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainClipboardAllocation, .{});
 }
 
 test "title replacement preserves the retained title on allocation failure" {
@@ -6610,16 +6639,18 @@ fn replaceTitleAndIconAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("both", state.current_icon.?);
 }
 
-fn replaceClipboardAllocation(allocator: std.mem.Allocator) !void {
+fn retainClipboardAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
-    try std.testing.expect(try state.replaceClipboard("c;b2xk"));
-    const changed = state.replaceClipboard("c;bmV3") catch |err| {
+    try std.testing.expect(try state.retainClipboard("c;b2xk"));
+    const changed = state.retainClipboard("c;bmV3") catch |err| {
         try std.testing.expectEqualStrings("c;b2xk", state.pendingClipboardSet().?);
+        try std.testing.expectEqual(@as(u8, 1), state.clipboard_requests_count);
         return err;
     };
     try std.testing.expect(changed);
-    try std.testing.expectEqualStrings("c;bmV3", state.pendingClipboardSet().?);
+    try std.testing.expectEqualStrings("c;b2xk", state.pendingClipboardSet().?);
+    try std.testing.expectEqual(@as(u8, 2), state.clipboard_requests_count);
 }
 
 test "hyperlink interning preserves prior identities on allocation failure" {
@@ -6651,9 +6682,9 @@ test "clipboard query reply preserves request and output on allocation failure" 
 fn replyClipboardAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
-    const retained = try state.replaceClipboard("c;?");
+    const retained = try state.retainClipboard("c;?");
     try std.testing.expect(retained);
-    const replied = state.replyPendingClipboardQuery("Howl") catch |failure| {
+    const replied = state.replyPendingClipboardQuery(1, "Howl") catch |failure| {
         const request = state.pendingClipboardRequest().?;
         try std.testing.expect(request.kind == .query);
         try std.testing.expectEqualStrings("c", request.selection);
@@ -6713,9 +6744,10 @@ test "retained host consequences enforce owner-specific boundaries" {
     clipboard[1] = 'p';
     clipboard[2] = 'q';
     clipboard[3] = ';';
-    try std.testing.expect(try state.replaceClipboard(clipboard[0 .. clipboard_max_bytes - 4]));
-    try std.testing.expect(try state.replaceClipboard(clipboard[0..clipboard_max_bytes]));
-    try std.testing.expectError(error.ConsequenceLimit, state.replaceClipboard(clipboard));
+    try std.testing.expect(try state.retainClipboard(clipboard[0..clipboard_max_bytes]));
+    try std.testing.expectError(error.ConsequenceLimit, state.retainClipboard("c;QQ=="));
+    try std.testing.expectError(error.ConsequenceLimit, state.retainClipboard(clipboard));
+    try std.testing.expectEqual(clipboard_max_bytes, state.clipboard_retained_bytes);
     try std.testing.expectEqual(clipboard_max_bytes, byteCount(state.pendingClipboardSet().?));
 }
 
@@ -6741,8 +6773,8 @@ test "pending output enforces exact accumulated boundary" {
 fn drainClipboardAllocation(result_allocator: std.mem.Allocator) !void {
     var state = HostState.init(std.testing.allocator);
     defer state.deinit();
-    try std.testing.expect(try state.replaceClipboard("c;SG93bA=="));
-    const decoded = state.drainPendingClipboardSet(result_allocator) catch |err| {
+    try std.testing.expect(try state.retainClipboard("c;SG93bA=="));
+    const decoded = state.drainPendingClipboardSet(1, result_allocator) catch |err| {
         try std.testing.expectEqualStrings("c;SG93bA==", state.pendingClipboardSet().?);
         return err;
     };
@@ -9285,7 +9317,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         },
         .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.host.internHyperlink(spec)),
         .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
-        .clipboard_set => |payload| return try vt.host.replaceClipboard(payload),
+        .clipboard_set => |payload| return try vt.host.retainClipboard(payload),
         .locator_reporting => |cfg| setReporting(&vt.host.locator, cfg.mode, cfg.unit),
         .locator_filter => |area| setFilter(&vt.host.locator, area),
         .locator_events => |modes| setEvents(&vt.host.locator, modes.params[0..modes.param_count]),
@@ -11846,8 +11878,10 @@ pub const Terminal = struct {
     /// Reports paste construction or bounded locator-report retention failure.
     pub const InputError = PasteError || ApplyError ||
         error{ InvalidUtf8, InvalidText, KeyTextLimit };
-    /// Reports allocation or 64 KiB pending-output saturation without consuming a clipboard query.
-    pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit };
+    /// Reports stale identity, allocation, or bounded reply saturation without consuming a clipboard query.
+    pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit, StaleClipboardRequest };
+    /// Reports stale identity or an attempt to acknowledge a query without its required reply.
+    pub const ClipboardAcknowledgeError = error{ StaleClipboardRequest, ClipboardReplyRequired };
     /// Reports stale or mismatched host facts, allocation failure, or bounded reply saturation.
     pub const WindowReplyError = ApplyError || error{ StaleWindowRequest, WindowReplyMismatch };
     /// Reports stale identity or an attempt to acknowledge a query without its required reply.
@@ -11856,6 +11890,10 @@ pub const Terminal = struct {
     pub const window_request_max_count = window_request_capacity;
     /// Bounds host clipboard bytes accepted by one query reply in every framing mode.
     pub const clipboard_reply_max_bytes = clipboard_reply_bytes_max;
+    /// Bounds aggregate raw OSC 52 bytes retained across pending operations.
+    pub const clipboard_request_max_bytes = clipboard_max_bytes;
+    /// Exposes the fixed pending OSC 52 operation capacity to embedding hosts.
+    pub const clipboard_max_count = clipboard_capacity;
     /// Exposes one borrowed OSC 52 operation and its exact host-policy selection bytes.
     pub const ClipboardRequest = ClipboardRequestView;
     /// Uses the canonical copied terminal RGB value.
@@ -12652,6 +12690,8 @@ pub const Terminal = struct {
                 .shell = integration.shell,
             } else null,
             .shell_mark = self.host.shell_mark,
+            .clipboard_request = self.host.pendingClipboardRequest(),
+            .clipboard_request_count = self.host.clipboard_requests_count,
             .notification = self.host.notificationView(),
             .notification_count = self.host.notifications_count,
             .pointer_shape = self.host.pointerShapeView(),
@@ -12955,18 +12995,38 @@ pub const Terminal = struct {
     ///
     /// A returned slice is owned by `allocator`; `null` means no decodable set
     /// request was pending. Allocation failure preserves the request.
-    pub fn drainPendingClipboard(self: *Terminal, allocator: std.mem.Allocator) error{OutOfMemory}!?[]u8 {
-        return self.host.drainPendingClipboardSet(allocator);
+    pub fn drainPendingClipboard(
+        self: *Terminal,
+        generation: u64,
+        allocator: std.mem.Allocator,
+    ) error{ OutOfMemory, StaleClipboardRequest }!?[]u8 {
+        const drained = try self.host.drainPendingClipboardSet(generation, allocator);
+        if (drained != null) self.dirty_generation +%= 1;
+        return drained;
     }
 
-    /// Borrow one pending OSC 52 operation until replacement, drain, reply, or deinit.
+    /// Borrow the FIFO-head OSC 52 operation until terminal mutation.
     pub fn pendingClipboardRequest(self: *const Terminal) ?ClipboardRequest {
         return self.host.pendingClipboardRequest();
     }
 
     /// Queue one host-approved OSC 52 reply and consume its query only after complete bounded serialization.
-    pub fn replyPendingClipboard(self: *Terminal, bytes: []const u8) ClipboardReplyError!bool {
-        return self.host.replyPendingClipboardQuery(bytes);
+    pub fn replyPendingClipboard(self: *Terminal, generation: u64, bytes: []const u8) ClipboardReplyError!bool {
+        const replied = try self.host.replyPendingClipboardQuery(generation, bytes);
+        if (replied) self.dirty_generation +%= 1;
+        return replied;
+    }
+
+    /// Consume the matching FIFO-head clipboard set after host policy runs.
+    pub fn acknowledgeClipboard(
+        self: *Terminal,
+        generation: u64,
+    ) ClipboardAcknowledgeError!void {
+        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation) return error.StaleClipboardRequest;
+        if (request.kind == .query) return error.ClipboardReplyRequired;
+        self.host.consumeClipboardRequest();
+        self.dirty_generation +%= 1;
     }
 
     /// Consume the matching FIFO-head notification after host presentation policy runs.
@@ -13086,6 +13146,10 @@ pub const Terminal = struct {
         working_directory: ?Terminal.WorkingDirectory,
         shell_integration: ?Terminal.ShellIntegration,
         shell_mark: ShellMark,
+        /// Borrows the FIFO-head OSC 52 operation until terminal mutation.
+        clipboard_request: ?Terminal.ClipboardRequest,
+        /// Reports the bounded number of pending clipboard operations, including the exposed head.
+        clipboard_request_count: u8,
         /// Borrows the next FIFO host-neutral notification until terminal mutation.
         notification: ?Notification,
         /// Reports the bounded number of pending notifications, including the exposed head.

@@ -271,17 +271,34 @@ fn drainOutput(terminal: *howl_vt.Terminal) !void {
 }
 
 fn drainClipboard(terminal: *howl_vt.Terminal) !void {
-    if (try terminal.drainPendingClipboard(std.testing.allocator)) |previous| {
-        std.testing.allocator.free(previous);
+    const pending_output = try terminal.drainPendingOutput(std.testing.allocator);
+    std.testing.allocator.free(pending_output);
+    while (terminal.pendingClipboardRequest()) |request| {
+        switch (request.kind) {
+            .set => try terminal.acknowledgeClipboard(request.generation),
+            .query => {
+                try std.testing.expect(try terminal.replyPendingClipboard(request.generation, ""));
+                const reply = try terminal.drainPendingOutput(std.testing.allocator);
+                std.testing.allocator.free(reply);
+            },
+        }
     }
+    try std.testing.expect(terminal.pendingClipboardRequest() == null);
     // CAN makes the retained OSC consequence independent of preceding bytes.
     try feedHostile(terminal, "\x18\x1b]52;c;SG93bA==\x07");
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    try std.testing.expectError(error.OutOfMemory, terminal.drainPendingClipboard(failing.allocator()));
-    const clipboard = (try terminal.drainPendingClipboard(std.testing.allocator)).?;
+    const request = terminal.pendingClipboardRequest().?;
+    try std.testing.expectError(
+        error.OutOfMemory,
+        terminal.drainPendingClipboard(request.generation, failing.allocator()),
+    );
+    const clipboard = (try terminal.drainPendingClipboard(request.generation, std.testing.allocator)).?;
     defer std.testing.allocator.free(clipboard);
     try std.testing.expectEqualStrings("Howl", clipboard);
-    try std.testing.expectEqual(@as(?[]u8, null), try terminal.drainPendingClipboard(std.testing.allocator));
+    try std.testing.expectError(
+        error.StaleClipboardRequest,
+        terminal.drainPendingClipboard(request.generation, std.testing.allocator),
+    );
 }
 
 fn acknowledgeAndReuse(terminal: *howl_vt.Terminal) !void {
