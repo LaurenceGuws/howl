@@ -2029,6 +2029,29 @@ test "DEC screen origin and autowrap modes own exact repeated command effects" {
     try std.testing.expect(!(try terminal.feed("\x1b[?7h")).state_changed);
 }
 
+test "ignored and unknown DEC modes preserve pending wrap and grid state" {
+    const modes = [_]u16{ 2, 4, 20, 42, std.math.maxInt(u16) };
+    const finals = [_]u8{ 'h', 'l' };
+
+    for (modes) |mode| for (finals) |final| {
+        var terminal = try Terminal.init(std.testing.allocator, 2, 2);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("AB")).state_changed);
+        try std.testing.expect(terminal.screen_state.activeConst().wrap_pending);
+
+        var bytes: [16]u8 = undefined;
+        const prefix = try std.fmt.bufPrint(bytes[0..], "\x1b[?{d}", .{mode});
+        try std.testing.expect(!(try terminal.feed(prefix)).state_changed);
+        try std.testing.expect(!(try terminal.feed(&.{final})).state_changed);
+        try std.testing.expect(terminal.screen_state.activeConst().wrap_pending);
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.activeConst().cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.activeConst().cellAt(0, 1));
+
+        try std.testing.expect((try terminal.feed("C")).state_changed);
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.screen_state.activeConst().cellAt(1, 0));
+    };
+}
+
 test "application keypad modes affect keypad encoding and DECRQM" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

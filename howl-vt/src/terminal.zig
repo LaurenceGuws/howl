@@ -12983,8 +12983,9 @@ pub const Terminal = struct {
 
     fn setDecMode(self: *Terminal, mode_number: u16, enabled: bool) bool {
         const active = self.screen_state.active();
-        const pending_changed = active.cancelPendingWrap();
         const mode_changed = switch (mode_number) {
+            // Recognized unsupported modes leave even pending-wrap state untouched.
+            2, 4, 20, 42 => return false,
             1 => replaceBool(&self.modes.application_cursor_keys, enabled),
             3 => result: {
                 var changed = replaceBool(&self.modes.column_mode_132, enabled);
@@ -13051,9 +13052,9 @@ pub const Terminal = struct {
             2031 => replaceBool(&self.modes.color_preference_notifications, enabled),
             5522 => replaceBool(&self.modes.paste_events, enabled),
             19997 => replaceBool(&self.modes.termios_signals, enabled),
-            else => false,
+            else => return false,
         };
-        return mode_changed or pending_changed;
+        return active.cancelPendingWrap() or mode_changed;
     }
 
     fn setAnsiModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) bool {
