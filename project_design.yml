@@ -33,6 +33,7 @@ relationships:
   - frame copies complete VT visual truth and cumulative cell damage without owning layout, text, platform, or GPU policy
   - render borrows immutable frames and owns one text/cache preparation path shared across every terminal
   - host composes control, frame, render, and Wayland while owning bounded tabs, pane layout, focus, and presentation lifecycles
+  - the platform-independent workspace owner defines bounded tab and split-pane state before native host adoption
   - the window loop never walks terminal cells or issues GLES commands
   - the render thread updates pane backing textures, releases every borrowed frame, and composites one visible tab
   - qagent is the first real embedder and supplies integration pressure without Howl policy

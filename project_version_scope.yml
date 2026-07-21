@@ -30,6 +30,12 @@ capabilities:
       transactionally resize available terminals from pane layout, and share one render thread, text owner,
       mask cache, and GLES device
 
+  - name: workspace_model
+    acceptance: >-
+      one platform-independent bounded owner provides stable tab and pane identities, transactional names and
+      topology, direct and directional focus, exact pane retirement and close fallback, bounded divider movement, and
+      transactional terminal-grid resize with recursive minimum geometry
+
   - name: window_interaction
     acceptance: >-
       the Wayland loop owns bounded cancellable keyboard repeat, routes cell/pixel mouse facts only to the focused

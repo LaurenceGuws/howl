@@ -23,13 +23,22 @@ boundaries:
 
 categories:
   - id: workspace_model
-    status: queued
+    status: accepted
     goal: >-
-      Establish stable session, tab, pane, and split identities; real resource bounds; transactional tab and pane CRUD;
+      Establish stable session, tab, and pane identities; real resource bounds; transactional tab and pane CRUD;
       deterministic focus fallback; and geometry independent from Wayland, GLES, PTY, and rendering types.
     gate: >-
-      Create, close, rename, reorder, switch, horizontal/vertical split, directional focus, and resize either commit one
-      valid tree or preserve the prior workspace exactly under invalid input, capacity, and allocation failure.
+      Create, close, rename, reorder, switch, horizontal/vertical split, direct/directional focus, divider resize, and
+      outer resize either commit one valid tree or preserve the prior workspace exactly under invalid input, capacity,
+      and allocation failure. Close operations expose every retired pane identity before host adoption destroys owners.
+    result: >-
+      One platform, renderer, and terminal-independent fixed-tree owner now admits sixteen tabs, sixteen panes per tab,
+      sixty-four panes per session, eight split ancestors, 128-byte names, and the current 512 by 256 grid domain.
+      Names allocate before commit; topology is allocation-free. Split nodes retain integer first-child cell extents;
+      divider movement saturates at recursive pane minima, and outer resize preserves those extents or transactionally
+      clamps them for every tab. Dense proofs cover stable identities, exact pane retirement, tab CRUD/order, split and
+      close fallback, direct and directional focus, nested divider movement, odd geometry, hostile topology rejection,
+      depth/count/size rejection, and allocation rollback. The fixed native host remains unchanged until host_adoption.
 
   - id: host_adoption
     status: queued

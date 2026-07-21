@@ -46,6 +46,15 @@ fn addWindow(
     check: *std.Build.Step,
     test_step: *std.Build.Step,
 ) void {
+    const workspace = b.createModule(.{
+        .root_source_file = b.path("howl-window/src/workspace.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const workspace_tests = addTest(b, "howl-window-workspace", workspace);
+    check.dependOn(&workspace_tests.step);
+    test_step.dependOn(&addTestRun(b, workspace_tests).step);
+
     const module = b.createModule(.{
         .root_source_file = b.path("howl-window/src/window.zig"),
         .target = target,
