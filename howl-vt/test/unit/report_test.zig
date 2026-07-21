@@ -30,6 +30,7 @@ test "report mapping: DSR DECXCPR and DEC locator status map" {
     try std.testing.expect(process(makePrivateStyleChange('n', &.{6})).? == .dec_cursor_position_report);
     try std.testing.expectEqual(@as(u16, 55), process(makePrivateStyleChange('n', &.{55})).?.dec_device_status_report);
     try std.testing.expectEqual(@as(u16, 56), process(makePrivateStyleChange('n', &.{56})).?.dec_device_status_report);
+    try std.testing.expect(process(makePrivateStyleChange('n', &.{996})).? == .color_preference_query);
 }
 
 test "report mapping: device attributes and title reports" {

@@ -1787,7 +1787,12 @@ references:
               proof: {path: howl-vt/test/unit/terminal_test.zig,
                 test: synchronized update DCS shares exact bounded mode state}}}
           - {id: iterm2.mode.dark_mode_dsr, raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report,
-            relevance: extension, howl: {status: 'false'}}
+            conditions: "The host supplies each observed dark or light fact; Howl retains, reports, saves, resets, and
+              transactionally serializes the mode but additionally cancels pending wrap at its boundary",
+            relevance: extension, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: Terminal.reportColorSchemePreference, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}}
           - {id: iterm2.mode.resize_notifications, raw: "CSI ? 2048 h|l", effect: toggle resize notifications,
             conditions: resize reports require host-provided cell pixel facts, relevance: extension,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
@@ -2347,7 +2352,11 @@ references:
             conditions: under DECOM Kitty makes only the row origin-relative while Howl also applies the left margin,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: kitty.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: report DEC status,
-            conditions: Kitty additionally delegates private 996 color preference, howl: {status: partial}}
+            conditions: "Howl retains up to 16 ordered private 996 queries for exact host replies and also supports DEC
+              locator statuses 55 and 56, which Kitty ignores",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.replyColorSchemePreference,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "Kitty color-preference queries retain ordered intent and transactional replies"}}}
           - {id: kitty.csi.save_cursor, raw: "CSI s", effect: save cursor,
             conditions: "Howl additionally retains cursor visibility plus cell-domain protection, hyperlink, font, and
               baseline rendition",

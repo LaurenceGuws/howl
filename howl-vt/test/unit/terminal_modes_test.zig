@@ -779,6 +779,81 @@ test "Kitty host-coordinated modes retain exact state reports and color notifica
     try std.testing.expect(!publication.termios_signals);
 }
 
+test "Kitty color-preference queries retain ordered intent and transactional replies" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?99")).state_changed);
+    try std.testing.expect((try terminal.feed("6n\x9b?996n")).state_changed);
+    var publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u8, 2), publication.color_preference_query_count);
+    try std.testing.expectEqual(@as(u64, 1), publication.color_preference_query_generation.?);
+    try std.testing.expectError(
+        error.StaleColorPreferenceQuery,
+        terminal.replyColorSchemePreference(2, .dark),
+    );
+
+    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes);
+    defer allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expectError(
+        error.ConsequenceLimit,
+        terminal.replyColorSchemePreference(1, .dark),
+    );
+    try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
+    try std.testing.expectEqual(@as(u64, 1), terminal.surfaceSnapshot().color_preference_query_generation.?);
+
+    clearPendingOutput(&terminal);
+    try terminal.replyColorSchemePreference(1, .dark);
+    try std.testing.expectEqualStrings("\x1b[?997;1n", pendingOutput(&terminal));
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u64, 2), publication.color_preference_query_generation.?);
+    try std.testing.expectEqual(@as(u8, 1), publication.color_preference_query_count);
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b G\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(4, 10);
+    try terminal.replyColorSchemePreference(2, .light);
+    try std.testing.expectEqualStrings("\x1b[?997;2n", pendingOutput(&terminal));
+    try std.testing.expect(terminal.surfaceSnapshot().color_preference_query_generation == null);
+
+    clearPendingOutput(&terminal);
+    for (0..Terminal.color_preference_query_max_count) |_| {
+        try std.testing.expect((try terminal.feed("\x1b[?996n")).state_changed);
+    }
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Terminal.color_preference_query_max_count, publication.color_preference_query_count);
+    const generation_before_full = terminal.host.color_preference_query_generation;
+    const head_before_full = publication.color_preference_query_generation.?;
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[?996n"));
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(generation_before_full, terminal.host.color_preference_query_generation);
+    try std.testing.expectEqual(head_before_full, publication.color_preference_query_generation.?);
+    try std.testing.expectEqual(Terminal.color_preference_query_max_count, publication.color_preference_query_count);
+
+    for (0..Terminal.color_preference_query_max_count) |offset| {
+        const generation = terminal.surfaceSnapshot().color_preference_query_generation.?;
+        try std.testing.expectEqual(head_before_full + @as(u64, @intCast(offset)), generation);
+        try terminal.replyColorSchemePreference(generation, .dark);
+        clearPendingOutput(&terminal);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().color_preference_query_generation == null);
+    try std.testing.expect(!(try terminal.feed("\x1b[?996;1n")).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().color_preference_query_generation == null);
+    try std.testing.expectError(
+        error.StaleColorPreferenceQuery,
+        terminal.replyColorSchemePreference(generation_before_full, .dark),
+    );
+
+    terminal.host.color_preference_query_generation = std.math.maxInt(u64);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[?996n"));
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u8, 0), publication.color_preference_query_count);
+    try std.testing.expect(publication.color_preference_query_generation == null);
+}
+
 test "iTerm2 host-coordinated input modes retain reports and terminal lifetime" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

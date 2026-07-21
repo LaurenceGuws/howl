@@ -5920,6 +5920,9 @@ pub const WindowRequestOccurrence = struct {
     request: WindowRequest,
 };
 
+// Bounds one burst of identical host color-preference queries without allocation.
+const color_preference_query_capacity: u8 = 16;
+
 /// Preserves one ANSI or DEC media-copy command for host printing policy.
 pub const MediaCopyRequest = struct {
     /// Distinguishes `CSI ? Ps i` from the ordinary ANSI command.
@@ -6076,6 +6079,9 @@ pub const HostState = struct {
     window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
     window_requests_start: u8 = 0,
     window_requests_count: u8 = 0,
+    color_preference_query_generation: u64 = 0,
+    color_preference_query_head: u64 = 0,
+    color_preference_query_count: u8 = 0,
     media_copy_generation: u64 = 0,
     media_copy_requests: [media_copy_capacity]MediaCopyOccurrence = undefined,
     media_copy_start: u8 = 0,
@@ -6316,6 +6322,33 @@ pub const HostState = struct {
         std.debug.assert(self.window_requests_count > 0);
         self.window_requests_start = (self.window_requests_start + 1) % window_request_capacity;
         self.window_requests_count -= 1;
+    }
+
+    fn retainColorPreferenceQuery(self: *HostState) ApplyError!void {
+        if (self.color_preference_query_count == color_preference_query_capacity)
+            return error.ConsequenceLimit;
+        if (self.color_preference_query_generation == std.math.maxInt(u64))
+            return error.ConsequenceLimit;
+        self.color_preference_query_generation += 1;
+        if (self.color_preference_query_count == 0)
+            self.color_preference_query_head = self.color_preference_query_generation;
+        self.color_preference_query_count += 1;
+    }
+
+    fn colorPreferenceQueryGeneration(self: *const HostState) ?u64 {
+        if (self.color_preference_query_count == 0) return null;
+        return self.color_preference_query_head;
+    }
+
+    fn consumeColorPreferenceQuery(self: *HostState) void {
+        std.debug.assert(self.color_preference_query_count > 0);
+        self.color_preference_query_count -= 1;
+        if (self.color_preference_query_count == 0) {
+            self.color_preference_query_head = 0;
+        } else {
+            std.debug.assert(self.color_preference_query_head < self.color_preference_query_generation);
+            self.color_preference_query_head += 1;
+        }
     }
 
     fn retainMediaCopy(self: *HostState, request: MediaCopyRequest) ApplyError!void {
@@ -8302,6 +8335,7 @@ fn report(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEv
             5 => SemanticEvent.device_status_report,
             6 => SemanticEvent.dec_cursor_position_report,
             55, 56 => |status| SemanticEvent{ .dec_device_status_report = status },
+            996 => SemanticEvent.color_preference_query,
             else => null,
         },
         else => null,
@@ -9065,6 +9099,7 @@ pub const SemanticEvent = union(enum) {
     notification: struct { command: u16, payload: []const u8 },
     pointer_shape: []const u8,
     window_request: WindowRequest,
+    color_preference_query,
     kitty_color_stack: KittyColorCommand,
     sgr_stack_push: ModeParams,
     sgr_stack_pop,
@@ -9741,6 +9776,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .notification => |notification| try vt.host.retainNotification(notification.command, notification.payload),
         .pointer_shape => |payload| try vt.host.retainPointerShape(payload),
         .window_request => |request| try vt.host.retainWindowRequest(request),
+        .color_preference_query => try vt.host.retainColorPreferenceQuery(),
         .color_control => |cmd| {
             const before = vt.host.colors;
             const output_before = byteCount(vt.host.pending_output.bytes.items);
@@ -11607,6 +11643,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .notification,
         .pointer_shape,
         .window_request,
+        .color_preference_query,
         .hyperlink_set,
         .hyperlink_clear,
         .clipboard_set,
@@ -12469,6 +12506,10 @@ pub const Terminal = struct {
         dark,
         light,
     };
+    /// Reports stale query identity, allocation failure, or bounded reply saturation.
+    pub const ColorPreferenceReplyError = ApplyError || error{StaleColorPreferenceQuery};
+    /// Exposes the fixed pending color-preference-query capacity to embedding hosts.
+    pub const color_preference_query_max_count = color_preference_query_capacity;
     /// Borrows validated shell-integration identity from one surface publication.
     pub const ShellIntegration = ItermShellIntegration;
     /// Borrows the latest child-reported directory bytes and their URI-or-path interpretation.
@@ -12803,6 +12844,24 @@ pub const Terminal = struct {
         );
         self.dirty_generation +%= 1;
         return true;
+    }
+
+    /// Reply to and consume the matching FIFO-head color-preference query transactionally.
+    pub fn replyColorSchemePreference(
+        self: *Terminal,
+        generation: u64,
+        preference: ColorSchemePreference,
+    ) ColorPreferenceReplyError!void {
+        const head = self.host.colorPreferenceQueryGeneration() orelse return error.StaleColorPreferenceQuery;
+        if (head != generation) return error.StaleColorPreferenceQuery;
+        try appendCsiReply(
+            &self.host.pending_output,
+            self.allocator,
+            .kitty,
+            if (preference == .dark) "?997;1n" else "?997;2n",
+        );
+        self.host.consumeColorPreferenceQuery();
+        self.dirty_generation +%= 1;
     }
 
     /// Applies RIS while preserving dimensions and owned allocations.
@@ -13443,6 +13502,8 @@ pub const Terminal = struct {
             .file_transfer_count = self.host.file_transfer_count,
             .window_request = self.host.windowRequestHead(),
             .window_request_count = self.host.window_requests_count,
+            .color_preference_query_generation = self.host.colorPreferenceQueryGeneration(),
+            .color_preference_query_count = self.host.color_preference_query_count,
             .media_copy = self.host.mediaCopyHead(),
             .media_copy_count = self.host.media_copy_count,
             .dcs_payload = self.host.dcsPayloadHead(),
@@ -13955,6 +14016,10 @@ pub const Terminal = struct {
         window_request: ?WindowRequestOccurrence,
         /// Reports the bounded number of pending FIFO window requests, including the exposed head.
         window_request_count: u8,
+        /// Identifies the next FIFO color-preference query until terminal mutation.
+        color_preference_query_generation: ?u64,
+        /// Reports the bounded number of pending color-preference queries, including the exposed head.
+        color_preference_query_count: u8,
         /// Borrows the next FIFO ANSI or DEC media-copy command until terminal mutation.
         media_copy: ?MediaCopyOccurrence,
         /// Reports the bounded number of pending media-copy commands, including the exposed head.
