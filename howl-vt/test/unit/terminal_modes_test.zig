@@ -67,12 +67,14 @@ fn clearPendingOutput(terminal: *Terminal) void {
     terminal.host.clearPendingOutput();
 }
 
-fn dcsPayloadKind(terminal: *const Terminal) ?dcs_payload.DcsPayloadKind {
-    return terminal.host.dcsPayloadKind();
+fn dcsPayloadKind(terminal: *Terminal) ?dcs_payload.DcsPayloadKind {
+    if (terminal.surfaceSnapshot().dcs_payload) |payload| return payload.kind;
+    return null;
 }
 
-fn dcsPayload(terminal: *const Terminal) ?[]const u8 {
-    return terminal.host.dcsPayload();
+fn dcsPayload(terminal: *Terminal) ?[]const u8 {
+    if (terminal.surfaceSnapshot().dcs_payload) |payload| return payload.payload;
+    return null;
 }
 
 fn legacyControl(terminal: *const Terminal) ?legacy_control.LegacyControlKind {
@@ -1758,27 +1760,28 @@ test "XTGETTCAP response capacity failure rolls back every requested reply" {
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
 
-test "DCS legacy payload protocols retain latest host-neutral payload" {
-    const allocator = std.testing.allocator;
-    var terminal = try Terminal.init(allocator, 4, 8);
-    defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
-
-    write(&stream, "\x1bP+p436F=7661\x1b\\");
-    try std.testing.expect(dcsPayloadKind(&terminal).? == .xtsettcap);
-    try std.testing.expectEqualStrings("436F=7661", dcsPayload(&terminal).?);
-}
-
-test "DCS legacy payload protocols retain latest host-neutral payload across slices" {
+test "DCS configuration commands retain bounded cross-family order" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
     try stream.nextSlice("\x1bP+p436F=");
-    try stream.nextSlice("7661\x1b\\");
-    try std.testing.expect(dcsPayloadKind(&terminal).? == .xtsettcap);
-    try std.testing.expectEqualStrings("436F=7661", dcsPayload(&terminal).?);
+    try stream.nextSlice("7661\x1b\\\x90" ++ "0;1|keys\x9c\x1bP0!uA\x1b\\");
+    const expected = [_]struct { kind: dcs_payload.DcsPayloadKind, payload: []const u8 }{
+        .{ .kind = .xtsettcap, .payload = "436F=7661" },
+        .{ .kind = .decudk, .payload = "0;1|keys" },
+        .{ .kind = .decaupss, .payload = "0!uA" },
+    };
+    try std.testing.expectEqual(@as(u8, expected.len), terminal.surfaceSnapshot().dcs_payload_count);
+    for (expected, 1..) |wanted, generation| {
+        const occurrence = terminal.surfaceSnapshot().dcs_payload.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqual(wanted.kind, occurrence.kind);
+        try std.testing.expectEqualStrings(wanted.payload, occurrence.payload);
+        try terminal.acknowledgeDcsPayload(occurrence.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().dcs_payload == null);
 }
 
 test "canceled DCS discards its partial consequence before the next complete DCS" {
@@ -1794,6 +1797,27 @@ test "canceled DCS discards its partial consequence before the next complete DCS
     try stream.nextSlice("\x1bP+p436F=keep\x1b\\");
     try std.testing.expectEqual(dcs_payload.DcsPayloadKind.xtsettcap, dcsPayloadKind(&terminal).?);
     try std.testing.expectEqualStrings("436F=keep", dcsPayload(&terminal).?);
+}
+
+test "DCS configuration queue wraps and preserves full-queue identity" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+
+    for (0..5) |_| {
+        try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).state_changed);
+        try terminal.acknowledgeDcsPayload(terminal.surfaceSnapshot().dcs_payload.?.generation);
+    }
+    for (0..8) |_| try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).state_changed);
+    const full = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u8, 8), full.dcs_payload_count);
+    const head = full.dcs_payload.?;
+    const generation = terminal.host.dcs_payload_generation;
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1bP+pB\x1b\\"));
+    try std.testing.expectEqual(generation, terminal.host.dcs_payload_generation);
+    try std.testing.expectEqual(head.generation, terminal.surfaceSnapshot().dcs_payload.?.generation);
+    try std.testing.expectEqualStrings("A", terminal.surfaceSnapshot().dcs_payload.?.payload);
+    try std.testing.expectError(error.StaleDcsPayload, terminal.acknowledgeDcsPayload(head.generation + 1));
 }
 
 test "DCS payload bound reports overflow and remains restartable" {
@@ -1817,7 +1841,12 @@ test "DCS payload bound reports overflow and remains restartable" {
     try std.testing.expectEqual(@as(usize, parser_mod.max_metadata_control_bytes), dcsPayload(&terminal).?.len);
     try std.testing.expectEqual(@as(u8, 'x'), dcsPayload(&terminal).?[5]);
 
+    try terminal.acknowledgeDcsPayload(terminal.surfaceSnapshot().dcs_payload.?.generation);
     try std.testing.expect(!(try terminal.feed("\x1bP+pkeep\x1b\\")).history_lost);
+    try std.testing.expectEqualStrings("keep", dcsPayload(&terminal).?);
+
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(5, 9);
     try std.testing.expectEqualStrings("keep", dcsPayload(&terminal).?);
 }
 

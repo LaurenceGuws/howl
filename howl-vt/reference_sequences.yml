@@ -1478,8 +1478,15 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreTabStops, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECRSPS replaces active bounded tab stops transactionally"}}}
-          - {id: iterm2.dcs.xtsettcap, raw: "DCS + p Pt ST", effect: set termcap or terminfo values,
-            howl: {status: partial}}
+          - id: iterm2.dcs.xtsettcap
+            raw: "DCS + p Pt ST"
+            effect: set termcap or terminfo values
+            conditions: >-
+              iTerm2 validates names and mutates terminal key mappings; Howl retains each exact command in an
+              eight-entry cross-family FIFO sharing a 2 KiB aggregate bound, and delegates terminfo policy.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: HostState.retainDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DCS configuration commands retain bounded cross-family order"}}
           - {id: iterm2.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
             conditions: "Howl answers Co, colors, RGB, Tc, and Su without exposing term identity, profile, key mapping,
               or arbitrary terminfo",

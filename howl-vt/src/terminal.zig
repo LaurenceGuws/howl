@@ -5784,6 +5784,8 @@ const clipboard_reply_bytes_max: u32 =
     ((pending_output_max_bytes - clipboard_selection_max_bytes - 8) / 4) * 3;
 /// Retained DCS families are metadata protocols bounded by parser acceptance.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
+// Bounds one DCS command burst within the unchanged aggregate payload budget.
+const dcs_payload_capacity: u8 = 8;
 /// One retained OSC 8 URI and optional identity share the ordinary metadata scale.
 const hyperlink_target_max_bytes: u32 = 2 * 1024;
 /// Each retained title or icon name follows the 1 KiB parser metadata scale.
@@ -6012,8 +6014,13 @@ pub const HostState = struct {
     // Heap-backed consequences are bounded before allocation; notification
     // and pointer occurrences use fixed inline queue storage.
     const DcsPayloadOwned = struct {
+        generation: u64,
         kind: DcsPayloadKind,
         payload: []u8,
+
+        fn view(self: *const DcsPayloadOwned) DcsPayloadOccurrence {
+            return .{ .generation = self.generation, .kind = self.kind, .payload = self.payload };
+        }
     };
 
     allocator: std.mem.Allocator,
@@ -6054,7 +6061,11 @@ pub const HostState = struct {
     media_copy_count: u8 = 0,
     bell_generation: u64 = 0,
     locator: Locator = .{},
-    dcs_payload: ?DcsPayloadOwned = null,
+    dcs_payload_generation: u64 = 0,
+    dcs_payloads: [dcs_payload_capacity]DcsPayloadOwned = undefined,
+    dcs_payloads_start: u8 = 0,
+    dcs_payloads_count: u8 = 0,
+    dcs_retained_bytes: u32 = 0,
     legacy_control: ?LegacyControlKind = null,
 
     /// Initialize empty consequence state borrowing `allocator` until deinit.
@@ -6085,7 +6096,10 @@ pub const HostState = struct {
         if (self.shell_integration) |integration|
             if (integration.shell) |shell| self.allocator.free(shell);
         self.allocator.free(self.shell_mark.metadata);
-        if (self.dcs_payload) |payload| self.allocator.free(payload.payload);
+        for (0..self.dcs_payloads_count) |offset| {
+            const index = (@as(usize, self.dcs_payloads_start) + offset) % dcs_payload_capacity;
+            self.allocator.free(self.dcs_payloads[index].payload);
+        }
         self.pending_output.bytes.deinit(self.allocator);
     }
 
@@ -6378,12 +6392,40 @@ pub const HostState = struct {
         self.clipboard_retained_bytes = retained_bytes;
     }
 
-    /// Replace the retained DCS payload after bounds and allocation succeed.
-    pub fn replaceDcsPayload(self: *HostState, payload: DcsPayload) ApplyError!void {
+    /// Retain one DCS command after count, byte, generation, and allocation bounds succeed.
+    pub fn retainDcsPayload(self: *HostState, payload: DcsPayload) ApplyError!void {
         try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
+        if (self.dcs_payloads_count == dcs_payload_capacity) return error.ConsequenceLimit;
+        if (self.dcs_payload_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const retained_bytes = std.math.add(u32, self.dcs_retained_bytes, byteCount(payload.payload)) catch
+            return error.ConsequenceLimit;
+        if (retained_bytes > dcs_payload_max_bytes) return error.ConsequenceLimit;
         const owned = try self.allocator.dupe(u8, payload.payload);
-        if (self.dcs_payload) |old| self.allocator.free(old.payload);
-        self.dcs_payload = .{ .kind = payload.kind, .payload = owned };
+        const index = (self.dcs_payloads_start + self.dcs_payloads_count) % dcs_payload_capacity;
+        self.dcs_payload_generation += 1;
+        self.dcs_payloads[index] = .{
+            .generation = self.dcs_payload_generation,
+            .kind = payload.kind,
+            .payload = owned,
+        };
+        self.dcs_payloads_count += 1;
+        self.dcs_retained_bytes = retained_bytes;
+    }
+
+    fn dcsPayloadHead(self: *const HostState) ?DcsPayloadOccurrence {
+        if (self.dcs_payloads_count == 0) return null;
+        return self.dcs_payloads[self.dcs_payloads_start].view();
+    }
+
+    fn consumeDcsPayload(self: *HostState) void {
+        std.debug.assert(self.dcs_payloads_count > 0);
+        const payload = &self.dcs_payloads[self.dcs_payloads_start];
+        const payload_len = byteCount(payload.payload);
+        std.debug.assert(payload_len <= self.dcs_retained_bytes);
+        self.allocator.free(payload.payload);
+        self.dcs_retained_bytes -= payload_len;
+        self.dcs_payloads_start = (self.dcs_payloads_start + 1) % dcs_payload_capacity;
+        self.dcs_payloads_count -= 1;
     }
 
     // Returns a stable nonzero hyperlink identity, preserving existing identities on failure.
@@ -6503,18 +6545,6 @@ pub const HostState = struct {
         try appendStringReply(&self.pending_output, self.allocator, .terminal, .osc, payload);
         self.consumeClipboardRequest();
         return true;
-    }
-
-    /// Return the retained DCS payload kind, if any.
-    pub fn dcsPayloadKind(self: *const HostState) ?DcsPayloadKind {
-        if (self.dcs_payload) |payload| return payload.kind;
-        return null;
-    }
-
-    /// Borrow the retained DCS payload bytes, if any.
-    pub fn dcsPayload(self: *const HostState) ?[]const u8 {
-        if (self.dcs_payload) |payload| return payload.payload;
-        return null;
     }
 
     /// Return the most recently observed legacy control kind.
@@ -6940,13 +6970,12 @@ test "retained host consequences enforce owner-specific boundaries" {
     const dcs = try allocator.alloc(u8, dcs_payload_max_bytes + 1);
     defer allocator.free(dcs);
     @memset(dcs, 'd');
-    try state.replaceDcsPayload(.{ .kind = .xtsettcap, .payload = dcs[0 .. dcs_payload_max_bytes - 1] });
-    try state.replaceDcsPayload(.{ .kind = .xtsettcap, .payload = dcs[0..dcs_payload_max_bytes] });
+    try state.retainDcsPayload(.{ .kind = .xtsettcap, .payload = dcs[0 .. dcs_payload_max_bytes - 1] });
     try std.testing.expectError(
         error.ConsequenceLimit,
-        state.replaceDcsPayload(.{ .kind = .xtsettcap, .payload = dcs }),
+        state.retainDcsPayload(.{ .kind = .xtsettcap, .payload = dcs[0..dcs_payload_max_bytes] }),
     );
-    try std.testing.expectEqual(dcs_payload_max_bytes, byteCount(state.dcsPayload().?));
+    try std.testing.expectEqual(dcs_payload_max_bytes - 1, state.dcs_retained_bytes);
 
     const clipboard = try allocator.alloc(u8, clipboard_max_bytes + 1);
     defer allocator.free(clipboard);
@@ -7357,6 +7386,16 @@ pub const DcsPayloadKind = enum {
     xtsettcap,
     decudk,
     decaupss,
+};
+
+/// Borrows one ordered terminal-configuration DCS command until acknowledgement.
+pub const DcsPayloadOccurrence = struct {
+    /// Monotonic identity advancing for every retained command, including repeated bytes.
+    generation: u64,
+    /// Identifies the exact DCS command family owning `payload`.
+    kind: DcsPayloadKind,
+    /// Borrows exact bounded command bytes until terminal mutation.
+    payload: []const u8,
 };
 
 // Borrows one complete DCS payload for immediate semantic decoding.
@@ -9590,7 +9629,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             param,
         ),
         .media_copy_request => |request| try vt.host.retainMediaCopy(request),
-        .dcs_payload => |payload| try vt.host.replaceDcsPayload(payload),
+        .dcs_payload => |payload| try vt.host.retainDcsPayload(payload),
         .legacy_control => |kind| vt.host.legacy_control = kind,
         else => unreachable,
     }
@@ -13120,6 +13159,8 @@ pub const Terminal = struct {
             .window_request_count = self.host.window_requests_count,
             .media_copy = self.host.mediaCopyHead(),
             .media_copy_count = self.host.media_copy_count,
+            .dcs_payload = self.host.dcsPayloadHead(),
+            .dcs_payload_count = self.host.dcs_payloads_count,
             .color_preference_notifications = self.modes.color_preference_notifications,
             .paste_events = self.modes.paste_events,
             .termios_signals = self.modes.termios_signals,
@@ -13543,6 +13584,14 @@ pub const Terminal = struct {
         self.dirty_generation +%= 1;
     }
 
+    /// Consume the matching FIFO-head terminal-configuration DCS command.
+    pub fn acknowledgeDcsPayload(self: *Terminal, generation: u64) error{StaleDcsPayload}!void {
+        const occurrence = self.host.dcsPayloadHead() orelse return error.StaleDcsPayload;
+        if (occurrence.generation != generation) return error.StaleDcsPayload;
+        self.host.consumeDcsPayload();
+        self.dirty_generation +%= 1;
+    }
+
     fn noteSelectionChanged(self: *Terminal) void {
         self.screen_state.active().markAllRowsDirty();
         self.dirty_generation +%= 1;
@@ -13611,6 +13660,10 @@ pub const Terminal = struct {
         media_copy: ?MediaCopyOccurrence,
         /// Reports the bounded number of pending media-copy commands, including the exposed head.
         media_copy_count: u8,
+        /// Borrows the next FIFO terminal-configuration DCS command until terminal mutation.
+        dcs_payload: ?DcsPayloadOccurrence,
+        /// Reports the bounded number of pending DCS commands, including the exposed head.
+        dcs_payload_count: u8,
         /// Reports whether mode 2031 asks the host to publish color-scheme changes.
         color_preference_notifications: bool,
         /// Reports whether mode 5522 asks the host to use Kitty's extended paste path.
