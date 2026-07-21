@@ -5782,9 +5782,9 @@ const clipboard_selection_max_bytes: u8 = 12;
 /// One query reply fits regardless of selection length and 7-bit framing.
 const clipboard_reply_bytes_max: u32 =
     ((pending_output_max_bytes - clipboard_selection_max_bytes - 8) / 4) * 3;
-/// Bounds aggregate bytes retained across ordered configuration and host-directed DCS consequences.
+/// Bounds aggregate bytes retained across configuration, delegated transport, and host-directed DCS consequences.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
-// Holds all nine Kitty host-directed commands plus a bounded mixed-family burst.
+// Holds the nine-command Kitty family, three iTerm2 transports, and a bounded mixed-family burst.
 const dcs_payload_capacity: u8 = 16;
 // Bounds one ordered APC, PM, and SOS fallback burst within the same metadata scale.
 const string_payload_capacity: u8 = 32;
@@ -6013,8 +6013,8 @@ const HyperlinkTarget = struct {
 /// `allocator` is borrowed for the HostState lifetime and owns every retained
 /// allocation; caller-selected drain allocators own only returned buffers.
 pub const HostState = struct {
-    // Heap-backed consequences are bounded before allocation. DCS occurrences
-    // share count and aggregate-byte bounds across configuration and host-directed families.
+    // Heap-backed consequences are bounded before allocation. Configuration,
+    // delegated transport, and host-directed DCS families share count and aggregate-byte bounds.
     const DcsPayloadOwned = struct {
         generation: u64,
         kind: DcsPayloadKind,
@@ -6413,7 +6413,8 @@ pub const HostState = struct {
         self.clipboard_retained_bytes = retained_bytes;
     }
 
-    /// Retain one ordered DCS consequence after count, byte, generation, and allocation bounds succeed.
+    /// Retain one ordered configuration, delegated transport, or host-directed DCS consequence.
+    /// Count, byte, generation, and allocation bounds succeed before queue mutation.
     pub fn retainDcsPayload(self: *HostState, payload: DcsPayload) ApplyError!void {
         try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
         if (self.dcs_payloads_count == dcs_payload_capacity) return error.ConsequenceLimit;
@@ -7456,11 +7457,14 @@ const KittyState = struct {
     }
 };
 
-/// Identifies one retained configuration or host-directed DCS consequence family.
+/// Identifies one retained configuration, delegated transport, or host-directed DCS consequence family.
 pub const DcsPayloadKind = enum {
     xtsettcap,
     decudk,
     decaupss,
+    iterm_tmux_hook,
+    iterm_ssh_hook,
+    iterm_tmux_wrap,
     kitty_remote_command,
     kitty_overlay_ready,
     kitty_result,
@@ -7472,7 +7476,8 @@ pub const DcsPayloadKind = enum {
     kitty_edit,
 };
 
-/// Borrows the FIFO-head configuration or host-directed DCS consequence until acknowledgement.
+/// Borrows the FIFO-head configuration, delegated transport, or host-directed DCS consequence.
+/// Its payload remains valid until terminal mutation or matching acknowledgement.
 pub const DcsPayloadOccurrence = struct {
     /// Monotonic identity advancing for every retained consequence, including repeated bytes.
     generation: u64,
@@ -7500,7 +7505,7 @@ const StringPayload = struct {
     payload: []const u8,
 };
 
-// Borrows one complete DCS payload for immediate semantic decoding.
+// Borrows one complete typed DCS consequence for immediate semantic decoding.
 const DcsPayload = struct {
     kind: DcsPayloadKind,
     payload: []const u8,
@@ -8438,6 +8443,18 @@ fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
     if (dcs.final == '|') return SemanticEvent{ .dcs_payload = .{ .kind = .decudk, .payload = dcs.body } };
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '!' and dcs.final == 'u')
         return SemanticEvent{ .dcs_payload = .{ .kind = .decaupss, .payload = dcs.body } };
+    if (dcs.intermediates_len == 0) {
+        if (dcs.final == 'p' and dcs.param_count == 1) {
+            const kind: DcsPayloadKind = switch (dcs.params[0]) {
+                1000 => .iterm_tmux_hook,
+                2000 => .iterm_ssh_hook,
+                else => return null,
+            };
+            return SemanticEvent{ .dcs_payload = .{ .kind = kind, .payload = dcs.payload } };
+        }
+        if (dcs.final == 't' and dcs.param_count == 0 and std.mem.startsWith(u8, dcs.payload, "tmux;"))
+            return SemanticEvent{ .dcs_payload = .{ .kind = .iterm_tmux_wrap, .payload = dcs.payload[5..] } };
+    }
     if (dcs.intermediates_len == 0 and dcs.param_count == 0 and dcs.final == '@' and
         std.mem.startsWith(u8, dcs.payload, "kitty-"))
     {
@@ -13825,7 +13842,7 @@ pub const Terminal = struct {
         self.dirty_generation +%= 1;
     }
 
-    /// Consume the matching FIFO-head configuration or host-directed DCS consequence.
+    /// Consume the matching FIFO-head configuration, delegated transport, or host-directed DCS consequence.
     pub fn acknowledgeDcsPayload(self: *Terminal, generation: u64) error{StaleDcsPayload}!void {
         const occurrence = self.host.dcsPayloadHead() orelse return error.StaleDcsPayload;
         if (occurrence.generation != generation) return error.StaleDcsPayload;
@@ -13909,9 +13926,9 @@ pub const Terminal = struct {
         media_copy: ?MediaCopyOccurrence,
         /// Reports the bounded number of pending media-copy commands, including the exposed head.
         media_copy_count: u8,
-        /// Borrows the next FIFO configuration or host-directed DCS consequence until terminal mutation.
+        /// Borrows the next FIFO configuration, delegated transport, or host-directed DCS consequence.
         dcs_payload: ?DcsPayloadOccurrence,
-        /// Reports up to 16 pending ordered DCS consequences, including the exposed head.
+        /// Reports up to 16 ordered configuration, delegated transport, and host-directed DCS consequences.
         dcs_payload_count: u8,
         /// Borrows the next FIFO generic APC, PM, or SOS payload until terminal mutation.
         string_payload: ?StringPayloadOccurrence,

@@ -1464,13 +1464,25 @@ references:
         recognition: implemented
         records:
           - {id: iterm2.dcs.tmux_hook, raw: "DCS 1000 p Pb ST", effect: enter tmux passthrough parser,
-            recognition: delegated, relevance: transport, howl: {status: 'false'}}
+            recognition: delegated, relevance: transport,
+            conditions: Howl retains exact bounded completed hook bytes but does not stream or execute the tmux parser,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "iTerm2 DCS transport commands retain exact delegated bytes in order"}}}
           - {id: iterm2.dcs.ssh_hook, raw: "DCS 2000 p Pb ST", effect: enter SSH conductor parser,
-            recognition: delegated, relevance: transport, howl: {status: 'false'}}
+            recognition: delegated, relevance: transport,
+            conditions: Howl retains exact bounded completed hook bytes but does not stream or execute the SSH parser,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "iTerm2 DCS transport commands retain exact delegated bytes in order"}}}
           - {id: iterm2.dcs.sixel, raw: "DCS Pm q Pb ST", effect: decode Sixel image, recognition: delegated,
             relevance: graphics, howl: {status: 'false'}}
           - {id: iterm2.dcs.tmux_wrap, raw: "DCS t tmux;Pb ST", effect: unwrap tmux terminal bytes,
-            relevance: transport, howl: {status: 'false'}}
+            relevance: transport,
+            conditions: Howl retains bounded bytes after tmux; without iTerm2's ESC unescaping or recursive parsing,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "iTerm2 DCS transport commands retain exact delegated bytes in order"}}}
           - id: iterm2.dcs.sync_begin
             raw: "DCS = 1 s ST"
             effect: begin synchronized update

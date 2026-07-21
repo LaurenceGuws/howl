@@ -1784,6 +1784,45 @@ test "DCS configuration commands retain bounded cross-family order" {
     try std.testing.expect(terminal.surfaceSnapshot().dcs_payload == null);
 }
 
+test "iTerm2 DCS transport commands retain exact delegated bytes in order" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    const commands = [_]struct { introducer: []const u8, payload: []const u8 }{
+        .{ .introducer = "\x1bP1000p", .payload = "tmux-client" },
+        .{ .introducer = "\x1bP2000p", .payload = "ssh-client" },
+        .{ .introducer = "\x1bPt", .payload = "tmux;wrapped-bytes" },
+    };
+    for (commands) |command| {
+        try std.testing.expect(!(try terminal.feed(command.introducer)).state_changed);
+        const split = command.payload.len / 2;
+        try std.testing.expect(!(try terminal.feed(command.payload[0..split])).state_changed);
+        try std.testing.expect(!(try terminal.feed(command.payload[split..])).state_changed);
+        try std.testing.expect((try terminal.feed("\x1b\\")).state_changed);
+    }
+
+    const expected = [_]struct { kind: dcs_payload.DcsPayloadKind, payload: []const u8 }{
+        .{ .kind = .iterm_tmux_hook, .payload = "tmux-client" },
+        .{ .kind = .iterm_ssh_hook, .payload = "ssh-client" },
+        .{ .kind = .iterm_tmux_wrap, .payload = "wrapped-bytes" },
+    };
+    for (expected, 1..) |wanted, generation| {
+        const occurrence = terminal.surfaceSnapshot().dcs_payload.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqual(wanted.kind, occurrence.kind);
+        try std.testing.expectEqualStrings(wanted.payload, occurrence.payload);
+        try terminal.acknowledgeDcsPayload(occurrence.generation);
+    }
+
+    const ignored = [_][]const u8{
+        "\x1bP999punknown\x1b\\",
+        "\x1bP1000;1ptrailing-param\x1b\\",
+        "\x1bPtother;payload\x1b\\",
+    };
+    for (ignored) |bytes| try std.testing.expect(!(try terminal.feed(bytes)).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().dcs_payload == null);
+}
+
 test "Kitty host-directed DCS commands retain exact handler payloads in order" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
