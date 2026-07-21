@@ -5841,6 +5841,9 @@ pub const max_metadata_bytes: u32 = 1024;
 const notification_capacity: u8 = 8;
 // Bounds one pointer-request burst while a host applies validation and presentation policy.
 const pointer_shape_capacity: u8 = 8;
+// Bounds one opaque file-transfer burst while its host applies policy and storage.
+const file_transfer_capacity: u8 = 8;
+const file_transfer_packet_max_bytes: u32 = parser_mod.max_chunk_control_bytes;
 /// Kitty retains the newest ten nonempty child titles.
 const title_stack_limit = 10;
 /// A terminal instance interns at most 4096 distinct hyperlink targets.
@@ -5902,6 +5905,29 @@ const PointerShapeOwned = struct {
     }
 };
 
+/// Identifies the opaque file-transfer grammar governing one retained packet.
+pub const FileTransferProtocol = enum { iterm2_1337, kitty_5113 };
+
+/// Borrows one ordered file-transfer packet until terminal mutation.
+pub const FileTransferPacket = struct {
+    /// Monotonic identity advancing for every retained packet, including repeated bytes.
+    generation: u64,
+    /// Selects the protocol whose host layer interprets `payload`.
+    protocol: FileTransferProtocol,
+    /// Preserves the exact bounded command payload without executing host policy.
+    payload: []const u8,
+};
+
+const FileTransferPacketOwned = struct {
+    generation: u64,
+    protocol: FileTransferProtocol,
+    payload: []u8,
+
+    fn view(self: *const FileTransferPacketOwned) FileTransferPacket {
+        return .{ .generation = self.generation, .protocol = self.protocol, .payload = self.payload };
+    }
+};
+
 /// Names one host-neutral request from the child to manipulate its containing window.
 pub const WindowRequest = union(enum) {
     deiconify,
@@ -5958,6 +5984,7 @@ comptime {
     std.debug.assert(hyperlink_target_max_bytes <= std.math.maxInt(u16));
     std.debug.assert(notification_capacity > 0);
     std.debug.assert(pointer_shape_capacity > 0);
+    std.debug.assert(file_transfer_capacity > 0);
     std.debug.assert(clipboard_capacity > 0);
     std.debug.assert(@sizeOf(NotificationOwned) <= max_metadata_bytes + 16);
     std.debug.assert(@sizeOf(PointerShapeOwned) <= max_metadata_bytes + 16);
@@ -6041,6 +6068,10 @@ pub const HostState = struct {
     pointer_shapes: [pointer_shape_capacity]PointerShapeOwned = undefined,
     pointer_shapes_start: u8 = 0,
     pointer_shapes_count: u8 = 0,
+    file_transfer_generation: u64 = 0,
+    file_transfer_packets: [file_transfer_capacity]FileTransferPacketOwned = undefined,
+    file_transfer_start: u8 = 0,
+    file_transfer_count: u8 = 0,
     window_request_generation: u64 = 0,
     window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
     window_requests_start: u8 = 0,
@@ -6067,6 +6098,10 @@ pub const HostState = struct {
         for (0..self.clipboard_requests_count) |offset| {
             const index = (@as(usize, self.clipboard_requests_start) + offset) % clipboard_capacity;
             self.allocator.free(self.clipboard_requests[index].raw);
+        }
+        for (0..self.file_transfer_count) |offset| {
+            const index = (@as(usize, self.file_transfer_start) + offset) % file_transfer_capacity;
+            self.allocator.free(self.file_transfer_packets[index].payload);
         }
         if (self.current_title) |title| self.allocator.free(title);
         if (self.current_icon) |icon| self.allocator.free(icon);
@@ -6212,6 +6247,35 @@ pub const HostState = struct {
         slot.generation = self.pointer_shape_generation;
         slot.payload_len = @intCast(payload.len);
         self.pointer_shapes_count += 1;
+    }
+
+    // Retain one opaque packet only after every queue and allocation bound succeeds.
+    fn retainFileTransfer(self: *HostState, protocol: FileTransferProtocol, payload: []const u8) ApplyError!void {
+        try ensureRetainedBound(byteCount(payload), file_transfer_packet_max_bytes);
+        if (self.file_transfer_count == file_transfer_capacity) return error.ConsequenceLimit;
+        if (self.file_transfer_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const owned = try self.allocator.dupe(u8, payload);
+        const index = (self.file_transfer_start + self.file_transfer_count) % file_transfer_capacity;
+        self.file_transfer_generation += 1;
+        self.file_transfer_packets[index] = .{
+            .generation = self.file_transfer_generation,
+            .protocol = protocol,
+            .payload = owned,
+        };
+        self.file_transfer_count += 1;
+    }
+
+    fn fileTransferHead(self: *const HostState) ?FileTransferPacket {
+        if (self.file_transfer_count == 0) return null;
+        return self.file_transfer_packets[self.file_transfer_start].view();
+    }
+
+    fn consumeFileTransfer(self: *HostState) void {
+        std.debug.assert(self.file_transfer_count > 0);
+        const packet = &self.file_transfer_packets[self.file_transfer_start];
+        self.allocator.free(packet.payload);
+        self.file_transfer_start = (self.file_transfer_start + 1) % file_transfer_capacity;
+        self.file_transfer_count -= 1;
     }
 
     /// Retain one window request occurrence without executing host policy.
@@ -6660,6 +6724,10 @@ test "clipboard enqueue preserves the retained FIFO on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, retainKittyClipboardAllocation, .{});
 }
 
+test "file-transfer enqueue preserves the retained FIFO on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFileTransferAllocation, .{});
+}
+
 test "title replacement preserves the retained title on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, replaceTitleAllocation, .{});
 }
@@ -6784,6 +6852,26 @@ fn retainKittyClipboardAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(u64, 2), request.generation);
     try std.testing.expect(request.protocol == .kitty_5522);
     try std.testing.expectEqualStrings("type=wdata:mime=dGV4dA==;bmV3", request.payload);
+}
+
+fn retainFileTransferAllocation(allocator: std.mem.Allocator) !void {
+    var state = HostState.init(allocator);
+    defer state.deinit();
+    try state.retainFileTransfer(.iterm2_1337, "FilePart=b2xk");
+    state.retainFileTransfer(.kitty_5113, "ac=send;d=bmV3") catch |err| {
+        const packet = state.fileTransferHead().?;
+        try std.testing.expectEqual(@as(u64, 1), packet.generation);
+        try std.testing.expect(packet.protocol == .iterm2_1337);
+        try std.testing.expectEqualStrings("FilePart=b2xk", packet.payload);
+        try std.testing.expectEqual(@as(u8, 1), state.file_transfer_count);
+        return err;
+    };
+    try std.testing.expectEqual(@as(u8, 2), state.file_transfer_count);
+    state.consumeFileTransfer();
+    const packet = state.fileTransferHead().?;
+    try std.testing.expectEqual(@as(u64, 2), packet.generation);
+    try std.testing.expect(packet.protocol == .kitty_5113);
+    try std.testing.expectEqualStrings("ac=send;d=bmV3", packet.payload);
 }
 
 test "hyperlink interning preserves prior identities on allocation failure" {
@@ -6941,6 +7029,7 @@ const ItermCommand = union(enum) {
     shell_integration: ItermShellIntegration,
     current_directory: []const u8,
     notification: []const u8,
+    file_transfer: []const u8,
 };
 
 // Decodes one borrowed OSC 50 or 1337 payload under its exact command family.
@@ -6967,6 +7056,10 @@ fn parse1337(payload: []const u8) ?ItermCommand {
     if (std.mem.eql(u8, key, "SetColors")) return .{ .set_colors = value };
     if (std.mem.eql(u8, key, "CurrentDir")) return .{ .current_directory = value };
     if (std.mem.eql(u8, key, "Notification")) return .{ .notification = value };
+    if (std.mem.eql(u8, key, "File") or
+        std.mem.eql(u8, key, "MultipartFile") or
+        std.mem.eql(u8, key, "FilePart") or
+        std.mem.eql(u8, key, "FileEnd")) return .{ .file_transfer = payload };
     if (std.mem.eql(u8, key, "ShellIntegrationVersion"))
         return .{ .shell_integration = parseShellIntegration(value) orelse return null };
     return null;
@@ -7042,6 +7135,7 @@ test "iTerm safe controls decode without accepting policy commands" {
     try std.testing.expectEqualStrings("fg=fff", parse(1337, "SetColors=fg=fff").?.set_colors);
     try std.testing.expectEqualStrings("/work/tree", parse(1337, "CurrentDir=/work/tree").?.current_directory);
     try std.testing.expectEqualStrings("hello", parse(1337, "Notification=hello").?.notification);
+    try std.testing.expectEqualStrings("FilePart=QQ==", parse(1337, "FilePart=QQ==").?.file_transfer);
     const integration = parse(1337, "ShellIntegrationVersion=20;shell=bash").?.shell_integration;
     try std.testing.expectEqual(@as(u32, 20), integration.version);
     try std.testing.expectEqualStrings("bash", integration.shell.?);
@@ -8435,12 +8529,20 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
                 .shell_integration_set = integration,
             },
             .notification => |payload| SemanticEvent{ .notification = .{ .command = 1337, .payload = payload } },
+            .file_transfer => |payload| SemanticEvent{ .file_transfer_packet = .{
+                .protocol = .iterm2_1337,
+                .payload = payload,
+            } },
         } else null,
         .kitty_color_stack_push => SemanticEvent{ .kitty_color_stack = .{ .push = 0 } },
         .kitty_color_stack_pop => SemanticEvent{ .kitty_color_stack = .{ .pop = 0 } },
         .hyperlink => |v| parseHyperlink(v.payload),
         .clipboard => |v| SemanticEvent{ .clipboard_set = v.payload },
         .kitty_clipboard => |v| SemanticEvent{ .kitty_clipboard_packet = v.payload },
+        .kitty_file_transfer => |v| SemanticEvent{ .file_transfer_packet = .{
+            .protocol = .kitty_5113,
+            .payload = v.payload,
+        } },
         else => null,
     };
 }
@@ -8660,10 +8762,12 @@ test "OSC Kitty host-policy payloads expose only retained terminal facts" {
         .payload = "type=write",
         .term = .st,
     } }).?.kitty_clipboard_packet);
-    try std.testing.expect(oscProcess(.{ .kitty_file_transfer = .{
+    const transfer = oscProcess(.{ .kitty_file_transfer = .{
         .payload = "cmd=data",
         .term = .st,
-    } }) == null);
+    } }).?.file_transfer_packet;
+    try std.testing.expect(transfer.protocol == .kitty_5113);
+    try std.testing.expectEqualStrings("cmd=data", transfer.payload);
     try std.testing.expect(oscProcess(.{ .kitty_text_size = .{
         .payload = "s=2;Big",
         .term = .st,
@@ -8762,6 +8866,7 @@ pub const SemanticEvent = union(enum) {
     hyperlink_clear,
     clipboard_set: []const u8,
     kitty_clipboard_packet: []const u8,
+    file_transfer_packet: struct { protocol: FileTransferProtocol, payload: []const u8 },
     dec_mode_query: u16,
     dec_mode_save: ModeParams,
     dec_mode_restore: ModeParams,
@@ -9465,6 +9570,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
         .clipboard_set => |payload| return try vt.host.retainClipboard(payload),
         .kitty_clipboard_packet => |payload| try vt.host.retainKittyClipboard(payload),
+        .file_transfer_packet => |packet| try vt.host.retainFileTransfer(packet.protocol, packet.payload),
         .locator_reporting => |cfg| setReporting(&vt.host.locator, cfg.mode, cfg.unit),
         .locator_filter => |area| setFilter(&vt.host.locator, area),
         .locator_events => |modes| setEvents(&vt.host.locator, modes.params[0..modes.param_count]),
@@ -11275,6 +11381,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .hyperlink_clear,
         .clipboard_set,
         .kitty_clipboard_packet,
+        .file_transfer_packet,
         .locator_reporting,
         .locator_filter,
         .locator_events,
@@ -12069,6 +12176,12 @@ pub const Terminal = struct {
     pub const pointer_shape_max_bytes = max_metadata_bytes;
     /// Exposes the fixed pending-pointer-request capacity to embedding hosts.
     pub const pointer_shape_max_count = pointer_shape_capacity;
+    /// Bounds one retained encoded file-transfer packet.
+    pub const file_transfer_max_bytes = file_transfer_packet_max_bytes;
+    /// Bounds one retained iTerm OSC 1337 file-transfer payload at parser admission.
+    pub const iterm_file_transfer_max_bytes = parser_mod.max_metadata_control_bytes;
+    /// Exposes the fixed pending file-transfer packet capacity.
+    pub const file_transfer_max_count = file_transfer_capacity;
     /// Exposes the typed host-input vocabulary accepted by encodeInput.
     pub const InputEvent = Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
@@ -12929,6 +13042,8 @@ pub const Terminal = struct {
             .notification_count = self.host.notifications_count,
             .pointer_shape = self.host.pointerShapeView(),
             .pointer_shape_count = self.host.pointer_shapes_count,
+            .file_transfer = self.host.fileTransferHead(),
+            .file_transfer_count = self.host.file_transfer_count,
             .window_request = self.host.windowRequestHead(),
             .window_request_count = self.host.window_requests_count,
             .color_preference_notifications = self.modes.color_preference_notifications,
@@ -13281,6 +13396,14 @@ pub const Terminal = struct {
         self.dirty_generation +%= 1;
     }
 
+    /// Consume the matching FIFO-head file-transfer packet after host policy runs.
+    pub fn acknowledgeFileTransfer(self: *Terminal, generation: u64) error{StaleFileTransfer}!void {
+        const packet = self.host.fileTransferHead() orelse return error.StaleFileTransfer;
+        if (packet.generation != generation) return error.StaleFileTransfer;
+        self.host.consumeFileTransfer();
+        self.dirty_generation +%= 1;
+    }
+
     /// Queue one exact reply for the matching FIFO-head query, consuming it only after serialization.
     pub fn replyWindowRequest(
         self: *Terminal,
@@ -13394,6 +13517,10 @@ pub const Terminal = struct {
         pointer_shape: ?PointerShapeRequest,
         /// Reports the bounded number of pending pointer requests, including the exposed head.
         pointer_shape_count: u8,
+        /// Borrows the next opaque file-transfer packet until terminal mutation.
+        file_transfer: ?FileTransferPacket,
+        /// Reports the bounded number of pending file-transfer packets, including the head.
+        file_transfer_count: u8,
         /// Borrows the next FIFO host-neutral CSI `t` request until terminal mutation.
         window_request: ?WindowRequestOccurrence,
         /// Reports the bounded number of pending FIFO window requests, including the exposed head.

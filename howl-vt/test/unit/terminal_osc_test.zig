@@ -591,6 +591,110 @@ test "Kitty OSC 5522 packet and FIFO bounds preserve prior occurrences" {
     try std.testing.expect(terminal.pendingClipboardRequest() == null);
 }
 
+test "iTerm and Kitty file transfers retain one opaque ordered stream" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 16);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;MultipartFi")).state_changed);
+    try std.testing.expect((try terminal.feed(
+        "le=name=ZmlsZQ==\x1b\\" ++
+            "\x1b]5113;ac=send;id=1;d=QQ==\x1b\\" ++
+            "\x1b]1337;FilePart=Qg==\x07" ++
+            "\x1b]1337;FileEnd=done\x1b\\",
+    )).state_changed);
+    try std.testing.expectEqual(@as(u8, 4), terminal.surfaceSnapshot().file_transfer_count);
+
+    const expected = [_]struct { protocol: terminal_mod.FileTransferProtocol, payload: []const u8 }{
+        .{ .protocol = .iterm2_1337, .payload = "MultipartFile=name=ZmlsZQ==" },
+        .{ .protocol = .kitty_5113, .payload = "ac=send;id=1;d=QQ==" },
+        .{ .protocol = .iterm2_1337, .payload = "FilePart=Qg==" },
+        .{ .protocol = .iterm2_1337, .payload = "FileEnd=done" },
+    };
+    try std.testing.expectError(error.StaleFileTransfer, terminal.acknowledgeFileTransfer(2));
+    for (expected, 1..) |item, generation| {
+        const packet = terminal.surfaceSnapshot().file_transfer.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), packet.generation);
+        try std.testing.expect(packet.protocol == item.protocol);
+        try std.testing.expectEqualStrings(item.payload, packet.payload);
+        try terminal.acknowledgeFileTransfer(packet.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().file_transfer == null);
+
+    try std.testing.expect((try terminal.feed("\x9d5113;ac=send;id=2\x9c")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(4, 20);
+    const retained = terminal.surfaceSnapshot().file_transfer.?;
+    try std.testing.expectEqual(@as(u64, 5), retained.generation);
+    try std.testing.expectEqualStrings("ac=send;id=2", retained.payload);
+}
+
+test "opaque file-transfer bounds preserve FIFO identity and wrap" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 16);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b]5113;first\x1b\\")).state_changed);
+    try terminal.acknowledgeFileTransfer(1);
+    const payload = try allocator.alloc(u8, Terminal.file_transfer_max_bytes + 1);
+    defer allocator.free(payload);
+    @memset(payload, 'x');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+    try sequence.appendSlice(allocator, "\x1b]5113;");
+    try sequence.appendSlice(allocator, payload[0..Terminal.file_transfer_max_bytes]);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    const split = sequence.items.len / 2;
+    try std.testing.expect(!(try terminal.feed(sequence.items[0..split])).state_changed);
+    try std.testing.expect((try terminal.feed(sequence.items[split..])).state_changed);
+    for (0..Terminal.file_transfer_max_count - 1) |_| {
+        try std.testing.expect((try terminal.feed("\x1b]1337;FilePart=QQ==\x1b\\")).state_changed);
+    }
+    var publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Terminal.file_transfer_max_count, publication.file_transfer_count);
+    try std.testing.expectEqual(@as(u64, 2), publication.file_transfer.?.generation);
+    try std.testing.expectEqual(@as(usize, Terminal.file_transfer_max_bytes), publication.file_transfer.?.payload.len);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]5113;rejected\x1b\\"));
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u64, 2), publication.file_transfer.?.generation);
+    try std.testing.expectEqual(Terminal.file_transfer_max_count, publication.file_transfer_count);
+
+    for (0..Terminal.file_transfer_max_count) |_| {
+        const packet = terminal.surfaceSnapshot().file_transfer.?;
+        try terminal.acknowledgeFileTransfer(packet.generation);
+    }
+    try std.testing.expect((try terminal.feed("\x1b]5113;after\x1b\\")).state_changed);
+    try std.testing.expectEqual(@as(u64, 10), terminal.surfaceSnapshot().file_transfer.?.generation);
+    try terminal.acknowledgeFileTransfer(10);
+
+    const iterm_payload = try allocator.alloc(u8, Terminal.iterm_file_transfer_max_bytes + 1);
+    defer allocator.free(iterm_payload);
+    @memset(iterm_payload, 'x');
+    @memcpy(iterm_payload[0.."FilePart=".len], "FilePart=");
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]1337;");
+    try sequence.appendSlice(allocator, iterm_payload[0..Terminal.iterm_file_transfer_max_bytes]);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    try std.testing.expectEqual(@as(u64, 11), terminal.surfaceSnapshot().file_transfer.?.generation);
+    try terminal.acknowledgeFileTransfer(11);
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]1337;");
+    try sequence.appendSlice(allocator, iterm_payload);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
+    try std.testing.expect(terminal.surfaceSnapshot().file_transfer == null);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]5113;");
+    try sequence.appendSlice(allocator, payload);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
+    try std.testing.expect(terminal.surfaceSnapshot().file_transfer == null);
+    terminal.host.file_transfer_generation = std.math.maxInt(u64);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]5113;exhausted\x1b\\"));
+    try std.testing.expect(terminal.surfaceSnapshot().file_transfer == null);
+}
+
 test "shell integration OSC 133 records latest mark" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
