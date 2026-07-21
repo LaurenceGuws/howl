@@ -417,7 +417,7 @@ test "OSC 133 retains exact metadata and finds positional exit status" {
     try std.testing.expectEqualStrings("cmdline=exit 7", mark.metadata);
 }
 
-test "OSC notifications retain exact bounded host-neutral occurrences" {
+test "OSC notifications retain ordered bounded host-neutral occurrences" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
@@ -430,33 +430,39 @@ test "OSC notifications retain exact bounded host-neutral occurrences" {
     try std.testing.expectEqual(@as(u16, 9), notification.command);
     try std.testing.expectEqualStrings("hello", notification.payload);
 
-    try std.testing.expect((try terminal.feed("\x1b]99;i=one:d=0;body\x1b\\")).state_changed);
-    notification = terminal.surfaceSnapshot().notification.?;
-    try std.testing.expectEqual(@as(u64, 2), notification.generation);
-    try std.testing.expectEqual(@as(u16, 99), notification.command);
-    try std.testing.expectEqualStrings("i=one:d=0;body", notification.payload);
+    try std.testing.expect((try terminal.feed(
+        "\x1b]99;i=one:d=0;body\x1b\\" ++
+            "\x9d777;notify;title;body\x9c" ++
+            "\x1b]1337;Notification=rich body\x07" ++
+            "\x1b]9;last\x07",
+    )).state_changed);
+    try std.testing.expectEqual(@as(u8, 5), terminal.surfaceSnapshot().notification_count);
+    try std.testing.expectError(error.StaleNotification, terminal.acknowledgeNotification(2));
 
-    try std.testing.expect((try terminal.feed("\x9d777;notify;title;body\x9c")).state_changed);
-    notification = terminal.surfaceSnapshot().notification.?;
-    try std.testing.expectEqual(@as(u64, 3), notification.generation);
-    try std.testing.expectEqual(@as(u16, 777), notification.command);
-    try std.testing.expectEqualStrings("notify;title;body", notification.payload);
+    const expected = [_]struct { command: u16, payload: []const u8 }{
+        .{ .command = 9, .payload = "hello" },
+        .{ .command = 99, .payload = "i=one:d=0;body" },
+        .{ .command = 777, .payload = "notify;title;body" },
+        .{ .command = 1337, .payload = "rich body" },
+        .{ .command = 9, .payload = "last" },
+    };
+    for (expected, 1..) |item, generation| {
+        notification = terminal.surfaceSnapshot().notification.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), notification.generation);
+        try std.testing.expectEqual(item.command, notification.command);
+        try std.testing.expectEqualStrings(item.payload, notification.payload);
+        try terminal.acknowledgeNotification(notification.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().notification == null);
 
-    try std.testing.expect((try terminal.feed("\x1b]1337;Notification=rich body\x07")).state_changed);
-    notification = terminal.surfaceSnapshot().notification.?;
-    try std.testing.expectEqual(@as(u64, 4), notification.generation);
-    try std.testing.expectEqual(@as(u16, 1337), notification.command);
-    try std.testing.expectEqualStrings("rich body", notification.payload);
-
-    try std.testing.expect((try terminal.feed("\x1b]9;hello\x07")).state_changed);
-    try std.testing.expectEqual(@as(u64, 5), terminal.surfaceSnapshot().notification.?.generation);
+    try std.testing.expect((try terminal.feed("\x1b]9;survives\x07")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     notification = terminal.surfaceSnapshot().notification.?;
-    try std.testing.expectEqual(@as(u64, 5), notification.generation);
-    try std.testing.expectEqualStrings("hello", notification.payload);
+    try std.testing.expectEqual(@as(u64, 6), notification.generation);
+    try std.testing.expectEqualStrings("survives", notification.payload);
 }
 
-test "OSC notification overflow preserves the last complete occurrence" {
+test "OSC notification bounds preserve the FIFO and wrap without reuse" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
@@ -473,8 +479,9 @@ test "OSC notification overflow preserves the last complete occurrence" {
 
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
     var retained = terminal.surfaceSnapshot().notification.?;
-    try std.testing.expectEqual(@as(u64, 2), retained.generation);
-    try std.testing.expectEqual(Terminal.notification_max_bytes, retained.payload.len);
+    try std.testing.expectEqual(@as(u64, 1), retained.generation);
+    try std.testing.expectEqualStrings("prior", retained.payload);
+    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().notification_count);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]9;");
@@ -483,13 +490,40 @@ test "OSC notification overflow preserves the last complete occurrence" {
 
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
     retained = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 1), retained.generation);
+    try std.testing.expectEqualStrings("prior", retained.payload);
+    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().notification_count);
+
+    try terminal.acknowledgeNotification(1);
+    retained = terminal.surfaceSnapshot().notification.?;
     try std.testing.expectEqual(@as(u64, 2), retained.generation);
     try std.testing.expectEqual(Terminal.notification_max_bytes, retained.payload.len);
+    for (0..Terminal.notification_max_count - 1) |_| {
+        try std.testing.expect((try terminal.feed("\x1b]9;queued\x07")).state_changed);
+    }
+    const full = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Terminal.notification_max_count, full.notification_count);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]9;rejected\x07"));
+    try std.testing.expectEqual(@as(u64, 2), terminal.surfaceSnapshot().notification.?.generation);
+    try std.testing.expectEqual(Terminal.notification_max_count, terminal.surfaceSnapshot().notification_count);
+
+    for (0..Terminal.notification_max_count) |_| {
+        retained = terminal.surfaceSnapshot().notification.?;
+        try terminal.acknowledgeNotification(retained.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().notification == null);
     try std.testing.expect((try terminal.feed("\x1b]9;after\x07")).state_changed);
-    try std.testing.expectEqualStrings("after", terminal.surfaceSnapshot().notification.?.payload);
+    retained = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 10), retained.generation);
+    try std.testing.expectEqualStrings("after", retained.payload);
+    try terminal.acknowledgeNotification(10);
+    try std.testing.expectError(error.StaleNotification, terminal.acknowledgeNotification(10));
+    terminal.host.notification_generation = std.math.maxInt(u64);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]9;exhausted\x07"));
+    try std.testing.expect(terminal.surfaceSnapshot().notification == null);
 }
 
-test "OSC 22 retains exact host-neutral pointer requests across terminal lifetime" {
+test "OSC 22 retains ordered bounded host-neutral requests" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
 
@@ -500,20 +534,37 @@ test "OSC 22 retains exact host-neutral pointer requests across terminal lifetim
     try std.testing.expectEqual(@as(u64, 1), request.generation);
     try std.testing.expectEqualStrings(">wait,pointer", request.payload);
 
-    try std.testing.expect((try terminal.feed("\x9d22;?default,current\x9c")).state_changed);
-    request = terminal.surfaceSnapshot().pointer_shape.?;
-    try std.testing.expectEqual(@as(u64, 2), request.generation);
-    try std.testing.expectEqualStrings("?default,current", request.payload);
-    try std.testing.expect((try terminal.feed("\x9d22;?default,current\x9c")).state_changed);
-    try std.testing.expectEqual(@as(u64, 3), terminal.surfaceSnapshot().pointer_shape.?.generation);
+    try std.testing.expect((try terminal.feed(
+        "\x9d22;?default,current\x9c" ++
+            "\x1b]22;>crosshair\x07" ++
+            "\x1b]22;<1\x07",
+    )).state_changed);
+    try std.testing.expectEqual(@as(u8, 4), terminal.surfaceSnapshot().pointer_shape_count);
+    try std.testing.expectError(error.StalePointerShape, terminal.acknowledgePointerShape(2));
 
+    const expected = [_][]const u8{
+        ">wait,pointer",
+        "?default,current",
+        ">crosshair",
+        "<1",
+    };
+    for (expected, 1..) |payload, generation| {
+        request = terminal.surfaceSnapshot().pointer_shape.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), request.generation);
+        try std.testing.expectEqualStrings(payload, request.payload);
+        try terminal.acknowledgePointerShape(request.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().pointer_shape == null);
+
+    try std.testing.expect((try terminal.feed("\x1b]22;survives\x07")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(4, 9);
     request = terminal.surfaceSnapshot().pointer_shape.?;
-    try std.testing.expectEqual(@as(u64, 3), request.generation);
-    try std.testing.expectEqualStrings("?default,current", request.payload);
+    try std.testing.expectEqual(@as(u64, 5), request.generation);
+    try std.testing.expectEqualStrings("survives", request.payload);
 }
 
-test "OSC 22 bound is exact and overflow preserves the prior request" {
+test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
@@ -523,13 +574,15 @@ test "OSC 22 bound is exact and overflow preserves the prior request" {
     var sequence = std.ArrayList(u8).empty;
     defer sequence.deinit(allocator);
 
+    try std.testing.expect((try terminal.feed("\x1b]22;prior\x07")).state_changed);
     try sequence.appendSlice(allocator, "\x1b]22;");
     try sequence.appendSlice(allocator, payload[0..Terminal.pointer_shape_max_bytes]);
     try sequence.append(allocator, 0x07);
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
     var retained = terminal.surfaceSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 1), retained.generation);
-    try std.testing.expectEqual(Terminal.pointer_shape_max_bytes, retained.payload.len);
+    try std.testing.expectEqualStrings("prior", retained.payload);
+    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().pointer_shape_count);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]22;");
@@ -538,10 +591,41 @@ test "OSC 22 bound is exact and overflow preserves the prior request" {
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
     retained = terminal.surfaceSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 1), retained.generation);
-    try std.testing.expectEqual(Terminal.pointer_shape_max_bytes, retained.payload.len);
+    try std.testing.expectEqualStrings("prior", retained.payload);
+    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().pointer_shape_count);
 
-    try std.testing.expect((try terminal.feed("\x1b]22;default\x07")).state_changed);
-    try std.testing.expectEqualStrings("default", terminal.surfaceSnapshot().pointer_shape.?.payload);
+    try terminal.acknowledgePointerShape(1);
+    retained = terminal.surfaceSnapshot().pointer_shape.?;
+    try std.testing.expectEqual(@as(u64, 2), retained.generation);
+    try std.testing.expectEqual(Terminal.pointer_shape_max_bytes, retained.payload.len);
+    for (0..Terminal.pointer_shape_max_count - 1) |_| {
+        try std.testing.expect((try terminal.feed("\x1b]22;queued\x07")).state_changed);
+    }
+    try std.testing.expectEqual(
+        Terminal.pointer_shape_max_count,
+        terminal.surfaceSnapshot().pointer_shape_count,
+    );
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]22;rejected\x07"));
+    try std.testing.expectEqual(@as(u64, 2), terminal.surfaceSnapshot().pointer_shape.?.generation);
+    try std.testing.expectEqual(
+        Terminal.pointer_shape_max_count,
+        terminal.surfaceSnapshot().pointer_shape_count,
+    );
+
+    for (0..Terminal.pointer_shape_max_count) |_| {
+        retained = terminal.surfaceSnapshot().pointer_shape.?;
+        try terminal.acknowledgePointerShape(retained.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().pointer_shape == null);
+    try std.testing.expect((try terminal.feed("\x1b]22;after\x07")).state_changed);
+    retained = terminal.surfaceSnapshot().pointer_shape.?;
+    try std.testing.expectEqual(@as(u64, 10), retained.generation);
+    try std.testing.expectEqualStrings("after", retained.payload);
+    try terminal.acknowledgePointerShape(10);
+    try std.testing.expectError(error.StalePointerShape, terminal.acknowledgePointerShape(10));
+    terminal.host.pointer_shape_generation = std.math.maxInt(u64);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]22;exhausted\x07"));
+    try std.testing.expect(terminal.surfaceSnapshot().pointer_shape == null);
 }
 
 test "iTerm safe controls mutate presentation metadata and exact replies" {

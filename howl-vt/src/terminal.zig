@@ -5735,6 +5735,10 @@ const dcs_payload_max_bytes: u32 = 2 * 1024;
 const hyperlink_target_max_bytes: u32 = 2 * 1024;
 /// Each retained title or icon name follows the 1 KiB parser metadata scale.
 pub const max_metadata_bytes: u32 = 1024;
+// Bounds one notification burst while a host applies presentation policy.
+const notification_capacity: u8 = 8;
+// Bounds one pointer-request burst while a host applies validation and presentation policy.
+const pointer_shape_capacity: u8 = 8;
 /// Kitty retains the newest ten nonempty child titles.
 const title_stack_limit = 10;
 /// A terminal instance interns at most 4096 distinct hyperlink targets.
@@ -5748,25 +5752,6 @@ const ShellMark = struct {
     metadata: []u8 = &[_]u8{},
 };
 
-// Owns one latest bounded host payload and its monotonic occurrence identity.
-const HostPayload = struct {
-    generation: u64 = 0,
-    payload_len: u16 = 0,
-    payload: [max_metadata_bytes]u8 = undefined,
-
-    fn retain(self: *HostPayload, payload: []const u8) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
-        if (self.generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
-        @memcpy(self.payload[0..payload.len], payload);
-        self.payload_len = @intCast(payload.len);
-        self.generation += 1;
-    }
-
-    fn bytes(self: *const HostPayload) []const u8 {
-        return self.payload[0..self.payload_len];
-    }
-};
-
 /// Borrows one host-neutral notification occurrence until terminal mutation.
 pub const Notification = struct {
     /// Monotonic identity advancing for every accepted notification, including repeated bytes.
@@ -5777,12 +5762,42 @@ pub const Notification = struct {
     payload: []const u8,
 };
 
+// Owns one bounded notification queue slot without allocation.
+const NotificationOwned = struct {
+    generation: u64,
+    command: u16,
+    payload_len: u16,
+    payload: [max_metadata_bytes]u8,
+
+    fn view(self: *const NotificationOwned) Notification {
+        return .{
+            .generation = self.generation,
+            .command = self.command,
+            .payload = self.payload[0..self.payload_len],
+        };
+    }
+};
+
 /// Borrows one raw OSC 22 pointer-shape request until terminal mutation.
 pub const PointerShapeRequest = struct {
     /// Monotonic identity advancing for every accepted request, including repeated bytes.
     generation: u64,
     /// Raw bounded shape, stack operation, or query; interpretation and replies belong to the host.
     payload: []const u8,
+};
+
+// Owns one bounded pointer-request queue slot without allocation.
+const PointerShapeOwned = struct {
+    generation: u64,
+    payload_len: u16,
+    payload: [max_metadata_bytes]u8,
+
+    fn view(self: *const PointerShapeOwned) PointerShapeRequest {
+        return .{
+            .generation = self.generation,
+            .payload = self.payload[0..self.payload_len],
+        };
+    }
 };
 
 /// Names one host-neutral request from the child to manipulate its containing window.
@@ -5839,6 +5854,10 @@ const TitleStackEffect = struct {
 comptime {
     std.debug.assert(max_metadata_bytes <= hyperlink_target_max_bytes);
     std.debug.assert(hyperlink_target_max_bytes <= std.math.maxInt(u16));
+    std.debug.assert(notification_capacity > 0);
+    std.debug.assert(pointer_shape_capacity > 0);
+    std.debug.assert(@sizeOf(NotificationOwned) <= max_metadata_bytes + 16);
+    std.debug.assert(@sizeOf(PointerShapeOwned) <= max_metadata_bytes + 16);
     std.debug.assert(dcs_payload_max_bytes <= pending_output_max_bytes);
     std.debug.assert(clipboard_reply_bytes_max < pending_output_max_bytes);
     std.debug.assert(hyperlink_target_max_count > 0);
@@ -5888,8 +5907,8 @@ const HyperlinkTarget = struct {
 /// `allocator` is borrowed for the HostState lifetime and owns every retained
 /// allocation; caller-selected drain allocators own only returned buffers.
 pub const HostState = struct {
-    // Host consequence retention is heap-backed today, but every retained path
-    // is bounded by this file's product capacity constants before allocation.
+    // Heap-backed consequences are bounded before allocation; notification
+    // and pointer occurrences use fixed inline queue storage.
     const DcsPayloadOwned = struct {
         kind: DcsPayloadKind,
         payload: []u8,
@@ -5907,9 +5926,14 @@ pub const HostState = struct {
     title_stack_len: u8 = 0,
     shell_integration: ?ShellIntegration = null,
     shell_mark: ShellMark = .{},
-    notification: HostPayload = .{},
-    notification_command: u16 = 0,
-    pointer_shape: HostPayload = .{},
+    notification_generation: u64 = 0,
+    notifications: [notification_capacity]NotificationOwned = undefined,
+    notifications_start: u8 = 0,
+    notifications_count: u8 = 0,
+    pointer_shape_generation: u64 = 0,
+    pointer_shapes: [pointer_shape_capacity]PointerShapeOwned = undefined,
+    pointer_shapes_start: u8 = 0,
+    pointer_shapes_count: u8 = 0,
     window_request_generation: u64 = 0,
     window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
     window_requests_start: u8 = 0,
@@ -6053,13 +6077,31 @@ pub const HostState = struct {
 
     /// Retain one notification occurrence without choosing host presentation policy.
     pub fn retainNotification(self: *HostState, command: u16, payload: []const u8) ApplyError!void {
-        try self.notification.retain(payload);
-        self.notification_command = command;
+        try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
+        if (self.notifications_count == notification_capacity) return error.ConsequenceLimit;
+        if (self.notification_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const index = (self.notifications_start + self.notifications_count) % notification_capacity;
+        const slot = &self.notifications[index];
+        @memcpy(slot.payload[0..payload.len], payload);
+        self.notification_generation += 1;
+        slot.generation = self.notification_generation;
+        slot.command = command;
+        slot.payload_len = @intCast(payload.len);
+        self.notifications_count += 1;
     }
 
     /// Retain one OSC 22 request without selecting a host pointer or answering queries.
     pub fn retainPointerShape(self: *HostState, payload: []const u8) ApplyError!void {
-        try self.pointer_shape.retain(payload);
+        try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
+        if (self.pointer_shapes_count == pointer_shape_capacity) return error.ConsequenceLimit;
+        if (self.pointer_shape_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const index = (self.pointer_shapes_start + self.pointer_shapes_count) % pointer_shape_capacity;
+        const slot = &self.pointer_shapes[index];
+        @memcpy(slot.payload[0..payload.len], payload);
+        self.pointer_shape_generation += 1;
+        slot.generation = self.pointer_shape_generation;
+        slot.payload_len = @intCast(payload.len);
+        self.pointer_shapes_count += 1;
     }
 
     /// Retain one window request occurrence without executing host policy.
@@ -6084,17 +6126,25 @@ pub const HostState = struct {
     }
 
     fn notificationView(self: *const HostState) ?Notification {
-        if (self.notification.generation == 0) return null;
-        return .{
-            .generation = self.notification.generation,
-            .command = self.notification_command,
-            .payload = self.notification.bytes(),
-        };
+        if (self.notifications_count == 0) return null;
+        return self.notifications[self.notifications_start].view();
+    }
+
+    fn consumeNotification(self: *HostState) void {
+        std.debug.assert(self.notifications_count > 0);
+        self.notifications_start = (self.notifications_start + 1) % notification_capacity;
+        self.notifications_count -= 1;
     }
 
     fn pointerShapeView(self: *const HostState) ?PointerShapeRequest {
-        if (self.pointer_shape.generation == 0) return null;
-        return .{ .generation = self.pointer_shape.generation, .payload = self.pointer_shape.bytes() };
+        if (self.pointer_shapes_count == 0) return null;
+        return self.pointer_shapes[self.pointer_shapes_start].view();
+    }
+
+    fn consumePointerShape(self: *HostState) void {
+        std.debug.assert(self.pointer_shapes_count > 0);
+        self.pointer_shapes_start = (self.pointer_shapes_start + 1) % pointer_shape_capacity;
+        self.pointer_shapes_count -= 1;
     }
 
     /// Replace title and icon together transactionally and report any changed bytes.
@@ -11777,8 +11827,12 @@ pub const Terminal = struct {
     pub const shell_mark_metadata_max_bytes = max_metadata_bytes;
     /// Bounds raw bytes retained for one host-neutral notification occurrence.
     pub const notification_max_bytes = max_metadata_bytes;
+    /// Exposes the fixed pending-notification capacity to embedding hosts.
+    pub const notification_max_count = notification_capacity;
     /// Bounds raw bytes retained for one OSC 22 pointer-shape request.
     pub const pointer_shape_max_bytes = max_metadata_bytes;
+    /// Exposes the fixed pending-pointer-request capacity to embedding hosts.
+    pub const pointer_shape_max_count = pointer_shape_capacity;
     /// Exposes the typed host-input vocabulary accepted by encodeInput.
     pub const InputEvent = Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
@@ -12599,7 +12653,9 @@ pub const Terminal = struct {
             } else null,
             .shell_mark = self.host.shell_mark,
             .notification = self.host.notificationView(),
+            .notification_count = self.host.notifications_count,
             .pointer_shape = self.host.pointerShapeView(),
+            .pointer_shape_count = self.host.pointer_shapes_count,
             .window_request = self.host.windowRequestHead(),
             .window_request_count = self.host.window_requests_count,
             .bell_generation = self.host.bell_generation,
@@ -12913,6 +12969,22 @@ pub const Terminal = struct {
         return self.host.replyPendingClipboardQuery(bytes);
     }
 
+    /// Consume the matching FIFO-head notification after host presentation policy runs.
+    pub fn acknowledgeNotification(self: *Terminal, generation: u64) error{StaleNotification}!void {
+        const notification = self.host.notificationView() orelse return error.StaleNotification;
+        if (notification.generation != generation) return error.StaleNotification;
+        self.host.consumeNotification();
+        self.dirty_generation +%= 1;
+    }
+
+    /// Consume the matching FIFO-head pointer request after host policy runs.
+    pub fn acknowledgePointerShape(self: *Terminal, generation: u64) error{StalePointerShape}!void {
+        const request = self.host.pointerShapeView() orelse return error.StalePointerShape;
+        if (request.generation != generation) return error.StalePointerShape;
+        self.host.consumePointerShape();
+        self.dirty_generation +%= 1;
+    }
+
     /// Queue one exact reply for the matching FIFO-head query, consuming it only after serialization.
     pub fn replyWindowRequest(
         self: *Terminal,
@@ -13014,10 +13086,14 @@ pub const Terminal = struct {
         working_directory: ?Terminal.WorkingDirectory,
         shell_integration: ?Terminal.ShellIntegration,
         shell_mark: ShellMark,
-        /// Borrows the latest host-neutral notification occurrence until terminal mutation.
+        /// Borrows the next FIFO host-neutral notification until terminal mutation.
         notification: ?Notification,
-        /// Borrows the latest OSC 22 request until terminal mutation.
+        /// Reports the bounded number of pending notifications, including the exposed head.
+        notification_count: u8,
+        /// Borrows the next FIFO OSC 22 request until terminal mutation.
         pointer_shape: ?PointerShapeRequest,
+        /// Reports the bounded number of pending pointer requests, including the exposed head.
+        pointer_shape_count: u8,
         /// Borrows the next FIFO host-neutral CSI `t` request until terminal mutation.
         window_request: ?WindowRequestOccurrence,
         /// Reports the bounded number of pending FIFO window requests, including the exposed head.
