@@ -5748,6 +5748,42 @@ const ShellMark = struct {
     metadata: []u8 = &[_]u8{},
 };
 
+// Owns the latest bounded notification bytes and a monotonic occurrence identity.
+const NotificationState = struct {
+    generation: u64 = 0,
+    command: u16 = 0,
+    payload_len: u16 = 0,
+    payload: [max_metadata_bytes]u8 = undefined,
+
+    fn retain(self: *NotificationState, command: u16, payload: []const u8) ApplyError!void {
+        try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
+        if (self.generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        @memcpy(self.payload[0..payload.len], payload);
+        self.command = command;
+        self.payload_len = @intCast(payload.len);
+        self.generation += 1;
+    }
+
+    fn view(self: *const NotificationState) ?Notification {
+        if (self.generation == 0) return null;
+        return .{
+            .generation = self.generation,
+            .command = self.command,
+            .payload = self.payload[0..self.payload_len],
+        };
+    }
+};
+
+/// Borrows one host-neutral notification occurrence until terminal mutation.
+pub const Notification = struct {
+    /// Monotonic identity advancing for every accepted notification, including repeated bytes.
+    generation: u64,
+    /// Original OSC command identifying the notification protocol family.
+    command: u16,
+    /// Raw bounded protocol payload; interpretation and presentation belong to the host.
+    payload: []const u8,
+};
+
 // Owns validated shell-integration identity until replacement or deinit.
 const ShellIntegration = struct {
     version: u32,
@@ -5836,6 +5872,7 @@ pub const HostState = struct {
     title_stack_len: u8 = 0,
     shell_integration: ?ShellIntegration = null,
     shell_mark: ShellMark = .{},
+    notification: NotificationState = .{},
     bell_generation: u64 = 0,
     locator: Locator = .{},
     media_copy_request: ?u16 = null,
@@ -5971,6 +6008,11 @@ pub const HostState = struct {
             .status = mark.status,
             .metadata = metadata,
         };
+    }
+
+    /// Retain one notification occurrence without choosing host presentation policy.
+    pub fn retainNotification(self: *HostState, command: u16, payload: []const u8) ApplyError!void {
+        try self.notification.retain(command, payload);
     }
 
     /// Replace title and icon together transactionally and report any changed bytes.
@@ -6585,6 +6627,7 @@ const ItermCommand = union(enum) {
     set_colors: []const u8,
     shell_integration: ItermShellIntegration,
     current_directory: []const u8,
+    notification: []const u8,
 };
 
 // Decodes one borrowed OSC 50 or 1337 payload under its exact command family.
@@ -6610,6 +6653,7 @@ fn parse1337(payload: []const u8) ?ItermCommand {
     if (std.mem.eql(u8, key, "CursorShape")) return parseCursorShape(payload);
     if (std.mem.eql(u8, key, "SetColors")) return .{ .set_colors = value };
     if (std.mem.eql(u8, key, "CurrentDir")) return .{ .current_directory = value };
+    if (std.mem.eql(u8, key, "Notification")) return .{ .notification = value };
     if (std.mem.eql(u8, key, "ShellIntegrationVersion"))
         return .{ .shell_integration = parseShellIntegration(value) orelse return null };
     return null;
@@ -6677,6 +6721,7 @@ test "iTerm safe controls decode without accepting policy commands" {
     try std.testing.expectEqual(ScreenCursorShape.bar, parse(1337, "CursorShape=1").?.cursor_shape);
     try std.testing.expectEqualStrings("fg=fff", parse(1337, "SetColors=fg=fff").?.set_colors);
     try std.testing.expectEqualStrings("/work/tree", parse(1337, "CurrentDir=/work/tree").?.current_directory);
+    try std.testing.expectEqualStrings("hello", parse(1337, "Notification=hello").?.notification);
     const integration = parse(1337, "ShellIntegrationVersion=20;shell=bash").?.shell_integration;
     try std.testing.expectEqual(@as(u32, 20), integration.version);
     try std.testing.expectEqualStrings("bash", integration.shell.?);
@@ -8013,6 +8058,8 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .kitty_color => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
         .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
         .shell_mark => |v| if (parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
+        .notification => |v| SemanticEvent{ .notification = .{ .command = v.command, .payload = v.payload } },
+        .rxvt_extension => |v| SemanticEvent{ .notification = .{ .command = 777, .payload = v.payload } },
         .iterm2 => |v| if (parse(v.command, v.payload)) |command| switch (command) {
             .cursor_shape => |shape| SemanticEvent{ .cursor_shape = shape },
             .report_cell_size => SemanticEvent.iterm_report_cell_size,
@@ -8023,6 +8070,7 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
             .shell_integration => |integration| SemanticEvent{
                 .shell_integration_set = integration,
             },
+            .notification => |payload| SemanticEvent{ .notification = .{ .command = 1337, .payload = payload } },
         } else null,
         .kitty_color_stack_push => SemanticEvent{ .kitty_color_stack = .{ .push = 0 } },
         .kitty_color_stack_pop => SemanticEvent{ .kitty_color_stack = .{ .pop = 0 } },
@@ -8222,12 +8270,14 @@ test "OSC shell mark maps to neutral semantic metadata" {
     try std.testing.expectEqual(@as(?i32, 7), shell_mark.shell_mark.status);
 }
 
-test "OSC Kitty policy payloads remain parser facts without semantic effects" {
-    try std.testing.expect(oscProcess(.{ .notification = .{
+test "OSC Kitty host-policy payloads expose only retained terminal facts" {
+    const notification = oscProcess(.{ .notification = .{
         .command = 99,
         .payload = "i=1:p=body;Hello",
         .term = .st,
-    } }) == null);
+    } }).?;
+    try std.testing.expectEqual(@as(u16, 99), notification.notification.command);
+    try std.testing.expectEqualStrings("i=1:p=body;Hello", notification.notification.payload);
     try std.testing.expect(oscProcess(.{ .pointer_shape = .{
         .payload = ">wait,pointer",
         .term = .st,
@@ -8321,6 +8371,7 @@ pub const SemanticEvent = union(enum) {
     kitty_keyboard_push: u8,
     kitty_keyboard_pop: u16,
     shell_mark: ItermShellMark,
+    notification: struct { command: u16, payload: []const u8 },
     kitty_color_stack: KittyColorCommand,
     sgr_stack_push: ModeParams,
     sgr_stack_pop,
@@ -8989,6 +9040,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .shell_integration_set => |integration| try vt.host.replaceShellIntegration(integration),
         .working_directory_report => |directory| return vt.host.replaceWorkingDirectoryReport(directory),
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
+        .notification => |notification| try vt.host.retainNotification(notification.command, notification.payload),
         .color_control => |cmd| {
             const before = vt.host.colors;
             const output_before = byteCount(vt.host.pending_output.bytes.items);
@@ -10826,6 +10878,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .shell_integration_set,
         .working_directory_report,
         .shell_mark,
+        .notification,
         .hyperlink_set,
         .hyperlink_clear,
         .clipboard_set,
@@ -11569,6 +11622,8 @@ pub const Terminal = struct {
     pub const shell_name_max_bytes = max_shell_name_bytes;
     /// Bounds copied OSC 133 metadata retained by one shell mark.
     pub const shell_mark_metadata_max_bytes = max_metadata_bytes;
+    /// Bounds raw bytes retained for one host-neutral notification occurrence.
+    pub const notification_max_bytes = max_metadata_bytes;
     /// Exposes the typed host-input vocabulary accepted by encodeInput.
     pub const InputEvent = Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
@@ -12382,6 +12437,7 @@ pub const Terminal = struct {
                 .shell = integration.shell,
             } else null,
             .shell_mark = self.host.shell_mark,
+            .notification = self.host.notification.view(),
             .bell_generation = self.host.bell_generation,
             .history_loss_generation = self.screen_state.primary.history_loss_generation,
             .is_alternate_screen = snapshot.view.is_alternate_screen,
@@ -12737,6 +12793,8 @@ pub const Terminal = struct {
         working_directory: ?Terminal.WorkingDirectory,
         shell_integration: ?Terminal.ShellIntegration,
         shell_mark: ShellMark,
+        /// Borrows the latest host-neutral notification occurrence until terminal mutation.
+        notification: ?Notification,
         /// Monotonic count of accepted BEL controls; presentation belongs to the embedder.
         bell_generation: u64,
         /// Monotonic count of history rows dropped after bounded allocation failure.

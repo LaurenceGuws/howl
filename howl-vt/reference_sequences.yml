@@ -1316,7 +1316,10 @@ references:
           - {id: iterm2.osc1337.custom, raw: "OSC 1337 ; Custom=Pm:payload (BEL|ST)",
             effect: dispatch custom host message, relevance: extension, howl: {status: 'false'}}
           - {id: iterm2.osc1337.notification, raw: "OSC 1337 ; Notification=Pt (BEL|ST)",
-            effect: post rich notification, relevance: host consequence, howl: {status: 'false'}}
+            effect: post rich notification, conditions: Howl retains raw bounded text but delegates presentation,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC notifications retain exact bounded host-neutral occurrences"}}}
           - {id: iterm2.osc1337.capabilities, raw: "OSC 1337 ; Capabilities=Pt (BEL|ST)",
             effect: report host capabilities, relevance: query, howl: {status: 'false'}}
           - {id: iterm2.osc1337.env, raw: "OSC 1337 ; Env=Pt (BEL|ST)", effect: update environment metadata,
@@ -2218,13 +2221,25 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           - {id: kitty.osc.notify_9, raw: "OSC 9 ; Pt (BEL|ST)", effect: display notification,
-            relevance: host consequence, howl: {status: 'false'}}
+            conditions: Howl retains raw bounded bytes but delegates parsing and presentation,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC notifications retain exact bounded host-neutral occurrences"}}}
           - {id: kitty.osc.notify_99, raw: "OSC 99 ; Pt (BEL|ST)", effect: display notification,
-            relevance: host consequence, howl: {status: 'false'}}
+            conditions: Howl retains raw bounded protocol bytes but delegates parsing and presentation,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC notifications retain exact bounded host-neutral occurrences"}}}
           - {id: kitty.osc.notify_777, raw: "OSC 777 ; Pt (BEL|ST)", effect: display notification,
-            relevance: host consequence, howl: {status: 'false'}}
+            conditions: Howl retains raw bounded protocol bytes but delegates parsing and presentation,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC notifications retain exact bounded host-neutral occurrences"}}}
           - {id: kitty.osc.notify_1337, raw: "OSC 1337 ; Pt (BEL|ST)", effect: display notification,
-            relevance: host consequence, howl: {status: 'false'}}
+            conditions: Howl retains only Notification= payloads and delegates parsing and presentation,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC notifications retain exact bounded host-neutral occurrences"}}}
           - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground, howl: {status: partial}}
           - {id: kitty.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background, howl: {status: partial}}
           - {id: kitty.osc.cursor, raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,

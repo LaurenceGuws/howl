@@ -379,6 +379,78 @@ test "shell integration OSC 133 records latest mark" {
     try std.testing.expectEqual(@as(u64, 2), terminal.surfaceSnapshot().shell_mark.generation);
 }
 
+test "OSC notifications retain exact bounded host-neutral occurrences" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b]9;hel")).state_changed == false);
+    try std.testing.expect(terminal.surfaceSnapshot().notification == null);
+    try std.testing.expect((try terminal.feed("lo\x07")).state_changed);
+    var notification = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 1), notification.generation);
+    try std.testing.expectEqual(@as(u16, 9), notification.command);
+    try std.testing.expectEqualStrings("hello", notification.payload);
+
+    try std.testing.expect((try terminal.feed("\x1b]99;i=one:d=0;body\x1b\\")).state_changed);
+    notification = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 2), notification.generation);
+    try std.testing.expectEqual(@as(u16, 99), notification.command);
+    try std.testing.expectEqualStrings("i=one:d=0;body", notification.payload);
+
+    try std.testing.expect((try terminal.feed("\x9d777;notify;title;body\x9c")).state_changed);
+    notification = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 3), notification.generation);
+    try std.testing.expectEqual(@as(u16, 777), notification.command);
+    try std.testing.expectEqualStrings("notify;title;body", notification.payload);
+
+    try std.testing.expect((try terminal.feed("\x1b]1337;Notification=rich body\x07")).state_changed);
+    notification = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 4), notification.generation);
+    try std.testing.expectEqual(@as(u16, 1337), notification.command);
+    try std.testing.expectEqualStrings("rich body", notification.payload);
+
+    try std.testing.expect((try terminal.feed("\x1b]9;hello\x07")).state_changed);
+    try std.testing.expectEqual(@as(u64, 5), terminal.surfaceSnapshot().notification.?.generation);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    notification = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 5), notification.generation);
+    try std.testing.expectEqualStrings("hello", notification.payload);
+}
+
+test "OSC notification overflow preserves the last complete occurrence" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b]9;prior\x07")).state_changed);
+    const payload = try allocator.alloc(u8, Terminal.notification_max_bytes + 1);
+    defer allocator.free(payload);
+    @memset(payload, 'x');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+    try sequence.appendSlice(allocator, "\x1b]9;");
+    try sequence.appendSlice(allocator, payload[0..Terminal.notification_max_bytes]);
+    try sequence.append(allocator, 0x07);
+
+    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    var retained = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 2), retained.generation);
+    try std.testing.expectEqual(Terminal.notification_max_bytes, retained.payload.len);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]9;");
+    try sequence.appendSlice(allocator, payload);
+    try sequence.append(allocator, 0x07);
+
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    retained = terminal.surfaceSnapshot().notification.?;
+    try std.testing.expectEqual(@as(u64, 2), retained.generation);
+    try std.testing.expectEqual(Terminal.notification_max_bytes, retained.payload.len);
+    try std.testing.expect((try terminal.feed("\x1b]9;after\x07")).state_changed);
+    try std.testing.expectEqualStrings("after", terminal.surfaceSnapshot().notification.?.payload);
+}
+
 test "iTerm safe controls mutate presentation metadata and exact replies" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
