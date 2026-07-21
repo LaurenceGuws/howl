@@ -10,10 +10,12 @@ The active projects are:
 - `howl-pty`: bounded native PTY, child process-group, I/O, resize, wake, and
   cleanup ownership.
 - `howl-control`: one live composition of `howl-pty` and `howl-vt`.
+- `howl-frame`: immutable terminal-local visual frames and renderer
+  acknowledgement.
 - `howl-host`: a native Wayland host with bounded terminal, layout, and text
   owners.
 
-The root package exports `howl_vt`, `howl_text`, `howl_pty`, and
+The root package exports `howl_vt`, `howl_text`, `howl_frame`, `howl_pty`, and
 `howl_control`. Native hosts and development proofs remain root workspace
 operations.
 

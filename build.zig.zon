@@ -9,6 +9,7 @@
         "build.zig.zon",
         "build",
         "howl-control/src",
+        "howl-frame/src",
         "howl-pty/src",
         "howl-text/src",
         "howl-vt/src",

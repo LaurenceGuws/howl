@@ -8,6 +8,8 @@ sources:
   protocol_coverage.nu: >-
     root-owned catalogue normalization, validation, structured queries, and compact human views
   howl-text/src: current text loading, shaping, and rasterization implementation
+  howl-frame/src/howl_frame.zig: >-
+    complete immutable terminal-local visual frames, bounded publication slots, cumulative cell damage, and exact renderer acknowledgement
   howl-pty/src/howl_pty.zig: >-
     Linux PTY creation, copied launch values, process-group lifecycle, bounded transfer outcomes, resize,
     concurrent cancellation, exact native errors, and cleanup
@@ -17,6 +19,6 @@ sources:
   howl-control/src/client.zig: >-
     terminal identity, endpoint facts, private protocol codec, Linux socket mechanics, and one-shot client
   howl-control/src/test.zig: live PTY and semantic control proofs
-  howl-host/src: current Wayland, terminal-thread, layout, and GLES host implementation
+  howl-host/src: temporary Wayland, xkb, EGL/GLES, layout, and lifecycle copybook pending proven replacement
   howl-host/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host
   tools/audit_source.sh: maintained non-vendor Zig source policy and reviewed construct uses

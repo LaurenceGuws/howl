@@ -5,7 +5,12 @@ capabilities:
     acceptance: one version, package URL, dependency graph, build command surface, and atomic history
 
   - name: public_module_graph
-    acceptance: the root package exports curated howl_vt, howl_text, howl_pty, and howl_control modules
+    acceptance: the root package exports curated howl_vt, howl_text, howl_frame, howl_pty, and howl_control modules
+
+  - name: terminal_frame_publication
+    acceptance: >-
+      one bounded owner copies complete terminal-local visual truth, accumulates damage across skipped generations,
+      rejects stale release, keeps renderer frame use outside its mutex, and reports slot saturation immediately
 
   - name: development_orchestration
     acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig

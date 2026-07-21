@@ -8,6 +8,7 @@ pub fn add(
     optimize: std.builtin.OptimizeMode,
     vt: *std.Build.Module,
     text: *std.Build.Module,
+    frame: *std.Build.Module,
     pty: *std.Build.Module,
     control: *std.Build.Module,
 ) void {
@@ -24,10 +25,22 @@ pub fn add(
     check.dependOn(&protocol.step);
     addVt(b, target, optimize, vt, check, test_step);
     addText(b, target, optimize, check, test_step);
+    addFrame(b, frame, check, test_step);
     addPty(b, pty, check, test_step);
     addControl(b, target, optimize, control, check, test_step);
     addHost(b, target, optimize, vt, text, check, test_step);
     b.default_step = check;
+}
+
+fn addFrame(
+    b: *std.Build,
+    frame: *std.Build.Module,
+    check: *std.Build.Step,
+    test_step: *std.Build.Step,
+) void {
+    const tests = addTest(b, "howl-frame", frame);
+    check.dependOn(&tests.step);
+    test_step.dependOn(&addTestRun(b, tests).step);
 }
 
 fn addVt(
