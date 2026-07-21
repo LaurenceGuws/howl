@@ -27,6 +27,38 @@ test "terminal: stream applies bytes to grid state deterministically" {
     try std.testing.expectEqual(@as(u16, 2), s.cursor.col);
 }
 
+test "terminal: VT52 exit escape is an exact fragmented no-op" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[31;1m\x1b[?1hABCD")).state_changed);
+    const before = terminal.screen_state.activeConst();
+    try std.testing.expect(before.wrap_pending);
+    try std.testing.expect(before.current_attrs.bold);
+    try std.testing.expectEqual(Terminal.Color.indexed(1), before.current_attrs.fg);
+    try std.testing.expect(terminal.modes.application_cursor_keys);
+
+    try std.testing.expect(!(try terminal.feed("\x1b")).state_changed);
+    try std.testing.expect(!(try terminal.feed("<")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b<\x1b<")).state_changed);
+    const after = terminal.screen_state.activeConst();
+    try std.testing.expect(after.wrap_pending);
+    try std.testing.expectEqual(@as(u16, 0), after.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), after.cursor.col);
+    try std.testing.expect(after.current_attrs.bold);
+    try std.testing.expectEqual(Terminal.Color.indexed(1), after.current_attrs.fg);
+    try std.testing.expect(terminal.modes.application_cursor_keys);
+    try std.testing.expectEqual(@as(u8, 0), terminal.surfaceSnapshot().window_request_count);
+    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+
+    try std.testing.expect((try terminal.feed("E\x1b<\x1b[2;3HF")).state_changed);
+    const completed = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u21, 'E'), completed.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'F'), completed.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u16, 1), completed.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), completed.cursor.col);
+}
+
 test "terminal: REP retains bounded glyph state and exact lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

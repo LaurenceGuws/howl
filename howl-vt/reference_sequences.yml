@@ -189,7 +189,10 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
           - {id: libvterm.esc.vt52_exit, raw: "ESC <", effect: accepted no-op for VT52 exit,
-            recognition: recognized_noop, relevance: compatibility, howl: {status: 'false'}}
+            recognition: recognized_noop, relevance: compatibility, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: VT52 exit escape is an exact fragmented no-op"}}}
           - {id: libvterm.esc.deckpam, raw: "ESC =", effect: application keypad, relevance: input,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -822,8 +825,11 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: application keypad modes affect keypad encoding and DECRQM}}}
-          - {id: iterm2.esc.strict_ansi, raw: "ESC <", effect: enter strict ANSI mode, relevance: compatibility,
-            howl: {status: 'false'}}
+          - {id: iterm2.esc.strict_ansi, raw: "ESC <", effect: recognize strict-ANSI token without terminal mutation,
+            recognition: recognized_noop, relevance: compatibility, howl: {status: full,
+              source: howl-vt/src/terminal.zig, symbol: escProcess, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: VT52 exit escape is an exact fragmented no-op"}}}
           - {id: iterm2.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset,
             conditions: Howl implements only ASCII, UK, and DEC Special Graphics,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
