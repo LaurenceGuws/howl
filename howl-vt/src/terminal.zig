@@ -6002,11 +6002,11 @@ pub const HostState = struct {
     /// Replaces one bounded shell mark without disturbing the prior mark on failure.
     pub fn replaceShellMark(self: *HostState, mark: ItermShellMark) ApplyError!void {
         try ensureRetainedBound(byteCount(mark.metadata), max_metadata_bytes);
+        if (self.shell_mark.generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
         const metadata = try self.allocator.dupe(u8, mark.metadata);
         self.allocator.free(self.shell_mark.metadata);
         self.shell_mark = .{
-            .generation = std.math.add(u64, self.shell_mark.generation, 1) catch
-                @panic("terminal shell-mark identity exhausted"),
+            .generation = self.shell_mark.generation + 1,
             .kind = mark.kind,
             .status = mark.status,
             .metadata = metadata,
@@ -6296,6 +6296,22 @@ test "shell mark replacement is bounded transactional and reusable" {
         .status = null,
         .metadata = &oversized,
     }));
+
+    try state.replaceShellMark(.{
+        .kind = 'D',
+        .status = 9,
+        .metadata = "aid=build;9",
+    });
+    state.shell_mark.generation = std.math.maxInt(u64);
+    try std.testing.expectError(error.ConsequenceLimit, state.replaceShellMark(.{
+        .kind = 'A',
+        .status = null,
+        .metadata = "replacement",
+    }));
+    try std.testing.expectEqual(std.math.maxInt(u64), state.shell_mark.generation);
+    try std.testing.expectEqual(@as(u8, 'D'), state.shell_mark.kind);
+    try std.testing.expectEqual(@as(?i32, 9), state.shell_mark.status);
+    try std.testing.expectEqualStrings("aid=build;9", state.shell_mark.metadata);
 }
 
 fn replaceShellMarkAllocation(allocator: std.mem.Allocator) !void {
@@ -6719,7 +6735,7 @@ fn isShellNameByte(byte: u8) bool {
         byte == '.' or byte == '_' or byte == '+' or byte == '-';
 }
 
-// Parses one OSC 133 mark and optional command-exit status.
+// Parses one OSC 133 mark and the first positional command-exit status.
 fn parseShellMark(payload: []const u8) ?ItermShellMark {
     if (payload.len == 0) return null;
     const separator = std.mem.indexOfScalar(u8, payload, ';') orelse payload.len;
@@ -6730,11 +6746,18 @@ fn parseShellMark(payload: []const u8) ?ItermShellMark {
         else => return null,
     }
     const metadata = if (separator < payload.len) payload[separator + 1 ..] else "";
-    const status = if (kind == 'D' and metadata.len > 0)
-        std.fmt.parseInt(i32, metadata, 10) catch null
-    else
-        null;
+    const status = if (kind == 'D') parseShellExitStatus(metadata) else null;
     return .{ .kind = kind, .status = status, .metadata = metadata };
+}
+
+// Ignores key-value attributes and returns the first complete signed decimal field.
+fn parseShellExitStatus(metadata: []const u8) ?i32 {
+    var fields = std.mem.splitScalar(u8, metadata, ';');
+    while (fields.next()) |field| {
+        if (field.len == 0 or std.mem.indexOfScalar(u8, field, '=') != null) continue;
+        if (std.fmt.parseInt(i32, field, 10)) |status| return status else |_| {}
+    }
+    return null;
 }
 
 test "iTerm safe controls decode without accepting policy commands" {
@@ -8292,6 +8315,10 @@ test "OSC shell mark maps to neutral semantic metadata" {
     const shell_mark = oscProcess(.{ .shell_mark = .{ .payload = "D;7", .term = .bel } }).?;
     try std.testing.expectEqual(@as(u8, 'D'), shell_mark.shell_mark.kind);
     try std.testing.expectEqual(@as(?i32, 7), shell_mark.shell_mark.status);
+    try std.testing.expectEqual(@as(?i32, 9), parseShellMark("D;aid=nested;9;cl=x").?.status);
+    try std.testing.expectEqual(@as(?i32, -3), parseShellMark("D;;-3;aid=x").?.status);
+    try std.testing.expectEqual(@as(?i32, null), parseShellMark("D;aid=x;broken").?.status);
+    try std.testing.expectEqual(@as(?i32, null), parseShellMark("C;7").?.status);
 }
 
 test "OSC Kitty host-policy payloads expose only retained terminal facts" {

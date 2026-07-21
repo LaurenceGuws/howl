@@ -1208,8 +1208,15 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: resetXtermDynamicColor, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC palette and dynamic resets own exact bounds mutation and lifetime"}}
-          - {id: iterm2.osc.shell_mark, raw: "OSC 133 ; mark [; metadata] (BEL|ST)",
-            effect: update shell integration mark, howl: {status: partial}}
+          - id: iterm2.osc.shell_mark
+            raw: "OSC 133 ; mark [; metadata] (BEL|ST)"
+            effect: update shell integration mark
+            conditions: >-
+              Howl retains bounded A/B/C/D facts and the first positional D exit status; iTerm2 additionally owns
+              N/P marks, aid nesting, prompt kinds, fresh-line behavior, and host shell state.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parseShellMark, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC 133 retains exact metadata and finds positional exit status"}}
           - {id: iterm2.osc.framer, raw: "OSC 134 ; Pt (BEL|ST)", effect: frame wrapped terminal data,
             relevance: transport, howl: {status: 'false'}}
           - {id: iterm2.osc.tab_status, raw: "OSC 21337 ; Pt (BEL|ST)", effect: set tab status metadata,
@@ -2304,8 +2311,15 @@ references:
             relevance: host consequence, howl: {status: 'false'}}
           - {id: kitty.osc.drag_drop, raw: "OSC DND_CODE ; Pt (BEL|ST)", effect: drag and drop control,
             relevance: host consequence, howl: {status: 'false'}}
-          - {id: kitty.osc.shell_mark, raw: "OSC 133 ; mark [; metadata] (BEL|ST)",
-            effect: update shell integration mark, howl: {status: partial}}
+          - id: kitty.osc.shell_mark
+            raw: "OSC 133 ; mark [; metadata] (BEL|ST)"
+            effect: update shell integration mark
+            conditions: >-
+              Howl retains bounded A/B/C/D facts and a typed first positional D exit status; Kitty owns line
+              attributes and command-output marks while forwarding D payload policy to its host.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: parseShellMark, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC 133 retains exact metadata and finds positional exit status"}}
           - {id: kitty.osc.file_transfer, raw: "OSC FILE_TRANSFER_CODE ; Pt (BEL|ST)", effect: transfer file,
             relevance: host consequence, howl: {status: 'false'}}
           - {id: kitty.osc.color_push, raw: "OSC 30001 (BEL|ST)", effect: sequential color-stack push,

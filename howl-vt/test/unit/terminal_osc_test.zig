@@ -379,6 +379,44 @@ test "shell integration OSC 133 records latest mark" {
     try std.testing.expectEqual(@as(u64, 2), terminal.surfaceSnapshot().shell_mark.generation);
 }
 
+test "OSC 133 retains exact metadata and finds positional exit status" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]133;D;aid=nested;")).state_changed);
+    try std.testing.expectEqual(@as(u64, 0), terminal.surfaceSnapshot().shell_mark.generation);
+    try std.testing.expect((try terminal.feed("7;cl=done\x1b\\")).state_changed);
+    var mark = terminal.surfaceSnapshot().shell_mark;
+    try std.testing.expectEqual(@as(u64, 1), mark.generation);
+    try std.testing.expectEqual(@as(u8, 'D'), mark.kind);
+    try std.testing.expectEqual(@as(?i32, 7), mark.status);
+    try std.testing.expectEqualStrings("aid=nested;7;cl=done", mark.metadata);
+
+    try std.testing.expect((try terminal.feed("\x9d133;D;;-3;aid=second\x9c")).state_changed);
+    mark = terminal.surfaceSnapshot().shell_mark;
+    try std.testing.expectEqual(@as(u64, 2), mark.generation);
+    try std.testing.expectEqual(@as(?i32, -3), mark.status);
+    try std.testing.expectEqualStrings(";-3;aid=second", mark.metadata);
+
+    try std.testing.expect((try terminal.feed("\x1b]133;D;aid=only;broken\x07")).state_changed);
+    mark = terminal.surfaceSnapshot().shell_mark;
+    try std.testing.expectEqual(@as(u64, 3), mark.generation);
+    try std.testing.expectEqual(@as(?i32, null), mark.status);
+    try std.testing.expectEqualStrings("aid=only;broken", mark.metadata);
+
+    try std.testing.expect((try terminal.feed("\x1b]133;C;cmdline=exit 7\x07")).state_changed);
+    mark = terminal.surfaceSnapshot().shell_mark;
+    try std.testing.expectEqual(@as(u64, 4), mark.generation);
+    try std.testing.expectEqual(@as(u8, 'C'), mark.kind);
+    try std.testing.expectEqual(@as(?i32, null), mark.status);
+    try std.testing.expectEqualStrings("cmdline=exit 7", mark.metadata);
+
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    mark = terminal.surfaceSnapshot().shell_mark;
+    try std.testing.expectEqual(@as(u64, 4), mark.generation);
+    try std.testing.expectEqualStrings("cmdline=exit 7", mark.metadata);
+}
+
 test "OSC notifications retain exact bounded host-neutral occurrences" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
