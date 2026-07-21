@@ -134,7 +134,7 @@ categories:
       existing Terminal.setDecMode owner; its prior first-parameter decoder chain was deleted.
 
   - id: charset_line_geometry
-    status: queued
+    status: accepted
     owner: howl-vt
     records: 19
     mechanism: ISO-2022 G0-G3 designation, UTF-8/Latin-1 transport mode, and DEC physical-row geometry
@@ -146,6 +146,14 @@ categories:
       remapping or resize association are explicit exclusions rather than guessed mappings
     why_next: >-
       Row geometry and charset transport are prerequisites for truthful erase, repetition, and legacy cursor claims.
+    result: >-
+      Existing direct owners and dense transcripts already prove four-slot designation, GL/GR and single-shift
+      invocation, exact A/B/0/U/V mappings, rejected-table immutability, split UTF-8/Latin-1 selection, savepoint and
+      RIS lifetime, logical half-width cursor bounds, DECLRMM rejection, dirty publication, row scroll/history/edit
+      association, and resize reset. Pinned-source review corrected stale libvterm repertoire wording: libvterm accepts
+      only A/B/0 while Howl deliberately also accepts U/V. All 19 residuals are now explicit exclusions for conflicting
+      charset breadth/scalar remapping, fixed-UTF-8 policy, physical cell expansion, cursor scaling, or resize
+      association. Active partial howl-vt obligations fell from 83 to 64 with no production growth.
 
   - id: erase_repeat_alignment
     status: queued

@@ -47,6 +47,50 @@ classifications:
     Howl keeps one exact bounded ANSI/DEC mode set with explicit bank/global lifetime and transition-only mutation;
     reference-specific emulation gates, duplicate dirty callbacks, defaults, timeout policy, and conflicting mode
     breadth are outside the complete Howl family.
+  charset_policy_difference: &howl_charset_policy_difference >-
+    Howl keeps one bounded ISO-2022 model with four designated slots, explicit GL/GR invocation, and only the
+    A/B/0/U/V tables it implements exactly; conflicting accepted designations or decoded-scalar remapping are outside
+    the complete Howl family.
+  line_geometry_policy_difference: &howl_line_geometry_policy_difference >-
+    Howl retains DEC geometry as bounded physical-row metadata with logical half-width columns, exact scroll and copy
+    association, and reset on resize; reference cell expansion, cursor scaling, or conflicting resize association is
+    outside the complete Howl family.
+  libvterm_charset_excluded: &howl_libvterm_charset_excluded {support: partial, disposition: excluded,
+    rationale: *howl_charset_policy_difference,
+    residual: Howl additionally accepts the U and V tables that libvterm rejects.,
+    source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}
+  iterm_charset_excluded: &howl_iterm_charset_excluded {support: partial, disposition: excluded,
+    rationale: *howl_charset_policy_difference,
+    residual: iTerm2 maps 0 to line drawing and all other finals to normal; Howl accepts A/B/0/U/V and rejects others.,
+    source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}
+  kitty_charset_excluded: &howl_kitty_charset_excluded {support: partial, disposition: excluded,
+    rationale: *howl_charset_policy_difference,
+    residual: Kitty remaps decoded C1 scalars and U+00FF while Howl maps only GL and U+00A0 through U+00FE.,
+    source: howl-vt/src/terminal.zig, symbol: TerminalStream.mapCodepoint, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: Kitty CP437 and VAX42 share existing charset lifetime"}}
+  kitty_encoding_excluded: &howl_kitty_encoding_excluded {support: partial, disposition: excluded,
+    rationale: *howl_charset_policy_difference,
+    residual: Kitty remains UTF-8 while Howl implements explicit UTF-8 and ISO-8859-1 transport selection.,
+    source: howl-vt/src/parser.zig, symbol: selectLatin1, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}
+  libvterm_line_geometry_excluded: &howl_libvterm_line_geometry_excluded {support: partial,
+    disposition: excluded, rationale: *howl_line_geometry_policy_difference,
+    residual: Howl clamps cursor to logical width and resets geometry on resize while libvterm retains cursor/line-info.,
+    source: howl-vt/src/terminal.zig, symbol: Screen.applyLineGeometry, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
+  iterm_line_geometry_excluded: &howl_iterm_line_geometry_excluded {support: partial, disposition: excluded,
+    rationale: *howl_line_geometry_policy_difference,
+    residual: iTerm2 expands or compacts physical cells and scales the cursor while Howl retains logical row metadata.,
+    source: howl-vt/src/terminal.zig, symbol: Screen.applyLineGeometry, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
   ansi_first_parameter_excluded: &howl_ansi_first_parameter_excluded {support: partial, disposition: excluded,
     rationale: *howl_mode_policy_difference,
     residual: The pinned reference applies only the first parameter while Howl applies every supported ANSI mode.,
@@ -199,9 +243,7 @@ references:
               ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
               Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
             relevance: presentation
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
+            howl: *howl_libvterm_line_geometry_excluded
           - id: libvterm.esc.decdhl_bottom
             raw: "ESC # 4"
             effect: double-height bottom line
@@ -209,11 +251,10 @@ references:
               ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
               Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
             relevance: presentation
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
+            howl: *howl_libvterm_line_geometry_excluded
           - {id: libvterm.esc.decswl, raw: "ESC # 5", effect: single-width line, conditions: ignored under DECLRMM,
-            relevance: presentation, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry,
+            relevance: presentation, howl: {support: full, source: howl-vt/src/terminal.zig,
+              symbol: Screen.applyLineGeometry,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}}
           - id: libvterm.esc.decdwl
@@ -222,9 +263,7 @@ references:
             conditions: >-
               ignored under DECLRMM; Howl clamps a cursor beyond the narrowed row while libvterm retains its position;
               Howl resets physical-row geometry on resize rather than reassigning it across reflowed content
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
+            howl: *howl_libvterm_line_geometry_excluded
           - id: libvterm.esc.decaln
             raw: "ESC # 8"
             effect: fill screen with E
@@ -236,25 +275,17 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
           - {id: libvterm.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset, relevance: charset,
-            conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
+            conditions: libvterm accepts A/B/0 while Howl additionally accepts U/V,
+            howl: *howl_libvterm_charset_excluded}
           - {id: libvterm.esc.scs_g1, raw: "ESC ) F", effect: designate G1 charset, relevance: charset,
-            conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
+            conditions: libvterm accepts A/B/0 while Howl additionally accepts U/V,
+            howl: *howl_libvterm_charset_excluded}
           - {id: libvterm.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset, relevance: charset,
-            conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: libvterm accepts A/B/0 while Howl additionally accepts U/V,
+            howl: *howl_libvterm_charset_excluded}
           - {id: libvterm.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset, relevance: charset,
-            conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: libvterm accepts A/B/0 while Howl additionally accepts U/V,
+            howl: *howl_libvterm_charset_excluded}
           - {id: libvterm.esc.decsc, raw: "ESC 7", effect: save cursor and pen, relevance: core,
             conditions: "cursor position, shape, blink, visibility, and common pen state agree; Howl additionally saves
               origin, autowrap, pending wrap, reverse screen, charset invocation, protection, hyperlink, and extended
@@ -950,28 +981,28 @@ references:
             conditions: >-
               iTerm2 expands cells and scales cursor position while Howl owns logical half-width row geometry and resets
               physical-row geometry on resize
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
+            howl: *howl_iterm_line_geometry_excluded
           - id: iterm2.esc.decdhl_bottom
             raw: "ESC # 4"
             effect: double-height bottom line
             conditions: >-
               iTerm2 expands cells and scales cursor position while Howl owns logical half-width row geometry and resets
               physical-row geometry on resize
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
+            howl: *howl_iterm_line_geometry_excluded
           - id: iterm2.esc.decswl
             raw: "ESC # 5"
             effect: single-width line
             conditions: >-
               iTerm2 compacts cells and scales cursor position while Howl preserves logical cells and resets
               physical-row geometry on resize
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
+            howl: *howl_iterm_line_geometry_excluded
           - id: iterm2.esc.decdwl
             raw: "ESC # 6"
             effect: double-width line
             conditions: >-
               iTerm2 expands cells and scales cursor position while Howl owns logical half-width row geometry and resets
               physical-row geometry on resize
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
+            howl: *howl_iterm_line_geometry_excluded
           - id: iterm2.esc.decaln
             raw: "ESC # 8"
             effect: fill screen with E
@@ -995,25 +1026,17 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: VT52 exit escape is an exact fragmented no-op"}}}
           - {id: iterm2.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset,
-            conditions: Howl implements only ASCII, UK, and DEC Special Graphics,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
+            conditions: iTerm2 maps 0 to line drawing and all other finals to normal; Howl accepts A/B/0/U/V and rejects others.,
+            howl: *howl_iterm_charset_excluded}
           - {id: iterm2.esc.scs_g1, raw: "ESC ) F", effect: designate G1 charset,
-            conditions: Howl implements only ASCII, UK, and DEC Special Graphics,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: G0 G1 designation maps implemented repertoires across split feeds"}}}
+            conditions: iTerm2 maps 0 to line drawing and all other finals to normal; Howl accepts A/B/0/U/V and rejects others.,
+            howl: *howl_iterm_charset_excluded}
           - {id: iterm2.esc.scs_g2, raw: "ESC * F", effect: designate G2 charset,
-            conditions: iTerm2 treats 0 as line drawing and every other final as normal; Howl accepts only A B and 0,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: iTerm2 maps 0 to line drawing and all other finals to normal; Howl accepts A/B/0/U/V and rejects others.,
+            howl: *howl_iterm_charset_excluded}
           - {id: iterm2.esc.scs_g3, raw: "ESC + F", effect: designate G3 charset,
-            conditions: iTerm2 treats 0 as line drawing and every other final as normal; Howl accepts only A B and 0,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
+            conditions: iTerm2 maps 0 to line drawing and all other finals to normal; Howl accepts A/B/0/U/V and rejects others.,
+            howl: *howl_iterm_charset_excluded}
           - {id: iterm2.esc.decfi, raw: "ESC 9", effect: forward index, relevance: compatibility,
             conditions: iTerm2 gates the command to VT400 while Howl has no legacy emulation level,
             howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Screen.forwardIndex, proof: {
@@ -2398,14 +2421,10 @@ references:
                 test: application keypad modes affect keypad encoding and DECRQM}}}
           - {id: kitty.esc.latin1, raw: "ESC % @", effect: ignore attempt to select legacy decoding,
             recognition: recognized_noop, conditions: Kitty remains permanently UTF-8 while Howl selects ISO-8859-1,
-            howl: {support: partial, source: howl-vt/src/parser.zig, symbol: selectLatin1, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
+            howl: *howl_kitty_encoding_excluded}
           - {id: kitty.esc.utf8, raw: "ESC % G", effect: ignore attempt to select UTF-8 decoding,
             recognition: recognized_noop, conditions: Kitty remains UTF-8 while Howl reports mutation after Latin-1,
-            howl: {support: partial, source: howl-vt/src/parser.zig, symbol: selectLatin1, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
+            howl: *howl_kitty_encoding_excluded}
           - id: kitty.esc.decaln
             raw: "ESC # 8"
             effect: fill screen with E
@@ -2417,14 +2436,10 @@ references:
               symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
           - {id: kitty.esc.scs_g0, raw: "ESC ( A|B|0|U|V", effect: designate G0 charset,
             conditions: Howl maps A B 0 U V through ISO GL/GR; Kitty also remaps decoded C1 scalars and U+00FF,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: Kitty CP437 and VAX42 share existing charset lifetime"}}}
+            howl: *howl_kitty_charset_excluded}
           - {id: kitty.esc.scs_g1, raw: "ESC ) A|B|0|U|V", effect: designate G1 charset,
             conditions: Howl maps A B 0 U V through ISO GL/GR; Kitty also remaps decoded C1 scalars and U+00FF,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: Kitty CP437 and VAX42 share existing charset lifetime"}}}
+            howl: *howl_kitty_charset_excluded}
           - id: kitty.esc.s7c1t
             raw: "ESC SP F"
             effect: select 7-bit C1 transmission
