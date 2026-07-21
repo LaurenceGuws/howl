@@ -32,10 +32,11 @@ references:
             source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
-          - {id: libvterm.c0.bs, raw: "\\x08", effect: cursor left, relevance: core, howl: {status: full,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: libvterm.c0.bs, raw: "\\x08", effect: cursor left, relevance: core,
+            conditions: Howl additionally follows iTerm2 reverse-wrap and soft-wrapped-row policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Screen.backspace, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "reverse wrap owns backspace margins phantom state query save and reset"}}}
           - {id: libvterm.c0.ht, raw: "\\x09", effect: next tab stop, relevance: core, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -691,9 +692,9 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
           - {id: iterm2.c0.bs, raw: "\\x08", effect: cursor left, howl: {status: full,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+            source: howl-vt/src/terminal.zig, symbol: Screen.backspace, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "reverse wrap owns backspace margins phantom state query save and reset"}}}
           - {id: iterm2.c0.ht, raw: "\\x09", effect: next tab stop, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1539,7 +1540,9 @@ references:
           - {id: iterm2.mode.more_fix, raw: "CSI ? 41 h|l", effect: toggle more compatibility fix,
             relevance: compatibility, howl: {status: 'false'}}
           - {id: iterm2.mode.reverse_wrap, raw: "CSI ? 45 h|l", effect: toggle reverse wraparound,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Screen.backspace, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "reverse wrap owns backspace margins phantom state query save and reset"}}}
           - {id: iterm2.mode.alt_47, raw: "CSI ? 47 h|l", effect: toggle alternate screen preserving cursor position,
             howl: {status: partial}}
           - {id: iterm2.mode.deckpam, raw: "CSI ? 66 h|l", effect: toggle application keypad, howl: {status: partial}}
@@ -1674,10 +1677,11 @@ references:
             source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
-          - {id: kitty.c0.bs, raw: "\\x08", effect: cursor left, howl: {status: full,
-            source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: C0 controls retain exact stream effects", line: 30}}}
+          - {id: kitty.c0.bs, raw: "\\x08", effect: cursor left,
+            conditions: Kitty crosses rows unconditionally while Howl follows iTerm2 soft-wrap and mode gating,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Screen.backspace, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "reverse wrap owns backspace margins phantom state query save and reset"}}}
           - {id: kitty.c0.ht, raw: "\\x09", effect: next tab stop, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: applyExecute, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,

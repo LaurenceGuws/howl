@@ -1276,7 +1276,7 @@ pub const Screen = struct {
             },
             .reverse_index => self.reverseIndex(),
             .carriage_return => self.cursor.setColByClient(0),
-            .backspace => self.cursor.setColByClient(self.cursor.col -| 1),
+            .backspace => self.applyBackspace(false),
             .horizontal_tab => self.horizontalTabForward(1),
             .horizontal_tab_forward => |count| self.horizontalTabForward(count),
             .horizontal_tab_back => |count| self.horizontalTabBack(count),
@@ -1292,6 +1292,44 @@ pub const Screen = struct {
             .reset_default_tab_stops => self.resetDefaultTabStops(),
             else => unreachable,
         }
+    }
+
+    // Applies iTerm2's reverse-wrap policy to one C0 BS and reports exact cursor or phantom mutation.
+    fn backspace(self: *Screen, reverse_wraparound: bool) bool {
+        const cursor_before = self.cursor;
+        const pending_before = self.wrap_pending;
+        self.applyBackspace(reverse_wraparound);
+        return !std.meta.eql(cursor_before, self.cursor) or pending_before != self.wrap_pending;
+    }
+
+    fn applyBackspace(self: *Screen, reverse_wraparound: bool) void {
+        if (self.wrap_pending) {
+            self.wrap_pending = false;
+            if (!reverse_wraparound or !self.auto_wrap) {
+                self.cursor.setColByClient(self.cursor.col -| 1);
+            }
+        } else if (self.shouldReverseWrap(reverse_wraparound)) {
+            const previous_row = self.cursor.row - 1;
+            const right = if (self.left_right_margin_mode)
+                @min(self.right_margin, self.lineRightBoundary(previous_row))
+            else
+                self.lineRightBoundary(previous_row);
+            self.cursor.setPositionByClient(previous_row, right);
+        } else {
+            const left = if (self.left_right_margin_mode) self.left_margin else 0;
+            if (self.cursor.col > left or (self.cursor.col < left and self.cursor.col > 0)) {
+                self.cursor.setColByClient(self.cursor.col - 1);
+            }
+        }
+    }
+
+    fn shouldReverseWrap(self: *const Screen, reverse_wraparound: bool) bool {
+        if (!self.auto_wrap) return false;
+        const left = if (self.left_right_margin_mode) self.left_margin else 0;
+        if (self.cursor.col != left and self.cursor.col != 0) return false;
+        if (self.cursor.row == 0 or self.cursor.row == self.scroll_top) return false;
+        if (reverse_wraparound) return true;
+        return !self.left_right_margin_mode and self.rowWrapped(self.cursor.row - 1);
     }
 
     fn applyScreenState(self: *Screen, event: SemanticEvent) void {
@@ -5263,6 +5301,8 @@ const DecView = struct {
     focus_reporting: bool,
     bracketed_paste: bool,
     synchronized_output: bool,
+    reverse_wraparound: bool,
+    extended_reverse_wraparound: bool,
 };
 
 // Borrows the ANSI mode facts required to answer one mode query.
@@ -5282,6 +5322,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         7 => boolToDecModeState(view.auto_wrap),
         8 => boolToDecModeState(view.auto_repeat),
         12 => boolToDecModeState(view.cursor_blink),
+        45 => boolToDecModeState(view.reverse_wraparound),
         69 => boolToDecModeState(view.left_right_margin_mode),
         66 => boolToDecModeState(view.application_keypad),
         25 => boolToDecModeState(view.cursor_visible),
@@ -5297,6 +5338,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         1015 => boolToDecModeState(view.mouse_protocol == .urxvt),
         2004 => boolToDecModeState(view.bracketed_paste),
         2026 => boolToDecModeState(view.synchronized_output),
+        1045 => boolToDecModeState(view.extended_reverse_wraparound),
         else => 0,
     };
 }
@@ -5358,11 +5400,13 @@ fn canSetDecMode(mode: u16) bool {
         9,
         12,
         25,
+        45,
         47,
         66,
         69,
         1047,
         1049,
+        1045,
         1000,
         1002,
         1003,
@@ -8929,6 +8973,8 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .focus_reporting = vt.modes.focus_reporting,
         .bracketed_paste = vt.modes.bracketed_paste,
         .synchronized_output = vt.modes.synchronized_output,
+        .reverse_wraparound = vt.modes.reverse_wraparound_mode,
+        .extended_reverse_wraparound = vt.modes.extended_reverse_wraparound_mode,
     };
     switch (event) {
         .ansi_mode_query => |mode| try appendAnsiModeReport(
@@ -10665,6 +10711,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
                 if (event == .line_feed and vt.modes.newline_mode) .next_line else event,
             );
         },
+        .backspace => return vt.screen_state.active().backspace(vt.modes.reverse_wraparound_mode),
 
         .erase_display_below => |protected| {
             return vt.screen_state.active().eraseDisplay(.cursor_to_end, protected);
@@ -10729,7 +10776,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .write_codepoint,
         .reverse_index,
         .carriage_return,
-        .backspace,
         .horizontal_tab,
         .horizontal_tab_forward,
         .horizontal_tab_back,
@@ -11677,6 +11723,8 @@ pub const Terminal = struct {
         changed = replaceBool(&self.modes.newline_mode, false) or changed;
         changed = replaceBool(&self.modes.focus_reporting, false) or changed;
         changed = replaceBool(&self.modes.bracketed_paste, false) or changed;
+        changed = replaceBool(&self.modes.reverse_wraparound_mode, false) or changed;
+        changed = replaceBool(&self.modes.extended_reverse_wraparound_mode, false) or changed;
         if (self.modes.mouse_tracking != .off) changed = true;
         self.modes.mouse_tracking = .off;
         if (self.modes.mouse_protocol != .none) changed = true;
@@ -11923,9 +11971,9 @@ pub const Terminal = struct {
                 self.modes.pointer_mode = value;
                 return true;
             },
-            .reverse_wraparound_mode => |enabled| return replaceBool(&self.modes.reverse_wraparound_mode, enabled),
+            .reverse_wraparound_mode => |enabled| return self.setDecMode(45, enabled),
             .extended_reverse_wraparound_mode => |enabled| {
-                return replaceBool(&self.modes.extended_reverse_wraparound_mode, enabled);
+                return self.setDecMode(1045, enabled);
             },
             .bracketed_paste => |enabled| return replaceBool(&self.modes.bracketed_paste, enabled),
             .synchronized_output => |enabled| return replaceBool(&self.modes.synchronized_output, enabled),
@@ -11953,6 +12001,8 @@ pub const Terminal = struct {
             .focus_reporting = self.modes.focus_reporting,
             .bracketed_paste = self.modes.bracketed_paste,
             .synchronized_output = self.modes.synchronized_output,
+            .reverse_wraparound = self.modes.reverse_wraparound_mode,
+            .extended_reverse_wraparound = self.modes.extended_reverse_wraparound_mode,
         }, mode_number);
     }
 
@@ -12032,10 +12082,12 @@ pub const Terminal = struct {
                 changed = replaceBool(&self.screen_state.alternate.cursor.visible, enabled) or changed;
                 break :result changed;
             },
+            45 => replaceBool(&self.modes.reverse_wraparound_mode, enabled),
             66 => replaceBool(&self.modes.application_keypad, enabled),
             47 => self.switchScreenMode(enabled, false, false),
             1047 => self.switchScreenMode(enabled, true, false),
             1049 => self.switchScreenMode(enabled, true, true),
+            1045 => replaceBool(&self.modes.extended_reverse_wraparound_mode, enabled),
             9 => self.setMouseTracking(if (enabled) .x10 else .off),
             1000 => self.setMouseTracking(if (enabled) .normal else .off),
             1002 => self.setMouseTracking(if (enabled) .button_event else .off),

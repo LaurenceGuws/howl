@@ -1653,3 +1653,56 @@ test "low priority private modes and media copy retain host-neutral state" {
     try std.testing.expect(!reverseWraparoundMode(&terminal));
     try std.testing.expect(!extendedReverseWraparoundMode(&terminal));
 }
+
+test "reverse wrap owns backspace margins phantom state query save and reset" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 5);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x08")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?1045h")).state_changed);
+    try std.testing.expect((try terminal.feed("abcde")).state_changed);
+    try std.testing.expect((try terminal.feed("\x08")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect((try terminal.feed("\x08")).state_changed);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.activeConst().cursor.col);
+
+    terminal.hardReset();
+    try std.testing.expect((try terminal.feed("abcdef\r")).state_changed);
+    try std.testing.expect((try terminal.feed("\x08")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.activeConst().cursor.col);
+
+    terminal.hardReset();
+    try std.testing.expect((try terminal.feed("\x1b[?69h\x1b[2;4s\x1b[?45h\x1b[2;2H")).state_changed);
+    try std.testing.expect((try terminal.feed("\x08")).state_changed);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[2;2H")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x08")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.col);
+
+    terminal.hardReset();
+    try std.testing.expect((try terminal.feed("abcdef\r\x1b[?69h\x1b[2;4s\x1b[2;2H")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x08")).state_changed);
+    terminal.hardReset();
+    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?7l\x1b[2;1H")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x08")).state_changed);
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?1045h\x1b[?45;1045s")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?45l\x1b[?1045l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?45$p\x1b[?1045$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?45;1045r\x1b[?45$p\x1b[?1045$p")).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b[?45;2$y\x1b[?1045;2$y\x1b[?45;1$y\x1b[?1045;1$y",
+        pendingOutput(&terminal),
+    );
+
+    try std.testing.expect((try terminal.feed("\x1b[!p")).state_changed);
+    try std.testing.expect(!reverseWraparoundMode(&terminal));
+    try std.testing.expect(!extendedReverseWraparoundMode(&terminal));
+    try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
+}
