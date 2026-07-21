@@ -26,6 +26,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     frame.addImport("howl_vt", vt);
+    const render = b.addModule("howl_render", .{
+        .root_source_file = b.path("howl-render/src/howl_render.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    render.addImport("howl_frame", frame);
+    render.addImport("howl_text", text);
     const pty = b.addModule("howl_pty", .{
         .root_source_file = b.path("howl-pty/src/howl_pty.zig"),
         .target = target,
@@ -43,5 +51,5 @@ pub fn build(b: *std.Build) void {
     control.addImport("howl_frame", frame);
     control.addImport("howl_pty", pty);
 
-    if (b.dep_prefix.len == 0) dev.add(b, target, optimize, vt, text, frame, pty, control);
+    if (b.dep_prefix.len == 0) dev.add(b, target, optimize, vt, text, frame, render, pty, control);
 }

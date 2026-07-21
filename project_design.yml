@@ -19,6 +19,9 @@ components:
   - name: frame
     role: bounded immutable terminal-local visual publications and renderer acknowledgement
 
+  - name: render
+    role: shared text preparation, bounded glyph-mask cache, pane validation, and frame draw preparation
+
   - name: host
     role: native Wayland window loop, layout, shared text/GLES rendering, and presentation policy
 
@@ -28,7 +31,8 @@ relationships:
   - pty owns copied launch values and exact Linux process, descriptor, cancellation, and bounded I/O mechanics
   - control composes pty, vt, and frame and owns publication plus the bounded local byte-stream protocol
   - frame copies complete VT visual truth and cumulative cell damage without owning layout, text, platform, or GPU policy
-  - host composes control, frame, and text while owning window, layout, GPU, and presentation lifecycles
+  - render borrows immutable frames and owns one text/cache preparation path shared across every terminal
+  - host composes control, frame, render, and Wayland while owning window, layout, and presentation lifecycles
   - qagent is the first real embedder and supplies integration pressure without Howl policy
   - >-
     protocol evidence is family-owned at the root; implemented support, residual disposition, and concrete code
@@ -43,3 +47,4 @@ package:
     - howl_pty
     - howl_control
     - howl_frame
+    - howl_render

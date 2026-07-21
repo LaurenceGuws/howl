@@ -11,6 +11,8 @@ sources:
   howl-frame/src/howl_frame.zig: >-
     geometry-sized immutable terminal-local frames, transactional resize storage, cumulative cell damage,
     bounded publication slots, and exact renderer acknowledgement
+  howl-render/src/howl_render.zig: >-
+    shared font ownership, bounded cross-terminal glyph-mask cache, pane/frame validation, and damage-aware draw preparation
   howl-pty/src/howl_pty.zig: >-
     Linux PTY creation, copied launch values, process-group lifecycle, bounded transfer outcomes, resize,
     concurrent cancellation, exact native errors, and cleanup

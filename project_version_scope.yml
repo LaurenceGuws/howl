@@ -5,13 +5,19 @@ capabilities:
     acceptance: one version, package URL, dependency graph, build command surface, and atomic history
 
   - name: public_module_graph
-    acceptance: the root package exports curated howl_vt, howl_text, howl_frame, howl_pty, and howl_control modules
+    acceptance: >-
+      the root package exports curated howl_vt, howl_text, howl_frame, howl_render, howl_pty, and howl_control modules
 
   - name: terminal_frame_publication
     acceptance: >-
       one bounded owner copies complete terminal-local visual truth, accumulates damage across skipped generations,
       rejects stale release, sizes storage to admitted geometry, transactionally replaces unborrowed storage on resize,
       keeps renderer frame use outside its mutex, and reports slot saturation immediately
+
+  - name: shared_render_preparation
+    acceptance: >-
+      one owner shares native text and a fixed byte/count-bounded glyph-mask cache across terminal frames,
+      validates pane composition, and prepares only complete or damaged rows without retaining frame borrows
 
   - name: development_orchestration
     acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig

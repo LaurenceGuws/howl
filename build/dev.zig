@@ -9,6 +9,7 @@ pub fn add(
     vt: *std.Build.Module,
     text: *std.Build.Module,
     frame: *std.Build.Module,
+    render: *std.Build.Module,
     pty: *std.Build.Module,
     control: *std.Build.Module,
 ) void {
@@ -26,10 +27,25 @@ pub fn add(
     addVt(b, target, optimize, vt, check, test_step);
     addText(b, target, optimize, check, test_step);
     addFrame(b, frame, check, test_step);
+    addRender(b, render, check, test_step);
     addPty(b, pty, check, test_step);
     addControl(b, target, optimize, control, check, test_step);
     addHost(b, target, optimize, vt, text, check, test_step);
     b.default_step = check;
+}
+
+fn addRender(
+    b: *std.Build,
+    render: *std.Build.Module,
+    check: *std.Build.Step,
+    test_step: *std.Build.Step,
+) void {
+    const paths = b.addOptions();
+    paths.addOption([]const u8, "font", b.pathFromRoot("howl-text/testdata/primary.ttf"));
+    render.addImport("render_test_paths", paths.createModule());
+    const tests = addTest(b, "howl-render", render);
+    check.dependOn(&tests.step);
+    test_step.dependOn(&addTestRun(b, tests).step);
 }
 
 fn addFrame(
