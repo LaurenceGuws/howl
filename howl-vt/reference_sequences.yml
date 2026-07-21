@@ -1739,7 +1739,11 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
           - {id: iterm2.mode.alt_scroll, raw: "CSI ? 1007 h|l", effect: toggle alternate mouse scroll,
-            conditions: host policy permits, howl: {status: 'false'}}
+            conditions: "iTerm2 accepts enable only when host policy permits and translates wheel input above VT; Howl
+              retains, reports, publishes, and resets it; its host owns translation and admission",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "iTerm2 host-coordinated input modes retain reports and terminal lifetime"}}}
           - {id: iterm2.mode.mouse_urxvt, raw: "CSI ? 1015 h|l", effect: toggle urxvt mouse encoding,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -1749,7 +1753,11 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
           - {id: iterm2.mode.meta_escape, raw: "CSI ? 1036 h|l", effect: toggle Meta-sends-Escape, relevance: input,
-            howl: {status: 'false'}}
+            conditions: "iTerm2 host policy applies this and may override it for extended or raw key reporting;
+              Howl retains, reports, publishes, and resets the fact but does not reinterpret host key events",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "iTerm2 host-coordinated input modes retain reports and terminal lifetime"}}}
           - {id: iterm2.mode.alt_1047, raw: "CSI ? 1047 h|l",
             effect: preserve cursor coordinates across switch and clear alternate on exit,
             conditions: ignored when smcup or rmcup is disabled, howl: {status: partial}}
@@ -1765,7 +1773,11 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC cursor and alternate modes preserve bounded lifecycle truth"}}}
           - {id: iterm2.mode.key_up_1337, raw: "CSI ? 1337 h|l", effect: toggle key-release reports, relevance: input,
-            howl: {status: 'false'}}
+            conditions: "iTerm2 switches host key delivery to raw mode; Howl retains, reports, publishes, and resets the
+              fact but host input adaptation owns release delivery",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "iTerm2 host-coordinated input modes retain reports and terminal lifetime"}}}
           - {id: iterm2.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,

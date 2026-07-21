@@ -779,6 +779,49 @@ test "Kitty host-coordinated modes retain exact state reports and color notifica
     try std.testing.expect(!publication.termios_signals);
 }
 
+test "iTerm2 host-coordinated input modes retain reports and terminal lifetime" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    var publication = terminal.surfaceSnapshot();
+    try std.testing.expect(!publication.alternate_scroll);
+    try std.testing.expect(!publication.meta_sends_escape);
+    try std.testing.expect(!publication.report_key_up);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?100")).state_changed);
+    try std.testing.expect((try terminal.feed("7h\x1b[?1036h\x1b[?1337h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1007h\x1b[?1036h\x1b[?1337h")).state_changed);
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expect(publication.alternate_scroll);
+    try std.testing.expect(publication.meta_sends_escape);
+    try std.testing.expect(publication.report_key_up);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1007$p\x1b[?1036$p\x1b[?1337$p")).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b[?1007;1$y\x1b[?1036;1$y\x1b[?1337;1$y",
+        pendingOutput(&terminal),
+    );
+    clearPendingOutput(&terminal);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1047h")).state_changed);
+    try terminal.resize(4, 10);
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expect(publication.alternate_scroll);
+    try std.testing.expect(publication.meta_sends_escape);
+    try std.testing.expect(publication.report_key_up);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1036l\x1b[?1036$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?1036;2$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expect(!publication.alternate_scroll);
+    try std.testing.expect(!publication.meta_sends_escape);
+    try std.testing.expect(!publication.report_key_up);
+}
+
 test "paste encoding distinguishes borrowed and owned results" {
     const text = "paste";
     var no_storage: [0]u8 = .{};
