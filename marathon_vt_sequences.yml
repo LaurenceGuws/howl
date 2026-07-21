@@ -156,7 +156,7 @@ categories:
       association. Active partial howl-vt obligations fell from 83 to 64 with no production growth.
 
   - id: erase_repeat_alignment
-    status: queued
+    status: accepted
     owner: howl-vt
     records: 15
     mechanism: Screen erase owners, protected cells, retained glyph repetition, DECALN, scrollback, and row damage
@@ -169,6 +169,14 @@ categories:
       while conflicting multicell/selection/reference policy is settled separately
     why_next: >-
       It consumes the completed row-geometry contract and closes the remaining high-frequency grid mutations.
+    result: >-
+      Existing direct owners plus dense transcripts prove exact erase defaults/rejection, ISO/DEC protection,
+      pending-wrap and continuation mutation, logical row widths, current erase attributes, minimum changed spans,
+      history and logical-output lifetime, retained-glyph rendition and bounded allocation-free repetition, and DECALN
+      cursor/margin/geometry preservation. Eleven conflicting reference cell, repetition, alignment, and product-state
+      policies are explicit exclusions. Kitty's four erase records now defer only their precise graphics-plane
+      remainder to howl-vt/graphics after complete cell-plane proof. Active partial howl-vt obligations fall from 64
+      to 49 with no production growth.
 
   - id: cursor_compatibility_and_restore
     status: queued

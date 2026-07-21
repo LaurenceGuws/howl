@@ -55,6 +55,50 @@ classifications:
     Howl retains DEC geometry as bounded physical-row metadata with logical half-width columns, exact scroll and copy
     association, and reset on resize; reference cell expansion, cursor scaling, or conflicting resize association is
     outside the complete Howl family.
+  erase_policy_difference: &howl_erase_policy_difference >-
+    Howl erases its bounded cells, ISO/DEC protection provenance, logical row widths, history, and minimum changed
+    row spans exactly; reference-only multicell repair, selection, external attributes, and permissive parameters are
+    outside the complete Howl family.
+  repeat_policy_difference: &howl_repeat_policy_difference >-
+    Howl repeats one bounded retained glyph through its ordinary write path; conflicting row-clamp, last-codepoint,
+    multicell, and external-attribute policies are outside the complete Howl family.
+  alignment_policy_difference: &howl_alignment_policy_difference >-
+    Howl fills retained DEC logical row widths while preserving cursor, margins, and row geometry; conflicting cursor,
+    margin, full-physical-row, and geometry-reset policies are outside the complete Howl family.
+  clear_buffer_policy_difference: &howl_clear_buffer_policy_difference >-
+    Howl clears the active grid, projected history, cursor, viewport, and selection while preserving independent
+    resize-stable logical output; reference-only prompt, image, mark, highlight, find, and saved-cursor policy is
+    outside the complete Howl family.
+  erase_display_excluded: &howl_erase_display_excluded {support: partial, disposition: excluded,
+    rationale: *howl_erase_policy_difference, source: howl-vt/src/terminal.zig, symbol: Screen.eraseDisplay,
+    proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
+  erase_line_excluded: &howl_erase_line_excluded {support: partial, disposition: excluded,
+    rationale: *howl_erase_policy_difference, source: howl-vt/src/terminal.zig, symbol: Screen.eraseLine,
+    proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
+  kitty_erase_display_graphics: &howl_kitty_erase_display_graphics {support: partial, disposition: deferred,
+    owner: howl-vt, milestone: graphics, residual: Matching Kitty graphics-plane display erasure remains.,
+    rationale: *howl_erase_policy_difference, source: howl-vt/src/terminal.zig, symbol: Screen.eraseDisplay,
+    proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
+  kitty_erase_line_graphics: &howl_kitty_erase_line_graphics {support: partial, disposition: deferred,
+    owner: howl-vt, milestone: graphics, residual: Matching Kitty graphics-plane line erasure remains.,
+    rationale: *howl_erase_policy_difference, source: howl-vt/src/terminal.zig, symbol: Screen.eraseLine,
+    proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}
+  repeat_excluded: &howl_repeat_excluded {support: partial, disposition: excluded,
+    rationale: *howl_repeat_policy_difference, source: howl-vt/src/terminal.zig, symbol: Screen.repeatPreceding,
+    proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}
+  alignment_excluded: &howl_alignment_excluded {support: partial, disposition: excluded,
+    rationale: *howl_alignment_policy_difference, source: howl-vt/src/terminal.zig, symbol: Screen.alignmentDisplay,
+    proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
+  clear_buffer_excluded: &howl_clear_buffer_excluded {support: partial, disposition: excluded,
+    rationale: *howl_clear_buffer_policy_difference, source: howl-vt/src/terminal.zig, symbol: Terminal.clearBuffer,
+    proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+      symbol: "iTerm ClearScrollback clears only active screen state with exact repetition"}}
   libvterm_charset_excluded: &howl_libvterm_charset_excluded {support: partial, disposition: excluded,
     rationale: *howl_charset_policy_difference,
     residual: Howl additionally accepts the U and V tables that libvterm rejects.,
@@ -271,9 +315,7 @@ references:
             conditions: >-
               libvterm emits E glyphs across each logical ROWWIDTH without changing cursor or line information;
               Howl additionally cancels pending wrap and clears wrapped-row metadata
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
+            howl: *howl_alignment_excluded
           - {id: libvterm.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset, relevance: charset,
             conditions: libvterm accepts A/B/0 while Howl additionally accepts U/V,
             howl: *howl_libvterm_charset_excluded}
@@ -467,9 +509,7 @@ references:
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
             conditions: libvterm clamps complete glyph repetition to the logical row while Howl wraps through the grid,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
+            howl: *howl_repeat_excluded}
           - {id: libvterm.csi.da1, raw: "CSI [Ps=0] c", effect: report primary device attributes, relevance: query,
             conditions: libvterm identifies VT100 level with 22 and OSC 52 while Howl identifies VT220 level with 22,
             howl: {support: partial, disposition: excluded, rationale: *howl_report_identity_difference,
@@ -1009,9 +1049,7 @@ references:
             conditions: >-
               iTerm2 fills the full physical grid, homes the cursor, and resets vertical and horizontal scroll regions;
               Howl fills each retained DEC logical row width and preserves cursor and regions
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
+            howl: *howl_alignment_excluded
           - {id: iterm2.esc.deckpam, raw: "ESC =", effect: application keypad,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -1106,9 +1144,7 @@ references:
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
             conditions: iTerm2 includes double-width and external-attribute behavior absent from Howl,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
+            howl: *howl_repeat_excluded}
           - {id: iterm2.csi.cud, raw: "CSI [Ps=1] B", effect: cursor down,
             conditions: clamps from above the vertical region into its bottom, howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
@@ -1163,15 +1199,11 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: iterm2.csi.ed, raw: "CSI [Ps=0] J", effect: erase display,
-            conditions: iTerm2 treats unsupported Ps as 0 while Howl rejects it, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: eraseDisplay, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            conditions: iTerm2 treats unsupported Ps as 0 while Howl rejects it,
+            howl: *howl_erase_display_excluded}
           - {id: iterm2.csi.el, raw: "CSI [Ps=0] K", effect: erase line,
-            conditions: iTerm2 delegate owns double-width and multiline character repair, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: eraseLine, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            conditions: iTerm2 delegate owns double-width and multiline character repair,
+            howl: *howl_erase_line_excluded}
           - {id: iterm2.csi.hvp, raw: "CSI [row=1] ; [col=1] f", effect: cursor position,
             conditions: double-width target-line column addressing, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -1374,14 +1406,10 @@ references:
               symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
           - {id: iterm2.csi.decsed, raw: "CSI ? [Ps=0] J", effect: selective erase display,
             conditions: iTerm2 delegate owns protected-cell attribute and multiline consequences,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: eraseDisplay, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            howl: *howl_erase_display_excluded}
           - {id: iterm2.csi.decsel, raw: "CSI ? [Ps=0] K", effect: selective erase line,
             conditions: iTerm2 delegate owns protected-cell attribute and multiline consequences,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: eraseLine, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            howl: *howl_erase_line_excluded}
           - {id: iterm2.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns,
             conditions: iTerm2 repairs double-width cells and external attributes that Howl cannot yet produce,
             howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -1651,9 +1679,7 @@ references:
               independent resize-stable logical-output evidence; iTerm2 additionally preserves an active prompt,
               resets saved cursor positions, and clears image, mark, highlight, and find state.
             relevance: terminal state
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.clearBuffer, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "iTerm ClearScrollback clears only active screen state with exact repetition"}}
+            howl: *howl_clear_buffer_excluded
           - {id: iterm2.osc1337.current_dir, raw: "OSC 1337 ; CurrentDir=Pt (BEL|ST)", effect: report working directory,
             conditions: "iTerm2 delegates only for a trusted terminal while Howl retains a host-neutral path
               up to 1 KiB",
@@ -2431,9 +2457,7 @@ references:
             conditions: >-
               Kitty also homes the cursor, resets vertical margins, and reinitializes every row's line geometry;
               Howl preserves cursor, margins, and DEC line geometry
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
+            howl: *howl_alignment_excluded
           - {id: kitty.esc.scs_g0, raw: "ESC ( A|B|0|U|V", effect: designate G0 charset,
             conditions: Howl maps A B 0 U V through ISO GL/GR; Kitty also remaps decoded C1 scalars and U+00FF,
             howl: *howl_kitty_charset_excluded}
@@ -2667,9 +2691,7 @@ references:
                 symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: kitty.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
             conditions: Kitty repeats its last codepoint while Howl retains its bounded combining cluster,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: REP retains bounded glyph state and exact lifetime"}}}
+            howl: *howl_repeat_excluded}
           - {id: kitty.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
             conditions: Kitty margin clamp also depends on horizontal inclusion, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -2756,25 +2778,17 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: kitty.csi.ed, raw: "CSI [Ps=0] J", effect: erase display,
-            conditions: Kitty additionally owns Ps 22 and graphics/multicell/selection consequences,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: eraseDisplay, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            conditions: Kitty additionally accepts Ps 22 and owns multicell and selection consequences,
+            howl: *howl_kitty_erase_display_graphics}
           - {id: kitty.csi.decsed, raw: "CSI ? [Ps=0] J", effect: selective erase display,
-            conditions: Kitty preserves cell attributes and owns graphics/multicell/selection consequences,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: eraseDisplay, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            conditions: Kitty preserves cell attributes and owns multicell and selection consequences,
+            howl: *howl_kitty_erase_display_graphics}
           - {id: kitty.csi.el, raw: "CSI [Ps=0] K", effect: erase line,
-            conditions: Kitty owns multicell/graphics/selection consequences, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: eraseLine, proof: {
-                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            conditions: Kitty owns multicell and selection consequences,
+            howl: *howl_kitty_erase_line_graphics}
           - {id: kitty.csi.decsel, raw: "CSI ? [Ps=0] K", effect: selective erase line,
-            conditions: Kitty preserves cell attributes and owns multicell/graphics/selection consequences,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: eraseLine, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
+            conditions: Kitty preserves cell attributes and owns multicell and selection consequences,
+            howl: *howl_kitty_erase_line_graphics}
           - {id: kitty.csi.il, raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
               disposition: deferred, owner: howl-vt, milestone: graphics,

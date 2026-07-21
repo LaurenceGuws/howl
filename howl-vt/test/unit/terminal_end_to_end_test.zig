@@ -76,6 +76,20 @@ test "terminal: REP retains bounded glyph state and exact lifetime" {
         try std.testing.expectEqualSlices(u32, &.{ 0x301, 0x327, 0x308 }, cell.combining[0..3]);
     }
 
+    try std.testing.expect((try terminal.feed("\x1b[32;4m\x1b[0b")).state_changed);
+    const defaulted = primary.cellInfoAt(0, 3);
+    try std.testing.expectEqual(@as(u21, 'A'), defaulted.codepoint);
+    try std.testing.expectEqual(@as(u8, 3), defaulted.combining_len);
+    try std.testing.expectEqual(Terminal.Color.indexed(2), defaulted.attrs.fg);
+    try std.testing.expect(defaulted.attrs.underline);
+
+    // Parser-bounded counts remain allocation-free and use the ordinary
+    // wrapping path rather than constructing a repeated glyph buffer.
+    try std.testing.expect((try terminal.feed("\x1b[?7l\x1b[999999b")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'A'), primary.cellAt(0, 7));
+    try std.testing.expect(primary.cellInfoAt(0, 7).attrs.underline);
+    try std.testing.expect((try terminal.feed("\x1b[?7h")).state_changed);
+
     try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[3b")).state_changed);
     try std.testing.expect((try terminal.feed("B\x1b[b")).state_changed);
