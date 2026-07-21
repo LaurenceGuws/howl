@@ -803,6 +803,7 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
     try std.testing.expect((try terminal.feed("lo\x07")).state_changed);
     var notification = terminal.surfaceSnapshot().notification.?;
     try std.testing.expectEqual(@as(u64, 1), notification.generation);
+    try std.testing.expectEqual(host_state.NotificationKind.message, notification.kind);
     try std.testing.expectEqual(@as(u16, 9), notification.command);
     try std.testing.expectEqualStrings("hello", notification.payload);
 
@@ -810,32 +811,39 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
         "\x1b]99;i=one:d=0;body\x1b\\" ++
             "\x9d777;notify;title;body\x9c" ++
             "\x1b]1337;Notification=rich body\x07" ++
+            "\x1b]1337;StealFocus\x1b\\" ++
+            "\x1b]1337;RequestAttention=fireworks\x07" ++
             "\x1b]9;last\x07",
     )).state_changed);
-    try std.testing.expectEqual(@as(u8, 5), terminal.surfaceSnapshot().notification_count);
+    try std.testing.expectEqual(@as(u8, 7), terminal.surfaceSnapshot().notification_count);
     try std.testing.expectError(error.StaleNotification, terminal.acknowledgeNotification(2));
 
-    const expected = [_]struct { command: u16, payload: []const u8 }{
-        .{ .command = 9, .payload = "hello" },
-        .{ .command = 99, .payload = "i=one:d=0;body" },
-        .{ .command = 777, .payload = "notify;title;body" },
-        .{ .command = 1337, .payload = "rich body" },
-        .{ .command = 9, .payload = "last" },
+    const expected = [_]struct { kind: host_state.NotificationKind, command: u16, payload: []const u8 }{
+        .{ .kind = .message, .command = 9, .payload = "hello" },
+        .{ .kind = .message, .command = 99, .payload = "i=one:d=0;body" },
+        .{ .kind = .message, .command = 777, .payload = "notify;title;body" },
+        .{ .kind = .message, .command = 1337, .payload = "rich body" },
+        .{ .kind = .steal_focus, .command = 1337, .payload = "" },
+        .{ .kind = .request_attention, .command = 1337, .payload = "fireworks" },
+        .{ .kind = .message, .command = 9, .payload = "last" },
     };
     for (expected, 1..) |item, generation| {
         notification = terminal.surfaceSnapshot().notification.?;
         try std.testing.expectEqual(@as(u64, @intCast(generation)), notification.generation);
+        try std.testing.expectEqual(item.kind, notification.kind);
         try std.testing.expectEqual(item.command, notification.command);
         try std.testing.expectEqualStrings(item.payload, notification.payload);
         try terminal.acknowledgeNotification(notification.generation);
     }
     try std.testing.expect(terminal.surfaceSnapshot().notification == null);
 
-    try std.testing.expect((try terminal.feed("\x1b]9;survives\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;RequestAtt")).state_changed);
+    try std.testing.expect((try terminal.feed("ention=once\x07")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     notification = terminal.surfaceSnapshot().notification.?;
-    try std.testing.expectEqual(@as(u64, 6), notification.generation);
-    try std.testing.expectEqualStrings("survives", notification.payload);
+    try std.testing.expectEqual(@as(u64, 8), notification.generation);
+    try std.testing.expectEqual(host_state.NotificationKind.request_attention, notification.kind);
+    try std.testing.expectEqualStrings("once", notification.payload);
 }
 
 test "OSC notification bounds preserve the FIFO and wrap without reuse" {

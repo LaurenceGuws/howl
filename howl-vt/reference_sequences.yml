@@ -1343,8 +1343,16 @@ references:
             relevance: host metadata, howl: {status: 'false'}}
           - {id: iterm2.osc1337.set_mark, raw: "OSC 1337 ; SetMark[=Pt] (BEL|ST)", effect: create scrollback mark,
             relevance: host metadata, howl: {status: partial}}
-          - {id: iterm2.osc1337.steal_focus, raw: "OSC 1337 ; StealFocus (BEL|ST)", effect: request application focus,
-            relevance: host consequence, howl: {status: 'false'}}
+          - id: iterm2.osc1337.steal_focus
+            raw: "OSC 1337 ; StealFocus[=Pt] (BEL|ST)"
+            effect: request application focus
+            conditions: >-
+              iTerm2 executes only for a trusted terminal; Howl retains one bounded ordered intent and delegates
+              authorization and focus policy to the host.
+            relevance: host consequence
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}
           - {id: iterm2.osc1337.clear_scrollback, raw: "OSC 1337 ; ClearScrollback (BEL|ST)", effect: clear scrollback,
             relevance: host consequence, howl: {status: partial}}
           - {id: iterm2.osc1337.current_dir, raw: "OSC 1337 ; CurrentDir=Pt (BEL|ST)", effect: report working directory,
@@ -1409,8 +1417,16 @@ references:
           - {id: iterm2.osc1337.shell_integration, raw: "OSC 1337 ; ShellIntegrationVersion=Pt (BEL|ST)",
             effect: report shell integration identity, relevance: host metadata, howl: {status: partial,
             source: howl-vt/src/terminal.zig, symbol: parse}}
-          - {id: iterm2.osc1337.request_attention, raw: "OSC 1337 ; RequestAttention=Ps (BEL|ST)",
-            effect: request user attention, relevance: host consequence, howl: {status: 'false'}}
+          - id: iterm2.osc1337.request_attention
+            raw: "OSC 1337 ; RequestAttention[=Ps] (BEL|ST)"
+            effect: request user attention
+            conditions: >-
+              Howl retains the raw bounded argument in FIFO order; the host owns iTerm2's start stop once fireworks
+              interpretation and presentation policy.
+            relevance: host consequence
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}
           - {id: iterm2.osc1337.background_image, raw: "OSC 1337 ; SetBackgroundImageFile=Pt (BEL|ST)",
             effect: set background image, relevance: host consequence, howl: {status: 'false'}}
           - {id: iterm2.osc1337.profile_property, raw: "OSC 1337 ; SetProfileProperty=key=base64-json (BEL|ST)",

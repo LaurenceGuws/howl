@@ -5801,7 +5801,7 @@ const string_payload_capacity: u8 = 32;
 const hyperlink_target_max_bytes: u32 = 2 * 1024;
 /// Each retained title or icon name follows the 1 KiB parser metadata scale.
 pub const max_metadata_bytes: u32 = 1024;
-// Bounds one notification burst while a host applies presentation policy.
+// Bounds one notification, focus, or attention burst while a host applies policy.
 const notification_capacity: u8 = 8;
 // Bounds one pointer-request burst while a host applies validation and presentation policy.
 const pointer_shape_capacity: u8 = 8;
@@ -5821,19 +5821,29 @@ const ShellMark = struct {
     metadata: []u8 = &[_]u8{},
 };
 
-/// Borrows one host-neutral notification occurrence until terminal mutation.
+/// Identifies one ordered host-neutral notification consequence.
+pub const NotificationKind = enum {
+    message,
+    steal_focus,
+    request_attention,
+};
+
+/// Borrows one host-neutral notification, focus, or attention occurrence until terminal mutation.
 pub const Notification = struct {
-    /// Monotonic identity advancing for every accepted notification, including repeated bytes.
+    /// Monotonic identity advancing for every accepted occurrence, including repeated values.
     generation: u64,
-    /// Original OSC command identifying the notification protocol family.
+    /// Selects message presentation, focus admission, or attention policy.
+    kind: NotificationKind,
+    /// Original OSC command identifying the protocol family.
     command: u16,
-    /// Raw bounded protocol payload; interpretation and presentation belong to the host.
+    /// Raw bounded message body or attention argument; interpretation belongs to the host.
     payload: []const u8,
 };
 
-// Owns one bounded notification queue slot without allocation.
+// Owns one bounded notification-consequence queue slot without allocation.
 const NotificationOwned = struct {
     generation: u64,
+    kind: NotificationKind,
     command: u16,
     payload_len: u16,
     payload: [max_metadata_bytes]u8,
@@ -5841,6 +5851,7 @@ const NotificationOwned = struct {
     fn view(self: *const NotificationOwned) Notification {
         return .{
             .generation = self.generation,
+            .kind = self.kind,
             .command = self.command,
             .payload = self.payload[0..self.payload_len],
         };
@@ -6245,8 +6256,13 @@ pub const HostState = struct {
         };
     }
 
-    /// Retain one notification occurrence without choosing host presentation policy.
-    pub fn retainNotification(self: *HostState, command: u16, payload: []const u8) ApplyError!void {
+    /// Retain one notification, focus, or attention occurrence without choosing host policy.
+    pub fn retainNotification(
+        self: *HostState,
+        kind: NotificationKind,
+        command: u16,
+        payload: []const u8,
+    ) ApplyError!void {
         try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
         if (self.notifications_count == notification_capacity) return error.ConsequenceLimit;
         if (self.notification_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
@@ -6255,6 +6271,7 @@ pub const HostState = struct {
         @memcpy(slot.payload[0..payload.len], payload);
         self.notification_generation += 1;
         slot.generation = self.notification_generation;
+        slot.kind = kind;
         slot.command = command;
         slot.payload_len = @intCast(payload.len);
         self.notifications_count += 1;
@@ -7166,6 +7183,8 @@ const ItermCommand = union(enum) {
     shell_integration: ItermShellIntegration,
     current_directory: []const u8,
     notification: []const u8,
+    steal_focus,
+    request_attention: []const u8,
     file_transfer: []const u8,
 };
 
@@ -7182,6 +7201,10 @@ fn parse1337(payload: []const u8) ?ItermCommand {
     const separator = std.mem.indexOfScalar(u8, payload, '=') orelse {
         return if (std.mem.eql(u8, payload, "ReportCellSize"))
             .report_cell_size
+        else if (std.mem.eql(u8, payload, "StealFocus"))
+            .steal_focus
+        else if (std.mem.eql(u8, payload, "RequestAttention"))
+            .{ .request_attention = "" }
         else
             null;
     };
@@ -7193,6 +7216,9 @@ fn parse1337(payload: []const u8) ?ItermCommand {
     if (std.mem.eql(u8, key, "SetColors")) return .{ .set_colors = value };
     if (std.mem.eql(u8, key, "CurrentDir")) return .{ .current_directory = value };
     if (std.mem.eql(u8, key, "Notification")) return .{ .notification = value };
+    // iTerm ignores an optional StealFocus value after recognizing the key.
+    if (std.mem.eql(u8, key, "StealFocus")) return .steal_focus;
+    if (std.mem.eql(u8, key, "RequestAttention")) return .{ .request_attention = value };
     if (std.mem.eql(u8, key, "File") or
         std.mem.eql(u8, key, "MultipartFile") or
         std.mem.eql(u8, key, "FilePart") or
@@ -7272,6 +7298,10 @@ test "iTerm safe controls decode without accepting policy commands" {
     try std.testing.expectEqualStrings("fg=fff", parse(1337, "SetColors=fg=fff").?.set_colors);
     try std.testing.expectEqualStrings("/work/tree", parse(1337, "CurrentDir=/work/tree").?.current_directory);
     try std.testing.expectEqualStrings("hello", parse(1337, "Notification=hello").?.notification);
+    try std.testing.expect(parse(1337, "StealFocus").? == .steal_focus);
+    try std.testing.expect(parse(1337, "StealFocus=ignored").? == .steal_focus);
+    try std.testing.expectEqualStrings("", parse(1337, "RequestAttention").?.request_attention);
+    try std.testing.expectEqualStrings("fireworks", parse(1337, "RequestAttention=fireworks").?.request_attention);
     try std.testing.expectEqualStrings("FilePart=QQ==", parse(1337, "FilePart=QQ==").?.file_transfer);
     const integration = parse(1337, "ShellIntegrationVersion=20;shell=bash").?.shell_integration;
     try std.testing.expectEqual(@as(u32, 20), integration.version);
@@ -8759,9 +8789,17 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .kitty_color => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
         .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
         .shell_mark => |v| if (parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
-        .notification => |v| SemanticEvent{ .notification = .{ .command = v.command, .payload = v.payload } },
+        .notification => |v| SemanticEvent{ .notification = .{
+            .kind = .message,
+            .command = v.command,
+            .payload = v.payload,
+        } },
         .pointer_shape => |v| SemanticEvent{ .pointer_shape = v.payload },
-        .rxvt_extension => |v| SemanticEvent{ .notification = .{ .command = 777, .payload = v.payload } },
+        .rxvt_extension => |v| SemanticEvent{ .notification = .{
+            .kind = .message,
+            .command = 777,
+            .payload = v.payload,
+        } },
         .iterm2 => |v| if (parse(v.command, v.payload)) |command| switch (command) {
             .cursor_shape => |shape| SemanticEvent{ .cursor_shape = shape },
             .report_cell_size => SemanticEvent.iterm_report_cell_size,
@@ -8772,7 +8810,21 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
             .shell_integration => |integration| SemanticEvent{
                 .shell_integration_set = integration,
             },
-            .notification => |payload| SemanticEvent{ .notification = .{ .command = 1337, .payload = payload } },
+            .notification => |payload| SemanticEvent{ .notification = .{
+                .kind = .message,
+                .command = 1337,
+                .payload = payload,
+            } },
+            .steal_focus => SemanticEvent{ .notification = .{
+                .kind = .steal_focus,
+                .command = 1337,
+                .payload = "",
+            } },
+            .request_attention => |payload| SemanticEvent{ .notification = .{
+                .kind = .request_attention,
+                .command = 1337,
+                .payload = payload,
+            } },
             .file_transfer => |payload| SemanticEvent{ .file_transfer_packet = .{
                 .protocol = .iterm2_1337,
                 .payload = payload,
@@ -8991,6 +9043,7 @@ test "OSC Kitty host-policy payloads expose only retained terminal facts" {
         .payload = "i=1:p=body;Hello",
         .term = .st,
     } }).?;
+    try std.testing.expectEqual(NotificationKind.message, notification.notification.kind);
     try std.testing.expectEqual(@as(u16, 99), notification.notification.command);
     try std.testing.expectEqualStrings("i=1:p=body;Hello", notification.notification.payload);
     const pointer = oscProcess(.{ .pointer_shape = .{
@@ -9096,7 +9149,7 @@ pub const SemanticEvent = union(enum) {
     kitty_keyboard_push: u8,
     kitty_keyboard_pop: u16,
     shell_mark: ItermShellMark,
-    notification: struct { command: u16, payload: []const u8 },
+    notification: struct { kind: NotificationKind, command: u16, payload: []const u8 },
     pointer_shape: []const u8,
     window_request: WindowRequest,
     color_preference_query,
@@ -9773,7 +9826,11 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .shell_integration_set => |integration| try vt.host.replaceShellIntegration(integration),
         .working_directory_report => |directory| return vt.host.replaceWorkingDirectoryReport(directory),
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
-        .notification => |notification| try vt.host.retainNotification(notification.command, notification.payload),
+        .notification => |notification| try vt.host.retainNotification(
+            notification.kind,
+            notification.command,
+            notification.payload,
+        ),
         .pointer_shape => |payload| try vt.host.retainPointerShape(payload),
         .window_request => |request| try vt.host.retainWindowRequest(request),
         .color_preference_query => try vt.host.retainColorPreferenceQuery(),
@@ -12518,9 +12575,9 @@ pub const Terminal = struct {
     pub const shell_name_max_bytes = max_shell_name_bytes;
     /// Bounds copied OSC 133 metadata retained by one shell mark.
     pub const shell_mark_metadata_max_bytes = max_metadata_bytes;
-    /// Bounds raw bytes retained for one host-neutral notification occurrence.
+    /// Bounds raw bytes retained for one host-neutral notification consequence.
     pub const notification_max_bytes = max_metadata_bytes;
-    /// Exposes the fixed pending-notification capacity to embedding hosts.
+    /// Exposes the fixed pending notification-consequence capacity to embedding hosts.
     pub const notification_max_count = notification_capacity;
     /// Bounds raw bytes retained for one OSC 22 pointer-shape request.
     pub const pointer_shape_max_bytes = max_metadata_bytes;
@@ -13847,7 +13904,7 @@ pub const Terminal = struct {
         self.dirty_generation +%= 1;
     }
 
-    /// Consume the matching FIFO-head notification after host presentation policy runs.
+    /// Consume the matching FIFO-head notification consequence after host policy runs.
     pub fn acknowledgeNotification(self: *Terminal, generation: u64) error{StaleNotification}!void {
         const notification = self.host.notificationView() orelse return error.StaleNotification;
         if (notification.generation != generation) return error.StaleNotification;
@@ -14000,9 +14057,9 @@ pub const Terminal = struct {
         clipboard_request: ?Terminal.ClipboardRequest,
         /// Reports the bounded number of pending clipboard operations, including the exposed head.
         clipboard_request_count: u8,
-        /// Borrows the next FIFO host-neutral notification until terminal mutation.
+        /// Borrows the next FIFO host-neutral notification consequence until terminal mutation.
         notification: ?Notification,
-        /// Reports the bounded number of pending notifications, including the exposed head.
+        /// Reports the bounded number of pending notification consequences, including the exposed head.
         notification_count: u8,
         /// Borrows the next FIFO OSC 22 request until terminal mutation.
         pointer_shape: ?PointerShapeRequest,
