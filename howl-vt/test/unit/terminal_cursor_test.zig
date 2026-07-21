@@ -60,17 +60,36 @@ test "terminal cursor: alt screen enter resets alt cursor instead of copying pri
     try std.testing.expect(active(&terminal).cursor.blink_intent);
 }
 
-test "terminal cursor: decscusr no-shape stays explicit through surface view" {
+test "terminal cursor: DECSCUSR restores host default and rejects unsupported values" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 2);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
+    terminal.screen_state.primary.setDefaultCursorStyle(.{ .shape = .underline, .blink = false });
 
-    try stream.nextSlice("\x1b[7 q");
-    const visible = view(&terminal);
-    try std.testing.expectEqual(.none, active(&terminal).cursor.effective_shape);
-    try std.testing.expectEqual(.none, visible.cursor_shape);
-    try std.testing.expect(visible.cursor_visible);
+    const cases = [_]struct { bytes: []const u8, shape: Screen.CursorShape, blink: bool }{
+        .{ .bytes = "\x1b[1 q", .shape = .block, .blink = true },
+        .{ .bytes = "\x1b[2 q", .shape = .block, .blink = false },
+        .{ .bytes = "\x1b[3 q", .shape = .underline, .blink = true },
+        .{ .bytes = "\x1b[4 q", .shape = .underline, .blink = false },
+        .{ .bytes = "\x1b[5 q", .shape = .bar, .blink = true },
+        .{ .bytes = "\x1b[6 q", .shape = .bar, .blink = false },
+    };
+    for (cases) |case| {
+        try std.testing.expect((try terminal.feed(case.bytes)).state_changed);
+        try std.testing.expectEqual(case.shape, active(&terminal).cursor.effective_shape);
+        try std.testing.expectEqual(case.blink, active(&terminal).cursor.blink_intent);
+    }
+
+    try std.testing.expect(!(try terminal.feed("\x1b[0 ")).state_changed);
+    try std.testing.expect((try terminal.feed("q")).state_changed);
+    try std.testing.expectEqual(.underline, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(!active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!(try terminal.feed("\x1b[ q\x1b[7 q\x1b[999999 q")).state_changed);
+    try std.testing.expectEqual(.underline, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(!active(&terminal).cursor.blink_intent);
+
+    try std.testing.expect((try terminal.feed("\x1bP$q q\x1b\\")).state_changed);
+    try std.testing.expectEqualStrings("\x1bP1$r4 q\x1b\\", terminal.host.pendingOutput());
 }
 
 test "terminal cursor: savepoint restores presentation while host colors remain current" {
@@ -184,10 +203,10 @@ test "terminal cursor: presentation modes preserve exact bank and lifetime truth
     try std.testing.expect(active(&terminal).cursor.blink_intent);
     try std.testing.expect(!active(&terminal).cursor.visible);
 
-    try std.testing.expect((try terminal.feed("\x1b[7 q")).state_changed);
-    try std.testing.expectEqual(.none, active(&terminal).cursor.effective_shape);
-    try std.testing.expect(active(&terminal).cursor.blink_intent);
-    try std.testing.expect(!(try terminal.feed("\x1b[7 q")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2 q")).state_changed);
+    try std.testing.expectEqual(.block, active(&terminal).cursor.effective_shape);
+    try std.testing.expect(!active(&terminal).cursor.blink_intent);
+    try std.testing.expect(!(try terminal.feed("\x1b[2 q")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
     try std.testing.expectEqual(.block, active(&terminal).cursor.effective_shape);
     try std.testing.expect(active(&terminal).cursor.blink_intent);

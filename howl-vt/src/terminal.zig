@@ -7664,7 +7664,9 @@ fn processTick(final: u8, params: []const i32) ?SemanticEvent {
 
 fn processSpace(final: u8, params: []const i32) ?SemanticEvent {
     return switch (final) {
-        'q' => SemanticEvent{ .cursor_style = cursorStyle(paramAtOrDefault0(params, 0)) },
+        'q' => SemanticEvent{
+            .cursor_style = cursorStyle(paramAtOrDefault0(params, 0)) orelse return null,
+        },
         '@' => SemanticEvent{ .shift_left_columns = paramAtOrDefault1(params, 0) },
         'A' => SemanticEvent{ .shift_right_columns = paramAtOrDefault1(params, 0) },
         else => null,
@@ -7919,15 +7921,16 @@ fn lineEraseMode(v: i32) ?ScreenEraseMode {
 }
 
 // Maps DECSCUSR parameters to an explicit cursor-style command.
-fn cursorStyle(param: u16) CursorStyleCommand {
+fn cursorStyle(param: u16) ?CursorStyleCommand {
     return switch (param) {
-        0, 1 => .{ .program_override = .{ .shape = .block, .blink = true } },
+        0 => .restore_default,
+        1 => .{ .program_override = .{ .shape = .block, .blink = true } },
         2 => .{ .program_override = .{ .shape = .block, .blink = false } },
         3 => .{ .program_override = .{ .shape = .underline, .blink = true } },
         4 => .{ .program_override = .{ .shape = .underline, .blink = false } },
         5 => .{ .program_override = .{ .shape = .bar, .blink = true } },
         6 => .{ .program_override = .{ .shape = .bar, .blink = false } },
-        else => .{ .program_override = .{ .shape = .none, .blink = (param & 1) == 1 } },
+        else => null,
     };
 }
 

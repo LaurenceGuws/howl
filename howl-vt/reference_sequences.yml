@@ -380,7 +380,10 @@ references:
           - {id: libvterm.csi.xtversion, raw: "CSI > [Ps=0] q", effect: report terminal version, relevance: query,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsiLeader}}
           - {id: libvterm.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor shape and blink,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: processSpace}}
+            conditions: parameter 0 selects a blinking block while Howl restores the configured host default,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: cursorStyle, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: DECSCUSR restores host default and rejects unsupported values"}}}
           - {id: libvterm.csi.decsca, raw: "CSI [Ps=0] \" q", effect: set character protection, howl: {status: full,
             source: howl-vt/src/terminal.zig, symbol: processQuote, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1051,7 +1054,11 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {
               path: howl-vt/test/unit/terminal_test.zig,
               symbol: "terminal DECSTR preserves text and position while resetting terminal state"}}}
-          - {id: iterm2.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style, howl: {status: partial}}
+          - {id: iterm2.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style,
+            conditions: parameter 0 restores the configured host default and values above 6 are ignored,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: cursorStyle, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: DECSCUSR restores host default and rejects unsupported values"}}}
           - {id: iterm2.csi.decsca, raw: "CSI [Ps=0] \" q", effect: select character protection,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: processQuote, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -2383,7 +2390,12 @@ references:
           - {id: kitty.csi.decsace, raw: "CSI [Ps=0] * x", effect: set rectangle attribute extent,
             conditions: Kitty maps every value other than 2 to stream mode while Howl ignores values above 2,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: processStar}}
-          - {id: kitty.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style, howl: {status: partial}}
+          - {id: kitty.csi.decscusr, raw: "CSI [Ps=0] SP q", effect: set cursor style,
+            conditions: Kitty maps values above 6 to host-default shape with parameter-selected blink while Howl
+              rejects them,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: cursorStyle, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: DECSCUSR restores host default and rejects unsupported values"}}}
           - {id: kitty.csi.multi_cursor, raw: "CSI > Pm SP q", effect: set multiple cursor shapes, relevance: extension,
             howl: {status: partial}}
           - {id: kitty.csi.xtversion, raw: "CSI > [Ps=0] q", effect: report version, relevance: query,
