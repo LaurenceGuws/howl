@@ -886,7 +886,7 @@ references:
       - source: VT100CSIParser.m
         symbol: decodeFromContext
         line: 353
-        census: {semantic_branches: 64, records: 64}
+        census: {semantic_branches: 66, records: 66}
         recognition: implemented
         records:
           - {id: iterm2.csi.cub, raw: "CSI [Ps=1] D", effect: cursor backward,
@@ -970,6 +970,26 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "window controls retain ordered bounded host requests and lifetime"}}
+          - id: iterm2.csi.decsnls
+            raw: "CSI rows * |"
+            effect: request terminal row count
+            conditions: >-
+              iTerm2 accepts rows 1..255 only at VT400 level and delegates one-dimensional resize; Howl has no
+              emulation-level policy and retains the exact row request in its bounded ordered host-intent FIFO.
+            relevance: host consequence
+            howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: processStar, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DEC cell dimension requests retain exact ordered host intent"}}
+          - id: iterm2.csi.decscpp
+            raw: "CSI [cols=0] $ |"
+            effect: request 80 or 132 terminal columns
+            conditions: >-
+              iTerm2 accepts 0/80 as 80 and 132 only at VT300 level, updates column mode, and preserves screen
+              contents; Howl has no emulation-level policy and retains the exact column request for host execution.
+            relevance: host consequence
+            howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: processDollar, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "DEC cell dimension requests retain exact ordered host intent"}}
           - {id: iterm2.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: line-buffer history and selection consequences, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}

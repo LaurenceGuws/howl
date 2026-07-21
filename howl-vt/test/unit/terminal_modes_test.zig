@@ -1075,6 +1075,38 @@ test "window controls retain ordered bounded host requests and lifetime" {
     try std.testing.expectEqual(.iconify, std.meta.activeTag(occurrence.request));
 }
 
+test "DEC cell dimension requests retain exact ordered host intent" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 24, 80);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    try stream.nextSlice("\x1b[40*");
+    try stream.nextSlice("|\x9b132$|\x1b[$|\x1b[0$|\x1b[80$|\x1b[255*|");
+    try std.testing.expectEqual(@as(u8, 6), terminal.surfaceSnapshot().window_request_count);
+
+    const expected = [_]terminal_mod.WindowRequest{
+        .{ .resize_rows = 40 },
+        .{ .resize_columns = .columns_132 },
+        .{ .resize_columns = .columns_80 },
+        .{ .resize_columns = .columns_80 },
+        .{ .resize_columns = .columns_80 },
+        .{ .resize_rows = 255 },
+    };
+    for (expected, 1..) |wanted, generation| {
+        const occurrence = terminal.surfaceSnapshot().window_request.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqualDeep(wanted, occurrence.request);
+        try terminal.acknowledgeWindowRequest(occurrence.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
+
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b[*|\x1b[0*|\x1b[256*|\x1b[42;1*|\x1b[81$|\x1b[80;1$|",
+    )).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().window_request == null);
+}
+
 test "window query replies require matching live intent and serialize transactionally" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 5);

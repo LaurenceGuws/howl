@@ -5887,6 +5887,8 @@ pub const WindowRequest = union(enum) {
     resize_pixels: struct { height: u32, width: u32 },
     raise,
     lower,
+    resize_rows: u8,
+    resize_columns: enum(u8) { columns_80 = 80, columns_132 = 132 },
     resize_cells: struct { rows: u32, cols: u32 },
     report_state,
     report_position,
@@ -7516,6 +7518,11 @@ fn processDollar(final: u8, params: []const i32) ?SemanticEvent {
         'x' => rectFill(params),
         'z' => rectErase(params, false),
         '{' => rectErase(params, true),
+        '|' => if (params.len <= 1) switch (paramAtOrDefault0(params, 0)) {
+            0, 80 => SemanticEvent{ .window_request = .{ .resize_columns = .columns_80 } },
+            132 => SemanticEvent{ .window_request = .{ .resize_columns = .columns_132 } },
+            else => null,
+        } else null,
         else => null,
     };
 }
@@ -7527,6 +7534,10 @@ fn processStar(final: u8, params: []const i32) ?SemanticEvent {
             2 => SemanticEvent{ .attr_change_extent_rect = true },
             else => null,
         };
+    }
+    if (final == '|') {
+        if (params.len != 1 or params[0] <= 0 or params[0] >= 256) return null;
+        return SemanticEvent{ .window_request = .{ .resize_rows = @intCast(params[0]) } };
     }
     if (final != 'y') return null;
     const area = rectArea(params, 2) orelse return null;
