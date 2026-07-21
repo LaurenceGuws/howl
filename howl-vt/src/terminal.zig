@@ -5754,25 +5754,33 @@ const ClipboardRequestOwned = struct {
     raw: []u8,
     selection_len: u8,
     kind: ClipboardRequestKind,
+    protocol: ClipboardProtocol,
 
     fn view(self: *const ClipboardRequestOwned) ClipboardRequestView {
         return .{
             .generation = self.generation,
             .selection = self.raw[0..self.selection_len],
+            .payload = self.raw,
             .kind = self.kind,
+            .protocol = self.protocol,
         };
     }
 };
 
-const ClipboardRequestKind = enum { set, query };
+const ClipboardRequestKind = enum { set, query, packet };
+const ClipboardProtocol = enum { osc52, kitty_5522 };
 
 const ClipboardRequestView = struct {
     /// Monotonic identity advancing for every accepted operation, including repeated bytes.
     generation: u64,
     /// Borrows exact OSC 52 selection bytes; empty selection leaves the choice to host policy.
     selection: []const u8,
-    /// Distinguishes clipboard replacement from a host-approved reply request.
+    /// Borrows the exact protocol payload for host parsing and policy.
+    payload: []const u8,
+    /// Distinguishes OSC 52 replacement/query operations from one Kitty packet.
     kind: ClipboardRequestKind,
+    /// Identifies the framing and semantics governing `payload`.
+    protocol: ClipboardProtocol,
 };
 
 const ParsedClipboardRequest = struct {
@@ -5814,6 +5822,8 @@ const PendingOutput = struct {
 pub const pending_output_max_bytes: u32 = 64 * 1024;
 /// OSC 52 is unchunked; retain at most the parser's 1 MiB clipboard packet.
 const clipboard_max_bytes: u32 = 1024 * 1024;
+/// One Kitty OSC 5522 packet follows the parser's encoded chunk boundary.
+const kitty_clipboard_packet_max_bytes: u32 = parser_mod.max_chunk_control_bytes;
 /// Bounds one ordered clipboard burst while the host applies access policy.
 const clipboard_capacity: u8 = 8;
 /// OSC 52 names four standard selections and eight numbered cut buffers.
@@ -6273,6 +6283,23 @@ pub const HostState = struct {
     pub fn retainClipboard(self: *HostState, payload: []const u8) ApplyError!bool {
         try ensureRetainedBound(byteCount(payload), clipboard_max_bytes);
         const parsed = parseClipboardRequest(payload) orelse return false;
+        try self.retainClipboardRequest(payload, @intCast(parsed.selection.len), parsed.kind, .osc52);
+        return true;
+    }
+
+    // Retain one exact Kitty OSC 5522 packet for ordered host parsing and policy.
+    fn retainKittyClipboard(self: *HostState, payload: []const u8) ApplyError!void {
+        try ensureRetainedBound(byteCount(payload), kitty_clipboard_packet_max_bytes);
+        try self.retainClipboardRequest(payload, 0, .packet, .kitty_5522);
+    }
+
+    fn retainClipboardRequest(
+        self: *HostState,
+        payload: []const u8,
+        selection_len: u8,
+        kind: ClipboardRequestKind,
+        protocol: ClipboardProtocol,
+    ) ApplyError!void {
         if (self.clipboard_requests_count == clipboard_capacity) return error.ConsequenceLimit;
         if (self.clipboard_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
         const retained_bytes = std.math.add(u32, self.clipboard_retained_bytes, byteCount(payload)) catch
@@ -6284,12 +6311,12 @@ pub const HostState = struct {
         self.clipboard_requests[index] = .{
             .generation = self.clipboard_generation,
             .raw = owned,
-            .selection_len = @intCast(parsed.selection.len),
-            .kind = parsed.kind,
+            .selection_len = selection_len,
+            .kind = kind,
+            .protocol = protocol,
         };
         self.clipboard_requests_count += 1;
         self.clipboard_retained_bytes = retained_bytes;
-        return true;
     }
 
     /// Replace the retained DCS payload after bounds and allocation succeed.
@@ -6349,7 +6376,7 @@ pub const HostState = struct {
         return null;
     }
 
-    /// Borrow the FIFO-head OSC 52 operation and its exact host-policy selection bytes.
+    /// Borrow the FIFO-head OSC 52 operation or Kitty OSC 5522 packet.
     pub fn pendingClipboardRequest(self: *const HostState) ?ClipboardRequestView {
         const request = self.clipboardRequestHead() orelse return null;
         return request.view();
@@ -6372,7 +6399,7 @@ pub const HostState = struct {
         self.clipboard_requests_count -= 1;
     }
 
-    /// Decode into caller-owned memory; allocation failure preserves the request.
+    /// Decode one OSC 52 set into caller-owned memory; allocation failure preserves the request.
     pub fn drainPendingClipboardSet(
         self: *HostState,
         generation: u64,
@@ -6380,6 +6407,7 @@ pub const HostState = struct {
     ) error{ OutOfMemory, StaleClipboardRequest }!?[]u8 {
         const request = self.clipboardRequestHead() orelse return error.StaleClipboardRequest;
         if (request.generation != generation) return error.StaleClipboardRequest;
+        if (request.protocol != .osc52) return null;
         const pending = self.pendingClipboardSet() orelse return null;
         const decoded = decodeClipboardSet(allocator, pending) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -6397,7 +6425,7 @@ pub const HostState = struct {
     ) ClipboardHostReplyError!bool {
         const request = self.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
         if (request.generation != generation) return error.StaleClipboardRequest;
-        if (request.kind != .query) return false;
+        if (request.protocol != .osc52 or request.kind != .query) return false;
         const selection = request.selection;
         if (bytes.len > clipboard_reply_bytes_max) return error.ConsequenceLimit;
         const encoded_len = std.base64.standard.Encoder.calcSize(bytes.len);
@@ -6629,6 +6657,7 @@ fn ensureRetainedBound(len: u32, max_len: u32) ApplyError!void {
 
 test "clipboard enqueue preserves the retained FIFO on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, retainClipboardAllocation, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainKittyClipboardAllocation, .{});
 }
 
 test "title replacement preserves the retained title on allocation failure" {
@@ -6735,6 +6764,26 @@ fn retainClipboardAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expect(changed);
     try std.testing.expectEqualStrings("c;b2xk", state.pendingClipboardSet().?);
     try std.testing.expectEqual(@as(u8, 2), state.clipboard_requests_count);
+}
+
+fn retainKittyClipboardAllocation(allocator: std.mem.Allocator) !void {
+    var state = HostState.init(allocator);
+    defer state.deinit();
+    try std.testing.expect(try state.retainClipboard("c;b2xk"));
+    state.retainKittyClipboard("type=wdata:mime=dGV4dA==;bmV3") catch |err| {
+        const request = state.pendingClipboardRequest().?;
+        try std.testing.expectEqual(@as(u64, 1), request.generation);
+        try std.testing.expect(request.protocol == .osc52);
+        try std.testing.expectEqualStrings("c;b2xk", request.payload);
+        try std.testing.expectEqual(@as(u8, 1), state.clipboard_requests_count);
+        return err;
+    };
+    try std.testing.expectEqual(@as(u8, 2), state.clipboard_requests_count);
+    state.consumeClipboardRequest();
+    const request = state.pendingClipboardRequest().?;
+    try std.testing.expectEqual(@as(u64, 2), request.generation);
+    try std.testing.expect(request.protocol == .kitty_5522);
+    try std.testing.expectEqualStrings("type=wdata:mime=dGV4dA==;bmV3", request.payload);
 }
 
 test "hyperlink interning preserves prior identities on allocation failure" {
@@ -8391,6 +8440,7 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .kitty_color_stack_pop => SemanticEvent{ .kitty_color_stack = .{ .pop = 0 } },
         .hyperlink => |v| parseHyperlink(v.payload),
         .clipboard => |v| SemanticEvent{ .clipboard_set = v.payload },
+        .kitty_clipboard => |v| SemanticEvent{ .kitty_clipboard_packet = v.payload },
         else => null,
     };
 }
@@ -8606,10 +8656,10 @@ test "OSC Kitty host-policy payloads expose only retained terminal facts" {
     const pop = oscProcess(.{ .kitty_color_stack_pop = .st }).?;
     try std.testing.expectEqual(@as(u16, 0), push.kitty_color_stack.push);
     try std.testing.expectEqual(@as(u16, 0), pop.kitty_color_stack.pop);
-    try std.testing.expect(oscProcess(.{ .kitty_clipboard = .{
+    try std.testing.expectEqualStrings("type=write", oscProcess(.{ .kitty_clipboard = .{
         .payload = "type=write",
         .term = .st,
-    } }) == null);
+    } }).?.kitty_clipboard_packet);
     try std.testing.expect(oscProcess(.{ .kitty_file_transfer = .{
         .payload = "cmd=data",
         .term = .st,
@@ -8711,6 +8761,7 @@ pub const SemanticEvent = union(enum) {
     hyperlink_set: HyperlinkSpec,
     hyperlink_clear,
     clipboard_set: []const u8,
+    kitty_clipboard_packet: []const u8,
     dec_mode_query: u16,
     dec_mode_save: ModeParams,
     dec_mode_restore: ModeParams,
@@ -9413,6 +9464,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.host.internHyperlink(spec)),
         .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
         .clipboard_set => |payload| return try vt.host.retainClipboard(payload),
+        .kitty_clipboard_packet => |payload| try vt.host.retainKittyClipboard(payload),
         .locator_reporting => |cfg| setReporting(&vt.host.locator, cfg.mode, cfg.unit),
         .locator_filter => |area| setFilter(&vt.host.locator, area),
         .locator_events => |modes| setEvents(&vt.host.locator, modes.params[0..modes.param_count]),
@@ -11222,6 +11274,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .hyperlink_set,
         .hyperlink_clear,
         .clipboard_set,
+        .kitty_clipboard_packet,
         .locator_reporting,
         .locator_filter,
         .locator_events,
@@ -12041,11 +12094,13 @@ pub const Terminal = struct {
     pub const window_request_max_count = window_request_capacity;
     /// Bounds host clipboard bytes accepted by one query reply in every framing mode.
     pub const clipboard_reply_max_bytes = clipboard_reply_bytes_max;
-    /// Bounds aggregate raw OSC 52 bytes retained across pending operations.
+    /// Bounds aggregate raw OSC 52 and Kitty OSC 5522 bytes retained across pending operations.
     pub const clipboard_request_max_bytes = clipboard_max_bytes;
-    /// Exposes the fixed pending OSC 52 operation capacity to embedding hosts.
+    /// Bounds one encoded Kitty OSC 5522 packet before host policy.
+    pub const kitty_clipboard_packet_max_bytes = parser_mod.max_chunk_control_bytes;
+    /// Exposes the fixed pending clipboard-operation capacity to embedding hosts.
     pub const clipboard_max_count = clipboard_capacity;
-    /// Exposes one borrowed OSC 52 operation and its exact host-policy selection bytes.
+    /// Exposes one borrowed OSC 52 operation or Kitty OSC 5522 packet.
     pub const ClipboardRequest = ClipboardRequestView;
     /// Uses the canonical copied terminal RGB value.
     pub const Rgb = Screen.Rgb;
@@ -13186,7 +13241,7 @@ pub const Terminal = struct {
         return drained;
     }
 
-    /// Borrow the FIFO-head OSC 52 operation until terminal mutation.
+    /// Borrow the FIFO-head OSC 52 operation or Kitty OSC 5522 packet until terminal mutation.
     pub fn pendingClipboardRequest(self: *const Terminal) ?ClipboardRequest {
         return self.host.pendingClipboardRequest();
     }
@@ -13198,7 +13253,7 @@ pub const Terminal = struct {
         return replied;
     }
 
-    /// Consume the matching FIFO-head clipboard set after host policy runs.
+    /// Consume the matching FIFO-head clipboard set or Kitty packet after host policy runs.
     pub fn acknowledgeClipboard(
         self: *Terminal,
         generation: u64,
@@ -13327,7 +13382,7 @@ pub const Terminal = struct {
         working_directory: ?Terminal.WorkingDirectory,
         shell_integration: ?Terminal.ShellIntegration,
         shell_mark: ShellMark,
-        /// Borrows the FIFO-head OSC 52 operation until terminal mutation.
+        /// Borrows the FIFO-head OSC 52 operation or Kitty OSC 5522 packet until terminal mutation.
         clipboard_request: ?Terminal.ClipboardRequest,
         /// Reports the bounded number of pending clipboard operations, including the exposed head.
         clipboard_request_count: u8,

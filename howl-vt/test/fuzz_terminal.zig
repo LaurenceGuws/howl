@@ -275,7 +275,7 @@ fn drainClipboard(terminal: *howl_vt.Terminal) !void {
     std.testing.allocator.free(pending_output);
     while (terminal.pendingClipboardRequest()) |request| {
         switch (request.kind) {
-            .set => try terminal.acknowledgeClipboard(request.generation),
+            .set, .packet => try terminal.acknowledgeClipboard(request.generation),
             .query => {
                 try std.testing.expect(try terminal.replyPendingClipboard(request.generation, ""));
                 const reply = try terminal.drainPendingOutput(std.testing.allocator);

@@ -50,7 +50,7 @@ pub const max_metadata_control_bytes = metadata_control_max_bytes;
 /// Maximum complete payload accepted for one unchunked OSC 52 control.
 const max_clipboard_control_bytes = clipboard_control_max_bytes;
 /// Maximum complete payload accepted for one chunked Kitty control.
-const max_chunk_control_bytes = chunk_control_max_bytes;
+pub const max_chunk_control_bytes = chunk_control_max_bytes;
 /// Identifies BEL or ST termination for a completed OSC action.
 pub const OscTerminator = enum {
     bel,

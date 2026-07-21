@@ -2423,8 +2423,17 @@ references:
             relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
               symbol: HostState.replyPendingClipboardQuery, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 52 retains ordered sets and queries until exact head consumption"}}}
-          - {id: kitty.osc.clipboard_5522, raw: "OSC 5522 ; Pc ; Pd (BEL|ST)", effect: Kitty clipboard extension,
-            relevance: host consequence, howl: {status: 'false'}}
+          - id: kitty.osc.clipboard_5522
+            raw: "OSC 5522 ; metadata ; payload ST"
+            effect: Kitty clipboard extension
+            conditions: >-
+              Howl retains exact encoded packets up to 8 KiB in the shared eight-entry clipboard FIFO and additionally
+              accepts BEL termination; MIME/base64 parsing, multi-packet transactions, permissions, and replies remain
+              host-owned.
+            relevance: host consequence
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: HostState.retainKittyClipboard, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "Kitty OSC 5522 shares ordered clipboard admission without host policy"}}
           - {id: kitty.osc.text_size, raw: "OSC TEXT_SIZE_CODE ; Pt (BEL|ST)", effect: control text sizing,
             relevance: host consequence, howl: {status: 'false'}}
           - {id: kitty.osc.drag_drop, raw: "OSC DND_CODE ; Pt (BEL|ST)", effect: drag and drop control,

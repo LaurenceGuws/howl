@@ -483,6 +483,114 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
     try std.testing.expect(terminal.pendingClipboardRequest() == null);
 }
 
+test "Kitty OSC 5522 shares ordered clipboard admission without host policy" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 16);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]5522;type=wr")).state_changed);
+    try std.testing.expect((try terminal.feed("ite\x1b\\")).state_changed);
+    try std.testing.expect((try terminal.feed(
+        "\x1b]52;c;?\x07" ++
+            "\x1b]5522;type=read;dGV4dC9wbGFpbg==\x07",
+    )).state_changed);
+    var publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u8, 3), publication.clipboard_request_count);
+
+    var request = publication.clipboard_request.?;
+    try std.testing.expectEqual(@as(u64, 1), request.generation);
+    try std.testing.expect(request.protocol == .kitty_5522);
+    try std.testing.expect(request.kind == .packet);
+    try std.testing.expectEqualStrings("", request.selection);
+    try std.testing.expectEqualStrings("type=write", request.payload);
+    try std.testing.expect(!(try terminal.replyPendingClipboard(request.generation, "ignored")));
+    try std.testing.expectEqual(@as(?[]u8, null), try terminal.drainPendingClipboard(
+        request.generation,
+        std.testing.allocator,
+    ));
+    try std.testing.expectEqual(@as(u8, 3), terminal.surfaceSnapshot().clipboard_request_count);
+    try terminal.acknowledgeClipboard(request.generation);
+
+    request = terminal.pendingClipboardRequest().?;
+    try std.testing.expectEqual(@as(u64, 2), request.generation);
+    try std.testing.expect(request.protocol == .osc52);
+    try std.testing.expect(request.kind == .query);
+    try std.testing.expectEqualStrings("c", request.selection);
+    try std.testing.expectEqualStrings("c;?", request.payload);
+    try std.testing.expect(try terminal.replyPendingClipboard(request.generation, "A\x00B"));
+    const reply = try terminal.drainPendingOutput(std.testing.allocator);
+    defer std.testing.allocator.free(reply);
+    try std.testing.expectEqualStrings("\x1b]52;c;QQBC\x1b\\", reply);
+
+    request = terminal.pendingClipboardRequest().?;
+    try std.testing.expectEqual(@as(u64, 3), request.generation);
+    try std.testing.expect(request.protocol == .kitty_5522);
+    try std.testing.expectEqualStrings("type=read;dGV4dC9wbGFpbg==", request.payload);
+    try std.testing.expectError(error.StaleClipboardRequest, terminal.acknowledgeClipboard(2));
+    try terminal.acknowledgeClipboard(3);
+    try std.testing.expect(terminal.pendingClipboardRequest() == null);
+
+    try std.testing.expect((try terminal.feed("\x9d5522;type=wdata:mime=dGV4dA==;QQ==\x9c")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(4, 20);
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u64, 4), publication.clipboard_request.?.generation);
+    try std.testing.expectEqualStrings(
+        "type=wdata:mime=dGV4dA==;QQ==",
+        publication.clipboard_request.?.payload,
+    );
+}
+
+test "Kitty OSC 5522 packet and FIFO bounds preserve prior occurrences" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 16);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b]5522;type=write\x1b\\")).state_changed);
+    try terminal.acknowledgeClipboard(1);
+
+    const payload = try allocator.alloc(u8, Terminal.kitty_clipboard_packet_max_bytes + 1);
+    defer allocator.free(payload);
+    @memset(payload, 'x');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+    try sequence.appendSlice(allocator, "\x1b]5522;");
+    try sequence.appendSlice(allocator, payload[0..Terminal.kitty_clipboard_packet_max_bytes]);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    const split = sequence.items.len / 2;
+    try std.testing.expect(!(try terminal.feed(sequence.items[0..split])).state_changed);
+    try std.testing.expect((try terminal.feed(sequence.items[split..])).state_changed);
+    for (0..Terminal.clipboard_max_count - 1) |_| {
+        try std.testing.expect((try terminal.feed("\x1b]5522;type=wdata\x1b\\")).state_changed);
+    }
+    var publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(Terminal.clipboard_max_count, publication.clipboard_request_count);
+    try std.testing.expectEqual(@as(u64, 2), publication.clipboard_request.?.generation);
+    try std.testing.expectEqual(
+        @as(usize, Terminal.kitty_clipboard_packet_max_bytes),
+        publication.clipboard_request.?.payload.len,
+    );
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;QQ==\x07"));
+    publication = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u64, 2), publication.clipboard_request.?.generation);
+    try std.testing.expectEqual(Terminal.clipboard_max_count, publication.clipboard_request_count);
+
+    for (0..Terminal.clipboard_max_count) |_| {
+        const head = terminal.pendingClipboardRequest().?;
+        try terminal.acknowledgeClipboard(head.generation);
+    }
+    try std.testing.expect(terminal.pendingClipboardRequest() == null);
+    try std.testing.expect((try terminal.feed("\x1b]5522;type=read;Lg==\x1b\\")).state_changed);
+    try std.testing.expectEqual(@as(u64, 10), terminal.pendingClipboardRequest().?.generation);
+    try terminal.acknowledgeClipboard(10);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]5522;");
+    try sequence.appendSlice(allocator, payload);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
+    try std.testing.expect(terminal.pendingClipboardRequest() == null);
+}
+
 test "shell integration OSC 133 records latest mark" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
