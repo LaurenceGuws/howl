@@ -161,6 +161,8 @@ pub const TerminalFrame = struct {
 
 /// Reports invalid configured storage or allocation before ownership transfers.
 pub const InitError = std.mem.Allocator.Error || error{InvalidBounds};
+/// Reports invalid geometry, allocation failure, or immutable borrowed storage.
+pub const PrepareResizeError = InitError || error{BorrowedFrames};
 
 /// Reports the exact invalid copied fact or exhausted publication identity.
 pub const PublishError = error{
@@ -202,6 +204,33 @@ const Slot = struct {
     full_redraw: bool = true,
 };
 
+/// Owns replacement publication storage until committed or rolled back.
+/// Preparation reserves the publisher against new borrows; `deinit` restores
+/// the prior publisher unchanged unless `commit` consumed this value.
+pub const PreparedResize = struct {
+    owner: *Publisher,
+    pending_damage: []RowDamage,
+    slots: [slot_count]Slot,
+    rows: u16,
+    cols: u16,
+    active: bool = true,
+
+    /// Installs the prepared storage and releases the resize reservation.
+    pub fn commit(self: *PreparedResize) void {
+        std.debug.assert(self.active);
+        self.owner.commitResize(self);
+        self.active = false;
+    }
+
+    /// Frees uncommitted storage and restores frame borrowing.
+    pub fn deinit(self: *PreparedResize) void {
+        if (!self.active) return;
+        self.owner.cancelResize();
+        deinitStorage(self.owner.allocator, self.pending_damage, self.slots);
+        self.active = false;
+    }
+};
+
 /// Borrows one immutable frame until its exact generation is released.
 pub const Borrow = struct {
     /// Retains the publisher required for exact release.
@@ -237,6 +266,7 @@ pub const Publisher = struct {
     last_rows: u16 = 0,
     last_cols: u16 = 0,
     last_geometry_generation: u64 = 0,
+    resizing: bool = false,
 
     /// Allocates exactly two frame capacities and one cumulative-damage set.
     pub fn init(
@@ -246,43 +276,53 @@ pub const Publisher = struct {
         capacity_cols: u16,
     ) InitError!Publisher {
         if (capacity_rows == 0 or capacity_cols == 0) return error.InvalidBounds;
-        const capacity_cells = std.math.mul(
-            usize,
-            capacity_rows,
-            capacity_cols,
-        ) catch return error.InvalidBounds;
-        const pending_damage = try allocator.alloc(RowDamage, capacity_rows);
-        errdefer allocator.free(pending_damage);
-        @memset(pending_damage, .{});
-
-        var slots: [slot_count]Slot = undefined;
-        var initialized: usize = 0;
-        errdefer for (slots[0..initialized]) |slot| deinitSlot(allocator, slot);
-        while (initialized < slots.len) : (initialized += 1) {
-            slots[initialized] = try initSlot(
-                allocator,
-                capacity_cells,
-                capacity_rows,
-            );
-        }
+        const storage = try initStorage(allocator, capacity_rows, capacity_cols);
         return .{
             .allocator = allocator,
             .io = io,
             .capacity_rows = capacity_rows,
             .capacity_cols = capacity_cols,
-            .pending_damage = pending_damage,
-            .slots = slots,
+            .pending_damage = storage.pending_damage,
+            .slots = storage.slots,
         };
     }
 
     /// Releases all storage after the caller has returned every borrow.
     pub fn deinit(self: *Publisher) void {
+        std.debug.assert(!self.resizing);
         for (self.slots) |slot| {
             std.debug.assert(slot.state != .borrowed);
-            deinitSlot(self.allocator, slot);
         }
-        self.allocator.free(self.pending_damage);
+        deinitStorage(self.allocator, self.pending_damage, self.slots);
         self.* = undefined;
+    }
+
+    /// Reserves borrowing and allocates exact replacement storage. Any active
+    /// borrow rejects preparation without changing the publisher. Publication
+    /// and resize preparation are externally serialized by the terminal owner.
+    pub fn prepareResize(
+        self: *Publisher,
+        rows: u16,
+        cols: u16,
+    ) PrepareResizeError!PreparedResize {
+        if (rows == 0 or cols == 0) return error.InvalidBounds;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        std.debug.assert(!self.resizing);
+        for (self.slots) |slot| if (slot.state == .borrowed)
+            return error.BorrowedFrames;
+        self.resizing = true;
+        const storage = initStorage(self.allocator, rows, cols) catch |failure| {
+            self.resizing = false;
+            return failure;
+        };
+        return .{
+            .owner = self,
+            .pending_damage = storage.pending_damage,
+            .slots = storage.slots,
+            .rows = rows,
+            .cols = cols,
+        };
     }
 
     /// Copies one VT publication while holding the publisher mutex. If both
@@ -297,6 +337,7 @@ pub const Publisher = struct {
         try self.validateSurface(surface, cell_pixels);
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
+        std.debug.assert(!self.resizing);
         if (self.last_generation == std.math.maxInt(u64))
             return error.GenerationExhausted;
 
@@ -338,6 +379,7 @@ pub const Publisher = struct {
     pub fn borrowNewest(self: *Publisher) ?Borrow {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
+        if (self.resizing) return null;
         const slot_index = self.newest_slot orelse return null;
         const slot = &self.slots[slot_index];
         if (slot.state != .ready) return null;
@@ -379,6 +421,30 @@ pub const Publisher = struct {
             if (slot.state != .borrowed) return index;
         }
         return null;
+    }
+
+    fn commitResize(self: *Publisher, prepared: *PreparedResize) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        std.debug.assert(self.resizing);
+        std.debug.assert(prepared.owner == self);
+        for (self.slots) |slot| std.debug.assert(slot.state != .borrowed);
+        deinitStorage(self.allocator, self.pending_damage, self.slots);
+        self.pending_damage = prepared.pending_damage;
+        self.slots = prepared.slots;
+        self.capacity_rows = prepared.rows;
+        self.capacity_cols = prepared.cols;
+        self.pending_full = true;
+        self.pending_unpublished = true;
+        self.newest_slot = null;
+        self.resizing = false;
+    }
+
+    fn cancelResize(self: *Publisher) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        std.debug.assert(self.resizing);
+        self.resizing = false;
     }
 
     fn validateSurface(
@@ -557,6 +623,39 @@ fn deinitSlot(allocator: std.mem.Allocator, slot: Slot) void {
     allocator.free(slot.damage);
     allocator.free(slot.line_geometry);
     allocator.free(slot.cells);
+}
+
+const Storage = struct {
+    pending_damage: []RowDamage,
+    slots: [slot_count]Slot,
+};
+
+fn initStorage(
+    allocator: std.mem.Allocator,
+    rows: u16,
+    cols: u16,
+) InitError!Storage {
+    const capacity_cells = std.math.mul(usize, rows, cols) catch
+        return error.InvalidBounds;
+    const pending_damage = try allocator.alloc(RowDamage, rows);
+    errdefer allocator.free(pending_damage);
+    @memset(pending_damage, .{});
+    var slots: [slot_count]Slot = undefined;
+    var initialized: usize = 0;
+    errdefer for (slots[0..initialized]) |slot| deinitSlot(allocator, slot);
+    while (initialized < slots.len) : (initialized += 1) {
+        slots[initialized] = try initSlot(allocator, capacity_cells, rows);
+    }
+    return .{ .pending_damage = pending_damage, .slots = slots };
+}
+
+fn deinitStorage(
+    allocator: std.mem.Allocator,
+    pending_damage: []RowDamage,
+    slots: [slot_count]Slot,
+) void {
+    for (slots) |slot| deinitSlot(allocator, slot);
+    allocator.free(pending_damage);
 }
 
 fn initSlot(
@@ -831,7 +930,82 @@ test "publisher validates bounds and rolls back every allocation" {
     try std.testing.expectEqual(@as(u64, 0), exact.newestGeneration());
 }
 
+test "resize preparation rejects borrowed storage without mutation" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 1, 2);
+    defer terminal.deinit();
+    var publisher = try Publisher.init(std.testing.allocator, std.testing.io, 1, 2);
+    defer publisher.deinit();
+    const generation = try expectPublished(try publisher.publish(
+        terminal.surfaceSnapshot(),
+        0,
+        null,
+    ));
+    var borrowed = publisher.borrowNewest().?;
+
+    try std.testing.expectError(error.BorrowedFrames, publisher.prepareResize(2, 4));
+    try std.testing.expectEqual(@as(u16, 1), publisher.capacity_rows);
+    try std.testing.expectEqual(@as(u16, 2), publisher.capacity_cols);
+    try std.testing.expectEqual(generation, borrowed.frame.generation);
+    try std.testing.expect(!try borrowed.release());
+}
+
+test "resize allocation failure preserves ready storage and borrowing" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 1, 2);
+    defer terminal.deinit();
+    var publisher = try Publisher.init(failing.allocator(), std.testing.io, 1, 2);
+    defer publisher.deinit();
+    const generation = try expectPublished(try publisher.publish(
+        terminal.surfaceSnapshot(),
+        0,
+        null,
+    ));
+    failing.fail_index = failing.alloc_index;
+
+    try std.testing.expectError(error.OutOfMemory, publisher.prepareResize(2, 4));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(u16, 1), publisher.capacity_rows);
+    try std.testing.expectEqual(@as(u16, 2), publisher.capacity_cols);
+    var borrowed = publisher.borrowNewest().?;
+    try std.testing.expectEqual(generation, borrowed.frame.generation);
+    try std.testing.expect(!try borrowed.release());
+}
+
+test "resize commit replaces storage at exact geometry in both directions" {
+    var publisher = try Publisher.init(std.testing.allocator, std.testing.io, 2, 4);
+    defer publisher.deinit();
+    var grown = try publisher.prepareResize(4, 8);
+    defer grown.deinit();
+    grown.commit();
+    try std.testing.expectEqual(@as(u16, 4), publisher.capacity_rows);
+    try std.testing.expectEqual(@as(u16, 8), publisher.capacity_cols);
+    try std.testing.expectEqual(@as(usize, 32), publisher.slots[0].cells.len);
+
+    var shrunk = try publisher.prepareResize(1, 2);
+    defer shrunk.deinit();
+    shrunk.commit();
+    try std.testing.expectEqual(@as(u16, 1), publisher.capacity_rows);
+    try std.testing.expectEqual(@as(u16, 2), publisher.capacity_cols);
+    try std.testing.expectEqual(@as(usize, 2), publisher.slots[0].cells.len);
+    try std.testing.expectEqual(@as(usize, 1), publisher.pending_damage.len);
+}
+
+test "resize preparation rolls back every partial allocation" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        preparePublisherResize,
+        .{},
+    );
+}
+
 fn initPublisher(allocator: std.mem.Allocator) !void {
     var publisher = try Publisher.init(allocator, std.testing.io, 4, 8);
     publisher.deinit();
+}
+
+fn preparePublisherResize(allocator: std.mem.Allocator) !void {
+    var publisher = try Publisher.init(allocator, std.testing.io, 1, 2);
+    defer publisher.deinit();
+    var prepared = try publisher.prepareResize(4, 8);
+    defer prepared.deinit();
 }

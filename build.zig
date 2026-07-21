@@ -40,6 +40,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     control.addImport("howl_vt", vt);
+    control.addImport("howl_frame", frame);
     control.addImport("howl_pty", pty);
 
     if (b.dep_prefix.len == 0) dev.add(b, target, optimize, vt, text, frame, pty, control);

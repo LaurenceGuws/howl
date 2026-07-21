@@ -10,7 +10,8 @@ capabilities:
   - name: terminal_frame_publication
     acceptance: >-
       one bounded owner copies complete terminal-local visual truth, accumulates damage across skipped generations,
-      rejects stale release, keeps renderer frame use outside its mutex, and reports slot saturation immediately
+      rejects stale release, sizes storage to admitted geometry, transactionally replaces unborrowed storage on resize,
+      keeps renderer frame use outside its mutex, and reports slot saturation immediately
 
   - name: development_orchestration
     acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig
@@ -28,7 +29,8 @@ capabilities:
 
   - name: reusable_terminal_control
     acceptance: >-
-      one curated native owner composes PTY, VT, live input, replies, resize, semantic surfaces, wakes, and cleanup
+      one curated native owner composes PTY, VT, immutable frame publication, live input, replies, resize,
+      semantic surfaces, wakes, and cleanup
 
   - name: local_terminal_control
     acceptance: >-

@@ -61,6 +61,14 @@ fn rowStartsWith(view: anytype, expected: []const u8) bool {
     return true;
 }
 
+fn frameStartsWith(frame: control.Frame, expected: []const u8) bool {
+    if (expected.len > frame.frame.cols) return false;
+    for (expected, 0..) |byte, col| {
+        if (frame.frame.cells[col].codepoint != byte) return false;
+    }
+    return true;
+}
+
 fn viewContains(view: anytype, expected: []const u8) bool {
     if (expected.len == 0 or expected.len > view.cols) return false;
     for (0..view.rows) |row| {
@@ -126,13 +134,21 @@ test "owner captures one child semantic surface" {
     defer terminal.deinit();
     try wait(std.testing.io, terminal);
 
-    var surface = terminal.surface();
-    defer surface.deinit();
-    try std.testing.expectEqual(@as(u16, 24), surface.publication.snapshot.view.rows);
-    try std.testing.expect(rowStartsWith(surface.publication.snapshot.view, "headless"));
-    try std.testing.expect(surface.acknowledge());
+    {
+        var surface = terminal.surface();
+        defer surface.deinit();
+        try std.testing.expectEqual(@as(u16, 24), surface.publication.snapshot.view.rows);
+        try std.testing.expect(rowStartsWith(surface.publication.snapshot.view, "headless"));
+        try std.testing.expect(surface.acknowledge());
+    }
     try std.testing.expectEqual(@as(u32, 1), wake_count.load(.monotonic));
     terminal.consumeWake();
+
+    var frame = terminal.borrowFrame().?;
+    try std.testing.expectEqual(@as(u16, 24), frame.frame.rows);
+    try std.testing.expectEqual(@as(u16, 80), frame.frame.cols);
+    try std.testing.expect(frameStartsWith(frame, "headless"));
+    try terminal.releaseFrame(&frame);
 }
 
 test "local endpoint shares identity operations ordering and owned unlink" {
@@ -441,6 +457,12 @@ test "resize publishes only changed dimensions" {
     }
 
     try std.testing.expect(!(try terminal.resize(100, 40)).changed);
+    var frame = terminal.borrowFrame().?;
+    try std.testing.expectEqual(@as(u64, 1), frame.frame.geometry_generation);
+    try std.testing.expectEqual(@as(u16, 100), frame.frame.cols);
+    try std.testing.expectEqual(@as(u16, 40), frame.frame.rows);
+    try std.testing.expect(frame.frame.damage.full);
+    try terminal.releaseFrame(&frame);
     var unchanged = terminal.surface();
     defer unchanged.deinit();
     try std.testing.expectEqual(snapshot_seq, unchanged.publication.snapshot_seq);
@@ -448,7 +470,66 @@ test "resize publishes only changed dimensions" {
     try std.testing.expect(unchanged.publication.snapshot.dirty == null);
 }
 
-test "model resize allocation failure restores prior PTY geometry" {
+test "borrowed frame rejects geometry growth before PTY or model mutation" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 4, .rows = 2 },
+        .{},
+    );
+    defer terminal.deinit();
+    var frame = terminal.borrowFrame().?;
+
+    try std.testing.expectError(error.FrameBorrowed, terminal.resize(8, 4));
+    var status = terminal.status();
+    try std.testing.expectEqual(@as(u16, 4), status.cols);
+    try std.testing.expectEqual(@as(u16, 2), status.rows);
+    try std.testing.expectEqual(@as(u64, 0), status.geometry_sequence);
+    try std.testing.expectEqual(@as(u16, 4), frame.frame.cols);
+    try std.testing.expect(!(try terminal.resize(4, 2)).changed);
+    try terminal.releaseFrame(&frame);
+
+    try std.testing.expect((try terminal.resize(8, 4)).changed);
+    status = terminal.status();
+    try std.testing.expectEqual(@as(u16, 8), status.cols);
+    try std.testing.expectEqual(@as(u16, 4), status.rows);
+    try std.testing.expectEqual(@as(u64, 1), status.geometry_sequence);
+    var resized = terminal.borrowFrame().?;
+    try std.testing.expectEqual(@as(u16, 8), resized.frame.cols);
+    try std.testing.expectEqual(@as(u16, 4), resized.frame.rows);
+    try terminal.releaseFrame(&resized);
+}
+
+test "remote resize reports borrowed frame storage exactly" {
+    const runtime_dir = try testRuntimeDir();
+    defer std.testing.allocator.free(runtime_dir);
+    defer std.Io.Dir.cwd().deleteTree(std.testing.io, runtime_dir) catch {};
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .runtime_dir = runtime_dir, .command = "sleep 30", .cols = 4, .rows = 2 },
+        .{},
+    );
+    defer terminal.deinit();
+    var client = try control.Client.init(
+        std.testing.allocator,
+        std.testing.io,
+        runtime_dir,
+        terminal.id(),
+    );
+    defer client.deinit();
+    var frame = terminal.borrowFrame().?;
+
+    try std.testing.expectError(error.FrameBorrowed, client.resize(8, 4));
+    var status = try client.status();
+    defer status.deinit();
+    try std.testing.expectEqual(@as(u16, 4), status.value.cols);
+    try std.testing.expectEqual(@as(u16, 2), status.value.rows);
+    try std.testing.expectEqual(@as(u64, 0), status.value.geometry_sequence);
+    try terminal.releaseFrame(&frame);
+}
+
+test "frame resize allocation failure preserves prior PTY and model geometry" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     const terminal = try control.Terminal.init(
         failing.allocator(),
@@ -466,6 +547,10 @@ test "model resize allocation failure restores prior PTY geometry" {
     try std.testing.expect(!status.resize_rollback_failed);
     try std.testing.expectEqual(@as(u16, 80), status.cols);
     try std.testing.expectEqual(@as(u16, 24), status.rows);
+    var frame = terminal.borrowFrame().?;
+    try std.testing.expectEqual(@as(u16, 80), frame.frame.cols);
+    try std.testing.expectEqual(@as(u16, 24), frame.frame.rows);
+    try terminal.releaseFrame(&frame);
 }
 
 test "deinit stops one live child and reader" {
@@ -475,6 +560,21 @@ test "deinit stops one live child and reader" {
         .{ .command = "sleep 30" },
         .{},
     );
+    terminal.deinit();
+}
+
+test "cancellation preserves a borrowed frame until ordered release" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{},
+    );
+    var frame = terminal.borrowFrame().?;
+    terminal.cancel();
+    try std.testing.expectEqual(control.State.stopped, terminal.state());
+    try std.testing.expectEqual(@as(u16, 80), frame.frame.cols);
+    try terminal.releaseFrame(&frame);
     terminal.deinit();
 }
 

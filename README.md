@@ -9,7 +9,7 @@ The active projects are:
   rasterization.
 - `howl-pty`: bounded native PTY, child process-group, I/O, resize, wake, and
   cleanup ownership.
-- `howl-control`: one live composition of `howl-pty` and `howl-vt`.
+- `howl-control`: one live PTY/VT owner with immutable frame publication.
 - `howl-frame`: immutable terminal-local visual frames and renderer
   acknowledgement.
 - `howl-host`: a native Wayland host with bounded terminal, layout, and text

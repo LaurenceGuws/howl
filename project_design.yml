@@ -14,7 +14,7 @@ components:
     role: Linux PTY creation, child process-group lifecycle, bounded transfer outcomes, resize, cancellation, and cleanup
 
   - name: control
-    role: bounded PTY and terminal composition with native identity, local endpoint facts, and one-shot control client
+    role: bounded PTY, terminal, and frame publication with native identity, local endpoint facts, and one-shot control client
 
   - name: frame
     role: bounded immutable terminal-local visual publications and renderer acknowledgement
@@ -26,7 +26,7 @@ relationships:
   - vt owns terminal truth and accepts host facts through native Zig values
   - text owns terminal text preparation without owning terminal state or presentation
   - pty owns copied launch values and exact Linux process, descriptor, cancellation, and bounded I/O mechanics
-  - control composes pty and vt and owns the bounded local byte-stream protocol used by native embedders
+  - control composes pty, vt, and frame and owns publication plus the bounded local byte-stream protocol
   - frame copies complete VT visual truth and cumulative cell damage without owning layout, text, platform, or GPU policy
   - host composes control, frame, and text while owning window, layout, GPU, and presentation lifecycles
   - qagent is the first real embedder and supplies integration pressure without Howl policy

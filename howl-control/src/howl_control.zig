@@ -2,6 +2,7 @@
 
 const builtin = @import("builtin");
 const std = @import("std");
+const howl_frame = @import("howl_frame");
 const howl_pty = @import("howl_pty");
 const howl_vt = @import("howl_vt");
 const client = @import("client.zig");
@@ -47,6 +48,10 @@ pub const SignalResult = client.SignalResult;
 pub const Screen = client.Screen;
 /// Copies coherent lifecycle, geometry, sequence, and output facts.
 pub const Status = client.Status;
+/// Borrows one immutable complete visual generation until exact release.
+pub const Frame = howl_frame.Borrow;
+/// Reports stale frame release or exact pending-publication failure.
+pub const FrameReleaseError = howl_frame.ReleaseError || howl_frame.PublishError;
 
 /// Bounds one terminal surface width before model or PTY construction.
 pub const max_cols = client.max_cols;
@@ -89,7 +94,8 @@ pub const Wake = struct {
 
 /// Reports invalid bounds or failure before terminal ownership transfers.
 pub const InitError = howl_vt.Terminal.InitError || std.mem.Allocator.Error ||
-    std.Thread.SpawnError || net.UnixAddress.InitError || net.UnixAddress.ListenError || error{
+    howl_frame.PublishError || std.Thread.SpawnError ||
+    net.UnixAddress.InitError || net.UnixAddress.ListenError || error{
     InvalidDimensions,
     InvalidHistory,
     InvalidTransferTimeout,
@@ -161,6 +167,13 @@ const ReaderFailure = enum(u8) {
     pty_wait_failed,
     reply_allocation_failed,
     string_control_limit,
+    frame_surface_bounds,
+    frame_invalid_cell,
+    frame_invalid_cell_pixels,
+    frame_invalid_cursor,
+    frame_invalid_damage,
+    frame_invalid_selection,
+    frame_generation_exhausted,
 };
 
 /// Borrows one semantic surface while preventing concurrent terminal mutation.
@@ -176,8 +189,10 @@ pub const Surface = struct {
         self.* = undefined;
     }
 
-    /// Retires dirty state for this publication while its borrow remains valid.
+    /// Confirms this surface was retained by the frame owner or retires it
+    /// directly when frame publication was saturated.
     pub fn acknowledge(self: *Surface) bool {
+        if (self.owner.frame_surface_generation >= self.publication.snapshot_seq) return true;
         return self.owner.model.ackSurface(self.publication.snapshot_seq);
     }
 };
@@ -189,6 +204,7 @@ pub const Terminal = struct {
     io: std.Io,
     transport: howl_pty.Owned,
     model: howl_vt.Terminal,
+    frames: howl_frame.Publisher,
     reader: std.Thread,
     terminal_id: TerminalId,
     endpoint_path: ?[]u8,
@@ -203,6 +219,7 @@ pub const Terminal = struct {
     child_cwd: ?[]u8,
     admission_sequence: u64 = 0,
     geometry_sequence: u64 = 0,
+    frame_surface_generation: u64 = 0,
     lock: std.Io.Mutex = .init,
     write_lock: std.Io.Mutex = .init,
     // Lifecycle publication stays independent from the model lock used by hot surfaces.
@@ -219,7 +236,8 @@ pub const Terminal = struct {
     rows: u16,
     transfer_timeout_ms: u32,
 
-    /// Constructs and starts every owned resource before returning a stable pointer.
+    /// Constructs every resource before returning a stable pointer, including
+    /// two frame slots sized to the admitted initial geometry.
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -244,6 +262,16 @@ pub const Terminal = struct {
             config.history_rows,
         );
         errdefer model.deinit();
+        var frames = howl_frame.Publisher.init(
+            allocator,
+            io,
+            config.rows,
+            config.cols,
+        ) catch |failure| switch (failure) {
+            error.InvalidBounds => @panic("validated initial frame bounds are invalid"),
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        errdefer frames.deinit();
         transport.start(config.cols, config.rows) catch |failure| switch (failure) {
             error.AlreadyStarted => @panic("fresh PTY owner reported already started"),
             else => |expected| return expected,
@@ -302,6 +330,7 @@ pub const Terminal = struct {
             .io = io,
             .transport = transport,
             .model = model,
+            .frames = frames,
             .reader = undefined,
             .terminal_id = terminal_id,
             .endpoint_path = endpoint_path,
@@ -314,6 +343,10 @@ pub const Terminal = struct {
             .rows = config.rows,
             .transfer_timeout_ms = config.transfer_timeout_ms,
         };
+        switch (try self.publishFrameLocked()) {
+            .published => {},
+            .saturated => @panic("fresh frame publisher reported saturation"),
+        }
         self.reader = try .spawn(.{}, readLoop, .{self});
         errdefer {
             self.cancel();
@@ -323,7 +356,8 @@ pub const Terminal = struct {
         return self;
     }
 
-    /// Stops the reader and child before releasing model and allocation ownership.
+    /// Stops the reader and child before releasing frame, model, and allocation ownership.
+    /// Every frame borrow must be released before this externally serialized call.
     pub fn deinit(self: *Terminal) void {
         self.cancel();
         self.stopping.store(true, .release);
@@ -341,6 +375,7 @@ pub const Terminal = struct {
         }
         self.reader.join();
         self.transport.deinit();
+        self.frames.deinit();
         self.model.deinit();
         const allocator = self.allocator;
         if (self.child_cwd) |cwd| allocator.free(cwd);
@@ -469,12 +504,12 @@ pub const Terminal = struct {
     }
 
     /// Admits one resize and advances geometry only after an actual change.
+    /// Changed geometry is rejected before PTY mutation while a frame is borrowed.
     pub fn resize(self: *Terminal, cols: u16, rows: u16) ResizeError!ResizeResult {
         self.admission_lock.lockUncancelable(self.io);
         defer self.admission_lock.unlock(self.io);
         const admission = self.nextAdmission();
         const changed = try self.resizeModel(cols, rows);
-        if (changed) self.geometry_sequence = nextSequence(self.geometry_sequence);
         return .{
             .admission_sequence = admission,
             .geometry_sequence = self.geometry_sequence,
@@ -495,6 +530,12 @@ pub const Terminal = struct {
             if (announce_failure) self.notify();
         }
         if (self.cols == cols and self.rows == rows) return false;
+        var frame_resize = self.frames.prepareResize(rows, cols) catch |failure| switch (failure) {
+            error.InvalidBounds => @panic("validated frame resize bounds became invalid"),
+            error.BorrowedFrames => return error.FrameBorrowed,
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        defer frame_resize.deinit();
         self.transport.resize(cols, rows) catch |failure| switch (failure) {
             error.NotStarted => return error.NotStarted,
             error.ResizeFailed => return error.PtyResizeFailed,
@@ -512,6 +553,16 @@ pub const Terminal = struct {
         };
         self.cols = cols;
         self.rows = rows;
+        self.geometry_sequence = nextSequence(self.geometry_sequence);
+        frame_resize.commit();
+        const frame_result = self.publishFrameLocked() catch |failure| {
+            self.stopAfterFrameFailure(frameReaderError(failure));
+            announce_failure = true;
+            return frameResizeError(failure);
+        };
+        switch (frame_result) {
+            .published, .saturated => {},
+        }
         return true;
     }
 
@@ -692,10 +743,61 @@ pub const Terminal = struct {
         } and (mouse.kind == .move or mouse.buttons_down == 0);
     }
 
+    /// Borrows the newest complete visual generation without retaining the
+    /// terminal-model lock while the renderer uses it.
+    pub fn borrowFrame(self: *Terminal) ?Frame {
+        return self.frames.borrowNewest();
+    }
+
+    /// Releases one exact visual generation. If prior saturation retained a
+    /// newer model state, this call copies it into the released slot and wakes
+    /// the consumer before returning. The caller holds no semantic `Surface`
+    /// borrow because recovery requires the same terminal-model lock.
+    pub fn releaseFrame(self: *Terminal, frame: *Frame) FrameReleaseError!void {
+        self.lock.lockUncancelable(self.io);
+        const pending = frame.release() catch |failure| {
+            self.lock.unlock(self.io);
+            return failure;
+        };
+        if (!pending) {
+            self.lock.unlock(self.io);
+            return;
+        }
+        const recovered = self.publishFrameLocked() catch |failure| {
+            self.lock.unlock(self.io);
+            self.finish(.failed, readerFailure(frameReaderError(failure)));
+            self.transport.cancel();
+            return failure;
+        };
+        self.lock.unlock(self.io);
+        switch (recovered) {
+            .published => self.notify(),
+            .saturated => @panic("released frame slot was not reusable"),
+        }
+    }
+
     /// Locks and borrows one complete semantic surface publication.
     pub fn surface(self: *Terminal) Surface {
         self.lock.lockUncancelable(self.io);
         return .{ .owner = self, .publication = self.model.surfaceSnapshot() };
+    }
+
+    fn publishFrameLocked(self: *Terminal) howl_frame.PublishError!howl_frame.PublishResult {
+        const surface_value = self.model.surfaceSnapshot();
+        const result = try self.frames.publish(
+            surface_value,
+            self.geometry_sequence,
+            null,
+        );
+        switch (result) {
+            .published => {
+                if (surface_value.snapshot.dirty != null)
+                    std.debug.assert(self.model.ackSurface(surface_value.snapshot_seq));
+                self.frame_surface_generation = surface_value.snapshot_seq;
+            },
+            .saturated => {},
+        }
+        return result;
     }
 
     fn readLoop(self: *Terminal) void {
@@ -737,6 +839,16 @@ pub const Terminal = struct {
             self.lock.unlock(self.io);
             return error.ReplyAllocationFailed;
         };
+        if (summary.state_changed or summary.history_lost) {
+            const frame_result = self.publishFrameLocked() catch |failure| {
+                self.lock.unlock(self.io);
+                self.allocator.free(reply);
+                return frameReaderError(failure);
+            };
+            switch (frame_result) {
+                .published, .saturated => {},
+            }
+        }
         self.lock.unlock(self.io);
         std.debug.assert(reply.len <= max_transfer_bytes);
         if (reply.len != 0) {
@@ -814,6 +926,16 @@ pub const Terminal = struct {
         self.transport.cancel();
     }
 
+    fn stopAfterFrameFailure(self: *Terminal, failure: ReaderError) void {
+        self.lifecycle_lock.lockUncancelable(self.io);
+        if (self.state_value.load(.monotonic) == .running) {
+            self.reader_failure.store(readerFailure(failure), .monotonic);
+            self.state_value.store(.failed, .release);
+        }
+        self.lifecycle_lock.unlock(self.io);
+        self.transport.cancel();
+    }
+
     fn retainReplyTransferFailure(
         self: *Terminal,
         transferred: usize,
@@ -864,7 +986,7 @@ pub const Terminal = struct {
 
     fn handlePeer(self: *Terminal, peer: *net.Stream) void {
         if (!client.admitUid(linux.geteuid(), client.peerUid(peer.socket.handle) catch null)) {
-            client.writeFailure(self.io, peer, self.terminal_id, .unauthorized) catch {};
+            client.writeFailure(self.io, peer, self.terminal_id, null, .unauthorized) catch {};
             return;
         }
         const started = std.Io.Clock.awake.now(self.io);
@@ -876,7 +998,7 @@ pub const Terminal = struct {
             started,
             client.admission_timeout_ms,
         ) catch {
-            client.writeFailure(self.io, peer, self.terminal_id, .truncated) catch {};
+            client.writeFailure(self.io, peer, self.terminal_id, null, .truncated) catch {};
             return;
         };
         const request = client.decodeRequestHeader(&header) catch |failure| {
@@ -884,12 +1006,19 @@ pub const Terminal = struct {
                 self.io,
                 peer,
                 self.terminal_id,
+                null,
                 requestFailureStatus(failure),
             ) catch {};
             return;
         };
         if (!std.mem.eql(u8, &request.terminal_id.bytes, &self.terminal_id.bytes)) {
-            client.writeFailure(self.io, peer, self.terminal_id, .wrong_terminal) catch {};
+            client.writeFailure(
+                self.io,
+                peer,
+                self.terminal_id,
+                request.operation,
+                .wrong_terminal,
+            ) catch {};
             return;
         }
         var payload: [client.max_request_bytes]u8 = undefined;
@@ -901,7 +1030,13 @@ pub const Terminal = struct {
             started,
             client.admission_timeout_ms,
         ) catch {
-            client.writeFailure(self.io, peer, self.terminal_id, .truncated) catch {};
+            client.writeFailure(
+                self.io,
+                peer,
+                self.terminal_id,
+                request.operation,
+                .truncated,
+            ) catch {};
             return;
         };
         self.execute(peer, request.operation, body) catch |failure| {
@@ -909,6 +1044,7 @@ pub const Terminal = struct {
                 self.io,
                 peer,
                 self.terminal_id,
+                request.operation,
                 operationFailureStatus(failure),
             ) catch {};
         };
@@ -1043,8 +1179,19 @@ fn operationFailureStatus(failure: OperationError) client.ResponseStatus {
         error.OutOfMemory => .out_of_memory,
         error.ConsequenceLimit => .consequence_limit,
         error.ScreenLimit => .screen_limit,
+        error.FrameBorrowed => .frame_borrowed,
         error.ResizeRollbackFailed => .resize_rollback_failed,
-        error.NotStarted, error.PtyResizeFailed, error.ResponseWriteFailed => .internal_failure,
+        error.NotStarted,
+        error.PtyResizeFailed,
+        error.FrameSurfaceBounds,
+        error.FrameInvalidCell,
+        error.FrameInvalidCellPixels,
+        error.FrameInvalidCursor,
+        error.FrameInvalidDamage,
+        error.FrameInvalidSelection,
+        error.FrameGenerationExhausted,
+        error.ResponseWriteFailed,
+        => .internal_failure,
     };
 }
 
@@ -1078,6 +1225,37 @@ fn readerFailure(failure: ReaderError) ReaderFailure {
         error.PtyWaitFailed => .pty_wait_failed,
         error.ReplyAllocationFailed => .reply_allocation_failed,
         error.StringControlLimit => .string_control_limit,
+        error.FrameSurfaceBounds => .frame_surface_bounds,
+        error.FrameInvalidCell => .frame_invalid_cell,
+        error.FrameInvalidCellPixels => .frame_invalid_cell_pixels,
+        error.FrameInvalidCursor => .frame_invalid_cursor,
+        error.FrameInvalidDamage => .frame_invalid_damage,
+        error.FrameInvalidSelection => .frame_invalid_selection,
+        error.FrameGenerationExhausted => .frame_generation_exhausted,
+    };
+}
+
+fn frameReaderError(failure: howl_frame.PublishError) ReaderError {
+    return switch (failure) {
+        error.SurfaceBounds => error.FrameSurfaceBounds,
+        error.InvalidCell => error.FrameInvalidCell,
+        error.InvalidCellPixels => error.FrameInvalidCellPixels,
+        error.InvalidCursor => error.FrameInvalidCursor,
+        error.InvalidDamage => error.FrameInvalidDamage,
+        error.InvalidSelection => error.FrameInvalidSelection,
+        error.GenerationExhausted => error.FrameGenerationExhausted,
+    };
+}
+
+fn frameResizeError(failure: howl_frame.PublishError) ResizeError {
+    return switch (failure) {
+        error.SurfaceBounds => error.FrameSurfaceBounds,
+        error.InvalidCell => error.FrameInvalidCell,
+        error.InvalidCellPixels => error.FrameInvalidCellPixels,
+        error.InvalidCursor => error.FrameInvalidCursor,
+        error.InvalidDamage => error.FrameInvalidDamage,
+        error.InvalidSelection => error.FrameInvalidSelection,
+        error.GenerationExhausted => error.FrameGenerationExhausted,
     };
 }
 
@@ -1096,6 +1274,13 @@ fn decodeReaderFailure(failure: ReaderFailure) ?ReaderError {
         .pty_wait_failed => error.PtyWaitFailed,
         .reply_allocation_failed => error.ReplyAllocationFailed,
         .string_control_limit => error.StringControlLimit,
+        .frame_surface_bounds => error.FrameSurfaceBounds,
+        .frame_invalid_cell => error.FrameInvalidCell,
+        .frame_invalid_cell_pixels => error.FrameInvalidCellPixels,
+        .frame_invalid_cursor => error.FrameInvalidCursor,
+        .frame_invalid_damage => error.FrameInvalidDamage,
+        .frame_invalid_selection => error.FrameInvalidSelection,
+        .frame_generation_exhausted => error.FrameGenerationExhausted,
     };
 }
 
@@ -1220,6 +1405,58 @@ test "wake mutation between observation and acknowledgement is announced" {
     terminal.acknowledgeWake(observed);
     try std.testing.expectEqual(@as(u32, 2), wake_count.load(.acquire));
     try std.testing.expectEqual(terminal.wake_generation.load(.acquire), terminal.wake_announced.load(.acquire));
+}
+
+test "frame saturation recovers newest complete state through exact release" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 4, .rows = 1 },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+
+    var first = terminal.borrowFrame().?;
+    try terminal.consume("A");
+    var second = terminal.borrowFrame().?;
+    try terminal.consume("B");
+    try std.testing.expectEqual(@as(u64, 2), terminal.frames.newestGeneration());
+    try std.testing.expect(terminal.model.surfaceSnapshot().snapshot.dirty != null);
+
+    try terminal.releaseFrame(&first);
+    try std.testing.expectEqual(@as(u64, 3), terminal.frames.newestGeneration());
+    var recovered = terminal.borrowFrame().?;
+    try std.testing.expectEqual(@as(u21, 'A'), recovered.frame.cells[0].codepoint);
+    try std.testing.expectEqual(@as(u21, 'B'), recovered.frame.cells[1].codepoint);
+    try std.testing.expect(recovered.frame.damage.full);
+    try std.testing.expect(terminal.model.surfaceSnapshot().snapshot.dirty == null);
+    try std.testing.expect(wake_count.load(.acquire) != 0);
+    try terminal.releaseFrame(&second);
+    try terminal.releaseFrame(&recovered);
+}
+
+test "frame publication failures retain exact reader meanings" {
+    try std.testing.expectEqual(
+        @as(ReaderError, error.FrameSurfaceBounds),
+        frameReaderError(error.SurfaceBounds),
+    );
+    try std.testing.expectEqual(
+        @as(ReaderError, error.FrameInvalidDamage),
+        frameReaderError(error.InvalidDamage),
+    );
+    try std.testing.expectEqual(
+        @as(ReaderError, error.FrameGenerationExhausted),
+        frameReaderError(error.GenerationExhausted),
+    );
+    try std.testing.expectEqual(
+        ReaderFailure.frame_generation_exhausted,
+        readerFailure(error.FrameGenerationExhausted),
+    );
+    try std.testing.expectEqual(
+        @as(?ReaderError, error.FrameGenerationExhausted),
+        decodeReaderFailure(.frame_generation_exhausted),
+    );
 }
 
 test "resize rollback failure transition stops progress and preserves cleanup control" {

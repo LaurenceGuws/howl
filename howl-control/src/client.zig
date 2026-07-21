@@ -124,6 +124,13 @@ pub const ReaderError = error{
     PtyWaitFailed,
     ReplyAllocationFailed,
     StringControlLimit,
+    FrameSurfaceBounds,
+    FrameInvalidCell,
+    FrameInvalidCellPixels,
+    FrameInvalidCursor,
+    FrameInvalidDamage,
+    FrameInvalidSelection,
+    FrameGenerationExhausted,
 };
 /// Copies one bounded real OSC 133 mark and retained shell identity.
 pub const ShellMark = struct {
@@ -156,12 +163,20 @@ pub const InputError = howl_vt.Terminal.InputError || error{InputLimit};
 /// Retains exact complete or partial PTY transfer truth.
 pub const InputTransfer = howl_pty.Transfer;
 const TransferIncomplete = @FieldType(InputTransfer, "incomplete");
-/// Reports an invalid size, model failure, PTY failure, or failed rollback.
+/// Reports invalid size, borrowed frame storage, model/PTTY failure, or failed rollback.
 pub const ResizeError = howl_vt.Terminal.ResizeError || error{
     InvalidDimensions,
     NotStarted,
     PtyResizeFailed,
     ResizeRollbackFailed,
+    FrameBorrowed,
+    FrameSurfaceBounds,
+    FrameInvalidCell,
+    FrameInvalidCellPixels,
+    FrameInvalidCursor,
+    FrameInvalidDamage,
+    FrameInvalidSelection,
+    FrameGenerationExhausted,
 };
 /// Uses Howl VT's bounded finalized-output cursor and loss outcomes.
 pub const LogicalOutputResult = howl_vt.Terminal.LogicalOutputResult;
@@ -471,6 +486,7 @@ pub const ClientError = std.mem.Allocator.Error || error{
     InvalidPayload,
     InvalidResponse,
     ReadFailed,
+    FrameBorrowed,
     RemoteRejected,
     ResizeRollbackFailed,
     ResponseLimit,
@@ -581,6 +597,13 @@ fn encodeReaderError(failure: ?ReaderError) u8 {
         error.PtyWaitFailed => 10,
         error.ReplyAllocationFailed => 11,
         error.StringControlLimit => 12,
+        error.FrameSurfaceBounds => 13,
+        error.FrameInvalidCell => 14,
+        error.FrameInvalidCellPixels => 15,
+        error.FrameInvalidCursor => 16,
+        error.FrameInvalidDamage => 17,
+        error.FrameInvalidSelection => 18,
+        error.FrameGenerationExhausted => 19,
     };
 }
 
@@ -929,8 +952,23 @@ fn decodeReaderError(value: u8) error{InvalidResponse}!?ReaderError {
         10 => @as(?ReaderError, error.PtyWaitFailed),
         11 => @as(?ReaderError, error.ReplyAllocationFailed),
         12 => @as(?ReaderError, error.StringControlLimit),
+        13 => @as(?ReaderError, error.FrameSurfaceBounds),
+        14 => @as(?ReaderError, error.FrameInvalidCell),
+        15 => @as(?ReaderError, error.FrameInvalidCellPixels),
+        16 => @as(?ReaderError, error.FrameInvalidCursor),
+        17 => @as(?ReaderError, error.FrameInvalidDamage),
+        18 => @as(?ReaderError, error.FrameInvalidSelection),
+        19 => @as(?ReaderError, error.FrameGenerationExhausted),
         else => return error.InvalidResponse,
     };
+}
+
+test "frame publication failure survives status wire encoding" {
+    try std.testing.expectEqual(
+        @as(?ReaderError, error.FrameGenerationExhausted),
+        try decodeReaderError(encodeReaderError(error.FrameGenerationExhausted)),
+    );
+    try std.testing.expectError(error.InvalidResponse, decodeReaderError(20));
 }
 
 fn decodeScreen(allocator: std.mem.Allocator, payload: []const u8) ClientError!Screen {
@@ -1411,6 +1449,7 @@ pub const ResponseStatus = enum(u8) {
     out_of_memory = 17,
     consequence_limit = 18,
     resize_rollback_failed = 19,
+    frame_borrowed = 20,
 };
 
 const WireState = enum(u8) { running = 0, stopped = 1, failed = 2 };
@@ -1483,7 +1522,9 @@ fn decodeResponseHeader(
     if (!std.mem.eql(u8, bytes[0..4], "QTRS")) return error.BadMagic;
     if (std.mem.readInt(u16, bytes[4..6], .big) != protocol_version) return error.WrongVersion;
     if (!std.mem.eql(u8, bytes[8..24], &expected_id.bytes)) return error.WrongTerminal;
-    if (bytes[7] != @intFromEnum(expected_operation)) return error.InvalidResponse;
+    if (bytes[7] != @intFromEnum(expected_operation) and
+        !(bytes[6] != @intFromEnum(ResponseStatus.ok) and bytes[7] == 0))
+        return error.InvalidResponse;
     if (!std.mem.allEqual(u8, bytes[24..40], 0) or
         !std.mem.allEqual(u8, bytes[44..56], 0)) return error.InvalidResponse;
     const payload_len = std.mem.readInt(u32, bytes[40..44], .big);
@@ -1508,6 +1549,7 @@ fn decodeResponseHeader(
             @intFromEnum(ResponseStatus.out_of_memory) => error.OutOfMemory,
             @intFromEnum(ResponseStatus.consequence_limit) => error.ConsequenceLimit,
             @intFromEnum(ResponseStatus.resize_rollback_failed) => error.ResizeRollbackFailed,
+            @intFromEnum(ResponseStatus.frame_borrowed) => error.FrameBorrowed,
             else => error.RemoteRejected,
         };
     }
@@ -1539,12 +1581,14 @@ pub fn writeFailure(
     io: std.Io,
     peer: *net.Stream,
     id: TerminalId,
+    operation: ?Operation,
     status: ResponseStatus,
 ) !void {
     var header: [response_header_bytes]u8 = @splat(0);
     @memcpy(header[0..4], "QTRS");
     std.mem.writeInt(u16, header[4..6], protocol_version, .big);
     header[6] = @intFromEnum(status);
+    header[7] = if (operation) |value| @intFromEnum(value) else 0;
     @memcpy(header[8..24], &id.bytes);
     try writeExact(
         io,
@@ -1852,6 +1896,7 @@ test "wire status and lifecycle values remain protocol v1 constants" {
     try std.testing.expectEqual(@as(u8, 0), @intFromEnum(ResponseStatus.ok));
     try std.testing.expectEqual(@as(u8, 11), @intFromEnum(ResponseStatus.internal_failure));
     try std.testing.expectEqual(@as(u8, 19), @intFromEnum(ResponseStatus.resize_rollback_failed));
+    try std.testing.expectEqual(@as(u8, 20), @intFromEnum(ResponseStatus.frame_borrowed));
     try std.testing.expectEqual(@as(u8, 0), encodeWireState(.running));
     try std.testing.expectEqual(@as(u8, 1), encodeWireState(.stopped));
     try std.testing.expectEqual(@as(u8, 2), encodeWireState(.failed));
