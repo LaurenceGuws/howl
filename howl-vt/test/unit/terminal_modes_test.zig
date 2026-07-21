@@ -2021,3 +2021,51 @@ test "reverse wrap owns backspace margins phantom state query save and reset" {
     try std.testing.expect(!extendedReverseWraparoundMode(&terminal));
     try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
 }
+
+test "DECCOLM owns Kitty screen transition query save and reset lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed(
+        "abcdefgh\x1b[?69h\x1b[2;7s\x1b[2;3r\x1b[?6h\x1b[2;3H",
+    )).state_changed);
+    const active = terminal.screen_state.active();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?3")).state_changed);
+    try std.testing.expect((try terminal.feed("h")).state_changed);
+    try std.testing.expectEqual(@as(u16, 8), active.cols);
+    try std.testing.expectEqual(@as(u16, 1), active.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), active.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), active.scroll_top);
+    try std.testing.expectEqual(@as(u16, 2), active.scroll_bottom);
+    try std.testing.expectEqual(@as(u16, 1), active.left_margin);
+    try std.testing.expectEqual(@as(u16, 6), active.right_margin);
+    for (0..active.rows) |row| for (0..active.cols) |col|
+        try std.testing.expectEqual(@as(u21, 0), active.cellAt(@intCast(row), @intCast(col)));
+
+    active.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b[?3h")).state_changed);
+    try std.testing.expect(active.peekDirtyRows() == null);
+    try std.testing.expect((try terminal.feed("\x1b[?3$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?3;1$y", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("text\x1b[?3s\x1b[?3l")).state_changed);
+    const cursor_before_reset = active.cursor;
+    try std.testing.expect(!(try terminal.feed("\x1b[?3l")).state_changed);
+    try std.testing.expectEqual(cursor_before_reset.row, active.cursor.row);
+    try std.testing.expectEqual(cursor_before_reset.col, active.cursor.col);
+    try std.testing.expectEqual(@as(u21, 't'), active.cellAt(1, 0));
+
+    try std.testing.expect((try terminal.feed("\x1b[?3r")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), active.cellAt(1, 0));
+    try std.testing.expect((try terminal.feed("\x1b[?3$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?3;1$y", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[!p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?3$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?3;2$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
+}

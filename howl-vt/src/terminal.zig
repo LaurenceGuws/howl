@@ -2611,19 +2611,37 @@ pub const Screen = struct {
     fn alignmentDisplay(self: *Screen) bool {
         const cells = self.cells orelse return false;
         const fill = Cell{ .codepoint = 'E', .attrs = self.current_attrs };
+        const erased = self.eraseCell();
+        var changed = self.wrap_pending;
+        self.wrap_pending = false;
         var row: u16 = 0;
         while (row < self.rows) : (row += 1) {
             const start = self.rowStart(row);
             const line_cols = self.lineColumnCount(row);
-            @memset(cells[@intCast(start)..@intCast(start + line_cols)], fill);
-            @memset(cells[@intCast(start + line_cols)..@intCast(start + self.cols)], self.eraseCell());
+            var row_changed = false;
+            for (cells[@intCast(start)..@intCast(start + line_cols)]) |*cell| {
+                if (std.meta.eql(cell.*, fill)) continue;
+                cell.* = fill;
+                row_changed = true;
+            }
+            for (cells[@intCast(start + line_cols)..@intCast(start + self.cols)]) |*cell| {
+                if (std.meta.eql(cell.*, erased)) continue;
+                cell.* = erased;
+                row_changed = true;
+            }
+            if (self.row_flags) |flags| {
+                const idx = self.rowWrapIndex(row) orelse unreachable;
+                if (flags[@intCast(idx)] & row_wrapped_bit != 0) {
+                    flags[@intCast(idx)] &= ~row_wrapped_bit;
+                    row_changed = true;
+                }
+            }
+            if (row_changed) {
+                self.markDirtyRow(row);
+                changed = true;
+            }
         }
-        self.wrap_pending = false;
-        if (self.row_flags) |flags| {
-            for (flags) |*flag| flag.* &= ~row_wrapped_bit;
-        }
-        self.markAllRowsDirty();
-        return true;
+        return changed;
     }
 
     fn lineColumnCount(self: *const Screen, logical_row: u16) u16 {
@@ -5335,6 +5353,7 @@ const ModeState = struct {
     keyboard_action_mode: bool = false,
     application_cursor_keys: bool = false,
     application_keypad: bool = false,
+    column_mode_132: bool = false,
     auto_repeat: bool = true,
     reverse_screen_mode: bool = false,
     send_receive_mode: bool = false,
@@ -5367,6 +5386,7 @@ const SavedDecMode = struct {
 const DecView = struct {
     application_cursor_keys: bool,
     application_keypad: bool,
+    column_mode_132: bool,
     auto_repeat: bool,
     reverse_screen_mode: bool,
     origin_mode: bool,
@@ -5399,6 +5419,7 @@ const AnsiView = struct {
 fn decModeStateForView(view: DecView, mode: u16) u8 {
     return switch (mode) {
         1 => boolToDecModeState(view.application_cursor_keys),
+        3 => boolToDecModeState(view.column_mode_132),
         5 => boolToDecModeState(view.reverse_screen_mode),
         6 => boolToDecModeState(view.origin_mode),
         7 => boolToDecModeState(view.auto_wrap),
@@ -5478,6 +5499,7 @@ fn savedDecModeState(saved_modes: []const SavedDecMode, saved_count: SavedDecMod
 fn canSetDecMode(mode: u16) bool {
     return switch (mode) {
         1,
+        3,
         5,
         6,
         7,
@@ -8169,6 +8191,7 @@ fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
         8 => boolEvent(final, .{ .auto_repeat = true }, .{ .auto_repeat = false }),
         6 => boolEvent(final, .{ .origin_mode = true }, .{ .origin_mode = false }),
         1 => boolEvent(final, .{ .application_cursor_keys = true }, .{ .application_cursor_keys = false }),
+        3 => boolEvent(final, .{ .column_mode_132 = true }, .{ .column_mode_132 = false }),
         66 => boolEvent(final, .{ .application_keypad = true }, .{ .application_keypad = false }),
         69 => boolEvent(final, .{ .left_right_margin_mode = true }, .{ .left_right_margin_mode = false }),
         45 => boolEvent(final, .{ .reverse_wraparound_mode = true }, .{ .reverse_wraparound_mode = false }),
@@ -8816,6 +8839,7 @@ pub const SemanticEvent = union(enum) {
     insert_mode: bool,
     application_cursor_keys: bool,
     application_keypad: bool,
+    column_mode_132: bool,
     ansi_mode_set: ModeParams,
     ansi_mode_reset: ModeParams,
     ansi_mode_query: u16,
@@ -9631,6 +9655,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     const dec_modes = DecView{
         .application_cursor_keys = vt.modes.application_cursor_keys,
         .application_keypad = vt.modes.application_keypad,
+        .column_mode_132 = vt.modes.column_mode_132,
         .auto_repeat = vt.modes.auto_repeat,
         .reverse_screen_mode = vt.modes.reverse_screen_mode,
         .origin_mode = active.origin_mode,
@@ -11306,6 +11331,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
 
         .application_cursor_keys,
         .application_keypad,
+        .column_mode_132,
         .auto_repeat,
         .reverse_screen_mode,
         .eight_bit_controls,
@@ -12524,6 +12550,7 @@ pub const Terminal = struct {
 
         changed = replaceBool(&self.modes.application_cursor_keys, false) or changed;
         changed = replaceBool(&self.modes.application_keypad, false) or changed;
+        changed = replaceBool(&self.modes.column_mode_132, false) or changed;
         changed = replaceBool(&self.modes.newline_mode, false) or changed;
         changed = replaceBool(&self.modes.focus_reporting, false) or changed;
         changed = replaceBool(&self.modes.bracketed_paste, false) or changed;
@@ -12735,6 +12762,7 @@ pub const Terminal = struct {
         switch (event) {
             .application_cursor_keys => |enabled| return replaceBool(&self.modes.application_cursor_keys, enabled),
             .application_keypad => |enabled| return replaceBool(&self.modes.application_keypad, enabled),
+            .column_mode_132 => |enabled| return self.setDecMode(3, enabled),
             .auto_repeat => |enabled| return self.setDecMode(8, enabled),
             .reverse_screen_mode => |enabled| return self.setDecMode(5, enabled),
             .eight_bit_controls => |enabled| {
@@ -12797,6 +12825,7 @@ pub const Terminal = struct {
         return decModeStateForView(.{
             .application_cursor_keys = self.modes.application_cursor_keys,
             .application_keypad = self.modes.application_keypad,
+            .column_mode_132 = self.modes.column_mode_132,
             .auto_repeat = self.modes.auto_repeat,
             .reverse_screen_mode = self.modes.reverse_screen_mode,
             .origin_mode = active.origin_mode,
@@ -12861,6 +12890,17 @@ pub const Terminal = struct {
         const pending_changed = active.cancelPendingWrap();
         const mode_changed = switch (mode_number) {
             1 => replaceBool(&self.modes.application_cursor_keys, enabled),
+            3 => result: {
+                var changed = replaceBool(&self.modes.column_mode_132, enabled);
+                if (!enabled) break :result changed;
+                changed = active.eraseDisplay(.all, false) or changed;
+                const cursor_before = active.cursor;
+                active.cursor.setPositionByClient(
+                    if (active.origin_mode) active.scroll_top else 0,
+                    0,
+                );
+                break :result !std.meta.eql(cursor_before, active.cursor) or changed;
+            },
             5 => replaceBool(&self.modes.reverse_screen_mode, enabled),
             6 => changed: {
                 const before = .{ active.origin_mode, active.cursor.row, active.cursor.col };

@@ -767,6 +767,52 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and pu
     try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.snapshot.view.lineGeometry(0));
 }
 
+test "terminal: DECALN owns exact retained grid and mutation truth" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[31;44;1mABCDEFx\x1b[2;1H\x1b#6")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;3r\x1b[2;3H")).state_changed);
+    const active = terminal.screen_state.active();
+    const cursor_before = active.cursor;
+    const attrs_before = active.current_attrs;
+    try std.testing.expect(active.rowWrapped(0));
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(1));
+
+    active.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b#")).state_changed);
+    try std.testing.expect((try terminal.feed("8")).state_changed);
+    try std.testing.expectEqual(cursor_before.row, active.cursor.row);
+    try std.testing.expectEqual(cursor_before.col, active.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), active.scroll_top);
+    try std.testing.expectEqual(@as(u16, 2), active.scroll_bottom);
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(1));
+    try std.testing.expect(!active.rowWrapped(0));
+    for (0..active.rows) |row| {
+        const line_cols: usize = if (row == 1) 3 else 6;
+        for (0..active.cols) |col| {
+            const cell = active.cellInfoAt(@intCast(row), @intCast(col));
+            try std.testing.expectEqual(if (col < line_cols) @as(u21, 'E') else 0, cell.codepoint);
+            try std.testing.expect(std.meta.eql(attrs_before, cell.attrs));
+        }
+    }
+    const dirty = active.peekDirtyRows().?;
+    try std.testing.expectEqual(@as(u16, 0), dirty.start_row);
+    try std.testing.expectEqual(@as(u16, 2), dirty.end_row);
+
+    active.clearDirtyRows();
+    try std.testing.expect(!(try terminal.feed("\x1b#8")).state_changed);
+    try std.testing.expect(active.peekDirtyRows() == null);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;6HE")).state_changed);
+    try std.testing.expect(active.wrap_pending);
+    active.clearDirtyRows();
+    try std.testing.expect((try terminal.feed("\x1b#8")).state_changed);
+    try std.testing.expect(!active.wrap_pending);
+    try std.testing.expect(active.peekDirtyRows() == null);
+    try std.testing.expect(!(try terminal.feed("\x1b#8")).state_changed);
+}
+
 test "terminal: resize resets physical geometry without reassigning it to reflowed content" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();

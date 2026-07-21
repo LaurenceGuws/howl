@@ -144,10 +144,16 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}
-          - {id: libvterm.esc.decaln, raw: "ESC # 8", effect: fill screen with E, relevance: diagnostic,
-            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay, proof: {
+          - id: libvterm.esc.decaln
+            raw: "ESC # 8"
+            effect: fill screen with E
+            relevance: diagnostic
+            conditions: >-
+              libvterm emits E glyphs across each logical ROWWIDTH without changing cursor or line information;
+              Howl additionally cancels pending wrap and clears wrapped-row metadata
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: DEC line geometry owns width movement scroll resize reset and publication"}}}
+              symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
           - {id: libvterm.esc.scs_g0, raw: "ESC ( F", effect: designate G0 charset, relevance: charset,
             conditions: Howl implements ASCII, UK, and DEC Special Graphics but not libvterm's other encodings,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
@@ -779,9 +785,15 @@ references:
               iTerm2 expands cells and scales cursor position while Howl owns logical half-width row geometry and resets
               physical-row geometry on resize
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: applyLineGeometry}
-          - {id: iterm2.esc.decaln, raw: "ESC # 8", effect: fill screen with E,
-            conditions: iTerm2 also homes the cursor and resets scroll regions,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay}}
+          - id: iterm2.esc.decaln
+            raw: "ESC # 8"
+            effect: fill screen with E
+            conditions: >-
+              iTerm2 fills the full physical grid, homes the cursor, and resets vertical and horizontal scroll regions;
+              Howl fills each retained DEC logical row width and preserves cursor and regions
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
           - {id: iterm2.esc.deckpam, raw: "ESC =", effect: application keypad,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: escProcess,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -1548,8 +1560,15 @@ references:
                 test: application cursor mode changes arrow key encoding}}}
           - {id: iterm2.mode.ansi_vt52, raw: "CSI ? 2 h|l", effect: ignore emulation switch,
             recognition: recognized_noop, relevance: compatibility, howl: {status: 'false'}}
-          - {id: iterm2.mode.deccolm, raw: "CSI ? 3 h|l", effect: toggle 80 or 132 columns, conditions: allowColumnMode,
-            howl: {status: partial}}
+          - id: iterm2.mode.deccolm
+            raw: "CSI ? 3 h|l"
+            effect: toggle 80 or 132 columns
+            conditions: >-
+              iTerm2 gates through allowColumnMode and owns asynchronous grid resizing plus preserve-screen policy;
+              Howl owns mode query/save/reset and set-side erase/home while embedder geometry remains unchanged
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECCOLM owns Kitty screen transition query save and reset lifetime"}}
           - {id: iterm2.mode.decsclm, raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
             recognition: recognized_noop, howl: {status: 'false'}}
           - {id: iterm2.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse video,
@@ -1880,9 +1899,15 @@ references:
             howl: {status: partial, source: howl-vt/src/parser.zig, symbol: selectLatin1, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime"}}}
-          - {id: kitty.esc.decaln, raw: "ESC # 8", effect: fill screen with E,
-            conditions: Kitty also homes the cursor and resets margins,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay}}
+          - id: kitty.esc.decaln
+            raw: "ESC # 8"
+            effect: fill screen with E
+            conditions: >-
+              Kitty also homes the cursor, resets vertical margins, and reinitializes every row's line geometry;
+              Howl preserves cursor, margins, and DEC line geometry
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: alignmentDisplay, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DECALN owns exact retained grid and mutation truth"}}
           - {id: kitty.esc.scs_g0, raw: "ESC ( A|B|0|U|V", effect: designate G0 charset,
             conditions: Howl maps A B 0 U V through ISO GL/GR; Kitty also remaps decoded C1 scalars and U+00FF,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: configureCharset, proof: {
@@ -1950,8 +1975,13 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
-          - {id: kitty.mode.deccolm, raw: "CSI ? 3 h|l", effect: toggle 80 or 132 column mode and home screen,
-            howl: {status: partial}}
+          - id: kitty.mode.deccolm
+            raw: "CSI ? 3 h|l"
+            effect: retain column mode; set erases the screen and homes the cursor
+            conditions: caller owns any physical resize before setting the mode
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECCOLM owns Kitty screen transition query save and reset lifetime"}}
           - {id: kitty.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat,
             conditions: "Howl additionally cancels pending wrap at the CSI boundary; physical repeat suppression,
               press and release preservation, default-on lifetime, mode query, and save or restore match",
