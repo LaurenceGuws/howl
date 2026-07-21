@@ -2272,7 +2272,10 @@ references:
             conditions: Kitty shifts full rows plus graphics references, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: kitty.csi.scrollback_fill, raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
-            relevance: extension, howl: {status: partial}}
+            conditions: Howl restores bounded primary text rows and retained cell/line facts but has no graphics plane,
+            relevance: extension, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: scrollDownFromHistory, proof: {path: howl-vt/test/unit/terminal_test.zig,
+                symbol: "terminal Kitty unscroll consumes primary history in row order"}}}
           - {id: kitty.csi.decstr, raw: "CSI ! p", effect: reject unsupported DECSTR,
             conditions: Kitty recognizes the final but rejects the unsupported intermediate while Howl applies DECSTR,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: softReset, proof: {

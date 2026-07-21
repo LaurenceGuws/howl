@@ -452,6 +452,108 @@ test "terminal visible view projects scrollback rows" {
     try std.testing.expectEqual(1, scrolled.rowDepth(1));
 }
 
+test "terminal Kitty unscroll consumes primary history in row order" {
+    var vt = try Terminal.initWithHistory(std.testing.allocator, 3, 4, 8);
+    defer vt.deinit();
+
+    try std.testing.expect((try vt.feed("aaaa\r\nbbbb\r\ncccc\r\ndddd\r\neeee")).state_changed);
+    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    vt.screen_state.active().cursor.setPositionByClient(1, 2);
+
+    try std.testing.expect((try vt.feed("\x1b[2+T")).state_changed);
+    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.activeConst().cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.activeConst().cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.activeConst().cellAt(2, 0));
+    try std.testing.expectEqual(@as(u16, 1), vt.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 2), vt.screen_state.activeConst().cursor.col);
+
+    try vt.resize(3, 2);
+    try std.testing.expectEqual(@as(u32, 3), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.historyRowAt(2, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.cellAt(0, 0));
+}
+
+test "terminal Kitty unscroll fragments and preserves alternate history" {
+    var vt = try Terminal.initWithHistory(std.testing.allocator, 2, 3, 4);
+    defer vt.deinit();
+
+    try feedChanged(&vt, "aaa\r\nbbb\r\nccc");
+    try std.testing.expectEqual(@as(u32, 1), vt.visibleHistoryCount());
+    try feedChanged(&vt, "\x1b[?1049hxxx");
+    try std.testing.expect(!(try vt.feed("\x1b[")).state_changed);
+    try std.testing.expect((try vt.feed("+T")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u32, 1), vt.screen_state.primary.historyCount());
+    try feedChanged(&vt, "\x1b[?1049l\x1b[999999+T");
+    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.primary.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.cellAt(1, 0));
+}
+
+test "terminal Kitty unscroll preserves logical authority and cell facts" {
+    var vt = try Terminal.initWithHistory(std.testing.allocator, 2, 4, 2);
+    defer vt.deinit();
+
+    try feedChanged(&vt, "\x1b[31mAAAA\r\n1111\r\n2222");
+    try std.testing.expectEqual(@as(u32, 1), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(0, 0));
+    try std.testing.expect((try vt.feed("\x1b[+T")).state_changed);
+    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.cellAt(0, 0));
+    try std.testing.expectEqual(
+        terminal_mod.Screen.Color.indexed(1),
+        vt.screen_state.primary.cellInfoAt(0, 0).attrs.fg,
+    );
+
+    try vt.resize(2, 2);
+    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(0, 1));
+}
+
+test "terminal Kitty unscroll consumes wrapped history ring authority" {
+    var vt = try Terminal.initWithHistory(std.testing.allocator, 2, 2, 2);
+    defer vt.deinit();
+
+    try feedChanged(&vt, "aa\r\nbb\r\ncc\r\ndd\r\nee");
+    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.primary.historyRowAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(1, 0));
+
+    try feedChanged(&vt, "\x1b[+T");
+    try std.testing.expectEqual(@as(u32, 1), vt.visibleHistoryCount());
+    try feedChanged(&vt, "\x1b[2;1Hzz\r\n");
+    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+
+    try feedChanged(&vt, "\x1b[2+T");
+    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.primary.cellAt(1, 0));
+
+    try vt.resize(2, 1);
+    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(0, 0));
+}
+
+test "terminal Kitty unscroll consumes newest rows of one wrapped line" {
+    var vt = try Terminal.initWithHistory(std.testing.allocator, 2, 3, 4);
+    defer vt.deinit();
+
+    try feedChanged(&vt, "abcdefghij");
+    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+
+    try feedChanged(&vt, "\x1b[+T");
+    try std.testing.expectEqual(@as(u32, 1), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'd'), vt.screen_state.primary.cellAt(0, 0));
+
+    try feedChanged(&vt, "\x1b[+T");
+    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.cellAt(0, 0));
+}
+
 test "terminal RIS delegates hard-reset owners" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();

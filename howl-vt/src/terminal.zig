@@ -1207,6 +1207,7 @@ pub const Screen = struct {
             .delete_chars,
             .scroll_up_lines,
             .scroll_down_lines,
+            .scroll_down_from_history,
             .set_scroll_region,
             .hard_reset,
             => self.applyLineEdit(event),
@@ -1387,6 +1388,10 @@ pub const Screen = struct {
             .scroll_down_lines => |count| {
                 self.wrap_pending = false;
                 self.scrollDownRegion(self.scroll_top, self.scrollBottom(), count);
+            },
+            .scroll_down_from_history => |count| {
+                self.wrap_pending = false;
+                self.scrollDownFromHistory(count);
             },
             .set_scroll_region => |region| {
                 self.wrap_pending = false;
@@ -2477,6 +2482,76 @@ pub const Screen = struct {
             self.clearRowRange(clear_row, left, right + 1);
             self.setRowWrapped(clear_row, false);
             if (left == 0 and right + 1 == self.cols) self.resetLineGeometry(clear_row);
+        }
+    }
+
+    // Removes the newest projected history row and its matching logical authority.
+    // A partially consumed logical line becomes the open prefix so later resize
+    // cannot rejoin visible content to a completed history line.
+    fn consumeNewestHistoryRow(self: *Screen) void {
+        std.debug.assert(self.history_count > 0);
+        const allocator = self.allocator orelse unreachable;
+        self.history_count -= 1;
+
+        if (self.open_history_line) |*line| {
+            const row_count = self.projectedRowCountForCells(line.cells.items);
+            std.debug.assert(row_count > 0);
+            const remove = line.cells.items.len - @as(usize, row_count - 1) * self.cols;
+            std.debug.assert(remove > 0);
+            line.cells.shrinkRetainingCapacity(line.cells.items.len - remove);
+            if (line.cells.items.len == 0) {
+                line.deinit(allocator);
+                self.open_history_line = null;
+            }
+            return;
+        }
+
+        const count = self.historyLineCount();
+        std.debug.assert(count > 0);
+        if (self.history_lines_start != 0) {
+            const split: usize = @intCast(self.history_lines_start);
+            std.mem.reverse(HistoryLine, self.history_lines.items[0..split]);
+            std.mem.reverse(HistoryLine, self.history_lines.items[split..]);
+            std.mem.reverse(HistoryLine, self.history_lines.items);
+            self.history_lines_start = 0;
+        }
+        const newest: usize = @intCast(count - 1);
+        var line = self.history_lines.items[newest];
+        const row_count = self.projectedRowCountForCells(line.cells.items);
+        std.debug.assert(row_count > 0);
+        if (row_count > 1) {
+            const tail = line.cells.items.len - @as(usize, row_count - 1) * self.cols;
+            std.debug.assert(tail > 0 and tail <= self.cols);
+            line.cells.shrinkRetainingCapacity(line.cells.items.len - tail);
+            self.open_history_line = line;
+        } else {
+            line.deinit(allocator);
+        }
+        self.history_lines.items[newest] = .{};
+        self.history_lines.shrinkRetainingCapacity(newest);
+    }
+
+    /// Reverse-scroll and restore newest primary scrollback rows when available.
+    fn scrollDownFromHistory(self: *Screen, count: u16) void {
+        if (self.rows == 0 or self.cols == 0 or count == 0) return;
+        const limit = @max(@as(u32, self.rows), self.history_count);
+        var remaining: u32 = @min(@as(u32, count), limit);
+        while (remaining > 0) : (remaining -= 1) {
+            const history_slot = self.historySlotForRecency(0);
+            const history_flags = if (history_slot) |slot| self.history_flags.?[@intCast(slot)] else 0;
+            self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1);
+            if (history_slot) |slot| {
+                const history = self.history.?;
+                const source = slot * @as(u32, self.cols);
+                const destination = self.rowStart(self.scroll_top);
+                @memcpy(
+                    self.cells.?[@intCast(destination)..@intCast(destination + self.cols)],
+                    history[@intCast(source)..@intCast(source + self.cols)],
+                );
+                self.row_flags.?[@intCast(self.rowWrapIndex(self.scroll_top).?)] = history_flags;
+                self.markDirtyRow(self.scroll_top);
+                self.consumeNewestHistoryRow();
+            }
         }
     }
 
@@ -7370,7 +7445,7 @@ fn processStar(final: u8, params: []const i32) ?SemanticEvent {
 
 fn processPlus(final: u8, params: []const i32) ?SemanticEvent {
     return switch (final) {
-        'T' => SemanticEvent{ .scroll_down_lines = paramAtOrDefault1(params, 0) },
+        'T' => SemanticEvent{ .scroll_down_from_history = paramAtOrDefault1(params, 0) },
         else => null,
     };
 }
@@ -8683,6 +8758,7 @@ pub const SemanticEvent = union(enum) {
     delete_chars: u16,
     scroll_up_lines: u16,
     scroll_down_lines: u16,
+    scroll_down_from_history: u16,
     set_scroll_region: struct {
         top: u16,
         bottom: ?u16,
@@ -11243,6 +11319,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .delete_chars,
         .scroll_up_lines,
         .scroll_down_lines,
+        .scroll_down_from_history,
         .set_scroll_region,
         .rect_fill,
         .rect_copy,

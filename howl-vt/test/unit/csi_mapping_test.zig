@@ -129,7 +129,7 @@ test "csi mapping: editing and scrolling" {
         .private = false,
         .intermediates = intermediates[0..],
         .intermediates_len = 1,
-    } }).?.scroll_down_lines);
+    } }).?.scroll_down_from_history);
 }
 
 test "csi mapping: positioning, tab, erase, and reset semantics" {
