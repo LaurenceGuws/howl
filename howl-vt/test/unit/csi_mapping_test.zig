@@ -288,8 +288,12 @@ test "csi mapping: protection, rectangular ops, and margins" {
     const margins = process(makeStyleChange('s', 2, 4, 2)).?;
     try std.testing.expectEqual(@as(u16, 1), margins.set_left_right_margins.left);
     try std.testing.expectEqual(@as(?u16, 3), margins.set_left_right_margins.right);
-    try std.testing.expect(process(makePrivateStyleChange('h', &.{69})).?.left_right_margin_mode);
-    try std.testing.expect(!process(makePrivateStyleChange('l', &.{69})).?.left_right_margin_mode);
+    const margins_on = process(makePrivateStyleChange('h', &.{69})).?;
+    try std.testing.expect(margins_on == .dec_mode_set);
+    try std.testing.expectEqual(@as(u16, 69), margins_on.dec_mode_set.params[0]);
+    const margins_off = process(makePrivateStyleChange('l', &.{69})).?;
+    try std.testing.expect(margins_off == .dec_mode_reset);
+    try std.testing.expectEqual(@as(u16, 69), margins_off.dec_mode_reset.params[0]);
 }
 
 test "csi mapping: cursor style, save restore aliases, and invalid sequence" {

@@ -575,7 +575,7 @@ test "terminal DECSTR preserves text and position while resetting terminal state
     defer vt.deinit();
     var stream = try stream_harness.Harness.init(&vt);
 
-    try stream.nextSlice("kept\x1b[2;9H\x1b#6\x1b[3g\x1b[?1;6;25;1000;1004;1006;2004h");
+    try stream.nextSlice("kept\x1b[2;9H\x1b[3g\x1b[?1;6;25;1000;1004;1006;2004h\x1b#6");
     try stream.nextSlice("\x1b[4;20h\x1b(B\x1b)0\x1b G");
     const row_before = vt.screen_state.activeConst().cursor.row;
     const col_before = vt.screen_state.activeConst().cursor.col;

@@ -84,6 +84,16 @@ fn makeEscFinal(final: u8) Event {
     } };
 }
 
+fn expectDecModes(event: Event, enabled: bool, expected: []const u16) !void {
+    const semantic = process(event) orelse return error.NoEvent;
+    const modes = switch (semantic) {
+        .dec_mode_set => |modes| if (enabled) modes else return error.UnexpectedEvent,
+        .dec_mode_reset => |modes| if (!enabled) modes else return error.UnexpectedEvent,
+        else => return error.UnexpectedEvent,
+    };
+    try std.testing.expectEqualSlices(u16, expected, modes.params[0..modes.param_count]);
+}
+
 test "actions: text event maps to write_text" {
     const sem = process(Event{ .text = "hello" }) orelse return error.NoEvent;
     try std.testing.expectEqualSlices(u8, "hello", sem.write_text);
@@ -107,7 +117,7 @@ test "actions: DEC private application cursor enable maps true" {
         .intermediates = empty_intermediates[0..],
         .intermediates_len = 0,
     } };
-    try std.testing.expect(process(ev).?.application_cursor_keys);
+    try expectDecModes(ev, true, &.{1});
 }
 
 test "actions: DEC private focus reporting enable maps true" {
@@ -123,7 +133,7 @@ test "actions: DEC private focus reporting enable maps true" {
         .intermediates = empty_intermediates[0..],
         .intermediates_len = 0,
     } };
-    try std.testing.expect(process(ev).?.focus_reporting);
+    try expectDecModes(ev, true, &.{1004});
 }
 
 test "actions: DEC private bracketed paste disable maps false" {
@@ -139,12 +149,12 @@ test "actions: DEC private bracketed paste disable maps false" {
         .intermediates = empty_intermediates[0..],
         .intermediates_len = 0,
     } };
-    try std.testing.expect(!process(ev).?.bracketed_paste);
+    try expectDecModes(ev, false, &.{2004});
 }
 
 test "actions: DEC private synchronized output maps enable disable" {
-    try std.testing.expect(process(makePrivateStyleChange('h', &.{2026})).?.synchronized_output);
-    try std.testing.expect(!process(makePrivateStyleChange('l', &.{2026})).?.synchronized_output);
+    try expectDecModes(makePrivateStyleChange('h', &.{2026}), true, &.{2026});
+    try expectDecModes(makePrivateStyleChange('l', &.{2026}), false, &.{2026});
 }
 
 test "actions: DEC private mouse tracking mode mappings" {
@@ -160,25 +170,25 @@ test "actions: DEC private mouse tracking mode mappings" {
         .intermediates = empty_intermediates[0..],
         .intermediates_len = 0,
     } };
-    try std.testing.expect(process(ev).? == .mouse_tracking_x10);
+    try expectDecModes(ev, true, &.{9});
     params[0] = 1000;
     ev.style_change.params = params[0..];
-    try std.testing.expect(process(ev).? == .mouse_tracking_normal);
+    try expectDecModes(ev, true, &.{1000});
     params[0] = 1002;
     ev.style_change.params = params[0..];
-    try std.testing.expect(process(ev).? == .mouse_tracking_button_event);
+    try expectDecModes(ev, true, &.{1002});
     params[0] = 1003;
     ev.style_change.params = params[0..];
-    try std.testing.expect(process(ev).? == .mouse_tracking_any_event);
+    try expectDecModes(ev, true, &.{1003});
     params[0] = 1006;
     ev.style_change.params = params[0..];
-    try std.testing.expect(process(ev).?.mouse_protocol_sgr);
+    try expectDecModes(ev, true, &.{1006});
     params[0] = 1005;
     ev.style_change.params = params[0..];
-    try std.testing.expect(process(ev).?.mouse_protocol_utf8);
+    try expectDecModes(ev, true, &.{1005});
     params[0] = 1015;
     ev.style_change.params = params[0..];
-    try std.testing.expect(process(ev).?.mouse_protocol_urxvt);
+    try expectDecModes(ev, true, &.{1015});
 }
 
 test "actions: low priority DEC private modes and media copy map" {
@@ -196,11 +206,11 @@ test "actions: low priority DEC private modes and media copy map" {
 
     params[0] = 45;
     ev.style_change.params = params[0..];
-    try std.testing.expect(process(ev).?.reverse_wraparound_mode);
+    try expectDecModes(ev, true, &.{45});
 
     params[0] = 1045;
     ev.style_change.params = params[0..];
-    try std.testing.expect(process(ev).?.extended_reverse_wraparound_mode);
+    try expectDecModes(ev, true, &.{1045});
 
     params[0] = 5;
     ev.style_change.final = 'i';
@@ -227,7 +237,7 @@ test "actions: application keypad and modifyOtherKeys mappings" {
         .intermediates = empty_intermediates[0..],
         .intermediates_len = 0,
     } };
-    try std.testing.expect(process(ev).?.application_keypad);
+    try expectDecModes(ev, true, &.{66});
 
     params[0] = 4;
     params[1] = 2;

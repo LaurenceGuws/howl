@@ -109,7 +109,7 @@ categories:
       Active partial howl-vt obligations fell from 125 to 112; no input-classified active gap remains.
 
   - id: mode_dispatch_lifecycle
-    status: queued
+    status: accepted
     owner: howl-vt
     records: 29
     mechanism: ANSI and DEC mode dispatch, mirrored or bank-local state, query/save/reset, reply framing, and resize
@@ -123,6 +123,15 @@ categories:
     why_next: >-
       This is the largest residual group and settles shared lifecycle vocabulary used by later cursor, geometry, and
       compatibility decisions.
+    result: >-
+      Existing dense mode proofs cover exact repeated assignment, pending-wrap cancellation, mirrored and bank-local
+      state, parameterized and all-mode save/restore, RIS, DECSTR, alternate-screen and resize lifetime, DECRQM,
+      S7C1T/S8C1T reply framing, synchronized-update control, and transactional resize reports. Two resize-notification
+      records are now full because howl-window supplies admitted cell pixels through howl-control; two cursor-blink
+      presentation obligations delegate to howl-window; 25 conflicting breadth, default, dirty, C1, column, and
+      timeout policies are explicit exclusions. Active partial howl-vt obligations fell from 112 to 83, with no
+      category member remaining active. Private DEC set/reset now applies every parser-bounded parameter through the
+      existing Terminal.setDecMode owner; its prior first-parameter decoder chain was deleted.
 
   - id: charset_line_geometry
     status: queued

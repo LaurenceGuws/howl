@@ -637,6 +637,14 @@ test "individual DEC mode saves retain every implemented mode without saturation
     clearPendingOutput(&terminal);
     try std.testing.expect((try terminal.feed("\x1b[?5522$p")).state_changed);
     try std.testing.expectEqualStrings("\x1b[?5522;2$y", pendingOutput(&terminal));
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?1;7;25h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1;7;25h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1;7;25l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1;7;25l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1$p\x1b[?7$p\x1b[?25$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?1;2$y\x1b[?7;2$y\x1b[?25;2$y", pendingOutput(&terminal));
 }
 
 test "Kitty key fields preserve empty alternates locks and committed text" {

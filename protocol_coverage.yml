@@ -43,6 +43,28 @@ classifications:
     Howl encodes typed terminal input through one bounded mode-aware owner; reference-specific host admission, raw
     keyboard delivery, stack depth, permissive flags, logging, and conflicting no-op behavior are outside the
     complete Howl family.
+  mode_policy_difference: &howl_mode_policy_difference >-
+    Howl keeps one exact bounded ANSI/DEC mode set with explicit bank/global lifetime and transition-only mutation;
+    reference-specific emulation gates, duplicate dirty callbacks, defaults, timeout policy, and conflicting mode
+    breadth are outside the complete Howl family.
+  ansi_first_parameter_excluded: &howl_ansi_first_parameter_excluded {support: partial, disposition: excluded,
+    rationale: *howl_mode_policy_difference,
+    residual: The pinned reference applies only the first parameter while Howl applies every supported ANSI mode.,
+    source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}
+  ansi_mode_breadth_excluded: &howl_ansi_mode_breadth_excluded {support: partial, disposition: excluded,
+    rationale: *howl_mode_policy_difference,
+    residual: Howl implements its curated ANSI mode set rather than every mode recognized by the pinned reference.,
+    source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
+      path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+      symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}
+  dec_mode_dispatch_excluded: &howl_dec_mode_dispatch_excluded {support: partial, disposition: excluded,
+    rationale: *howl_mode_policy_difference,
+    residual: Howl implements its reviewed bounded DEC mode set rather than every mode recognized by the reference.,
+    source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+      path: howl-vt/test/unit/terminal_modes_test.zig,
+      symbol: "individual DEC mode saves retain every implemented mode without saturation"}}
   ignored_color_policy: &howl_ignored_color_policy {support: partial, disposition: excluded,
     rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
       path: howl-vt/test/unit/terminal_osc_test.zig,
@@ -157,7 +179,8 @@ references:
             effect: select 7-bit C1 transmission
             conditions: Howl keeps typed key mouse focus and paste encoding in their independently selected protocols
             relevance: compatibility
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "S7C1T and S8C1T serialize mixed replies through one bounded owner"}}
           - id: libvterm.esc.s8c1t
@@ -165,7 +188,8 @@ references:
             effect: select 8-bit C1 transmission
             conditions: Howl keeps typed key mouse focus and paste encoding in their independently selected protocols
             relevance: compatibility
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "S7C1T and S8C1T serialize mixed replies through one bounded owner"}}
           - id: libvterm.esc.decdhl_top
@@ -449,11 +473,9 @@ references:
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: libvterm.csi.sm, raw: "CSI Pm h", effect: set ANSI modes,
             conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
-          - {id: libvterm.csi.decset, raw: "CSI ? Pm h", effect: set DEC private modes, howl: {support: partial, residual: Howl implements only the individually indexed DEC modes.,
-            source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
+            howl: *howl_ansi_first_parameter_excluded}
+          - {id: libvterm.csi.decset, raw: "CSI ? Pm h", effect: set DEC private modes,
+            conditions: Howl implements only the individually indexed DEC modes., howl: *howl_dec_mode_dispatch_excluded}
           - {id: libvterm.csi.hpb, raw: "CSI [Ps=1] j", effect: cursor backward, relevance: compatibility,
             conditions: libvterm honors the left margin only under DECOM while Howl uses its directional margin policy,
             howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
@@ -466,11 +488,9 @@ references:
               symbol: "terminal: HPB and VPB retain bounded cursor movement and exact mutation"}}}
           - {id: libvterm.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes,
             conditions: libvterm applies only the first parameter while Howl applies every supported parameter,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setAnsiModes, proof: {
-              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-              symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
-          - {id: libvterm.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC private modes, howl: {support: partial, residual: Howl implements only the individually indexed DEC modes.,
-            source: howl-vt/src/terminal.zig, symbol: decodePrivateCsi}}
+            howl: *howl_ansi_first_parameter_excluded}
+          - {id: libvterm.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC private modes,
+            conditions: Howl implements only the individually indexed DEC modes., howl: *howl_dec_mode_dispatch_excluded}
           - {id: libvterm.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, bounds: indexed and RGB forms,
             howl: {support: partial, disposition: excluded, rationale: *howl_rendition_policy_difference,
               residual: Howl implements the indexed bounded rendition subset proved below.,
@@ -581,7 +601,9 @@ references:
                 symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: libvterm.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Howl retains blink with each screen cursor while libvterm owns one terminal mode across banks,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window,
+              residual: The Wayland renderer does not yet schedule cursor blink presentation.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: libvterm.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
@@ -1133,14 +1155,14 @@ references:
               source: howl-vt/src/terminal.zig, symbol: Screen.moveCursor, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
-          - {id: iterm2.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
+          - {id: iterm2.csi.rm, raw: "CSI Pm l", effect: reset ANSI modes, howl: *howl_ansi_mode_breadth_excluded}
           - {id: iterm2.csi.sgr, raw: "CSI Pm m", effect: select graphic rendition, howl: {support: partial,
             disposition: excluded, rationale: *howl_rendition_policy_difference,
             residual: Howl implements the indexed bounded rendition subset proved below.,
             source: howl-vt/src/terminal.zig, symbol: Screen.applySgr, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
-          - {id: iterm2.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
+          - {id: iterm2.csi.sm, raw: "CSI Pm h", effect: set ANSI modes, howl: *howl_ansi_mode_breadth_excluded}
           - {id: iterm2.csi.tbc, raw: "CSI [Ps=0] g", effect: clear tab stops, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1257,8 +1279,8 @@ references:
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: restoreCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
-          - {id: iterm2.csi.decset, raw: "CSI ? Pm h", effect: set DEC modes, howl: {support: partial, residual: Howl implements only the individually indexed DEC modes.}}
-          - {id: iterm2.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC modes, howl: {support: partial, residual: Howl implements only the individually indexed DEC modes.}}
+          - {id: iterm2.csi.decset, raw: "CSI ? Pm h", effect: set DEC modes, howl: *howl_dec_mode_dispatch_excluded}
+          - {id: iterm2.csi.decrst, raw: "CSI ? Pm l", effect: reset DEC modes, howl: *howl_dec_mode_dispatch_excluded}
           - {id: iterm2.csi.decdsr, raw: "CSI ? Ps n", effect: DEC status report,
             conditions: iTerm2 gates a wider status set by emulation level, howl: {support: partial,
               disposition: excluded, rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig,
@@ -1948,7 +1970,8 @@ references:
               Howl matches iTerm2's permission gate, transition-only erase/home, preserve-screen mode, queries, and
               parameterized save/restore; Howl defaults permission on, preserves existing margins, and leaves physical
               geometry to the embedder while iTerm2 defaults permission off and asynchronously resizes its grid
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
           - {id: iterm2.mode.decsclm, raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
@@ -1957,6 +1980,7 @@ references:
                 symbol: "ignored and unknown DEC modes preserve pending wrap and grid state"}}}
           - {id: iterm2.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse video,
             conditions: Howl additionally cancels pending wrap at the CSI boundary, howl: {support: partial,
+              disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
@@ -1966,6 +1990,7 @@ references:
               symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: iterm2.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap,
             conditions: Howl additionally cancels pending wrap at the CSI boundary, howl: {support: partial,
+              disposition: excluded, rationale: *howl_mode_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
@@ -2007,7 +2032,8 @@ references:
               Set reset query and parameterized save or restore match; Howl defaults permission on across RIS while
               iTerm2 defaults it off.
             relevance: policy
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
           - id: iterm2.mode.more_fix
@@ -2017,7 +2043,8 @@ references:
               Howl matches pending-wrap HT movement, query, parameterized save/restore, DECSTR, RIS, and
               alternate-screen lifetime; iTerm2 also dirties its delegate on byte-identical mode assignment.
             relevance: compatibility
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC more-fix owns pending-wrap tab query save and reset lifetime"}}
           - {id: iterm2.mode.reverse_wrap, raw: "CSI ? 45 h|l", effect: toggle reverse wraparound,
@@ -2047,7 +2074,8 @@ references:
             conditions: >-
               Howl applies the mode without iTerm2's VT-level-500 gate and preserves its fixed grid rather than an
               asynchronous physical resize; set reset query save restore DECSTR and RIS lifetime otherwise match.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
           - {id: iterm2.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
@@ -2141,7 +2169,7 @@ references:
                 symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}}
           - {id: iterm2.mode.resize_notifications, raw: "CSI ? 2048 h|l", effect: toggle resize notifications,
             conditions: resize reports require host-provided cell pixel facts, relevance: extension,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
+            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
       - source: VT100Terminal.m
@@ -2402,7 +2430,8 @@ references:
             effect: select 7-bit C1 transmission
             conditions: >-
               Kitty ignores this control while Howl selects terminal reply framing; Kitty extension replies stay fixed
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "S7C1T and S8C1T serialize mixed replies through one bounded owner"}}
           - id: kitty.esc.s8c1t
@@ -2410,7 +2439,8 @@ references:
             effect: select 8-bit C1 transmission
             conditions: >-
               Kitty ignores this control while Howl selects terminal reply framing; Kitty extension replies stay fixed
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: appendReplyControl, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "S7C1T and S8C1T serialize mixed replies through one bounded owner"}}
       - source: screen.c
@@ -2433,7 +2463,8 @@ references:
               symbol: "terminal: ANSI insert and newline modes retain exact global lifetime"}}}
           - {id: kitty.mode.decscnm, raw: "CSI ? 5 h|l", effect: toggle reverse screen,
             conditions: Kitty retains its beyond-edge cursor while Howl cancels pending wrap at the CSI boundary,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: kitty.mode.decom, raw: "CSI ? 6 h|l", effect: toggle origin mode and home the cursor,
@@ -2442,12 +2473,15 @@ references:
               symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: kitty.mode.decawm, raw: "CSI ? 7 h|l", effect: toggle autowrap,
             conditions: Kitty retains its beyond-edge cursor while Howl cancels pending wrap at the CSI boundary,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: kitty.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Kitty resets its shared cursor on alternate entry while Howl retains per-screen cursor style,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window,
+              residual: The Wayland renderer does not yet schedule cursor blink presentation.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: kitty.mode.dectcem, raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
@@ -2460,7 +2494,8 @@ references:
             conditions: >-
               Howl's default permission accepts the first set, but Howl erases and homes only changed set or reset
               transitions when DECNCSM is clear; Kitty erases and homes every set and leaves reset content intact.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
           - {id: kitty.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat,
@@ -2541,7 +2576,11 @@ references:
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: terminal paste encoding is gated by DECSET 2004}}}
           - {id: kitty.mode.synchronized_output, raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
-            howl: {support: partial, residual: Howl retains synchronized-update state without Kitty timeout policy.}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              residual: Howl retains synchronized-update state without Kitty timeout policy.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+                path: howl-vt/test/unit/terminal_test.zig,
+                symbol: "synchronized update DCS shares exact bounded mode state"}}}
           - id: kitty.mode.color_preference
             raw: "CSI ? 2031 h|l"
             effect: toggle color-preference notifications
@@ -2559,7 +2598,7 @@ references:
                 symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
           - {id: kitty.mode.inband_resize, raw: "CSI ? 2048 h|l", effect: toggle in-band resize notifications,
             conditions: resize reports require host-provided cell pixel facts, relevance: extension,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
+            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
           - id: kitty.mode.paste_events
@@ -2789,8 +2828,8 @@ references:
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
-          - {id: kitty.csi.sm, raw: "CSI Pm h", effect: set modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
-          - {id: kitty.csi.rm, raw: "CSI Pm l", effect: reset modes, howl: {support: partial, residual: Howl implements only the individually indexed ANSI modes.}}
+          - {id: kitty.csi.sm, raw: "CSI Pm h", effect: set modes, howl: *howl_ansi_mode_breadth_excluded}
+          - {id: kitty.csi.rm, raw: "CSI Pm l", effect: reset modes, howl: *howl_ansi_mode_breadth_excluded}
           - {id: kitty.csi.dsr, raw: "CSI [Ps=0] n", effect: report device status,
             conditions: under DECOM Kitty makes only the row origin-relative while Howl also applies the left margin,
             howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
@@ -3262,7 +3301,8 @@ references:
             raw: "DCS = Ps s Pt ST"
             effect: synchronized update control
             conditions: Ps 1 starts and Ps 2 stops; Kitty also expires or stops pending mode on timeout and resize
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
               path: howl-vt/test/unit/terminal_test.zig,
               test: synchronized update DCS shares exact bounded mode state}}
       - source: vt-parser.c

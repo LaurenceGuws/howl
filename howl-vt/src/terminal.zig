@@ -8030,8 +8030,7 @@ fn pointerMode(params: []const i32) SemanticEvent {
     return SemanticEvent{ .pointer_mode = @intCast(@min(value, 3)) };
 }
 
-// Tracks colon separators across the parser-bounded CSI parameter array.
-// Stores at most the parser CSI parameter bound as clamped u16 mode values.
+// Stores one parser-bounded parameter list as clamped u16 values.
 const ModeParams = struct {
     params: [parser_mod.max_params]u16,
     param_count: u8,
@@ -8383,7 +8382,9 @@ fn decodePrivateCsi(final: u8, params: []const i32, leader: u8, intermediates: [
     if (modeReport(final, params, intermediates)) |event| return event;
     if (report(final, params, intermediates)) |event| return event;
     if (intermediates.len != 0) return null;
-    return modeToggle(final, params[0]);
+    if (final == 'h') return SemanticEvent{ .dec_mode_set = collectParams(params) };
+    if (final == 'l') return SemanticEvent{ .dec_mode_reset = collectParams(params) };
+    return null;
 }
 
 fn directQuery(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEvent {
@@ -8455,103 +8456,6 @@ fn queryParam(params: []const i32) ?u16 {
 
 fn zeroQuery(params: []const i32) bool {
     return (queryParam(params) orelse return false) == 0;
-}
-
-fn modeToggle(final: u8, mode: i32) ?SemanticEvent {
-    if (basicModeToggle(final, mode)) |event| return event;
-    if (mouseModeToggle(final, mode)) |event| return event;
-    return altScreenToggle(final, mode);
-}
-
-fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
-    return switch (mode) {
-        5 => boolEvent(final, .{ .reverse_screen_mode = true }, .{ .reverse_screen_mode = false }),
-        12 => boolEvent(final, .{ .cursor_blink = true }, .{ .cursor_blink = false }),
-        25 => boolEvent(final, .{ .cursor_visible = true }, .{ .cursor_visible = false }),
-        7 => boolEvent(final, .{ .auto_wrap = true }, .{ .auto_wrap = false }),
-        8 => boolEvent(final, .{ .auto_repeat = true }, .{ .auto_repeat = false }),
-        6 => boolEvent(final, .{ .origin_mode = true }, .{ .origin_mode = false }),
-        1 => boolEvent(final, .{ .application_cursor_keys = true }, .{ .application_cursor_keys = false }),
-        3 => boolEvent(final, .{ .column_mode_132 = true }, .{ .column_mode_132 = false }),
-        40 => boolEvent(final, .{ .allow_column_mode = true }, .{ .allow_column_mode = false }),
-        41 => boolEvent(final, .{ .more_fix = true }, .{ .more_fix = false }),
-        95 => boolEvent(
-            final,
-            .{ .preserve_screen_on_column_mode = true },
-            .{ .preserve_screen_on_column_mode = false },
-        ),
-        66 => boolEvent(final, .{ .application_keypad = true }, .{ .application_keypad = false }),
-        69 => boolEvent(final, .{ .left_right_margin_mode = true }, .{ .left_right_margin_mode = false }),
-        45 => boolEvent(final, .{ .reverse_wraparound_mode = true }, .{ .reverse_wraparound_mode = false }),
-        1004 => boolEvent(final, .{ .focus_reporting = true }, .{ .focus_reporting = false }),
-        1007 => boolEvent(final, .{ .alternate_scroll = true }, .{ .alternate_scroll = false }),
-        1036 => boolEvent(final, .{ .meta_sends_escape = true }, .{ .meta_sends_escape = false }),
-        1337 => boolEvent(final, .{ .report_key_up = true }, .{ .report_key_up = false }),
-        2004 => boolEvent(final, .{ .bracketed_paste = true }, .{ .bracketed_paste = false }),
-        2026 => boolEvent(final, .{ .synchronized_output = true }, .{ .synchronized_output = false }),
-        2048 => boolEvent(
-            final,
-            .{ .inband_resize_notifications = true },
-            .{ .inband_resize_notifications = false },
-        ),
-        2031 => boolEvent(
-            final,
-            .{ .color_preference_notifications = true },
-            .{ .color_preference_notifications = false },
-        ),
-        5522 => boolEvent(final, .{ .paste_events = true }, .{ .paste_events = false }),
-        19997 => boolEvent(final, .{ .termios_signals = true }, .{ .termios_signals = false }),
-        1045 => boolEvent(
-            final,
-            .{ .extended_reverse_wraparound_mode = true },
-            .{ .extended_reverse_wraparound_mode = false },
-        ),
-        else => null,
-    };
-}
-
-fn mouseModeToggle(final: u8, mode: i32) ?SemanticEvent {
-    return switch (mode) {
-        9 => boolEvent(final, SemanticEvent.mouse_tracking_x10, SemanticEvent.mouse_tracking_off),
-        1000 => boolEvent(final, SemanticEvent.mouse_tracking_normal, SemanticEvent.mouse_tracking_off),
-        1002 => boolEvent(final, SemanticEvent.mouse_tracking_button_event, SemanticEvent.mouse_tracking_off),
-        1003 => boolEvent(final, SemanticEvent.mouse_tracking_any_event, SemanticEvent.mouse_tracking_off),
-        1005 => boolEvent(final, .{ .mouse_protocol_utf8 = true }, .{ .mouse_protocol_utf8 = false }),
-        1006 => boolEvent(final, .{ .mouse_protocol_sgr = true }, .{ .mouse_protocol_sgr = false }),
-        1015 => boolEvent(final, .{ .mouse_protocol_urxvt = true }, .{ .mouse_protocol_urxvt = false }),
-        1016 => boolEvent(final, .{ .mouse_protocol_sgr_pixel = true }, .{ .mouse_protocol_sgr_pixel = false }),
-        else => null,
-    };
-}
-
-fn altScreenToggle(final: u8, mode: i32) ?SemanticEvent {
-    return switch (mode) {
-        47 => boolEvent(
-            final,
-            .{ .enter_alt_screen = .{ .clear = false, .save_cursor = false } },
-            .{ .exit_alt_screen = .{ .restore_cursor = false } },
-        ),
-        1047 => boolEvent(
-            final,
-            .{ .enter_alt_screen = .{ .clear = false, .save_cursor = false } },
-            .{ .exit_alt_screen = .{ .restore_cursor = false } },
-        ),
-        1048 => boolEvent(final, SemanticEvent.save_cursor, SemanticEvent.restore_cursor),
-        1049 => boolEvent(
-            final,
-            .{ .enter_alt_screen = .{ .clear = true, .save_cursor = true } },
-            .{ .exit_alt_screen = .{ .restore_cursor = true } },
-        ),
-        else => null,
-    };
-}
-
-fn boolEvent(final: u8, on: SemanticEvent, off: SemanticEvent) ?SemanticEvent {
-    return switch (final) {
-        'h' => on,
-        'l' => off,
-        else => null,
-    };
 }
 
 fn requestStatusPayload(data: []const u8) ?[]const u8 {
@@ -9259,6 +9163,8 @@ pub const SemanticEvent = union(enum) {
     kitty_clipboard_packet: []const u8,
     file_transfer_packet: struct { protocol: FileTransferProtocol, payload: []const u8 },
     dec_mode_query: u16,
+    dec_mode_set: ModeParams,
+    dec_mode_reset: ModeParams,
     dec_mode_save: ModeParams,
     dec_mode_restore: ModeParams,
     dcs_request_status: []const u8,
@@ -11745,6 +11651,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .color_preference_notifications,
         .paste_events,
         .termios_signals,
+        .dec_mode_set,
+        .dec_mode_reset,
         .dec_mode_save,
         .dec_mode_restore,
         => return vt.applyModeEvent(event),
@@ -13373,6 +13281,8 @@ pub const Terminal = struct {
             .color_preference_notifications => |enabled| return self.setDecMode(2031, enabled),
             .paste_events => |enabled| return self.setDecMode(5522, enabled),
             .termios_signals => |enabled| return self.setDecMode(19997, enabled),
+            .dec_mode_set => |modes| return self.setDecModes(modes.params[0..modes.param_count], true),
+            .dec_mode_reset => |modes| return self.setDecModes(modes.params[0..modes.param_count], false),
             .dec_mode_save => |modes| return self.saveDecModes(modes.params[0..modes.param_count]),
             .dec_mode_restore => |modes| return self.restoreDecModes(modes.params[0..modes.param_count]),
             else => unreachable,
@@ -13410,6 +13320,12 @@ pub const Terminal = struct {
             .reverse_wraparound = self.modes.reverse_wraparound_mode,
             .extended_reverse_wraparound = self.modes.extended_reverse_wraparound_mode,
         }, mode_number);
+    }
+
+    fn setDecModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) bool {
+        var changed = false;
+        for (mode_numbers) |mode_number| changed = self.setDecMode(mode_number, enabled) or changed;
+        return changed;
     }
 
     fn saveDecModes(self: *Terminal, mode_numbers: []const u16) bool {
@@ -13541,7 +13457,8 @@ pub const Terminal = struct {
             45 => replaceBool(&self.modes.reverse_wraparound_mode, enabled),
             66 => replaceBool(&self.modes.application_keypad, enabled),
             47 => self.switchScreenMode(enabled, false, false),
-            1047 => self.switchScreenMode(enabled, true, false),
+            1047 => self.switchScreenMode(enabled, false, false),
+            1048 => if (enabled) self.saveCursor() else self.restoreCursor(),
             1049 => self.switchScreenMode(enabled, true, true),
             1045 => replaceBool(&self.modes.extended_reverse_wraparound_mode, enabled),
             9 => self.setMouseTracking(if (enabled) .x10 else .off),
