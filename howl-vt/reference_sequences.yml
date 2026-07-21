@@ -1155,7 +1155,10 @@ references:
           - {id: iterm2.osc.highlight_fg, raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
             howl: {status: partial}}
           - {id: iterm2.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
-            relevance: host consequence, howl: {status: partial}}
+            conditions: Howl retains each raw bounded request but delegates validation and presentation,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.retainPointerShape, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 22 retains exact host-neutral pointer requests across terminal lifetime"}}}
           - {id: iterm2.osc.kvp_50, raw: "OSC 50 ; key=value (BEL|ST)", effect: legacy iTerm key-value command,
             howl: {status: partial}}
           - {id: iterm2.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard or base64 paste,
@@ -2249,7 +2252,10 @@ references:
           - {id: kitty.osc.highlight_fg, raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
             howl: {status: partial}}
           - {id: kitty.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
-            relevance: host consequence, howl: {status: partial}}
+            conditions: Howl retains stack and query syntax but delegates validation presentation and replies,
+            relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.retainPointerShape, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 22 retains exact host-neutral pointer requests across terminal lifetime"}}}
           - id: kitty.osc.reset_fg
             raw: "OSC 110 (BEL|ST)"
             effect: reset foreground

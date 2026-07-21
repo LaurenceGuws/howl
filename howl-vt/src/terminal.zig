@@ -5748,29 +5748,22 @@ const ShellMark = struct {
     metadata: []u8 = &[_]u8{},
 };
 
-// Owns the latest bounded notification bytes and a monotonic occurrence identity.
-const NotificationState = struct {
+// Owns one latest bounded host payload and its monotonic occurrence identity.
+const HostPayload = struct {
     generation: u64 = 0,
-    command: u16 = 0,
     payload_len: u16 = 0,
     payload: [max_metadata_bytes]u8 = undefined,
 
-    fn retain(self: *NotificationState, command: u16, payload: []const u8) ApplyError!void {
+    fn retain(self: *HostPayload, payload: []const u8) ApplyError!void {
         try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
         if (self.generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
         @memcpy(self.payload[0..payload.len], payload);
-        self.command = command;
         self.payload_len = @intCast(payload.len);
         self.generation += 1;
     }
 
-    fn view(self: *const NotificationState) ?Notification {
-        if (self.generation == 0) return null;
-        return .{
-            .generation = self.generation,
-            .command = self.command,
-            .payload = self.payload[0..self.payload_len],
-        };
+    fn bytes(self: *const HostPayload) []const u8 {
+        return self.payload[0..self.payload_len];
     }
 };
 
@@ -5781,6 +5774,14 @@ pub const Notification = struct {
     /// Original OSC command identifying the notification protocol family.
     command: u16,
     /// Raw bounded protocol payload; interpretation and presentation belong to the host.
+    payload: []const u8,
+};
+
+/// Borrows one raw OSC 22 pointer-shape request until terminal mutation.
+pub const PointerShapeRequest = struct {
+    /// Monotonic identity advancing for every accepted request, including repeated bytes.
+    generation: u64,
+    /// Raw bounded shape, stack operation, or query; interpretation and replies belong to the host.
     payload: []const u8,
 };
 
@@ -5872,7 +5873,9 @@ pub const HostState = struct {
     title_stack_len: u8 = 0,
     shell_integration: ?ShellIntegration = null,
     shell_mark: ShellMark = .{},
-    notification: NotificationState = .{},
+    notification: HostPayload = .{},
+    notification_command: u16 = 0,
+    pointer_shape: HostPayload = .{},
     bell_generation: u64 = 0,
     locator: Locator = .{},
     media_copy_request: ?u16 = null,
@@ -6012,7 +6015,27 @@ pub const HostState = struct {
 
     /// Retain one notification occurrence without choosing host presentation policy.
     pub fn retainNotification(self: *HostState, command: u16, payload: []const u8) ApplyError!void {
-        try self.notification.retain(command, payload);
+        try self.notification.retain(payload);
+        self.notification_command = command;
+    }
+
+    /// Retain one OSC 22 request without selecting a host pointer or answering queries.
+    pub fn retainPointerShape(self: *HostState, payload: []const u8) ApplyError!void {
+        try self.pointer_shape.retain(payload);
+    }
+
+    fn notificationView(self: *const HostState) ?Notification {
+        if (self.notification.generation == 0) return null;
+        return .{
+            .generation = self.notification.generation,
+            .command = self.notification_command,
+            .payload = self.notification.bytes(),
+        };
+    }
+
+    fn pointerShapeView(self: *const HostState) ?PointerShapeRequest {
+        if (self.pointer_shape.generation == 0) return null;
+        return .{ .generation = self.pointer_shape.generation, .payload = self.pointer_shape.bytes() };
     }
 
     /// Replace title and icon together transactionally and report any changed bytes.
@@ -8059,6 +8082,7 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
         .shell_mark => |v| if (parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
         .notification => |v| SemanticEvent{ .notification = .{ .command = v.command, .payload = v.payload } },
+        .pointer_shape => |v| SemanticEvent{ .pointer_shape = v.payload },
         .rxvt_extension => |v| SemanticEvent{ .notification = .{ .command = 777, .payload = v.payload } },
         .iterm2 => |v| if (parse(v.command, v.payload)) |command| switch (command) {
             .cursor_shape => |shape| SemanticEvent{ .cursor_shape = shape },
@@ -8278,10 +8302,11 @@ test "OSC Kitty host-policy payloads expose only retained terminal facts" {
     } }).?;
     try std.testing.expectEqual(@as(u16, 99), notification.notification.command);
     try std.testing.expectEqualStrings("i=1:p=body;Hello", notification.notification.payload);
-    try std.testing.expect(oscProcess(.{ .pointer_shape = .{
+    const pointer = oscProcess(.{ .pointer_shape = .{
         .payload = ">wait,pointer",
         .term = .st,
-    } }) == null);
+    } }).?;
+    try std.testing.expectEqualStrings(">wait,pointer", pointer.pointer_shape);
     const push = oscProcess(.{ .kitty_color_stack_push = .st }).?;
     const pop = oscProcess(.{ .kitty_color_stack_pop = .st }).?;
     try std.testing.expectEqual(@as(u16, 0), push.kitty_color_stack.push);
@@ -8372,6 +8397,7 @@ pub const SemanticEvent = union(enum) {
     kitty_keyboard_pop: u16,
     shell_mark: ItermShellMark,
     notification: struct { command: u16, payload: []const u8 },
+    pointer_shape: []const u8,
     kitty_color_stack: KittyColorCommand,
     sgr_stack_push: ModeParams,
     sgr_stack_pop,
@@ -9041,6 +9067,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .working_directory_report => |directory| return vt.host.replaceWorkingDirectoryReport(directory),
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
         .notification => |notification| try vt.host.retainNotification(notification.command, notification.payload),
+        .pointer_shape => |payload| try vt.host.retainPointerShape(payload),
         .color_control => |cmd| {
             const before = vt.host.colors;
             const output_before = byteCount(vt.host.pending_output.bytes.items);
@@ -10879,6 +10906,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .working_directory_report,
         .shell_mark,
         .notification,
+        .pointer_shape,
         .hyperlink_set,
         .hyperlink_clear,
         .clipboard_set,
@@ -11624,6 +11652,8 @@ pub const Terminal = struct {
     pub const shell_mark_metadata_max_bytes = max_metadata_bytes;
     /// Bounds raw bytes retained for one host-neutral notification occurrence.
     pub const notification_max_bytes = max_metadata_bytes;
+    /// Bounds raw bytes retained for one OSC 22 pointer-shape request.
+    pub const pointer_shape_max_bytes = max_metadata_bytes;
     /// Exposes the typed host-input vocabulary accepted by encodeInput.
     pub const InputEvent = Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
@@ -12437,7 +12467,8 @@ pub const Terminal = struct {
                 .shell = integration.shell,
             } else null,
             .shell_mark = self.host.shell_mark,
-            .notification = self.host.notification.view(),
+            .notification = self.host.notificationView(),
+            .pointer_shape = self.host.pointerShapeView(),
             .bell_generation = self.host.bell_generation,
             .history_loss_generation = self.screen_state.primary.history_loss_generation,
             .is_alternate_screen = snapshot.view.is_alternate_screen,
@@ -12795,6 +12826,8 @@ pub const Terminal = struct {
         shell_mark: ShellMark,
         /// Borrows the latest host-neutral notification occurrence until terminal mutation.
         notification: ?Notification,
+        /// Borrows the latest OSC 22 request until terminal mutation.
+        pointer_shape: ?PointerShapeRequest,
         /// Monotonic count of accepted BEL controls; presentation belongs to the embedder.
         bell_generation: u64,
         /// Monotonic count of history rows dropped after bounded allocation failure.

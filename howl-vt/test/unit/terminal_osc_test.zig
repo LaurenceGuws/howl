@@ -451,6 +451,61 @@ test "OSC notification overflow preserves the last complete occurrence" {
     try std.testing.expectEqualStrings("after", terminal.surfaceSnapshot().notification.?.payload);
 }
 
+test "OSC 22 retains exact host-neutral pointer requests across terminal lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]22;>wait,")).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().pointer_shape == null);
+    try std.testing.expect((try terminal.feed("pointer\x1b\\")).state_changed);
+    var request = terminal.surfaceSnapshot().pointer_shape.?;
+    try std.testing.expectEqual(@as(u64, 1), request.generation);
+    try std.testing.expectEqualStrings(">wait,pointer", request.payload);
+
+    try std.testing.expect((try terminal.feed("\x9d22;?default,current\x9c")).state_changed);
+    request = terminal.surfaceSnapshot().pointer_shape.?;
+    try std.testing.expectEqual(@as(u64, 2), request.generation);
+    try std.testing.expectEqualStrings("?default,current", request.payload);
+    try std.testing.expect((try terminal.feed("\x9d22;?default,current\x9c")).state_changed);
+    try std.testing.expectEqual(@as(u64, 3), terminal.surfaceSnapshot().pointer_shape.?.generation);
+
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    request = terminal.surfaceSnapshot().pointer_shape.?;
+    try std.testing.expectEqual(@as(u64, 3), request.generation);
+    try std.testing.expectEqualStrings("?default,current", request.payload);
+}
+
+test "OSC 22 bound is exact and overflow preserves the prior request" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    const payload = try allocator.alloc(u8, Terminal.pointer_shape_max_bytes + 1);
+    defer allocator.free(payload);
+    @memset(payload, 'x');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+
+    try sequence.appendSlice(allocator, "\x1b]22;");
+    try sequence.appendSlice(allocator, payload[0..Terminal.pointer_shape_max_bytes]);
+    try sequence.append(allocator, 0x07);
+    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    var retained = terminal.surfaceSnapshot().pointer_shape.?;
+    try std.testing.expectEqual(@as(u64, 1), retained.generation);
+    try std.testing.expectEqual(Terminal.pointer_shape_max_bytes, retained.payload.len);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]22;");
+    try sequence.appendSlice(allocator, payload);
+    try sequence.append(allocator, 0x07);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    retained = terminal.surfaceSnapshot().pointer_shape.?;
+    try std.testing.expectEqual(@as(u64, 1), retained.generation);
+    try std.testing.expectEqual(Terminal.pointer_shape_max_bytes, retained.payload.len);
+
+    try std.testing.expect((try terminal.feed("\x1b]22;default\x07")).state_changed);
+    try std.testing.expectEqualStrings("default", terminal.surfaceSnapshot().pointer_shape.?.payload);
+}
+
 test "iTerm safe controls mutate presentation metadata and exact replies" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
