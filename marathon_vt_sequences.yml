@@ -95,10 +95,18 @@ categories:
       125.
 
   - id: input_modes
-    status: queued
+    status: accepted
     owner: howl-vt
     mechanism: typed keyboard, mouse, focus, and paste encoding plus saved mode state
     gate: exact bytes, bounds, modifier and coordinate policy, and screen/reset lifetime
+    result: >-
+      One fragmented cross-mode transcript proves application cursor and keypad bytes, focus gating, pixel mouse
+      coordinates and modifiers, NUL-preserving bracketed paste, DECARM repeat suppression, Kitty press/release
+      encoding, per-screen keyboard stacks, exact repeated-command mutation, and RIS defaults. Existing hostile proofs
+      retain modifier, text, coordinate, allocation, depth, save/restore, alternate-screen, and pending-output bounds.
+      Nine permanent host/input-policy conflicts are explicit exclusions and four completed VT handoffs delegate
+      compositor focus, iTerm key-up delivery, Kitty paste exchange, and color-scheme observation to howl-window.
+      Active partial howl-vt obligations fell from 125 to 112; no input-classified active gap remains.
 
 completion:
   - every indexed non-graphics record is full or has an explicit maintained disposition

@@ -39,6 +39,10 @@ classifications:
     Howl reports only its bounded owned terminal state and curated capability set; reference-specific host gates,
     additional state domains, mode sets, reply formatting, and permissive query grammar are outside the complete
     Howl family.
+  input_policy_difference: &howl_input_policy_difference >-
+    Howl encodes typed terminal input through one bounded mode-aware owner; reference-specific host admission, raw
+    keyboard delivery, stack depth, permissive flags, logging, and conflicting no-op behavior are outside the
+    complete Howl family.
   ignored_color_policy: &howl_ignored_color_policy {support: partial, disposition: excluded,
     rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
       path: howl-vt/test/unit/terminal_osc_test.zig,
@@ -1410,14 +1414,23 @@ references:
           - {id: iterm2.csi.kitty_set, raw: "CSI = flags ; [mode=1] u", effect: set Kitty keyboard flags,
             conditions: iTerm2 clears the active stack and retains unbounded integer flags while Howl mutates the
               active eight-slot stack entry and retains seven protocol bits,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.set}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.set, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
           - {id: iterm2.csi.kitty_push, raw: "CSI > [flags=0] u", effect: push Kitty keyboard flags,
             conditions: iTerm2 retains 1024 entries while Howl follows Kitty's eight-slot stack,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.push}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.push, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
           - {id: iterm2.csi.kitty_pop, raw: "CSI < [count=1] u", effect: pop Kitty keyboard flags,
             conditions: iTerm2's root flags remain after its dynamic stack empties while Howl pops Kitty's active
               eight-slot stack to zero,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.pop}}
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: KittyKeyStack.pop, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "kitty keyboard stack has exact flags depth mutation and replies"}}}
           - {id: iterm2.csi.kitty_query, raw: "CSI ? u", effect: report Kitty keyboard flags,
             conditions: iTerm2 gates reports through host policy while Howl always queues the bounded terminal reply,
             howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
@@ -1959,7 +1972,8 @@ references:
           - {id: iterm2.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat,
             conditions: "Howl additionally cancels pending wrap at the CSI boundary; physical repeat suppression,
               default-on lifetime, mode query, and save or restore match",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
           - id: iterm2.mode.mouse_x10
@@ -1969,7 +1983,8 @@ references:
             conditions: >-
               iTerm2 deliberately keeps this mode inert and does not report it; Howl implements bounded X10 press
               encoding plus query, save or restore, alternate-screen, resize, and reset lifetime.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "legacy X10 mouse mode owns exact input query save and reset lifetime"}}
           - {id: iterm2.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
@@ -2014,7 +2029,12 @@ references:
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig,
               symbol: Terminal.switchScreenMode, proof: {path: howl-vt/test/unit/terminal_test.zig,
                 symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
-          - {id: iterm2.mode.deckpam, raw: "CSI ? 66 h|l", effect: toggle application keypad, howl: {support: partial, residual: Howl encodes application keypad mode through its owned key model, not iTerm2 key events.}}
+          - {id: iterm2.mode.deckpam, raw: "CSI ? 66 h|l", effect: toggle application keypad,
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              residual: Howl encodes application keypad mode through its owned key model rather than iTerm2 host events.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "input mode category preserves encoding gates screen stacks and reset lifetime"}}}
           - {id: iterm2.mode.declrmm, raw: "CSI ? 69 h|l", effect: toggle horizontal margins, conditions: VT level 400+,
             howl: {support: partial, disposition: excluded, rationale: *howl_cursor_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
@@ -2043,7 +2063,11 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "mouse reporting is gated by DECSET mouse modes and SGR protocol"}}}
           - {id: iterm2.mode.focus, raw: "CSI ? 1004 h|l", effect: toggle focus reporting,
-            conditions: host policy permits, howl: {support: partial}}
+            conditions: host policy permits, howl: {support: partial, disposition: delegated, owner: howl-window,
+              residual: The Wayland host does not yet route compositor focus transitions through VT input admission.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.encodeFocusInput, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "input mode category preserves encoding gates screen stacks and reset lifetime"}}}
           - {id: iterm2.mode.mouse_utf8, raw: "CSI ? 1005 h|l", effect: toggle UTF-8 mouse encoding,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -2092,7 +2116,9 @@ references:
           - {id: iterm2.mode.key_up_1337, raw: "CSI ? 1337 h|l", effect: toggle key-release reports, relevance: input,
             conditions: "iTerm2 switches host key delivery to raw mode; Howl retains, reports, publishes, and resets the
               fact but host input adaptation owns release delivery",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window,
+              residual: The Wayland host does not yet apply iTerm2 raw key-release delivery policy.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "iTerm2 host-coordinated input modes retain reports and terminal lifetime"}}}
           - {id: iterm2.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
@@ -2440,7 +2466,8 @@ references:
           - {id: kitty.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat,
             conditions: "Howl additionally cancels pending wrap at the CSI boundary; physical repeat suppression,
               press and release preservation, default-on lifetime, mode query, and save or restore match",
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
           - {id: kitty.mode.decsclm, raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
@@ -2523,7 +2550,10 @@ references:
               fixed Kitty reply, reports mode state, saves and restores it, and clears it on RIS. Howl additionally
               cancels pending wrap at the DECSET or DECRST boundary.
             relevance: extension
-            howl: {support: partial, source: howl-vt/src/terminal.zig,
+            howl: {support: partial, disposition: delegated, owner: howl-window,
+              rationale: *howl_input_policy_difference,
+              residual: The Wayland host does not yet observe and submit current color-scheme changes.,
+              source: howl-vt/src/terminal.zig,
               symbol: Terminal.reportColorSchemePreference, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
@@ -2540,7 +2570,9 @@ references:
               permission-sensitive multipart OSC 5522 clipboard exchange; Howl also cancels pending wrap at the mode
               boundary.
             relevance: input
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.SurfacePublication, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window,
+              residual: The Wayland host does not yet perform Kitty's permission-sensitive multipart paste exchange.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.SurfacePublication, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
           - id: kitty.mode.application_escape
@@ -2551,7 +2583,8 @@ references:
             conditions: >-
               Kitty recognizes and logs rejection; Howl silently rejects it through the unknown-mode path while
               preserving pending wrap, grid, and subsequent input. Neither terminal mutates application-escape state.
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "ignored and unknown DEC modes preserve pending wrap and grid state"}}
           - id: kitty.mode.termios_signals
@@ -2940,7 +2973,12 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: rendition protection and rectangle owners report exact mutation"}}}
           - {id: kitty.csi.modify_other_keys, raw: "CSI > Ps ; Ps m", effect: set modifyOtherKeys, relevance: input,
-            howl: {support: partial, residual: Howl implements the supported modifyOtherKeys levels and rejects unsupported values.}}
+            conditions: Kitty recognizes and logs the superseded request without changing key encoding while Howl
+              implements bounded xterm levels zero through two,
+            howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: setModifyOtherKeys, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "xterm key format query reset and other-key encoding"}}}
       - source: vt-parser.c
         symbol: dispatch_osc
         line: 493

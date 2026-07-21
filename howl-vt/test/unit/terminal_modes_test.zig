@@ -950,6 +950,63 @@ test "iTerm2 host-coordinated input modes retain reports and terminal lifetime" 
     try std.testing.expect(!publication.report_key_up);
 }
 
+test "input mode category preserves encoding gates screen stacks and reset lifetime" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    var scratch: Terminal.InputScratch = .{};
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?1")).state_changed);
+    try std.testing.expect((try terminal.feed("h\x1b=\x1b[?1004h\x1b[?1003h\x1b[?1016h\x1b[?2004h\x1b[?8l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1h\x1b=\x1b[?1004h\x1b[?1003h\x1b[?1016h\x1b[?2004h\x1b[?8l")).state_changed);
+    try std.testing.expectEqualStrings("\x1bOA", encodeKey(&terminal, .{ .named = .up }, .{}));
+    try std.testing.expectEqualStrings("\x1bOk", encodeKey(&terminal, .{ .named = .keypad_add }, .{}));
+    try std.testing.expectEqualStrings("\x1b[I", encodeFocusIn(&terminal));
+    try std.testing.expectEqualStrings("\x1b[O", encodeFocusOut(&terminal));
+    try std.testing.expectEqualStrings("\x1b[<16;320;240M", encodeMouse(&terminal, .{
+        .kind = .press,
+        .button = .left,
+        .row = 1,
+        .col = 2,
+        .pixel_x = 319,
+        .pixel_y = 239,
+        .mod = .{ .control = true },
+        .buttons_down = 1,
+    }));
+
+    var paste = try terminal.encodeInput(allocator, &scratch, .{ .paste = "x\x00y" });
+    defer paste.deinit();
+    try std.testing.expectEqualStrings("\x1b[200~x\x00y\x1b[201~", paste.bytes);
+    var repeat = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
+        .key = try Terminal.Key.initUnicode('a'),
+        .action = .repeat,
+        .legacy_text = "a",
+    } });
+    defer repeat.deinit();
+    try std.testing.expectEqualStrings("", repeat.bytes);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[=3")).state_changed);
+    try std.testing.expect((try terminal.feed("u")).state_changed);
+    var release = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
+        .key = try Terminal.Key.initUnicode('a'),
+        .action = .release,
+    } });
+    defer release.deinit();
+    try std.testing.expectEqualStrings("\x1b[97;1:3u", release.bytes);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
+    var alternate_release = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
+        .key = try Terminal.Key.initUnicode('a'),
+        .action = .release,
+    } });
+    defer alternate_release.deinit();
+    try std.testing.expectEqualStrings("", alternate_release.bytes);
+    try std.testing.expect((try terminal.feed("\x1b[?1049l\x1bc")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[A", encodeKey(&terminal, .{ .named = .up }, .{}));
+    try std.testing.expectEqualStrings("+", encodeKey(&terminal, .{ .named = .keypad_add }, .{}));
+    try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
+}
+
 test "paste encoding distinguishes borrowed and owned results" {
     const text = "paste";
     var no_storage: [0]u8 = .{};
