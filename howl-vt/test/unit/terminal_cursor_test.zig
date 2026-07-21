@@ -92,6 +92,18 @@ test "terminal cursor: DECSCUSR restores host default and rejects unsupported va
     try std.testing.expectEqualStrings("\x1bP1$r4 q\x1b\\", terminal.host.pendingOutput());
 }
 
+test "terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[4 q")).state_changed);
+    const before = terminal.screen_state.activeConst().cursor;
+    try std.testing.expect(!(try terminal.feed("\x1b[>100;29:2:1")).state_changed);
+    try std.testing.expect(!(try terminal.feed(":2 q\x1b[> q")).state_changed);
+    try std.testing.expectEqual(before, terminal.screen_state.activeConst().cursor);
+    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+}
+
 test "terminal cursor: Kitty DCS restores configured appearance across fragmented input" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();

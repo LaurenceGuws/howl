@@ -179,7 +179,7 @@ categories:
       to 49 with no production growth.
 
   - id: cursor_compatibility_and_restore
-    status: queued
+    status: accepted
     owner: howl-vt
     records: 13
     mechanism: legacy cursor movement, cursor presentation, savepoint restoration, and bounded tab-stop replacement
@@ -192,6 +192,14 @@ categories:
       multiple-cursor and permissive/unbounded reference behavior is explicitly excluded
     why_next: >-
       It reuses the settled mode and geometry facts, then closes the remaining cursor/save-state compatibility edge.
+    result: >-
+      Existing direct cursor, savepoint, parser, and tab owners plus dense adversarial transcripts prove BS region and
+      pending-wrap policy, DECFI/DECBI margin shifts, HPB/VPB bounds, parameterless CSI-s savepoint ownership under
+      DECLRMM, DECSCUSR defaults and rejection, strict DECCIR parsing and G0 restoration, bounded DECTABSR replacement
+      across resize, and exact repeated mutation. Twelve conflicting reference emulation, movement, parsing, and
+      retention policies are explicit partial exclusions; Kitty multiple cursors are an explicit missing exclusion.
+      No presentation residual is delegated because every remaining difference is VT protocol policy, not unfinished
+      host presentation. Active partial howl-vt obligations fall from 49 to 36 with no production growth.
 
   - id: metadata_shell_integration
     status: queued

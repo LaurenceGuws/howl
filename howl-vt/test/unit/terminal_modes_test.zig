@@ -1993,6 +1993,13 @@ test "DECRSPS replaces active bounded tab stops transactionally" {
     try std.testing.expect(active.tabStopAt(10));
     try std.testing.expect(!active.tabStopAt(8));
 
+    try terminal.resize(2, 6);
+    try std.testing.expect(active.tabStopAt(2));
+    try terminal.resize(2, 18);
+    try std.testing.expect(active.tabStopAt(2));
+    try std.testing.expect(!active.tabStopAt(10));
+
+    try std.testing.expect((try terminal.feed("\x1bP2$t3/11/999/bad/0/3\x1b\\")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1bP2$t3/11/999/bad/0/3\x1b\\")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bP2$t\x1b\\")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1bP2$t\x1b\\")).state_changed);

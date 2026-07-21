@@ -1014,6 +1014,24 @@ test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
     }
 }
 
+test "terminal: parameterless CSI s remains a savepoint under DECLRMM" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[?69h\x1b[2;7s\x1b[2;5H")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
+    try std.testing.expect((try terminal.feed("s")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[s")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[3;8s\x1b[1;3H\x1b[u")).state_changed);
+    const active = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u16, 1), active.cursor.row);
+    try std.testing.expectEqual(@as(u16, 4), active.cursor.col);
+    try std.testing.expectEqual(@as(u16, 2), active.left_margin);
+    try std.testing.expectEqual(@as(u16, 7), active.right_margin);
+    try std.testing.expect(!(try terminal.feed("\x1b[u")).state_changed);
+}
+
 test "terminal: HPB and VPB retain bounded cursor movement and exact mutation" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();

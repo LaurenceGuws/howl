@@ -1166,6 +1166,14 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
         Screen.CursorShape.underline,
         terminal.surfaceSnapshot().snapshot.view.cursor_shape,
     );
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;CursorShape=2\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b]1337;CursorShape=\x07\x1b]1337;CursorShape=x\x1b\\",
+    )).state_changed);
+    try std.testing.expectEqual(
+        Screen.CursorShape.underline,
+        terminal.surfaceSnapshot().snapshot.view.cursor_shape,
+    );
 }
 
 test "OSC 50 accepts only cursor shape without 1337 consequences" {
