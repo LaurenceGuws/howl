@@ -1353,8 +1353,17 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}
-          - {id: iterm2.osc1337.clear_scrollback, raw: "OSC 1337 ; ClearScrollback (BEL|ST)", effect: clear scrollback,
-            relevance: host consequence, howl: {status: partial}}
+          - id: iterm2.osc1337.clear_scrollback
+            raw: "OSC 1337 ; ClearScrollback (BEL|ST)"
+            effect: clear active buffer and scrollback
+            conditions: >-
+              Howl clears the active grid, projected scrollback, cursor, viewport, and selection while preserving its
+              independent resize-stable logical-output evidence; iTerm2 additionally preserves an active prompt,
+              resets saved cursor positions, and clears image, mark, highlight, and find state.
+            relevance: terminal state
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.clearBuffer, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "iTerm ClearScrollback clears only active screen state with exact repetition"}}
           - {id: iterm2.osc1337.current_dir, raw: "OSC 1337 ; CurrentDir=Pt (BEL|ST)", effect: report working directory,
             conditions: "iTerm2 delegates only for a trusted terminal while Howl retains a host-neutral path
               up to 1 KiB",

@@ -128,6 +128,44 @@ test "iTerm RemoteHost retains bounded metadata across terminal screen lifetime"
     try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.surfaceSnapshot().remote_host.?.len);
 }
 
+test "iTerm ClearScrollback clears only active screen state with exact repetition" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("aaaa\r\nbbbb\r\ncccc")).state_changed);
+    try std.testing.expect(terminal.screen_state.primary.historyCount() > 0);
+    try std.testing.expect(terminal.scrollViewport(.top));
+    const output_before = terminal.logicalOutputRange();
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049halt")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]1337;ClearScrollback=ignored\x07")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), terminal.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;ClearScrollback\x1b\\")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect(terminal.screen_state.primary.historyCount() > 0);
+    try std.testing.expectEqual(output_before, terminal.logicalOutputRange());
+    terminal.startSelection(0, 0);
+    try std.testing.expect(terminal.selectionState() != null);
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;ClearScro")).state_changed);
+    try std.testing.expect((try terminal.feed("llback\x07")).state_changed);
+    try std.testing.expectEqual(@as(u32, 0), terminal.screen_state.primary.historyCount());
+    try std.testing.expectEqual(output_before, terminal.logicalOutputRange());
+    try std.testing.expectEqual(@as(u32, 0), terminal.scrollback_offset);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.primary.cursor.col);
+    try std.testing.expect(terminal.selectionState() == null);
+    for (0..terminal.screen_state.primary.rows) |row| {
+        for (0..terminal.screen_state.primary.cols) |col| {
+            try std.testing.expectEqual(
+                @as(u21, 0),
+                terminal.screen_state.primary.cellAt(@intCast(row), @intCast(col)),
+            );
+        }
+    }
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;ClearScrollback\x07")).state_changed);
+}
+
 test "working-directory report limit preserves the prior complete fact" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

@@ -7201,6 +7201,7 @@ const ItermCommand = union(enum) {
     shell_integration: ItermShellIntegration,
     current_directory: []const u8,
     remote_host: []const u8,
+    clear_scrollback,
     notification: []const u8,
     steal_focus,
     request_attention: []const u8,
@@ -7222,6 +7223,8 @@ fn parse1337(payload: []const u8) ?ItermCommand {
             .report_cell_size
         else if (std.mem.eql(u8, payload, "StealFocus"))
             .steal_focus
+        else if (std.mem.eql(u8, payload, "ClearScrollback"))
+            .clear_scrollback
         else if (std.mem.eql(u8, payload, "RequestAttention"))
             .{ .request_attention = "" }
         else
@@ -7235,6 +7238,7 @@ fn parse1337(payload: []const u8) ?ItermCommand {
     if (std.mem.eql(u8, key, "SetColors")) return .{ .set_colors = value };
     if (std.mem.eql(u8, key, "CurrentDir")) return .{ .current_directory = value };
     if (std.mem.eql(u8, key, "RemoteHost")) return .{ .remote_host = value };
+    if (std.mem.eql(u8, key, "ClearScrollback")) return .clear_scrollback;
     if (std.mem.eql(u8, key, "Notification")) return .{ .notification = value };
     // iTerm ignores an optional StealFocus value after recognizing the key.
     if (std.mem.eql(u8, key, "StealFocus")) return .steal_focus;
@@ -8835,6 +8839,7 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
                 .working_directory_report = .{ .kind = .path, .value = value },
             },
             .remote_host => |value| SemanticEvent{ .remote_host_report = value },
+            .clear_scrollback => SemanticEvent.clear_buffer,
             .shell_integration => |integration| SemanticEvent{
                 .shell_integration_set = integration,
             },
@@ -9193,6 +9198,7 @@ pub const SemanticEvent = union(enum) {
     shell_integration_set: ItermShellIntegration,
     working_directory_report: WorkingDirectoryReport,
     remote_host_report: []const u8,
+    clear_buffer,
     iterm_report_cell_size,
     iterm_set_colors: []const u8,
     color_control: TerminalColorControlCommand,
@@ -11765,6 +11771,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             );
         },
         .backspace => return vt.screen_state.active().backspace(vt.modes.reverse_wraparound_mode),
+        .clear_buffer => return vt.clearBuffer(),
         .horizontal_tab => {
             const active = vt.screen_state.active();
             if (vt.modes.more_fix and active.wrap_pending) {
@@ -13565,6 +13572,21 @@ pub const Terminal = struct {
     pub fn visibleHistoryCount(self: *const Terminal) u32 {
         if (self.screen_state.alt_active) return 0;
         return self.screen_state.activeConst().historyCount();
+    }
+
+    // Clears active display, history, cursor, viewport, and selection as one exact terminal mutation.
+    fn clearBuffer(self: *Terminal) bool {
+        const active = self.screen_state.active();
+        var changed = active.eraseDisplay(.all, false);
+        changed = active.clearScrollback() or changed;
+        const cursor_before = active.cursor;
+        active.cursor.setPositionByClient(0, 0);
+        changed = !std.meta.eql(cursor_before, active.cursor) or changed;
+        if (self.scrollback_offset != 0) changed = true;
+        self.scrollback_offset = 0;
+        if (self.screen_state.activeSelectionConst().state() != null) changed = true;
+        self.screen_state.activeSelection().clear();
+        return changed;
     }
 
     fn clampScrollbackOffset(self: *Terminal) void {
