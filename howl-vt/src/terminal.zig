@@ -5907,6 +5907,25 @@ pub const WindowRequestOccurrence = struct {
     request: WindowRequest,
 };
 
+/// Preserves one ANSI or DEC media-copy command for host printing policy.
+pub const MediaCopyRequest = struct {
+    /// Distinguishes `CSI ? Ps i` from the ordinary ANSI command.
+    private: bool,
+    /// Retains the exact bounded scalar parameter accepted from the child.
+    parameter: u16,
+};
+
+// Bounds one print-command burst while a host performs potentially slow policy.
+const media_copy_capacity: u8 = 8;
+
+/// Borrows one accepted media-copy command until head acknowledgement.
+pub const MediaCopyOccurrence = struct {
+    /// Monotonic identity advancing for every command, including repeated values.
+    generation: u64,
+    /// Exact command family and parameter retained for host interpretation.
+    request: MediaCopyRequest,
+};
+
 /// Supplies one host-owned fact requested by a retained window query.
 pub const WindowReply = union(enum) {
     state: enum { normal, iconified },
@@ -6029,9 +6048,12 @@ pub const HostState = struct {
     window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
     window_requests_start: u8 = 0,
     window_requests_count: u8 = 0,
+    media_copy_generation: u64 = 0,
+    media_copy_requests: [media_copy_capacity]MediaCopyOccurrence = undefined,
+    media_copy_start: u8 = 0,
+    media_copy_count: u8 = 0,
     bell_generation: u64 = 0,
     locator: Locator = .{},
-    media_copy_request: ?u16 = null,
     dcs_payload: ?DcsPayloadOwned = null,
     legacy_control: ?LegacyControlKind = null,
 
@@ -6252,6 +6274,26 @@ pub const HostState = struct {
         self.window_requests_count -= 1;
     }
 
+    fn retainMediaCopy(self: *HostState, request: MediaCopyRequest) ApplyError!void {
+        if (self.media_copy_count == media_copy_capacity) return error.ConsequenceLimit;
+        if (self.media_copy_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        self.media_copy_generation += 1;
+        const index = (self.media_copy_start + self.media_copy_count) % media_copy_capacity;
+        self.media_copy_requests[index] = .{ .generation = self.media_copy_generation, .request = request };
+        self.media_copy_count += 1;
+    }
+
+    fn mediaCopyHead(self: *const HostState) ?MediaCopyOccurrence {
+        if (self.media_copy_count == 0) return null;
+        return self.media_copy_requests[self.media_copy_start];
+    }
+
+    fn consumeMediaCopy(self: *HostState) void {
+        std.debug.assert(self.media_copy_count > 0);
+        self.media_copy_start = (self.media_copy_start + 1) % media_copy_capacity;
+        self.media_copy_count -= 1;
+    }
+
     fn notificationView(self: *const HostState) ?Notification {
         if (self.notifications_count == 0) return null;
         return self.notifications[self.notifications_start].view();
@@ -6461,11 +6503,6 @@ pub const HostState = struct {
         try appendStringReply(&self.pending_output, self.allocator, .terminal, .osc, payload);
         self.consumeClipboardRequest();
         return true;
-    }
-
-    /// Return the most recently retained media-copy request.
-    pub fn mediaCopyRequest(self: *const HostState) ?u16 {
-        return self.media_copy_request;
     }
 
     /// Return the retained DCS payload kind, if any.
@@ -7941,6 +7978,13 @@ fn decodeCsi(
             .erase_line = lineEraseMode(paramAtOrDefault0(params, 0)) orelse return null,
         },
         'X' => return SemanticEvent{ .erase_chars = paramAtOrDefault1(params, 0) },
+        'i' => {
+            if (intermediates.len != 0) return null;
+            return SemanticEvent{ .media_copy_request = .{
+                .private = false,
+                .parameter = queryParam(params) orelse return null,
+            } };
+        },
         'x' => {
             if (intermediates.len != 0) return null;
             const kind = queryParam(params) orelse return null;
@@ -8095,7 +8139,7 @@ fn report(final: u8, params: []const i32, intermediates: []const u8) ?SemanticEv
     if (intermediates.len != 0) return null;
     const param = queryParam(params) orelse return null;
     return switch (final) {
-        'i' => SemanticEvent{ .media_copy_request = param },
+        'i' => SemanticEvent{ .media_copy_request = .{ .private = true, .parameter = param } },
         'n' => switch (param) {
             5 => SemanticEvent.device_status_report,
             6 => SemanticEvent.dec_cursor_position_report,
@@ -8862,7 +8906,7 @@ pub const SemanticEvent = union(enum) {
     locator_filter: OptionalRectArea,
     locator_events: ModeParams,
     locator_request: u16,
-    media_copy_request: u16,
+    media_copy_request: MediaCopyRequest,
     legacy_control: LegacyControlKind,
     sgr: struct {
         params: []const i32,
@@ -9545,7 +9589,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             scratch.buf[0..],
             param,
         ),
-        .media_copy_request => |param| vt.host.media_copy_request = param,
+        .media_copy_request => |request| try vt.host.retainMediaCopy(request),
         .dcs_payload => |payload| try vt.host.replaceDcsPayload(payload),
         .legacy_control => |kind| vt.host.legacy_control = kind,
         else => unreachable,
@@ -13074,6 +13118,8 @@ pub const Terminal = struct {
             .file_transfer_count = self.host.file_transfer_count,
             .window_request = self.host.windowRequestHead(),
             .window_request_count = self.host.window_requests_count,
+            .media_copy = self.host.mediaCopyHead(),
+            .media_copy_count = self.host.media_copy_count,
             .color_preference_notifications = self.modes.color_preference_notifications,
             .paste_events = self.modes.paste_events,
             .termios_signals = self.modes.termios_signals,
@@ -13489,6 +13535,14 @@ pub const Terminal = struct {
         self.dirty_generation +%= 1;
     }
 
+    /// Consume the matching FIFO-head media-copy command after host policy runs.
+    pub fn acknowledgeMediaCopy(self: *Terminal, generation: u64) error{StaleMediaCopy}!void {
+        const occurrence = self.host.mediaCopyHead() orelse return error.StaleMediaCopy;
+        if (occurrence.generation != generation) return error.StaleMediaCopy;
+        self.host.consumeMediaCopy();
+        self.dirty_generation +%= 1;
+    }
+
     fn noteSelectionChanged(self: *Terminal) void {
         self.screen_state.active().markAllRowsDirty();
         self.dirty_generation +%= 1;
@@ -13553,6 +13607,10 @@ pub const Terminal = struct {
         window_request: ?WindowRequestOccurrence,
         /// Reports the bounded number of pending FIFO window requests, including the exposed head.
         window_request_count: u8,
+        /// Borrows the next FIFO ANSI or DEC media-copy command until terminal mutation.
+        media_copy: ?MediaCopyOccurrence,
+        /// Reports the bounded number of pending media-copy commands, including the exposed head.
+        media_copy_count: u8,
         /// Reports whether mode 2031 asks the host to publish color-scheme changes.
         color_preference_notifications: bool,
         /// Reports whether mode 5522 asks the host to use Kitty's extended paste path.

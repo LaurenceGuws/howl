@@ -205,7 +205,10 @@ test "actions: low priority DEC private modes and media copy map" {
     params[0] = 5;
     ev.style_change.final = 'i';
     ev.style_change.params = params[0..];
-    try std.testing.expectEqual(@as(u16, 5), process(ev).?.media_copy_request);
+    try std.testing.expectEqualDeep(
+        semantic_event.MediaCopyRequest{ .private = true, .parameter = 5 },
+        process(ev).?.media_copy_request,
+    );
 }
 
 test "actions: application keypad and modifyOtherKeys mappings" {

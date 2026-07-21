@@ -87,10 +87,6 @@ fn extendedReverseWraparoundMode(terminal: *const Terminal) bool {
     return terminal.modes.extended_reverse_wraparound_mode;
 }
 
-fn mediaCopyRequest(terminal: *const Terminal) ?u16 {
-    return terminal.host.mediaCopyRequest();
-}
-
 test "encodeMouse returns empty output and does not mutate state" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 5, 10);
@@ -2072,11 +2068,72 @@ test "low priority private modes and media copy retain host-neutral state" {
     write(&stream, "\x1b[?45h\x1b[?1045h\x1b[?5i");
     try std.testing.expect(reverseWraparoundMode(&terminal));
     try std.testing.expect(extendedReverseWraparoundMode(&terminal));
-    try std.testing.expectEqual(@as(?u16, 5), mediaCopyRequest(&terminal));
+    try std.testing.expectEqualDeep(
+        terminal_mod.MediaCopyRequest{ .private = true, .parameter = 5 },
+        terminal.surfaceSnapshot().media_copy.?.request,
+    );
 
     write(&stream, "\x1b[?45l\x1b[?1045l");
     try std.testing.expect(!reverseWraparoundMode(&terminal));
     try std.testing.expect(!extendedReverseWraparoundMode(&terminal));
+}
+
+test "media-copy commands retain bounded ordered host intent" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    try stream.nextSlice("\x1b[");
+    try stream.nextSlice("i\x9b4i\x1b[5i\x1b[99i\x1b[?5i");
+    const expected = [_]terminal_mod.MediaCopyRequest{
+        .{ .private = false, .parameter = 0 },
+        .{ .private = false, .parameter = 4 },
+        .{ .private = false, .parameter = 5 },
+        .{ .private = false, .parameter = 99 },
+        .{ .private = true, .parameter = 5 },
+    };
+    try std.testing.expectEqual(@as(u8, expected.len), terminal.surfaceSnapshot().media_copy_count);
+    for (expected, 1..) |request, generation| {
+        const occurrence = terminal.surfaceSnapshot().media_copy.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqualDeep(request, occurrence.request);
+        try terminal.acknowledgeMediaCopy(occurrence.generation);
+    }
+    try std.testing.expect(terminal.surfaceSnapshot().media_copy == null);
+
+    // Exercise ring wrap before filling the fixed burst bound.
+    for (0..5) |_| {
+        try std.testing.expect((try terminal.feed("\x1b[5i")).state_changed);
+        try terminal.acknowledgeMediaCopy(terminal.surfaceSnapshot().media_copy.?.generation);
+    }
+    for (0..8) |parameter| {
+        var bytes: [16]u8 = undefined;
+        const command = try std.fmt.bufPrint(&bytes, "\x1b[{d}i", .{parameter});
+        try std.testing.expect((try terminal.feed(command)).state_changed);
+    }
+    const full = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u8, 8), full.media_copy_count);
+    const generation_before = full.media_copy.?.generation + 7;
+    const head_before = full.media_copy.?;
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[5i"));
+    try std.testing.expectEqualDeep(head_before, terminal.surfaceSnapshot().media_copy.?);
+    try std.testing.expectEqual(generation_before, terminal.host.media_copy_generation);
+
+    try std.testing.expectError(error.StaleMediaCopy, terminal.acknowledgeMediaCopy(head_before.generation + 1));
+    try terminal.acknowledgeMediaCopy(head_before.generation);
+    try std.testing.expect((try terminal.feed("\x1b[?4i")).state_changed);
+    while (terminal.surfaceSnapshot().media_copy) |occurrence| {
+        try terminal.acknowledgeMediaCopy(occurrence.generation);
+    }
+
+    try std.testing.expect(!(try terminal.feed("\x1b[1;2i\x1b[-1i\x1b[?1;2i")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[5i\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(5, 9);
+    try std.testing.expectEqualDeep(
+        terminal_mod.MediaCopyRequest{ .private = false, .parameter = 5 },
+        terminal.surfaceSnapshot().media_copy.?.request,
+    );
 }
 
 test "reverse wrap owns backspace margins phantom state query save and reset" {

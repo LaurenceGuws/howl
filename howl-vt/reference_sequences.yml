@@ -1019,8 +1019,16 @@ references:
               source: howl-vt/src/terminal.zig, symbol: eraseChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
-          - {id: iterm2.csi.media_copy, raw: "CSI [Ps=0] i", effect: media copy request, relevance: host consequence,
-            howl: {status: partial}}
+          - id: iterm2.csi.media_copy
+            raw: "CSI [Ps=0] i"
+            effect: media copy request
+            conditions: >-
+              iTerm2 maps 4 to print-and-end capture, 5 to begin capture, and every other scalar to print screen;
+              Howl retains every exact command in an eight-entry FIFO and delegates capture and printing policy.
+            relevance: host consequence
+            howl: {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: HostState.retainMediaCopy, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "media-copy commands retain bounded ordered host intent"}}
           - {id: iterm2.csi.save_or_margins, raw: "CSI Pm s", effect: save cursor or set horizontal margins,
             conditions: iTerm2 treats parameterless CSI s as DECSLRM under DECLRMM while Howl saves the cursor,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
