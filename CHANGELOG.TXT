@@ -20,3 +20,12 @@
   endpoint optional.
 - Moved terminal identity, same-user admission, bounded wire operations, and
   hostile response validation into the reusable terminal owner.
+
+0.1.3-dev
+
+- Indexed the pinned libvterm, iTerm2, and Kitty protocol vocabularies with
+  deterministic implementation and proof evidence.
+- Hardened non-graphics terminal modes, host-neutral consequences, metadata,
+  window intents, compatibility controls, and exact reset lifetime.
+- Reached 242 full, 352 partial, 68 absent, and zero unassessed reference
+  records before the root catalogue schema migration.
