@@ -5782,10 +5782,10 @@ const clipboard_selection_max_bytes: u8 = 12;
 /// One query reply fits regardless of selection length and 7-bit framing.
 const clipboard_reply_bytes_max: u32 =
     ((pending_output_max_bytes - clipboard_selection_max_bytes - 8) / 4) * 3;
-/// Retained DCS families are metadata protocols bounded by parser acceptance.
+/// Bounds aggregate bytes retained across ordered configuration and host-directed DCS consequences.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
-// Bounds one DCS command burst within the unchanged aggregate payload budget.
-const dcs_payload_capacity: u8 = 8;
+// Holds all nine Kitty host-directed commands plus a bounded mixed-family burst.
+const dcs_payload_capacity: u8 = 16;
 // Bounds one ordered APC, PM, and SOS fallback burst within the same metadata scale.
 const string_payload_capacity: u8 = 32;
 /// One retained OSC 8 URI and optional identity share the ordinary metadata scale.
@@ -6013,8 +6013,8 @@ const HyperlinkTarget = struct {
 /// `allocator` is borrowed for the HostState lifetime and owns every retained
 /// allocation; caller-selected drain allocators own only returned buffers.
 pub const HostState = struct {
-    // Heap-backed consequences are bounded before allocation; notification
-    // and pointer occurrences use fixed inline queue storage.
+    // Heap-backed consequences are bounded before allocation. DCS occurrences
+    // share count and aggregate-byte bounds across configuration and host-directed families.
     const DcsPayloadOwned = struct {
         generation: u64,
         kind: DcsPayloadKind,
@@ -6413,7 +6413,7 @@ pub const HostState = struct {
         self.clipboard_retained_bytes = retained_bytes;
     }
 
-    /// Retain one DCS command after count, byte, generation, and allocation bounds succeed.
+    /// Retain one ordered DCS consequence after count, byte, generation, and allocation bounds succeed.
     pub fn retainDcsPayload(self: *HostState, payload: DcsPayload) ApplyError!void {
         try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
         if (self.dcs_payloads_count == dcs_payload_capacity) return error.ConsequenceLimit;
@@ -7456,20 +7456,29 @@ const KittyState = struct {
     }
 };
 
-/// Identifies the supported DCS family owning a captured payload.
+/// Identifies one retained configuration or host-directed DCS consequence family.
 pub const DcsPayloadKind = enum {
     xtsettcap,
     decudk,
     decaupss,
+    kitty_remote_command,
+    kitty_overlay_ready,
+    kitty_result,
+    kitty_print,
+    kitty_echo,
+    kitty_ssh,
+    kitty_askpass,
+    kitty_clone,
+    kitty_edit,
 };
 
-/// Borrows one ordered terminal-configuration DCS command until acknowledgement.
+/// Borrows the FIFO-head configuration or host-directed DCS consequence until acknowledgement.
 pub const DcsPayloadOccurrence = struct {
-    /// Monotonic identity advancing for every retained command, including repeated bytes.
+    /// Monotonic identity advancing for every retained consequence, including repeated bytes.
     generation: u64,
-    /// Identifies the exact DCS command family owning `payload`.
+    /// Identifies the exact DCS consequence family owning `payload`.
     kind: DcsPayloadKind,
-    /// Borrows exact bounded command bytes until terminal mutation.
+    /// Borrows the exact bounded family payload until terminal mutation.
     payload: []const u8,
 };
 
@@ -8430,8 +8439,35 @@ fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '!' and dcs.final == 'u')
         return SemanticEvent{ .dcs_payload = .{ .kind = .decaupss, .payload = dcs.body } };
     if (dcs.intermediates_len == 0 and dcs.param_count == 0 and dcs.final == '@' and
-        std.mem.startsWith(u8, dcs.payload, "kitty-restore-cursor-appearance|"))
-        return .restore_cursor_appearance;
+        std.mem.startsWith(u8, dcs.payload, "kitty-"))
+    {
+        if (std.mem.startsWith(u8, dcs.payload, "kitty-restore-cursor-appearance|"))
+            return .restore_cursor_appearance;
+        if (kittyDcsPayload(dcs.payload)) |payload|
+            return SemanticEvent{ .dcs_payload = payload };
+    }
+    return null;
+}
+
+// Classifies Kitty's host-directed DCS prefixes and borrows exactly the bytes
+// delivered to its handler, including the remote-command opening brace.
+fn kittyDcsPayload(payload: []const u8) ?DcsPayload {
+    const commands = [_]struct { prefix: []const u8, kind: DcsPayloadKind, include_last: bool = false }{
+        .{ .prefix = "kitty-cmd{", .kind = .kitty_remote_command, .include_last = true },
+        .{ .prefix = "kitty-overlay-ready|", .kind = .kitty_overlay_ready },
+        .{ .prefix = "kitty-kitten-result|", .kind = .kitty_result },
+        .{ .prefix = "kitty-print|", .kind = .kitty_print },
+        .{ .prefix = "kitty-echo|", .kind = .kitty_echo },
+        .{ .prefix = "kitty-ssh|", .kind = .kitty_ssh },
+        .{ .prefix = "kitty-ask|", .kind = .kitty_askpass },
+        .{ .prefix = "kitty-clone|", .kind = .kitty_clone },
+        .{ .prefix = "kitty-edit|", .kind = .kitty_edit },
+    };
+    for (commands) |command| {
+        if (!std.mem.startsWith(u8, payload, command.prefix)) continue;
+        const start = command.prefix.len - @as(usize, if (command.include_last) 1 else 0);
+        return .{ .kind = command.kind, .payload = payload[start..] };
+    }
     return null;
 }
 
@@ -13789,7 +13825,7 @@ pub const Terminal = struct {
         self.dirty_generation +%= 1;
     }
 
-    /// Consume the matching FIFO-head terminal-configuration DCS command.
+    /// Consume the matching FIFO-head configuration or host-directed DCS consequence.
     pub fn acknowledgeDcsPayload(self: *Terminal, generation: u64) error{StaleDcsPayload}!void {
         const occurrence = self.host.dcsPayloadHead() orelse return error.StaleDcsPayload;
         if (occurrence.generation != generation) return error.StaleDcsPayload;
@@ -13873,9 +13909,9 @@ pub const Terminal = struct {
         media_copy: ?MediaCopyOccurrence,
         /// Reports the bounded number of pending media-copy commands, including the exposed head.
         media_copy_count: u8,
-        /// Borrows the next FIFO terminal-configuration DCS command until terminal mutation.
+        /// Borrows the next FIFO configuration or host-directed DCS consequence until terminal mutation.
         dcs_payload: ?DcsPayloadOccurrence,
-        /// Reports the bounded number of pending DCS commands, including the exposed head.
+        /// Reports up to 16 pending ordered DCS consequences, including the exposed head.
         dcs_payload_count: u8,
         /// Borrows the next FIFO generic APC, PM, or SOS payload until terminal mutation.
         string_payload: ?StringPayloadOccurrence,

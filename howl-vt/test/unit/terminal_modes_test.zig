@@ -1784,6 +1784,44 @@ test "DCS configuration commands retain bounded cross-family order" {
     try std.testing.expect(terminal.surfaceSnapshot().dcs_payload == null);
 }
 
+test "Kitty host-directed DCS commands retain exact handler payloads in order" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    const commands = [_]struct {
+        bytes: []const u8,
+        kind: dcs_payload.DcsPayloadKind,
+        payload: []const u8,
+    }{
+        .{ .bytes = "kitty-cmd{\"cmd\":\"ls\"}", .kind = .kitty_remote_command, .payload = "{\"cmd\":\"ls\"}" },
+        .{ .bytes = "kitty-overlay-ready|ready", .kind = .kitty_overlay_ready, .payload = "ready" },
+        .{ .bytes = "kitty-kitten-result|result", .kind = .kitty_result, .payload = "result" },
+        .{ .bytes = "kitty-print|cHJpbnQ=", .kind = .kitty_print, .payload = "cHJpbnQ=" },
+        .{ .bytes = "kitty-echo|echo", .kind = .kitty_echo, .payload = "echo" },
+        .{ .bytes = "kitty-ssh|ssh", .kind = .kitty_ssh, .payload = "ssh" },
+        .{ .bytes = "kitty-ask|ask", .kind = .kitty_askpass, .payload = "ask" },
+        .{ .bytes = "kitty-clone|clone", .kind = .kitty_clone, .payload = "clone" },
+        .{ .bytes = "kitty-edit|edit", .kind = .kitty_edit, .payload = "edit" },
+    };
+    for (commands) |command| {
+        try std.testing.expect(!(try terminal.feed("\x1bP@")).state_changed);
+        try std.testing.expect(!(try terminal.feed(command.bytes[0 .. command.bytes.len / 2])).state_changed);
+        try std.testing.expect(!(try terminal.feed(command.bytes[command.bytes.len / 2 ..])).state_changed);
+        try std.testing.expect((try terminal.feed("\x1b\\")).state_changed);
+    }
+    try std.testing.expectEqual(@as(u8, commands.len), terminal.surfaceSnapshot().dcs_payload_count);
+    for (commands, 1..) |wanted, generation| {
+        const occurrence = terminal.surfaceSnapshot().dcs_payload.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqual(wanted.kind, occurrence.kind);
+        try std.testing.expectEqualStrings(wanted.payload, occurrence.payload);
+        try terminal.acknowledgeDcsPayload(occurrence.generation);
+    }
+
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-unknown|drop\x1b\\")).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().dcs_payload == null);
+}
+
 test "canceled DCS discards its partial consequence before the next complete DCS" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
@@ -1799,7 +1837,7 @@ test "canceled DCS discards its partial consequence before the next complete DCS
     try std.testing.expectEqualStrings("436F=keep", dcsPayload(&terminal).?);
 }
 
-test "DCS configuration queue wraps and preserves full-queue identity" {
+test "DCS consequence queue proves sixteen-entry saturation and preserves identity" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
@@ -1808,9 +1846,9 @@ test "DCS configuration queue wraps and preserves full-queue identity" {
         try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).state_changed);
         try terminal.acknowledgeDcsPayload(terminal.surfaceSnapshot().dcs_payload.?.generation);
     }
-    for (0..8) |_| try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).state_changed);
+    for (0..16) |_| try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).state_changed);
     const full = terminal.surfaceSnapshot();
-    try std.testing.expectEqual(@as(u8, 8), full.dcs_payload_count);
+    try std.testing.expectEqual(@as(u8, 16), full.dcs_payload_count);
     const head = full.dcs_payload.?;
     const generation = terminal.host.dcs_payload_generation;
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1bP+pB\x1b\\"));

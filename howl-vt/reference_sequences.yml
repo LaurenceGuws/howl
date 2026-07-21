@@ -1506,7 +1506,7 @@ references:
             effect: set termcap or terminfo values
             conditions: >-
               iTerm2 validates names and mutates terminal key mappings; Howl retains each exact command in an
-              eight-entry cross-family FIFO sharing a 2 KiB aggregate bound, and delegates terminfo policy.
+              16-entry cross-family FIFO sharing a 2 KiB aggregate bound, and delegates terminfo policy.
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: HostState.retainDcsPayload, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DCS configuration commands retain bounded cross-family order"}}
@@ -2722,23 +2722,56 @@ references:
         recognition: implemented
         records:
           - {id: kitty.dcs.remote_cmd, raw: "DCS @kitty-cmd{Pb ST", effect: dispatch remote-control command,
-            relevance: extension, howl: {status: 'false'}}
+            relevance: extension, conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - {id: kitty.dcs.overlay_ready, raw: "DCS @kitty-overlay-ready|Pb ST", effect: report overlay readiness,
-            relevance: host metadata, howl: {status: 'false'}}
+            relevance: host metadata,
+            conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - {id: kitty.dcs.kitten_result, raw: "DCS @kitty-kitten-result|Pb ST", effect: report kitten result,
-            relevance: extension, howl: {status: 'false'}}
+            relevance: extension, conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - {id: kitty.dcs.remote_print, raw: "DCS @kitty-print|Pb ST", effect: print remote payload,
-            relevance: host consequence, howl: {status: 'false'}}
+            relevance: host consequence,
+            conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - {id: kitty.dcs.remote_echo, raw: "DCS @kitty-echo|Pb ST", effect: echo remote payload,
-            relevance: host consequence, howl: {status: 'false'}}
+            relevance: host consequence,
+            conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - {id: kitty.dcs.remote_ssh, raw: "DCS @kitty-ssh|Pb ST", effect: dispatch SSH integration payload,
-            relevance: transport, howl: {status: 'false'}}
+            relevance: transport, conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - {id: kitty.dcs.remote_askpass, raw: "DCS @kitty-ask|Pb ST", effect: dispatch askpass request,
-            relevance: host consequence, howl: {status: 'false'}}
+            relevance: host consequence,
+            conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - {id: kitty.dcs.remote_clone, raw: "DCS @kitty-clone|Pb ST", effect: clone terminal state,
-            relevance: host consequence, howl: {status: 'false'}}
+            relevance: host consequence,
+            conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - {id: kitty.dcs.remote_edit, raw: "DCS @kitty-edit|Pb ST", effect: dispatch remote edit request,
-            relevance: host consequence, howl: {status: 'false'}}
+            relevance: host consequence,
+            conditions: Howl retains exact bounded handler bytes but does not execute host policy,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: kittyDcsPayload, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty host-directed DCS commands retain exact handler payloads in order"}}}
           - id: kitty.dcs.restore_cursor
             raw: "DCS @kitty-restore-cursor-appearance|Pb ST"
             effect: restore configured cursor shape blink visibility and color
