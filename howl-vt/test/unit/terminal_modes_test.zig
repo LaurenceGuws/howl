@@ -199,6 +199,59 @@ test "mouse reporting supports legacy x10 normal utf8 and urxvt encodings" {
     try std.testing.expectEqualStrings("\x1b[32;241;241M", encodeMouse(&terminal, far_press));
 }
 
+test "legacy X10 mouse mode owns exact input query save and reset lifetime" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 5, 10);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    const press = input_mouse.MouseEvent{
+        .kind = .press,
+        .button = .left,
+        .row = 2,
+        .col = 3,
+        .mod = .{ .shift = true, .alt = true },
+        .buttons_down = 1,
+    };
+    const release = input_mouse.MouseEvent{
+        .kind = .release,
+        .button = .left,
+        .row = 2,
+        .col = 3,
+        .mod = .{},
+        .buttons_down = 0,
+    };
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?9")).state_changed);
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, press));
+    try std.testing.expect((try terminal.feed("h")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[M $#", encodeMouse(&terminal, press));
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, release));
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, .{
+        .kind = .press,
+        .button = .left,
+        .row = 223,
+        .col = 0,
+        .mod = .{},
+        .buttons_down = 1,
+    }));
+    try std.testing.expect(!(try terminal.feed("\x1b[?9h")).state_changed);
+
+    try stream.nextSlice("\x1b[?9$p");
+    try std.testing.expectEqualStrings("\x1b[?9;1$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+    try stream.nextSlice("\x1b[?9s\x1b[?1000h\x1b[?9r\x1b[?9$p\x1b[?1000$p");
+    try std.testing.expectEqualStrings("\x1b[?9;1$y\x1b[?1000;2$y", pendingOutput(&terminal));
+    clearPendingOutput(&terminal);
+
+    try stream.nextSlice("\x1b[?1049h\x1b[?1049l");
+    try terminal.resize(7, 12);
+    try std.testing.expectEqualStrings("\x1b[M $#", encodeMouse(&terminal, press));
+    try stream.nextSlice("\x1bc\x1b[?9$p");
+    try std.testing.expectEqualStrings("\x1b[?9;2$y", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("", encodeMouse(&terminal, press));
+}
+
 test "mouse mode queries and save restore include extended protocols" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

@@ -1718,8 +1718,16 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.encodeKeyInput, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DECARM owns repeat encoding query save and reset lifetime"}}}
-          - {id: iterm2.mode.mouse_x10, raw: "CSI ? 9 h|l", effect: accept legacy mouse mode without implementation,
-            recognition: recognized_noop, howl: {status: 'false'}}
+          - id: iterm2.mode.mouse_x10
+            raw: "CSI ? 9 h|l"
+            effect: accept legacy mouse mode without implementation
+            recognition: recognized_noop
+            conditions: >-
+              iTerm2 deliberately keeps this mode inert and does not report it; Howl implements bounded X10 press
+              encoding plus query, save or restore, alternate-screen, resize, and reset lifetime.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "legacy X10 mouse mode owns exact input query save and reset lifetime"}}
           - {id: iterm2.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Howl retains blink with each screen cursor while iTerm2 delegates one host cursor property,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
