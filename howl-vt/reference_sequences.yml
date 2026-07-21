@@ -1910,16 +1910,27 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "mouse and focus modes own exact protocol selection mutation and pixel reports"}}}
-          - {id: kitty.mode.alt_47, raw: "CSI ? 47 h|l", effect: toggle alternate screen, howl: {status: partial}}
+          - id: kitty.mode.alt_47
+            raw: "CSI ? 47 h|l"
+            effect: toggle alternate screen without clear or cursor save
+            conditions: acts only on an actual transition and resets the alternate cursor and rendition on entry
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty alternate-screen modes preserve banks and apply transition effects once"}}
           - {id: kitty.mode.alt_1047, raw: "CSI ? 1047 h|l",
             effect: toggle alternate screen without clear or cursor save,
-            howl: {status: partial}}
+            conditions: acts only on an actual transition and resets the alternate cursor and rendition on entry,
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty alternate-screen modes preserve banks and apply transition effects once"}}}
           - {id: kitty.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save cursor on set or reset,
             recognition: implemented,
             howl: {status: partial}}
           - {id: kitty.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: toggle alternate screen with cursor save,
             conditions: clear and save or restore occur only on an actual screen transition,
-            howl: {status: partial}}
+            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty alternate-screen modes preserve banks and apply transition effects once"}}}
           - {id: kitty.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,

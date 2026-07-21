@@ -7717,7 +7717,7 @@ fn altScreenToggle(final: u8, mode: i32) ?SemanticEvent {
         ),
         1047 => boolEvent(
             final,
-            .{ .enter_alt_screen = .{ .clear = true, .save_cursor = false } },
+            .{ .enter_alt_screen = .{ .clear = false, .save_cursor = false } },
             .{ .exit_alt_screen = .{ .restore_cursor = false } },
         ),
         1048 => boolEvent(final, SemanticEvent.save_cursor, SemanticEvent.restore_cursor),

@@ -13,6 +13,7 @@ const parser_mod = @import("../../src/parser.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
+const Screen = terminal_mod.Screen;
 const HostState = host_state;
 const StreamHarness = stream_harness.Harness;
 
@@ -1571,9 +1572,46 @@ test "DEC cursor and alternate modes preserve bounded lifecycle truth" {
     const alternate = terminal.screen_state.activeConst();
     try std.testing.expectEqual(@as(u16, 5), alternate.rows);
     try std.testing.expectEqual(@as(u16, 10), alternate.cols);
-    try std.testing.expectEqual(@as(u21, 0), alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), alternate.cellAt(0, 0));
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor.row);
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor.col);
+}
+
+test "Kitty alternate-screen modes preserve banks and apply transition effects once" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 6);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("MAIN\x1b[?47hALT\x1b[31m")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'M'), terminal.screen_state.primary.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.alternate.cellAt(0, 0));
+
+    try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.alternate.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.alternate.cursor.col);
+    try std.testing.expectEqual(Screen.default_cell_attrs, terminal.screen_state.alternate.current_attrs);
+    try std.testing.expect(!(try terminal.feed("\x1b[?47h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1047h")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.alternate.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.alternate.cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1047h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1047l")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[?1049hX")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expect(!(try terminal.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.cursor.col);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1049l")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0), terminal.screen_state.alternate.cellAt(0, 0));
 }
 
 test "DEC screen origin and autowrap modes own exact repeated command effects" {
