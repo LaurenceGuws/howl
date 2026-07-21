@@ -1,6 +1,7 @@
 const std = @import("std");
 const host_state = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
+const parser_mod = @import("../../src/parser.zig");
 const screen_mod = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
@@ -164,6 +165,43 @@ test "iTerm ClearScrollback clears only active screen state with exact repetitio
         }
     }
     try std.testing.expect(!(try terminal.feed("\x1b]1337;ClearScrollback\x07")).state_changed);
+}
+
+test "Kitty ignored OSC selectors remain bounded exact no-ops" {
+    const ignored = [_]u32{
+        5,   105,  6,    106,  13,   14,   15,   16,    18,
+        46,  50,   51,   60,   61,   440,  633,  666,   697,
+        701, 7704, 7721, 7750, 7770, 7771, 7777, 77119, 9001,
+    };
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+
+    for (ignored, 0..) |command, index| {
+        var sequence_buf: [64]u8 = undefined;
+        const terminator = if (index % 2 == 0) "\x07" else "\x1b\\";
+        const sequence = try std.fmt.bufPrint(&sequence_buf, "\x1b]{d};ignored{s}", .{ command, terminator });
+        const split = sequence.len / 2;
+        try std.testing.expect(!(try terminal.feed(sequence[0..split])).state_changed);
+        try std.testing.expect(!(try terminal.feed(sequence[split..])).state_changed);
+    }
+    try std.testing.expectEqual(@as(?[]const u8, null), terminal.surfaceSnapshot().title);
+    try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
+
+    const payload = try std.testing.allocator.alloc(u8, parser_mod.max_metadata_control_bytes - 2);
+    defer std.testing.allocator.free(payload);
+    @memset(payload, 'x');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(std.testing.allocator);
+    try sequence.appendSlice(std.testing.allocator, "\x1b]46;");
+    try sequence.appendSlice(std.testing.allocator, payload[0 .. parser_mod.max_metadata_control_bytes - 3]);
+    try sequence.append(std.testing.allocator, 0x07);
+    try std.testing.expect(!(try terminal.feed(sequence.items)).state_changed);
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(std.testing.allocator, "\x1b]46;");
+    try sequence.appendSlice(std.testing.allocator, payload);
+    try sequence.append(std.testing.allocator, 0x07);
+    try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
+    try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
 }
 
 test "working-directory report limit preserves the prior complete fact" {

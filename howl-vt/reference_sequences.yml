@@ -2730,59 +2730,67 @@ references:
         recognition: recognized_noop
         records:
           - {id: kitty.osc_ignore.special_colors_5, raw: "OSC 5 ; Pt (BEL|ST)", effect: ignore xterm special colors,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: &kitty_ignored_osc_condition "Howl silently drops the command within its 2 KiB ordinary OSC
+              bound and rejects overflow with StringControlLimit; Kitty recognizes the selector and may log its
+              ignored status",
+            relevance: compatibility, howl: &kitty_ignored_osc_howl {status: partial,
+              source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "Kitty ignored OSC selectors remain bounded exact no-ops"}}}
           - {id: kitty.osc_ignore.special_colors_105, raw: "OSC 105 ; Pt (BEL|ST)", effect: ignore xterm special colors,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.special_enable_6, raw: "OSC 6 ; Pt (BEL|ST)",
-            effect: ignore xterm special-color enablement, relevance: compatibility, howl: {status: 'false'}}
+            effect: ignore xterm special-color enablement, conditions: *kitty_ignored_osc_condition,
+            relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.special_enable_106, raw: "OSC 106 ; Pt (BEL|ST)",
-            effect: ignore xterm special-color enablement, relevance: compatibility, howl: {status: 'false'}}
+            effect: ignore xterm special-color enablement, conditions: *kitty_ignored_osc_condition,
+            relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.color_report_13, raw: "OSC 13 ; Pt (BEL|ST)", effect: ignore color report,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.color_report_14, raw: "OSC 14 ; Pt (BEL|ST)", effect: ignore color report,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.color_report_15, raw: "OSC 15 ; Pt (BEL|ST)", effect: ignore color report,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.color_report_16, raw: "OSC 16 ; Pt (BEL|ST)", effect: ignore color report,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.color_report_18, raw: "OSC 18 ; Pt (BEL|ST)", effect: ignore color report,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.logging, raw: "OSC 46 ; Pt (BEL|ST)", effect: ignore xterm logging,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.font, raw: "OSC 50 ; Pt (BEL|ST)", effect: ignore xterm font selection,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.emacs, raw: "OSC 51 ; Pt (BEL|ST)", effect: ignore Emacs shell command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.xterm_query_60, raw: "OSC 60 ; Pt (BEL|ST)", effect: ignore xterm query control,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.xterm_query_61, raw: "OSC 61 ; Pt (BEL|ST)", effect: ignore xterm query control,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_audio, raw: "OSC 440 ; Pt (BEL|ST)", effect: ignore audio command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.vscode, raw: "OSC 633 ; Pt (BEL|ST)", effect: ignore VS Code shell integration,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.vte, raw: "OSC 666 ; Pt (BEL|ST)", effect: ignore VTE shell integration,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.fig, raw: "OSC 697 ; Pt (BEL|ST)", effect: ignore Fig shell integration,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_locale, raw: "OSC 701 ; Pt (BEL|ST)", effect: ignore locale command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_ansi, raw: "OSC 7704 ; Pt (BEL|ST)", effect: ignore ANSI color command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_copy_title, raw: "OSC 7721 ; Pt (BEL|ST)", effect: ignore copy-title command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_emoji, raw: "OSC 7750 ; Pt (BEL|ST)", effect: ignore emoji-style command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_font, raw: "OSC 7770 ; Pt (BEL|ST)", effect: ignore font-size command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_glyphs, raw: "OSC 7771 ; Pt (BEL|ST)", effect: ignore glyph-coverage command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_window, raw: "OSC 7777 ; Pt (BEL|ST)", effect: ignore window-size command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.mintty_wide, raw: "OSC 77119 ; Pt (BEL|ST)", effect: ignore wide-character command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
           - {id: kitty.osc_ignore.windows, raw: "OSC 9001 ; Pt (BEL|ST)", effect: ignore Windows Terminal command,
-            relevance: compatibility, howl: {status: 'false'}}
+            conditions: *kitty_ignored_osc_condition, relevance: compatibility, howl: *kitty_ignored_osc_howl}
       - source: vt-parser.c
         symbol: dispatch_dcs
         line: 675
