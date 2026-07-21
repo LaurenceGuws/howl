@@ -12646,7 +12646,7 @@ pub const Terminal = struct {
         return changed;
     }
 
-    /// Saves cursor, rendition, charset, origin, and wrap state into the active screen slot.
+    /// Saves cursor presentation, rendition, charset, origin, and wrap state into the active screen slot.
     ///
     /// The result reports whether the bank-local savepoint changed.
     pub fn saveCursor(self: *Terminal) bool {
@@ -12665,6 +12665,7 @@ pub const Terminal = struct {
                 .row = active.cursor.row,
                 .col = active.cursor.col,
                 .style = active.cursor.effectiveStyle(),
+                .visible = active.cursor.visible,
             },
             .current_attrs = active.current_attrs,
             .reverse_screen_mode = self.modes.reverse_screen_mode,
@@ -12684,6 +12685,10 @@ pub const Terminal = struct {
     pub fn restoreCursor(self: *Terminal) bool {
         const active = self.screen_state.active();
         const cursor_before = active.cursor;
+        const visibility_before = .{
+            self.screen_state.primary.cursor.visible,
+            self.screen_state.alternate.cursor.visible,
+        };
         const attrs_before = active.current_attrs;
         const wrap_pending_before = active.wrap_pending;
         const auto_wrap_before = active.auto_wrap;
@@ -12696,6 +12701,10 @@ pub const Terminal = struct {
 
         self.restoreCursorState();
         return !std.meta.eql(cursor_before, active.cursor) or
+            !std.meta.eql(visibility_before, .{
+                self.screen_state.primary.cursor.visible,
+                self.screen_state.alternate.cursor.visible,
+            }) or
             !std.meta.eql(attrs_before, active.current_attrs) or
             wrap_pending_before != active.wrap_pending or
             auto_wrap_before != active.auto_wrap or
@@ -12726,6 +12735,8 @@ pub const Terminal = struct {
         active.auto_wrap = savepoint.auto_wrap;
         active.current_attrs = savepoint.current_attrs;
         active.cursor.restoreSavedStyle(savepoint.cursor.style);
+        self.screen_state.primary.cursor.visible = savepoint.cursor.visible;
+        self.screen_state.alternate.cursor.visible = savepoint.cursor.visible;
         restoreCursorPosition(active, savepoint.cursor.row, savepoint.cursor.col);
         active.wrap_pending = savepoint.wrap_pending and active.cursor.col == active.rightBoundary();
         self.gl_index = savepoint.gl_index;
@@ -13839,9 +13850,10 @@ const CursorSavepoint = struct {
     row: u16 = 0,
     col: u16 = 0,
     style: Screen.CursorStyle = Screen.default_cursor_style,
+    visible: bool = true,
 };
 
-// Stores cursor, rendition, charset, origin, and wrap state for one screen-bank save slot.
+// Stores cursor presentation, rendition, charset, origin, and wrap state for one screen-bank save slot.
 const Savepoint = struct {
     valid: bool = false,
     cursor: CursorSavepoint = .{},

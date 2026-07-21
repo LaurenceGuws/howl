@@ -175,12 +175,16 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: four charset slots share locking single-shift save and reset ownership"}}}
           - {id: libvterm.esc.decsc, raw: "ESC 7", effect: save cursor and pen, relevance: core,
-            conditions: libvterm saves cursor visibility while Howl leaves visibility host-current,
+            conditions: "cursor position, shape, blink, visibility, and common pen state agree; Howl additionally saves
+              origin, autowrap, pending wrap, reverse screen, charset invocation, protection, hyperlink, and extended
+              rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: saveCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
           - {id: libvterm.esc.decrc, raw: "ESC 8", effect: restore cursor and pen, relevance: core,
-            conditions: libvterm restores cursor visibility while Howl leaves visibility host-current,
+            conditions: "cursor position, shape, blink, visibility, and common pen state agree; Howl additionally
+              restores origin, autowrap, pending wrap, reverse screen, charset invocation, protection, hyperlink, and
+              extended rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
@@ -484,11 +488,15 @@ references:
           - {id: libvterm.mode.alt_1047, raw: "CSI ? 1047 h|l", effect: enter or exit alternate screen,
             howl: {status: partial}}
           - {id: libvterm.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save or restore cursor,
-            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: altScreenToggle, proof: {
+            conditions: Howl additionally saves and restores its extended cursor savepoint state,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: altScreenToggle, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC cursor and alternate modes preserve bounded lifecycle truth", line: 963}}}
           - {id: libvterm.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: alternate screen with cursor save,
-            howl: {status: partial}}
+            conditions: Howl additionally saves and restores its extended cursor savepoint state,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC cursor and alternate modes preserve bounded lifecycle truth"}}}
           - {id: libvterm.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: applyDecMode,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -830,12 +838,14 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DECFI and DECBI shift exact active margin rows at horizontal edges"}}}
           - {id: iterm2.esc.decrc, raw: "ESC 8", effect: restore cursor,
-            conditions: iTerm2 also restores its product-selected Unicode version,
+            conditions: "iTerm2 additionally restores its product-selected Unicode version; Howl additionally restores
+              cursor shape, blink, visibility, reverse screen, pending wrap, and extended rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
           - {id: iterm2.esc.decsc, raw: "ESC 7", effect: save cursor,
-            conditions: iTerm2 also saves its product-selected Unicode version,
+            conditions: "iTerm2 additionally saves its product-selected Unicode version; Howl additionally saves
+              cursor shape, blink, visibility, reverse screen, pending wrap, and extended rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: saveCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
@@ -990,7 +1000,8 @@ references:
             conditions: iTerm2 treats parameterless CSI s as DECSLRM under DECLRMM while Howl saves the cursor,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
           - {id: iterm2.csi.restore_cursor, raw: "CSI u", effect: restore cursor,
-            conditions: iTerm2 also restores its product-selected Unicode version,
+            conditions: "iTerm2 additionally restores its product-selected Unicode version; Howl additionally restores
+              cursor shape, blink, visibility, reverse screen, pending wrap, and extended rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
@@ -1660,11 +1671,16 @@ references:
             effect: preserve cursor coordinates across switch and clear alternate on exit,
             conditions: ignored when smcup or rmcup is disabled, howl: {status: partial}}
           - {id: iterm2.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save or restore cursor,
-            conditions: ignored when smcup or rmcup is disabled,
-            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: altScreenToggle}}
+            conditions: "ignored when smcup or rmcup is disabled; savepoint differences match iTerm2 ESC 7 and ESC 8",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: altScreenToggle, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC cursor and alternate modes preserve bounded lifecycle truth"}}}
           - {id: iterm2.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: alternate screen with cursor save,
-            conditions: repeated set saves and clears; repeated reset restores; smcup or rmcup may disable,
-            howl: {status: partial}}
+            conditions: "iTerm2 repeats save, clear, or restore and may disable smcup or rmcup; Howl acts once per
+              transition and additionally restores cursor presentation and extended rendition",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC cursor and alternate modes preserve bounded lifecycle truth"}}}
           - {id: iterm2.mode.key_up_1337, raw: "CSI ? 1337 h|l", effect: toggle key-release reports, relevance: input,
             howl: {status: 'false'}}
           - {id: iterm2.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
@@ -1872,12 +1888,14 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.esc.decsc, raw: "ESC 7", effect: save cursor,
-            conditions: Howl additionally retains cell-domain protection hyperlink font and baseline rendition,
+            conditions: "Howl additionally retains cursor visibility plus cell-domain protection, hyperlink, font, and
+              baseline rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: saveCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
           - {id: kitty.esc.decrc, raw: "ESC 8", effect: restore cursor,
-            conditions: Howl additionally restores cell-domain protection hyperlink font and baseline rendition,
+            conditions: "Howl additionally restores cursor visibility plus cell-domain protection, hyperlink, font,
+              and baseline rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
@@ -2039,10 +2057,15 @@ references:
               symbol: "Kitty alternate-screen modes preserve banks and apply transition effects once"}}}
           - {id: kitty.mode.cursor_1048, raw: "CSI ? 1048 h|l", effect: save cursor on set or reset,
             recognition: implemented,
-            howl: {status: partial}}
+            conditions: "Kitty saves on both set and reset; Howl saves on set, restores on reset, and includes cursor
+              visibility plus extended rendition",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: altScreenToggle, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC cursor and alternate modes preserve bounded lifecycle truth"}}}
           - {id: kitty.mode.alt_1049, raw: "CSI ? 1049 h|l", effect: toggle alternate screen with cursor save,
-            conditions: clear and save or restore occur only on an actual screen transition,
-            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
+            conditions: "transition, clear, position, and ordinary cursor state agree; Howl additionally restores
+              cursor visibility and extended rendition",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.switchScreenMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "Kitty alternate-screen modes preserve banks and apply transition effects once"}}}
           - {id: kitty.mode.bracketed_paste, raw: "CSI ? 2004 h|l", effect: toggle bracketed paste,
@@ -2227,7 +2250,8 @@ references:
           - {id: kitty.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: report DEC status,
             conditions: Kitty additionally delegates private 996 color preference, howl: {status: partial}}
           - {id: kitty.csi.save_cursor, raw: "CSI s", effect: save cursor,
-            conditions: Howl additionally retains cell-domain protection hyperlink font and baseline rendition,
+            conditions: "Howl additionally retains cursor visibility plus cell-domain protection, hyperlink, font, and
+              baseline rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: saveCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
@@ -2263,7 +2287,8 @@ references:
             effect: reject application cell resize, recognition: rejected_known, relevance: host consequence,
             howl: {status: 'false'}}
           - {id: kitty.csi.restore_cursor, raw: "CSI u", effect: restore cursor,
-            conditions: Howl additionally restores cell-domain protection hyperlink font and baseline rendition,
+            conditions: "Howl additionally restores cursor visibility plus cell-domain protection, hyperlink, font,
+              and baseline rendition",
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}

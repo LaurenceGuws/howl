@@ -82,7 +82,7 @@ test "terminal: cursor savepoints retain exact bank reset and resize state" {
         "\x1b[31;1;3m" ++
             "\x1b[1\"q" ++
             "\x1b)0\x0e" ++
-            "\x1b[?5h\x1b[?6h\x1b[?7h" ++
+            "\x1b[?5h\x1b[?6h\x1b[?7h\x1b[?25l" ++
             "\x1b[2;8HZ",
     )).state_changed);
     try std.testing.expect(terminal.screen_state.activeConst().wrap_pending);
@@ -91,7 +91,7 @@ test "terminal: cursor savepoints retain exact bank reset and resize state" {
     try std.testing.expect(!(try terminal.feed("\x1b7")).state_changed);
 
     try std.testing.expect((try terminal.feed(
-        "\x1b[0m\x1b[0\"q\x0f\x1b[?5l\x1b[?6l\x1b[?7l\x1b[1;1H",
+        "\x1b[0m\x1b[0\"q\x0f\x1b[?5l\x1b[?6l\x1b[?7l\x1b[?25h\x1b[1;1H",
     )).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
     try std.testing.expect((try terminal.feed("u")).state_changed);
@@ -102,6 +102,8 @@ test "terminal: cursor savepoints retain exact bank reset and resize state" {
     try std.testing.expect(primary.wrap_pending);
     try std.testing.expect(primary.auto_wrap);
     try std.testing.expect(primary.origin_mode);
+    try std.testing.expect(!terminal.screen_state.primary.cursor.visible);
+    try std.testing.expect(!terminal.screen_state.alternate.cursor.visible);
     try std.testing.expect(terminal.modes.reverse_screen_mode);
     try std.testing.expect(primary.current_attrs.bold);
     try std.testing.expect(primary.current_attrs.italic);

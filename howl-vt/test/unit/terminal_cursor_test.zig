@@ -73,7 +73,7 @@ test "terminal cursor: decscusr no-shape stays explicit through surface view" {
     try std.testing.expect(visible.cursor_visible);
 }
 
-test "terminal cursor: savepoint restores Kitty cursor payload and leaves visibility and colors alone" {
+test "terminal cursor: savepoint restores presentation while host colors remain current" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
@@ -116,7 +116,8 @@ test "terminal cursor: savepoint restores Kitty cursor payload and leaves visibi
     try std.testing.expect(terminal.modes.reverse_screen_mode);
     try std.testing.expect(active(&terminal).origin_mode);
     try std.testing.expect(!active(&terminal).auto_wrap);
-    try std.testing.expect(active(&terminal).cursor.visible);
+    try std.testing.expect(!active(&terminal).cursor.visible);
+    try std.testing.expect(!terminal.screen_state.alternate.cursor.visible);
     try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 1, .g = 2, .b = 3 }), active(&terminal).cursor.cursor_color);
     try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 4, .g = 5, .b = 6 }), active(&terminal).cursor.cursor_text_color);
     try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
