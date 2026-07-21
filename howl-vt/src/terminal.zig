@@ -6081,6 +6081,7 @@ pub const HostState = struct {
     current_title: ?[]u8 = null,
     current_icon: ?[]u8 = null,
     working_directory_report: ?WorkingDirectoryReport = null,
+    remote_host_report: ?[]u8 = null,
     title_stack: [title_stack_limit]?[]u8 = [_]?[]u8{null} ** title_stack_limit,
     title_stack_len: u8 = 0,
     shell_integration: ?ShellIntegration = null,
@@ -6146,6 +6147,7 @@ pub const HostState = struct {
         if (self.current_title) |title| self.allocator.free(title);
         if (self.current_icon) |icon| self.allocator.free(icon);
         if (self.working_directory_report) |directory| self.allocator.free(directory.value);
+        if (self.remote_host_report) |remote_host| self.allocator.free(remote_host);
         for (self.title_stack[0..self.title_stack_len]) |title| self.allocator.free(title.?);
         if (self.shell_integration) |integration|
             if (integration.shell) |shell| self.allocator.free(shell);
@@ -6201,6 +6203,11 @@ pub const HostState = struct {
         if (self.working_directory_report) |current| self.allocator.free(current.value);
         self.working_directory_report = .{ .kind = directory.kind, .value = owned };
         return true;
+    }
+
+    // Replaces one bounded child-reported remote-host identity transactionally.
+    fn replaceRemoteHostReport(self: *HostState, remote_host: []const u8) ApplyError!bool {
+        return replaceMetadata(self, &self.remote_host_report, remote_host);
     }
 
     /// Pushes one nonempty current title, dropping the oldest only after allocation succeeds.
@@ -7193,6 +7200,7 @@ const ItermCommand = union(enum) {
     set_colors: []const u8,
     shell_integration: ItermShellIntegration,
     current_directory: []const u8,
+    remote_host: []const u8,
     notification: []const u8,
     steal_focus,
     request_attention: []const u8,
@@ -7226,6 +7234,7 @@ fn parse1337(payload: []const u8) ?ItermCommand {
     if (std.mem.eql(u8, key, "CursorShape")) return parseCursorShape(payload);
     if (std.mem.eql(u8, key, "SetColors")) return .{ .set_colors = value };
     if (std.mem.eql(u8, key, "CurrentDir")) return .{ .current_directory = value };
+    if (std.mem.eql(u8, key, "RemoteHost")) return .{ .remote_host = value };
     if (std.mem.eql(u8, key, "Notification")) return .{ .notification = value };
     // iTerm ignores an optional StealFocus value after recognizing the key.
     if (std.mem.eql(u8, key, "StealFocus")) return .steal_focus;
@@ -8825,6 +8834,7 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
             .current_directory => |value| SemanticEvent{
                 .working_directory_report = .{ .kind = .path, .value = value },
             },
+            .remote_host => |value| SemanticEvent{ .remote_host_report = value },
             .shell_integration => |integration| SemanticEvent{
                 .shell_integration_set = integration,
             },
@@ -9182,6 +9192,7 @@ pub const SemanticEvent = union(enum) {
     icon_set: []const u8,
     shell_integration_set: ItermShellIntegration,
     working_directory_report: WorkingDirectoryReport,
+    remote_host_report: []const u8,
     iterm_report_cell_size,
     iterm_set_colors: []const u8,
     color_control: TerminalColorControlCommand,
@@ -9846,6 +9857,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .icon_set => |icon| return vt.host.replaceIcon(icon),
         .shell_integration_set => |integration| try vt.host.replaceShellIntegration(integration),
         .working_directory_report => |directory| return vt.host.replaceWorkingDirectoryReport(directory),
+        .remote_host_report => |remote_host| return vt.host.replaceRemoteHostReport(remote_host),
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
         .notification => |notification| try vt.host.retainNotification(
             notification.kind,
@@ -11723,6 +11735,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .icon_set,
         .shell_integration_set,
         .working_directory_report,
+        .remote_host_report,
         .shell_mark,
         .notification,
         .pointer_shape,
@@ -12610,6 +12623,8 @@ pub const Terminal = struct {
     pub const ShellIntegration = ItermShellIntegration;
     /// Borrows the latest child-reported directory bytes and their URI-or-path interpretation.
     pub const WorkingDirectory = WorkingDirectoryReport;
+    /// Bounds one latest child-reported iTerm remote-host identity.
+    pub const remote_host_max_bytes = max_metadata_bytes;
     /// Bounds the optional copied shell name in shell-integration metadata.
     pub const shell_name_max_bytes = max_shell_name_bytes;
     /// Bounds copied OSC 133 metadata retained by one shell mark.
@@ -13597,6 +13612,7 @@ pub const Terminal = struct {
             .title = self.host.current_title,
             .icon = self.host.current_icon,
             .working_directory = self.host.working_directory_report,
+            .remote_host = self.host.remote_host_report,
             .shell_integration = if (self.host.shell_integration) |integration| .{
                 .version = integration.version,
                 .shell = integration.shell,
@@ -14104,6 +14120,8 @@ pub const Terminal = struct {
         icon: ?[]const u8,
         /// Borrows the latest OSC 7 URI or iTerm CurrentDir path until terminal mutation.
         working_directory: ?Terminal.WorkingDirectory,
+        /// Borrows the latest OSC 1337 RemoteHost value until terminal mutation.
+        remote_host: ?[]const u8,
         shell_integration: ?Terminal.ShellIntegration,
         shell_mark: ShellMark,
         /// Borrows the FIFO-head OSC 52 operation or Kitty OSC 5522 packet until terminal mutation.

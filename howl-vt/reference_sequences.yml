@@ -1361,8 +1361,17 @@ references:
             relevance: host metadata, howl: {status: partial, source: howl-vt/src/terminal.zig,
               symbol: replaceWorkingDirectoryReport, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
-          - {id: iterm2.osc1337.remote_host, raw: "OSC 1337 ; RemoteHost=user@host (BEL|ST)",
-            effect: report remote host, relevance: host metadata, howl: {status: 'false'}}
+          - id: iterm2.osc1337.remote_host
+            raw: "OSC 1337 ; RemoteHost=user@host (BEL|ST)"
+            effect: report remote host
+            conditions: >-
+              Howl retains the latest raw value up to 1 KiB across screen switches, resize, and RIS; iTerm2 admits
+              trusted input only, strips controls, splits at the final @, and associates structured host locality with
+              a logical line.
+            relevance: host metadata
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: replaceRemoteHostReport, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "iTerm RemoteHost retains bounded metadata across terminal screen lifetime"}}
           - {id: iterm2.osc1337.set_profile, raw: "OSC 1337 ; SetProfile=Pt (BEL|ST)", effect: switch profile,
             relevance: host consequence, howl: {status: 'false'}}
           - {id: iterm2.osc1337.add_note, raw: "OSC 1337 ; AddNote=Pt (BEL|ST)", effect: add visible note,

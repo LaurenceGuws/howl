@@ -94,6 +94,40 @@ test "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutat
     try std.testing.expect(terminal.surfaceSnapshot().working_directory == null);
 }
 
+test "iTerm RemoteHost retains bounded metadata across terminal screen lifetime" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;RemoteHost=user@ho")).state_changed);
+    try std.testing.expect((try terminal.feed("st\x1b\\")).state_changed);
+    try std.testing.expectEqualStrings("user@host", terminal.surfaceSnapshot().remote_host.?);
+    try std.testing.expect(!(try terminal.feed("\x1b]1337;RemoteHost=user@host\x07")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
+    try terminal.resize(4, 10);
+    terminal.hardReset();
+    try std.testing.expectEqualStrings("user@host", terminal.surfaceSnapshot().remote_host.?);
+
+    const payload = try allocator.alloc(u8, Terminal.remote_host_max_bytes + 1);
+    defer allocator.free(payload);
+    @memset(payload, 'h');
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+    try sequence.appendSlice(allocator, "\x1b]1337;RemoteHost=");
+    try sequence.appendSlice(allocator, payload[0..Terminal.remote_host_max_bytes]);
+    try sequence.append(allocator, 0x07);
+    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.surfaceSnapshot().remote_host.?.len);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b]1337;RemoteHost=");
+    try sequence.appendSlice(allocator, payload);
+    try sequence.append(allocator, 0x07);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.surfaceSnapshot().remote_host.?.len);
+}
+
 test "working-directory report limit preserves the prior complete fact" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
