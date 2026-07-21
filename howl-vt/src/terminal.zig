@@ -10164,7 +10164,7 @@ test "cursor position report payload names semantic cursor position" {
 
 const Rgb = Screen.Rgb;
 const osc_reply_max_bytes = 8;
-const color_osc_max_bytes = 16;
+const color_osc_max_bytes = 18;
 
 // Owns the 256-color palette and dynamic foreground, background, and cursor colors.
 const TerminalColorState = struct {
@@ -10726,7 +10726,11 @@ fn formatOscReply(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []c
 
 fn formatColorOsc(buf: []u8, color: Rgb) []const u8 {
     std.debug.assert(buf.len >= color_osc_max_bytes);
-    return std.fmt.bufPrint(buf, "rgb:{x:0>2}/{x:0>2}/{x:0>2}", .{ color.r, color.g, color.b }) catch unreachable;
+    return std.fmt.bufPrint(buf, "rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{
+        @as(u16, color.r) * 0x101,
+        @as(u16, color.g) * 0x101,
+        @as(u16, color.b) * 0x101,
+    }) catch unreachable;
 }
 
 fn buildDefaultPalette() [256]Rgb {
@@ -10786,7 +10790,7 @@ fn parseHashColor(hex: []const u8) ?Rgb {
             const r = parseHexNibble(hex[0]) orelse return null;
             const g = parseHexNibble(hex[1]) orelse return null;
             const b = parseHexNibble(hex[2]) orelse return null;
-            break :blk .{ .r = r << 4, .g = g << 4, .b = b << 4 };
+            break :blk .{ .r = r * 0x11, .g = g * 0x11, .b = b * 0x11 };
         },
         6 => .{
             .r = parseHexByte(hex[0..2]) orelse return null,
@@ -10812,6 +10816,7 @@ fn parseRgbColor(text: []const u8) ?Rgb {
     const r = parseRgbComponent(parts.next() orelse return null) orelse return null;
     const g = parseRgbComponent(parts.next() orelse return null) orelse return null;
     const b = parseRgbComponent(parts.next() orelse return null) orelse return null;
+    if (parts.next() != null) return null;
     return .{ .r = r, .g = g, .b = b };
 }
 

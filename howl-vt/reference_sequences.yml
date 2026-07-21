@@ -1139,7 +1139,15 @@ references:
           - {id: iterm2.osc.title, raw: "OSC 2 ; Pt (BEL|ST)", effect: set title,
             conditions: iTerm2 truncates at newline and sanitizes control characters,
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: oscProcess}}
-          - {id: iterm2.osc.palette, raw: "OSC 4 ; Pt (BEL|ST)", effect: set or query palette, howl: {status: partial}}
+          - id: iterm2.osc.palette
+            raw: "OSC 4 ; Pt (BEL|ST)"
+            effect: set or query palette
+            conditions: >-
+              Howl owns indexes 0..255 plus xterm special indexes 256..260 and fixed 16-bit rgb replies, but omits
+              iTerm2 selectable 8-bit replies, preferred-color-space, and tmux report policy.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: handleXtermPaletteControl, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC color grammar scales short components and rejects trailing components"}}
           - {id: iterm2.osc.eterm, raw: "OSC 6 ; Pt (BEL|ST)", effect: Eterm extension, relevance: compatibility,
             howl: {status: 'false'}}
           - {id: iterm2.osc.cwd, raw: "OSC 7 ; URI (BEL|ST)", effect: report working directory,
@@ -1155,15 +1163,19 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           - {id: iterm2.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
-            howl: {status: partial}}
+            conditions: &iterm2_dynamic_color_condition "Howl retains host-neutral RGB state and emits fixed 16-bit
+              replies but omits iTerm2 selectable 8-bit replies and its broader platform color parser.",
+            howl: &iterm2_dynamic_color_howl {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: handleXtermDynamicColor, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
           - {id: iterm2.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
-            howl: {status: partial}}
+            conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           - {id: iterm2.osc.cursor, raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,
-            howl: {status: partial}}
+            conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           - {id: iterm2.osc.highlight_bg, raw: "OSC 17 ; color (BEL|ST)", effect: set or query highlight background,
-            howl: {status: partial}}
+            conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           - {id: iterm2.osc.highlight_fg, raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
-            howl: {status: partial}}
+            conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           - {id: iterm2.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates validation and presentation,
             relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
@@ -2261,7 +2273,15 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: oscProcess, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC metadata reports only committed replacement and survives split cancellation"}}}
-          - {id: kitty.osc.palette, raw: "OSC 4 ; Pt (BEL|ST)", effect: set or query palette, howl: {status: partial}}
+          - id: kitty.osc.palette
+            raw: "OSC 4 ; Pt (BEL|ST)"
+            effect: set or query palette
+            conditions: >-
+              Shared indexes 0..255 and 16-bit replies agree; Howl additionally owns xterm special indexes and
+              accepts a narrower deterministic color grammar than Kitty's color parser.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: handleXtermPaletteControl, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "OSC color grammar scales short components and rejects trailing components"}}
           - id: kitty.osc.palette_reset
             raw: "OSC 104 ; Pm (BEL|ST)"
             effect: reset palette
@@ -2302,14 +2322,20 @@ references:
             relevance: host consequence, howl: {status: partial, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
-          - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground, howl: {status: partial}}
-          - {id: kitty.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background, howl: {status: partial}}
+          - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
+            conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB fact and exact reply but
+              omits Kitty host dirtiness policy and accepts a narrower deterministic color grammar.",
+            howl: &kitty_dynamic_color_howl {status: partial, source: howl-vt/src/terminal.zig,
+              symbol: handleXtermDynamicColor, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
+          - {id: kitty.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
+            conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
           - {id: kitty.osc.cursor, raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,
-            howl: {status: partial}}
+            conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
           - {id: kitty.osc.highlight_bg, raw: "OSC 17 ; color (BEL|ST)", effect: set or query highlight background,
-            howl: {status: partial}}
+            conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
           - {id: kitty.osc.highlight_fg, raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
-            howl: {status: partial}}
+            conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
           - {id: kitty.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
             conditions: "Howl retains stack and query syntax in an 8-entry ordered raw-byte FIFO but delegates
               validation presentation and replies",
@@ -2351,8 +2377,15 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: resetXtermDynamicColor, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC palette and dynamic resets own exact bounds mutation and lifetime"}}
-          - {id: kitty.osc.kitty_color, raw: "OSC 21 ; Pt (BEL|ST)", effect: query set or reset terminal colors,
-            howl: {status: partial}}
+          - id: kitty.osc.kitty_color
+            raw: "OSC 21 ; Pt (BEL|ST)"
+            effect: query set or reset terminal colors
+            conditions: >-
+              Howl owns palette plus foreground/background/cursor/cursor-text/selection RGB facts; transparent
+              backgrounds, visual-bell color, opacity, and Kitty host refresh policy remain outside this subset.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: handleKittyControl, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "kitty OSC 21 sets queries and resets terminal colors"}}
           - {id: kitty.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard transfer,
             conditions: "Kitty chunks writes owns policy and fixes ESC framing; Howl retains an ordered bounded S7/S8
               FIFO",

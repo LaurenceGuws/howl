@@ -787,7 +787,7 @@ test "S7C1T and S8C1T serialize mixed replies through one bounded owner" {
     try stream.nextSlice("\x1b ");
     try stream.nextSlice("G\x1b[5n\x1bP$qr\x1b\\\x1b]4;1;?\x1b\\\x1b[?u\x1b]1337;ReportCellSize\x07");
     try std.testing.expectEqualStrings(
-        "\x9b0n\x901$r1;3r\x9c\x9d4;1;rgb:01/02/03\x9c" ++
+        "\x9b0n\x901$r1;3r\x9c\x9d4;1;rgb:0101/0202/0303\x9c" ++
             "\x1b[?0u\x1b]1337;ReportCellSize=18;9;1\x1b\\",
         pendingOutput(&terminal),
     );

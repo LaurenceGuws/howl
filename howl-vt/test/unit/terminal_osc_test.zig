@@ -913,7 +913,7 @@ test "OSC colors distinguish mutation query and malformed no-op" {
 
     const query = try terminal.feed("\x1b]4;1;?\x07");
     try std.testing.expect(query.state_changed);
-    try std.testing.expectEqualStrings("\x1b]4;1;rgb:01/02/03\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b]4;1;rgb:0101/0202/0303\x1b\\", terminal.host.pendingOutput());
 
     terminal.host.clearPendingOutput();
     const iterm_malformed = try terminal.feed("\x1b]1337;SetColors=fg=bogus,missing,p3=x\x07");
@@ -961,8 +961,8 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
     try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, colors.background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);
     try std.testing.expectEqualStrings(
-        "\x1b]21;foreground=rgb:11/22/33\x1b\\" ++
-            "\x1b]21;background=rgb:44/55/66\x1b\\" ++
+        "\x1b]21;foreground=rgb:1111/2222/3333\x1b\\" ++
+            "\x1b]21;background=rgb:4444/5555/6666\x1b\\" ++
             "\x1b]21;cursor=\x1b\\" ++
             "\x1b]21;no_such=?\x1b\\",
         terminal.host.pendingOutput(),
@@ -983,13 +983,43 @@ test "xterm OSC colors set query and reset palette and dynamic colors" {
     try stream.nextSlice("\x1b]4;1;?\x1b\\\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\");
 
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.host.terminalColorState().palette[1]);
-    try std.testing.expectEqualStrings("\x1b]4;1;rgb:01/02/03\x1b\\\x1b]10;rgb:aa/bb/cc\x1b\\\x1b]11;rgb:0d/0e/0f\x1b\\\x1b]12;rgb:ff/00/00\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings(
+        "\x1b]4;1;rgb:0101/0202/0303\x1b\\" ++
+            "\x1b]10;rgb:aaaa/bbbb/cccc\x1b\\" ++
+            "\x1b]11;rgb:0d0d/0e0e/0f0f\x1b\\" ++
+            "\x1b]12;rgb:ffff/0000/0000\x1b\\",
+        terminal.host.pendingOutput(),
+    );
 
     try stream.nextSlice("\x1b]104;1\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\");
     try std.testing.expectEqual(Rgb{ .r = 205, .g = 49, .b = 49 }, terminal.host.terminalColorState().palette[1]);
     try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.host.terminalColorState().foreground);
     try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.host.terminalColorState().background);
     try std.testing.expectEqual(@as(?Rgb, null), terminal.host.terminalColorState().cursor);
+}
+
+test "OSC color grammar scales short components and rejects trailing components" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]4;1;#123;2;rgb:1/22/333/4")).state_changed);
+    try std.testing.expect((try terminal.feed("44;3;rgb:1/22/333\x1b\\")).state_changed);
+    var colors = terminal.host.terminalColorState();
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.palette[1]);
+    try std.testing.expectEqual(Terminal.default_presentation.palette[2], colors.palette[2]);
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.palette[3]);
+
+    try std.testing.expect(!(try terminal.feed("\x1b]4;1;#123;2;rgb:1/22/333/444\x07")).state_changed);
+    colors = terminal.host.terminalColorState();
+    try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.palette[1]);
+    try std.testing.expectEqual(Terminal.default_presentation.palette[2], colors.palette[2]);
+
+    try std.testing.expect((try terminal.feed("\x1b]4;1;?\x1b\\")).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b]4;1;rgb:1111/2222/3333\x1b\\",
+        terminal.host.pendingOutput(),
+    );
 }
 
 test "xterm extra dynamic colors set query and reset host-neutral state" {
@@ -1010,13 +1040,13 @@ test "xterm extra dynamic colors set query and reset host-neutral state" {
     try std.testing.expectEqual(Rgb{ .r = 16, .g = 17, .b = 18 }, colors.tektronix_cursor.?);
     try std.testing.expectEqual(Rgb{ .r = 19, .g = 20, .b = 21 }, colors.selection_foreground.?);
     try std.testing.expectEqualStrings(
-        "\x1b]13;rgb:01/02/03\x1b\\" ++
-            "\x1b]14;rgb:04/05/06\x1b\\" ++
-            "\x1b]15;rgb:07/08/09\x1b\\" ++
-            "\x1b]16;rgb:0a/0b/0c\x1b\\" ++
-            "\x1b]17;rgb:0d/0e/0f\x1b\\" ++
-            "\x1b]18;rgb:10/11/12\x1b\\" ++
-            "\x1b]19;rgb:13/14/15\x1b\\",
+        "\x1b]13;rgb:0101/0202/0303\x1b\\" ++
+            "\x1b]14;rgb:0404/0505/0606\x1b\\" ++
+            "\x1b]15;rgb:0707/0808/0909\x1b\\" ++
+            "\x1b]16;rgb:0a0a/0b0b/0c0c\x1b\\" ++
+            "\x1b]17;rgb:0d0d/0e0e/0f0f\x1b\\" ++
+            "\x1b]18;rgb:1010/1111/1212\x1b\\" ++
+            "\x1b]19;rgb:1313/1414/1515\x1b\\",
         terminal.host.pendingOutput(),
     );
 
@@ -1047,10 +1077,10 @@ test "xterm special colors via OSC 5 and OSC 4 special offsets" {
     try std.testing.expectEqual(Rgb{ .r = 7, .g = 8, .b = 9 }, colors.special_palette[2].?);
     try std.testing.expectEqual(Rgb{ .r = 10, .g = 11, .b = 12 }, colors.special_palette[4].?);
     try std.testing.expectEqualStrings(
-        "\x1b]5;0;rgb:01/02/03\x1b\\" ++
-            "\x1b]5;1;rgb:04/05/06\x1b\\" ++
-            "\x1b]4;258;rgb:07/08/09\x1b\\" ++
-            "\x1b]4;260;rgb:0a/0b/0c\x1b\\",
+        "\x1b]5;0;rgb:0101/0202/0303\x1b\\" ++
+            "\x1b]5;1;rgb:0404/0505/0606\x1b\\" ++
+            "\x1b]4;258;rgb:0707/0808/0909\x1b\\" ++
+            "\x1b]4;260;rgb:0a0a/0b0b/0c0c\x1b\\",
         terminal.host.pendingOutput(),
     );
 
