@@ -1,4 +1,4 @@
-//! Imports the replacement host's concrete Wayland, EGL, GLES, xkb, and Linux C namespace.
+//! Imports the native host's concrete Wayland, EGL, GLES, xkb, and Linux C namespace.
 
 pub const c = @cImport({
     @cDefine("_FORTIFY_SOURCE", "0");

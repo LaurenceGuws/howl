@@ -31,7 +31,6 @@ pub fn add(
     addWindow(b, target, optimize, vt, text, frame, render, control, check, test_step);
     addPty(b, pty, check, test_step);
     addControl(b, target, optimize, control, check, test_step);
-    addHost(b, target, optimize, vt, text, check, test_step);
     b.default_step = check;
 }
 
@@ -71,7 +70,7 @@ fn addWindow(
     b.installArtifact(executable);
     const run = b.addRunArtifact(executable);
     if (b.args) |arguments| run.addArgs(arguments);
-    b.step("run:window", "Run the replacement Wayland window").dependOn(&run.step);
+    b.step("run:window", "Run the native Wayland window").dependOn(&run.step);
 }
 
 fn addWindowImports(
@@ -88,9 +87,9 @@ fn addWindowImports(
     module.addImport("howl_frame", frame);
     module.addImport("howl_render", render);
     module.addImport("howl_control", control);
-    module.addIncludePath(b.path("howl-host/vendor/xdg-shell"));
+    module.addIncludePath(b.path("howl-window/vendor/xdg-shell"));
     module.addCSourceFile(.{
-        .file = b.path("howl-host/vendor/xdg-shell/xdg-shell-protocol.c"),
+        .file = b.path("howl-window/vendor/xdg-shell/xdg-shell-protocol.c"),
         .flags = &.{"-std=c11"},
     });
     inline for (.{ "wayland-client", "wayland-egl", "EGL", "GLESv2", "xkbcommon" }) |library|
@@ -256,79 +255,6 @@ fn addControl(
     check.dependOn(&tests.step);
     test_step.dependOn(&addTestRun(b, api).step);
     test_step.dependOn(&addTestRun(b, tests).step);
-}
-
-fn addHost(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    vt: *std.Build.Module,
-    text: *std.Build.Module,
-    check: *std.Build.Step,
-    test_step: *std.Build.Step,
-) void {
-    const module = b.addModule("howl_host", .{
-        .root_source_file = b.path("howl-host/src/howl_host.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    addHostImports(b, module, vt, text);
-    const api = addTest(b, "howl-host-api", module);
-
-    const paths = b.addOptions();
-    paths.addOption([]const u8, "font", b.pathFromRoot("howl-text/testdata/primary.ttf"));
-    const tests_module = b.createModule(.{
-        .root_source_file = b.path("howl-host/src/test.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    addHostImports(b, tests_module, vt, text);
-    tests_module.addImport("host_test_paths", paths.createModule());
-    const tests = addTest(b, "howl-host", tests_module);
-
-    const executable_module = b.createModule(.{
-        .root_source_file = b.path("howl-host/src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    addHostImports(b, executable_module, vt, text);
-    const executable = b.addExecutable(.{ .name = "howl-host", .root_module = executable_module });
-    executable.use_llvm = true;
-    check.dependOn(&api.step);
-    check.dependOn(&tests.step);
-    check.dependOn(&executable.step);
-    test_step.dependOn(&addTestRun(b, tests).step);
-    b.installArtifact(executable);
-    const run = b.addRunArtifact(executable);
-    if (b.args) |arguments| run.addArgs(arguments);
-    b.step("run:host", "Run the native Wayland host").dependOn(&run.step);
-}
-
-fn addHostImports(
-    b: *std.Build,
-    module: *std.Build.Module,
-    vt: *std.Build.Module,
-    text: *std.Build.Module,
-) void {
-    module.addImport("howl_vt", vt);
-    module.addImport("howl_text", text);
-    module.addIncludePath(b.path("howl-host/vendor/xdg-shell"));
-    module.addCSourceFile(.{
-        .file = b.path("howl-host/vendor/xdg-shell/xdg-shell-protocol.c"),
-        .flags = &.{"-std=c11"},
-    });
-    inline for (.{
-        "wayland-client",
-        "wayland-egl",
-        "EGL",
-        "GLESv2",
-        "xkbcommon",
-        "freetype",
-        "harfbuzz",
-    }) |library| module.linkSystemLibrary(library, .{});
 }
 
 fn addTest(b: *std.Build, name: []const u8, module: *std.Build.Module) *std.Build.Step.Compile {

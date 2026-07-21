@@ -10,8 +10,11 @@ const MouseButton = @FieldType(MouseInput, "button");
 const MouseKind = @FieldType(MouseInput, "kind");
 
 const initial_size = renderer.Size{ .width = 960, .height = 600 };
-const terminal_count: usize = 3;
 const max_wheel_steps: usize = 32;
+
+const TerminalSpec = struct { shell: []const u8 = "/bin/bash" };
+const terminal_specs = [_]TerminalSpec{ .{}, .{}, .{} };
+const terminal_count = terminal_specs.len;
 
 const TabId = enum(u8) { split = 1, full = 2 };
 const PaneId = enum(u8) { left = 1, right = 2, full = 3 };
@@ -327,10 +330,10 @@ const Loop = struct {
                 terminal.* = null;
             };
         }
-        for (&self.terminals, 0..) |*terminal, index| {
+        for (&self.terminals, terminal_specs, 0..) |*terminal, spec, index| {
             const geometry = terminalGeometry(@intCast(index), self.size, render.metrics());
             terminal.* = try howl_control.Terminal.init(allocator, io, .{
-                .shell = "/bin/bash",
+                .shell = spec.shell,
                 .cols = geometry.cols,
                 .rows = geometry.rows,
                 .cell_pixels = .{
@@ -900,7 +903,7 @@ const Loop = struct {
     }
 };
 
-/// Runs one replacement Wayland window until compositor close or exact failure.
+/// Runs the native Wayland window until compositor close or exact failure.
 pub fn run(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const u8) Error!void {
     const owner = try Loop.init(allocator, io, font_paths);
     var primary_failure: ?Error = null;
@@ -919,11 +922,16 @@ fn terminalWake(context: ?*anyopaque) void {
     const wake: *WakeContext = @ptrCast(@alignCast(context.?));
     const self: *Loop = @ptrCast(@alignCast(wake.owner.?));
     const bit = @as(u8, 1) << wake.index;
-    if (self.wake_bits.fetchOr(bit, .release) & bit != 0) return;
+    if (!markTerminalWake(&self.wake_bits, bit)) return;
     const value: u64 = 1;
     const count = c.write(self.terminal_signal, &value, @sizeOf(u64));
     if (count != @sizeOf(u64) and !(count < 0 and std.posix.errno(count) == .AGAIN))
         @panic("terminal wake eventfd write failed");
+}
+
+fn markTerminalWake(bits: *std.atomic.Value(u8), bit: u8) bool {
+    std.debug.assert(bit != 0 and bit & (bit - 1) == 0);
+    return bits.fetchOr(bit, .release) & bit == 0;
 }
 
 const Geometry = struct { cols: u16, rows: u16 };
@@ -1110,7 +1118,10 @@ fn toplevelConfigure(
     self.pending_size = .{ .width = @intCast(width), .height = @intCast(height) };
 }
 fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
-    loop(data).closed = true;
+    requestClose(&loop(data).closed);
+}
+fn requestClose(closed: *bool) void {
+    closed.* = true;
 }
 fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
 fn wmCapabilities(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: ?*c.struct_wl_array) callconv(.c) void {}
@@ -1422,6 +1433,23 @@ test "one poll result preserves every simultaneous ready source" {
     try std.testing.expect(ready.terminal);
     try std.testing.expect(ready.render);
     try std.testing.expect(ready.repeat);
+}
+
+test "terminal output wake coalesces until the window drains its exact bit" {
+    var bits: std.atomic.Value(u8) = .init(0);
+    try std.testing.expect(markTerminalWake(&bits, 0b001));
+    try std.testing.expect(!markTerminalWake(&bits, 0b001));
+    try std.testing.expect(markTerminalWake(&bits, 0b100));
+    try std.testing.expectEqual(@as(u8, 0b101), bits.swap(0, .acq_rel));
+    try std.testing.expect(markTerminalWake(&bits, 0b001));
+}
+
+test "compositor close is an idempotent loop termination fact" {
+    var closed = false;
+    requestClose(&closed);
+    try std.testing.expect(closed);
+    requestClose(&closed);
+    try std.testing.expect(closed);
 }
 
 test "pointer translation admits only focused available pane cell pixels" {

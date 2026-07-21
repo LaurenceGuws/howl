@@ -19,10 +19,10 @@ resume_requires:
       publish and acknowledge terminal frames from the PTY/VT owner without blocking PTY progress when consumers lag
   - owner: howl-text
     capability: one direct reviewed shaping and rasterization owner suitable for deterministic frame resolution
-  - owner: howl-host
+  - owner: howl-window
     capability: >-
       one shared renderer and texture cache across terminal instances for proving presentation consequences
-  - owner: howl-host
+  - owner: howl-window
     capability: >-
       a Wayland window loop that exposes and acknowledges ordered host consequences without interpreting cells or writing PTY bytes
   - owner: protocol_evidence

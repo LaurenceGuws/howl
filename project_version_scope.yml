@@ -19,10 +19,10 @@ capabilities:
       one owner shares native text and a fixed byte/count-bounded glyph-mask cache across terminal frames,
       validates pane composition, and prepares only complete or damaged rows without retaining frame borrows
 
-  - name: replacement_window_vertical
+  - name: native_window_vertical
     acceptance: >-
       one Wayland/xkb loop routes live terminal wakes and input while one render thread owns EGL/GLES, the shared
-      glyph and texture caches, frame release, swap, and completion notification for one replacement window
+      glyph and texture caches, frame release, swap, and completion notification for the native window
 
   - name: pane_composition
     acceptance: >-
@@ -79,5 +79,5 @@ gates:
   - active YAML parses and the protocol catalogue schema validates
   - root and module build graphs use Zig 0.16
   - all accepted VT tests, simulations, fuzzing, and benchmarks pass in four optimization modes
-  - control, text, host, and QAgent embedding checks pass
+  - control, text, window, and QAgent embedding checks pass
   - source audit and git diff checks pass

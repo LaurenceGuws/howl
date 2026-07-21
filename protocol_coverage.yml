@@ -3,7 +3,7 @@ schema: 2
 howl_schema:
   support: [full, partial, missing, unassessed]
   disposition: [none, active, delegated, deferred, excluded]
-  owner: [howl-vt, howl-host, howl-control, howl-text, howl-pty]
+  owner: [howl-vt, howl-window, howl-control, howl-text, howl-pty]
   defaults: {full_disposition: none, incomplete_disposition: active, owner: howl-vt}
   meaning:
     support: implemented behavior relative to the pinned reference
@@ -544,7 +544,7 @@ references:
             bounds: caller-provided decode buffer with set data delivered in fragments,
             conditions: "Howl retains an 8-entry FIFO within a 1 MiB aggregate bound while libvterm streams
               selection fragments",
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window,
             source: howl-vt/src/terminal.zig, symbol: HostState.replyPendingClipboardQuery,
             proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 52 retains ordered sets and queries until exact head consumption"}}}
@@ -598,7 +598,7 @@ references:
         records:
           - {id: libvterm.apc.fallback, raw: "APC Pb ST", effect: delegate payload to configured APC fallback,
             conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
             symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: state.c
@@ -609,7 +609,7 @@ references:
         records:
           - {id: libvterm.pm.fallback, raw: "PM Pb ST", effect: delegate payload to configured PM fallback,
             conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
             symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: state.c
@@ -620,7 +620,7 @@ references:
         records:
           - {id: libvterm.sos.fallback, raw: "SOS Pb ST", effect: delegate payload to configured SOS fallback,
             conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
             symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: pen.c
@@ -1003,7 +1003,7 @@ references:
               answers 14/16/18/21 from owned facts; and owns its bounded title stack. Host execution remains policy.
             recognition: delegated
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "window controls retain ordered bounded host requests and lifetime"}}
           - id: iterm2.csi.decsnls
@@ -1013,7 +1013,7 @@ references:
               iTerm2 accepts rows 1..255 only at VT400 level and delegates one-dimensional resize; Howl has no
               emulation-level policy and retains the exact row request in its bounded ordered host-intent FIFO.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: processStar, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC cell dimension requests retain exact ordered host intent"}}
           - id: iterm2.csi.decscpp
@@ -1023,7 +1023,7 @@ references:
               iTerm2 accepts 0/80 as 80 and 132 only at VT300 level, updates column mode, and preserves screen
               contents; Howl has no emulation-level policy and retains the exact column request for host execution.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: processDollar, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "DEC cell dimension requests retain exact ordered host intent"}}
           - {id: iterm2.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
@@ -1062,7 +1062,7 @@ references:
               iTerm2 maps 4 to print-and-end capture, 5 to begin capture, and every other scalar to print screen;
               Howl retains every exact command in an eight-entry FIFO and delegates capture and printing policy.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainMediaCopy, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "media-copy commands retain bounded ordered host intent"}}
           - {id: iterm2.csi.save_or_margins, raw: "CSI Pm s", effect: save cursor or set horizontal margins,
@@ -1274,7 +1274,7 @@ references:
             conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           - {id: iterm2.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates validation and presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainPointerShape, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 22 retains ordered bounded host-neutral requests"}}}
           - {id: iterm2.osc.kvp_50, raw: "OSC 50 ; key=value (BEL|ST)", effect: legacy iTerm key-value command,
@@ -1283,7 +1283,7 @@ references:
           - {id: iterm2.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard or base64 paste,
             conditions: "iTerm2 ignores Pc sanitizes text and fixes ESC framing; Howl preserves ordered bounded raw
               operations and S7/S8 state",
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.replyPendingClipboardQuery, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 52 retains ordered sets and queries until exact head consumption"}}}
           - id: iterm2.osc.palette_reset
@@ -1351,7 +1351,7 @@ references:
           - {id: iterm2.osc1337.file, raw: "OSC 1337 ; File=Pm : base64 (BEL|ST)", effect: transfer or display file,
             conditions: &iterm_file_transfer_condition "Howl retains exact packets up to its 2 KiB iTerm OSC bound
               in an eight-entry cross-protocol FIFO and delegates decoding trust storage and presentation",
-            relevance: host consequence, howl: &iterm_file_transfer_howl {support: partial, disposition: delegated, owner: howl-host,
+            relevance: host consequence, howl: &iterm_file_transfer_howl {support: partial, disposition: delegated, owner: howl-window,
               source: howl-vt/src/terminal.zig, symbol: HostState.retainFileTransfer, proof: {
                 path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "iTerm and Kitty file transfers retain one opaque ordered stream"}}}
@@ -1375,7 +1375,7 @@ references:
               iTerm2 executes only for a trusted terminal; Howl retains one bounded ordered intent and delegates
               authorization and focus policy to the host.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}
           - id: iterm2.osc1337.clear_scrollback
@@ -1467,11 +1467,11 @@ references:
               Howl retains the raw bounded argument in FIFO order; the host owns iTerm2's start stop once fireworks
               interpretation and presentation policy.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}
           - {id: iterm2.osc1337.background_image, raw: "OSC 1337 ; SetBackgroundImageFile=Pt (BEL|ST)",
-            effect: set background image, relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-host, milestone: background_presentation}}
+            effect: set background image, relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-window, milestone: background_presentation}}
           - {id: iterm2.osc1337.profile_property, raw: "OSC 1337 ; SetProfileProperty=key=base64-json (BEL|ST)",
             effect: set profile property, relevance: host consequence, howl: *howl_missing_excluded_iterm}
           - {id: iterm2.osc1337.user_var, raw: "OSC 1337 ; SetUserVar=name=base64 (BEL|ST)", effect: set user variable,
@@ -1497,7 +1497,7 @@ references:
           - {id: iterm2.osc1337.notification, raw: "OSC 1337 ; Notification=Pt (BEL|ST)",
             effect: post rich notification,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
           - {id: iterm2.osc1337.capabilities, raw: "OSC 1337 ; Capabilities=Pt (BEL|ST)",
@@ -1578,7 +1578,7 @@ references:
             conditions: >-
               iTerm2 validates names and mutates terminal key mappings; Howl retains each exact command in an
               16-entry cross-family FIFO sharing a 2 KiB aggregate bound, and delegates terminfo policy.
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainDcsPayload, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: HostState.retainDcsPayload, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DCS configuration commands retain bounded cross-family order"}}
           - {id: iterm2.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
@@ -1755,7 +1755,7 @@ references:
               symbol: "legacy X10 mouse mode owns exact input query save and reset lifetime"}}
           - {id: iterm2.mode.cursor_blink, raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Howl retains blink with each screen cursor while iTerm2 delegates one host cursor property,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           - {id: iterm2.mode.lnm_private, raw: "CSI ? 20 h|l", effect: ignore private line mode,
@@ -1832,7 +1832,7 @@ references:
           - {id: iterm2.mode.alt_scroll, raw: "CSI ? 1007 h|l", effect: toggle alternate mouse scroll,
             conditions: "iTerm2 accepts enable only when host policy permits and translates wheel input above VT; Howl
               retains, reports, publishes, and resets it; its host owns translation and admission",
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "iTerm2 host-coordinated input modes retain reports and terminal lifetime"}}}
           - {id: iterm2.mode.mouse_urxvt, raw: "CSI ? 1015 h|l", effect: toggle urxvt mouse encoding,
@@ -1846,7 +1846,7 @@ references:
           - {id: iterm2.mode.meta_escape, raw: "CSI ? 1036 h|l", effect: toggle Meta-sends-Escape, relevance: input,
             conditions: "iTerm2 host policy applies this and may override it for extended or raw key reporting;
               Howl retains, reports, publishes, and resets the fact but does not reinterpret host key events",
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "iTerm2 host-coordinated input modes retain reports and terminal lifetime"}}}
           - {id: iterm2.mode.alt_1047, raw: "CSI ? 1047 h|l",
@@ -1903,8 +1903,8 @@ references:
               Howl retains every accepted request in a 32-entry FIFO; execution remains host policy. Operations are
               acknowledged at the live head; queries require a matching head identity and exact host-supplied fact.
             relevance: host consequence
-            howl: &iterm2_window_operation_howl {support: partial, disposition: delegated, owner: howl-host,
-              residual: Howl retains ordered intent while howl-host owns execution and host policy,
+            howl: &iterm2_window_operation_howl {support: partial, disposition: delegated, owner: howl-window,
+              residual: Howl retains ordered intent while howl-window owns execution and host policy,
               source: howl-vt/src/terminal.zig,
               symbol: decodeWindowRequest, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -1947,8 +1947,8 @@ references:
             raw: "CSI 11 t"
             effect: report iconified state
             relevance: query
-            howl: &iterm2_window_query_howl {support: partial, disposition: delegated, owner: howl-host,
-              residual: Howl retains ordered queries while howl-host owns live host facts and policy,
+            howl: &iterm2_window_query_howl {support: partial, disposition: delegated, owner: howl-window,
+              residual: Howl retains ordered queries while howl-window owns live host facts and policy,
               source: howl-vt/src/terminal.zig,
               symbol: Terminal.replyWindowRequest, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "window query replies require matching live intent and serialize transactionally"}}
@@ -1960,7 +1960,7 @@ references:
             howl: *iterm2_window_query_howl
           - {id: iterm2.window.report_pixels, raw: "CSI 14 t", effect: report window pixel size, relevance: query,
             conditions: iTerm2 reports host window pixels while Howl reports host-supplied cell pixels times the grid,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: iterm2.window.report_cells, raw: "CSI 18 t", effect: report terminal cell dimensions, relevance: query,
@@ -1981,17 +1981,17 @@ references:
             howl: *iterm2_window_query_howl
           - {id: iterm2.window.report_window_title, raw: "CSI 21 t", effect: report window title, relevance: query,
             conditions: iTerm2 gates and sanitizes the host window title while Howl reports its bounded child title,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: appendWindowTitleReport, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: appendWindowTitleReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "title stack retains exact bounded title lifecycle and report bytes"}}}
           - {id: iterm2.window.push_title, raw: "CSI 22 ; [Ps] t", effect: push title stack, relevance: host metadata,
             conditions: iTerm2 owns separate unbounded title and icon stacks and also retains absent titles,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "title stack retains exact bounded title lifecycle and report bytes"}}}
           - {id: iterm2.window.pop_title, raw: "CSI 23 ; [Ps] t", effect: pop title stack, relevance: host metadata,
             conditions: iTerm2 owns separate unbounded title and icon stacks,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "title stack retains exact bounded title lifecycle and report bytes"}}}
 
@@ -2332,7 +2332,7 @@ references:
               host policy, and Kitty neither reports nor saves this mode. Howl additionally cancels pending wrap at
               the mode boundary.
             relevance: input
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: Terminal.SurfacePublication, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: Terminal.SurfacePublication, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
       - source: vt-parser.c
@@ -2521,7 +2521,7 @@ references:
             conditions: >-
               Kitty rejects this request; Howl instead retains each complete nonnegative request in its bounded ordered
               host-intent FIFO, including zero and repeated values, without executing resize policy.
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "application resize requests retain exact ordered host intent"}}
           - id: kitty.csi.resize_cells_unsupported
@@ -2532,7 +2532,7 @@ references:
             conditions: >-
               Kitty rejects this request; Howl instead retains each complete nonnegative request in its bounded ordered
               host-intent FIFO, including zero and repeated values, without executing resize policy.
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "application resize requests retain exact ordered host intent"}}
           - {id: kitty.csi.restore_cursor, raw: "CSI u", effect: restore cursor,
@@ -2661,23 +2661,23 @@ references:
               symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           - {id: kitty.osc.notify_9, raw: "OSC 9 ; Pt (BEL|ST)", effect: display notification,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates parsing and presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
           - {id: kitty.osc.notify_99, raw: "OSC 99 ; Pt (BEL|ST)", effect: display notification,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates parsing and presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
           - {id: kitty.osc.notify_777, raw: "OSC 777 ; Pt (BEL|ST)", effect: display notification,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates parsing and presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
           - {id: kitty.osc.notify_1337, raw: "OSC 1337 ; Pt (BEL|ST)", effect: display notification,
             conditions: "Howl retains only Notification= payloads in an 8-entry ordered raw-byte FIFO and delegates
               parsing and presentation",
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
           - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
@@ -2697,7 +2697,7 @@ references:
           - {id: kitty.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
             conditions: "Howl retains stack and query syntax in an 8-entry ordered raw-byte FIFO but delegates
               validation presentation and replies",
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.retainPointerShape, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 22 retains ordered bounded host-neutral requests"}}}
           - id: kitty.osc.reset_fg
@@ -2747,7 +2747,7 @@ references:
           - {id: kitty.osc.clipboard, raw: "OSC 52 ; Pc ; Pd (BEL|ST)", effect: clipboard transfer,
             conditions: "Kitty chunks writes owns policy and fixes ESC framing; Howl retains an ordered bounded S7/S8
               FIFO",
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig,
               symbol: HostState.replyPendingClipboardQuery, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "OSC 52 retains ordered sets and queries until exact head consumption"}}}
           - id: kitty.osc.clipboard_5522
@@ -2758,13 +2758,13 @@ references:
               accepts BEL termination; MIME/base64 parsing, multi-packet transactions, permissions, and replies remain
               host-owned.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainKittyClipboard, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: HostState.retainKittyClipboard, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "Kitty OSC 5522 shares ordered clipboard admission without host policy"}}
           - {id: kitty.osc.text_size, raw: "OSC TEXT_SIZE_CODE ; Pt (BEL|ST)", effect: control text sizing,
-            relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-host, milestone: text_presentation}}
+            relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-window, milestone: text_presentation}}
           - {id: kitty.osc.drag_drop, raw: "OSC DND_CODE ; Pt (BEL|ST)", effect: drag and drop control,
-            relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-host, milestone: host_input}}
+            relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-window, milestone: host_input}}
           - id: kitty.osc.shell_mark
             raw: "OSC 133 ; mark [; metadata] (BEL|ST)"
             effect: update shell integration mark
@@ -2782,7 +2782,7 @@ references:
               transfer sessions, authorization, filesystem effects, replies, and Kitty's 4096-decoded-byte rule
               remain host-owned.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainFileTransfer, proof: {
+            howl: {support: partial, disposition: delegated, owner: howl-window, source: howl-vt/src/terminal.zig, symbol: HostState.retainFileTransfer, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "iTerm and Kitty file transfers retain one opaque ordered stream"}}
           - {id: kitty.osc.color_push, raw: "OSC 30001 (BEL|ST)", effect: sequential color-stack push,

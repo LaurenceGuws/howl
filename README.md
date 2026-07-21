@@ -14,8 +14,8 @@ The active projects are:
   acknowledgement.
 - `howl-render`: shared text, glyph-mask cache, and terminal-frame draw
   preparation.
-- `howl-host`: a native Wayland host with bounded terminal, layout, and text
-  owners.
+- `howl-window`: the native Wayland host with bounded tabs, panes, input,
+  shared text/GLES rendering, and terminal composition.
 
 The root package exports `howl_vt`, `howl_text`, `howl_frame`, `howl_render`,
 `howl_pty`, and `howl_control`. Native hosts and development proofs remain root
