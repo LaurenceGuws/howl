@@ -1,0 +1,46 @@
+marathon:
+  name: vt_sequences
+  status: parked
+  reason: >-
+    The protocol catalogue and planning remain valid, but broad coverage work is paused while sibling owners mature
+    enough to prove control and host-visible effects without duplicating them in VT tests or overstating VT-only proof.
+
+objective: >-
+  Close the non-graphics protocol catalogue with exact primary evidence, owned deterministic proof, and the additional
+  control or host proof required by each observable effect without lowering the Foot or TigerBeetle source bars.
+
+resume_requires:
+  - owner: howl-frame
+    capability: >-
+      publish one complete immutable terminal-local frame with exact generation, row geometry, cursor, presentation,
+      and cumulative damage
+  - owner: howl-control
+    capability: >-
+      publish and acknowledge terminal frames from the PTY/VT owner without blocking PTY progress when consumers lag
+  - owner: howl-text
+    capability: one direct reviewed shaping and rasterization owner suitable for deterministic frame resolution
+  - owner: howl-host
+    capability: >-
+      one shared renderer and texture cache across terminal instances for proving presentation consequences
+  - owner: howl-host
+    capability: >-
+      a Wayland window loop that exposes and acknowledges ordered host consequences without interpreting cells or writing PTY bytes
+  - owner: protocol_evidence
+    capability: distinguish VT, control/transport, and host-visible proof in catalogue records
+
+allowed_while_parked:
+  - isolated VT parser and state-machine correctness fixes
+  - catalogue evidence corrections that do not claim unproved capability
+
+proof:
+  vt: exact bytes produce exact state, reply, consequence, or rejection
+  control: terminal truth survives bounded PTY ownership and publication
+  host: the operator-visible consequence is rendered or handled exactly
+
+next_family: >-
+  Graphics begins after the operator and both agents agree the non-graphics foundation has no remaining preparation debt.
+
+completion:
+  - every indexed non-graphics record is full or has an explicit maintained disposition
+  - every full claim points at exact proof
+  - no host-visible capability is inferred from VT-only state
