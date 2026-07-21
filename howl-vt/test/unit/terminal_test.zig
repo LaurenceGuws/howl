@@ -640,3 +640,61 @@ test "terminal DECSTR resets mirrored modes across alternate-screen banks" {
     try std.testing.expect(!vt.screen_state.activeConst().left_right_margin_mode);
     try std.testing.expect(vt.screen_state.activeConst().cursor.visible);
 }
+
+test "terminal save reset and alternate lifecycle stays coherent across resize and bank changes" {
+    var vt = try Terminal.init(std.testing.allocator, 4, 8);
+    defer vt.deinit();
+
+    // Save a primary cursor at the old edge with rendition and charset facts
+    // that must survive an alternate-bank soft reset and a narrower resize.
+    try std.testing.expect((try vt.feed(
+        "PRIMARY\x1b[4;8H\x1b[1;3m\x1b)0\x0e\x1b[?5h\x1b[?1049h",
+    )).state_changed);
+    try std.testing.expect(vt.screen_state.alt_active);
+    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.alternate.cellAt(0, 0));
+
+    // DECSTR is active-bank-local for row state and terminal-global for the
+    // mirrored input, margin, and visibility facts owned by Terminal.
+    try std.testing.expect((try vt.feed(
+        "ALT\x1b[4h\x1b[?25l\x1b[?69h\x1b[2;5s\x1b[3;4H\x1b[!p",
+    )).state_changed);
+    try std.testing.expect(vt.screen_state.alt_active);
+    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 2), vt.screen_state.alternate.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), vt.screen_state.alternate.cursor.col);
+    try std.testing.expect(!vt.screen_state.primary.insert_mode);
+    try std.testing.expect(!vt.screen_state.alternate.insert_mode);
+    try std.testing.expect(!vt.screen_state.primary.left_right_margin_mode);
+    try std.testing.expect(!vt.screen_state.alternate.left_right_margin_mode);
+    try std.testing.expect(vt.screen_state.primary.cursor.visible);
+    try std.testing.expect(vt.screen_state.alternate.cursor.visible);
+    try std.testing.expect(!(try vt.feed("\x1b[!p")).state_changed);
+
+    try vt.resize(2, 4);
+    try std.testing.expect((try vt.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect(!vt.screen_state.alt_active);
+    try std.testing.expectEqual(@as(u16, 1), vt.screen_state.primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), vt.screen_state.primary.cursor.col);
+    try std.testing.expect(vt.screen_state.primary.current_attrs.bold);
+    try std.testing.expect(vt.screen_state.primary.current_attrs.italic);
+    try std.testing.expect(vt.modes.reverse_screen_mode);
+    try std.testing.expectEqual(@as(u8, 1), vt.gl_index);
+    try std.testing.expectEqual(@as(u8, '0'), vt.designations[1]);
+
+    // RIS resets the selected bank and all terminal-global save state without
+    // inventing an implicit screen switch or erasing the inactive bank.
+    try std.testing.expect((try vt.feed("\x1b[HKEEP\x1b[?47hALT2\x1b7\x1bc")).state_changed);
+    try std.testing.expect(vt.screen_state.alt_active);
+    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'K'), vt.screen_state.primary.cellAt(0, 0));
+    try std.testing.expect(!vt.modes.reverse_screen_mode);
+    try std.testing.expectEqual(@as(u8, 0), vt.gl_index);
+    try std.testing.expectEqual([_]u8{ 'B', 'B', 'B', 'B' }, vt.designations);
+
+    try std.testing.expect((try vt.feed("\x1b[?47l\x1b8")).state_changed);
+    try std.testing.expect(!vt.screen_state.alt_active);
+    try std.testing.expectEqual(@as(u16, 0), vt.screen_state.primary.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), vt.screen_state.primary.cursor.col);
+    try std.testing.expect(vt.screen_state.primary.current_attrs.bold);
+    try std.testing.expect(vt.screen_state.primary.current_attrs.italic);
+}
