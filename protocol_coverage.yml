@@ -17,6 +17,9 @@ classifications:
   cursor_policy_difference: &howl_cursor_policy_difference >-
     Howl keeps one coherent cursor, origin, margin, and logical-row policy; exact parity with a pinned reference's
     conflicting directional or margin policy is outside the complete Howl family.
+  structural_policy_difference: &howl_structural_policy_difference >-
+    Howl edits its bounded cell, row-geometry, continuation, history, and damage model exactly; reference-only
+    multicell, selection, callback, or external-attribute consequences are outside the complete Howl family.
   missing_deferred_graphics: &howl_missing_deferred_graphics {
     support: missing, disposition: deferred, owner: howl-vt, milestone: graphics}
   missing_excluded_iterm: &howl_missing_excluded_iterm {
@@ -257,8 +260,10 @@ references:
         bounds: one leader and one intermediate byte
         records:
           - {id: libvterm.csi.ich, raw: "CSI [Ps=1] @", effect: insert characters,
-            conditions: logical row width and wide-row state, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: logical row width and wide-row state, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.insertChars, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: structural edits retain logical width row geometry and exact mutation"}}}
           - {id: libvterm.csi.cuu, raw: "CSI [Ps=1] A", effect: cursor up,
             conditions: libvterm constrains margins only in origin mode, howl: {support: partial,
               disposition: excluded, rationale: *howl_cursor_policy_difference,
@@ -328,20 +333,32 @@ references:
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
           - {id: libvterm.csi.il, raw: "CSI [Ps=1] L", effect: insert lines,
-            conditions: wide-row line information, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: wide-row line information, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.insertLines, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: structural edits retain logical width row geometry and exact mutation"}}}
           - {id: libvterm.csi.dl, raw: "CSI [Ps=1] M", effect: delete lines,
-            conditions: wide-row line information, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: wide-row line information, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.deleteLines, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: structural edits retain logical width row geometry and exact mutation"}}}
           - {id: libvterm.csi.dch, raw: "CSI [Ps=1] P", effect: delete characters,
-            conditions: logical row width and wide-row state, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+            conditions: logical row width and wide-row state, howl: {support: full,
+              source: howl-vt/src/terminal.zig, symbol: Screen.deleteChars, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: structural edits retain logical width row geometry and exact mutation"}}}
           - {id: libvterm.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: wide-row line information and callback consequences, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.scrollUpRegion, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: libvterm.csi.sd, raw: "CSI [Ps=1] T", effect: scroll down,
             conditions: wide-row line information and callback consequences, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.scrollDownRegion, proof: {
+                path: howl-vt/test/unit/screen_test.zig,
+                symbol: "screen: structural edits report wrap row and dirty mutation exactly"}}}
           - {id: libvterm.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters,
             conditions: logical row width, howl: {support: full,
               source: howl-vt/src/terminal.zig, symbol: eraseChars, proof: {
@@ -460,11 +477,13 @@ references:
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: libvterm.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns, howl: {support: partial,
+            disposition: excluded, rationale: *howl_structural_policy_difference,
             source: howl-vt/src/terminal.zig, symbol: Screen.insertColumns, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}},
             conditions: libvterm's callback path can repair multi-column glyph boundaries that Howl cannot yet produce}
           - {id: libvterm.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns, howl: {support: partial,
+            disposition: excluded, rationale: *howl_structural_policy_difference,
             source: howl-vt/src/terminal.zig, symbol: Screen.deleteColumns, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}},
@@ -1053,13 +1072,22 @@ references:
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: iterm2.csi.il, raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: multiline character and selection consequences, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.insertLines, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: iterm2.csi.dch, raw: "CSI [Ps=1] P", effect: delete characters,
             conditions: double-width and multicell boundary repair, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.deleteChars, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: iterm2.csi.dl, raw: "CSI [Ps=1] M", effect: delete lines,
             conditions: multiline character and selection consequences, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.deleteLines, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - id: iterm2.csi.window
             raw: "CSI Pm t"
             effect: dispatch window operation by first parameter
@@ -1093,10 +1121,16 @@ references:
                 symbol: "DEC cell dimension requests retain exact ordered host intent"}}
           - {id: iterm2.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: line-buffer history and selection consequences, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.scrollUpRegion, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: iterm2.csi.sd, raw: "CSI [Ps=1] T", effect: scroll down,
             conditions: selection consequences, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.scrollDownRegion, proof: {
+                path: howl-vt/test/unit/screen_test.zig,
+                symbol: "screen: structural edits report wrap row and dirty mutation exactly"}}}
           - {id: iterm2.csi.cbt, raw: "CSI [Ps=1] Z", effect: backward tabs, howl: {support: full,
             source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
@@ -1125,6 +1159,7 @@ references:
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
           - {id: iterm2.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters,
             conditions: double-width rows and ISO protected-mode erase, howl: {support: partial,
+              disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: eraseChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
@@ -1212,12 +1247,14 @@ references:
               symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
           - {id: iterm2.csi.decic, raw: "CSI [Ps=1] ' }", effect: insert columns,
             conditions: iTerm2 repairs double-width cells and external attributes that Howl cannot yet produce,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Screen.insertColumns, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.insertColumns, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
           - {id: iterm2.csi.decdc, raw: "CSI [Ps=1] ' ~", effect: delete columns,
             conditions: iTerm2 repairs double-width cells and external attributes that Howl cannot yet produce,
-            howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: Screen.deleteColumns, proof: {
+            howl: {support: partial, disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.deleteColumns, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC column edits require cursor regions and retain exact bounded mutation"}}}
           - id: iterm2.csi.xtpushcolors
@@ -2425,7 +2462,10 @@ references:
         records:
           - {id: kitty.csi.ich, raw: "CSI [Ps=1] @", effect: insert characters,
             conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.insertChars, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: kitty.csi.rep, raw: "CSI [Ps=1] b", effect: repeat preceding character,
             conditions: Kitty repeats its last codepoint while Howl retains its bounded combining cluster,
             howl: {support: partial, source: howl-vt/src/terminal.zig, symbol: repeatPreceding, proof: {
@@ -2538,13 +2578,22 @@ references:
               symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
           - {id: kitty.csi.il, raw: "CSI [Ps=1] L", effect: insert lines,
             conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: deferred, owner: howl-vt, milestone: graphics,
+              source: howl-vt/src/terminal.zig, symbol: Screen.insertLines, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: kitty.csi.dl, raw: "CSI [Ps=1] M", effect: delete lines,
             conditions: Kitty shifts full rows and repairs multiline characters/graphics, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: deferred, owner: howl-vt, milestone: graphics,
+              source: howl-vt/src/terminal.zig, symbol: Screen.deleteLines, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: kitty.csi.dch, raw: "CSI [Ps=1] P", effect: delete characters,
             conditions: Kitty ignores horizontal margins and repairs multicell boundaries, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: excluded, rationale: *howl_structural_policy_difference,
+              source: howl-vt/src/terminal.zig, symbol: Screen.deleteChars, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: kitty.csi.push_colors, raw: "CSI [Ps=0] # P", effect: push color stack, conditions: ten slots,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: pushState, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
@@ -2563,6 +2612,7 @@ references:
               symbol: "terminal: tab controls share exact stored-stop and clamping behavior", line: 74}}}
           - {id: kitty.csi.ech, raw: "CSI [Ps=1] X", effect: erase characters,
             conditions: multicell boundary repair, howl: {support: partial,
+              disposition: excluded, rationale: *howl_structural_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: eraseChars, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: erase families retain exact ranges protection geometry and mutation"}}}
@@ -2713,10 +2763,16 @@ references:
             howl: {support: partial, residual: Howl reports its own terminal identity rather than Kitty identity.}}
           - {id: kitty.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: Kitty shifts full rows plus graphics and history references, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: deferred, owner: howl-vt, milestone: graphics,
+              source: howl-vt/src/terminal.zig, symbol: Screen.scrollUpRegion, proof: {
+                path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: CSI grid edits clamp counts and preserve region boundaries"}}}
           - {id: kitty.csi.sd, raw: "CSI [Ps=1] T", effect: scroll down,
             conditions: Kitty shifts full rows plus graphics references, howl: {support: partial,
-              source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
+              disposition: deferred, owner: howl-vt, milestone: graphics,
+              source: howl-vt/src/terminal.zig, symbol: Screen.scrollDownRegion, proof: {
+                path: howl-vt/test/unit/screen_test.zig,
+                symbol: "screen: structural edits report wrap row and dirty mutation exactly"}}}
           - {id: kitty.csi.scrollback_fill, raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
             conditions: Howl restores bounded primary text rows and retained cell/line facts but has no graphics plane,
             relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics, source: howl-vt/src/terminal.zig,

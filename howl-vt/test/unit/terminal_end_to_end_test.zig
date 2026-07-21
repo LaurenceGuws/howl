@@ -1548,6 +1548,48 @@ test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
     }
 }
 
+test "terminal: structural edits retain logical width row geometry and exact mutation" {
+    const allocator = std.testing.allocator;
+
+    {
+        var terminal = try Terminal.init(allocator, 2, 8);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed("\x1b[1;1HABCD\x1b[1;1H\x1b#6\x1b[1;2H\x1b[@")).state_changed);
+        const screen = terminal.screen_state.active();
+        try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(0));
+        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(0, 3));
+        try std.testing.expect((try terminal.feed("\x1b[999999P")).state_changed);
+        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+        for (1..8) |col| try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, @intCast(col)));
+        screen.clearDirtyRows();
+        try std.testing.expect(!(try terminal.feed("\x1b[999999P")).state_changed);
+        try std.testing.expect(screen.peekDirtyRows() == null);
+    }
+
+    {
+        var terminal = try Terminal.init(allocator, 4, 8);
+        defer terminal.deinit();
+        try std.testing.expect((try terminal.feed(
+            "\x1b[1;1HAAAAAAAA\x1b[2;1HBBBB\x1b[2;1H\x1b#6" ++
+                "\x1b[3;1HCCCCCCCC\x1b[4;1HDDDDDDDD\x1b[2;4r\x1b[2;1H\x1b[L",
+        )).state_changed);
+        const screen = terminal.screen_state.active();
+        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(1));
+        try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(2));
+        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(3));
+        try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[M")).state_changed);
+        try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(1));
+        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(2));
+        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(3));
+        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 0));
+        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 0));
+    }
+}
+
 test "terminal: DEC column edits require cursor regions and retain exact bounded mutation" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();

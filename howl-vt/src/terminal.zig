@@ -1176,7 +1176,6 @@ pub const Screen = struct {
             .write_text, .write_codepoint, .sgr => self.applyRetainedState(event),
             .line_feed,
             .next_line,
-            .reverse_index,
             .carriage_return,
             .backspace,
             .horizontal_tab,
@@ -1200,15 +1199,7 @@ pub const Screen = struct {
             .attr_change_extent_rect,
             .left_right_margin_mode,
             => self.applyScreenState(event),
-            .insert_lines,
-            .delete_lines,
-            .insert_chars,
-            .delete_chars,
-            .scroll_up_lines,
-            .scroll_down_lines,
-            .scroll_down_from_history,
-            .hard_reset,
-            => self.applyLineEdit(event),
+            .hard_reset => self.applyLineEdit(event),
             .rect_fill, .rect_copy, .rect_attrs_change => self.applyRectEdit(event),
             else => unreachable,
         }
@@ -1273,7 +1264,6 @@ pub const Screen = struct {
                 self.cursor.setColByClient(0);
                 self.lineFeed();
             },
-            .reverse_index => self.reverseIndex(),
             .carriage_return => self.cursor.setColByClient(0),
             .backspace => self.applyBackspace(false),
             .horizontal_tab => self.horizontalTabForward(1),
@@ -1362,34 +1352,6 @@ pub const Screen = struct {
 
     fn applyLineEdit(self: *Screen, event: SemanticEvent) void {
         switch (event) {
-            .insert_lines => |count| {
-                self.wrap_pending = false;
-                self.insertLines(count);
-            },
-            .delete_lines => |count| {
-                self.wrap_pending = false;
-                self.deleteLines(count);
-            },
-            .insert_chars => |count| {
-                self.wrap_pending = false;
-                self.insertChars(count);
-            },
-            .delete_chars => |count| {
-                self.wrap_pending = false;
-                self.deleteChars(count);
-            },
-            .scroll_up_lines => |count| {
-                self.wrap_pending = false;
-                self.scrollUpRegion(self.scroll_top, self.scrollBottom(), count);
-            },
-            .scroll_down_lines => |count| {
-                self.wrap_pending = false;
-                self.scrollDownRegion(self.scroll_top, self.scrollBottom(), count);
-            },
-            .scroll_down_from_history => |count| {
-                self.wrap_pending = false;
-                self.scrollDownFromHistory(count);
-            },
             .hard_reset => self.reset(),
             else => unreachable,
         }
@@ -1781,13 +1743,15 @@ pub const Screen = struct {
     }
 
     /// Insert at least one erase cell at the cursor within the right boundary.
-    pub fn insertChars(self: *Screen, count: u16) void {
-        if (self.rows == 0 or self.cols == 0) return;
-        if (self.cursor.col >= self.cols) return;
-        if (!self.cursorWithinHorizontalMargins()) return;
+    /// Returns exact cell, continuation, or pending-wrap mutation.
+    pub fn insertChars(self: *Screen, count: u16) bool {
+        const changed = self.cancelPendingWrap();
+        if (self.rows == 0 or self.cols == 0) return changed;
+        if (self.cursor.col >= self.cols) return changed;
+        if (!self.cursorWithinHorizontalMargins()) return changed;
 
         const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
-        const row = self.rowCells(self.cursor.row) orelse return;
+        const row = self.rowCells(self.cursor.row) orelse return changed;
         const src_col = screenColCount(self.cursor.col);
         const dst_col = src_col + screenColCount(amount);
         const move_len = screenColCount(self.rightBoundary() + 1) - dst_col;
@@ -1799,7 +1763,14 @@ pub const Screen = struct {
         std.debug.assert(dst_col + move_len <= row.len);
         std.debug.assert(src_col + screenColCount(amount) <= row.len);
 
-        self.markDirtyCols(self.cursor.row, self.cursor.col, self.rightBoundary());
+        const erase = self.eraseCell();
+        var cells_changed = false;
+        var col = src_col;
+        const end = screenColCount(self.rightBoundary() + 1);
+        while (col < end) : (col += 1) {
+            const replacement = if (col < dst_col) erase else row[@intCast(col - screenColCount(amount))];
+            if (!std.meta.eql(row[@intCast(col)], replacement)) cells_changed = true;
+        }
         if (move_len > 0) {
             std.mem.copyBackwards(
                 Cell,
@@ -1807,18 +1778,22 @@ pub const Screen = struct {
                 row[@intCast(src_col)..@intCast(src_col + move_len)],
             );
         }
-        @memset(row[@intCast(src_col)..@intCast(src_col + screenColCount(amount))], self.eraseCell());
-        self.setRowWrapped(self.cursor.row, false);
+        @memset(row[@intCast(src_col)..@intCast(src_col + screenColCount(amount))], erase);
+        cells_changed = self.clearRowContinuation(self.cursor.row) or cells_changed;
+        if (cells_changed) self.markDirtyCols(self.cursor.row, self.cursor.col, self.rightBoundary());
+        return cells_changed or changed;
     }
 
     /// Delete at least one cell at the cursor within the right boundary.
-    pub fn deleteChars(self: *Screen, count: u16) void {
-        if (self.rows == 0 or self.cols == 0) return;
-        if (self.cursor.col >= self.cols) return;
-        if (!self.cursorWithinHorizontalMargins()) return;
+    /// Returns exact cell, continuation, or pending-wrap mutation.
+    pub fn deleteChars(self: *Screen, count: u16) bool {
+        const changed = self.cancelPendingWrap();
+        if (self.rows == 0 or self.cols == 0) return changed;
+        if (self.cursor.col >= self.cols) return changed;
+        if (!self.cursorWithinHorizontalMargins()) return changed;
 
         const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
-        const row = self.rowCells(self.cursor.row) orelse return;
+        const row = self.rowCells(self.cursor.row) orelse return changed;
         const dst_col = screenColCount(self.cursor.col);
         const src_col = @min(dst_col + screenColCount(amount), screenColCount(self.rightBoundary() + 1));
         const move_len = screenColCount(self.rightBoundary() + 1) - src_col;
@@ -1833,7 +1808,13 @@ pub const Screen = struct {
         std.debug.assert(tail_start <= tail_end);
         std.debug.assert(tail_end <= row.len);
 
-        self.markDirtyCols(self.cursor.row, self.cursor.col, self.rightBoundary());
+        const erase = self.eraseCell();
+        var cells_changed = false;
+        var col = dst_col;
+        while (col < tail_end) : (col += 1) {
+            const replacement = if (col < tail_start) row[@intCast(col + screenColCount(amount))] else erase;
+            if (!std.meta.eql(row[@intCast(col)], replacement)) cells_changed = true;
+        }
         if (move_len > 0) {
             std.mem.copyForwards(
                 Cell,
@@ -1841,8 +1822,10 @@ pub const Screen = struct {
                 row[@intCast(src_col)..@intCast(src_col + move_len)],
             );
         }
-        @memset(row[@intCast(tail_start)..@intCast(tail_end)], self.eraseCell());
-        self.setRowWrapped(self.cursor.row, false);
+        @memset(row[@intCast(tail_start)..@intCast(tail_end)], erase);
+        cells_changed = self.clearRowContinuation(self.cursor.row) or cells_changed;
+        if (cells_changed) self.markDirtyCols(self.cursor.row, self.cursor.col, self.rightBoundary());
+        return cells_changed or changed;
     }
 
     fn insertColumnsInRow(self: *Screen, row: u16, count: u16) bool {
@@ -2050,7 +2033,10 @@ pub const Screen = struct {
                 self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
             }
         }
-        if (self.insert_mode) self.insertChars(1);
+        if (self.insert_mode) {
+            const inserted = self.insertChars(1);
+            std.debug.assert(inserted or !self.wrap_pending);
+        }
         if (self.cells) |cells| {
             const start = self.rowStart(self.cursor.row);
             self.markDirtyCols(self.cursor.row, self.cursor.col, self.cursor.col);
@@ -2278,20 +2264,22 @@ pub const Screen = struct {
             return;
         }
         if (self.cursor.row == bottom) {
-            self.scrollUpRegion(self.scroll_top, bottom, 1);
+            std.debug.assert(self.scrollUpRegion(self.scroll_top, bottom, 1));
             return;
         }
         if (self.cursor.row < self.rows - 1) self.setCursorRowClamped(self.cursor.row + 1);
     }
 
     /// Move upward, scrolling the active region downward at its top edge.
-    fn reverseIndex(self: *Screen) void {
-        if (self.rows == 0) return;
+    fn reverseIndex(self: *Screen) bool {
+        const changed = self.cancelPendingWrap();
+        if (self.rows == 0) return changed;
         if (self.cursor.row == self.scroll_top) {
-            self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1);
-        } else {
-            self.setCursorRowClamped(self.cursor.row -| 1);
+            return self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1) or changed;
         }
+        const row = self.cursor.row;
+        self.setCursorRowClamped(row -| 1);
+        return self.cursor.row != row or changed;
     }
 
     // DECFI advances within the cursor's horizontal region and shifts its active rows at the edge.
@@ -2419,20 +2407,28 @@ pub const Screen = struct {
         return changed;
     }
 
-    /// Insert lines at the cursor within the active vertical scroll region.
-    fn insertLines(self: *Screen, count: u16) void {
+    /// Insert at least one line at an admitted cursor inside both active regions.
+    ///
+    /// Counts clamp to the remaining region. An outside cursor changes only a
+    /// pending-wrap fact; the result reports exact row or wrap mutation.
+    pub fn insertLines(self: *Screen, count: u16) bool {
+        const changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
-        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return;
-        if (!self.cursorWithinHorizontalMargins()) return;
-        self.scrollDownRegion(self.cursor.row, bottom, count);
+        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return changed;
+        if (!self.cursorWithinHorizontalMargins()) return changed;
+        return self.scrollDownRegion(self.cursor.row, bottom, @max(count, 1)) or changed;
     }
 
-    /// Delete lines at the cursor within the active vertical scroll region.
-    fn deleteLines(self: *Screen, count: u16) void {
+    /// Delete at least one line at an admitted cursor inside both active regions.
+    ///
+    /// Counts clamp to the remaining region. An outside cursor changes only a
+    /// pending-wrap fact; the result reports exact row or wrap mutation.
+    pub fn deleteLines(self: *Screen, count: u16) bool {
+        const changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
-        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return;
-        if (!self.cursorWithinHorizontalMargins()) return;
-        self.scrollUpRegion(self.cursor.row, bottom, count);
+        if (self.cursor.row < self.scroll_top or self.cursor.row > bottom) return changed;
+        if (!self.cursorWithinHorizontalMargins()) return changed;
+        return self.scrollUpRegion(self.cursor.row, bottom, @max(count, 1)) or changed;
     }
 
     fn cursorWithinHorizontalMargins(self: *const Screen) bool {
@@ -2440,62 +2436,62 @@ pub const Screen = struct {
         return self.cursor.col >= self.left_margin and self.cursor.col <= self.right_margin;
     }
 
-    /// Scroll an ordered, clamped region upward by at most its row count.
-    fn scrollUpRegion(self: *Screen, top: u16, bottom: u16, count: u16) void {
-        if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return;
+    /// Scroll an ordered region upward by at most its bounded row count.
+    /// Returns exact cell, row-fact, history, damage, or pending-wrap mutation.
+    pub fn scrollUpRegion(self: *Screen, top: u16, bottom: u16, count: u16) bool {
+        var changed = self.cancelPendingWrap();
+        if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return changed;
         const bounded_bottom = @min(bottom, self.rows - 1);
         const region_len: u16 = bounded_bottom - top + 1;
         const amount = @min(count, region_len);
-        if (amount == 0) return;
+        if (amount == 0) return changed;
 
         if (top == 0 and bounded_bottom == self.rows - 1) {
             var remaining = amount;
             while (remaining > 0) : (remaining -= 1) self.scrollUp();
-            return;
+            return true;
         }
 
-        self.markDirtyRows(top, bounded_bottom);
         const left = if (self.left_right_margin_mode) self.left_margin else 0;
         const right = if (self.left_right_margin_mode) self.right_margin else self.cols -| 1;
 
         var dst = top;
         while (dst + amount <= bounded_bottom) : (dst += 1) {
-            self.copyRowRange(dst, dst + amount, left, right + 1);
+            changed = self.copyRowRange(dst, dst + amount, left, right + 1) or changed;
         }
 
         var clear_row = bounded_bottom - amount + 1;
         while (clear_row <= bounded_bottom) : (clear_row += 1) {
-            self.clearRowRange(clear_row, left, right + 1);
-            self.setRowWrapped(clear_row, false);
-            if (left == 0 and right + 1 == self.cols) self.resetLineGeometry(clear_row);
+            changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
         }
+        return changed;
     }
 
-    /// Scroll an ordered, clamped region downward by at most its row count.
-    fn scrollDownRegion(self: *Screen, top: u16, bottom: u16, count: u16) void {
-        if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return;
+    /// Scroll an ordered region downward by at most its bounded row count.
+    /// Returns exact cell, row-fact, damage, or pending-wrap mutation.
+    pub fn scrollDownRegion(self: *Screen, top: u16, bottom: u16, count: u16) bool {
+        var changed = self.cancelPendingWrap();
+        if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return changed;
         const bounded_bottom = @min(bottom, self.rows - 1);
         const region_len: u16 = bounded_bottom - top + 1;
         const amount = @min(count, region_len);
-        if (amount == 0) return;
+        if (amount == 0) return changed;
 
-        self.markDirtyRows(top, bounded_bottom);
         const left = if (self.left_right_margin_mode) self.left_margin else 0;
         const right = if (self.left_right_margin_mode) self.right_margin else self.cols -| 1;
 
         var dst = bounded_bottom;
         while (dst >= top + amount) {
-            self.copyRowRange(dst, dst - amount, left, right + 1);
+            changed = self.copyRowRange(dst, dst - amount, left, right + 1) or changed;
             if (dst == top + amount) break;
             dst -= 1;
         }
 
         var clear_row = top;
         while (clear_row < top + amount) : (clear_row += 1) {
-            self.clearRowRange(clear_row, left, right + 1);
-            self.setRowWrapped(clear_row, false);
-            if (left == 0 and right + 1 == self.cols) self.resetLineGeometry(clear_row);
+            changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
         }
+        return changed;
     }
 
     // Removes the newest projected history row and its matching logical authority.
@@ -2545,14 +2541,15 @@ pub const Screen = struct {
     }
 
     /// Reverse-scroll and restore newest primary scrollback rows when available.
-    fn scrollDownFromHistory(self: *Screen, count: u16) void {
-        if (self.rows == 0 or self.cols == 0 or count == 0) return;
+    fn scrollDownFromHistory(self: *Screen, count: u16) bool {
+        var changed = self.cancelPendingWrap();
+        if (self.rows == 0 or self.cols == 0 or count == 0) return changed;
         const limit = @max(@as(u32, self.rows), self.history_count);
         var remaining: u32 = @min(@as(u32, count), limit);
         while (remaining > 0) : (remaining -= 1) {
             const history_slot = self.historySlotForRecency(0);
             const history_flags = if (history_slot) |slot| self.history_flags.?[@intCast(slot)] else 0;
-            self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1);
+            changed = self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1) or changed;
             if (history_slot) |slot| {
                 const history = self.history.?;
                 const source = slot * @as(u32, self.cols);
@@ -2564,8 +2561,10 @@ pub const Screen = struct {
                 self.row_flags.?[@intCast(self.rowWrapIndex(self.scroll_top).?)] = history_flags;
                 self.markDirtyRow(self.scroll_top);
                 self.consumeNewestHistoryRow();
+                changed = true;
             }
         }
+        return changed;
     }
 
     fn rowStart(self: *const Screen, logical_row: u16) u32 {
@@ -2747,6 +2746,28 @@ pub const Screen = struct {
         );
     }
 
+    // Clear one structural-edit range and its row facts, reporting only observable mutation.
+    fn clearStructuralRowRange(self: *Screen, row: u16, start_col: u16, end_col_exclusive: u16) bool {
+        const cells = self.cells orelse return false;
+        const start = self.rowStart(row);
+        const erase = self.eraseCell();
+        var changed = false;
+        var col = start_col;
+        while (col < end_col_exclusive) : (col += 1) {
+            const cell = &cells[@intCast(start + @as(u32, col))];
+            if (std.meta.eql(cell.*, erase)) continue;
+            cell.* = erase;
+            changed = true;
+        }
+        changed = self.clearRowContinuation(row) or changed;
+        if (start_col == 0 and end_col_exclusive == self.cols and self.lineGeometry(row) != .single_width) {
+            self.resetLineGeometry(row);
+            changed = true;
+        }
+        if (changed) self.markDirtyCols(row, start_col, end_col_exclusive - 1);
+        return changed;
+    }
+
     // Erases one bounded row range and reports exact cell mutation.
     fn eraseRowRange(
         self: *Screen,
@@ -2819,34 +2840,37 @@ pub const Screen = struct {
         self.resetLineGeometry(row);
     }
 
-    fn copyRow(self: *Screen, dst_row: u16, src_row: u16) void {
-        const c = self.cells orelse return;
-        const row_len = @as(u32, self.cols);
-        const dst_start = self.rowStart(dst_row);
-        const src_start = self.rowStart(src_row);
-        std.mem.copyForwards(
-            Cell,
-            c[@intCast(dst_start)..@intCast(dst_start + row_len)],
-            c[@intCast(src_start)..@intCast(src_start + row_len)],
-        );
-        self.copyRowFlags(dst_row, src_row);
-    }
-
-    fn copyRowRange(self: *Screen, dst_row: u16, src_row: u16, start_col: u16, end_col_exclusive: u16) void {
-        const c = self.cells orelse return;
+    fn copyRowRange(self: *Screen, dst_row: u16, src_row: u16, start_col: u16, end_col_exclusive: u16) bool {
+        const c = self.cells orelse return false;
         const dst_start = self.rowStart(dst_row);
         const src_start = self.rowStart(src_row);
         const start_col32 = @as(u32, start_col);
         const end_col32 = @as(u32, end_col_exclusive);
+        const dst = c[@intCast(dst_start + start_col32)..@intCast(dst_start + end_col32)];
+        const src = c[@intCast(src_start + start_col32)..@intCast(src_start + end_col32)];
+        var changed = false;
+        for (dst, src) |dst_cell, src_cell| {
+            if (!std.meta.eql(dst_cell, src_cell)) changed = true;
+        }
         std.mem.copyForwards(
             Cell,
-            c[@intCast(dst_start + start_col32)..@intCast(dst_start + end_col32)],
-            c[@intCast(src_start + start_col32)..@intCast(src_start + end_col32)],
+            dst,
+            src,
         );
-        if (start_col == 0 and end_col_exclusive == self.cols)
-            self.copyRowFlags(dst_row, src_row)
-        else
-            self.setRowWrapped(dst_row, false);
+        if (start_col == 0 and end_col_exclusive == self.cols) {
+            changed = self.rowFlagsValue(dst_row) != self.rowFlagsValue(src_row) or changed;
+            self.copyRowFlags(dst_row, src_row);
+        } else {
+            changed = self.clearRowContinuation(dst_row) or changed;
+        }
+        if (changed) self.markDirtyCols(dst_row, start_col, end_col_exclusive - 1);
+        return changed;
+    }
+
+    fn rowFlagsValue(self: *const Screen, row: u16) u8 {
+        const flags = self.row_flags orelse return 0;
+        const idx = self.rowWrapIndex(row) orelse return 0;
+        return flags[@intCast(idx)];
     }
 
     fn copyRowFlags(self: *Screen, dst_row: u16, src_row: u16) void {
@@ -11842,10 +11866,24 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .delete_columns => |count| {
             return vt.screen_state.active().deleteColumns(count);
         },
+        .insert_chars => |count| return vt.screen_state.active().insertChars(count),
+        .delete_chars => |count| return vt.screen_state.active().deleteChars(count),
+        .insert_lines => |count| return vt.screen_state.active().insertLines(count),
+        .delete_lines => |count| return vt.screen_state.active().deleteLines(count),
+        .scroll_up_lines => |count| {
+            const screen = vt.screen_state.active();
+            return screen.scrollUpRegion(screen.scroll_top, screen.scrollBottom(), count);
+        },
+        .scroll_down_lines => |count| {
+            const screen = vt.screen_state.active();
+            return screen.scrollDownRegion(screen.scroll_top, screen.scrollBottom(), count);
+        },
         .forward_index => return vt.screen_state.active().forwardIndex(),
         .back_index => return vt.screen_state.active().backIndex(),
         .shift_left_columns => |count| return vt.screen_state.active().shiftColumnsLeft(count),
         .shift_right_columns => |count| return vt.screen_state.active().shiftColumnsRight(count),
+        .reverse_index => return vt.screen_state.active().reverseIndex(),
+        .scroll_down_from_history => |count| return vt.screen_state.active().scrollDownFromHistory(count),
         .cursor_up,
         .cursor_down,
         .cursor_forward,
@@ -11867,7 +11905,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
 
         .write_text,
         .write_codepoint,
-        .reverse_index,
         .carriage_return,
         .horizontal_tab_forward,
         .horizontal_tab_back,
@@ -11877,13 +11914,6 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .cursor_color,
         .cursor_text_color,
         .insert_mode,
-        .insert_lines,
-        .delete_lines,
-        .insert_chars,
-        .delete_chars,
-        .scroll_up_lines,
-        .scroll_down_lines,
-        .scroll_down_from_history,
         .rect_fill,
         .rect_copy,
         .rect_attrs_change,

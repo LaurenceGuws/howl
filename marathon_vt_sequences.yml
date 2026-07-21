@@ -57,10 +57,16 @@ categories:
       active partial howl-vt obligations from 267 to 228.
 
   - id: structural_edits_scrolling
-    status: queued
+    status: accepted
     owner: howl-vt
     mechanism: Screen row/column edits, scrolling, history, dirty bounds, protection, and line geometry
     gate: exact region, history, geometry, protection, overlap, and failure-atomic behavior
+    result: >-
+      ICH, DCH, IL, DL, SU, and SD now bypass the void Screen facade and publish exact cell, row-fact, history,
+      damage, continuation, and pending-wrap mutation. Existing bounded region, logical-width, geometry, history,
+      and column-edit proofs plus one adversarial blank-grid proof close 23 active records: four libvterm matches became
+      full, 15 unrepresentable reference policies became deliberate exclusions, and four Kitty graphics consequences
+      remain explicitly deferred. Active partial howl-vt obligations fell from 228 to 205.
 
   - id: rendition_color_protection_rectangles
     status: queued

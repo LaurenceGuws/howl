@@ -5,6 +5,7 @@ const erase = @import("../../src/terminal.zig");
 const parser_mod = @import("../../src/parser.zig");
 
 const Screen = screen_mod.Screen;
+const Terminal = screen_mod.Terminal;
 const Grid = Screen;
 const EraseMode = erase.ScreenEraseMode;
 const SemanticEvent = semantic_event.SemanticEvent;
@@ -187,7 +188,7 @@ test "screen: DECSTBM and IL shift rows down inside region" {
 
     try std.testing.expect(s.setScrollRegion(1, 3));
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
-    apply(&s, SemanticEvent{ .insert_lines = 1 });
+    try std.testing.expect(s.insertLines(1));
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(1, 0));
@@ -211,7 +212,7 @@ test "screen: DECSTBM and DL shift rows up inside region" {
 
     try std.testing.expect(s.setScrollRegion(1, 3));
     apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
-    apply(&s, SemanticEvent{ .delete_lines = 1 });
+    try std.testing.expect(s.deleteLines(1));
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'C'), s.cellAt(1, 0));
@@ -230,7 +231,7 @@ test "screen: DCH deletes chars and clears tail" {
     apply(&s, SemanticEvent.backspace);
     apply(&s, SemanticEvent.backspace);
     apply(&s, SemanticEvent.backspace);
-    apply(&s, SemanticEvent{ .delete_chars = 3 });
+    try std.testing.expect(s.deleteChars(3));
     apply(&s, SemanticEvent{ .write_text = "ll" });
 
     try std.testing.expectEqual(@as(u21, 'l'), s.cellAt(0, 0));
@@ -248,7 +249,7 @@ test "screen: ICH inserts blanks and shifts suffix right" {
     apply(&s, SemanticEvent{ .write_text = "abcdef" });
     s.cursor.setColByClient(2);
     s.current_attrs.bg = Grid.Color.rgbComponents(40, 44, 52);
-    apply(&s, SemanticEvent{ .insert_chars = 2 });
+    try std.testing.expect(s.insertChars(2));
 
     try std.testing.expectEqual(@as(u21, 'a'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), s.cellAt(0, 1));
@@ -270,13 +271,13 @@ test "screen: zero-count character edits default to one cell" {
 
     screen.writeText("abcd");
     screen.cursor.setColByClient(1);
-    screen.insertChars(0);
+    try std.testing.expect(screen.insertChars(0));
     try std.testing.expectEqual(@as(u21, 'a'), screen.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
     try std.testing.expectEqual(@as(u21, 'b'), screen.cellAt(0, 2));
     try std.testing.expectEqual(@as(u21, 'c'), screen.cellAt(0, 3));
 
-    screen.deleteChars(0);
+    try std.testing.expect(screen.deleteChars(0));
     try std.testing.expectEqual(@as(u21, 'a'), screen.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), screen.cellAt(0, 1));
     try std.testing.expectEqual(@as(u21, 'c'), screen.cellAt(0, 2));
@@ -285,23 +286,17 @@ test "screen: zero-count character edits default to one cell" {
 
 test "screen: RI scrolls region down at top margin" {
     const gpa = std.testing.allocator;
-    var s = try Grid.initWithCells(gpa, 3, 4);
-    defer s.deinit(gpa);
+    var terminal = try Terminal.init(gpa, 3, 4);
+    defer terminal.deinit();
 
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 0, .col = 0 } });
-    apply(&s, SemanticEvent{ .write_text = "AAAA" });
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
-    apply(&s, SemanticEvent{ .write_text = "BBBB" });
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 2, .col = 0 } });
-    apply(&s, SemanticEvent{ .write_text = "CCCC" });
+    try std.testing.expect((try terminal.feed(
+        "\x1b[1;1HAAAA\x1b[2;1HBBBB\x1b[3;1HCCCC\x1b[2;3r\x1b[2;1H\x1bM",
+    )).state_changed);
 
-    try std.testing.expect(s.setScrollRegion(1, 2));
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
-    apply(&s, SemanticEvent.reverse_index);
-
-    try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0), s.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 'B'), s.cellAt(2, 0));
+    const screen = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 0));
 }
 
 test "screen: erase_line uses current background for empty cells" {
@@ -673,7 +668,7 @@ test "screen: SU scrolls only within configured region" {
     apply(&s, SemanticEvent{ .write_text = "DDDD" });
 
     try std.testing.expect(s.setScrollRegion(1, 3));
-    apply(&s, SemanticEvent{ .scroll_up_lines = 1 });
+    try std.testing.expect(s.scrollUpRegion(s.scroll_top, s.scroll_bottom, 1));
 
     try std.testing.expectEqual(@as(u21, 'A'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'C'), s.cellAt(1, 0));
@@ -696,7 +691,7 @@ test "screen: vertical scrolling preserves columns outside horizontal margins" {
     apply(&screen, .{ .left_right_margin_mode = true });
     try std.testing.expect(screen.setLeftRightMargins(1, 3));
     try std.testing.expect(screen.setScrollRegion(1, 3));
-    apply(&screen, .{ .scroll_up_lines = 1 });
+    try std.testing.expect(screen.scrollUpRegion(screen.scroll_top, screen.scroll_bottom, 1));
 
     try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
     try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(1, 1));
@@ -710,4 +705,47 @@ test "screen: vertical scrolling preserves columns outside horizontal margins" {
     try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 1));
     try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 3));
     try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(3, 4));
+}
+
+test "screen: structural edits report wrap row and dirty mutation exactly" {
+    const allocator = std.testing.allocator;
+    var screen = try Grid.initWithCells(allocator, 3, 5);
+    defer screen.deinit(allocator);
+
+    screen.clearDirtyRows();
+    screen.wrap_pending = true;
+    try std.testing.expect(screen.insertChars(0));
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!screen.insertChars(999));
+    try std.testing.expect(screen.peekDirtyRows() == null);
+
+    screen.wrap_pending = true;
+    try std.testing.expect(screen.deleteChars(0));
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!screen.deleteChars(999));
+
+    screen.cursor.setPositionByClient(1, 0);
+    screen.wrap_pending = true;
+    try std.testing.expect(screen.insertLines(0));
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!screen.insertLines(999));
+
+    screen.wrap_pending = true;
+    try std.testing.expect(screen.deleteLines(0));
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!screen.deleteLines(999));
+
+    try std.testing.expect(screen.setScrollRegion(1, 2));
+    screen.clearDirtyRows();
+    screen.wrap_pending = true;
+    try std.testing.expect(screen.scrollUpRegion(1, 2, 0));
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expect(screen.peekDirtyRows() == null);
+    try std.testing.expect(!screen.scrollUpRegion(1, 2, 999));
+    try std.testing.expect(!screen.scrollDownRegion(1, 2, 999));
+    try std.testing.expect(screen.peekDirtyRows() == null);
 }
