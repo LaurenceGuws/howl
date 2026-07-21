@@ -28,10 +28,73 @@ pub fn add(
     addText(b, target, optimize, check, test_step);
     addFrame(b, frame, check, test_step);
     addRender(b, render, check, test_step);
+    addWindow(b, target, optimize, vt, text, frame, render, control, check, test_step);
     addPty(b, pty, check, test_step);
     addControl(b, target, optimize, control, check, test_step);
     addHost(b, target, optimize, vt, text, check, test_step);
     b.default_step = check;
+}
+
+fn addWindow(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    vt: *std.Build.Module,
+    text: *std.Build.Module,
+    frame: *std.Build.Module,
+    render: *std.Build.Module,
+    control: *std.Build.Module,
+    check: *std.Build.Step,
+    test_step: *std.Build.Step,
+) void {
+    const module = b.createModule(.{
+        .root_source_file = b.path("howl-window/src/window.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    addWindowImports(b, module, vt, text, frame, render, control);
+    const tests = addTest(b, "howl-window", module);
+    check.dependOn(&tests.step);
+    test_step.dependOn(&addTestRun(b, tests).step);
+
+    const executable_module = b.createModule(.{
+        .root_source_file = b.path("howl-window/src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    addWindowImports(b, executable_module, vt, text, frame, render, control);
+    const executable = b.addExecutable(.{ .name = "howl-window", .root_module = executable_module });
+    executable.use_llvm = true;
+    check.dependOn(&executable.step);
+    b.installArtifact(executable);
+    const run = b.addRunArtifact(executable);
+    if (b.args) |arguments| run.addArgs(arguments);
+    b.step("run:window", "Run the replacement Wayland window").dependOn(&run.step);
+}
+
+fn addWindowImports(
+    b: *std.Build,
+    module: *std.Build.Module,
+    vt: *std.Build.Module,
+    text: *std.Build.Module,
+    frame: *std.Build.Module,
+    render: *std.Build.Module,
+    control: *std.Build.Module,
+) void {
+    module.addImport("howl_vt", vt);
+    module.addImport("howl_text", text);
+    module.addImport("howl_frame", frame);
+    module.addImport("howl_render", render);
+    module.addImport("howl_control", control);
+    module.addIncludePath(b.path("howl-host/vendor/xdg-shell"));
+    module.addCSourceFile(.{
+        .file = b.path("howl-host/vendor/xdg-shell/xdg-shell-protocol.c"),
+        .flags = &.{"-std=c11"},
+    });
+    inline for (.{ "wayland-client", "wayland-egl", "EGL", "GLESv2", "xkbcommon" }) |library|
+        module.linkSystemLibrary(library, .{});
 }
 
 fn addRender(

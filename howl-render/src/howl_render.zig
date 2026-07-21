@@ -22,6 +22,7 @@ pub const Error = howl_text.ShapeError || howl_text.RasterError ||
     GlyphRunTooLarge,
     CacheFull,
     CacheGenerationExhausted,
+    MaskIdentityExhausted,
     MaskTooLarge,
 };
 
@@ -52,12 +53,49 @@ pub const Prepared = struct {
     cells: usize,
     /// Counts visible source clusters submitted to text shaping.
     clusters: usize,
+    /// Counts positioned glyph masks resolved for damaged clusters.
+    glyphs: usize,
+    /// Counts cells rendered as U+FFFD because no configured face covered them.
+    replacement_cells: usize,
     /// Counts glyph masks reused from the shared cache.
     cache_hits: usize,
     /// Counts glyph masks admitted to the shared cache.
     cache_misses: usize,
     /// Reports bytes retained by all cache entries after preparation.
     cache_bytes: usize,
+};
+
+/// Borrows one cache-resident alpha mask and its exact cell placement.
+pub const Glyph = struct {
+    /// Identifies this cache admission without reuse.
+    identity: u64,
+    /// Borrows tightly packed alpha bytes until the next preparation call.
+    pixels: []const u8,
+    /// Reports the mask width in pixels.
+    width: u16,
+    /// Reports the mask height in pixels.
+    height: u16,
+    /// Places the mask left edge relative to the shaped pen.
+    left: i16,
+    /// Places the mask top edge relative to the text baseline.
+    top: i16,
+    /// Applies the shaped horizontal offset in FreeType 26.6 units.
+    x_offset: i32,
+    /// Applies the shaped vertical offset in FreeType 26.6 units.
+    y_offset: i32,
+};
+
+/// Carries every positioned glyph emitted for one bounded terminal cell.
+pub const CellGlyphs = struct {
+    /// Stores only the first `count` initialized glyph placements.
+    values: [max_cell_codepoints]Glyph = undefined,
+    /// Bounds initialized placements to one base plus trailing cell scalars.
+    count: u8 = 0,
+
+    /// Borrows only initialized glyph facts.
+    pub fn slice(self: *const CellGlyphs) []const Glyph {
+        return self.values[0..self.count];
+    }
 };
 
 const max_cell_codepoints = howl_frame.max_combining + 1;
@@ -68,6 +106,7 @@ const Key = union(enum) {
 };
 
 const Entry = struct {
+    identity: u64,
     key: Key,
     pixels: []u8,
     width: u16,
@@ -81,19 +120,20 @@ const Cache = struct {
     entries: [cache_capacity]Entry = undefined,
     count: u16 = 0,
     bytes: usize = 0,
+    last_identity: u64 = 0,
 
     fn deinit(self: *Cache, allocator: std.mem.Allocator) void {
         for (self.entries[0..self.count]) |entry| allocator.free(entry.pixels);
         self.* = undefined;
     }
 
-    fn find(self: *Cache, key: Key, generation: u64) bool {
+    fn find(self: *Cache, key: Key, generation: u64) ?Entry {
         for (self.entries[0..self.count]) |*entry| {
             if (!std.meta.eql(entry.key, key)) continue;
             entry.last_used_generation = generation;
-            return true;
+            return entry.*;
         }
-        return false;
+        return null;
     }
 
     fn admit(
@@ -101,10 +141,12 @@ const Cache = struct {
         allocator: std.mem.Allocator,
         generation: u64,
         candidate: Candidate,
-    ) Error!void {
+    ) Error!Entry {
         // Rejection precedes mutation and leaves candidate pixels caller-owned;
         // success performs no allocation and transfers that exact slice.
         if (candidate.pixels.len > cache_byte_capacity) return error.MaskTooLarge;
+        if (self.last_identity == std.math.maxInt(u64))
+            return error.MaskIdentityExhausted;
         var reclaimable_entries: usize = 0;
         var reclaimable_bytes: usize = 0;
         for (self.entries[0..self.count]) |entry| {
@@ -126,7 +168,8 @@ const Cache = struct {
             self.remove(allocator, victim);
         }
         const index = self.count;
-        self.entries[index] = .{
+        const entry = Entry{
+            .identity = self.last_identity + 1,
             .key = candidate.key,
             .pixels = candidate.pixels,
             .width = candidate.width,
@@ -135,8 +178,11 @@ const Cache = struct {
             .top = candidate.top,
             .last_used_generation = generation,
         };
+        self.entries[index] = entry;
         self.count += 1;
         self.bytes += candidate.pixels.len;
+        self.last_identity = entry.identity;
+        return entry;
     }
 
     fn oldestBefore(self: *const Cache, generation: u64) ?u16 {
@@ -231,6 +277,8 @@ pub const Renderer = struct {
             .panes = @intCast(panes.len),
             .cells = 0,
             .clusters = 0,
+            .glyphs = 0,
+            .replacement_cells = 0,
             .cache_hits = 0,
             .cache_misses = 0,
             .cache_bytes = 0,
@@ -261,7 +309,12 @@ pub const Renderer = struct {
                 if (cell.x != 0 or cell.y != 0 or cell.codepoint == 0 or
                     cell.invisible) continue;
                 prepared.clusters += 1;
-                try self.resolveCell(cache_generation, cell, prepared);
+                const glyphs = try self.resolveCell(
+                    cache_generation,
+                    cell,
+                    prepared,
+                );
+                prepared.glyphs += glyphs.count;
             }
         }
     }
@@ -271,60 +324,92 @@ pub const Renderer = struct {
         cache_generation: u64,
         cell: howl_frame.Cell,
         prepared: *Prepared,
-    ) Error!void {
+    ) Error!CellGlyphs {
         var codepoints: [max_cell_codepoints]u32 = undefined;
         codepoints[0] = cell.codepoint;
         for (cell.combining[0..cell.combining_len], 0..) |value, index|
             codepoints[index + 1] = value;
-        const values = codepoints[0 .. cell.combining_len + 1];
+        var values = codepoints[0 .. cell.combining_len + 1];
         if (values.len == 1 and howl_text.classifyGenerated(cell.codepoint) != null) {
-            try self.resolveGenerated(
+            const glyph = try self.resolveGenerated(
                 cache_generation,
                 cell.codepoint,
                 cell.width,
                 prepared,
             );
-            return;
+            var result = CellGlyphs{};
+            result.values[0] = glyph;
+            result.count = 1;
+            return result;
         }
         const clusters = [_]u32{0} ** max_cell_codepoints;
-        var run = try self.fonts.shape(self.allocator, .{
+        var run = self.fonts.shape(self.allocator, .{
             .codepoints = values,
             .clusters = clusters[0..values.len],
             .cell_span = cell.width,
-        });
+        }) catch |failure| switch (failure) {
+            error.MissingGlyph => replacement: {
+                codepoints[0] = 0xfffd;
+                values = codepoints[0..1];
+                prepared.replacement_cells += 1;
+                break :replacement try self.fonts.shape(self.allocator, .{
+                    .codepoints = values,
+                    .clusters = clusters[0..1],
+                    .cell_span = cell.width,
+                });
+            },
+            else => return failure,
+        };
         defer run.deinit();
         if (run.glyphs.len > max_cell_codepoints) return error.GlyphRunTooLarge;
+        var result = CellGlyphs{};
+        var pen_x: i32 = 0;
+        var pen_y: i32 = 0;
         for (run.glyphs) |glyph| {
             const key = Key{ .native = .{
                 .face = run.face_index,
                 .glyph = glyph.id,
                 .span = cell.width,
             } };
-            if (self.cache.find(key, cache_generation)) {
+            const entry = if (self.cache.find(key, cache_generation)) |found| hit: {
                 prepared.cache_hits += 1;
-                continue;
-            }
-            var raster = try self.fonts.rasterize(
-                self.allocator,
-                run.face_index,
-                glyph.id,
-                cell.width,
-            );
-            self.cache.admit(self.allocator, cache_generation, .{
-                .key = key,
-                .pixels = raster.pixels,
-                .width = raster.width,
-                .height = raster.height,
-                .left = raster.left,
-                .top = raster.top,
-            }) catch |failure| {
-                raster.deinit();
-                return failure;
+                break :hit found;
+            } else admitted: {
+                var raster = try self.fonts.rasterize(
+                    self.allocator,
+                    run.face_index,
+                    glyph.id,
+                    cell.width,
+                );
+                const value = self.cache.admit(self.allocator, cache_generation, .{
+                    .key = key,
+                    .pixels = raster.pixels,
+                    .width = raster.width,
+                    .height = raster.height,
+                    .left = raster.left,
+                    .top = raster.top,
+                }) catch |failure| {
+                    raster.deinit();
+                    return failure;
+                };
+                raster.pixels = undefined;
+                prepared.cache_misses += 1;
+                break :admitted value;
             };
-            // Cache now owns the exact allocation formerly owned by Raster.
-            raster.pixels = undefined;
-            prepared.cache_misses += 1;
+            result.values[result.count] = glyphFromEntry(
+                entry,
+                std.math.add(i32, pen_x, glyph.x_offset) catch
+                    return error.InvalidShapeResult,
+                std.math.add(i32, pen_y, glyph.y_offset) catch
+                    return error.InvalidShapeResult,
+            );
+            result.count += 1;
+            pen_x = std.math.add(i32, pen_x, glyph.x_advance) catch
+                return error.InvalidShapeResult;
+            pen_y = std.math.add(i32, pen_y, glyph.y_advance) catch
+                return error.InvalidShapeResult;
         }
+        return result;
     }
 
     fn resolveGenerated(
@@ -333,7 +418,7 @@ pub const Renderer = struct {
         codepoint: u21,
         span: u8,
         prepared: *Prepared,
-    ) Error!void {
+    ) Error!Glyph {
         const width = std.math.mul(u16, self.fonts.metrics.cell_width, span) catch
             return error.InvalidFrame;
         const height = self.fonts.metrics.cell_height;
@@ -342,9 +427,9 @@ pub const Renderer = struct {
             .width = width,
             .height = height,
         } };
-        if (self.cache.find(key, cache_generation)) {
+        if (self.cache.find(key, cache_generation)) |entry| {
             prepared.cache_hits += 1;
-            return;
+            return glyphFromEntry(entry, 0, 0);
         }
         const count = std.math.mul(usize, width, height) catch
             return error.InvalidFrame;
@@ -352,7 +437,7 @@ pub const Renderer = struct {
             return error.OutOfMemory;
         errdefer self.allocator.free(pixels);
         try howl_text.rasterizeGenerated(pixels, width, height, codepoint);
-        try self.cache.admit(self.allocator, cache_generation, .{
+        const entry = try self.cache.admit(self.allocator, cache_generation, .{
             .key = key,
             .pixels = pixels,
             .width = width,
@@ -361,8 +446,43 @@ pub const Renderer = struct {
             .top = @intCast(self.fonts.metrics.baseline),
         });
         prepared.cache_misses += 1;
+        return glyphFromEntry(entry, 0, 0);
+    }
+
+    /// Resolves one cell after successful preparation without admitting a new
+    /// mask. The concrete draw owner consumes the returned borrowed pixels
+    /// before another preparation call may mutate cache ownership.
+    pub fn preparedGlyphs(self: *Renderer, cell: howl_frame.Cell) Error!CellGlyphs {
+        var facts = Prepared{
+            .generation = self.last_generation,
+            .panes = 0,
+            .cells = 0,
+            .clusters = 0,
+            .glyphs = 0,
+            .replacement_cells = 0,
+            .cache_hits = 0,
+            .cache_misses = 0,
+            .cache_bytes = self.cache.bytes,
+        };
+        const glyphs = try self.resolveCell(self.cache_generation, cell, &facts);
+        if (facts.cache_misses != 0)
+            @panic("successful preparation omitted a visible glyph mask");
+        return glyphs;
     }
 };
+
+fn glyphFromEntry(entry: Entry, x_offset: i32, y_offset: i32) Glyph {
+    return .{
+        .identity = entry.identity,
+        .pixels = entry.pixels,
+        .width = entry.width,
+        .height = entry.height,
+        .left = entry.left,
+        .top = entry.top,
+        .x_offset = x_offset,
+        .y_offset = y_offset,
+    };
+}
 
 fn validatePanes(
     window_width: u32,
@@ -495,6 +615,35 @@ test "mirrored terminal frames share one glyph cache identity" {
     try std.testing.expectEqual(@as(u16, 1), renderer.cache.count);
 }
 
+test "prepared glyphs borrow the admitted mask without allocation or identity drift" {
+    const paths = @import("render_test_paths");
+    var renderer = try Renderer.init(std.testing.allocator, .{
+        .primary = paths.font,
+        .pixel_height = 18,
+    });
+    defer renderer.deinit();
+    const cell = testCell('A');
+    const cells = [_]howl_frame.Cell{ cell, testCell(0) };
+    const frame = testFrame(&cells, 1);
+    const metrics_value = renderer.metrics();
+    const pane = Pane{
+        .x = 0,
+        .y = 0,
+        .width = @as(u32, metrics_value.cell_width) * 2,
+        .height = metrics_value.cell_height,
+        .frame = frame,
+    };
+    const prepared = try renderer.prepare(1, pane.width, pane.height, &.{pane});
+    try std.testing.expectEqual(@as(usize, 1), prepared.glyphs);
+    const before = renderer.cache;
+    const first = try renderer.preparedGlyphs(cell);
+    const second = try renderer.preparedGlyphs(cell);
+    try std.testing.expectEqual(@as(u8, 1), first.count);
+    try std.testing.expectEqual(first.values[0].identity, second.values[0].identity);
+    try std.testing.expectEqual(first.values[0].pixels.ptr, second.values[0].pixels.ptr);
+    try std.testing.expectEqualDeep(before, renderer.cache);
+}
+
 test "damage and generation validation reject stale work before cache mutation" {
     const paths = @import("render_test_paths");
     var renderer = try Renderer.init(std.testing.allocator, .{
@@ -528,7 +677,7 @@ test "cache capacity pins one generation and later work evicts oldest" {
     var pixel: u8 = 1;
     while (cache.count < cache_capacity) : (pixel +%= 1) {
         const pixels = try std.testing.allocator.dupe(u8, &.{pixel});
-        try cache.admit(std.testing.allocator, 1, .{
+        const admitted = try cache.admit(std.testing.allocator, 1, .{
             .key = .{ .native = .{
                 .face = 0,
                 .glyph = cache.count + 1,
@@ -540,6 +689,7 @@ test "cache capacity pins one generation and later work evicts oldest" {
             .left = 0,
             .top = 1,
         });
+        try std.testing.expect(admitted.identity != 0);
     }
     const before = cache;
     const rejected = try std.testing.allocator.dupe(u8, &.{255});
@@ -558,7 +708,7 @@ test "cache capacity pins one generation and later work evicts oldest" {
     ));
     try std.testing.expectEqualDeep(before, cache);
     const replacement = try std.testing.allocator.dupe(u8, &.{255});
-    try cache.admit(std.testing.allocator, 2, .{
+    const admitted = try cache.admit(std.testing.allocator, 2, .{
         .key = .{ .native = .{ .face = 0, .glyph = 999, .span = 1 } },
         .pixels = replacement,
         .width = 1,
@@ -566,10 +716,11 @@ test "cache capacity pins one generation and later work evicts oldest" {
         .left = 0,
         .top = 1,
     });
+    try std.testing.expect(admitted.identity != 0);
     try std.testing.expect(cache.find(
         .{ .native = .{ .face = 0, .glyph = 999, .span = 1 } },
         2,
-    ));
+    ) != null);
     try std.testing.expectEqual(@as(u16, cache_capacity), cache.count);
     try std.testing.expectEqual(@as(usize, cache_capacity), cache.bytes);
 }
@@ -580,7 +731,7 @@ test "cache takes one owned allocation without a second allocation" {
     defer cache.deinit(failing.allocator());
     const pixels = try failing.allocator().dupe(u8, &.{1});
     failing.fail_index = failing.alloc_index;
-    try cache.admit(
+    const admitted = try cache.admit(
         failing.allocator(),
         1,
         .{
@@ -592,6 +743,7 @@ test "cache takes one owned allocation without a second allocation" {
             .top = 1,
         },
     );
+    try std.testing.expect(admitted.identity != 0);
     try std.testing.expect(!failing.has_induced_failure);
     try std.testing.expectEqual(@as(u16, 1), cache.count);
     try std.testing.expectEqual(@as(usize, 1), cache.bytes);
@@ -622,7 +774,7 @@ test "byte preflight rejects before evicting insufficient old masks" {
     var cache = Cache{};
     defer cache.deinit(std.testing.allocator);
     const pinned = try std.testing.allocator.alloc(u8, 4 * 1024 * 1024);
-    try cache.admit(std.testing.allocator, 2, .{
+    const admitted = try cache.admit(std.testing.allocator, 2, .{
         .key = .{ .native = .{ .face = 0, .glyph = 1, .span = 1 } },
         .pixels = pinned,
         .width = 1,
@@ -630,9 +782,10 @@ test "byte preflight rejects before evicting insufficient old masks" {
         .left = 0,
         .top = 1,
     });
+    try std.testing.expect(admitted.identity != 0);
     for (2..4) |glyph| {
         const old = try std.testing.allocator.alloc(u8, 1024 * 1024);
-        try cache.admit(std.testing.allocator, 1, .{
+        const old_admission = try cache.admit(std.testing.allocator, 1, .{
             .key = .{ .native = .{
                 .face = 0,
                 .glyph = @intCast(glyph),
@@ -644,6 +797,7 @@ test "byte preflight rejects before evicting insufficient old masks" {
             .left = 0,
             .top = 1,
         });
+        try std.testing.expect(old_admission.identity != 0);
     }
     const before_count = cache.count;
     const before_bytes = cache.bytes;
@@ -667,7 +821,7 @@ test "byte preflight rejects before evicting insufficient old masks" {
     try std.testing.expectEqual(@as(u32, 3), cache.entries[2].key.native.glyph);
 }
 
-test "later preparation failure retains useful masks for exact retry" {
+test "missing source glyph admits one shared replacement and continues" {
     const paths = @import("render_test_paths");
     var renderer = try Renderer.init(std.testing.allocator, .{
         .primary = paths.font,
@@ -675,7 +829,7 @@ test "later preparation failure retains useful masks for exact retry" {
     });
     defer renderer.deinit();
     const accepted_cells = [_]howl_frame.Cell{ testCell('A'), testCell(0) };
-    const rejected_cells = [_]howl_frame.Cell{ testCell(0x10ffff), testCell(0) };
+    const missing_cells = [_]howl_frame.Cell{ testCell(0x10ffff), testCell(0) };
     const metrics_value = renderer.metrics();
     const width = @as(u32, metrics_value.cell_width) * 2;
     const panes = [_]Pane{
@@ -691,34 +845,32 @@ test "later preparation failure retains useful masks for exact retry" {
             .y = 0,
             .width = width,
             .height = metrics_value.cell_height,
-            .frame = testFrame(&rejected_cells, 1),
+            .frame = testFrame(&missing_cells, 1),
         },
     };
-    try std.testing.expectError(
-        error.MissingGlyph,
-        renderer.prepare(1, width * 2, metrics_value.cell_height, &panes),
-    );
-    try std.testing.expectEqual(@as(u64, 0), renderer.last_generation);
-    try std.testing.expectEqual(@as(u16, 1), renderer.cache.count);
+    const prepared = try renderer.prepare(1, width * 2, metrics_value.cell_height, &panes);
+    try std.testing.expectEqual(@as(usize, 1), prepared.replacement_cells);
+    try std.testing.expectEqual(@as(u16, 2), renderer.cache.count);
 
-    const retry = [_]Pane{
+    const reused = [_]Pane{
         panes[0],
         Pane{
             .x = width,
             .y = 0,
             .width = width,
             .height = metrics_value.cell_height,
-            .frame = testFrame(&accepted_cells, 1),
+            .frame = testFrame(&missing_cells, 1),
         },
     };
-    const prepared = try renderer.prepare(
-        1,
+    const repeated = try renderer.prepare(
+        2,
         width * 2,
         metrics_value.cell_height,
-        &retry,
+        &reused,
     );
-    try std.testing.expectEqual(@as(usize, 2), prepared.cache_hits);
-    try std.testing.expectEqual(@as(usize, 0), prepared.cache_misses);
+    try std.testing.expectEqual(@as(usize, 1), repeated.replacement_cells);
+    try std.testing.expectEqual(@as(usize, 2), repeated.cache_hits);
+    try std.testing.expectEqual(@as(usize, 0), repeated.cache_misses);
 }
 
 test "generated mask allocation failure leaves cache and generation unchanged" {
@@ -765,6 +917,8 @@ test "generated raster failure releases the staged mask" {
         .panes = 1,
         .cells = 1,
         .clusters = 1,
+        .glyphs = 0,
+        .replacement_cells = 0,
         .cache_hits = 0,
         .cache_misses = 0,
         .cache_bytes = 0,

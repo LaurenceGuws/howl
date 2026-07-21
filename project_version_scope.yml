@@ -19,6 +19,11 @@ capabilities:
       one owner shares native text and a fixed byte/count-bounded glyph-mask cache across terminal frames,
       validates pane composition, and prepares only complete or damaged rows without retaining frame borrows
 
+  - name: replacement_window_vertical
+    acceptance: >-
+      one Wayland/xkb loop routes live terminal wakes and input while one render thread owns EGL/GLES, the shared
+      glyph and texture caches, frame release, swap, and completion notification for one replacement window
+
   - name: development_orchestration
     acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig
 

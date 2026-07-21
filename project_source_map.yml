@@ -13,6 +13,8 @@ sources:
     bounded publication slots, and exact renderer acknowledgement
   howl-render/src/howl_render.zig: >-
     shared font ownership, bounded cross-terminal glyph-mask cache, pane/frame validation, and damage-aware draw preparation
+  howl-window/src: >-
+    replacement Wayland/xkb loop, Linux wakes, one EGL/GLES render thread, shared texture representation, and live host route
   howl-pty/src/howl_pty.zig: >-
     Linux PTY creation, copied launch values, process-group lifecycle, bounded transfer outcomes, resize,
     concurrent cancellation, exact native errors, and cleanup
@@ -23,5 +25,5 @@ sources:
     terminal identity, endpoint facts, private protocol codec, Linux socket mechanics, and one-shot client
   howl-control/src/test.zig: live PTY, immutable frame publication, and semantic control proofs
   howl-host/src: temporary Wayland, xkb, EGL/GLES, layout, and lifecycle copybook pending proven replacement
-  howl-host/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host
+  howl-host/vendor/xdg-shell: generated Wayland shell protocol source temporarily consumed by both native host routes
   tools/audit_source.sh: maintained non-vendor Zig source policy and reviewed construct uses

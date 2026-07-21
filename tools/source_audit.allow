@@ -120,3 +120,21 @@ howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_osc_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_snapshot_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_surface_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_test.zig");
+howl-window/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn keyboardKey(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: u32, code: u32, state: u32) callconv(.c) void {
+howl-window/src/window.zig|anyopaque|fn keyboardKeymap(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
+howl-window/src/window.zig|anyopaque|fn keyboardLeave(_: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn keyboardRepeat(_: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: i32, _: i32) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn loop(data: ?*anyopaque) *Loop {
+howl-window/src/window.zig|anyopaque|fn registryRemove(_: ?*anyopaque, _: ?*c.struct_wl_registry, _: u32) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn seatCapabilities(data: ?*anyopaque, seat: ?*c.struct_wl_seat, capabilities: u32) callconv(.c) void {
+howl-window/src/window.zig|anyopaque|fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}
+howl-window/src/window.zig|anyopaque|fn shellPing(_: ?*anyopaque, base: ?*c.struct_xdg_wm_base, serial: u32) callconv(.c) void {
+howl-window/src/window.zig|anyopaque|fn surfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_xdg_surface, serial: u32) callconv(.c) void {
+howl-window/src/window.zig|anyopaque|fn terminalWake(context: ?*anyopaque) void {
+howl-window/src/window.zig|anyopaque|fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
+howl-window/src/window.zig|anyopaque|fn wmCapabilities(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: ?*c.struct_wl_array) callconv(.c) void {}

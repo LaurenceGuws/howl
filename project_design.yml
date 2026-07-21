@@ -23,7 +23,7 @@ components:
     role: shared text preparation, bounded glyph-mask cache, pane validation, and frame draw preparation
 
   - name: host
-    role: native Wayland window loop, layout, shared text/GLES rendering, and presentation policy
+    role: concrete Wayland/xkb window loop and one shared EGL/GLES render thread
 
 relationships:
   - vt owns terminal truth and accepts host facts through native Zig values
@@ -33,6 +33,8 @@ relationships:
   - frame copies complete VT visual truth and cumulative cell damage without owning layout, text, platform, or GPU policy
   - render borrows immutable frames and owns one text/cache preparation path shared across every terminal
   - host composes control, frame, render, and Wayland while owning window, layout, and presentation lifecycles
+  - the replacement window loop never walks terminal cells or issues GLES commands
+  - the replacement render thread releases every borrowed frame after preparation and swap
   - qagent is the first real embedder and supplies integration pressure without Howl policy
   - >-
     protocol evidence is family-owned at the root; implemented support, residual disposition, and concrete code
