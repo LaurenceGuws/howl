@@ -337,6 +337,11 @@ test "csi mapping: mode query, save restore, and erase families" {
     try std.testing.expectEqual(@as(u8, 3), restore.dec_mode_restore.param_count);
     try std.testing.expectEqual(@as(u16, 1004), restore.dec_mode_restore.params[2]);
 
+    const save_all = process(makePrivateStyleChange('s', &.{})).?;
+    try std.testing.expectEqual(@as(u8, 0), save_all.dec_mode_save.param_count);
+    const restore_all = process(makePrivateStyleChange('r', &.{})).?;
+    try std.testing.expectEqual(@as(u8, 0), restore_all.dec_mode_restore.param_count);
+
     try std.testing.expect(!process(makeStyleChange('J', 0, 0, 0)).?.erase_display_below);
     try std.testing.expect(!process(makeStyleChange('J', 1, 0, 1)).?.erase_display_above);
     try std.testing.expect(!process(makeStyleChange('J', 2, 0, 1)).?.erase_display_complete);

@@ -514,6 +514,80 @@ test "DECARM owns repeat encoding query save and reset lifetime" {
     try std.testing.expectEqualStrings("\x1b[?8;1$y", pendingOutput(&terminal));
 }
 
+test "Kitty parameterless mode save restores the exact curated mode set" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+
+    const enable =
+        "\x1b[20h\x1b[4h" ++
+        "\x1b[?8l\x1b[?2004h\x1b[?1004h\x1b[?2031h\x1b[?5522h\x1b[?2048h" ++
+        "\x1b[?1h\x1b[?25l\x1b[?7l\x1b[?1003h\x1b[?1006h\x1b[?5h";
+    try std.testing.expect((try terminal.feed(enable)).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?")).state_changed);
+    try std.testing.expect((try terminal.feed("s")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?s")).state_changed);
+
+    const invert =
+        "\x1b[20l\x1b[4l" ++
+        "\x1b[?8h\x1b[?2004l\x1b[?1004l\x1b[?2031l\x1b[?5522l\x1b[?2048l" ++
+        "\x1b[?1l\x1b[?25h\x1b[?7h\x1b[?1003l\x1b[?1006l\x1b[?5l";
+    try std.testing.expect((try terminal.feed(invert)).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?")).state_changed);
+    try std.testing.expect((try terminal.feed("r")).state_changed);
+
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed(
+        "\x1b[20$p\x1b[4$p" ++
+            "\x1b[?8$p\x1b[?2004$p\x1b[?1004$p\x1b[?2031$p\x1b[?5522$p\x1b[?2048$p" ++
+            "\x1b[?1$p\x1b[?25$p\x1b[?7$p\x1b[?1003$p\x1b[?1006$p\x1b[?5$p",
+    )).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b[20;1$y\x1b[4;1$y" ++
+            "\x1b[?8;2$y\x1b[?2004;1$y\x1b[?1004;1$y\x1b[?2031;1$y" ++
+            "\x1b[?5522;1$y\x1b[?2048;1$y\x1b[?1;1$y\x1b[?25;2$y" ++
+            "\x1b[?7;2$y\x1b[?1003;1$y\x1b[?1006;1$y\x1b[?5;1$y",
+        pendingOutput(&terminal),
+    );
+    clearPendingOutput(&terminal);
+    try std.testing.expect(!(try terminal.feed("\x1b[?r")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?r")).state_changed);
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?8$p\x1b[?25$p\x1b[?7$p")).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b[?8;2$y\x1b[?25;2$y\x1b[?7;2$y",
+        pendingOutput(&terminal),
+    );
+}
+
+test "individual DEC mode saves retain every implemented mode without saturation" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+
+    const modes = [_]u16{
+        1,    3,    5,    6,    7,    8,    9,    12,   25,   45,
+        47,   66,   69,   1045, 1047, 1049, 1000, 1002, 1003, 1004,
+        1005, 1006, 1015, 1016, 2004, 2026, 2031, 2048, 5522,
+    };
+    var changed_count: usize = 0;
+    for (modes) |mode| {
+        var bytes: [24]u8 = undefined;
+        const command = try std.fmt.bufPrint(&bytes, "\x1b[?{d}s", .{mode});
+        const first = try terminal.feed(command);
+        changed_count += @intFromBool(first.state_changed);
+        const second = try terminal.feed(command);
+        try std.testing.expect(!second.state_changed);
+    }
+    try std.testing.expectEqual(@as(usize, 4), changed_count);
+    try std.testing.expect(!(try terminal.feed("\x1b[?9999s\x1b[?9999r")).state_changed);
+
+    try std.testing.expect((try terminal.feed("\x1b[?5522h\x1b[?5522r")).state_changed);
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[?5522$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?5522;2$y", pendingOutput(&terminal));
+}
+
 test "Kitty key fields preserve empty alternates locks and committed text" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();

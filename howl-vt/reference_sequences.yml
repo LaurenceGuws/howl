@@ -2260,7 +2260,16 @@ references:
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: saveCursor, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: cursor savepoints retain exact bank reset and resize state"}}}
-          - {id: kitty.csi.save_modes, raw: "CSI ? Pm s", effect: save DEC modes, howl: {status: partial}}
+          - id: kitty.csi.save_modes
+            raw: "CSI ? Pm s"
+            effect: save DEC modes
+            conditions: >-
+              Parameterless form saves Kitty's curated ANSI and DEC mode set; parameterized form uses fixed slots for
+              Howl's reviewed savable DEC set; supported sets differ; Howl stores IRM and DECAWM on Screen, mirrors
+              IRM between banks, and keeps DECAWM bank-local
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.saveDecModes, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty parameterless mode save restores the exact curated mode set"}}
           - {id: kitty.csi.report_window_pixels, raw: "CSI 14 ; [Ps] t", effect: report window pixel size,
             conditions: Howl needs host cell pixels and has no Kitty window-id fact for Ps=2 frame dimensions,
             relevance: query, howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendSizeReport,
@@ -2320,7 +2329,17 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: setScrollRegion, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: DEC margins bound rectangles and reject inverted coordinates"}}}
-          - {id: kitty.csi.restore_modes, raw: "CSI ? Pm r", effect: restore DEC modes, howl: {status: partial}}
+          - id: kitty.csi.restore_modes
+            raw: "CSI ? Pm r"
+            effect: restore DEC modes
+            conditions: >-
+              Parameterless form restores Kitty's curated ANSI and DEC mode set; parameterized form uses fixed
+              reset-cleared slots for Howl's reviewed savable set; supported sets differ; Howl stores IRM and DECAWM
+              on Screen, mirrors IRM between banks, and keeps DECAWM bank-local; after reset Kitty's saved DECARM,
+              DECTCEM, and DECAWM defaults are set while Howl's saved-all snapshot defaults are clear
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.restoreDecModes, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "Kitty parameterless mode save restores the exact curated mode set"}}
           - {id: kitty.csi.deccara, raw: "CSI Pt ; Pl ; Pb ; Pr ; Pm $ r",
             effect: change rectangle rendition,
             conditions: Kitty supports full SGR colors and subparameters while Howl supports bounded basic attributes,

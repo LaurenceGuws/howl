@@ -5344,9 +5344,12 @@ const KeyFormatChange = struct {
     value: ?u16,
 };
 
-const saved_dec_mode_limit = 16;
-const SavedDecModeCount = u8;
-const SavedDecModeSlot = u8;
+// Enumerates DEC modes whose state participates in parameterized XTSAVE and XTRESTORE.
+const savable_dec_modes = [_]u16{
+    1,    3,    5,    6,    7,    8,    9,    12,   25,   45,
+    47,   66,   69,   1045, 1047, 1049, 1000, 1002, 1003, 1004,
+    1005, 1006, 1015, 1016, 2004, 2026, 2031, 2048, 5522,
+};
 
 // Stores terminal modes that affect screen mutation, input encoding, and reports.
 const ModeState = struct {
@@ -5372,14 +5375,26 @@ const ModeState = struct {
     mouse_tracking: MouseTrackingMode = .off,
     mouse_protocol: MouseProtocol = .none,
     pointer_mode: u2 = 1,
-    saved_dec_modes: [saved_dec_mode_limit]SavedDecMode =
-        [_]SavedDecMode{.{ .mode = 0, .state = 0 }} ** saved_dec_mode_limit,
-    saved_dec_mode_count: SavedDecModeCount = 0,
+    saved_dec_modes: [savable_dec_modes.len]u8 = [_]u8{2} ** savable_dec_modes.len,
+    saved_all_modes: SavedAllModes = .{},
 };
 
-const SavedDecMode = struct {
-    mode: u16,
-    state: u8,
+// Retains the exact mode set selected by Kitty's parameterless XTSAVE extension.
+const SavedAllModes = struct {
+    newline_mode: bool = false,
+    insert_mode: bool = false,
+    auto_repeat: bool = false,
+    bracketed_paste: bool = false,
+    focus_reporting: bool = false,
+    color_preference_notifications: bool = false,
+    paste_events: bool = false,
+    inband_resize_notifications: bool = false,
+    application_cursor_keys: bool = false,
+    cursor_visible: bool = false,
+    auto_wrap: bool = false,
+    mouse_tracking: MouseTrackingMode = .off,
+    mouse_protocol: MouseProtocol = .none,
+    reverse_screen_mode: bool = false,
 };
 
 // Borrows the DEC mode facts required to answer one mode query.
@@ -5470,105 +5485,19 @@ fn replaceBool(target: *bool, value: bool) bool {
     return true;
 }
 
-// Returns an existing saved-mode slot or appends one within caller capacity.
-fn savedDecModeSlot(saved_modes: []SavedDecMode, saved_count: *SavedDecModeCount, mode: u16) ?SavedDecModeSlot {
-    const cap = savedDecModeCap(saved_modes);
-    var slot: SavedDecModeSlot = 0;
-    while (slot < saved_count.*) : (slot += 1) {
-        if (saved_modes[savedIndex(slot)].mode == mode) return slot;
-    }
-    if (saved_count.* < cap) {
-        const new_slot = saved_count.*;
-        saved_count.* += 1;
-        return new_slot;
+// Resolves one implemented DEC mode to its fixed saved-state slot.
+fn savedDecModeIndex(mode: u16) ?usize {
+    for (savable_dec_modes, 0..) |supported, index| {
+        if (supported == mode) return index;
     }
     return null;
 }
 
-// Returns a saved DEC mode value when the bounded store contains it.
-fn savedDecModeState(saved_modes: []const SavedDecMode, saved_count: SavedDecModeCount, mode: u16) ?u8 {
-    var slot: SavedDecModeSlot = 0;
-    while (slot < saved_count) : (slot += 1) {
-        const idx = savedIndex(slot);
-        if (saved_modes[idx].mode == mode) return saved_modes[idx].state;
+test "saved DEC mode slots cover each reviewed savable mode exactly once" {
+    for (savable_dec_modes, 0..) |mode, index| {
+        try std.testing.expectEqual(@as(?usize, index), savedDecModeIndex(mode));
     }
-    return null;
-}
-
-// Reports whether a DEC mode has implemented set and reset behavior.
-fn canSetDecMode(mode: u16) bool {
-    return switch (mode) {
-        1,
-        3,
-        5,
-        6,
-        7,
-        8,
-        9,
-        12,
-        25,
-        45,
-        47,
-        66,
-        69,
-        1047,
-        1049,
-        1045,
-        1000,
-        1002,
-        1003,
-        1004,
-        1005,
-        1006,
-        1015,
-        1016,
-        2004,
-        2026,
-        2048,
-        2031,
-        5522,
-        => true,
-        else => false,
-    };
-}
-
-fn savedIndex(slot: SavedDecModeSlot) usize {
-    return @intCast(slot);
-}
-
-fn savedDecModeCap(saved_modes: []const SavedDecMode) SavedDecModeCount {
-    std.debug.assert(saved_modes.len <= std.math.maxInt(SavedDecModeCount));
-    return @intCast(saved_modes.len);
-}
-
-test "saved dec mode slot reuses existing entry" {
-    var saved = [_]SavedDecMode{.{ .mode = 0, .state = 0 }} ** saved_dec_mode_limit;
-    saved[0] = .{ .mode = 7, .state = 1 };
-    var count: SavedDecModeCount = 1;
-    try std.testing.expectEqual(@as(?SavedDecModeSlot, 0), savedDecModeSlot(saved[0..], &count, 7));
-    try std.testing.expectEqual(@as(SavedDecModeCount, 1), count);
-}
-
-test "saved dec mode slot appends and saturates" {
-    var saved = [_]SavedDecMode{.{ .mode = 0, .state = 0 }} ** saved_dec_mode_limit;
-    var count: SavedDecModeCount = 0;
-    try std.testing.expectEqual(@as(?SavedDecModeSlot, 0), savedDecModeSlot(saved[0..], &count, 7));
-    try std.testing.expectEqual(@as(SavedDecModeCount, 1), count);
-    saved[saved_dec_mode_limit - 1] = .{ .mode = 2004, .state = 1 };
-    count = saved_dec_mode_limit;
-    try std.testing.expectEqual(@as(?SavedDecModeSlot, null), savedDecModeSlot(saved[0..], &count, 1004));
-    try std.testing.expectEqual(@as(SavedDecModeCount, saved_dec_mode_limit), count);
-    try std.testing.expectEqual(@as(u16, 2004), saved[saved_dec_mode_limit - 1].mode);
-    try std.testing.expectEqual(@as(u8, 1), saved[saved_dec_mode_limit - 1].state);
-}
-
-test "saved dec mode state scans only saved entries" {
-    var saved = [_]SavedDecMode{.{ .mode = 0, .state = 0 }} ** saved_dec_mode_limit;
-    saved[0] = .{ .mode = 7, .state = 1 };
-    saved[1] = .{ .mode = 1004, .state = 2 };
-    saved[2] = .{ .mode = 2004, .state = 1 };
-    try std.testing.expectEqual(@as(?u8, 2), savedDecModeState(saved[0..], 2, 1004));
-    try std.testing.expectEqual(@as(?u8, null), savedDecModeState(saved[0..], 2, 2004));
+    try std.testing.expectEqual(@as(?usize, null), savedDecModeIndex(9999));
 }
 
 const locator_report_max_bytes = 40;
@@ -8098,9 +8027,9 @@ fn decodeEraseDisplay(mode: ScreenEraseMode, protected: bool) SemanticEvent {
 fn decodePrivateCsi(final: u8, params: []const i32, leader: u8, intermediates: []const u8) ?SemanticEvent {
     if (leader != '?') return null;
     if (directQuery(final, params, intermediates)) |event| return event;
+    if (saveRestore(final, params, intermediates)) |event| return event;
     if (params.len == 0) return null;
     if (modeReport(final, params, intermediates)) |event| return event;
-    if (saveRestore(final, params, intermediates)) |event| return event;
     if (report(final, params, intermediates)) |event| return event;
     if (intermediates.len != 0) return null;
     return modeToggle(final, params[0]);
@@ -12864,40 +12793,72 @@ pub const Terminal = struct {
     }
 
     fn saveDecModes(self: *Terminal, mode_numbers: []const u16) bool {
+        if (mode_numbers.len == 0) return self.saveAllModes();
         var changed = false;
         for (mode_numbers) |mode_number| {
-            if (!canSetDecMode(mode_number)) continue;
-            const slot = savedDecModeSlot(
-                self.modes.saved_dec_modes[0..],
-                &self.modes.saved_dec_mode_count,
-                mode_number,
-            ) orelse continue;
-            const value: SavedDecMode = .{
-                .mode = mode_number,
-                .state = self.decModeState(mode_number),
-            };
-            const target = &self.modes.saved_dec_modes[@intCast(slot)];
-            if (target.mode == value.mode and target.state == value.state) continue;
-            target.* = value;
+            const index = savedDecModeIndex(mode_number) orelse continue;
+            const state = self.decModeState(mode_number);
+            if (self.modes.saved_dec_modes[index] == state) continue;
+            self.modes.saved_dec_modes[index] = state;
             changed = true;
         }
         return changed;
     }
 
     fn restoreDecModes(self: *Terminal, mode_numbers: []const u16) bool {
+        if (mode_numbers.len == 0) return self.restoreAllModes();
         var changed = false;
         for (mode_numbers) |mode_number| {
-            const state = savedDecModeState(
-                self.modes.saved_dec_modes[0..],
-                self.modes.saved_dec_mode_count,
-                mode_number,
-            ) orelse continue;
+            const index = savedDecModeIndex(mode_number) orelse continue;
+            const state = self.modes.saved_dec_modes[index];
             switch (state) {
                 1 => changed = self.setDecMode(mode_number, true) or changed,
                 2 => changed = self.setDecMode(mode_number, false) or changed,
                 else => {},
             }
         }
+        return changed;
+    }
+
+    fn saveAllModes(self: *Terminal) bool {
+        const active = self.screen_state.activeConst();
+        const saved: SavedAllModes = .{
+            .newline_mode = self.modes.newline_mode,
+            .insert_mode = active.insert_mode,
+            .auto_repeat = self.modes.auto_repeat,
+            .bracketed_paste = self.modes.bracketed_paste,
+            .focus_reporting = self.modes.focus_reporting,
+            .color_preference_notifications = self.modes.color_preference_notifications,
+            .paste_events = self.modes.paste_events,
+            .inband_resize_notifications = self.modes.inband_resize_notifications,
+            .application_cursor_keys = self.modes.application_cursor_keys,
+            .cursor_visible = active.cursor.visible,
+            .auto_wrap = active.auto_wrap,
+            .mouse_tracking = self.modes.mouse_tracking,
+            .mouse_protocol = self.modes.mouse_protocol,
+            .reverse_screen_mode = self.modes.reverse_screen_mode,
+        };
+        if (std.meta.eql(self.modes.saved_all_modes, saved)) return false;
+        self.modes.saved_all_modes = saved;
+        return true;
+    }
+
+    fn restoreAllModes(self: *Terminal) bool {
+        const saved = self.modes.saved_all_modes;
+        var changed = self.setAnsiModes(&.{20}, saved.newline_mode);
+        changed = self.setAnsiModes(&.{4}, saved.insert_mode) or changed;
+        changed = self.setDecMode(8, saved.auto_repeat) or changed;
+        changed = self.setDecMode(2004, saved.bracketed_paste) or changed;
+        changed = self.setDecMode(1004, saved.focus_reporting) or changed;
+        changed = self.setDecMode(2031, saved.color_preference_notifications) or changed;
+        changed = self.setDecMode(5522, saved.paste_events) or changed;
+        changed = self.setDecMode(2048, saved.inband_resize_notifications) or changed;
+        changed = self.setDecMode(1, saved.application_cursor_keys) or changed;
+        changed = self.setDecMode(25, saved.cursor_visible) or changed;
+        changed = self.setDecMode(7, saved.auto_wrap) or changed;
+        changed = self.setMouseTracking(saved.mouse_tracking) or changed;
+        changed = self.setMouseProtocol(saved.mouse_protocol) or changed;
+        changed = self.setDecMode(5, saved.reverse_screen_mode) or changed;
         return changed;
     }
 
