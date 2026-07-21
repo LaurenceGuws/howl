@@ -1354,7 +1354,11 @@ references:
               path: howl-vt/test/unit/terminal_test.zig,
               test: synchronized update DCS shares exact bounded mode state}}
           - {id: iterm2.dcs.decrqss, raw: "DCS $ q Pt ST", effect: request terminal state string, relevance: query,
-            howl: {status: partial}}
+            conditions: "Howl reports iTerm2's seven request families including VT220 DECSCL and minimum-24-row
+              DECSLPP; DECSLRM availability and retained SGR/cursor domains differ",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECRQSS reports conformance and page length across framing modes"}}}
           - {id: iterm2.dcs.decrsps_deccir, raw: "DCS 1 $ t Pt ST", effect: restore cursor information,
             conditions: "Howl transactionally restores strict VT300 coordinates, four rendition bits, pending wrap,
               origin, and supported G0 B/0 designation; permissive integers, %5, and VT500 Srend extension differ",
@@ -2337,7 +2341,11 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "XTGETTCAP replies preserve ordered names values failures and C1 serialization"}}}
           - {id: kitty.dcs.decrqss, raw: "DCS $ q Pt ST", effect: query terminal state string, relevance: query,
-            howl: {status: partial}}
+            conditions: "Howl recognizes Kitty's four requests; retained SGR fields, hidden cursor mapping, and
+              DECSACE report value differ",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: appendDecrqssReply, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECRQSS replies for owned state and invalid requests"}}}
           - id: kitty.dcs.sync
             raw: "DCS = Ps s Pt ST"
             effect: synchronized update control

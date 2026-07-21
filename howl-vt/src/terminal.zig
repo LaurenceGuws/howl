@@ -8971,7 +8971,10 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
             encode_buf,
             render_view,
         ),
-        .primary_device_attributes => try appendCsiReply(pending_output, allocator, .terminal, "?62;22c"),
+        .primary_device_attributes => {
+            const payload = std.fmt.bufPrint(encode_buf, "?{d};22c", .{dec_conformance_level}) catch unreachable;
+            try appendCsiReply(pending_output, allocator, .terminal, payload);
+        },
         .secondary_device_attributes => try appendCsiReply(pending_output, allocator, .terminal, ">1;10;0c"),
         .tertiary_device_attributes => try appendStringReply(
             pending_output,
@@ -9082,7 +9085,13 @@ fn appendDecrqssReply(
     try appendReplyControl(output, allocator, .terminal, .st);
 }
 
+// Howl identifies as a VT220-class terminal in DA1 and DECRQSS DECSCL.
+const dec_conformance_level: u8 = 62;
+
 fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, request, "\"p")) {
+        return std.fmt.bufPrint(encode_buf, "{d}\"p", .{dec_conformance_level}) catch null;
+    }
     if (std.mem.eql(u8, request, "r")) {
         const bottom = if (screen.rows == 0) @as(u16, 0) else @min(screen.scroll_bottom, screen.rows - 1);
         return std.fmt.bufPrint(encode_buf, "{d};{d}r", .{ screen.scroll_top + 1, bottom + 1 }) catch null;
@@ -9109,6 +9118,9 @@ fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) 
     if (std.mem.eql(u8, request, "*x")) {
         const value: u8 = if (screen.attr_change_extent_rect) 2 else 0;
         return std.fmt.bufPrint(encode_buf, "{d}*x", .{value}) catch null;
+    }
+    if (std.mem.eql(u8, request, "t")) {
+        return std.fmt.bufPrint(encode_buf, "{d}t", .{@max(@as(u16, 24), screen.rows)}) catch null;
     }
     return null;
 }
@@ -9629,6 +9641,46 @@ test "cursor style report payload reads semantic cursor owner" {
     screen.applyScreen(.{ .cursor_style = .{ .program_override = .{ .shape = .none, .blink = false } } });
     const no_shape = decrqssPayload(encode_buf[0..], &screen, " q").?;
     try std.testing.expectEqualStrings("1 q", no_shape);
+}
+
+test "DECRQSS reply allocation failure preserves prior pending output" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        appendDecrqssReplyAllocation,
+        .{},
+    );
+}
+
+fn appendDecrqssReplyAllocation(allocator: std.mem.Allocator) !void {
+    var output = PendingOutput.init();
+    defer output.bytes.deinit(allocator);
+    try appendOutput(&output, allocator, "kept");
+
+    const screen = Screen.init(30, 80);
+    var encode_buf: [terminal_report_max_bytes]u8 = undefined;
+    appendDecrqssReply(allocator, &output, encode_buf[0..], &screen, "t") catch |failure| {
+        try std.testing.expectEqualStrings("kept", output.bytes.items);
+        return failure;
+    };
+    try std.testing.expectEqualStrings("kept\x1bP1$r30t\x1b\\", output.bytes.items);
+}
+
+test "DECRQSS reply capacity failure preserves the complete prior output" {
+    const allocator = std.testing.allocator;
+    var output = PendingOutput.init();
+    defer output.bytes.deinit(allocator);
+    const retained = try allocator.alloc(u8, pending_output_max_bytes - 1);
+    defer allocator.free(retained);
+    @memset(retained, 'k');
+    try appendOutput(&output, allocator, retained);
+
+    const screen = Screen.init(30, 80);
+    var encode_buf: [terminal_report_max_bytes]u8 = undefined;
+    try std.testing.expectError(
+        error.ConsequenceLimit,
+        appendDecrqssReply(allocator, &output, encode_buf[0..], &screen, "t"),
+    );
+    try std.testing.expectEqualSlices(u8, retained, output.bytes.items);
 }
 
 test "cursor position report payload names semantic cursor position" {

@@ -1313,6 +1313,27 @@ test "DECRQSS replies for owned state and invalid requests" {
     );
 }
 
+test "DECRQSS reports conformance and page length across framing modes" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+    var stream = try StreamHarness.init(&terminal);
+
+    // DECSCL shares DA1's VT220 identity. DECSLPP follows iTerm2's minimum
+    // page length of 24 while retaining larger owned screen dimensions.
+    try std.testing.expect(!(try terminal.feed("\x1bP$q\"")).state_changed);
+    try std.testing.expect((try terminal.feed("p\x1b\\\x1bP$qt\x1b\\\x1b[c")).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1bP1$r62\"p\x1b\\\x1bP1$r24t\x1b\\\x1b[?62;22c",
+        pendingOutput(&terminal),
+    );
+
+    clearPendingOutput(&terminal);
+    try terminal.resize(30, 8);
+    write(&stream, "\x1b G\x90$q\"p\x9c\x90$qt\x9c");
+    try std.testing.expectEqualStrings("\x901$r62\"p\x9c\x901$r30t\x9c", pendingOutput(&terminal));
+}
+
 test "XTGETTCAP replies preserve ordered names values failures and C1 serialization" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
