@@ -16,6 +16,12 @@ pub fn add(
     const audit = b.addSystemCommand(&.{"bash"});
     audit.addFileArg(b.path("tools/audit_source.sh"));
     check.dependOn(&audit.step);
+    const protocol = b.addSystemCommand(&.{
+        "nu",
+        "-c",
+        "source protocol_coverage.nu; protocol validate --fail | ignore",
+    });
+    check.dependOn(&protocol.step);
     addVt(b, target, optimize, vt, check, test_step);
     addText(b, target, optimize, check, test_step);
     addPty(b, pty, check, test_step);

@@ -1,6 +1,9 @@
 rules:
   - Every retained character buys capability, correctness, clarity, or deterministic evidence.
   - Terminal protocol behavior follows primary evidence and exact host-owned facts.
+  - >-
+    Protocol support, remaining-residual disposition, and concrete module ownership are recorded as orthogonal
+    catalogue facts.
   - Inputs, retained state, queues, payloads, grids, and platform consequences have explicit bounds.
   - Construction failure and deinitialization release completed resources in reverse ownership order.
   - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.

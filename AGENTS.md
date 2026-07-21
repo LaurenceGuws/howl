@@ -22,10 +22,12 @@ Read only the authority relevant to the work:
 
 ## Protocol coverage
 
-`howl-vt/reference_sequences.yml` is the protocol census. From Nushell, source
-`howl-vt/protocol_coverage.nu` and use the `protocol coverage` command family
-for summaries, filtered records, gaps, proof review, and census-aware tab
-completion.
+`protocol_coverage.yml` is the family protocol census. From Nushell, source
+`protocol_coverage.nu`; `protocol help` gives the short human and structured
+query surface. Support describes implementation, disposition describes
+the treatment of the remaining residual obligation, and owner names the real
+module responsible for that residual. Full records normalize omitted
+disposition to `none`; incomplete records normalize omission to `active`.
 
 ## Development flow
 

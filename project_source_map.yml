@@ -3,8 +3,10 @@ sources:
   build.zig.zon: published package identity and source boundary
   build/dev.zig: root-only checks, proofs, benchmarks, simulations, and native hosts
   howl-vt/src: current terminal model implementation preserved through source-shape simplification
-  howl-vt/reference_sequences.yml: >-
-    pinned libvterm, iTerm2, and Kitty sequence evidence with exact current Howl support and proof locations
+  protocol_coverage.yml: >-
+    root-owned pinned libvterm, iTerm2, and Kitty evidence with normalized support, disposition, owner, and proof facts
+  protocol_coverage.nu: >-
+    root-owned catalogue normalization, validation, structured queries, and compact human views
   howl-text/src: current text loading, shaping, and rasterization implementation
   howl-pty/src/howl_pty.zig: >-
     Linux PTY creation, copied launch values, process-group lifecycle, bounded transfer outcomes, resize,

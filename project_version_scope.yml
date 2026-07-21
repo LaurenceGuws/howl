@@ -35,7 +35,9 @@ capabilities:
     acceptance: one direct root-owned audit enforces settled patterns and exact reviewed uses
 
   - name: protocol_evidence_index
-    acceptance: one source-pinned YAML index accounts for libvterm, iTerm2, Kitty, and exact current Howl support
+    acceptance: >-
+      one root-owned source-pinned YAML index accounts for libvterm, iTerm2, Kitty, implementation support,
+      remaining-residual disposition, concrete module ownership, and exact proof
 
 limitations:
   - name: source_layout
@@ -45,7 +47,7 @@ limitations:
     description: private development modules carry no downstream source or ABI promise
 
 gates:
-  - active YAML parses
+  - active YAML parses and the protocol catalogue schema validates
   - root and module build graphs use Zig 0.16
   - all accepted VT tests, simulations, fuzzing, and benchmarks pass in four optimization modes
   - control, text, host, and QAgent embedding checks pass

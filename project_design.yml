@@ -26,6 +26,9 @@ relationships:
   - control composes pty and vt and owns the bounded local byte-stream protocol used by native embedders
   - host embeds vt and text while owning platform, thread, window, GPU, and PTY lifecycles
   - qagent is the first real embedder and supplies integration pressure without Howl policy
+  - >-
+    protocol evidence is family-owned at the root; implemented support, residual disposition, and concrete code
+    ownership remain independent facts
 
 package:
   root_build: public module and artifact graph
