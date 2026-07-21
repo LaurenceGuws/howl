@@ -1850,6 +1850,101 @@ test "DCS payload bound reports overflow and remains restartable" {
     try std.testing.expectEqualStrings("keep", dcsPayload(&terminal).?);
 }
 
+test "APC PM and SOS retain bounded ordered fallback payloads" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b_A")).state_changed);
+    try std.testing.expect((try terminal.feed("PC\x1b\\\x9ePM\x9c\x1bXSOS\x1b\\")).state_changed);
+    const expected = [_]struct { kind: terminal_mod.StringPayloadKind, payload: []const u8 }{
+        .{ .kind = .apc, .payload = "APC" },
+        .{ .kind = .pm, .payload = "PM" },
+        .{ .kind = .sos, .payload = "SOS" },
+    };
+    try terminal.resize(5, 9);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h\x1b[?1049l\x1bc")).state_changed);
+    try std.testing.expectEqual(@as(u8, expected.len), terminal.surfaceSnapshot().string_payload_count);
+    for (expected, 1..) |wanted, generation| {
+        const occurrence = terminal.surfaceSnapshot().string_payload.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqual(wanted.kind, occurrence.kind);
+        try std.testing.expectEqualStrings(wanted.payload, occurrence.payload);
+        try terminal.acknowledgeStringPayload(occurrence.generation);
+    }
+    try std.testing.expectEqual(@as(u8, 0), terminal.surfaceSnapshot().string_payload_count);
+}
+
+test "generic string fallback cancellation overflow and queue saturation preserve identity" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b_drop\x18")).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().string_payload == null);
+    try std.testing.expect(!(try terminal.feed("\x1b_" ++ "x" ** 2049 ++ "\x1b\\")).state_changed);
+    try std.testing.expect(terminal.surfaceSnapshot().string_payload == null);
+
+    for (0..5) |_| {
+        try std.testing.expect((try terminal.feed("\x1b_A\x1b\\")).state_changed);
+        try terminal.acknowledgeStringPayload(terminal.surfaceSnapshot().string_payload.?.generation);
+    }
+    for (0..32) |_| try std.testing.expect((try terminal.feed("\x1b^P\x1b\\")).state_changed);
+    const head = terminal.surfaceSnapshot().string_payload.?;
+    const generation = terminal.host.string_payload_generation;
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1bXS\x1b\\"));
+    try std.testing.expectEqual(generation, terminal.host.string_payload_generation);
+    try std.testing.expectEqual(head.generation, terminal.surfaceSnapshot().string_payload.?.generation);
+    try std.testing.expectError(error.StaleStringPayload, terminal.acknowledgeStringPayload(head.generation + 1));
+}
+
+test "generic string aggregate budget rolls back and is reclaimed by acknowledgement" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 4, 8);
+    defer terminal.deinit();
+    var sequence = std.ArrayList(u8).empty;
+    defer sequence.deinit(allocator);
+
+    try sequence.appendSlice(allocator, "\x1b_");
+    try sequence.appendNTimes(allocator, 'a', 1200);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    const first = terminal.surfaceSnapshot().string_payload.?;
+    try std.testing.expectEqual(@as(u64, 1), first.generation);
+    try std.testing.expectEqual(@as(usize, 1200), first.payload.len);
+    try std.testing.expectEqual(@as(u32, 1200), terminal.host.string_retained_bytes);
+
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1b^");
+    try sequence.appendNTimes(allocator, 'b', 900);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    const preserved = terminal.surfaceSnapshot();
+    try std.testing.expectEqual(@as(u64, 1), terminal.host.string_payload_generation);
+    try std.testing.expectEqual(@as(u8, 1), preserved.string_payload_count);
+    try std.testing.expectEqual(first.generation, preserved.string_payload.?.generation);
+    try std.testing.expectEqualStrings(first.payload, preserved.string_payload.?.payload);
+    try std.testing.expectEqual(@as(u32, 1200), terminal.host.string_retained_bytes);
+
+    try terminal.acknowledgeStringPayload(first.generation);
+    try std.testing.expectEqual(@as(u32, 0), terminal.host.string_retained_bytes);
+    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    sequence.clearRetainingCapacity();
+    try sequence.appendSlice(allocator, "\x1bX");
+    try sequence.appendNTimes(allocator, 'c', 1000);
+    try sequence.appendSlice(allocator, "\x1b\\");
+    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+
+    const second = terminal.surfaceSnapshot().string_payload.?;
+    try std.testing.expectEqual(@as(u64, 2), second.generation);
+    try std.testing.expectEqual(terminal_mod.StringPayloadKind.pm, second.kind);
+    try std.testing.expectEqual(@as(usize, 900), second.payload.len);
+    try terminal.acknowledgeStringPayload(second.generation);
+    const third = terminal.surfaceSnapshot().string_payload.?;
+    try std.testing.expectEqual(@as(u64, 3), third.generation);
+    try std.testing.expectEqual(terminal_mod.StringPayloadKind.sos, third.kind);
+    try std.testing.expectEqual(@as(usize, 1000), third.payload.len);
+    try std.testing.expectEqual(@as(u32, 1000), terminal.host.string_retained_bytes);
+}
+
 test "legacy Tektronix C0 and ESC controls retain latest host-neutral state" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);

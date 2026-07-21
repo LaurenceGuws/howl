@@ -576,7 +576,10 @@ references:
         recognition: delegated
         records:
           - {id: libvterm.apc.fallback, raw: "APC Pb ST", effect: delegate payload to configured APC fallback,
-            conditions: unhandled without a fallback, howl: {status: 'false'}}
+            conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
+            howl: {status: partial, source: howl-vt/src/terminal.zig,
+            symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: state.c
         symbol: on_pm
         line: 1953
@@ -584,7 +587,10 @@ references:
         recognition: delegated
         records:
           - {id: libvterm.pm.fallback, raw: "PM Pb ST", effect: delegate payload to configured PM fallback,
-            conditions: unhandled without a fallback, howl: {status: 'false'}}
+            conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
+            howl: {status: partial, source: howl-vt/src/terminal.zig,
+            symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: state.c
         symbol: on_sos
         line: 1965
@@ -592,7 +598,10 @@ references:
         recognition: delegated
         records:
           - {id: libvterm.sos.fallback, raw: "SOS Pb ST", effect: delegate payload to configured SOS fallback,
-            conditions: unhandled without a fallback, howl: {status: 'false'}}
+            conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
+            howl: {status: partial, source: howl-vt/src/terminal.zig,
+            symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: pen.c
         symbol: vterm_state_setpen
         line: 276
@@ -2744,14 +2753,22 @@ references:
         recognition: implemented
         records:
           - {id: kitty.apc.graphics, raw: "APC G Pb ST", effect: Kitty graphics command, relevance: graphics,
-            bounds: parser command and payload bounds, howl: {status: 'false'}}
+            bounds: parser command and payload bounds,
+            conditions: Howl retains the exact bounded APC payload for host policy but does not implement graphics,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.acknowledgeStringPayload,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: vt-parser.c
         symbol: dispatch_pm
         line: 1432
         census: {semantic_branches: 1, records: 1}
         recognition: rejected_known
         records:
-          - {id: kitty.pm.unsupported, raw: "PM Pt ST", effect: report unsupported PM payload, howl: {status: 'false'}}
+          - {id: kitty.pm.unsupported, raw: "PM Pt ST", effect: report unsupported PM payload,
+            conditions: Howl retains the bounded payload for its host instead of issuing Kitty's diagnostic,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.acknowledgeStringPayload,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: vt-parser.c
         symbol: dispatch_sos
         line: 1445
@@ -2759,7 +2776,10 @@ references:
         recognition: rejected_known
         records:
           - {id: kitty.sos.unsupported, raw: "SOS Pt ST", effect: report unsupported SOS payload,
-            howl: {status: 'false'}}
+            conditions: Howl retains the bounded payload for its host instead of issuing Kitty's diagnostic,
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.acknowledgeStringPayload,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       - source: vt-parser.c
         symbol: _parse_sgr
         line: 965

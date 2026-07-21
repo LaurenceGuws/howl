@@ -5786,6 +5786,8 @@ const clipboard_reply_bytes_max: u32 =
 const dcs_payload_max_bytes: u32 = 2 * 1024;
 // Bounds one DCS command burst within the unchanged aggregate payload budget.
 const dcs_payload_capacity: u8 = 8;
+// Bounds one ordered APC, PM, and SOS fallback burst within the same metadata scale.
+const string_payload_capacity: u8 = 32;
 /// One retained OSC 8 URI and optional identity share the ordinary metadata scale.
 const hyperlink_target_max_bytes: u32 = 2 * 1024;
 /// Each retained title or icon name follows the 1 KiB parser metadata scale.
@@ -6023,6 +6025,16 @@ pub const HostState = struct {
         }
     };
 
+    const StringPayloadOwned = struct {
+        generation: u64,
+        kind: StringPayloadKind,
+        payload: []u8,
+
+        fn view(self: *const StringPayloadOwned) StringPayloadOccurrence {
+            return .{ .generation = self.generation, .kind = self.kind, .payload = self.payload };
+        }
+    };
+
     allocator: std.mem.Allocator,
     colors: TerminalColorState = .{},
     pending_output: PendingOutput,
@@ -6066,6 +6078,11 @@ pub const HostState = struct {
     dcs_payloads_start: u8 = 0,
     dcs_payloads_count: u8 = 0,
     dcs_retained_bytes: u32 = 0,
+    string_payload_generation: u64 = 0,
+    string_payloads: [string_payload_capacity]StringPayloadOwned = undefined,
+    string_payloads_start: u8 = 0,
+    string_payloads_count: u8 = 0,
+    string_retained_bytes: u32 = 0,
     legacy_control: ?LegacyControlKind = null,
 
     /// Initialize empty consequence state borrowing `allocator` until deinit.
@@ -6099,6 +6116,10 @@ pub const HostState = struct {
         for (0..self.dcs_payloads_count) |offset| {
             const index = (@as(usize, self.dcs_payloads_start) + offset) % dcs_payload_capacity;
             self.allocator.free(self.dcs_payloads[index].payload);
+        }
+        for (0..self.string_payloads_count) |offset| {
+            const index = (@as(usize, self.string_payloads_start) + offset) % string_payload_capacity;
+            self.allocator.free(self.string_payloads[index].payload);
         }
         self.pending_output.bytes.deinit(self.allocator);
     }
@@ -6426,6 +6447,42 @@ pub const HostState = struct {
         self.dcs_retained_bytes -= payload_len;
         self.dcs_payloads_start = (self.dcs_payloads_start + 1) % dcs_payload_capacity;
         self.dcs_payloads_count -= 1;
+    }
+
+    /// Retain one generic string control after every count, byte, generation, and allocation bound succeeds.
+    pub fn retainStringPayload(self: *HostState, payload: StringPayload) ApplyError!void {
+        try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
+        if (self.string_payloads_count == string_payload_capacity) return error.ConsequenceLimit;
+        if (self.string_payload_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const retained_bytes = std.math.add(u32, self.string_retained_bytes, byteCount(payload.payload)) catch
+            return error.ConsequenceLimit;
+        if (retained_bytes > dcs_payload_max_bytes) return error.ConsequenceLimit;
+        const owned = try self.allocator.dupe(u8, payload.payload);
+        const index = (self.string_payloads_start + self.string_payloads_count) % string_payload_capacity;
+        self.string_payload_generation += 1;
+        self.string_payloads[index] = .{
+            .generation = self.string_payload_generation,
+            .kind = payload.kind,
+            .payload = owned,
+        };
+        self.string_payloads_count += 1;
+        self.string_retained_bytes = retained_bytes;
+    }
+
+    fn stringPayloadHead(self: *const HostState) ?StringPayloadOccurrence {
+        if (self.string_payloads_count == 0) return null;
+        return self.string_payloads[self.string_payloads_start].view();
+    }
+
+    fn consumeStringPayload(self: *HostState) void {
+        std.debug.assert(self.string_payloads_count > 0);
+        const payload = &self.string_payloads[self.string_payloads_start];
+        const payload_len = byteCount(payload.payload);
+        std.debug.assert(payload_len <= self.string_retained_bytes);
+        self.allocator.free(payload.payload);
+        self.string_retained_bytes -= payload_len;
+        self.string_payloads_start = (self.string_payloads_start + 1) % string_payload_capacity;
+        self.string_payloads_count -= 1;
     }
 
     // Returns a stable nonzero hyperlink identity, preserving existing identities on failure.
@@ -6920,6 +6977,24 @@ test "clipboard query reply preserves request and output on allocation failure" 
     try std.testing.checkAllAllocationFailures(std.testing.allocator, replyClipboardAllocation, .{});
 }
 
+test "generic string retention preserves identity on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainStringAllocation, .{});
+}
+
+fn retainStringAllocation(allocator: std.mem.Allocator) !void {
+    var state = HostState.init(allocator);
+    defer state.deinit();
+    state.retainStringPayload(.{ .kind = .apc, .payload = "first" }) catch |failure| {
+        try std.testing.expectEqual(@as(u64, 0), state.string_payload_generation);
+        try std.testing.expectEqual(@as(u8, 0), state.string_payloads_count);
+        try std.testing.expectEqual(@as(u32, 0), state.string_retained_bytes);
+        return failure;
+    };
+    const occurrence = state.stringPayloadHead().?;
+    try std.testing.expectEqual(@as(u64, 1), occurrence.generation);
+    try std.testing.expectEqualStrings("first", occurrence.payload);
+}
+
 fn replyClipboardAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
@@ -7395,6 +7470,24 @@ pub const DcsPayloadOccurrence = struct {
     /// Identifies the exact DCS command family owning `payload`.
     kind: DcsPayloadKind,
     /// Borrows exact bounded command bytes until terminal mutation.
+    payload: []const u8,
+};
+
+/// Identifies one generic string-control family delegated to the embedding host.
+pub const StringPayloadKind = enum { apc, pm, sos };
+
+/// Borrows one ordered generic string-control payload until acknowledgement.
+pub const StringPayloadOccurrence = struct {
+    /// Monotonic identity advancing for every retained control, including repeated bytes.
+    generation: u64,
+    /// Identifies the framing family that carried `payload`.
+    kind: StringPayloadKind,
+    /// Borrows exact bounded payload bytes until terminal mutation.
+    payload: []const u8,
+};
+
+const StringPayload = struct {
+    kind: StringPayloadKind,
     payload: []const u8,
 };
 
@@ -8930,6 +9023,7 @@ pub const SemanticEvent = union(enum) {
     restore_tab_stops: []const u8,
     restore_cursor_appearance,
     dcs_payload: DcsPayload,
+    string_payload: StringPayload,
     device_status_report,
     dec_device_status_report: u16,
     cursor_position_report,
@@ -9637,6 +9731,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         ),
         .media_copy_request => |request| try vt.host.retainMediaCopy(request),
         .dcs_payload => |payload| try vt.host.retainDcsPayload(payload),
+        .string_payload => |payload| try vt.host.retainStringPayload(payload),
         .legacy_control => |kind| vt.host.legacy_control = kind,
         else => unreachable,
     }
@@ -11449,6 +11544,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .locator_request,
         .media_copy_request,
         .dcs_payload,
+        .string_payload,
         .legacy_control,
         => return applyHostEvent(vt, event),
 
@@ -11650,25 +11746,62 @@ const DcsCapture = struct {
     }
 };
 
-// Owns parser allocation and bounded DCS capture for one terminal lifetime.
+const StringCapture = struct {
+    allocator: std.mem.Allocator,
+    bytes: std.ArrayList(u8) = .empty,
+    kind: ?StringPayloadKind = null,
+    overflowed: bool = false,
+
+    fn deinit(self: *StringCapture) void {
+        self.bytes.deinit(self.allocator);
+    }
+
+    fn start(self: *StringCapture, kind: StringPayloadKind) void {
+        self.bytes.clearRetainingCapacity();
+        self.kind = kind;
+        self.overflowed = false;
+    }
+
+    fn put(self: *StringCapture, byte: u8) error{OutOfMemory}!void {
+        std.debug.assert(self.kind != null);
+        if (self.overflowed) return;
+        if (self.bytes.items.len >= dcs_payload_max_bytes) {
+            self.overflowed = true;
+            self.bytes.clearRetainingCapacity();
+            return;
+        }
+        try self.bytes.append(self.allocator, byte);
+    }
+
+    fn reset(self: *StringCapture) void {
+        self.bytes.clearRetainingCapacity();
+        self.kind = null;
+        self.overflowed = false;
+    }
+};
+
+// Owns parser allocation and bounded DCS and generic string capture for one terminal lifetime.
 const TerminalStreamState = struct {
     /// TerminalStream-state initialization can fail only while allocating parser storage.
     pub const InitError = error{OutOfMemory};
 
     parser: parser_mod.Parser,
     dcs: DcsCapture,
+    string: StringCapture,
 
-    /// Initializes parser storage and an empty DCS capture with one borrowed allocator.
+    /// Initializes parser storage and empty string captures with one borrowed allocator.
     pub fn initAlloc(allocator: std.mem.Allocator) InitError!TerminalStreamState {
         return .{
             .parser = try parser_mod.Parser.init(allocator),
             .dcs = DcsCapture.init(allocator),
+            .string = .{ .allocator = allocator },
         };
     }
 
-    /// Releases parser and DCS capture allocations.
+    /// Releases parser and string-capture allocations.
     pub fn deinit(self: *TerminalStreamState) void {
         self.dcs.deinit();
+        self.string.deinit();
         self.parser.deinit();
     }
 };
@@ -11705,6 +11838,7 @@ const TerminalStream = struct {
         errdefer {
             state.parser.reset();
             state.dcs.reset();
+            state.string.reset();
         }
 
         const phases = state.parser.next(byte);
@@ -11764,13 +11898,22 @@ const TerminalStream = struct {
             } }),
             .osc_dispatch => |osc| try self.applyEvent(.{ .osc = osc }),
             .screen_title => |title| try self.applyEvent(.{ .screen_title = title }),
-            .apc_start, .apc_put, .apc_end, .apc_cancel => discardedStringControl(),
+            .apc_start => self.startString(.apc),
+            .apc_put => |byte| self.putString(byte),
+            .apc_end => self.endString(),
+            .apc_cancel => self.cancelString(),
             .dcs_hook => |hook| self.startDcs(hook),
             .dcs_put => |byte| self.putDcs(byte),
             .dcs_unhook => self.endDcs(),
             .dcs_cancel => self.cancelDcs(),
-            .pm_start, .pm_put, .pm_end, .pm_cancel => discardedStringControl(),
-            .sos_start, .sos_put, .sos_end, .sos_cancel => discardedStringControl(),
+            .pm_start => self.startString(.pm),
+            .pm_put => |byte| self.putString(byte),
+            .pm_end => self.endString(),
+            .pm_cancel => self.cancelString(),
+            .sos_start => self.startString(.sos),
+            .sos_put => |byte| self.putString(byte),
+            .sos_end => self.endString(),
+            .sos_cancel => self.cancelString(),
             .esc_dispatch => |esc| self.applyEsc(esc),
         };
     }
@@ -11900,6 +12043,36 @@ const TerminalStream = struct {
 
     fn cancelDcs(self: *TerminalStream) EventEffect {
         self.terminal.stream_state.dcs.reset();
+        return discardedStringControl();
+    }
+
+    fn startString(self: *TerminalStream, kind: StringPayloadKind) EventEffect {
+        self.terminal.stream_state.string.start(kind);
+        return discardedStringControl();
+    }
+
+    fn putString(self: *TerminalStream, byte: u8) FeedError!EventEffect {
+        try self.terminal.stream_state.string.put(byte);
+        return discardedStringControl();
+    }
+
+    fn endString(self: *TerminalStream) FeedError!EventEffect {
+        const capture = &self.terminal.stream_state.string;
+        if (capture.overflowed) {
+            capture.reset();
+            return discardedStringControl();
+        }
+        const payload: StringPayload = .{ .kind = capture.kind.?, .payload = capture.bytes.items };
+        defer capture.reset();
+        return .{
+            .changed = try applySemantic(self.terminal, .{ .string_payload = payload }),
+            .title_changed = false,
+            .icon_changed = false,
+        };
+    }
+
+    fn cancelString(self: *TerminalStream) EventEffect {
+        self.terminal.stream_state.string.reset();
         return discardedStringControl();
     }
 
@@ -12244,6 +12417,10 @@ pub const Terminal = struct {
     pub const iterm_file_transfer_max_bytes = parser_mod.max_metadata_control_bytes;
     /// Exposes the fixed pending file-transfer packet capacity.
     pub const file_transfer_max_count = file_transfer_capacity;
+    /// Bounds aggregate retained APC, PM, and SOS payload bytes.
+    pub const string_payload_max_bytes = dcs_payload_max_bytes;
+    /// Exposes the fixed pending generic string-control capacity.
+    pub const string_payload_max_count = string_payload_capacity;
     /// Exposes the typed host-input vocabulary accepted by encodeInput.
     pub const InputEvent = Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
@@ -13187,6 +13364,8 @@ pub const Terminal = struct {
             .media_copy_count = self.host.media_copy_count,
             .dcs_payload = self.host.dcsPayloadHead(),
             .dcs_payload_count = self.host.dcs_payloads_count,
+            .string_payload = self.host.stringPayloadHead(),
+            .string_payload_count = self.host.string_payloads_count,
             .color_preference_notifications = self.modes.color_preference_notifications,
             .paste_events = self.modes.paste_events,
             .termios_signals = self.modes.termios_signals,
@@ -13618,6 +13797,14 @@ pub const Terminal = struct {
         self.dirty_generation +%= 1;
     }
 
+    /// Consume the matching FIFO-head APC, PM, or SOS payload after host handling.
+    pub fn acknowledgeStringPayload(self: *Terminal, generation: u64) error{StaleStringPayload}!void {
+        const occurrence = self.host.stringPayloadHead() orelse return error.StaleStringPayload;
+        if (occurrence.generation != generation) return error.StaleStringPayload;
+        self.host.consumeStringPayload();
+        self.dirty_generation +%= 1;
+    }
+
     fn noteSelectionChanged(self: *Terminal) void {
         self.screen_state.active().markAllRowsDirty();
         self.dirty_generation +%= 1;
@@ -13690,6 +13877,10 @@ pub const Terminal = struct {
         dcs_payload: ?DcsPayloadOccurrence,
         /// Reports the bounded number of pending DCS commands, including the exposed head.
         dcs_payload_count: u8,
+        /// Borrows the next FIFO generic APC, PM, or SOS payload until terminal mutation.
+        string_payload: ?StringPayloadOccurrence,
+        /// Reports the bounded number of generic string controls, including the exposed head.
+        string_payload_count: u8,
         /// Reports whether mode 2031 asks the host to publish color-scheme changes.
         color_preference_notifications: bool,
         /// Reports whether mode 5522 asks the host to use Kitty's extended paste path.
