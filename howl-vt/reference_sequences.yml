@@ -1670,11 +1670,12 @@ references:
             raw: "CSI ? 3 h|l"
             effect: toggle 80 or 132 columns
             conditions: >-
-              iTerm2 gates through allowColumnMode and owns asynchronous grid resizing plus preserve-screen policy;
-              Howl owns mode query/save/reset and set-side erase/home while embedder geometry remains unchanged
+              Howl matches iTerm2's permission gate, transition-only erase/home, preserve-screen mode, queries, and
+              parameterized save/restore; Howl defaults permission on, preserves existing margins, and leaves physical
+              geometry to the embedder while iTerm2 defaults permission off and asynchronously resizes its grid
             howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DECCOLM owns Kitty screen transition query save and reset lifetime"}}
+              symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
           - {id: iterm2.mode.decsclm, raw: "CSI ? 4 h|l", effect: ignore smooth-scroll mode,
             recognition: recognized_noop, howl: {status: full, source: howl-vt/src/terminal.zig,
               symbol: Terminal.setDecMode, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -1714,8 +1715,16 @@ references:
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
-          - {id: iterm2.mode.allow_deccolm, raw: "CSI ? 40 h|l", effect: toggle column-mode permission,
-            relevance: policy, howl: {status: 'false'}}
+          - id: iterm2.mode.allow_deccolm
+            raw: "CSI ? 40 h|l"
+            effect: toggle column-mode permission
+            conditions: >-
+              Set reset query and parameterized save or restore match; Howl defaults permission on across RIS while
+              iTerm2 defaults it off.
+            relevance: policy
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
           - {id: iterm2.mode.more_fix, raw: "CSI ? 41 h|l", effect: toggle more compatibility fix,
             relevance: compatibility, howl: {status: 'false'}}
           - {id: iterm2.mode.reverse_wrap, raw: "CSI ? 45 h|l", effect: toggle reverse wraparound,
@@ -1730,8 +1739,15 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "DEC screen origin and autowrap modes own exact repeated command effects"}}}
           - {id: iterm2.mode.decsdm, raw: "CSI ? 80 h|l", effect: toggle Sixel display mode, howl: {status: 'false'}}
-          - {id: iterm2.mode.decncsm, raw: "CSI ? 95 h|l", effect: preserve screen on column-mode change,
-            conditions: VT level 500+, howl: {status: 'false'}}
+          - id: iterm2.mode.decncsm
+            raw: "CSI ? 95 h|l"
+            effect: preserve screen on column-mode change
+            conditions: >-
+              Howl applies the mode without iTerm2's VT-level-500 gate and preserves its fixed grid rather than an
+              asynchronous physical resize; set reset query save restore DECSTR and RIS lifetime otherwise match.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
           - {id: iterm2.mode.mouse_normal, raw: "CSI ? 1000 h|l", effect: toggle button tracking,
             howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -2112,10 +2128,12 @@ references:
           - id: kitty.mode.deccolm
             raw: "CSI ? 3 h|l"
             effect: retain column mode; set erases the screen and homes the cursor
-            conditions: caller owns any physical resize before setting the mode
-            howl: {status: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+            conditions: >-
+              Howl's default permission accepts the first set, but Howl erases and homes only changed set or reset
+              transitions when DECNCSM is clear; Kitty erases and homes every set and leaves reset content intact.
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DECCOLM owns Kitty screen transition query save and reset lifetime"}}
+              symbol: "DEC column modes own permission preservation query save and reset lifetime"}}
           - {id: kitty.mode.decarm, raw: "CSI ? 8 h|l", effect: toggle autorepeat,
             conditions: "Howl additionally cancels pending wrap at the CSI boundary; physical repeat suppression,
               press and release preservation, default-on lifetime, mode query, and save or restore match",

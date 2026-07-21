@@ -5346,9 +5346,10 @@ const KeyFormatChange = struct {
 
 // Enumerates DEC modes whose state participates in parameterized XTSAVE and XTRESTORE.
 const savable_dec_modes = [_]u16{
-    1,    3,    5,    6,    7,    8,    9,    12,   25,   45,
-    47,   66,   69,   1045, 1047, 1049, 1000, 1002, 1003, 1004,
-    1005, 1006, 1015, 1016, 2004, 2026, 2031, 2048, 5522,
+    1,    3,    5,    6,    7,    8,    9,    12,   25,   40,
+    45,   47,   66,   69,   95,   1045, 1047, 1049, 1000, 1002,
+    1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026, 2031, 2048,
+    5522,
 };
 
 // Stores terminal modes that affect screen mutation, input encoding, and reports.
@@ -5357,6 +5358,9 @@ const ModeState = struct {
     application_cursor_keys: bool = false,
     application_keypad: bool = false,
     column_mode_132: bool = false,
+    // Howl historically admits DECCOLM while the embedding host owns physical geometry.
+    allow_column_mode: bool = true,
+    preserve_screen_on_column_mode: bool = false,
     auto_repeat: bool = true,
     reverse_screen_mode: bool = false,
     send_receive_mode: bool = false,
@@ -5405,6 +5409,8 @@ const DecView = struct {
     application_cursor_keys: bool,
     application_keypad: bool,
     column_mode_132: bool,
+    allow_column_mode: bool,
+    preserve_screen_on_column_mode: bool,
     auto_repeat: bool,
     reverse_screen_mode: bool,
     origin_mode: bool,
@@ -5440,7 +5446,9 @@ const AnsiView = struct {
 fn decModeStateForView(view: DecView, mode: u16) u8 {
     return switch (mode) {
         1 => boolToDecModeState(view.application_cursor_keys),
-        3 => boolToDecModeState(view.column_mode_132),
+        3 => boolToDecModeState(view.allow_column_mode and view.column_mode_132),
+        40 => boolToDecModeState(view.allow_column_mode),
+        95 => boolToDecModeState(view.preserve_screen_on_column_mode),
         5 => boolToDecModeState(view.reverse_screen_mode),
         6 => boolToDecModeState(view.origin_mode),
         7 => boolToDecModeState(view.auto_wrap),
@@ -8398,6 +8406,12 @@ fn basicModeToggle(final: u8, mode: i32) ?SemanticEvent {
         6 => boolEvent(final, .{ .origin_mode = true }, .{ .origin_mode = false }),
         1 => boolEvent(final, .{ .application_cursor_keys = true }, .{ .application_cursor_keys = false }),
         3 => boolEvent(final, .{ .column_mode_132 = true }, .{ .column_mode_132 = false }),
+        40 => boolEvent(final, .{ .allow_column_mode = true }, .{ .allow_column_mode = false }),
+        95 => boolEvent(
+            final,
+            .{ .preserve_screen_on_column_mode = true },
+            .{ .preserve_screen_on_column_mode = false },
+        ),
         66 => boolEvent(final, .{ .application_keypad = true }, .{ .application_keypad = false }),
         69 => boolEvent(final, .{ .left_right_margin_mode = true }, .{ .left_right_margin_mode = false }),
         45 => boolEvent(final, .{ .reverse_wraparound_mode = true }, .{ .reverse_wraparound_mode = false }),
@@ -9114,6 +9128,8 @@ pub const SemanticEvent = union(enum) {
     application_cursor_keys: bool,
     application_keypad: bool,
     column_mode_132: bool,
+    allow_column_mode: bool,
+    preserve_screen_on_column_mode: bool,
     ansi_mode_set: ModeParams,
     ansi_mode_reset: ModeParams,
     ansi_mode_query: u16,
@@ -9942,6 +9958,8 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .application_cursor_keys = vt.modes.application_cursor_keys,
         .application_keypad = vt.modes.application_keypad,
         .column_mode_132 = vt.modes.column_mode_132,
+        .allow_column_mode = vt.modes.allow_column_mode,
+        .preserve_screen_on_column_mode = vt.modes.preserve_screen_on_column_mode,
         .auto_repeat = vt.modes.auto_repeat,
         .reverse_screen_mode = vt.modes.reverse_screen_mode,
         .origin_mode = active.origin_mode,
@@ -11626,6 +11644,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .application_cursor_keys,
         .application_keypad,
         .column_mode_132,
+        .allow_column_mode,
+        .preserve_screen_on_column_mode,
         .auto_repeat,
         .reverse_screen_mode,
         .eight_bit_controls,
@@ -12954,6 +12974,7 @@ pub const Terminal = struct {
         changed = replaceBool(&self.modes.application_cursor_keys, false) or changed;
         changed = replaceBool(&self.modes.application_keypad, false) or changed;
         changed = replaceBool(&self.modes.column_mode_132, false) or changed;
+        changed = replaceBool(&self.modes.preserve_screen_on_column_mode, false) or changed;
         changed = replaceBool(&self.modes.newline_mode, false) or changed;
         changed = replaceBool(&self.modes.focus_reporting, false) or changed;
         changed = replaceBool(&self.modes.bracketed_paste, false) or changed;
@@ -13194,6 +13215,8 @@ pub const Terminal = struct {
             .application_cursor_keys => |enabled| return replaceBool(&self.modes.application_cursor_keys, enabled),
             .application_keypad => |enabled| return replaceBool(&self.modes.application_keypad, enabled),
             .column_mode_132 => |enabled| return self.setDecMode(3, enabled),
+            .allow_column_mode => |enabled| return self.setDecMode(40, enabled),
+            .preserve_screen_on_column_mode => |enabled| return self.setDecMode(95, enabled),
             .auto_repeat => |enabled| return self.setDecMode(8, enabled),
             .reverse_screen_mode => |enabled| return self.setDecMode(5, enabled),
             .eight_bit_controls => |enabled| {
@@ -13260,6 +13283,8 @@ pub const Terminal = struct {
             .application_cursor_keys = self.modes.application_cursor_keys,
             .application_keypad = self.modes.application_keypad,
             .column_mode_132 = self.modes.column_mode_132,
+            .allow_column_mode = self.modes.allow_column_mode,
+            .preserve_screen_on_column_mode = self.modes.preserve_screen_on_column_mode,
             .auto_repeat = self.modes.auto_repeat,
             .reverse_screen_mode = self.modes.reverse_screen_mode,
             .origin_mode = active.origin_mode,
@@ -13361,16 +13386,21 @@ pub const Terminal = struct {
             2, 4, 20, 42 => return false,
             1 => replaceBool(&self.modes.application_cursor_keys, enabled),
             3 => result: {
-                var changed = replaceBool(&self.modes.column_mode_132, enabled);
-                if (!enabled) break :result changed;
-                changed = active.eraseDisplay(.all, false) or changed;
+                if (!self.modes.allow_column_mode) return false;
+                const changed = replaceBool(&self.modes.column_mode_132, enabled);
+                // A repeated selection is not a new transition; DECNCSM preserves changed transitions.
+                if (!changed or self.modes.preserve_screen_on_column_mode) break :result changed;
+                var screen_changed = active.eraseDisplay(.all, false);
                 const cursor_before = active.cursor;
                 active.cursor.setPositionByClient(
                     if (active.origin_mode) active.scroll_top else 0,
                     0,
                 );
-                break :result !std.meta.eql(cursor_before, active.cursor) or changed;
+                screen_changed = !std.meta.eql(cursor_before, active.cursor) or screen_changed;
+                break :result screen_changed or changed;
             },
+            40 => replaceBool(&self.modes.allow_column_mode, enabled),
+            95 => replaceBool(&self.modes.preserve_screen_on_column_mode, enabled),
             5 => replaceBool(&self.modes.reverse_screen_mode, enabled),
             6 => changed: {
                 const before = .{ active.origin_mode, active.cursor.row, active.cursor.col };
