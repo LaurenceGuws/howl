@@ -1356,9 +1356,17 @@ references:
           - {id: iterm2.dcs.decrqss, raw: "DCS $ q Pt ST", effect: request terminal state string, relevance: query,
             howl: {status: partial}}
           - {id: iterm2.dcs.decrsps_deccir, raw: "DCS 1 $ t Pt ST", effect: restore cursor information,
-            howl: {status: partial}}
+            conditions: "Howl transactionally restores strict VT300 coordinates, four rendition bits, pending wrap,
+              origin, and supported G0 B/0 designation; permissive integers, %5, and VT500 Srend extension differ",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreCursorInformation, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECRSPS restores bounded cursor rendition wrap origin and line drawing"}}}
           - {id: iterm2.dcs.decrsps_dectabsr, raw: "DCS 2 $ t Pt ST", effect: restore tab stops,
-            howl: {status: partial}}
+            conditions: "Howl replaces exact positive in-range stops; stops beyond current width are not retained for
+              a later resize as iTerm2's unbounded set retains them",
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: restoreTabStops, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DECRSPS replaces active bounded tab stops transactionally"}}}
           - {id: iterm2.dcs.xtsettcap, raw: "DCS + p Pt ST", effect: set termcap or terminfo values,
             howl: {status: partial}}
           - {id: iterm2.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,

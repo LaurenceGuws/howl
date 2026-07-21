@@ -6741,7 +6741,6 @@ const KittyState = struct {
 /// Identifies the supported DCS family owning a captured payload.
 pub const DcsPayloadKind = enum {
     xtsettcap,
-    decrsps,
     decudk,
     decaupss,
 };
@@ -7604,8 +7603,14 @@ fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
         return SemanticEvent{ .dcs_request_resource = dcs.payload };
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '+' and dcs.final == 'p')
         return SemanticEvent{ .dcs_payload = .{ .kind = .xtsettcap, .payload = dcs.payload } };
-    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '$' and dcs.final == 't')
-        return SemanticEvent{ .dcs_payload = .{ .kind = .decrsps, .payload = dcs.body } };
+    if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '$' and dcs.final == 't') {
+        if (dcs.param_count != 1) return null;
+        return switch (dcs.params[0]) {
+            1 => SemanticEvent{ .restore_cursor_information = dcs.payload },
+            2 => SemanticEvent{ .restore_tab_stops = dcs.payload },
+            else => null,
+        };
+    }
     if (dcs.final == '|') return SemanticEvent{ .dcs_payload = .{ .kind = .decudk, .payload = dcs.body } };
     if (dcs.intermediates_len == 1 and dcs.intermediates[0] == '!' and dcs.final == 'u')
         return SemanticEvent{ .dcs_payload = .{ .kind = .decaupss, .payload = dcs.body } };
@@ -7682,10 +7687,18 @@ test "dcs legacy payload protocols classify host-neutral payloads" {
         "1$tstate",
         "state",
         't',
-        empty[0..],
-        0,
+        &.{1},
+        1,
         .dollar,
-    )).?.dcs_payload.kind == .decrsps);
+    )).? == .restore_cursor_information);
+    try std.testing.expect(dcsProcess(dcsEvent(
+        "2$t8/16",
+        "8/16",
+        't',
+        &.{2},
+        1,
+        .dollar,
+    )).? == .restore_tab_stops);
     try std.testing.expect(dcsProcess(dcsEvent(
         "0;1|keys",
         "keys",
@@ -8123,6 +8136,8 @@ pub const SemanticEvent = union(enum) {
     dcs_request_status: []const u8,
     dcs_request_termcap: []const u8,
     dcs_request_resource: []const u8,
+    restore_cursor_information: []const u8,
+    restore_tab_stops: []const u8,
     dcs_payload: DcsPayload,
     device_status_report,
     dec_device_status_report: u16,
@@ -10469,6 +10484,8 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .kitty_color_stack => |command| return applyKittyColorStack(vt, command),
         .sgr_stack_push => |params| return vt.pushSgr(params),
         .sgr_stack_pop => return vt.popSgr(),
+        .restore_cursor_information => |payload| return vt.restoreCursorInformation(payload),
+        .restore_tab_stops => |payload| return vt.restoreTabStops(payload),
 
         .focus_reporting => |enabled| return vt.setDecMode(1004, enabled),
         .mouse_tracking_off => return vt.setMouseTracking(.off),
@@ -11193,6 +11210,79 @@ test "discarded string controls stream without retaining payload bytes" {
     try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(0, 1));
 }
 
+const RestoredCursorInformation = struct {
+    row: u16,
+    col: u16,
+    reverse: bool,
+    blink: bool,
+    underline: bool,
+    bold: bool,
+    wrap_pending: bool,
+    origin_mode: bool,
+    g0_designation: u8,
+};
+
+// Parses the VT300 DECCIR fields that iTerm2 applies while validating the
+// complete four-slot designation suffix before any terminal mutation.
+fn parseCursorInformation(payload: []const u8) ?RestoredCursorInformation {
+    var fields: [10][]const u8 = undefined;
+    var parts = std.mem.splitScalar(u8, payload, ';');
+    for (&fields) |*field| field.* = parts.next() orelse return null;
+    if (parts.next() != null) return null;
+
+    const row = parsePresentationCoordinate(fields[0]) orelse return null;
+    const col = parsePresentationCoordinate(fields[1]) orelse return null;
+    if (parseDecimalPresentationField(fields[2]) == null) return null;
+    if (fields[3].len != 1 or fields[4].len != 1 or fields[5].len != 1 or fields[8].len != 1)
+        return null;
+
+    const rendition = fields[3][0];
+    if (rendition & 0xf0 != 0x40) return null;
+    if (parseDecimalPresentationField(fields[6]) == null or
+        parseDecimalPresentationField(fields[7]) == null) return null;
+
+    var designation_offset: usize = 0;
+    var g0_designation: u8 = 0;
+    for (0..4) |slot| {
+        const designation = consumePresentationDesignation(fields[9], &designation_offset) orelse return null;
+        if (slot == 0) g0_designation = designation;
+    }
+    if (designation_offset != fields[9].len or g0_designation == '%') return null;
+
+    return .{
+        .row = row,
+        .col = col,
+        .reverse = rendition & 8 != 0,
+        .blink = rendition & 4 != 0,
+        .underline = rendition & 2 != 0,
+        .bold = rendition & 1 != 0,
+        .wrap_pending = fields[5][0] & 8 != 0,
+        .origin_mode = fields[5][0] & 1 != 0,
+        .g0_designation = g0_designation,
+    };
+}
+
+fn parsePresentationCoordinate(field: []const u8) ?u16 {
+    const value = parseDecimalPresentationField(field) orelse return null;
+    return @intCast(@min(value -| 1, std.math.maxInt(u16)));
+}
+
+fn parseDecimalPresentationField(field: []const u8) ?u32 {
+    return std.fmt.parseInt(u32, field, 10) catch null;
+}
+
+fn consumePresentationDesignation(payload: []const u8, offset: *usize) ?u8 {
+    if (offset.* >= payload.len) return null;
+    const byte = payload[offset.*];
+    if (byte == '%' and offset.* + 1 < payload.len and payload[offset.* + 1] == '5') {
+        offset.* += 2;
+        return '%';
+    }
+    if (byte != 'B' and byte != '0') return null;
+    offset.* += 1;
+    return byte;
+}
+
 /// Host-neutral terminal state and protocol engine.
 pub const Terminal = struct {
     /// Exposes the terminal-borrowing byte stream type used by native hosts.
@@ -11537,6 +11627,61 @@ pub const Terminal = struct {
         const entry = self.sgr_stack[self.sgr_stack_len];
         restoreSelectedSgr(&self.screen_state.active().current_attrs, entry);
         return true;
+    }
+
+    // Restores the iTerm2-owned DECCIR subset after complete payload validation.
+    fn restoreCursorInformation(self: *Terminal, payload: []const u8) bool {
+        const info = parseCursorInformation(payload) orelse return false;
+        const active = self.screen_state.active();
+        const cursor_before = active.cursor;
+        const attrs_before = active.current_attrs;
+        const wrap_before = active.wrap_pending;
+        const origin_before = active.origin_mode;
+
+        const row = @min(info.row, active.rows - 1);
+        const col = @min(info.col, active.lineRightBoundary(row));
+        active.cursor.setPositionByClient(row, col);
+        active.current_attrs.reverse = info.reverse;
+        active.current_attrs.blink = info.blink;
+        active.current_attrs.underline = info.underline;
+        active.current_attrs.bold = info.bold;
+        active.wrap_pending = info.wrap_pending and active.auto_wrap and col == active.lineRightBoundary(row);
+        active.origin_mode = info.origin_mode;
+        const designation_changed = configureCharset(self, 0, info.g0_designation);
+
+        return !std.meta.eql(cursor_before, active.cursor) or
+            !std.meta.eql(attrs_before, active.current_attrs) or
+            wrap_before != active.wrap_pending or origin_before != active.origin_mode or
+            designation_changed;
+    }
+
+    // Replaces the active screen's bounded tab-stop set from one-based DECTABSR values.
+    fn restoreTabStops(self: *Terminal, payload: []const u8) bool {
+        const stops = self.screen_state.active().tab_stops orelse return false;
+        var restored: [parser_mod.max_metadata_control_bytes / 2 + 1]u16 = undefined;
+        var restored_count: usize = 0;
+        var values = std.mem.splitScalar(u8, payload, '/');
+        while (values.next()) |field| {
+            // iTerm2 filters invalid members independently instead of rejecting the complete stop set.
+            const one_based = std.fmt.parseInt(u32, field, 10) catch continue;
+            if (one_based == 0 or one_based > stops.len) continue;
+            std.debug.assert(restored_count < restored.len);
+            restored[restored_count] = @intCast(one_based - 1);
+            restored_count += 1;
+        }
+        std.sort.block(u16, restored[0..restored_count], {}, std.sort.asc(u16));
+
+        var changed = false;
+        var restored_index: usize = 0;
+        for (stops, 0..) |*stop, col| {
+            const column: u16 = @intCast(col);
+            while (restored_index < restored_count and restored[restored_index] < column)
+                restored_index += 1;
+            const next = restored_index < restored_count and restored[restored_index] == column;
+            changed = stop.* != next or changed;
+            stop.* = next;
+        }
+        return changed;
     }
 
     /// Saves cursor, rendition, charset, origin, and wrap state into the active screen slot.

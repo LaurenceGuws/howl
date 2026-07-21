@@ -1090,6 +1090,79 @@ test "DECCIR cursor information request is not supported" {
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
 }
 
+test "DECRSPS restores bounded cursor rendition wrap origin and line drawing" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 12);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[2;3m")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP1$t3;12;1;")).state_changed);
+    const restored = try terminal.feed("O;@;I;0;2;O;0BBB\x1b\\");
+    try std.testing.expect(restored.state_changed);
+
+    const active = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u16, 2), active.cursor.row);
+    try std.testing.expectEqual(@as(u16, 11), active.cursor.col);
+    try std.testing.expect(active.current_attrs.reverse);
+    try std.testing.expect(active.current_attrs.blink);
+    try std.testing.expect(active.current_attrs.underline);
+    try std.testing.expect(active.current_attrs.bold);
+    try std.testing.expect(active.wrap_pending);
+    try std.testing.expect(active.origin_mode);
+    try std.testing.expectEqual(@as(u8, '0'), terminal.designations[0]);
+
+    const repeated = try terminal.feed("\x1bP1$t3;12;1;O;@;I;0;2;O;0BBB\x1b\\");
+    try std.testing.expect(!repeated.state_changed);
+    const malformed = try terminal.feed("\x1bP1$tbad;12;1;O;@;I;0;2;O;0BBB\x1b\\");
+    try std.testing.expect(!malformed.state_changed);
+    const cursor_before = terminal.screen_state.activeConst().cursor;
+    const attrs_before = terminal.screen_state.activeConst().current_attrs;
+    const wrap_before = terminal.screen_state.activeConst().wrap_pending;
+    const origin_before = terminal.screen_state.activeConst().origin_mode;
+    const designations_before = terminal.designations;
+    const trailing_field = try terminal.feed("\x1bP1$t1;1;1;@;@;@;0;2;O;BBBB;extra\x1b\\");
+    try std.testing.expect(!trailing_field.state_changed);
+    const trailing_designation = try terminal.feed("\x1bP1$t1;1;1;@;@;@;0;2;O;BBBBx\x1b\\");
+    try std.testing.expect(!trailing_designation.state_changed);
+    try std.testing.expect(std.meta.eql(cursor_before, terminal.screen_state.activeConst().cursor));
+    try std.testing.expect(std.meta.eql(attrs_before, terminal.screen_state.activeConst().current_attrs));
+    try std.testing.expectEqual(wrap_before, terminal.screen_state.activeConst().wrap_pending);
+    try std.testing.expectEqual(origin_before, terminal.screen_state.activeConst().origin_mode);
+    try std.testing.expectEqualSlices(u8, designations_before[0..], terminal.designations[0..]);
+    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.activeConst().cursor.row);
+    const clamped = try terminal.feed("\x1bP1$t999999;999999;1;O;@;A;0;2;O;0BBB\x1b\\");
+    try std.testing.expect(clamped.state_changed);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 11), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expect(!terminal.screen_state.activeConst().wrap_pending);
+
+    try std.testing.expect((try terminal.feed("\x1b)A\x0e")).state_changed);
+    try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
+    try std.testing.expectEqual(@as(u8, 'A'), terminal.designations[1]);
+    const restore_g0 = try terminal.feed("\x1bP1$t4;12;1;O;@;A;0;2;O;BBBB\x1b\\");
+    try std.testing.expect(restore_g0.state_changed);
+    try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
+    try std.testing.expectEqual(@as(u8, 'B'), terminal.designations[0]);
+    try std.testing.expectEqual(@as(u8, 'A'), terminal.designations[1]);
+}
+
+test "DECRSPS replaces active bounded tab stops transactionally" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 18);
+    defer terminal.deinit();
+
+    try std.testing.expect(terminal.screen_state.activeConst().tabStopAt(8));
+    try std.testing.expect(!(try terminal.feed("\x1bP2$t3/11/999/bad")).state_changed);
+    try std.testing.expect((try terminal.feed("/0/3\x1b\\")).state_changed);
+    const active = terminal.screen_state.activeConst();
+    try std.testing.expect(active.tabStopAt(2));
+    try std.testing.expect(active.tabStopAt(10));
+    try std.testing.expect(!active.tabStopAt(8));
+
+    try std.testing.expect(!(try terminal.feed("\x1bP2$t3/11/999/bad/0/3\x1b\\")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bP2$t\x1b\\")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP2$t\x1b\\")).state_changed);
+    try std.testing.expect(!terminal.screen_state.activeConst().tabStopAt(2));
+}
+
 test "DECXCPR appends DEC cursor position report" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
