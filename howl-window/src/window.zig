@@ -1,4 +1,4 @@
-//! Owns one direct Wayland/xkb loop around one live terminal and render thread.
+//! Owns one direct Wayland/xkb loop around bounded tabs, panes, and terminals.
 
 const std = @import("std");
 const howl_control = @import("howl_control");
@@ -7,6 +7,47 @@ const renderer = @import("renderer.zig");
 const c = @import("native.zig").c;
 
 const initial_size = renderer.Size{ .width = 960, .height = 600 };
+const terminal_count: usize = 3;
+
+const TabId = enum(u8) { split = 1, full = 2 };
+const PaneId = enum(u8) { left = 1, right = 2, full = 3 };
+
+const PaneSpec = struct { id: PaneId, terminal: u8 };
+const Tab = struct { id: TabId, panes: []const PaneSpec };
+
+const split_panes = [_]PaneSpec{
+    .{ .id = .left, .terminal = 0 },
+    .{ .id = .right, .terminal = 1 },
+};
+const full_panes = [_]PaneSpec{.{ .id = .full, .terminal = 2 }};
+const tabs = [_]Tab{
+    .{ .id = .split, .panes = &split_panes },
+    .{ .id = .full, .panes = &full_panes },
+};
+
+const Workspace = struct {
+    tab: u8 = 0,
+    focus: [tabs.len]u8 = @splat(0),
+
+    fn switchTab(self: *Workspace, index: u8) bool {
+        if (index >= tabs.len or self.tab == index) return false;
+        self.tab = index;
+        return true;
+    }
+
+    fn focusNext(self: *Workspace) bool {
+        const count: u8 = @intCast(tabs[self.tab].panes.len);
+        if (count < 2) return false;
+        self.focus[self.tab] = (self.focus[self.tab] + 1) % count;
+        return true;
+    }
+
+    fn focusedTerminal(self: *const Workspace) u8 {
+        return tabs[self.tab].panes[self.focus[self.tab]].terminal;
+    }
+};
+
+const WakeContext = struct { owner: ?*anyopaque = null, index: u3 = 0 };
 
 pub const Error = renderer.StartError || renderer.Error || howl_control.InitError ||
     howl_control.InputError || howl_control.ResizeError || error{
@@ -21,6 +62,8 @@ pub const Error = renderer.StartError || renderer.Error || howl_control.InitErro
     TerminalSignal,
     Poll,
     InputIncomplete,
+    ResizeResultMismatch,
+    ResizeTransactionFailed,
 };
 
 const Loop = struct {
@@ -39,13 +82,22 @@ const Loop = struct {
     xkb_keymap: ?*c.struct_xkb_keymap = null,
     xkb_state: ?*c.struct_xkb_state = null,
     terminal_signal: c_int,
-    terminal: ?*howl_control.Terminal = null,
+    wake_bits: std.atomic.Value(u8) = .init(0),
+    wake_contexts: [terminal_count]WakeContext = @splat(.{}),
+    terminals: [terminal_count]?*howl_control.Terminal = @splat(null),
+    terminal_geometry: [terminal_count]Geometry = undefined,
+    // A stopped or failed pane keeps its last backing and rejects only focused
+    // input; sibling terminals, rendering, and tab ownership remain live.
+    unavailable: [terminal_count]bool = @splat(false),
     render: ?*renderer.Render = null,
     size: renderer.Size = initial_size,
+    pending_size: renderer.Size = initial_size,
     configured: bool = false,
     closed: bool = false,
     failure: ?Error = null,
     render_generation: u64 = 0,
+    completed_generation: u64 = 0,
+    workspace: Workspace = .{},
 
     fn init(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const u8) Error!*Loop {
         if (font_paths.len == 0) return error.FontOpen;
@@ -64,6 +116,10 @@ const Loop = struct {
             .display = display,
             .registry = registry,
             .terminal_signal = terminal_signal,
+        };
+        for (&self.wake_contexts, 0..) |*context, index| context.* = .{
+            .owner = self,
+            .index = @intCast(index),
         };
         errdefer self.destroyWayland();
         if (c.wl_registry_add_listener(registry, &registry_listener, self) != 0)
@@ -89,6 +145,8 @@ const Loop = struct {
         while (!self.configured and self.failure == null)
             if (c.wl_display_dispatch(display) < 0) return error.WaylandDispatch;
         if (self.failure) |failure| return failure;
+        self.size = self.pending_size;
+        if (self.size.width < 2) return error.InvalidSize;
         const render = try renderer.Render.start(allocator, io, .{
             .display = display,
             .surface = surface,
@@ -98,22 +156,31 @@ const Loop = struct {
         self.render = render;
         errdefer render.deinit() catch |failure|
             @panic(@errorName(failure));
-        const metrics = render.metrics();
-        const cols: u16 = @intCast(@max(1, self.size.width / metrics.cell_width));
-        const rows: u16 = @intCast(@max(1, self.size.height / metrics.cell_height));
-        const terminal = try howl_control.Terminal.init(allocator, io, .{
-            .shell = "/bin/bash",
-            .cols = cols,
-            .rows = rows,
-        }, .{ .context = self, .notify = terminalWake });
-        self.terminal = terminal;
+        errdefer {
+            for (&self.terminals) |*terminal| if (terminal.*) |value| {
+                value.deinit();
+                terminal.* = null;
+            };
+        }
+        for (&self.terminals, 0..) |*terminal, index| {
+            const geometry = terminalGeometry(@intCast(index), self.size, render.metrics());
+            terminal.* = try howl_control.Terminal.init(allocator, io, .{
+                .shell = "/bin/bash",
+                .cols = geometry.cols,
+                .rows = geometry.rows,
+            }, .{ .context = &self.wake_contexts[index], .notify = terminalWake });
+            self.terminal_geometry[index] = geometry;
+        }
+        self.updateTitle();
         return self;
     }
 
     fn run(self: *Loop) Error!void {
-        try self.submitNewest();
+        try self.submitVisible(visibleMask(self.workspace.tab));
         while (!self.closed and self.failure == null) {
             if (c.wl_display_dispatch_pending(self.display) < 0) return error.WaylandDispatch;
+            if (!std.meta.eql(self.pending_size, self.size) and
+                self.completed_generation == self.render_generation) try self.resizeAll();
             if (c.wl_display_flush(self.display) < 0 and std.posix.errno(-1) != .AGAIN)
                 return error.WaylandFlush;
             var fds = [_]std.posix.pollfd{
@@ -126,15 +193,22 @@ const Loop = struct {
             const faults = std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL;
             if (fds[2].revents & faults != 0) return error.Signal;
             if (fds[2].revents & std.posix.POLL.IN != 0) {
-                const completed = try self.render.?.completed();
-                std.debug.assert(completed != 0);
-                self.resizeTerminal();
+                self.completed_generation = try self.render.?.completed();
+                std.debug.assert(self.completed_generation != 0);
+                if (!std.meta.eql(self.pending_size, self.size)) try self.resizeAll();
             }
             if (fds[1].revents & faults != 0) return error.TerminalSignal;
             if (fds[1].revents & std.posix.POLL.IN != 0) {
                 try drainEvent(self.terminal_signal);
-                self.terminal.?.consumeWake();
-                try self.submitNewest();
+                const changed = self.wake_bits.swap(0, .acq_rel);
+                for (&self.terminals, 0..) |*terminal, index| if (changed & (@as(u8, 1) << @intCast(index)) != 0) {
+                    const value = terminal.*.?;
+                    value.consumeWake();
+                    self.unavailable[index] = value.state() != .running;
+                };
+                self.updateTitle();
+                const visible_changed = changed & visibleMask(self.workspace.tab);
+                if (visible_changed != 0) try self.submitVisible(visible_changed);
             }
             if (fds[0].revents & faults != 0) return error.WaylandDispatch;
             if (fds[0].revents & std.posix.POLL.IN != 0 and
@@ -143,37 +217,134 @@ const Loop = struct {
         if (self.failure) |failure| return failure;
     }
 
-    fn submitNewest(self: *Loop) Error!void {
-        var frame = self.terminal.?.borrowFrame() orelse return;
-        var transferred = false;
-        errdefer if (!transferred) self.terminal.?.releaseFrame(&frame) catch |failure| {
-            self.failure = failure;
-        };
+    fn submitVisible(self: *Loop, dirty_mask: u8) Error!void {
+        var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
+        const pane_count = self.visiblePanes(&panes);
+        var dirty: [renderer.max_terminals]*howl_control.Terminal = undefined;
+        var dirty_count: usize = 0;
+        const admitted_dirty = availableMask(dirty_mask, self.unavailable);
+        for (panes[0..pane_count]) |pane| {
+            for (self.terminals, 0..) |terminal, index| if (terminal == pane.terminal and
+                admitted_dirty & (@as(u8, 1) << @intCast(index)) != 0)
+            {
+                dirty[dirty_count] = pane.terminal;
+                dirty_count += 1;
+                break;
+            };
+        }
         if (self.render_generation == std.math.maxInt(u64)) return error.StaleGeneration;
         self.render_generation += 1;
         try self.render.?.submit(
             self.render_generation,
             self.size,
-            self.terminal.?,
-            &frame,
+            panes[0..pane_count],
+            dirty[0..dirty_count],
         );
-        transferred = true;
     }
 
-    fn resizeTerminal(self: *Loop) void {
+    fn resizeAll(self: *Loop) Error!void {
         const render = self.render orelse return;
-        const terminal = self.terminal orelse return;
-        const metrics = render.metrics();
-        const cols = std.math.cast(u16, @max(1, self.size.width / metrics.cell_width)) orelse return;
-        const rows = std.math.cast(u16, @max(1, self.size.height / metrics.cell_height)) orelse return;
-        const result = terminal.resize(cols, rows) catch |failure| switch (failure) {
-            error.FrameBorrowed => return,
-            else => {
-                self.failure = failure;
-                return;
-            },
+        if (self.completed_generation != self.render_generation) return;
+        if (self.pending_size.width < 2 or self.pending_size.height == 0 or
+            self.pending_size.width > renderer.max_window_dimension or
+            self.pending_size.height > renderer.max_window_dimension) return error.InvalidSize;
+        const plan = ResizePlan.init(
+            self.pending_size,
+            render.metrics(),
+            self.terminal_geometry,
+            self.unavailable,
+        );
+        var applied: [terminal_count]bool = @splat(false);
+        for (self.terminals, 0..) |terminal, index| {
+            if (!plan.change[index]) continue;
+            const target = plan.target[index];
+            const result = terminal.?.resize(target.cols, target.rows) catch |failure| {
+                if (!self.rollbackResize(applied, index)) return error.ResizeTransactionFailed;
+                return failure;
+            };
+            if (result.cols != target.cols or result.rows != target.rows) {
+                const prior = self.terminal_geometry[index];
+                const restored = terminal.?.resize(prior.cols, prior.rows) catch
+                    return error.ResizeTransactionFailed;
+                if (restored.cols != prior.cols or restored.rows != prior.rows or
+                    !self.rollbackResize(applied, index)) return error.ResizeTransactionFailed;
+                return error.ResizeResultMismatch;
+            }
+            applied[index] = true;
+        }
+        if (!plan.commit(&self.terminal_geometry, applied)) return error.ResizeTransactionFailed;
+        self.size = self.pending_size;
+        try self.submitVisible(visibleMask(self.workspace.tab));
+    }
+
+    fn rollbackResize(self: *Loop, applied: [terminal_count]bool, end: usize) bool {
+        var index = end;
+        while (index != 0) {
+            index -= 1;
+            if (!applied[index]) continue;
+            const prior = self.terminal_geometry[index];
+            const restored = self.terminals[index].?.resize(prior.cols, prior.rows) catch return false;
+            if (restored.cols != prior.cols or restored.rows != prior.rows) return false;
+        }
+        return true;
+    }
+
+    fn visiblePanes(self: *Loop, output: *[renderer.max_visible_panes]renderer.Pane) usize {
+        const selected = tabs[self.workspace.tab];
+        const split = self.size.width / 2;
+        for (selected.panes, 0..) |spec, index| {
+            const rect: renderer.Pane = switch (selected.id) {
+                .split => if (index == 0) .{
+                    .id = @enumFromInt(@intFromEnum(spec.id)),
+                    .terminal = self.terminals[spec.terminal].?,
+                    .x = 0,
+                    .y = 0,
+                    .width = split,
+                    .height = self.size.height,
+                    .focused = self.workspace.focus[self.workspace.tab] == index,
+                    .terminal_available = !self.unavailable[spec.terminal],
+                } else .{
+                    .id = @enumFromInt(@intFromEnum(spec.id)),
+                    .terminal = self.terminals[spec.terminal].?,
+                    .x = split,
+                    .y = 0,
+                    .width = self.size.width - split,
+                    .height = self.size.height,
+                    .focused = self.workspace.focus[self.workspace.tab] == index,
+                    .terminal_available = !self.unavailable[spec.terminal],
+                },
+                .full => .{
+                    .id = @enumFromInt(@intFromEnum(spec.id)),
+                    .terminal = self.terminals[spec.terminal].?,
+                    .x = 0,
+                    .y = 0,
+                    .width = self.size.width,
+                    .height = self.size.height,
+                    .focused = true,
+                    .terminal_available = !self.unavailable[spec.terminal],
+                },
+            };
+            output[index] = rect;
+        }
+        return selected.panes.len;
+    }
+
+    fn updateTitle(self: *Loop) void {
+        const focused = self.workspace.focusedTerminal();
+        const title: [*:0]const u8 = switch (self.workspace.tab) {
+            0 => if (self.unavailable[focused])
+                "Howl · tab 1/2 · pane unavailable"
+            else if (self.workspace.focus[0] == 0)
+                "Howl · tab 1/2 · pane 1/2"
+            else
+                "Howl · tab 1/2 · pane 2/2",
+            1 => if (self.unavailable[focused])
+                "Howl · tab 2/2 · pane unavailable"
+            else
+                "Howl · tab 2/2 · pane 1/1",
+            else => unreachable,
         };
-        std.debug.assert(result.cols == cols and result.rows == rows);
+        c.xdg_toplevel_set_title(self.toplevel.?, title);
     }
 
     fn key(self: *Loop, code: u32, state_value: u32) void {
@@ -192,6 +363,21 @@ const Loop = struct {
             .caps_lock = modifierActive(state, c.XKB_MOD_NAME_CAPS),
             .num_lock = modifierActive(state, c.XKB_MOD_NAME_NUM),
         };
+        if (mods.control and mods.shift) {
+            const changed = switch (symbol) {
+                c.XKB_KEY_F1 => self.workspace.switchTab(0),
+                c.XKB_KEY_F2 => self.workspace.switchTab(1),
+                c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => self.workspace.focusNext(),
+                else => false,
+            };
+            if (changed) {
+                self.updateTitle();
+                self.submitVisible(visibleMask(self.workspace.tab)) catch |failure| {
+                    self.failure = failure;
+                };
+                return;
+            }
+        }
         const named: ?howl_vt.Terminal.NamedKey = switch (symbol) {
             c.XKB_KEY_Return => .enter,
             c.XKB_KEY_Tab => .tab,
@@ -234,7 +420,8 @@ const Loop = struct {
                 .text = text,
             } };
         };
-        const result = self.terminal.?.send(&.{.{ .input = input }}) catch |failure| {
+        const focused = focusedAvailable(self.workspace, self.unavailable) orelse return;
+        const result = self.terminals[focused].?.send(&.{.{ .input = input }}) catch |failure| {
             self.failure = failure;
             return;
         };
@@ -246,18 +433,23 @@ const Loop = struct {
 
     fn deinit(self: *Loop) Error!void {
         if (self.render) |render| render.deinit() catch |failure| {
-            self.terminal.?.deinit();
-            self.terminal = null;
+            self.deinitTerminals();
             self.destroyWayland();
             const allocator = self.allocator;
             allocator.destroy(self);
             return failure;
         };
-        if (self.terminal) |terminal| terminal.deinit();
-        self.terminal = null;
+        self.deinitTerminals();
         self.destroyWayland();
         const allocator = self.allocator;
         allocator.destroy(self);
+    }
+
+    fn deinitTerminals(self: *Loop) void {
+        for (&self.terminals) |*terminal| if (terminal.*) |value| {
+            value.deinit();
+            terminal.* = null;
+        };
     }
 
     fn destroyWayland(self: *Loop) void {
@@ -305,11 +497,76 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const
 }
 
 fn terminalWake(context: ?*anyopaque) void {
-    const self: *Loop = @ptrCast(@alignCast(context.?));
+    const wake: *WakeContext = @ptrCast(@alignCast(context.?));
+    const self: *Loop = @ptrCast(@alignCast(wake.owner.?));
+    const bit = @as(u8, 1) << wake.index;
+    if (self.wake_bits.fetchOr(bit, .release) & bit != 0) return;
     const value: u64 = 1;
     const count = c.write(self.terminal_signal, &value, @sizeOf(u64));
     if (count != @sizeOf(u64) and !(count < 0 and std.posix.errno(count) == .AGAIN))
         @panic("terminal wake eventfd write failed");
+}
+
+const Geometry = struct { cols: u16, rows: u16 };
+
+const ResizePlan = struct {
+    target: [terminal_count]Geometry,
+    change: [terminal_count]bool,
+
+    fn init(
+        size: renderer.Size,
+        metrics: @import("howl_text").Metrics,
+        current: [terminal_count]Geometry,
+        unavailable: [terminal_count]bool,
+    ) ResizePlan {
+        var plan = ResizePlan{ .target = current, .change = @splat(false) };
+        for (&plan.target, 0..) |*target, index| {
+            if (unavailable[index]) continue;
+            target.* = terminalGeometry(@intCast(index), size, metrics);
+            plan.change[index] = !std.meta.eql(target.*, current[index]);
+        }
+        return plan;
+    }
+
+    fn commit(
+        self: ResizePlan,
+        current: *[terminal_count]Geometry,
+        applied: [terminal_count]bool,
+    ) bool {
+        if (!std.meta.eql(self.change, applied)) return false;
+        current.* = self.target;
+        return true;
+    }
+};
+
+fn terminalGeometry(index: u8, size: renderer.Size, metrics: @import("howl_text").Metrics) Geometry {
+    const width = if (index < 2)
+        if (index == 0) size.width / 2 else size.width - size.width / 2
+    else
+        size.width;
+    return .{
+        .cols = @intCast(@max(1, width / metrics.cell_width)),
+        .rows = @intCast(@max(1, size.height / metrics.cell_height)),
+    };
+}
+
+fn visibleMask(tab: u8) u8 {
+    var mask: u8 = 0;
+    for (tabs[tab].panes) |pane| mask |= @as(u8, 1) << @intCast(pane.terminal);
+    return mask;
+}
+
+fn availableMask(requested: u8, unavailable: [terminal_count]bool) u8 {
+    var admitted = requested;
+    for (unavailable, 0..) |blocked, index| {
+        if (blocked) admitted &= ~(@as(u8, 1) << @intCast(index));
+    }
+    return admitted;
+}
+
+fn focusedAvailable(workspace: Workspace, unavailable: [terminal_count]bool) ?u8 {
+    const terminal = workspace.focusedTerminal();
+    return if (unavailable[terminal]) null else terminal;
 }
 
 fn drainEvent(fd: c_int) Error!void {
@@ -361,7 +618,6 @@ fn surfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_xdg_surface, serial: 
     const self = loop(data);
     c.xdg_surface_ack_configure(surface, serial);
     self.configured = true;
-    self.resizeTerminal();
 }
 const xdg_surface_listener = c.struct_xdg_surface_listener{ .configure = surfaceConfigure };
 
@@ -374,7 +630,7 @@ fn toplevelConfigure(
 ) callconv(.c) void {
     if (width <= 0 or height <= 0) return;
     const self = loop(data);
-    self.size = .{ .width = @intCast(width), .height = @intCast(height) };
+    self.pending_size = .{ .width = @intCast(width), .height = @intCast(height) };
 }
 fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
     loop(data).closed = true;
@@ -501,4 +757,89 @@ test "pixel geometry admits at least one bounded cell" {
     const size = renderer.Size{ .width = 1, .height = 1 };
     try std.testing.expectEqual(@as(u32, 1), @max(1, size.width / 8));
     try std.testing.expectEqual(@as(u32, 1), @max(1, size.height / 16));
+}
+
+test "two stable tabs retain split focus independently" {
+    var workspace = Workspace{};
+    try std.testing.expectEqual(TabId.split, tabs[workspace.tab].id);
+    try std.testing.expectEqual(@as(u8, 0), workspace.focusedTerminal());
+    try std.testing.expect(workspace.focusNext());
+    try std.testing.expectEqual(@as(u8, 1), workspace.focusedTerminal());
+    try std.testing.expect(workspace.switchTab(1));
+    try std.testing.expectEqual(TabId.full, tabs[workspace.tab].id);
+    try std.testing.expectEqual(@as(u8, 2), workspace.focusedTerminal());
+    try std.testing.expect(!workspace.focusNext());
+    try std.testing.expect(workspace.switchTab(0));
+    try std.testing.expectEqual(@as(u8, 1), workspace.focusedTerminal());
+    try std.testing.expectEqual(@intFromEnum(PaneId.left), 1);
+    try std.testing.expectEqual(@intFromEnum(PaneId.right), 2);
+    try std.testing.expectEqual(@intFromEnum(PaneId.full), 3);
+}
+
+test "hidden terminal wakes stay outside visible work until tab switch" {
+    try std.testing.expectEqual(@as(u8, 0b011), visibleMask(0));
+    try std.testing.expectEqual(@as(u8, 0b100), visibleMask(1));
+    const hidden_wake: u8 = 0b100;
+    try std.testing.expectEqual(@as(u8, 0), hidden_wake & visibleMask(0));
+    try std.testing.expectEqual(hidden_wake, hidden_wake & visibleMask(1));
+}
+
+test "one failed pane rejects only its focused input" {
+    var workspace = Workspace{};
+    var unavailable: [terminal_count]bool = @splat(false);
+    unavailable[0] = true;
+    try std.testing.expectEqual(null, focusedAvailable(workspace, unavailable));
+    try std.testing.expect(workspace.focusNext());
+    try std.testing.expectEqual(@as(u8, 1), focusedAvailable(workspace, unavailable).?);
+    try std.testing.expect(workspace.switchTab(1));
+    try std.testing.expectEqual(@as(u8, 2), focusedAvailable(workspace, unavailable).?);
+    try std.testing.expectEqual(@as(u8, 0b010), availableMask(visibleMask(0), unavailable));
+    try std.testing.expectEqual(@as(u8, 0b100), availableMask(visibleMask(1), unavailable));
+}
+
+test "split and full terminal geometry cover admitted pixels deterministically" {
+    const metrics = testMetrics();
+    const size = renderer.Size{ .width = 101, .height = 61 };
+    try std.testing.expectEqual(Geometry{ .cols = 5, .rows = 3 }, terminalGeometry(0, size, metrics));
+    try std.testing.expectEqual(Geometry{ .cols = 5, .rows = 3 }, terminalGeometry(1, size, metrics));
+    try std.testing.expectEqual(Geometry{ .cols = 10, .rows = 3 }, terminalGeometry(2, size, metrics));
+}
+
+test "resize plan excludes unavailable geometry and commits every live result together" {
+    const metrics = testMetrics();
+    const current = [_]Geometry{
+        .{ .cols = 40, .rows = 20 },
+        .{ .cols = 40, .rows = 20 },
+        .{ .cols = 80, .rows = 20 },
+    };
+    const unavailable = [_]bool{ false, true, false };
+    const plan = ResizePlan.init(
+        .{ .width = 1_000, .height = 500 },
+        metrics,
+        current,
+        unavailable,
+    );
+    try std.testing.expectEqual([_]bool{ true, false, true }, plan.change);
+    try std.testing.expectEqual(current[1], plan.target[1]);
+
+    var uncommitted = current;
+    try std.testing.expect(!plan.commit(&uncommitted, .{ true, false, false }));
+    try std.testing.expectEqual(current, uncommitted);
+
+    var committed = current;
+    try std.testing.expect(plan.commit(&committed, plan.change));
+    try std.testing.expectEqual(plan.target, committed);
+    try std.testing.expectEqual(current[1], committed[1]);
+}
+
+fn testMetrics() @import("howl_text").Metrics {
+    return .{
+        .cell_width = 10,
+        .cell_height = 20,
+        .baseline = 15,
+        .underline_y = 17,
+        .underline_height = 1,
+        .strike_y = 10,
+        .strike_height = 1,
+    };
 }

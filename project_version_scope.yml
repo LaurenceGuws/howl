@@ -24,6 +24,12 @@ capabilities:
       one Wayland/xkb loop routes live terminal wakes and input while one render thread owns EGL/GLES, the shared
       glyph and texture caches, frame release, swap, and completion notification for one replacement window
 
+  - name: pane_composition
+    acceptance: >-
+      two stable tabs include one split, keep three terminal owners live, route input through explicit focus,
+      transactionally resize available terminals from pane layout, and share one render thread, text owner,
+      mask cache, and GLES device
+
   - name: development_orchestration
     acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig
 

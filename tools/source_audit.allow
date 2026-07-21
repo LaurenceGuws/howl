@@ -121,6 +121,7 @@ howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_snapshot_test.zig"
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_surface_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_test.zig");
 howl-window/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-window/src/window.zig|anyopaque|const WakeContext = struct { owner: ?*anyopaque = null, index: u3 = 0 };
 howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-window/src/window.zig|anyopaque|data: ?*anyopaque,

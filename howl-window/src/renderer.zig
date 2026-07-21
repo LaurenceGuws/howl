@@ -10,6 +10,13 @@ const c = @import("native.zig").c;
 
 const texture_capacity = howl_render.cache_capacity;
 const texture_byte_capacity = howl_render.cache_byte_capacity;
+/// Bounds terminal identities retained by one render owner and its mailbox.
+pub const max_terminals: usize = 8;
+/// Bounds simultaneously composed panes and frame borrows in one visible tab.
+pub const max_visible_panes: usize = 4;
+/// Bounds each nonzero Wayland/GLES width or height before C-int narrowing.
+pub const max_window_dimension: u32 = 8_192;
+const max_backing_bytes: usize = 128 * 1024 * 1024;
 
 /// Carries one nonzero logical Wayland surface extent in pixels.
 pub const Size = struct {
@@ -33,7 +40,8 @@ pub const Error = howl_render.Error || howl_control.FrameReleaseError || error{
     Signal,
     Stopping,
     StaleGeneration,
-    MailboxFull,
+    BackingLimit,
+    FrameUnavailable,
     InvalidSize,
     InvalidFonts,
     Cleanup,
@@ -57,31 +65,26 @@ pub const Init = struct {
 const Work = struct {
     generation: u64,
     size: Size,
-    terminal: *howl_control.Terminal,
-    frame: howl_control.Frame,
+    panes: [max_visible_panes]Pane = undefined,
+    pane_count: u8,
+    dirty: [max_terminals]*howl_control.Terminal = undefined,
+    dirty_count: u8,
 };
 
-// With one two-slot frame publisher, the render thread can own either active
-// plus pending, or superseded plus pending, never all three. The second form
-// exists only after active release makes a newer publication borrowable before
-// the render thread takes the prior pending work.
 const Mailbox = struct {
     pending: ?Work = null,
-    superseded: ?Work = null,
 
-    fn admit(self: *Mailbox, active: bool, work: *Work) error{MailboxFull}!void {
+    fn admit(self: *Mailbox, work: Work) void {
+        var newest = work;
         if (self.pending) |pending| {
-            if (active or self.superseded != null) return error.MailboxFull;
-            self.superseded = pending;
+            for (pending.dirty[0..pending.dirty_count]) |terminal| {
+                if (!containsAvailableTerminal(newest.panes[0..newest.pane_count], terminal) or
+                    containsDirty(newest.dirty[0..newest.dirty_count], terminal)) continue;
+                newest.dirty[newest.dirty_count] = terminal;
+                newest.dirty_count += 1;
+            }
         }
-        self.pending = work.*;
-        work.* = undefined;
-    }
-
-    fn takeSuperseded(self: *Mailbox) ?Work {
-        const work = self.superseded;
-        self.superseded = null;
-        return work;
+        self.pending = newest;
     }
 
     fn takePending(self: *Mailbox) ?Work {
@@ -91,8 +94,31 @@ const Mailbox = struct {
     }
 
     fn empty(self: *const Mailbox) bool {
-        return self.pending == null and self.superseded == null;
+        return self.pending == null;
     }
+};
+
+/// Gives one stable nonzero identity to a composed pane.
+pub const PaneId = enum(u8) { _ };
+
+/// Places one terminal in a bounded visible pane without borrowing its frame.
+pub const Pane = struct {
+    /// Identifies this pane backing; zero is invalid and identities are stable.
+    id: PaneId,
+    /// Borrows the terminal through render shutdown; the window loop owns it.
+    terminal: *howl_control.Terminal,
+    /// Places the pane's left edge within the submitted window width.
+    x: u32,
+    /// Places the pane's top edge within the submitted window height.
+    y: u32,
+    /// Supplies a nonzero extent contained by the submitted window width.
+    width: u32,
+    /// Supplies a nonzero extent contained by the submitted window height.
+    height: u32,
+    /// Marks exactly one submitted pane as the current input destination.
+    focused: bool,
+    /// False preserves and scales the last backing without requesting a frame.
+    terminal_available: bool,
 };
 
 const Texture = struct {
@@ -100,6 +126,22 @@ const Texture = struct {
     name: c.GLuint,
     bytes: usize,
     last_generation: u64,
+};
+
+const Backing = struct {
+    id: PaneId,
+    terminal: *howl_control.Terminal,
+    texture: c.GLuint,
+    framebuffer: c.GLuint,
+    width: u32,
+    height: u32,
+    initialized: bool = false,
+};
+
+const Borrowed = struct {
+    terminal: *howl_control.Terminal,
+    frame: howl_control.Frame,
+    pane: Pane,
 };
 
 const Vertex = extern struct { x: f32, y: f32, u: f32, v: f32, r: f32, g: f32, b: f32, a: f32 };
@@ -110,13 +152,17 @@ const Device = struct {
     context: c.EGLContext,
     surface: c.EGLSurface,
     window: *c.struct_wl_egl_window,
-    program: c.GLuint,
+    mask_program: c.GLuint,
+    copy_program: c.GLuint,
     buffer: c.GLuint,
     white: c.GLuint,
     core: howl_render.Renderer,
     textures: [texture_capacity]Texture = undefined,
     texture_count: u16 = 0,
     texture_bytes: usize = 0,
+    backings: [max_terminals]Backing = undefined,
+    backing_count: u8 = 0,
+    backing_bytes: usize = 0,
     size: Size,
 
     fn init(allocator: std.mem.Allocator, values: Init) StartError!Device {
@@ -164,8 +210,10 @@ const Device = struct {
             c.EGL_NO_SURFACE,
             c.EGL_NO_CONTEXT,
         ) != c.EGL_TRUE) @panic("EGL current-context rollback failed");
-        const program = try createProgram();
-        errdefer c.glDeleteProgram(program);
+        const mask_program = try createProgram(.mask);
+        errdefer c.glDeleteProgram(mask_program);
+        const copy_program = try createProgram(.copy);
+        errdefer c.glDeleteProgram(copy_program);
         var buffer: c.GLuint = 0;
         c.glGenBuffers(1, &buffer);
         if (buffer == 0 or c.glGetError() != c.GL_NO_ERROR) return error.Draw;
@@ -192,7 +240,8 @@ const Device = struct {
             .context = context,
             .surface = surface,
             .window = window,
-            .program = program,
+            .mask_program = mask_program,
+            .copy_program = copy_program,
             .buffer = buffer,
             .white = white,
             .core = core,
@@ -201,6 +250,26 @@ const Device = struct {
     }
 
     fn draw(self: *Device, work: Work) Error!void {
+        var borrowed: [max_visible_panes]Borrowed = undefined;
+        var borrowed_count: usize = 0;
+        var failure: ?Error = null;
+        self.drawBorrowed(work, &borrowed, &borrowed_count) catch |cause| {
+            failure = cause;
+        };
+        releaseBorrowed(borrowed[0..borrowed_count]) catch |cause| {
+            if (failure != null and failure.? != cause)
+                @panic("frame release failed after a distinct render failure");
+            failure = cause;
+        };
+        if (failure) |cause| return cause;
+    }
+
+    fn drawBorrowed(
+        self: *Device,
+        work: Work,
+        borrowed: *[max_visible_panes]Borrowed,
+        borrowed_count: *usize,
+    ) Error!void {
         if (!std.meta.eql(self.size, work.size)) {
             c.wl_egl_window_resize(
                 self.window,
@@ -211,29 +280,137 @@ const Device = struct {
             );
             self.size = work.size;
         }
-        const pane = howl_render.Pane{
-            .x = 0,
-            .y = 0,
-            .width = self.size.width,
-            .height = self.size.height,
-            .frame = work.frame.frame,
-        };
-        const prepared = try self.core.prepare(
-            work.generation,
-            self.size.width,
-            self.size.height,
-            &.{pane},
-        );
-        std.debug.assert(prepared.panes == 1);
+        try self.reconcile(work.panes[0..work.pane_count]);
+        for (work.panes[0..work.pane_count]) |pane| {
+            const backing = self.findBacking(pane.id).?;
+            const dirty = containsDirty(work.dirty[0..work.dirty_count], pane.terminal);
+            if (!needsFrame(pane, backing.initialized, dirty)) continue;
+            const frame = pane.terminal.borrowFrame() orelse {
+                if (backing.initialized) continue;
+                return error.FrameUnavailable;
+            };
+            borrowed[borrowed_count.*] = .{
+                .terminal = pane.terminal,
+                .frame = frame,
+                .pane = pane,
+            };
+            borrowed_count.* += 1;
+        }
+        if (borrowed_count.* != 0) {
+            var prepared_panes: [max_visible_panes]howl_render.Pane = undefined;
+            for (borrowed[0..borrowed_count.*], 0..) |owned, index| {
+                var complete = owned.frame.frame;
+                // A pane backing is rebuilt as complete state; terminal damage
+                // only bounds transport into a renderer that retains cell pixels.
+                complete.damage.full = true;
+                prepared_panes[index] = .{
+                    .x = 0,
+                    .y = 0,
+                    .width = owned.pane.width,
+                    .height = owned.pane.height,
+                    .frame = complete,
+                };
+            }
+            const prepared = try self.core.prepare(
+                work.generation,
+                work.size.width,
+                work.size.height,
+                prepared_panes[0..borrowed_count.*],
+            );
+            std.debug.assert(prepared.panes == borrowed_count.*);
+            for (borrowed[0..borrowed_count.*]) |owned| {
+                try self.drawFrame(work.generation, owned.pane, owned.frame.frame);
+                self.findBacking(owned.pane.id).?.initialized = true;
+            }
+        }
         c.glViewport(0, 0, @intCast(self.size.width), @intCast(self.size.height));
         c.glClearColor(0.035, 0.039, 0.045, 1.0);
         c.glClear(c.GL_COLOR_BUFFER_BIT);
-        c.glUseProgram(self.program);
+        c.glUseProgram(self.copy_program);
         c.glBindBuffer(c.GL_ARRAY_BUFFER, self.buffer);
         c.glEnableVertexAttribArray(0);
         c.glEnableVertexAttribArray(1);
         c.glEnableVertexAttribArray(2);
-        const frame = work.frame.frame;
+        const white = howl_vt.Terminal.Rgb{ .r = 255, .g = 255, .b = 255 };
+        for (work.panes[0..work.pane_count]) |pane| {
+            const backing = self.findBacking(pane.id).?;
+            c.glUseProgram(self.copy_program);
+            try self.quad(
+                @intCast(pane.x),
+                @intCast(pane.y),
+                @intCast(pane.width),
+                @intCast(pane.height),
+                white,
+                backing.texture,
+                self.size,
+                true,
+            );
+            if (pane.focused) {
+                c.glUseProgram(self.mask_program);
+                const focus = howl_vt.Terminal.Rgb{ .r = 142, .g = 192, .b = 124 };
+                const thickness: u16 = @intCast(@min(2, @min(pane.width, pane.height)));
+                try self.quad(
+                    @intCast(pane.x),
+                    @intCast(pane.y),
+                    @intCast(pane.width),
+                    thickness,
+                    focus,
+                    self.white,
+                    self.size,
+                    false,
+                );
+                try self.quad(
+                    @intCast(pane.x),
+                    @intCast(pane.y + pane.height - thickness),
+                    @intCast(pane.width),
+                    thickness,
+                    focus,
+                    self.white,
+                    self.size,
+                    false,
+                );
+                try self.quad(
+                    @intCast(pane.x),
+                    @intCast(pane.y),
+                    thickness,
+                    @intCast(pane.height),
+                    focus,
+                    self.white,
+                    self.size,
+                    false,
+                );
+                try self.quad(
+                    @intCast(pane.x + pane.width - thickness),
+                    @intCast(pane.y),
+                    thickness,
+                    @intCast(pane.height),
+                    focus,
+                    self.white,
+                    self.size,
+                    false,
+                );
+            }
+        }
+        if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+        if (c.eglSwapBuffers(self.display, self.surface) != c.EGL_TRUE) return error.Swap;
+    }
+
+    fn drawFrame(
+        self: *Device,
+        generation: u64,
+        pane: Pane,
+        frame: howl_frame.TerminalFrame,
+    ) Error!void {
+        const backing = self.findBacking(pane.id).?;
+        c.glBindFramebuffer(c.GL_FRAMEBUFFER, backing.framebuffer);
+        c.glViewport(0, 0, @intCast(pane.width), @intCast(pane.height));
+        c.glClearColor(0.035, 0.039, 0.045, 1.0);
+        c.glClear(c.GL_COLOR_BUFFER_BIT);
+        c.glUseProgram(self.mask_program);
+        c.glBindBuffer(c.GL_ARRAY_BUFFER, self.buffer);
+        c.glEnableVertexAttribArray(0);
+        c.glEnableVertexAttribArray(1);
+        c.glEnableVertexAttribArray(2);
         const metrics = self.core.metrics();
         for (0..frame.rows) |row| for (0..frame.cols) |col| {
             const cell = frame.cells[row * frame.cols + col];
@@ -253,12 +430,14 @@ const Device = struct {
                 metrics.cell_height,
                 background,
                 self.white,
+                .{ .width = pane.width, .height = pane.height },
+                false,
             );
             if (cell.codepoint == 0 or cell.x != 0 or cell.y != 0 or cell.invisible) continue;
             const glyphs = try self.core.preparedGlyphs(cell);
             for (glyphs.slice()) |glyph| {
                 if (glyph.width == 0 or glyph.height == 0) continue;
-                const texture_name = try self.texture(work.generation, glyph);
+                const texture_name = try self.texture(generation, glyph);
                 try self.quad(
                     @as(i32, @intCast(col * metrics.cell_width)) + glyph.left + @divTrunc(glyph.x_offset, 64),
                     @as(i32, @intCast(row * metrics.cell_height)) + metrics.baseline -
@@ -267,11 +446,58 @@ const Device = struct {
                     glyph.height,
                     foreground,
                     texture_name,
+                    .{ .width = pane.width, .height = pane.height },
+                    false,
                 );
             }
         };
+        c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
-        if (c.eglSwapBuffers(self.display, self.surface) != c.EGL_TRUE) return error.Swap;
+    }
+
+    fn reconcile(self: *Device, panes: []const Pane) Error!void {
+        for (panes) |pane| {
+            if (self.findBacking(pane.id)) |existing| {
+                if (existing.terminal != pane.terminal) return error.InvalidPane;
+                if (existing.width == pane.width and existing.height == pane.height) continue;
+                if (!pane.terminal_available) continue;
+                const old_bytes = backingBytes(existing.width, existing.height);
+                const new_bytes = backingBytes(pane.width, pane.height);
+                if (new_bytes > old_bytes and
+                    new_bytes - old_bytes > max_backing_bytes - self.backing_bytes)
+                    return error.BackingLimit;
+                const replacement = try createBacking(pane);
+                const old = existing.*;
+                existing.* = replacement;
+                self.backing_bytes -= old_bytes;
+                self.backing_bytes += new_bytes;
+                destroyBacking(old);
+                continue;
+            }
+            if (self.backing_count == max_terminals) return error.InvalidPane;
+            const bytes = backingBytes(pane.width, pane.height);
+            if (bytes > max_backing_bytes - self.backing_bytes) return error.BackingLimit;
+            self.backings[self.backing_count] = try createBacking(pane);
+            // A terminal that stopped before first visibility has no frame to
+            // initialize this pane. Its cleared backing is the retained fact.
+            self.backings[self.backing_count].initialized = !pane.terminal_available;
+            self.backing_count += 1;
+            self.backing_bytes += bytes;
+        }
+    }
+
+    fn findBacking(self: *Device, id: PaneId) ?*Backing {
+        for (self.backings[0..self.backing_count]) |*value|
+            if (value.id == id) return value;
+        return null;
+    }
+
+    fn removeBacking(self: *Device, index: u8) void {
+        const old = self.backings[index];
+        self.backing_bytes -= backingBytes(old.width, old.height);
+        destroyBacking(old);
+        self.backing_count -= 1;
+        if (index != self.backing_count) self.backings[index] = self.backings[self.backing_count];
     }
 
     fn texture(self: *Device, generation: u64, glyph: howl_render.Glyph) Error!c.GLuint {
@@ -325,28 +551,32 @@ const Device = struct {
     }
 
     fn quad(
-        self: *Device,
+        _: *Device,
         x: i32,
         y: i32,
         width: u16,
         height: u16,
         color: howl_vt.Terminal.Rgb,
         texture_name: c.GLuint,
+        extent: Size,
+        flip_vertical: bool,
     ) Error!void {
-        const left = pixelToNdc(x, self.size.width);
-        const right = pixelToNdc(x + width, self.size.width);
-        const top = -pixelToNdc(y, self.size.height);
-        const bottom = -pixelToNdc(y + height, self.size.height);
+        const left = pixelToNdc(x, extent.width);
+        const right = pixelToNdc(x + width, extent.width);
+        const top = -pixelToNdc(y, extent.height);
+        const bottom = -pixelToNdc(y + height, extent.height);
         const red: f32 = @as(f32, @floatFromInt(color.r)) / 255.0;
         const green: f32 = @as(f32, @floatFromInt(color.g)) / 255.0;
         const blue: f32 = @as(f32, @floatFromInt(color.b)) / 255.0;
+        const top_v: f32 = if (flip_vertical) 1 else 0;
+        const bottom_v: f32 = if (flip_vertical) 0 else 1;
         const vertices = [_]Vertex{
-            .{ .x = left, .y = top, .u = 0, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = left, .y = bottom, .u = 0, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = right, .y = bottom, .u = 1, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = left, .y = top, .u = 0, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = right, .y = bottom, .u = 1, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = right, .y = top, .u = 1, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
+            .{ .x = left, .y = top, .u = 0, .v = top_v, .r = red, .g = green, .b = blue, .a = 1 },
+            .{ .x = left, .y = bottom, .u = 0, .v = bottom_v, .r = red, .g = green, .b = blue, .a = 1 },
+            .{ .x = right, .y = bottom, .u = 1, .v = bottom_v, .r = red, .g = green, .b = blue, .a = 1 },
+            .{ .x = left, .y = top, .u = 0, .v = top_v, .r = red, .g = green, .b = blue, .a = 1 },
+            .{ .x = right, .y = bottom, .u = 1, .v = bottom_v, .r = red, .g = green, .b = blue, .a = 1 },
+            .{ .x = right, .y = top, .u = 1, .v = top_v, .r = red, .g = green, .b = blue, .a = 1 },
         };
         c.glBindTexture(c.GL_TEXTURE_2D, texture_name);
         c.glBufferData(c.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(vertices)), &vertices, c.GL_STREAM_DRAW);
@@ -358,11 +588,13 @@ const Device = struct {
     }
 
     fn deinit(self: *Device) Error!void {
+        while (self.backing_count != 0) self.removeBacking(self.backing_count - 1);
         for (self.textures[0..self.texture_count]) |entry| c.glDeleteTextures(1, &entry.name);
         self.core.deinit();
         c.glDeleteTextures(1, &self.white);
         c.glDeleteBuffers(1, &self.buffer);
-        c.glDeleteProgram(self.program);
+        c.glDeleteProgram(self.copy_program);
+        c.glDeleteProgram(self.mask_program);
         var failed = c.glGetError() != c.GL_NO_ERROR;
         if (c.eglMakeCurrent(
             self.display,
@@ -380,8 +612,78 @@ const Device = struct {
 
 fn validateSize(size: Size) error{InvalidSize}!void {
     if (size.width == 0 or size.height == 0 or
+        size.width > max_window_dimension or size.height > max_window_dimension or
         size.width > std.math.maxInt(c_int) or size.height > std.math.maxInt(c_int))
         return error.InvalidSize;
+}
+
+fn validateSubmission(
+    size: Size,
+    panes: []const Pane,
+    dirty: []const *howl_control.Terminal,
+) error{ InvalidSize, InvalidPane }!void {
+    try validateSize(size);
+    if (panes.len == 0 or panes.len > max_visible_panes or dirty.len > max_terminals)
+        return error.InvalidPane;
+    var bytes: usize = 0;
+    var focused: u8 = 0;
+    for (panes, 0..) |pane, index| {
+        if (@intFromEnum(pane.id) == 0 or pane.width == 0 or pane.height == 0 or
+            pane.x >= size.width or pane.y >= size.height or
+            pane.width > size.width - pane.x or pane.height > size.height - pane.y)
+            return error.InvalidPane;
+        if (pane.focused) focused += 1;
+        bytes = std.math.add(usize, bytes, backingBytes(pane.width, pane.height)) catch
+            return error.InvalidPane;
+        if (bytes > max_backing_bytes) return error.InvalidPane;
+        for (panes[0..index]) |prior| {
+            if (prior.id == pane.id or prior.terminal == pane.terminal or overlaps(prior, pane))
+                return error.InvalidPane;
+        }
+    }
+    if (focused != 1) return error.InvalidPane;
+    for (dirty, 0..) |terminal, index| {
+        if (!containsAvailableTerminal(panes, terminal) or
+            containsDirty(dirty[0..index], terminal))
+            return error.InvalidPane;
+    }
+}
+
+fn containsTerminal(panes: []const Pane, terminal: *howl_control.Terminal) bool {
+    for (panes) |pane| if (pane.terminal == terminal) return true;
+    return false;
+}
+
+fn containsAvailableTerminal(panes: []const Pane, terminal: *howl_control.Terminal) bool {
+    for (panes) |pane| if (pane.terminal == terminal) return pane.terminal_available;
+    return false;
+}
+
+fn containsDirty(values: []const *howl_control.Terminal, terminal: *howl_control.Terminal) bool {
+    for (values) |value| if (value == terminal) return true;
+    return false;
+}
+
+fn needsFrame(pane: Pane, initialized: bool, dirty: bool) bool {
+    return pane.terminal_available and (!initialized or dirty);
+}
+
+fn overlaps(a: Pane, b: Pane) bool {
+    return a.x < b.x + b.width and b.x < a.x + a.width and
+        a.y < b.y + b.height and b.y < a.y + a.height;
+}
+
+fn releaseBorrowed(values: []Borrowed) howl_control.FrameReleaseError!void {
+    var failure: ?howl_control.FrameReleaseError = null;
+    for (values) |value| {
+        var frame = value.frame;
+        value.terminal.releaseFrame(&frame) catch |cause| {
+            if (failure != null and failure.? != cause)
+                @panic("distinct frame release failures in one composition");
+            failure = cause;
+        };
+    }
+    if (failure) |cause| return cause;
 }
 
 fn validateInit(values: Init) error{ InvalidSize, InvalidFonts }!void {
@@ -389,7 +691,9 @@ fn validateInit(values: Init) error{ InvalidSize, InvalidFonts }!void {
     if (values.font_paths.len == 0) return error.InvalidFonts;
 }
 
-fn createProgram() Error!c.GLuint {
+const Fragment = enum { mask, copy };
+
+fn createProgram(fragment_kind: Fragment) Error!c.GLuint {
     const vertex_source: [:0]const u8 =
         \\attribute vec2 position;
         \\attribute vec2 texture_coordinate;
@@ -402,16 +706,29 @@ fn createProgram() Error!c.GLuint {
         \\  fragment_color = color;
         \\}
     ;
-    const fragment_source: [:0]const u8 =
+    const mask_fragment: [:0]const u8 =
         \\precision mediump float;
-        \\uniform sampler2D mask;
+        \\uniform sampler2D image;
         \\varying vec2 fragment_texture_coordinate;
         \\varying vec4 fragment_color;
         \\void main() {
-        \\  float alpha = texture2D(mask, fragment_texture_coordinate).a;
+        \\  float alpha = texture2D(image, fragment_texture_coordinate).a;
         \\  gl_FragColor = vec4(fragment_color.rgb, fragment_color.a * alpha);
         \\}
     ;
+    const copy_fragment: [:0]const u8 =
+        \\precision mediump float;
+        \\uniform sampler2D image;
+        \\varying vec2 fragment_texture_coordinate;
+        \\varying vec4 fragment_color;
+        \\void main() {
+        \\  gl_FragColor = texture2D(image, fragment_texture_coordinate) * fragment_color;
+        \\}
+    ;
+    const fragment_source = switch (fragment_kind) {
+        .mask => mask_fragment,
+        .copy => copy_fragment,
+    };
     const vertex = try compileShader(c.GL_VERTEX_SHADER, vertex_source);
     defer c.glDeleteShader(vertex);
     const fragment = try compileShader(c.GL_FRAGMENT_SHADER, fragment_source);
@@ -429,8 +746,71 @@ fn createProgram() Error!c.GLuint {
     c.glGetProgramiv(program, c.GL_LINK_STATUS, &linked);
     if (linked != c.GL_TRUE) return error.Shader;
     c.glUseProgram(program);
-    c.glUniform1i(c.glGetUniformLocation(program, "mask"), 0);
+    const image = c.glGetUniformLocation(program, "image");
+    if (image < 0) return error.Shader;
+    c.glUniform1i(image, 0);
+    if (c.glGetError() != c.GL_NO_ERROR) return error.Shader;
     return program;
+}
+
+fn createBacking(pane: Pane) Error!Backing {
+    var texture: c.GLuint = 0;
+    c.glGenTextures(1, &texture);
+    if (texture == 0) return error.Texture;
+    errdefer c.glDeleteTextures(1, &texture);
+    c.glBindTexture(c.GL_TEXTURE_2D, texture);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_NEAREST);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_NEAREST);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_CLAMP_TO_EDGE);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_CLAMP_TO_EDGE);
+    c.glTexImage2D(
+        c.GL_TEXTURE_2D,
+        0,
+        c.GL_RGBA,
+        @intCast(pane.width),
+        @intCast(pane.height),
+        0,
+        c.GL_RGBA,
+        c.GL_UNSIGNED_BYTE,
+        null,
+    );
+    if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+    var framebuffer: c.GLuint = 0;
+    c.glGenFramebuffers(1, &framebuffer);
+    if (framebuffer == 0) return error.Draw;
+    errdefer c.glDeleteFramebuffers(1, &framebuffer);
+    c.glBindFramebuffer(c.GL_FRAMEBUFFER, framebuffer);
+    c.glFramebufferTexture2D(
+        c.GL_FRAMEBUFFER,
+        c.GL_COLOR_ATTACHMENT0,
+        c.GL_TEXTURE_2D,
+        texture,
+        0,
+    );
+    if (c.glCheckFramebufferStatus(c.GL_FRAMEBUFFER) != c.GL_FRAMEBUFFER_COMPLETE)
+        return error.Draw;
+    c.glViewport(0, 0, @intCast(pane.width), @intCast(pane.height));
+    c.glClearColor(0.035, 0.039, 0.045, 1.0);
+    c.glClear(c.GL_COLOR_BUFFER_BIT);
+    if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+    c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
+    return .{
+        .id = pane.id,
+        .terminal = pane.terminal,
+        .texture = texture,
+        .framebuffer = framebuffer,
+        .width = pane.width,
+        .height = pane.height,
+    };
+}
+
+fn destroyBacking(backing: Backing) void {
+    c.glDeleteFramebuffers(1, &backing.framebuffer);
+    c.glDeleteTextures(1, &backing.texture);
+}
+
+fn backingBytes(width: u32, height: u32) usize {
+    return @as(usize, width) * height * 4;
 }
 
 fn compileShader(kind: c.GLenum, source: [:0]const u8) Error!c.GLuint {
@@ -473,7 +853,6 @@ pub const Render = struct {
     thread: std.Thread,
     init_values: Init,
     mailbox: Mailbox = .{},
-    active: bool = false,
     stopping: bool = false,
     started: bool = false,
     startup_failure: ?StartError = null,
@@ -518,26 +897,31 @@ pub const Render = struct {
         return self.signal_fd;
     }
 
-    /// Transfers one valid borrowed frame into bounded render-thread ownership.
-    /// Every rejection retains caller ownership; acceptance transfers it until
-    /// render completion, supersession, or defensive shutdown drainage.
+    /// Coalesces one complete visible layout and terminal-change set. Frame
+    /// borrowing and release occur later on the render thread only.
     pub fn submit(
         self: *Render,
         generation: u64,
         size: Size,
-        terminal: *howl_control.Terminal,
-        frame: *howl_control.Frame,
+        panes: []const Pane,
+        dirty: []const *howl_control.Terminal,
     ) Error!void {
-        try validateSize(size);
+        try validateSubmission(size, panes, dirty);
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.failure) |failure| return failure;
         if (self.stopping) return error.Stopping;
         if (generation == 0 or generation <= self.submitted_generation)
             return error.StaleGeneration;
-        var work = Work{ .generation = generation, .size = size, .terminal = terminal, .frame = frame.* };
-        try self.mailbox.admit(self.active, &work);
-        frame.* = undefined;
+        var work = Work{
+            .generation = generation,
+            .size = size,
+            .pane_count = @intCast(panes.len),
+            .dirty_count = @intCast(dirty.len),
+        };
+        @memcpy(work.panes[0..panes.len], panes);
+        @memcpy(work.dirty[0..dirty.len], dirty);
+        self.mailbox.admit(work);
         self.submitted_generation = generation;
         self.condition.signal(self.io);
     }
@@ -554,7 +938,7 @@ pub const Render = struct {
         return self.completed_generation;
     }
 
-    /// Stops, releases pending work, and destroys GLES/EGL in owner order.
+    /// Stops pending metadata work and destroys GLES/EGL in owner order.
     pub fn deinit(self: *Render) Error!void {
         self.mutex.lockUncancelable(self.io);
         self.stopping = true;
@@ -562,16 +946,9 @@ pub const Render = struct {
         self.mutex.unlock(self.io);
         self.thread.join();
         self.mutex.lockUncancelable(self.io);
-        var superseded = self.mailbox.takeSuperseded();
-        var pending = self.mailbox.takePending();
-        var failure = self.failure;
+        self.mailbox.pending = null;
+        const failure = self.failure;
         self.mutex.unlock(self.io);
-        releaseOwned(&superseded) catch |cause| if (failure == null) {
-            failure = cause;
-        };
-        releaseOwned(&pending) catch |cause| if (failure == null) {
-            failure = cause;
-        };
         const close_failed = !closeSignal(self.signal_fd);
         const allocator = self.allocator;
         allocator.destroy(self);
@@ -597,39 +974,14 @@ pub const Render = struct {
             while (self.mailbox.empty() and !self.stopping)
                 self.condition.waitUncancelable(self.io, &self.mutex);
             if (self.stopping) {
-                var superseded = self.mailbox.takeSuperseded();
-                var pending = self.mailbox.takePending();
+                self.mailbox.pending = null;
                 self.mutex.unlock(self.io);
-                releaseOwned(&superseded) catch |failure| self.storeFailure(failure);
-                releaseOwned(&pending) catch |failure| self.storeFailure(failure);
                 break;
             }
-            var superseded = self.mailbox.takeSuperseded();
-            if (superseded != null) {
-                self.mutex.unlock(self.io);
-                releaseOwned(&superseded) catch |failure| {
-                    self.failAndDrain(failure);
-                    break;
-                };
-                continue;
-            }
             const pending = self.mailbox.takePending();
-            self.active = pending != null;
             self.mutex.unlock(self.io);
             const work = pending orelse continue;
             device.draw(work) catch |failure| {
-                self.finishActive();
-                var active: ?Work = work;
-                releaseOwned(&active) catch |release_failure| {
-                    self.failAndDrain(release_failure);
-                    break;
-                };
-                self.failAndDrain(failure);
-                break;
-            };
-            self.finishActive();
-            var active: ?Work = work;
-            releaseOwned(&active) catch |failure| {
                 self.failAndDrain(failure);
                 break;
             };
@@ -658,19 +1010,9 @@ pub const Render = struct {
     fn failAndDrain(self: *Render, failure: Error) void {
         self.storeFailure(failure);
         self.mutex.lockUncancelable(self.io);
-        var superseded = self.mailbox.takeSuperseded();
-        var pending = self.mailbox.takePending();
+        self.mailbox.pending = null;
         self.mutex.unlock(self.io);
-        releaseOwned(&superseded) catch |cause| self.storeFailure(cause);
-        releaseOwned(&pending) catch |cause| self.storeFailure(cause);
         self.signal();
-    }
-
-    fn finishActive(self: *Render) void {
-        self.mutex.lockUncancelable(self.io);
-        std.debug.assert(self.active);
-        self.active = false;
-        self.mutex.unlock(self.io);
     }
 
     fn signal(self: *Render) void {
@@ -684,46 +1026,52 @@ pub const Render = struct {
     }
 };
 
-fn releaseOwned(work: *?Work) howl_control.FrameReleaseError!void {
-    if (work.*) |owned_value| {
-        var owned = owned_value;
-        work.* = null;
-        try owned.terminal.releaseFrame(&owned.frame);
-    }
-}
-
-fn testWork(generation: u64) Work {
-    return .{
-        .generation = generation,
-        .size = .{ .width = 1, .height = 1 },
-        .terminal = undefined,
-        .frame = undefined,
-    };
-}
-
-test "two-slot mailbox coalesces only after active ownership is absent" {
+test "mailbox keeps newest layout and unions only still-visible terminal dirtiness" {
+    const first_terminal: *howl_control.Terminal = @ptrFromInt(16);
+    const second_terminal: *howl_control.Terminal = @ptrFromInt(32);
+    const third_terminal: *howl_control.Terminal = @ptrFromInt(48);
     var mailbox = Mailbox{};
-    var first = testWork(1);
-    try mailbox.admit(false, &first);
-    const active = mailbox.takePending().?;
-    try std.testing.expectEqual(@as(u64, 1), active.generation);
+    mailbox.admit(testWork(1, &.{
+        testPane(1, first_terminal, 0, 50),
+        testPane(2, second_terminal, 50, 50),
+    }, &.{first_terminal}));
+    mailbox.admit(testWork(2, &.{testPane(3, third_terminal, 0, 100)}, &.{third_terminal}));
+    const switched = mailbox.takePending().?;
+    try std.testing.expectEqual(@as(u64, 2), switched.generation);
+    try std.testing.expectEqual(@as(u8, 1), switched.dirty_count);
+    try std.testing.expect(switched.dirty[0] == third_terminal);
 
-    var second = testWork(2);
-    try mailbox.admit(false, &second);
-    var third = testWork(3);
-    try mailbox.admit(false, &third);
-    try std.testing.expectEqual(@as(u64, 2), mailbox.superseded.?.generation);
-    try std.testing.expectEqual(@as(u64, 3), mailbox.pending.?.generation);
+    mailbox.admit(testWork(3, &.{
+        testPane(1, first_terminal, 0, 50),
+        testPane(2, second_terminal, 50, 50),
+    }, &.{first_terminal}));
+    mailbox.admit(testWork(4, &.{
+        testPane(1, first_terminal, 0, 50),
+        testPane(2, second_terminal, 50, 50),
+    }, &.{second_terminal}));
+    const merged = mailbox.takePending().?;
+    try std.testing.expectEqual(@as(u64, 4), merged.generation);
+    try std.testing.expectEqual(@as(u8, 2), merged.dirty_count);
+    try std.testing.expect(containsDirty(merged.dirty[0..2], first_terminal));
+    try std.testing.expect(containsDirty(merged.dirty[0..2], second_terminal));
 
-    var impossible = testWork(4);
-    try std.testing.expectError(error.MailboxFull, mailbox.admit(false, &impossible));
-    try std.testing.expectEqual(@as(u64, 4), impossible.generation);
+    mailbox.admit(testWork(5, &.{testPane(1, first_terminal, 0, 100)}, &.{first_terminal}));
+    var stopped = testPane(1, first_terminal, 0, 100);
+    stopped.terminal_available = false;
+    mailbox.admit(testWork(6, &.{stopped}, &.{}));
+    const unavailable = mailbox.takePending().?;
+    try std.testing.expectEqual(@as(u8, 0), unavailable.dirty_count);
+}
 
-    var active_mailbox = Mailbox{};
-    var pending = testWork(5);
-    try active_mailbox.admit(true, &pending);
-    var blocked = testWork(6);
-    try std.testing.expectError(error.MailboxFull, active_mailbox.admit(true, &blocked));
+test "unavailable pane retains its backing without requesting another frame" {
+    const terminal: *howl_control.Terminal = @ptrFromInt(16);
+    var pane = testPane(1, terminal, 0, 100);
+    try std.testing.expect(needsFrame(pane, false, false));
+    try std.testing.expect(needsFrame(pane, true, true));
+
+    pane.terminal_available = false;
+    try std.testing.expect(!needsFrame(pane, false, false));
+    try std.testing.expect(!needsFrame(pane, true, true));
 }
 
 test "public start rejects empty fonts and invalid size before native work" {
@@ -761,7 +1109,7 @@ test "public start rejects empty fonts and invalid size before native work" {
     ));
 }
 
-test "failed render owner rejects late submission without taking its frame" {
+test "failed render owner rejects late bounded metadata submission" {
     var render = Render{
         .allocator = std.testing.allocator,
         .io = std.testing.io,
@@ -771,23 +1119,19 @@ test "failed render owner rejects late submission without taking its frame" {
         .failure = error.Draw,
         .signal_fd = -1,
     };
-    var frame: howl_control.Frame = undefined;
+    const terminal: *howl_control.Terminal = @ptrFromInt(16);
     try std.testing.expectError(
         error.Draw,
-        render.submit(1, .{ .width = 1, .height = 1 }, undefined, &frame),
+        render.submit(1, .{ .width = 100, .height = 100 }, &.{
+            testPane(1, terminal, 0, 100),
+        }, &.{terminal}),
     );
     try std.testing.expect(render.mailbox.empty());
     try std.testing.expectEqual(@as(u64, 0), render.submitted_generation);
 }
 
-test "shutdown drains a dead render thread frame before terminal destruction" {
-    const terminal = try howl_control.Terminal.init(
-        std.testing.allocator,
-        std.testing.io,
-        .{ .command = "sleep 30", .cols = 2, .rows = 1 },
-        .{},
-    );
-    var frame = terminal.borrowFrame().?;
+test "shutdown joins a dead failed render owner with pending metadata" {
+    const terminal: *howl_control.Terminal = @ptrFromInt(16);
     const signal_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
     if (signal_fd < 0) return error.Signal;
     const render = try std.testing.allocator.create(Render);
@@ -800,22 +1144,37 @@ test "shutdown drains a dead render thread frame before terminal destruction" {
         .failure = error.Draw,
         .signal_fd = signal_fd,
     };
-    var work = Work{
-        .generation = 1,
-        .size = .{ .width = 1, .height = 1 },
-        .terminal = terminal,
-        .frame = frame,
-    };
-    try render.mailbox.admit(false, &work);
-    frame = undefined;
+    render.mailbox.admit(testWork(1, &.{testPane(1, terminal, 0, 100)}, &.{terminal}));
     try std.testing.expectError(error.Draw, render.deinit());
-    try std.testing.expect(terminal.borrowFrame() == null);
-    terminal.deinit();
 }
 
 fn finishedTestThread() void {}
 
-test "public submission rejects invalid size before frame transfer" {
+test "render-owned release returns every frame before terminal shutdown" {
+    const first = try howl_control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 2, .rows = 1 },
+        .{},
+    );
+    errdefer first.deinit();
+    const second = try howl_control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 2, .rows = 1 },
+        .{},
+    );
+    errdefer second.deinit();
+    var borrowed = [_]Borrowed{
+        .{ .terminal = first, .frame = first.borrowFrame().?, .pane = testPane(1, first, 0, 50) },
+        .{ .terminal = second, .frame = second.borrowFrame().?, .pane = testPane(2, second, 50, 50) },
+    };
+    try releaseBorrowed(&borrowed);
+    first.deinit();
+    second.deinit();
+}
+
+test "public submission rejects invalid composition before mailbox mutation" {
     const invalid_display: *c.struct_wl_display = undefined;
     const invalid_surface: *c.struct_wl_surface = undefined;
     var render = Render{
@@ -826,12 +1185,29 @@ test "public submission rejects invalid size before frame transfer" {
         .started = true,
         .signal_fd = -1,
     };
-    var frame: howl_control.Frame = undefined;
+    const terminal: *howl_control.Terminal = @ptrFromInt(16);
     try std.testing.expectError(error.InvalidSize, render.submit(
         1,
         .{ .width = 0, .height = 1 },
-        undefined,
-        &frame,
+        &.{testPane(1, terminal, 0, 1)},
+        &.{terminal},
+    ));
+    try std.testing.expectError(error.InvalidPane, render.submit(
+        1,
+        .{ .width = 100, .height = 100 },
+        &.{
+            testPane(1, terminal, 0, 60),
+            testPane(2, @ptrFromInt(32), 50, 50),
+        },
+        &.{terminal},
+    ));
+    var unavailable = testPane(1, terminal, 0, 100);
+    unavailable.terminal_available = false;
+    try std.testing.expectError(error.InvalidPane, render.submit(
+        1,
+        .{ .width = 100, .height = 100 },
+        &.{unavailable},
+        &.{terminal},
     ));
     try std.testing.expect(render.mailbox.empty());
     try std.testing.expectError(error.InvalidSize, validateInit(.{
@@ -840,4 +1216,38 @@ test "public submission rejects invalid size before frame transfer" {
         .size = .{ .width = @as(u32, std.math.maxInt(c_int)) + 1, .height = 1 },
         .font_paths = &.{"unused"},
     }));
+}
+
+fn testPane(
+    id: u8,
+    terminal: *howl_control.Terminal,
+    x: u32,
+    width: u32,
+) Pane {
+    return .{
+        .id = @enumFromInt(id),
+        .terminal = terminal,
+        .x = x,
+        .y = 0,
+        .width = width,
+        .height = 100,
+        .focused = id == 1,
+        .terminal_available = true,
+    };
+}
+
+fn testWork(
+    generation: u64,
+    panes: []const Pane,
+    dirty: []const *howl_control.Terminal,
+) Work {
+    var work = Work{
+        .generation = generation,
+        .size = .{ .width = 100, .height = 100 },
+        .pane_count = @intCast(panes.len),
+        .dirty_count = @intCast(dirty.len),
+    };
+    @memcpy(work.panes[0..panes.len], panes);
+    @memcpy(work.dirty[0..dirty.len], dirty);
+    return work;
 }

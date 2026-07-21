@@ -85,6 +85,7 @@ slices:
       coalesced render mailbox, and exact completion wake
 
   - id: pane_composition
+    status: implemented_pending_review
     outcome: >-
       compose at least one split across two tabs with stable identities, focus, resize coalescing, and live hidden terminals
     reference: >-
@@ -113,7 +114,9 @@ completion_bars:
   tigerbeetle:
     - bounded queues, publication slots, and caches
     - exact generations, cumulative damage, and stale-work rejection
-    - transactional resize and explicit saturation outcomes
+    - all available terminal resizes commit together or roll back before layout publication
+    - unavailable panes retain their last admitted terminal geometry while host layout continues
+    - explicit saturation outcomes
     - reverse cleanup and executable failure/shutdown proofs
   multiplexing:
     - one renderer and texture cache serve every terminal
