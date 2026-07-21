@@ -931,8 +931,17 @@ references:
           - {id: iterm2.csi.dl, raw: "CSI [Ps=1] M", effect: delete lines,
             conditions: multiline character and selection consequences, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
-          - {id: iterm2.csi.window, raw: "CSI Pm t", effect: dispatch window operation by first parameter,
-            recognition: delegated, relevance: host consequence, howl: {status: partial}}
+          - id: iterm2.csi.window
+            raw: "CSI Pm t"
+            effect: dispatch window operation by first parameter
+            conditions: >-
+              Howl retains operations 1-6 and 8, answers 14/16/18/21, and owns its bounded title stack; remaining
+              report and host-policy operations stay unsupported.
+            recognition: delegated
+            relevance: host consequence
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "window controls retain exact bounded host requests and lifetime"}}
           - {id: iterm2.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: line-buffer history and selection consequences, howl: {status: partial,
               source: howl-vt/src/terminal.zig, symbol: decodeCsi}}
@@ -1637,20 +1646,39 @@ references:
         census: {semantic_branches: 16, records: 16}
         recognition: implemented
         records:
-          - {id: iterm2.window.deiconify, raw: "CSI 1 t", effect: deiconify window, relevance: host consequence,
-            howl: {status: 'false'}}
-          - {id: iterm2.window.iconify, raw: "CSI 2 t", effect: iconify window, relevance: host consequence,
-            howl: {status: 'false'}}
-          - {id: iterm2.window.move, raw: "CSI 3 ; x ; y t", effect: move window, relevance: host consequence,
-            howl: {status: 'false'}}
-          - {id: iterm2.window.resize_pixels, raw: "CSI 4 ; height ; width t", effect: resize window in pixels,
-            relevance: host consequence, howl: {status: 'false'}}
-          - {id: iterm2.window.raise, raw: "CSI 5 t", effect: raise window, relevance: host consequence,
-            howl: {status: 'false'}}
-          - {id: iterm2.window.lower, raw: "CSI 6 t", effect: lower window, relevance: host consequence,
-            howl: {status: 'false'}}
-          - {id: iterm2.window.resize_cells, raw: "CSI 8 ; rows ; cols t", effect: resize terminal in cells,
-            relevance: host consequence, howl: {status: 'false'}}
+          - &iterm2_window_request
+            id: iterm2.window.deiconify
+            raw: "CSI 1 t"
+            effect: deiconify window
+            conditions: Howl retains the exact bounded occurrence while execution and authorization remain host policy
+            relevance: host consequence
+            howl: {status: partial, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "window controls retain exact bounded host requests and lifetime"}}
+          - <<: *iterm2_window_request
+            id: iterm2.window.iconify
+            raw: "CSI 2 t"
+            effect: iconify window
+          - <<: *iterm2_window_request
+            id: iterm2.window.move
+            raw: "CSI 3 ; x ; y t"
+            effect: move window
+          - <<: *iterm2_window_request
+            id: iterm2.window.resize_pixels
+            raw: "CSI 4 ; height ; width t"
+            effect: resize window in pixels
+          - <<: *iterm2_window_request
+            id: iterm2.window.raise
+            raw: "CSI 5 t"
+            effect: raise window
+          - <<: *iterm2_window_request
+            id: iterm2.window.lower
+            raw: "CSI 6 t"
+            effect: lower window
+          - <<: *iterm2_window_request
+            id: iterm2.window.resize_cells
+            raw: "CSI 8 ; rows ; cols t"
+            effect: resize terminal in cells
           - {id: iterm2.window.report_state, raw: "CSI 11 t", effect: report iconified state, relevance: query,
             howl: {status: 'false'}}
           - {id: iterm2.window.report_position, raw: "CSI 13 t", effect: report window position, relevance: query,

@@ -5785,6 +5785,25 @@ pub const PointerShapeRequest = struct {
     payload: []const u8,
 };
 
+/// Names one host-neutral request from the child to manipulate its containing window.
+pub const WindowRequest = union(enum) {
+    deiconify,
+    iconify,
+    move: struct { x: u32, y: u32 },
+    resize_pixels: struct { height: u32, width: u32 },
+    raise,
+    lower,
+    resize_cells: struct { rows: u32, cols: u32 },
+};
+
+/// Borrows the latest accepted window request until terminal mutation.
+pub const WindowRequestOccurrence = struct {
+    /// Monotonic identity advancing for every accepted request, including repeated values.
+    generation: u64,
+    /// Exact bounded operation and arguments; execution and authorization belong to the host.
+    request: WindowRequest,
+};
+
 // Owns validated shell-integration identity until replacement or deinit.
 const ShellIntegration = struct {
     version: u32,
@@ -5876,6 +5895,7 @@ pub const HostState = struct {
     notification: HostPayload = .{},
     notification_command: u16 = 0,
     pointer_shape: HostPayload = .{},
+    window_request: ?WindowRequestOccurrence = null,
     bell_generation: u64 = 0,
     locator: Locator = .{},
     media_copy_request: ?u16 = null,
@@ -6022,6 +6042,13 @@ pub const HostState = struct {
     /// Retain one OSC 22 request without selecting a host pointer or answering queries.
     pub fn retainPointerShape(self: *HostState, payload: []const u8) ApplyError!void {
         try self.pointer_shape.retain(payload);
+    }
+
+    /// Retain one window request occurrence without executing host policy.
+    pub fn retainWindowRequest(self: *HostState, request: WindowRequest) ApplyError!void {
+        const generation = if (self.window_request) |current| current.generation else 0;
+        if (generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        self.window_request = .{ .generation = generation + 1, .request = request };
     }
 
     fn notificationView(self: *const HostState) ?Notification {
@@ -7627,6 +7654,7 @@ fn decodeCsi(
                     .option = paramAtOrDefault0(params, 1),
                 } };
             }
+            if (decodeWindowRequest(params)) |request| return .{ .window_request = request };
             if (params.len > 2) return null;
             if (params.len == 2 and params[1] < 0) return null;
             return switch (params[0]) {
@@ -7657,6 +7685,37 @@ fn decodeCsi(
         },
         else => return null,
     }
+}
+
+// Decodes only host-directed xterm window operations with complete nonnegative arguments.
+fn decodeWindowRequest(params: []const i32) ?WindowRequest {
+    if (params.len == 0) return null;
+    return switch (params[0]) {
+        1 => if (params.len == 1) .deiconify else null,
+        2 => if (params.len == 1) .iconify else null,
+        3 => blk: {
+            if (params.len > 3) break :blk null;
+            const x = if (params.len > 1) nonnegativeParam(params[1]) orelse break :blk null else 0;
+            const y = if (params.len > 2) nonnegativeParam(params[2]) orelse break :blk null else 0;
+            break :blk .{ .move = .{ .x = x, .y = y } };
+        },
+        4 => if (params.len == 3) .{ .resize_pixels = .{
+            .height = nonnegativeParam(params[1]) orelse return null,
+            .width = nonnegativeParam(params[2]) orelse return null,
+        } } else null,
+        5 => if (params.len == 1) .raise else null,
+        6 => if (params.len == 1) .lower else null,
+        8 => if (params.len == 3) .{ .resize_cells = .{
+            .rows = nonnegativeParam(params[1]) orelse return null,
+            .cols = nonnegativeParam(params[2]) orelse return null,
+        } } else null,
+        else => null,
+    };
+}
+
+fn nonnegativeParam(param: i32) ?u32 {
+    if (param < 0) return null;
+    return @intCast(param);
 }
 
 fn decodeEraseDisplay(mode: ScreenEraseMode, protected: bool) SemanticEvent {
@@ -8425,6 +8484,7 @@ pub const SemanticEvent = union(enum) {
     shell_mark: ItermShellMark,
     notification: struct { command: u16, payload: []const u8 },
     pointer_shape: []const u8,
+    window_request: WindowRequest,
     kitty_color_stack: KittyColorCommand,
     sgr_stack_push: ModeParams,
     sgr_stack_pop,
@@ -9095,6 +9155,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .shell_mark => |mark| try vt.host.replaceShellMark(mark),
         .notification => |notification| try vt.host.retainNotification(notification.command, notification.payload),
         .pointer_shape => |payload| try vt.host.retainPointerShape(payload),
+        .window_request => |request| try vt.host.retainWindowRequest(request),
         .color_control => |cmd| {
             const before = vt.host.colors;
             const output_before = byteCount(vt.host.pending_output.bytes.items);
@@ -10934,6 +10995,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .shell_mark,
         .notification,
         .pointer_shape,
+        .window_request,
         .hyperlink_set,
         .hyperlink_clear,
         .clipboard_set,
@@ -12496,6 +12558,7 @@ pub const Terminal = struct {
             .shell_mark = self.host.shell_mark,
             .notification = self.host.notificationView(),
             .pointer_shape = self.host.pointerShapeView(),
+            .window_request = self.host.window_request,
             .bell_generation = self.host.bell_generation,
             .history_loss_generation = self.screen_state.primary.history_loss_generation,
             .is_alternate_screen = snapshot.view.is_alternate_screen,
@@ -12855,6 +12918,8 @@ pub const Terminal = struct {
         notification: ?Notification,
         /// Borrows the latest OSC 22 request until terminal mutation.
         pointer_shape: ?PointerShapeRequest,
+        /// Borrows the latest host-neutral CSI `t` request until terminal mutation.
+        window_request: ?WindowRequestOccurrence,
         /// Monotonic count of accepted BEL controls; presentation belongs to the embedder.
         bell_generation: u64,
         /// Monotonic count of history rows dropped after bounded allocation failure.

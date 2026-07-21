@@ -847,6 +847,68 @@ test "terminal size reports use exact current cell and pixel facts" {
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
 
+test "window controls retain exact bounded host requests and lifetime" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 5);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[3;2147483647;")).state_changed);
+    try std.testing.expect((try terminal.feed("42t")).state_changed);
+    var occurrence = terminal.surfaceSnapshot().window_request.?;
+    try std.testing.expectEqual(@as(u64, 1), occurrence.generation);
+    switch (occurrence.request) {
+        .move => |position| {
+            try std.testing.expectEqual(@as(u32, 2147483647), position.x);
+            try std.testing.expectEqual(@as(u32, 42), position.y);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    const requests = [_]struct { bytes: []const u8, tag: std.meta.Tag(terminal_mod.WindowRequest) }{
+        .{ .bytes = "\x1b[1t", .tag = .deiconify },
+        .{ .bytes = "\x1b[2t", .tag = .iconify },
+        .{ .bytes = "\x1b[4;0;4096t", .tag = .resize_pixels },
+        .{ .bytes = "\x1b[5t", .tag = .raise },
+        .{ .bytes = "\x1b[6t", .tag = .lower },
+        .{ .bytes = "\x1b[8;80;132t", .tag = .resize_cells },
+    };
+    for (requests, 2..) |request, generation| {
+        try std.testing.expect((try terminal.feed(request.bytes)).state_changed);
+        occurrence = terminal.surfaceSnapshot().window_request.?;
+        try std.testing.expectEqual(@as(u64, @intCast(generation)), occurrence.generation);
+        try std.testing.expectEqual(request.tag, std.meta.activeTag(occurrence.request));
+    }
+    switch (occurrence.request) {
+        .resize_cells => |size| {
+            try std.testing.expectEqual(@as(u32, 80), size.rows);
+            try std.testing.expectEqual(@as(u32, 132), size.cols);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    try std.testing.expect((try terminal.feed("\x1b[8;80;132t")).state_changed);
+    try std.testing.expectEqual(@as(u64, 8), terminal.surfaceSnapshot().window_request.?.generation);
+
+    try std.testing.expect(!(try terminal.feed("\x1b[4;10t\x1b[8;10;20;30t\x1b[3;-1;2t")).state_changed);
+    try std.testing.expectEqual(@as(u64, 8), terminal.surfaceSnapshot().window_request.?.generation);
+    try std.testing.expect(!(try terminal.feed("\x1b[4;10")).state_changed);
+    try std.testing.expect((try terminal.feed("\x18;20t")).state_changed);
+    try std.testing.expectEqual(@as(u64, 8), terminal.surfaceSnapshot().window_request.?.generation);
+
+    terminal.host.window_request.?.generation = std.math.maxInt(u64);
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[1t"));
+    occurrence = terminal.surfaceSnapshot().window_request.?;
+    try std.testing.expectEqual(std.math.maxInt(u64), occurrence.generation);
+    try std.testing.expectEqual(.resize_cells, std.meta.activeTag(occurrence.request));
+    terminal.host.window_request.?.generation = 8;
+
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try terminal.resize(4, 7);
+    occurrence = terminal.surfaceSnapshot().window_request.?;
+    try std.testing.expectEqual(@as(u64, 8), occurrence.generation);
+    try std.testing.expectEqual(.resize_cells, std.meta.activeTag(occurrence.request));
+}
+
 test "in-band resize mode emits transactional iTerm2 and Kitty reports" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 5);
