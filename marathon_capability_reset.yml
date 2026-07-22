@@ -1,0 +1,140 @@
+marathon:
+  name: capability_reset
+  status: active
+  mode: supervised deletion intervention
+
+objective: >-
+  Delete unearned packages, runtime abstractions, vocabulary, and build ceremony until the surviving Howl capabilities
+  match the explicitly accepted model. Rebuild nothing from intuition and preserve no rejected source shape through
+  renames, aliases, adapters, placeholders, or compatibility modules.
+
+working_rules:
+  - A compiling executable is not a milestone for this intervention.
+  - Deletion precedes reconstruction.
+  - Existing source is evidence, not authority.
+  - Every unsettled ownership or vocabulary decision blocks that case only and returns to the operator for discussion.
+  - Mature terminal concepts are derived from references and protocol evidence; they are not invented by the team.
+  - No autonomous architecture changes, broad rewrites, commits, or compatibility work are authorized.
+  - Tests proving accepted behavior may survive; tests proving only rejected architecture do not.
+
+survivors:
+  - capability: howl-vt
+    contract: independently embeddable terminal emulator capability
+
+  - capability: howl-pty
+    contract: independently embeddable native PTY capability
+
+  - capability: howl-control
+    contract: >-
+      optional composition of PTY and VT into ID-addressable terminal instances exposed through more than one bounded
+      interface shape; embedders may always compose PTY and VT themselves
+
+  - capability: howl-render
+    contract: >-
+      comptime-selectable rendering code and POJO vocabulary for perfect text, terminal grids, effects, and styling;
+      retained as one deliberately broad rendering bucket until evidence proves smaller ownership boundaries
+
+  - capability: first_party_executable
+    contract: >-
+      concrete embedder that currently chooses howl-control and uses howl-render while owning its runtime, threads,
+      windowing, GPU resources, sessions, tabs, panes, and presentation
+    noun: unsettled
+
+confirmed_deletions:
+  - offender: consumer-vt
+    reason: permanent fake downstream package created to retain a temporary package-isolation proof
+
+  - offender: standalone howl-frame package
+    reason: unearned package boundary inside the accepted rendering capability
+
+  - offender: standalone howl-text package
+    reason: text is a comptime-selectable part of the accepted rendering capability
+
+  - offender: probe subsystem
+    includes:
+      - probe build option
+      - enabled and disabled probe modules
+      - probe scenario
+      - probe imports and dependency wiring
+      - probe build aliases and generated records
+    reason: unauthorized replacement vocabulary and runtime architecture; future tracing retains the noun trace
+
+  - offender: rejected compatibility shapes
+    includes:
+      - aliases for removed package names
+      - no-op replacement modules
+      - adapters preserving rejected APIs
+      - renamed copies of rejected abstractions
+
+  - offender: stale workspace claims
+    reason: root build aliases and permanent documents currently describe packages and instrumentation being deleted
+
+investigations:
+  - id: vt_host_vocabulary
+    status: required
+    question: >-
+      After deleting HostState, Terminal.host, applyHostEvent, and related invented embedder vocabulary, which concrete
+      VT concepts are required by the referenced protocol behavior?
+    evidence:
+      - libvterm public state, parser, callback, output, and consumption contracts
+      - Foot terminal state and emitted-action contracts
+      - Kitty parser and screen contracts
+      - Ghostty terminal and public embedding contracts
+      - Howl protocol catalogue records for each affected sequence
+    gate: >-
+      Present source paths, symbols, protocol cases, lifetime, bounds, producer, and consumption semantics before each
+      replacement decision; do not propose a speculative aggregate noun.
+
+  - id: render_inventory
+    status: required
+    question: >-
+      Which existing text, frame, grid, style, effect, damage, cache, and generated-glyph code expresses accepted
+      rendering behavior, and which code encodes rejected runtime or package architecture?
+    gate: Classify concrete symbols before moving or rebuilding them; file location does not establish ownership.
+
+  - id: control_inventory
+    status: required
+    question: >-
+      Which existing PTY/VT composition, terminal-ID, embedded, client, remote-control, and CLI behaviors implement the
+      accepted control capability, and which symbols leak rendering or executable policy?
+    gate: Control retains no rendering, text, GPU, window, pane, tab, session, or thread architecture.
+
+  - id: executable_inventory
+    status: required
+    question: >-
+      Which current runtime, thread, window, GPU, session, tab, pane, and presentation code belongs to the first-party
+      executable after rejected module boundaries and instrumentation are removed?
+    gate: The executable noun remains unsettled and is decided separately from source survival.
+
+discussion_gates:
+  - id: vt_outputs
+    trigger: reference evidence for one current host-prefixed VT responsibility is ready
+    decision: approve the exact concept and API before implementation
+
+  - id: render_selection
+    trigger: concrete surviving render capabilities and dependency costs are indexed
+    decision: approve the initial comptime configurations without speculative option proliferation
+
+  - id: executable_noun
+    trigger: surviving executable responsibilities are concrete
+    decision: approve its public noun and package identity
+
+  - id: build_graph
+    trigger: surviving packages and their direct dependencies are settled
+    decision: approve child and workspace build surfaces; do not optimize for compiling deleted or unsettled code
+
+quarantined_evidence:
+  - path: marathon_dogfood_performance.yml
+    treatment: >-
+      Mine measured performance facts that remain reproducible, then delete the marathon; its probe vocabulary,
+      package ownership, commands, and accepted architecture are not authority for this intervention.
+
+completion:
+  - every tracked package corresponds to an explicitly accepted independently useful capability
+  - every surviving public noun and dependency has operator approval or reference-derived domain evidence
+  - rejected packages, probe code, compatibility shapes, stale build aliases, and stale permanent claims are deleted
+  - VT contains no invented embedder actor; each surviving use of host vocabulary has separate evidence and approval
+  - control contains only accepted PTY/VT composition, identity, and interface behavior
+  - render contains only selectable rendering knowledge and POJO vocabulary, with no runtime-thread or concrete GPU owner
+  - the executable contains runtime ownership without defining the only valid route through Howl capabilities
+  - remaining rebuild work is explicitly indexed; compilation is required only after the relevant contracts are settled
