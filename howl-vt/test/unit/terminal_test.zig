@@ -386,7 +386,7 @@ test "terminal rejects zero resize without changing dimensions" {
     defer terminal.deinit();
 
     try std.testing.expectError(error.InvalidDimensions, terminal.resize(0, 3));
-    const view = terminal.surfaceSnapshot().snapshot.view;
+    const view = terminal.visualView().view;
     try std.testing.expectEqual(@as(u16, 2), view.rows);
     try std.testing.expectEqual(@as(u16, 3), view.cols);
 }

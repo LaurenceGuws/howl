@@ -48,7 +48,7 @@ test "terminal: VT52 exit escape is an exact fragmented no-op" {
     try std.testing.expect(after.current_attrs.bold);
     try std.testing.expectEqual(Terminal.Color.indexed(1), after.current_attrs.fg);
     try std.testing.expect(terminal.modes.application_cursor_keys);
-    try std.testing.expectEqual(@as(u8, 0), terminal.surfaceSnapshot().window_request_count);
+    try std.testing.expectEqual(@as(u8, 0), terminal.stateSnapshot().window_request_count);
     try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
 
     try std.testing.expect((try terminal.feed("E\x1b<\x1b[2;3HF")).state_changed);
@@ -608,7 +608,7 @@ test "terminal: C0 controls retain exact stream effects" {
         var terminal = try Terminal.init(allocator, 3, 16);
         defer terminal.deinit();
         try std.testing.expect(!(try terminal.feed("\x07")).history_lost);
-        try std.testing.expectEqual(@as(u64, 1), terminal.surfaceSnapshot().bell_generation);
+        try std.testing.expectEqual(@as(u64, 1), terminal.stateSnapshot().bell_generation);
     }
     {
         var terminal = try Terminal.init(allocator, 3, 16);
@@ -813,23 +813,23 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and pu
     try std.testing.expectEqual(@as(u16, 9), dirty.dirty_cols_end[1]);
 
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
-    var surface = terminal.surfaceSnapshot();
-    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, surface.snapshot.view.lineGeometry(2));
+    var surface = terminal.visualView();
+    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, surface.view.lineGeometry(2));
     try terminal.resize(5, 12);
-    surface = terminal.surfaceSnapshot();
-    try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.snapshot.view.lineGeometry(2));
+    surface = terminal.visualView();
+    try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.view.lineGeometry(2));
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
 
     const cursor_before_alignment = terminal.screen_state.activeConst().cursor;
     try std.testing.expect((try terminal.feed("\x1b#8")).state_changed);
-    surface = terminal.surfaceSnapshot();
-    for (0..surface.snapshot.view.rows) |row| for (0..surface.snapshot.view.cols) |col| {
+    surface = terminal.visualView();
+    for (0..surface.view.rows) |row| for (0..surface.view.cols) |col| {
         const expected: u21 = if (row == 2 and col >= 6) 0 else 'E';
-        try std.testing.expectEqual(expected, surface.snapshot.view.cellAt(@intCast(row), @intCast(col)));
+        try std.testing.expectEqual(expected, surface.view.cellAt(@intCast(row), @intCast(col)));
     };
     try std.testing.expectEqual(cursor_before_alignment.row, terminal.screen_state.activeConst().cursor.row);
     try std.testing.expectEqual(cursor_before_alignment.col, terminal.screen_state.activeConst().cursor.col);
-    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, surface.snapshot.view.lineGeometry(2));
+    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, surface.view.lineGeometry(2));
 
     try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
     try std.testing.expectEqual(Screen.LineGeometry.single_width, terminal.screen_state.activeConst().lineGeometry(2));
@@ -846,11 +846,11 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and pu
     try std.testing.expect((try history_terminal.feed("\x1b#6\x1b[3;1H\x1bD")).state_changed);
     try std.testing.expectEqual(@as(u32, 1), history_terminal.visibleHistoryCount());
     try std.testing.expect(history_terminal.scrollViewport(.top));
-    surface = history_terminal.surfaceSnapshot();
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, surface.snapshot.view.lineGeometry(0));
+    surface = history_terminal.visualView();
+    try std.testing.expectEqual(Screen.LineGeometry.double_width, surface.view.lineGeometry(0));
     try history_terminal.resize(4, 12);
-    surface = history_terminal.surfaceSnapshot();
-    try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.snapshot.view.lineGeometry(0));
+    surface = history_terminal.visualView();
+    try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.view.lineGeometry(0));
 }
 
 test "terminal: DECALN owns exact retained grid and mutation truth" {
@@ -906,7 +906,7 @@ test "terminal: resize resets physical geometry without reassigning it to reflow
     try std.testing.expect((try terminal.feed("ABCD\x1b#6\x1b[2;1HEFGH\x1b[3;1HIJKL")).state_changed);
     try terminal.resize(6, 3);
 
-    const view = terminal.surfaceSnapshot().snapshot.view;
+    const view = terminal.visualView().view;
     const expected = [_][3]u21{
         .{ 'A', 'B', 'C' },
         .{ 'D', 0, 0 },

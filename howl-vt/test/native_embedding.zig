@@ -10,21 +10,21 @@ test "native root owns the complete embedding contract" {
     const feed = try terminal.feed("ABCD");
     try std.testing.expect(feed.state_changed);
 
-    const publication = terminal.surfaceSnapshot();
-    try std.testing.expectEqual(@as(u16, 2), publication.snapshot.view.rows);
-    try std.testing.expectEqual(@as(u16, 8), publication.snapshot.view.cols);
-    try std.testing.expectEqual(@as(u21, 'A'), publication.snapshot.view.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'D'), publication.snapshot.view.cellAt(0, 3));
-    try std.testing.expect(terminal.ackSurface(publication.snapshot_seq));
+    const publication = terminal.visualView();
+    try std.testing.expectEqual(@as(u16, 2), publication.view.rows);
+    try std.testing.expectEqual(@as(u16, 8), publication.view.cols);
+    try std.testing.expectEqual(@as(u21, 'A'), publication.view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'D'), publication.view.cellAt(0, 3));
+    try std.testing.expect(terminal.ackVisual(publication.dirty_token));
 
-    const stale = terminal.surfaceSnapshot();
+    const stale = terminal.visualView();
     _ = try terminal.feed("E");
-    try std.testing.expect(!terminal.ackSurface(stale.snapshot_seq));
-    const current = terminal.surfaceSnapshot();
-    try std.testing.expect(current.snapshot.dirty != null);
-    try std.testing.expect(current.snapshot_seq != stale.snapshot_seq);
-    try std.testing.expect(terminal.ackSurface(current.snapshot_seq));
-    try std.testing.expect(terminal.surfaceSnapshot().snapshot.dirty == null);
+    try std.testing.expect(!terminal.ackVisual(stale.dirty_token));
+    const current = terminal.visualView();
+    try std.testing.expect(current.dirty == .rows);
+    try std.testing.expect(current.dirty_token != stale.dirty_token);
+    try std.testing.expect(terminal.ackVisual(current.dirty_token));
+    try std.testing.expect(terminal.visualView().dirty == .none);
 
     terminal.startSelection(0, 1);
     terminal.updateSelection(0, 2);
@@ -74,7 +74,7 @@ test "native root owns the complete embedding contract" {
     try std.testing.expectEqualStrings("Howl", clipboard);
 
     try terminal.resize(3, 10);
-    const resized = terminal.surfaceSnapshot().snapshot.view;
+    const resized = terminal.visualView().view;
     try std.testing.expectEqual(@as(u16, 3), resized.rows);
     try std.testing.expectEqual(@as(u16, 10), resized.cols);
 }

@@ -79,7 +79,7 @@ test "snapshot: determinism across identical state" {
     }
 }
 
-test "surface publication carries OSC colors and complete cell presentation" {
+test "visual view carries OSC colors and complete cell presentation" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
     const summary = try terminal.feed(
@@ -91,7 +91,7 @@ test "surface publication carries OSC colors and complete cell presentation" {
     );
     try std.testing.expect(summary.state_changed);
 
-    const publication = terminal.surfaceSnapshot();
+    const publication = terminal.visualView();
     const presentation = publication.presentation;
     try std.testing.expectEqual(
         Terminal.Rgb{ .r = 1, .g = 2, .b = 3 },
@@ -109,7 +109,7 @@ test "surface publication carries OSC colors and complete cell presentation" {
         @as(?Terminal.Rgb, .{ .r = 0x31, .g = 0x32, .b = 0x33 }),
         presentation.cursor,
     );
-    const cell = publication.snapshot.view.cellInfoAt(0, 0);
+    const cell = publication.view.cellInfoAt(0, 0);
     try std.testing.expectEqual(
         presentation.palette[2],
         cell.attrs.fg.resolve(presentation.foreground, &presentation.palette),

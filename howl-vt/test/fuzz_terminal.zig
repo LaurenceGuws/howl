@@ -302,13 +302,12 @@ fn drainClipboard(terminal: *howl_vt.Terminal) !void {
 }
 
 fn acknowledgeAndReuse(terminal: *howl_vt.Terminal) !void {
-    const publication = terminal.surfaceSnapshot();
-    try std.testing.expect(!terminal.ackSurface(0));
-    try std.testing.expect(terminal.ackSurface(publication.snapshot_seq));
+    const publication = terminal.visualView();
+    try std.testing.expect(terminal.ackVisual(publication.dirty_token));
     _ = try terminal.feed("\x18A");
-    const next = terminal.surfaceSnapshot();
-    try std.testing.expect(next.dirty_generation != publication.dirty_generation);
-    try std.testing.expect(terminal.ackSurface(next.snapshot_seq));
+    const next = terminal.visualView();
+    try std.testing.expect(next.dirty_token != publication.dirty_token);
+    try std.testing.expect(terminal.ackVisual(next.dirty_token));
 }
 
 fn scrollViewport(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) void {
@@ -321,15 +320,14 @@ fn scrollViewport(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) void {
 }
 
 fn assertPublicInvariants(terminal: *howl_vt.Terminal, history_capacity: u16) !void {
-    const publication = terminal.surfaceSnapshot();
-    const view = publication.snapshot.view;
+    const publication = terminal.visualView();
+    const view = publication.view;
     try std.testing.expect(view.rows > 0);
     try std.testing.expect(view.cols > 0);
     try std.testing.expect(view.cursor_row < view.rows);
     try std.testing.expect(view.cursor_col < view.cols);
     try std.testing.expect(view.history_count <= history_capacity);
     if (view.is_alternate_screen) try std.testing.expectEqual(@as(u32, 0), view.history_count);
-    try std.testing.expect(publication.snapshot_seq != 0);
 
     var row: u16 = 0;
     while (row < view.rows) : (row += 1) {
@@ -338,5 +336,5 @@ fn assertPublicInvariants(terminal: *howl_vt.Terminal, history_capacity: u16) !v
             _ = view.cellInfoAt(row, col);
         }
     }
-    try std.testing.expect(terminal.ackSurface(publication.snapshot_seq));
+    try std.testing.expect(terminal.ackVisual(publication.dirty_token));
 }

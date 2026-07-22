@@ -73,7 +73,7 @@ test "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutat
     try std.testing.expect(!prefix.state_changed);
     const uri = try terminal.feed("/work\x1b\\");
     try std.testing.expect(uri.state_changed);
-    var directory = terminal.surfaceSnapshot().working_directory.?;
+    var directory = terminal.stateSnapshot().working_directory.?;
     try std.testing.expect(directory.kind == .uri);
     try std.testing.expectEqualStrings("file://host/work", directory.value);
 
@@ -81,18 +81,18 @@ test "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutat
     try std.testing.expect(!repeated_uri.state_changed);
     const path = try terminal.feed("\x1b]1337;CurrentDir=file://host/work\x07");
     try std.testing.expect(path.state_changed);
-    directory = terminal.surfaceSnapshot().working_directory.?;
+    directory = terminal.stateSnapshot().working_directory.?;
     try std.testing.expect(directory.kind == .path);
     try std.testing.expectEqualStrings("file://host/work", directory.value);
     try std.testing.expect(!(try terminal.feed("\x1b]1337;CurrentDir=file://host/work\x1b\\")).state_changed);
 
     try std.testing.expect(!(try terminal.feed("\x1b]1337;CurrentDir\x07")).state_changed);
-    directory = terminal.surfaceSnapshot().working_directory.?;
+    directory = terminal.stateSnapshot().working_directory.?;
     try std.testing.expect(directory.kind == .path);
     try std.testing.expectEqualStrings("file://host/work", directory.value);
 
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
-    try std.testing.expect(terminal.surfaceSnapshot().working_directory == null);
+    try std.testing.expect(terminal.stateSnapshot().working_directory == null);
 }
 
 test "iTerm RemoteHost retains bounded metadata across terminal screen lifetime" {
@@ -102,13 +102,13 @@ test "iTerm RemoteHost retains bounded metadata across terminal screen lifetime"
 
     try std.testing.expect(!(try terminal.feed("\x1b]1337;RemoteHost=user@ho")).state_changed);
     try std.testing.expect((try terminal.feed("st\x1b\\")).state_changed);
-    try std.testing.expectEqualStrings("user@host", terminal.surfaceSnapshot().remote_host.?);
+    try std.testing.expectEqualStrings("user@host", terminal.stateSnapshot().remote_host.?);
     try std.testing.expect(!(try terminal.feed("\x1b]1337;RemoteHost=user@host\x07")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
     try terminal.resize(4, 10);
     terminal.hardReset();
-    try std.testing.expectEqualStrings("user@host", terminal.surfaceSnapshot().remote_host.?);
+    try std.testing.expectEqualStrings("user@host", terminal.stateSnapshot().remote_host.?);
 
     const payload = try allocator.alloc(u8, Terminal.remote_host_max_bytes + 1);
     defer allocator.free(payload);
@@ -119,14 +119,14 @@ test "iTerm RemoteHost retains bounded metadata across terminal screen lifetime"
     try sequence.appendSlice(allocator, payload[0..Terminal.remote_host_max_bytes]);
     try sequence.append(allocator, 0x07);
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
-    try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.surfaceSnapshot().remote_host.?.len);
+    try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.stateSnapshot().remote_host.?.len);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]1337;RemoteHost=");
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, 0x07);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
-    try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.surfaceSnapshot().remote_host.?.len);
+    try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.stateSnapshot().remote_host.?.len);
 }
 
 test "iTerm ClearScrollback clears only active screen state with exact repetition" {
@@ -186,7 +186,7 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
     }
     try std.testing.expect(!(try terminal.feed("\x1b]46;canceled\x18")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b]50;restart\x07")).state_changed);
-    try std.testing.expectEqual(@as(?[]const u8, null), terminal.surfaceSnapshot().title);
+    try std.testing.expectEqual(@as(?[]const u8, null), terminal.stateSnapshot().title);
     try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
 
     const payload = try std.testing.allocator.alloc(u8, parser_mod.max_metadata_control_bytes - 2);
@@ -221,7 +221,7 @@ test "working-directory report limit preserves the prior complete fact" {
     try sequence.appendSlice(allocator, payload[0..HostState.max_metadata_bytes]);
     try sequence.append(allocator, 0x07);
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
-    var retained = terminal.surfaceSnapshot().working_directory.?;
+    var retained = terminal.stateSnapshot().working_directory.?;
     try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), retained.value.len);
 
     sequence.clearRetainingCapacity();
@@ -230,7 +230,7 @@ test "working-directory report limit preserves the prior complete fact" {
     try sequence.append(allocator, 0x07);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
 
-    retained = terminal.surfaceSnapshot().working_directory.?;
+    retained = terminal.stateSnapshot().working_directory.?;
     try std.testing.expect(retained.kind == .uri);
     try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), retained.value.len);
 }
@@ -243,7 +243,7 @@ test "OSC 0 1 and 2 match libvterm title and icon properties" {
     try std.testing.expect(both.state_changed);
     try std.testing.expect(both.title_changed);
     try std.testing.expect(both.icon_changed);
-    var publication = terminal.surfaceSnapshot();
+    var publication = terminal.stateSnapshot();
     try std.testing.expectEqualStrings("Both", publication.title.?);
     try std.testing.expectEqualStrings("Both", publication.icon.?);
 
@@ -257,7 +257,7 @@ test "OSC 0 1 and 2 match libvterm title and icon properties" {
     try std.testing.expect(!icon.title_changed);
     try std.testing.expect(icon.icon_changed);
 
-    publication = terminal.surfaceSnapshot();
+    publication = terminal.stateSnapshot();
     try std.testing.expectEqualStrings("Title", publication.title.?);
     try std.testing.expectEqualStrings("Icon", publication.icon.?);
 }
@@ -276,13 +276,13 @@ test "OSC metadata reports only committed replacement and survives split cancell
     try std.testing.expect(!(try terminal.feed("-title")).state_changed);
     const completed = try terminal.feed("\x1b\\");
     try std.testing.expect(completed.state_changed and completed.title_changed and !completed.icon_changed);
-    try std.testing.expectEqualStrings("split-title", terminal.surfaceSnapshot().title.?);
+    try std.testing.expectEqualStrings("split-title", terminal.stateSnapshot().title.?);
 
     try std.testing.expect(!(try terminal.feed("\x1b]1;discarded\x18")).state_changed);
-    try std.testing.expectEqualStrings("stable", terminal.surfaceSnapshot().icon.?);
+    try std.testing.expectEqualStrings("stable", terminal.stateSnapshot().icon.?);
     const cleared = try terminal.feed("\x1b]1;\x07");
     try std.testing.expect(cleared.state_changed and cleared.icon_changed);
-    try std.testing.expectEqualStrings("", terminal.surfaceSnapshot().icon.?);
+    try std.testing.expectEqualStrings("", terminal.stateSnapshot().icon.?);
 }
 
 test "raw OSC title updates terminal title through OSC owner path" {
@@ -336,7 +336,7 @@ test "OSC icon limit preserves prior title and icon" {
     try sequence.append(allocator, 0x07);
 
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
-    const publication = terminal.surfaceSnapshot();
+    const publication = terminal.stateSnapshot();
     try std.testing.expectEqualStrings("title", publication.title.?);
     try std.testing.expectEqualStrings("icon", publication.icon.?);
 }
@@ -359,7 +359,7 @@ test "OSC 0 bound failure preserves both prior metadata values" {
     try sequence.append(allocator, 0x07);
 
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
-    const publication = terminal.surfaceSnapshot();
+    const publication = terminal.stateSnapshot();
     try std.testing.expectEqualStrings("old-title", publication.title.?);
     try std.testing.expectEqualStrings("old-icon", publication.icon.?);
 }
@@ -380,14 +380,14 @@ fn oscZeroAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expect(seeded.title_changed);
     try std.testing.expect(seeded.icon_changed);
     const summary = terminal.feed("\x1b]0;both\x07") catch |err| {
-        const publication = terminal.surfaceSnapshot();
+        const publication = terminal.stateSnapshot();
         try std.testing.expectEqualStrings("old-title", publication.title.?);
         try std.testing.expectEqualStrings("old-icon", publication.icon.?);
         return err;
     };
     try std.testing.expect(summary.title_changed);
     try std.testing.expect(summary.icon_changed);
-    const publication = terminal.surfaceSnapshot();
+    const publication = terminal.stateSnapshot();
     try std.testing.expectEqualStrings("both", publication.title.?);
     try std.testing.expectEqualStrings("both", publication.icon.?);
 }
@@ -435,7 +435,7 @@ test "terminal metadata owns exact screen resize and reset lifetime" {
 
     try std.testing.expect((try terminal.feed("\x1b[?1049h\x1b[?1049l")).state_changed);
     try terminal.resize(3, 10);
-    var publication = terminal.surfaceSnapshot();
+    var publication = terminal.stateSnapshot();
     try std.testing.expectEqualStrings("name", publication.title.?);
     try std.testing.expectEqualStrings("name", publication.icon.?);
     try std.testing.expectEqualStrings("file://host/work", publication.working_directory.?.value);
@@ -446,7 +446,7 @@ test "terminal metadata owns exact screen resize and reset lifetime" {
     try std.testing.expectEqual(link_id, terminal.screen_state.primary.current_attrs.link_id);
 
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
-    publication = terminal.surfaceSnapshot();
+    publication = terminal.stateSnapshot();
     try std.testing.expectEqualStrings("name", publication.title.?);
     try std.testing.expectEqualStrings("name", publication.icon.?);
     try std.testing.expect(publication.working_directory == null);
@@ -585,7 +585,7 @@ test "OSC 52 retains ordered sets and queries until exact head consumption" {
             "\x1b]52;p;?\x1b\\" ++
             "\x9d52;c;VHdv\x9c",
     )).state_changed);
-    var publication = terminal.surfaceSnapshot();
+    var publication = terminal.stateSnapshot();
     try std.testing.expectEqual(@as(u8, 3), publication.clipboard_request_count);
     var request = publication.clipboard_request.?;
     try std.testing.expectEqual(@as(u64, 1), request.generation);
@@ -599,7 +599,7 @@ test "OSC 52 retains ordered sets and queries until exact head consumption" {
     const first = (try terminal.drainPendingClipboard(request.generation, allocator)).?;
     defer allocator.free(first);
     try std.testing.expectEqualStrings("One", first);
-    publication = terminal.surfaceSnapshot();
+    publication = terminal.stateSnapshot();
     try std.testing.expectEqual(@as(u8, 2), publication.clipboard_request_count);
     request = publication.clipboard_request.?;
     try std.testing.expectEqual(@as(u64, 2), request.generation);
@@ -623,7 +623,7 @@ test "OSC 52 retains ordered sets and queries until exact head consumption" {
     try std.testing.expect((try terminal.feed("\x1b]52;c;QQ==\x07")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     try terminal.resize(4, 20);
-    publication = terminal.surfaceSnapshot();
+    publication = terminal.stateSnapshot();
     try std.testing.expectEqual(@as(u64, 4), publication.clipboard_request.?.generation);
     try std.testing.expectEqual(@as(u8, 1), publication.clipboard_request_count);
 }
@@ -638,11 +638,11 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
     for (0..Terminal.clipboard_max_count) |_| {
         try std.testing.expect((try terminal.feed("\x1b]52;c;Qg==\x07")).state_changed);
     }
-    var publication = terminal.surfaceSnapshot();
+    var publication = terminal.stateSnapshot();
     try std.testing.expectEqual(Terminal.clipboard_max_count, publication.clipboard_request_count);
     try std.testing.expectEqual(@as(u64, 2), publication.clipboard_request.?.generation);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;Qw==\x07"));
-    publication = terminal.surfaceSnapshot();
+    publication = terminal.stateSnapshot();
     try std.testing.expectEqual(Terminal.clipboard_max_count, publication.clipboard_request_count);
     try std.testing.expectEqual(@as(u64, 2), publication.clipboard_request.?.generation);
 
@@ -668,7 +668,7 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
     try std.testing.expectEqual(@as(u64, 11), terminal.pendingClipboardRequest().?.generation);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;RQ==\x07"));
     try std.testing.expectEqual(@as(u64, 11), terminal.pendingClipboardRequest().?.generation);
-    try std.testing.expectEqual(@as(u8, 1), terminal.surfaceSnapshot().clipboard_request_count);
+    try std.testing.expectEqual(@as(u8, 1), terminal.stateSnapshot().clipboard_request_count);
     try terminal.acknowledgeClipboard(11);
 
     terminal.host.clipboard_generation = std.math.maxInt(u64);
@@ -686,7 +686,7 @@ test "Kitty OSC 5522 shares ordered clipboard admission without host policy" {
         "\x1b]52;c;?\x07" ++
             "\x1b]5522;type=read;dGV4dC9wbGFpbg==\x07",
     )).state_changed);
-    var publication = terminal.surfaceSnapshot();
+    var publication = terminal.stateSnapshot();
     try std.testing.expectEqual(@as(u8, 3), publication.clipboard_request_count);
 
     var request = publication.clipboard_request.?;
@@ -700,7 +700,7 @@ test "Kitty OSC 5522 shares ordered clipboard admission without host policy" {
         request.generation,
         std.testing.allocator,
     ));
-    try std.testing.expectEqual(@as(u8, 3), terminal.surfaceSnapshot().clipboard_request_count);
+    try std.testing.expectEqual(@as(u8, 3), terminal.stateSnapshot().clipboard_request_count);
     try terminal.acknowledgeClipboard(request.generation);
 
     request = terminal.pendingClipboardRequest().?;
@@ -725,7 +725,7 @@ test "Kitty OSC 5522 shares ordered clipboard admission without host policy" {
     try std.testing.expect((try terminal.feed("\x9d5522;type=wdata:mime=dGV4dA==;QQ==\x9c")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     try terminal.resize(4, 20);
-    publication = terminal.surfaceSnapshot();
+    publication = terminal.stateSnapshot();
     try std.testing.expectEqual(@as(u64, 4), publication.clipboard_request.?.generation);
     try std.testing.expectEqualStrings(
         "type=wdata:mime=dGV4dA==;QQ==",
@@ -755,7 +755,7 @@ test "Kitty OSC 5522 packet and FIFO bounds preserve prior occurrences" {
     for (0..Terminal.clipboard_max_count - 1) |_| {
         try std.testing.expect((try terminal.feed("\x1b]5522;type=wdata\x1b\\")).state_changed);
     }
-    var publication = terminal.surfaceSnapshot();
+    var publication = terminal.stateSnapshot();
     try std.testing.expectEqual(Terminal.clipboard_max_count, publication.clipboard_request_count);
     try std.testing.expectEqual(@as(u64, 2), publication.clipboard_request.?.generation);
     try std.testing.expectEqual(
@@ -763,7 +763,7 @@ test "Kitty OSC 5522 packet and FIFO bounds preserve prior occurrences" {
         publication.clipboard_request.?.payload.len,
     );
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;QQ==\x07"));
-    publication = terminal.surfaceSnapshot();
+    publication = terminal.stateSnapshot();
     try std.testing.expectEqual(@as(u64, 2), publication.clipboard_request.?.generation);
     try std.testing.expectEqual(Terminal.clipboard_max_count, publication.clipboard_request_count);
 
@@ -795,7 +795,7 @@ test "iTerm and Kitty file transfers retain one opaque ordered stream" {
             "\x1b]1337;FilePart=Qg==\x07" ++
             "\x1b]1337;FileEnd=done\x1b\\",
     )).state_changed);
-    try std.testing.expectEqual(@as(u8, 4), terminal.surfaceSnapshot().file_transfer_count);
+    try std.testing.expectEqual(@as(u8, 4), terminal.stateSnapshot().file_transfer_count);
 
     const expected = [_]struct { protocol: terminal_mod.FileTransferProtocol, payload: []const u8 }{
         .{ .protocol = .iterm2_1337, .payload = "MultipartFile=name=ZmlsZQ==" },
@@ -805,18 +805,18 @@ test "iTerm and Kitty file transfers retain one opaque ordered stream" {
     };
     try std.testing.expectError(error.StaleFileTransfer, terminal.acknowledgeFileTransfer(2));
     for (expected, 1..) |item, generation| {
-        const packet = terminal.surfaceSnapshot().file_transfer.?;
+        const packet = terminal.stateSnapshot().file_transfer.?;
         try std.testing.expectEqual(@as(u64, @intCast(generation)), packet.generation);
         try std.testing.expect(packet.protocol == item.protocol);
         try std.testing.expectEqualStrings(item.payload, packet.payload);
         try terminal.acknowledgeFileTransfer(packet.generation);
     }
-    try std.testing.expect(terminal.surfaceSnapshot().file_transfer == null);
+    try std.testing.expect(terminal.stateSnapshot().file_transfer == null);
 
     try std.testing.expect((try terminal.feed("\x9d5113;ac=send;id=2\x9c")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     try terminal.resize(4, 20);
-    const retained = terminal.surfaceSnapshot().file_transfer.?;
+    const retained = terminal.stateSnapshot().file_transfer.?;
     try std.testing.expectEqual(@as(u64, 5), retained.generation);
     try std.testing.expectEqualStrings("ac=send;id=2", retained.payload);
 }
@@ -842,21 +842,21 @@ test "opaque file-transfer bounds preserve FIFO identity and wrap" {
     for (0..Terminal.file_transfer_max_count - 1) |_| {
         try std.testing.expect((try terminal.feed("\x1b]1337;FilePart=QQ==\x1b\\")).state_changed);
     }
-    var publication = terminal.surfaceSnapshot();
+    var publication = terminal.stateSnapshot();
     try std.testing.expectEqual(Terminal.file_transfer_max_count, publication.file_transfer_count);
     try std.testing.expectEqual(@as(u64, 2), publication.file_transfer.?.generation);
     try std.testing.expectEqual(@as(usize, Terminal.file_transfer_max_bytes), publication.file_transfer.?.payload.len);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]5113;rejected\x1b\\"));
-    publication = terminal.surfaceSnapshot();
+    publication = terminal.stateSnapshot();
     try std.testing.expectEqual(@as(u64, 2), publication.file_transfer.?.generation);
     try std.testing.expectEqual(Terminal.file_transfer_max_count, publication.file_transfer_count);
 
     for (0..Terminal.file_transfer_max_count) |_| {
-        const packet = terminal.surfaceSnapshot().file_transfer.?;
+        const packet = terminal.stateSnapshot().file_transfer.?;
         try terminal.acknowledgeFileTransfer(packet.generation);
     }
     try std.testing.expect((try terminal.feed("\x1b]5113;after\x1b\\")).state_changed);
-    try std.testing.expectEqual(@as(u64, 10), terminal.surfaceSnapshot().file_transfer.?.generation);
+    try std.testing.expectEqual(@as(u64, 10), terminal.stateSnapshot().file_transfer.?.generation);
     try terminal.acknowledgeFileTransfer(10);
 
     const iterm_payload = try allocator.alloc(u8, Terminal.iterm_file_transfer_max_bytes + 1);
@@ -868,24 +868,24 @@ test "opaque file-transfer bounds preserve FIFO identity and wrap" {
     try sequence.appendSlice(allocator, iterm_payload[0..Terminal.iterm_file_transfer_max_bytes]);
     try sequence.appendSlice(allocator, "\x1b\\");
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
-    try std.testing.expectEqual(@as(u64, 11), terminal.surfaceSnapshot().file_transfer.?.generation);
+    try std.testing.expectEqual(@as(u64, 11), terminal.stateSnapshot().file_transfer.?.generation);
     try terminal.acknowledgeFileTransfer(11);
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]1337;");
     try sequence.appendSlice(allocator, iterm_payload);
     try sequence.appendSlice(allocator, "\x1b\\");
     try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
-    try std.testing.expect(terminal.surfaceSnapshot().file_transfer == null);
+    try std.testing.expect(terminal.stateSnapshot().file_transfer == null);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]5113;");
     try sequence.appendSlice(allocator, payload);
     try sequence.appendSlice(allocator, "\x1b\\");
     try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
-    try std.testing.expect(terminal.surfaceSnapshot().file_transfer == null);
+    try std.testing.expect(terminal.stateSnapshot().file_transfer == null);
     terminal.host.file_transfer_generation = std.math.maxInt(u64);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]5113;exhausted\x1b\\"));
-    try std.testing.expect(terminal.surfaceSnapshot().file_transfer == null);
+    try std.testing.expect(terminal.stateSnapshot().file_transfer == null);
 }
 
 test "shell integration OSC 133 records latest mark" {
@@ -896,14 +896,14 @@ test "shell integration OSC 133 records latest mark" {
 
     try stream.nextSlice("\x1b]133;C;cmdline=ls\x07\x1b]133;D;2\x07");
 
-    const mark = terminal.surfaceSnapshot().shell_mark;
+    const mark = terminal.stateSnapshot().shell_mark;
     try std.testing.expectEqual(@as(u64, 2), mark.generation);
     try std.testing.expectEqual(@as(u8, 'D'), mark.kind);
     try std.testing.expectEqual(@as(?i32, 2), mark.status);
     try std.testing.expectEqualStrings("2", mark.metadata);
 
     try stream.nextSlice("\x1b]133;Z;ignored\x07");
-    try std.testing.expectEqual(@as(u64, 2), terminal.surfaceSnapshot().shell_mark.generation);
+    try std.testing.expectEqual(@as(u64, 2), terminal.stateSnapshot().shell_mark.generation);
 }
 
 test "OSC 133 retains exact metadata and finds positional exit status" {
@@ -911,35 +911,35 @@ test "OSC 133 retains exact metadata and finds positional exit status" {
     defer terminal.deinit();
 
     try std.testing.expect(!(try terminal.feed("\x1b]133;D;aid=nested;")).state_changed);
-    try std.testing.expectEqual(@as(u64, 0), terminal.surfaceSnapshot().shell_mark.generation);
+    try std.testing.expectEqual(@as(u64, 0), terminal.stateSnapshot().shell_mark.generation);
     try std.testing.expect((try terminal.feed("7;cl=done\x1b\\")).state_changed);
-    var mark = terminal.surfaceSnapshot().shell_mark;
+    var mark = terminal.stateSnapshot().shell_mark;
     try std.testing.expectEqual(@as(u64, 1), mark.generation);
     try std.testing.expectEqual(@as(u8, 'D'), mark.kind);
     try std.testing.expectEqual(@as(?i32, 7), mark.status);
     try std.testing.expectEqualStrings("aid=nested;7;cl=done", mark.metadata);
 
     try std.testing.expect((try terminal.feed("\x9d133;D;;-3;aid=second\x9c")).state_changed);
-    mark = terminal.surfaceSnapshot().shell_mark;
+    mark = terminal.stateSnapshot().shell_mark;
     try std.testing.expectEqual(@as(u64, 2), mark.generation);
     try std.testing.expectEqual(@as(?i32, -3), mark.status);
     try std.testing.expectEqualStrings(";-3;aid=second", mark.metadata);
 
     try std.testing.expect((try terminal.feed("\x1b]133;D;aid=only;broken\x07")).state_changed);
-    mark = terminal.surfaceSnapshot().shell_mark;
+    mark = terminal.stateSnapshot().shell_mark;
     try std.testing.expectEqual(@as(u64, 3), mark.generation);
     try std.testing.expectEqual(@as(?i32, null), mark.status);
     try std.testing.expectEqualStrings("aid=only;broken", mark.metadata);
 
     try std.testing.expect((try terminal.feed("\x1b]133;C;cmdline=exit 7\x07")).state_changed);
-    mark = terminal.surfaceSnapshot().shell_mark;
+    mark = terminal.stateSnapshot().shell_mark;
     try std.testing.expectEqual(@as(u64, 4), mark.generation);
     try std.testing.expectEqual(@as(u8, 'C'), mark.kind);
     try std.testing.expectEqual(@as(?i32, null), mark.status);
     try std.testing.expectEqualStrings("cmdline=exit 7", mark.metadata);
 
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
-    mark = terminal.surfaceSnapshot().shell_mark;
+    mark = terminal.stateSnapshot().shell_mark;
     try std.testing.expectEqual(@as(u64, 4), mark.generation);
     try std.testing.expectEqualStrings("cmdline=exit 7", mark.metadata);
 }
@@ -950,9 +950,9 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
     defer terminal.deinit();
 
     try std.testing.expect((try terminal.feed("\x1b]9;hel")).state_changed == false);
-    try std.testing.expect(terminal.surfaceSnapshot().notification == null);
+    try std.testing.expect(terminal.stateSnapshot().notification == null);
     try std.testing.expect((try terminal.feed("lo\x07")).state_changed);
-    var notification = terminal.surfaceSnapshot().notification.?;
+    var notification = terminal.stateSnapshot().notification.?;
     try std.testing.expectEqual(@as(u64, 1), notification.generation);
     try std.testing.expectEqual(host_state.NotificationKind.message, notification.kind);
     try std.testing.expectEqual(@as(u16, 9), notification.command);
@@ -966,7 +966,7 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
             "\x1b]1337;RequestAttention=fireworks\x07" ++
             "\x1b]9;last\x07",
     )).state_changed);
-    try std.testing.expectEqual(@as(u8, 7), terminal.surfaceSnapshot().notification_count);
+    try std.testing.expectEqual(@as(u8, 7), terminal.stateSnapshot().notification_count);
     try std.testing.expectError(error.StaleNotification, terminal.acknowledgeNotification(2));
 
     const expected = [_]struct { kind: host_state.NotificationKind, command: u16, payload: []const u8 }{
@@ -979,19 +979,19 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
         .{ .kind = .message, .command = 9, .payload = "last" },
     };
     for (expected, 1..) |item, generation| {
-        notification = terminal.surfaceSnapshot().notification.?;
+        notification = terminal.stateSnapshot().notification.?;
         try std.testing.expectEqual(@as(u64, @intCast(generation)), notification.generation);
         try std.testing.expectEqual(item.kind, notification.kind);
         try std.testing.expectEqual(item.command, notification.command);
         try std.testing.expectEqualStrings(item.payload, notification.payload);
         try terminal.acknowledgeNotification(notification.generation);
     }
-    try std.testing.expect(terminal.surfaceSnapshot().notification == null);
+    try std.testing.expect(terminal.stateSnapshot().notification == null);
 
     try std.testing.expect(!(try terminal.feed("\x1b]1337;RequestAtt")).state_changed);
     try std.testing.expect((try terminal.feed("ention=once\x07")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
-    notification = terminal.surfaceSnapshot().notification.?;
+    notification = terminal.stateSnapshot().notification.?;
     try std.testing.expectEqual(@as(u64, 8), notification.generation);
     try std.testing.expectEqual(host_state.NotificationKind.request_attention, notification.kind);
     try std.testing.expectEqualStrings("once", notification.payload);
@@ -1013,10 +1013,10 @@ test "OSC notification bounds preserve the FIFO and wrap without reuse" {
     try sequence.append(allocator, 0x07);
 
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
-    var retained = terminal.surfaceSnapshot().notification.?;
+    var retained = terminal.stateSnapshot().notification.?;
     try std.testing.expectEqual(@as(u64, 1), retained.generation);
     try std.testing.expectEqualStrings("prior", retained.payload);
-    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().notification_count);
+    try std.testing.expectEqual(@as(u8, 2), terminal.stateSnapshot().notification_count);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]9;");
@@ -1024,38 +1024,38 @@ test "OSC notification bounds preserve the FIFO and wrap without reuse" {
     try sequence.append(allocator, 0x07);
 
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
-    retained = terminal.surfaceSnapshot().notification.?;
+    retained = terminal.stateSnapshot().notification.?;
     try std.testing.expectEqual(@as(u64, 1), retained.generation);
     try std.testing.expectEqualStrings("prior", retained.payload);
-    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().notification_count);
+    try std.testing.expectEqual(@as(u8, 2), terminal.stateSnapshot().notification_count);
 
     try terminal.acknowledgeNotification(1);
-    retained = terminal.surfaceSnapshot().notification.?;
+    retained = terminal.stateSnapshot().notification.?;
     try std.testing.expectEqual(@as(u64, 2), retained.generation);
     try std.testing.expectEqual(Terminal.notification_max_bytes, retained.payload.len);
     for (0..Terminal.notification_max_count - 1) |_| {
         try std.testing.expect((try terminal.feed("\x1b]9;queued\x07")).state_changed);
     }
-    const full = terminal.surfaceSnapshot();
+    const full = terminal.stateSnapshot();
     try std.testing.expectEqual(Terminal.notification_max_count, full.notification_count);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]9;rejected\x07"));
-    try std.testing.expectEqual(@as(u64, 2), terminal.surfaceSnapshot().notification.?.generation);
-    try std.testing.expectEqual(Terminal.notification_max_count, terminal.surfaceSnapshot().notification_count);
+    try std.testing.expectEqual(@as(u64, 2), terminal.stateSnapshot().notification.?.generation);
+    try std.testing.expectEqual(Terminal.notification_max_count, terminal.stateSnapshot().notification_count);
 
     for (0..Terminal.notification_max_count) |_| {
-        retained = terminal.surfaceSnapshot().notification.?;
+        retained = terminal.stateSnapshot().notification.?;
         try terminal.acknowledgeNotification(retained.generation);
     }
-    try std.testing.expect(terminal.surfaceSnapshot().notification == null);
+    try std.testing.expect(terminal.stateSnapshot().notification == null);
     try std.testing.expect((try terminal.feed("\x1b]9;after\x07")).state_changed);
-    retained = terminal.surfaceSnapshot().notification.?;
+    retained = terminal.stateSnapshot().notification.?;
     try std.testing.expectEqual(@as(u64, 10), retained.generation);
     try std.testing.expectEqualStrings("after", retained.payload);
     try terminal.acknowledgeNotification(10);
     try std.testing.expectError(error.StaleNotification, terminal.acknowledgeNotification(10));
     terminal.host.notification_generation = std.math.maxInt(u64);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]9;exhausted\x07"));
-    try std.testing.expect(terminal.surfaceSnapshot().notification == null);
+    try std.testing.expect(terminal.stateSnapshot().notification == null);
 }
 
 test "OSC 22 retains ordered bounded host-neutral requests" {
@@ -1063,9 +1063,9 @@ test "OSC 22 retains ordered bounded host-neutral requests" {
     defer terminal.deinit();
 
     try std.testing.expect(!(try terminal.feed("\x1b]22;>wait,")).state_changed);
-    try std.testing.expect(terminal.surfaceSnapshot().pointer_shape == null);
+    try std.testing.expect(terminal.stateSnapshot().pointer_shape == null);
     try std.testing.expect((try terminal.feed("pointer\x1b\\")).state_changed);
-    var request = terminal.surfaceSnapshot().pointer_shape.?;
+    var request = terminal.stateSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 1), request.generation);
     try std.testing.expectEqualStrings(">wait,pointer", request.payload);
 
@@ -1074,7 +1074,7 @@ test "OSC 22 retains ordered bounded host-neutral requests" {
             "\x1b]22;>crosshair\x07" ++
             "\x1b]22;<1\x07",
     )).state_changed);
-    try std.testing.expectEqual(@as(u8, 4), terminal.surfaceSnapshot().pointer_shape_count);
+    try std.testing.expectEqual(@as(u8, 4), terminal.stateSnapshot().pointer_shape_count);
     try std.testing.expectError(error.StalePointerShape, terminal.acknowledgePointerShape(2));
 
     const expected = [_][]const u8{
@@ -1084,17 +1084,17 @@ test "OSC 22 retains ordered bounded host-neutral requests" {
         "<1",
     };
     for (expected, 1..) |payload, generation| {
-        request = terminal.surfaceSnapshot().pointer_shape.?;
+        request = terminal.stateSnapshot().pointer_shape.?;
         try std.testing.expectEqual(@as(u64, @intCast(generation)), request.generation);
         try std.testing.expectEqualStrings(payload, request.payload);
         try terminal.acknowledgePointerShape(request.generation);
     }
-    try std.testing.expect(terminal.surfaceSnapshot().pointer_shape == null);
+    try std.testing.expect(terminal.stateSnapshot().pointer_shape == null);
 
     try std.testing.expect((try terminal.feed("\x1b]22;survives\x07")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     try terminal.resize(4, 9);
-    request = terminal.surfaceSnapshot().pointer_shape.?;
+    request = terminal.stateSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 5), request.generation);
     try std.testing.expectEqualStrings("survives", request.payload);
 }
@@ -1114,23 +1114,23 @@ test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
     try sequence.appendSlice(allocator, payload[0..Terminal.pointer_shape_max_bytes]);
     try sequence.append(allocator, 0x07);
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
-    var retained = terminal.surfaceSnapshot().pointer_shape.?;
+    var retained = terminal.stateSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 1), retained.generation);
     try std.testing.expectEqualStrings("prior", retained.payload);
-    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().pointer_shape_count);
+    try std.testing.expectEqual(@as(u8, 2), terminal.stateSnapshot().pointer_shape_count);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]22;");
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, 0x07);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
-    retained = terminal.surfaceSnapshot().pointer_shape.?;
+    retained = terminal.stateSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 1), retained.generation);
     try std.testing.expectEqualStrings("prior", retained.payload);
-    try std.testing.expectEqual(@as(u8, 2), terminal.surfaceSnapshot().pointer_shape_count);
+    try std.testing.expectEqual(@as(u8, 2), terminal.stateSnapshot().pointer_shape_count);
 
     try terminal.acknowledgePointerShape(1);
-    retained = terminal.surfaceSnapshot().pointer_shape.?;
+    retained = terminal.stateSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 2), retained.generation);
     try std.testing.expectEqual(Terminal.pointer_shape_max_bytes, retained.payload.len);
     for (0..Terminal.pointer_shape_max_count - 1) |_| {
@@ -1138,29 +1138,29 @@ test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
     }
     try std.testing.expectEqual(
         Terminal.pointer_shape_max_count,
-        terminal.surfaceSnapshot().pointer_shape_count,
+        terminal.stateSnapshot().pointer_shape_count,
     );
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]22;rejected\x07"));
-    try std.testing.expectEqual(@as(u64, 2), terminal.surfaceSnapshot().pointer_shape.?.generation);
+    try std.testing.expectEqual(@as(u64, 2), terminal.stateSnapshot().pointer_shape.?.generation);
     try std.testing.expectEqual(
         Terminal.pointer_shape_max_count,
-        terminal.surfaceSnapshot().pointer_shape_count,
+        terminal.stateSnapshot().pointer_shape_count,
     );
 
     for (0..Terminal.pointer_shape_max_count) |_| {
-        retained = terminal.surfaceSnapshot().pointer_shape.?;
+        retained = terminal.stateSnapshot().pointer_shape.?;
         try terminal.acknowledgePointerShape(retained.generation);
     }
-    try std.testing.expect(terminal.surfaceSnapshot().pointer_shape == null);
+    try std.testing.expect(terminal.stateSnapshot().pointer_shape == null);
     try std.testing.expect((try terminal.feed("\x1b]22;after\x07")).state_changed);
-    retained = terminal.surfaceSnapshot().pointer_shape.?;
+    retained = terminal.stateSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 10), retained.generation);
     try std.testing.expectEqualStrings("after", retained.payload);
     try terminal.acknowledgePointerShape(10);
     try std.testing.expectError(error.StalePointerShape, terminal.acknowledgePointerShape(10));
     terminal.host.pointer_shape_generation = std.math.maxInt(u64);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]22;exhausted\x07"));
-    try std.testing.expect(terminal.surfaceSnapshot().pointer_shape == null);
+    try std.testing.expect(terminal.stateSnapshot().pointer_shape == null);
 }
 
 test "iTerm safe controls mutate presentation metadata and exact replies" {
@@ -1176,16 +1176,17 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
             "\x1b]1337;ReportCellSize\x07",
     );
     try std.testing.expect(summary.state_changed);
-    const publication = terminal.surfaceSnapshot();
-    try std.testing.expectEqual(Screen.CursorShape.bar, publication.snapshot.view.cursor_shape);
-    try std.testing.expectEqual(@as(u32, 20), publication.shell_integration.?.version);
-    try std.testing.expectEqualStrings("bash", publication.shell_integration.?.shell.?);
-    try std.testing.expectEqual(Rgb{ .r = 0xaa, .g = 0xbb, .b = 0xcc }, publication.presentation.foreground);
-    try std.testing.expectEqual(Rgb{ .r = 0x10, .g = 0x20, .b = 0x30 }, publication.presentation.background);
-    try std.testing.expectEqual(Rgb{ .r = 0xff, .g = 0, .b = 0 }, publication.presentation.palette[1]);
-    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, publication.presentation.cursor.?);
-    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, publication.presentation.cursor_text.?);
-    try std.testing.expectEqual(Rgb{ .r = 0xee, .g = 0xee, .b = 0xee }, publication.presentation.palette[15]);
+    const state = terminal.stateSnapshot();
+    const visual = terminal.visualView();
+    try std.testing.expectEqual(Screen.CursorShape.bar, visual.view.cursor_shape);
+    try std.testing.expectEqual(@as(u32, 20), state.shell_integration.?.version);
+    try std.testing.expectEqualStrings("bash", state.shell_integration.?.shell.?);
+    try std.testing.expectEqual(Rgb{ .r = 0xaa, .g = 0xbb, .b = 0xcc }, visual.presentation.foreground);
+    try std.testing.expectEqual(Rgb{ .r = 0x10, .g = 0x20, .b = 0x30 }, visual.presentation.background);
+    try std.testing.expectEqual(Rgb{ .r = 0xff, .g = 0, .b = 0 }, visual.presentation.palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, visual.presentation.cursor.?);
+    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, visual.presentation.cursor_text.?);
+    try std.testing.expectEqual(Rgb{ .r = 0xee, .g = 0xee, .b = 0xee }, visual.presentation.palette[15]);
     try std.testing.expectEqualStrings(
         "\x1b]1337;ReportCellSize=18;9;1\x1b\\",
         terminal.host.pendingOutput(),
@@ -1205,7 +1206,7 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
     try std.testing.expect(osc_50.state_changed);
     try std.testing.expectEqual(
         Screen.CursorShape.underline,
-        terminal.surfaceSnapshot().snapshot.view.cursor_shape,
+        terminal.visualView().view.cursor_shape,
     );
     try std.testing.expect(!(try terminal.feed("\x1b]1337;CursorShape=2\x07")).state_changed);
     try std.testing.expect(!(try terminal.feed(
@@ -1213,7 +1214,7 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
     )).state_changed);
     try std.testing.expectEqual(
         Screen.CursorShape.underline,
-        terminal.surfaceSnapshot().snapshot.view.cursor_shape,
+        terminal.visualView().view.cursor_shape,
     );
 }
 
@@ -1234,10 +1235,10 @@ test "OSC 50 accepts only cursor shape without 1337 consequences" {
             "\x1b]50;ReportCellSize\x07",
     );
     try std.testing.expect(!rejected.state_changed);
-    const publication = terminal.surfaceSnapshot();
+    const publication = terminal.stateSnapshot();
     try std.testing.expectEqual(
         Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 },
-        publication.presentation.foreground,
+        terminal.visualView().presentation.foreground,
     );
     try std.testing.expectEqual(@as(u32, 20), publication.shell_integration.?.version);
     try std.testing.expectEqualStrings("bash", publication.shell_integration.?.shell.?);
@@ -1247,7 +1248,7 @@ test "OSC 50 accepts only cursor shape without 1337 consequences" {
     try std.testing.expect(accepted.state_changed);
     try std.testing.expectEqual(
         Screen.CursorShape.bar,
-        terminal.surfaceSnapshot().snapshot.view.cursor_shape,
+        terminal.visualView().view.cursor_shape,
     );
 }
 
@@ -1281,7 +1282,7 @@ test "unsupported SetMark and Kitty context metadata remain exact no-ops" {
 
     try std.testing.expect(!(try terminal.feed("\x1b]1337;SetMark=lab")).state_changed);
     try std.testing.expect(!(try terminal.feed("el\x1b\\")).state_changed);
-    try std.testing.expectEqual(@as(u64, 0), terminal.surfaceSnapshot().shell_mark.generation);
+    try std.testing.expectEqual(@as(u64, 0), terminal.stateSnapshot().shell_mark.generation);
     try std.testing.expect(!(try terminal.feed("\x9d3008;key=value\x9c")).state_changed);
 
     const payload = try std.testing.allocator.alloc(u8, parser_mod.max_metadata_control_bytes);
@@ -1293,7 +1294,7 @@ test "unsupported SetMark and Kitty context metadata remain exact no-ops" {
     try sequence.appendSlice(std.testing.allocator, payload);
     try sequence.append(std.testing.allocator, 0x07);
     try std.testing.expect(!(try terminal.feed(sequence.items)).state_changed);
-    try std.testing.expectEqual(@as(u64, 0), terminal.surfaceSnapshot().shell_mark.generation);
+    try std.testing.expectEqual(@as(u64, 0), terminal.stateSnapshot().shell_mark.generation);
 }
 
 test "iTerm shell integration rejects malformed duplicate and oversized metadata" {
@@ -1313,7 +1314,7 @@ test "iTerm shell integration rejects malformed duplicate and oversized metadata
     for (rejected) |sequence| {
         const summary = try terminal.feed(sequence);
         try std.testing.expect(!summary.state_changed);
-        const integration = terminal.surfaceSnapshot().shell_integration.?;
+        const integration = terminal.stateSnapshot().shell_integration.?;
         try std.testing.expectEqual(@as(u32, 20), integration.version);
         try std.testing.expectEqualStrings("bash", integration.shell.?);
     }
@@ -1333,7 +1334,7 @@ test "iTerm SetColors resets represented domains and ignores malformed pairs ind
             "curbg=default,curfg=default,red=default,bg=666666\x07",
     );
     try std.testing.expect(mixed.state_changed);
-    const presentation = terminal.surfaceSnapshot().presentation;
+    const presentation = terminal.visualView().presentation;
     try std.testing.expectEqual(Terminal.default_presentation.foreground, presentation.foreground);
     try std.testing.expectEqual(Rgb{ .r = 0x66, .g = 0x66, .b = 0x66 }, presentation.background);
     try std.testing.expectEqual(@as(?Rgb, null), presentation.cursor);

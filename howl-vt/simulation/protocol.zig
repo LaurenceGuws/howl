@@ -418,7 +418,7 @@ fn feedBytesToTerminal(
 
 fn digestTerminal(terminal: *Terminal) VtDigest {
     var hasher = std.hash.Fnv1a_64.init();
-    const view = terminal.surfaceSnapshot().snapshot.view;
+    const view = terminal.visualView().view;
 
     hashValue(&hasher, view.rows);
     hashValue(&hasher, view.cols);

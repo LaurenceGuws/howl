@@ -2,7 +2,7 @@
 
 const terminal = @import("terminal.zig");
 
-/// Terminal state owner, byte-stream engine, and semantic surface publisher.
+/// Terminal state owner, byte-stream engine, visual view, and consequence boundary.
 pub const Terminal = terminal.Terminal;
 
 test {

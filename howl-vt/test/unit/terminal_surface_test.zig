@@ -36,6 +36,25 @@ fn clearDirtyRows(terminal: *Terminal) void {
     screen_set.clearDirtyRows(&terminal.screen_state);
 }
 
+fn visualDirtyRow(view: Terminal.VisualView, row: u16) ?Terminal.VisualDirtyRow {
+    const rows = switch (view.dirty) {
+        .rows => |rows| rows,
+        else => return null,
+    };
+    var iterator = rows.iterator();
+    while (iterator.next()) |dirty| {
+        if (dirty.row == row) return dirty;
+    }
+    return null;
+}
+
+fn expectVisualDirtyRow(view: Terminal.VisualView, row: u16, start_col: u16, end_col: u16) !void {
+    try std.testing.expectEqual(
+        Terminal.VisualDirtyRow{ .row = row, .start_col = start_col, .end_col = end_col },
+        visualDirtyRow(view, row).?,
+    );
+}
+
 fn captureSnapshot(terminal: *const Terminal) !screen_capture.Capture {
     return screen_capture.Capture.captureFromScreen(
         terminal.allocator,
@@ -153,29 +172,30 @@ test "alternate screen switches mark active viewport fully dirty" {
     try std.testing.expectEqual(@as(u16, 3), exit_dirty.dirty_cols_end[2]);
 }
 
-test "surface metadata is borrowed per generation and tracks alternate identity" {
+test "state snapshot borrows metadata and tracks alternate identity" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
 
     const initial = try terminal.feed("\x1b]2;first\x07\x1b]1;one\x07");
     try std.testing.expect(initial.title_changed);
     try std.testing.expect(initial.icon_changed);
-    const first = terminal.surfaceSnapshot();
+    const first = terminal.stateSnapshot();
+    const first_visual = terminal.visualView();
     try std.testing.expectEqualStrings("first", first.title.?);
     try std.testing.expectEqualStrings("one", first.icon.?);
     try std.testing.expect(!first.is_alternate_screen);
 
     const changed = try terminal.feed("\x1b]2;second\x07\x1b[?1049h");
     try std.testing.expect(changed.title_changed);
-    const second = terminal.surfaceSnapshot();
-    try std.testing.expect(second.snapshot_seq != first.snapshot_seq);
+    const second = terminal.stateSnapshot();
+    try std.testing.expect(terminal.visualView().dirty_token != first_visual.dirty_token);
     try std.testing.expectEqualStrings("second", second.title.?);
     try std.testing.expectEqualStrings("one", second.icon.?);
     try std.testing.expect(second.is_alternate_screen);
 
     const restored = try terminal.feed("\x1b[?1049l");
     try std.testing.expect(restored.state_changed);
-    const primary = terminal.surfaceSnapshot();
+    const primary = terminal.stateSnapshot();
     try std.testing.expect(!primary.is_alternate_screen);
 }
 
@@ -196,6 +216,89 @@ test "alternate screen switching clears selection on the screen-set owner path" 
 
     try stream.nextSlice("\x1b[?1049l");
     try std.testing.expect(terminal.selectionState() == null);
+}
+
+test "visual view accumulates sparse cells and derives cursor overlay independently" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    const initial = terminal.visualView();
+    try std.testing.expect(initial.dirty == .full);
+    try std.testing.expect(terminal.ackVisual(initial.dirty_token));
+    try std.testing.expect(!terminal.ackVisual(initial.dirty_token));
+
+    try std.testing.expect((try terminal.feed("\x1b[2;3HX")).state_changed);
+    const first = terminal.visualView();
+    try expectVisualDirtyRow(first, 1, 2, 2);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;5HY")).state_changed);
+    const cumulative = terminal.visualView();
+    try expectVisualDirtyRow(cumulative, 0, 4, 4);
+    try expectVisualDirtyRow(cumulative, 1, 2, 2);
+    try std.testing.expect(!terminal.ackVisual(first.dirty_token));
+    try std.testing.expect(terminal.ackVisual(cumulative.dirty_token));
+
+    try std.testing.expect((try terminal.feed("\x1b[3;2H")).state_changed);
+    const cursor_only = terminal.visualView();
+    try std.testing.expect(cursor_only.dirty == .none);
+    try std.testing.expect(cursor_only.dirty_token != cumulative.dirty_token);
+    try std.testing.expect(terminal.ackVisual(cursor_only.dirty_token));
+
+    try std.testing.expect((try terminal.feed("\x1b]2;metadata-only\x07")).title_changed);
+    const metadata_only = terminal.visualView();
+    try std.testing.expectEqual(cursor_only.dirty_token, metadata_only.dirty_token);
+    try std.testing.expect(metadata_only.dirty == .none);
+}
+
+test "visual view marks selection geometry and source-wide discontinuities exactly" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+    try std.testing.expect((try terminal.feed("abcdef")).state_changed);
+    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+
+    terminal.startSelection(0, 1);
+    terminal.updateSelection(0, 3);
+    const selected = terminal.visualView();
+    try expectVisualDirtyRow(selected, 0, 1, 3);
+    try std.testing.expect(terminal.ackVisual(selected.dirty_token));
+
+    terminal.clearSelection();
+    const cleared = terminal.visualView();
+    try expectVisualDirtyRow(cleared, 0, 1, 3);
+    try std.testing.expect(terminal.ackVisual(cleared.dirty_token));
+
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b#6")).state_changed);
+    const geometry = terminal.visualView();
+    try expectVisualDirtyRow(geometry, 1, 0, 7);
+    try std.testing.expect(terminal.ackVisual(geometry.dirty_token));
+
+    try std.testing.expect((try terminal.feed("\x1b]4;1;#010203\x1b\\")).state_changed);
+    try std.testing.expect(terminal.visualView().dirty == .full);
+    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+
+    try terminal.resize(4, 10);
+    const resized = terminal.visualView();
+    try std.testing.expect(resized.dirty == .full);
+    try std.testing.expectEqual(@as(u16, 4), resized.view.rows);
+    try std.testing.expectEqual(@as(u16, 10), resized.view.cols);
+}
+
+test "visual view remains cumulative across fragmented stream mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+
+    var stream = terminal.vtStream();
+    try stream.nextSlice("A");
+    const first = terminal.visualView();
+    try stream.nextSlice("B");
+    const second = terminal.visualView();
+
+    try std.testing.expect(!terminal.ackVisual(first.dirty_token));
+    try expectVisualDirtyRow(second, 0, 0, 1);
+    try std.testing.expect(terminal.ackVisual(second.dirty_token));
 }
 
 test "full-screen scroll dirties only exposed bottom row" {
@@ -220,14 +323,20 @@ test "terminal feed fails overlong OSC instead of truncating it" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 2, 4);
     defer terminal.deinit();
+    const clean = terminal.visualView();
+    try std.testing.expect(terminal.ackVisual(clean.dirty_token));
 
-    var bytes = try std.ArrayList(u8).initCapacity(allocator, 4_101);
+    var bytes = try std.ArrayList(u8).initCapacity(allocator, 4_103);
     defer bytes.deinit(allocator);
-    try bytes.appendSlice(allocator, "\x1b]0;");
+    try bytes.appendSlice(allocator, "X\x1b]0;");
     try bytes.appendNTimes(allocator, 'A', 4_097);
     try bytes.append(allocator, 0x07);
 
     try std.testing.expectError(error.StringControlLimit, terminal.feed(bytes.items));
+    const partial = terminal.visualView();
+    try std.testing.expect(partial.dirty_token != clean.dirty_token);
+    try std.testing.expectEqual(@as(u21, 'X'), partial.view.cellAt(0, 0));
+    try expectVisualDirtyRow(partial, 0, 0, 0);
 
     const recovered = try terminal.feed("A");
     try std.testing.expect(recovered.state_changed);
@@ -293,13 +402,46 @@ test "selection follows viewport movement through scrollback rows" {
     terminal.updateSelection(2, 1);
     terminal.finishSelection();
 
-    const live = visibleView(&terminal, 0);
-    try std.testing.expectEqual(@as(?selection_projection.Range, .{ .start = 0, .end_exclusive = 2 }), selection_projection.visibleRange(live, terminal.selectionState().?, 0));
-    try std.testing.expectEqual(@as(?selection_projection.Range, .{ .start = 0, .end_exclusive = 2 }), selection_projection.visibleRange(live, terminal.selectionState().?, 1));
+    const live = terminal.visualView();
+    const selected = @as(?selection_projection.Range, .{ .start = 0, .end_exclusive = 2 });
+    try std.testing.expectEqual(selected, live.selectedSpan(0));
+    try std.testing.expectEqual(selected, live.selectedSpan(1));
 
-    const scrolled = visibleView(&terminal, 1);
-    try std.testing.expectEqual(@as(?selection_projection.Range, null), selection_projection.visibleRange(scrolled, terminal.selectionState().?, 0));
-    try std.testing.expectEqual(@as(?selection_projection.Range, .{ .start = 0, .end_exclusive = 2 }), selection_projection.visibleRange(scrolled, terminal.selectionState().?, 1));
+    try std.testing.expect(terminal.scrollViewport(.{ .absolute = 1 }));
+    const scrolled = terminal.visualView();
+    try std.testing.expectEqual(@as(?selection_projection.Range, null), scrolled.selectedSpan(0));
+    try std.testing.expectEqual(selected, scrolled.selectedSpan(1));
+    try std.testing.expectEqual(@as(?selection_projection.Range, null), scrolled.selectedSpan(2));
+}
+
+test "visual dirty rows resolve a mixed history and screen viewport" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 6, 8);
+    defer terminal.deinit();
+
+    const history = "111111\r\n222222\r\n333333\r\n444444\r\n555555\r\n666666";
+    try std.testing.expect((try terminal.feed(history)).state_changed);
+    try std.testing.expect(terminal.scrollViewport(.{ .absolute = 2 }));
+    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+
+    try std.testing.expect((try terminal.feed("\x1b[1;2HX\x1b[4;5HY")).state_changed);
+    const visual = terminal.visualView();
+    try std.testing.expectEqual(@as(u32, 2), visual.view.scrollback_offset);
+    try expectVisualDirtyRow(visual, 2, 1, 1);
+    try std.testing.expect(visualDirtyRow(visual, 0) == null);
+    try std.testing.expect(visualDirtyRow(visual, 1) == null);
+    try std.testing.expect(visualDirtyRow(visual, 3) == null);
+}
+
+test "visual hyperlink borrow requires the exact current visual identity" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+
+    const current = terminal.visualView();
+    try std.testing.expect(terminal.ackVisual(current.dirty_token));
+    try std.testing.expect(try terminal.visibleCellHyperlinkUri(current.dirty_token, 0, 0) == null);
+
+    try std.testing.expect((try terminal.feed("X")).state_changed);
+    try std.testing.expectError(error.InvalidArgument, terminal.visibleCellHyperlinkUri(current.dirty_token, 0, 0));
 }
 
 test "cursor hides when viewport is scrolled off live bottom" {

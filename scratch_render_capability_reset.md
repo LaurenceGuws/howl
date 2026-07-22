@@ -378,3 +378,96 @@ GPU commands, concrete backend behavior, or graphics capability.
 - [x] Admitted updates are immutable caller storage with no VT borrow.
 - [x] Full reconstruction is explicit and independent of skipped projections.
 - [x] Render owns no runtime publication, synchronization, or GPU resource.
+
+## `vt_visual_view_contract` implementation findings
+
+Implemented VT ownership is narrower than the rejected surface publication:
+
+- Screen dirty storage: `terminal.zig:2870-2934`, `markDirtyCols`,
+  `markDirtyRows`, `markAllRowsDirty`, and `:3501`, `DirtyState`, own
+  caller-allocated cumulative spans and their private mutation revision.
+- Borrowed source: `terminal.zig:9244`, `View`, `:9317`, `VisualSource`, and
+  `:9420`, `projectVisualSource`, own viewport cells, geometry, and selection.
+- Byte boundary: `terminal.zig:11999`, `TerminalStream.nextSliceSummary`, and
+  `:12919`, `completeStreamMutation`, close successful and partial-error work.
+- Visual identity: `terminal.zig:12636-12667`, `DirtyToken`, `VisualDirty`, and
+  `VisualView`, plus `:12863-12908`, own sparse/full and cursor comparison.
+- Public observation: `terminal.zig:13621`, `ackVisual`, and `:13714`,
+  `visualView`, own allocation-free borrowing and cumulative retirement.
+- Selection appearance: `terminal.zig:14222-14239`, `noteSelectionChanged` and
+  `markSelectionAppearance`, union old and new visible selected spans.
+
+- `Terminal.visualView` allocates nothing and borrows visible cells, row
+  geometry, selection, palette, and dirty spans only until terminal mutation.
+  Its copied `DirtyToken` identifies that exact observation.
+- `VisualDirty` is `none`, dense cumulative row spans, or `full`. Existing
+  caller-allocated screen dirty-column arrays remain the sole span storage;
+  resize allocates replacement arrays transactionally through the terminal's
+  caller-provided allocator.
+- `ackVisual` accepts only the current unacknowledged token. It retires active
+  spans and `full`; stale and repeated acknowledgement leave state unchanged.
+- Cell and geometry paths converge on `markDirtyCols`, `markDirtyRows`, or
+  `markAllRowsDirty`. A private revision records mutation even when a new span
+  is already contained by cumulative unacknowledged bounds.
+- Cursor position, visibility, shape, blink intent, and cursor-specific colors
+  are compared as a copied overlay. Hidden cursor details are canonicalized so
+  invisible movement does not create visual work. Cursor changes never mark VT
+  cell spans.
+- Direct selection operations union only old and new visible selected spans.
+  Selection invalidation during byte application and screen-bank changes use
+  full reconstruction because the former projection may no longer be
+  addressable after mutation. Finishing selection changes gesture state but
+  not visual dirtiness.
+- Resize, viewport/source mapping, alternate-bank identity, row-origin shifts,
+  reverse-screen changes, and palette/default-color mutation produce `full`.
+  Failed resize and failed color transactions leave visual identity unchanged.
+- `TerminalStream.next`, `nextSlice`, and `nextSliceSummary` now close the same
+  visual mutation boundary as `Terminal.feed`, including a partially applied
+  slice that later returns an error. No borrowed view survives that boundary.
+- `hardReset`, `restoreCursor`, `switchScreenMode`, `applyModeEvent`, resize,
+  viewport movement, and selection APIs account for direct callers rather than
+  relying on a later feed wrapper.
+- The old aggregate is now `StateSnapshot` and contains retained consequences
+  and input-policy facts only. `SurfacePublication`, `surfaceSnapshot`,
+  `ackSurface`, publication slots/sequences, and visual fields in that aggregate
+  were deleted rather than aliased.
+
+Owner-local proof covers initial full state, sparse cumulative cells, cursor-only
+token movement with clean cell spans, stale/repeated acknowledgement, exact
+selection add/remove spans, full row geometry, palette and resize full recovery,
+and fragmented stream accumulation.
+
+Pedantic correction tightened three owner boundaries:
+
+- `VisualView` no longer exports raw selection endpoints. `selectedSpan(row)`
+  resolves the half-open selected columns inside VT for the borrowed viewport,
+  including retained-history and mixed history/screen rows.
+- `VisualDirty.rows` rebases borrowed active-screen spans into visible viewport
+  coordinates. Its iterator skips history rows and offscreen active rows while
+  preserving sparse cumulative screen dirtiness. Selection appearance on a
+  retained-history row requests full reconstruction because screen-owned dirty
+  arrays cannot name that row; it is never misreported as an active-screen row.
+- Dirty revisions, visual identity, and source-wide revision use checked
+  monotonic increment. Exhausting `u64` is an explicit invariant panic, so an
+  ancient `DirtyToken` can never become current through modulo reuse.
+- `visibleCellHyperlinkUri` treats a token as current visual identity rather
+  than acknowledgement ownership: acknowledging the token keeps the borrow
+  eligible until the next visual mutation; stale identities are rejected.
+
+Additional proof covers row-resolved selection while moving through retained
+history, a two-history/two-screen viewport with one visible and one offscreen
+active-screen mutation, and current-versus-stale hyperlink identity.
+
+Validation completed:
+
+- `howl-vt`: `zig build check` in Debug, ReleaseSafe, ReleaseFast, ReleaseSmall.
+- `howl-vt`: `zig build test` in Debug and ReleaseSafe.
+- `howl-vt`: `zig build simulate`; `zig build fuzz`.
+- formatting and `git diff --check` pass for the owned files.
+
+The root workspace check remains blocked before reaching this VT boundary:
+`howl-control` still names deleted `howl-frame`, root aliases still name deleted
+`howl-text`, `howl-frame`, `howl-window`, and `consumer-vt`, and the source-audit
+allowlist still describes those quarantined paths. The rejected
+`howl-render/src/howl_frame.zig` and control consumers still name
+`SurfacePublication`; changing them belongs to later approved slices.

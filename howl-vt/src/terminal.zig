@@ -2869,6 +2869,7 @@ pub const Screen = struct {
     /// Union an ordered, clamped column range into one row's dirty state.
     pub fn markDirtyCols(self: *Screen, row: u16, start_col: u16, end_col: u16) void {
         if (self.rows == 0 or self.cols == 0 or row >= self.rows) return;
+        advanceIdentity(&self.dirty_state.revision);
         const start = @min(start_col, self.cols -| 1);
         const end = @min(end_col, self.cols -| 1);
         const lo = @min(start, end);
@@ -2897,6 +2898,7 @@ pub const Screen = struct {
     /// Mark a clamped row range fully dirty and union it with prior dirty rows.
     pub fn markDirtyRows(self: *Screen, start_row: u16, end_row: u16) void {
         if (self.rows == 0) return;
+        advanceIdentity(&self.dirty_state.revision);
         const start = @min(start_row, self.rows -| 1);
         const end = @min(end_row, self.rows -| 1);
         if (self.dirty_state.cols_start) |cols_start| {
@@ -2925,6 +2927,7 @@ pub const Screen = struct {
     /// Mark every row and column dirty while refreshing borrowed column slices.
     pub fn markAllRowsDirty(self: *Screen) void {
         if (self.rows == 0) return;
+        advanceIdentity(&self.dirty_state.revision);
         if (self.dirty_state.cols_start) |buf| @memset(buf, 0);
         if (self.dirty_state.cols_end) |buf| @memset(buf, self.cols -| 1);
         self.dirty_state.rows = rowsForFull(self.rows, self.dirty_state.cols_start, self.dirty_state.cols_end);
@@ -3499,6 +3502,7 @@ const DirtyState = struct {
     rows: ?ScreenDirtyRows = null,
     cols_start: ?[]u16 = null,
     cols_end: ?[]u16 = null,
+    revision: u64 = 0,
 
     /// Marks every row and column dirty using caller-owned column arrays.
     pub fn initFull(row_count: u16, cols_start: ?[]u16, cols_end: ?[]u16) DirtyState {
@@ -3506,6 +3510,7 @@ const DirtyState = struct {
             .rows = rowsForFull(row_count, cols_start, cols_end),
             .cols_start = cols_start,
             .cols_end = cols_end,
+            .revision = 1,
         };
     }
 
@@ -3516,6 +3521,10 @@ const DirtyState = struct {
         self.* = .{};
     }
 };
+
+fn advanceIdentity(value: *u64) void {
+    value.* = std.math.add(u64, value.*, 1) catch @panic("monotonic identity exhausted");
+}
 
 // Allocates and initializes one u16 column bound per row when rows are nonzero.
 fn allocDirtyCols(allocator: std.mem.Allocator, rows: u16, initial: u16) std.mem.Allocator.Error!?[]u16 {
@@ -9309,10 +9318,19 @@ pub const View = struct {
 };
 
 // Pairs a borrowed visible view with its active selection.
-const SurfaceSnapshot = struct {
+const VisualSource = struct {
     view: View,
-    dirty: ?Screen.DirtyRows,
     selection: ?TerminalSelection,
+};
+
+const VisibleSelection = struct {
+    selected: ?TerminalSelection,
+
+    fn span(self: VisibleSelection, view: View, row: u16) ?Range {
+        if (row >= view.rows) return null;
+        const selected = self.selected orelse return null;
+        return visibleRange(view, selected, row);
+    }
 };
 
 // Owns primary and alternate screens plus their independent selections.
@@ -9413,17 +9431,15 @@ pub fn visibleView(screen_state: *const Set, scrollback_offset: u32) View {
 }
 
 // Builds a borrowed view and selection at a clamped u64 offset.
-fn projectSurface(screen_state: *const Set, scrollback_offset: u64) SurfaceSnapshot {
+fn projectVisualSource(screen_state: *const Set, scrollback_offset: u64) VisualSource {
     const history_count: u64 = if (screen_state.alt_active)
         0
     else
         screen_state.activeConst().historyCount();
     const offset: u32 = @intCast(@min(scrollback_offset, history_count));
     const view = visibleView(screen_state, offset);
-    const dirty = peekDirtyRows(screen_state);
     return .{
         .view = view,
-        .dirty = dirty,
         .selection = screen_state.activeSelectionConst().state(),
     };
 }
@@ -9738,46 +9754,6 @@ fn copyText(allocator: std.mem.Allocator, screen_state: *const Set, selected: ?T
     return out.toOwnedSlice(allocator);
 }
 
-// Tracks monotonic mutation, snapshot, and acknowledgement identities.
-const Publication = struct {
-    seq: u64 = 1,
-    dirty_generation: u64 = 0,
-    scrollback_offset: u64 = 0,
-    start: u64 = 0,
-    rows: u16 = 0,
-    cols: u16 = 0,
-    alt: bool = false,
-
-    /// Publishes a new snapshot only when mutation advanced beyond the last publication.
-    pub fn publish(self: *Publication, view: View, scrollback_offset: u64, dirty_generation: u64) u64 {
-        std.debug.assert(view.rows > 0);
-        std.debug.assert(view.cols > 0);
-        const same_dirty = self.dirty_generation == dirty_generation;
-        const same_offset = self.scrollback_offset == scrollback_offset;
-        const same_start = self.start == view.start;
-        const same_rows = self.rows == view.rows;
-        const same_cols = self.cols == view.cols;
-        const same_alt = self.alt == view.is_alternate_screen;
-        if (!(same_dirty and same_offset and same_start and same_rows and same_cols and same_alt)) {
-            if (self.dirty_generation != 0) self.seq +%= 1;
-            self.dirty_generation = dirty_generation;
-            self.scrollback_offset = scrollback_offset;
-            self.start = view.start;
-            self.rows = view.rows;
-            self.cols = view.cols;
-            self.alt = view.is_alternate_screen;
-        }
-        std.debug.assert(self.seq != 0);
-        return self.seq;
-    }
-
-    /// Accepts acknowledgement only for a nonzero snapshot no newer than publication.
-    pub fn canAck(self: Publication, snapshot_seq: u64, dirty_generation_current: u64) bool {
-        if (snapshot_seq == 0) return false;
-        return self.seq == snapshot_seq and self.dirty_generation == dirty_generation_current;
-    }
-};
-
 // Semantic application and terminal reply generation.
 
 // Apply one host-directed semantic event and retain its bounded consequence.
@@ -9840,7 +9816,9 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
                 ),
                 else => {},
             }
-            return !std.meta.eql(before, vt.host.colors) or output_before != vt.host.pending_output.bytes.items.len;
+            const colors_changed = !std.meta.eql(before, vt.host.colors);
+            if (colors_changed) vt.noteSourceWideVisualChange();
+            return colors_changed or output_before != vt.host.pending_output.bytes.items.len;
         },
         .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.host.internHyperlink(spec)),
         .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
@@ -11571,7 +11549,12 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .kitty_keyboard_pop,
         => return try applyKittyEvent(vt, event),
 
-        .kitty_color_stack => |command| return applyKittyColorStack(vt, command),
+        .kitty_color_stack => |command| {
+            const colors_before = vt.host.colors;
+            const changed = applyKittyColorStack(vt, command);
+            if (!std.meta.eql(colors_before, vt.host.colors)) vt.noteSourceWideVisualChange();
+            return changed;
+        },
         .sgr_stack_push => |params| return vt.pushSgr(params),
         .sgr_stack_pop => return vt.popSgr(),
         .restore_cursor_information => |payload| return vt.restoreCursorInformation(payload),
@@ -11654,7 +11637,9 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .iterm_set_colors => |payload| {
             const before = vt.host.colors;
             handleItermSetColors(&vt.host.colors, payload);
-            return !std.meta.eql(before, vt.host.colors);
+            const changed = !std.meta.eql(before, vt.host.colors);
+            if (changed) vt.noteSourceWideVisualChange();
+            return changed;
         },
         .bell,
         .title_and_icon_set,
@@ -11980,7 +11965,7 @@ const TerminalStream = struct {
 
     /// Feeds one byte and omits the optional mutation summary while preserving failures.
     pub fn next(self: *TerminalStream, byte: u8) FeedError!void {
-        const summary = try self.nextSummary(byte);
+        const summary = try self.nextSliceSummary(&.{byte});
         std.debug.assert(!summary.title_changed or summary.state_changed);
         std.debug.assert(!summary.icon_changed or summary.state_changed);
     }
@@ -12026,6 +12011,18 @@ const TerminalStream = struct {
 
     /// Feeds a complete borrowed slice and merges per-byte mutation summaries.
     pub fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) FeedError!FeedSummary {
+        const visual_before = self.terminal.visualMutationState();
+        const selection_before = self.terminal.screen_state.activeSelectionConst().state();
+        const history_before = self.terminal.visibleHistoryCount();
+        const was_scrolled = self.terminal.scrollback_offset > 0;
+        var completed = false;
+        defer if (!completed) self.terminal.completeStreamMutation(
+            visual_before,
+            selection_before,
+            history_before,
+            was_scrolled,
+            null,
+        );
         var summary: FeedSummary = .{
             .state_changed = false,
             .title_changed = false,
@@ -12041,6 +12038,14 @@ const TerminalStream = struct {
         }
         summary.history_lost =
             self.terminal.screen_state.primary.history_loss_generation != history_loss_before;
+        self.terminal.completeStreamMutation(
+            visual_before,
+            selection_before,
+            history_before,
+            was_scrolled,
+            summary.state_changed,
+        );
+        completed = true;
         return summary;
     }
 
@@ -12460,7 +12465,7 @@ test "discarded string controls stream without retaining payload bytes" {
     try stream.nextSlice("\x1b\\");
     try stream.nextSlice("ok");
 
-    const view = terminal.surfaceSnapshot().snapshot.view;
+    const view = terminal.visualView().view;
     try std.testing.expectEqual(@as(u21, 'o'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(0, 1));
 }
@@ -12564,7 +12569,7 @@ pub const Terminal = struct {
     pub const ColorPreferenceReplyError = ApplyError || error{StaleColorPreferenceQuery};
     /// Exposes the fixed pending color-preference-query capacity to embedding hosts.
     pub const color_preference_query_max_count = color_preference_query_capacity;
-    /// Borrows validated shell-integration identity from one surface publication.
+    /// Borrows validated shell-integration identity from one state snapshot.
     pub const ShellIntegration = ItermShellIntegration;
     /// Borrows the latest child-reported directory bytes and their URI-or-path interpretation.
     pub const WorkingDirectory = WorkingDirectoryReport;
@@ -12641,7 +12646,97 @@ pub const Terminal = struct {
     pub const default_cell_attrs = Screen.default_cell_attrs;
     /// Provides the immutable terminal palette and dynamic-color defaults.
     pub const default_presentation = defaultPresentation();
-    /// Bounds each borrowed title or icon value in a surface publication.
+    /// Identifies one exact cumulative visual-dirty observation without exposing its counter.
+    pub const DirtyToken = enum(u64) { _ };
+    /// Identifies one visible row and its inclusive changed-column span.
+    pub const VisualDirtyRow = struct {
+        /// Identifies the row in the borrowed visual viewport.
+        row: u16,
+        /// Identifies the first changed visible column.
+        start_col: u16,
+        /// Identifies the last changed visible column.
+        end_col: u16,
+    };
+    /// Iterates active-screen dirtiness resolved into visible viewport coordinates.
+    pub const VisualDirtyRows = struct {
+        /// Identifies the viewport row represented by borrowed column index zero.
+        start_row: u16,
+        /// Identifies the last viewport row represented by the borrowed arrays.
+        end_row: u16,
+        /// Borrows one first-changed-column value per represented viewport row.
+        dirty_cols_start: []const u16,
+        /// Borrows one last-changed-column value per represented viewport row.
+        dirty_cols_end: []const u16,
+
+        /// Owns bounded iteration state and borrows dirty-column arrays from the terminal.
+        pub const Iterator = struct {
+            rows: VisualDirtyRows,
+            index: usize,
+
+            /// Returns the next changed visible row, skipping clean rows in the dense interval.
+            pub fn next(self: *Iterator) ?VisualDirtyRow {
+                while (self.index < self.rows.dirty_cols_start.len) {
+                    const index = self.index;
+                    self.index += 1;
+                    const start_col = self.rows.dirty_cols_start[index];
+                    const end_col = self.rows.dirty_cols_end[index];
+                    if (start_col > end_col) continue;
+                    return .{
+                        .row = self.rows.start_row + @as(u16, @intCast(index)),
+                        .start_col = start_col,
+                        .end_col = end_col,
+                    };
+                }
+                return null;
+            }
+        };
+
+        /// Starts one allocation-free pass over changed rows in ascending viewport order.
+        pub fn iterator(self: VisualDirtyRows) Iterator {
+            return .{ .rows = self, .index = 0 };
+        }
+
+        fn hasRows(self: VisualDirtyRows) bool {
+            var it = self.iterator();
+            return it.next() != null;
+        }
+    };
+    /// Describes cumulative terminal-owned cell and row-geometry dirtiness.
+    pub const VisualDirty = union(enum) {
+        /// No cell, selection-span, or row-geometry mutation remains unacknowledged.
+        none,
+        /// Borrows changed spans resolved into visible viewport rows until terminal mutation.
+        rows: VisualDirtyRows,
+        /// Requires complete reconstruction after a source-wide visual discontinuity.
+        full,
+    };
+    /// Borrows coherent terminal visual semantics until the next terminal mutation.
+    ///
+    /// This view allocates and owns nothing. The caller must exclude terminal
+    /// mutation while reading borrowed cells, dirty spans, selected spans, or palette.
+    /// Cursor overlay changes are copied separately and do not enter cell dirty spans.
+    pub const VisualView = struct {
+        /// Borrows visible cells, row geometry, and copied cursor overlay facts.
+        view: View,
+        /// Borrows cumulative cell and row dirtiness or requests full reconstruction.
+        dirty: VisualDirty,
+        /// Retains only the VT-owned row-resolution operation for selection appearance.
+        selected_rows: VisibleSelection,
+        /// Copies palette, dynamic defaults, cursor colors, and screen reverse state.
+        presentation: Presentation,
+        /// Identifies the exact visual observation accepted by `ackVisual`.
+        dirty_token: DirtyToken,
+
+        /// Resolves the selected half-open column span for one visible row.
+        ///
+        /// Raw history and screen selection endpoints remain VT-owned. An invalid
+        /// row has no selected span.
+        pub fn selectedSpan(self: VisualView, row: u16) ?Range {
+            if (row >= self.view.rows) return null;
+            return self.selected_rows.span(self.view, row);
+        }
+    };
+    /// Bounds each borrowed title or icon value in a state snapshot.
     pub const metadata_max_bytes = max_metadata_bytes;
     /// Bounds one finalized logical line retained as UTF-8 evidence.
     pub const logical_output_line_max_bytes = logical_output_line_bytes_max;
@@ -12683,7 +12778,7 @@ pub const Terminal = struct {
         line_count: u16,
         /// Reports that another finalized line remains after `cursor`.
         more: bool,
-        /// Binds `open_line` to one surface publication.
+        /// Binds `open_line` to one terminal-state observation.
         publication: u64,
 
         /// Releases both copied byte slices exactly once.
@@ -12738,7 +12833,10 @@ pub const Terminal = struct {
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
     dirty_generation: u64 = 1,
-    surface_publication: Publication = .{},
+    visual_generation: u64 = 1,
+    visual_acknowledged_generation: u64 = 0,
+    visual_full: bool = true,
+    visual_source_wide_revision: u64 = 0,
     scrollback_offset: u32 = 0,
 
     /// Selects one bounded projection requested by an external viewport-policy owner.
@@ -12812,15 +12910,107 @@ pub const Terminal = struct {
         return .init(self);
     }
 
+    const VisualCursorState = struct {
+        row: u16,
+        col: u16,
+        visible: bool,
+        shape: CursorShape,
+        blink: bool,
+        color: ?Terminal.Rgb,
+        text_color: ?Terminal.Rgb,
+    };
+
+    const VisualMutationState = struct {
+        dirty_revision: u64,
+        cursor: VisualCursorState,
+        selection: ?TerminalSelection,
+        rows: u16,
+        cols: u16,
+        start: u32,
+        history_count: u32,
+        history_row_base: u32,
+        scrollback_offset: u32,
+        row_origin: u16,
+        alternate: bool,
+        reverse_screen: bool,
+        source_wide_revision: u64,
+    };
+
+    fn visualMutationState(self: *const Terminal) VisualMutationState {
+        const active = self.screen_state.activeConst();
+        const view = visibleView(&self.screen_state, self.scrollback_offset);
+        const cursor_visible = view.cursor_visible;
+        return .{
+            .dirty_revision = active.dirty_state.revision,
+            .cursor = .{
+                .row = if (cursor_visible) view.cursor_row else 0,
+                .col = if (cursor_visible) view.cursor_col else 0,
+                .visible = cursor_visible,
+                .shape = if (cursor_visible) view.cursor_shape else .block,
+                .blink = cursor_visible and view.cursor_blink,
+                .color = if (cursor_visible) active.cursor.cursor_color else null,
+                .text_color = if (cursor_visible) active.cursor.cursor_text_color else null,
+            },
+            .selection = self.screen_state.activeSelectionConst().state(),
+            .rows = view.rows,
+            .cols = view.cols,
+            .start = view.start,
+            .history_count = view.history_count,
+            .history_row_base = view.history_row_base,
+            .scrollback_offset = view.scrollback_offset,
+            .row_origin = active.row_origin,
+            .alternate = view.is_alternate_screen,
+            .reverse_screen = self.modes.reverse_screen_mode,
+            .source_wide_revision = self.visual_source_wide_revision,
+        };
+    }
+
+    fn finishVisualMutation(self: *Terminal, before: VisualMutationState) void {
+        const after = self.visualMutationState();
+        if (std.meta.eql(before, after)) return;
+        if (before.rows != after.rows or before.cols != after.cols or
+            before.start != after.start or before.history_count != after.history_count or
+            before.history_row_base != after.history_row_base or
+            before.scrollback_offset != after.scrollback_offset or
+            before.row_origin != after.row_origin or before.alternate != after.alternate or
+            before.reverse_screen != after.reverse_screen or
+            before.source_wide_revision != after.source_wide_revision)
+        {
+            self.visual_full = true;
+        }
+        advanceIdentity(&self.visual_generation);
+    }
+
+    fn noteSourceWideVisualChange(self: *Terminal) void {
+        advanceIdentity(&self.visual_source_wide_revision);
+    }
+
     /// Applies a borrowed byte slice and reports mutation; failures reset transient parser state.
     pub fn feed(self: *Terminal, bytes: []const u8) FeedError!FeedSummary {
-        const history_before = self.visibleHistoryCount();
-        const was_scrolled = self.scrollback_offset > 0;
         var stream = self.vtStream();
-        const summary = try stream.nextSliceSummary(bytes);
-        self.postApply(summary.state_changed);
+        return stream.nextSliceSummary(bytes);
+    }
+
+    fn completeStreamMutation(
+        self: *Terminal,
+        visual_before: VisualMutationState,
+        selection_before: ?TerminalSelection,
+        history_before: u32,
+        was_scrolled: bool,
+        state_changed: ?bool,
+    ) void {
+        if (state_changed) |changed| {
+            self.postApply(changed);
+        } else {
+            self.screen_state.activeSelection().clearIfInvalidatedByGrid(
+                self.screen_state.activeConst(),
+            );
+        }
         self.repairScrollbackAfterHistoryChange(history_before, was_scrolled);
-        return summary;
+        if (!std.meta.eql(selection_before, self.screen_state.activeSelectionConst().state())) {
+            self.visual_full = true;
+        }
+        self.finishVisualMutation(visual_before);
     }
 
     /// Publishes mutation identity and enforces cursor and selection invariants after routing.
@@ -12834,9 +13024,10 @@ pub const Terminal = struct {
     /// Resize both terminal screens.
     ///
     /// Both dimensions must be nonzero. Invalid dimensions or allocation
-    /// failure leave both screens and terminal publication state unchanged.
+    /// failure leave both screens, terminal state, and visual identity unchanged.
     pub fn resize(self: *Terminal, rows: u16, cols: u16) ResizeError!void {
         try validateDimensions(rows, cols);
+        const visual_before = self.visualMutationState();
         const output_before = byteCount(self.host.pending_output.bytes.items);
         errdefer restorePendingOutput(&self.host.pending_output, output_before);
         if (self.modes.inband_resize_notifications) try self.appendInbandResizeReport(rows, cols);
@@ -12846,6 +13037,8 @@ pub const Terminal = struct {
         );
         self.clampScrollbackOffset();
         self.dirty_generation +%= 1;
+        self.noteSourceWideVisualChange();
+        self.finishVisualMutation(visual_before);
     }
 
     // Appends one exact iTerm2/Kitty mode-2048 resize report when host pixel facts are known.
@@ -12922,6 +13115,7 @@ pub const Terminal = struct {
 
     /// Applies RIS while preserving dimensions and owned allocations.
     pub fn hardReset(self: *Terminal) void {
+        const visual_before = self.visualMutationState();
         self.screen_state.reset();
         self.screen_state.primary.insert_mode = false;
         self.screen_state.alternate.insert_mode = false;
@@ -12936,6 +13130,8 @@ pub const Terminal = struct {
         self.host.pending_output.eight_bit_controls = false;
         self.kitty.resetTerminalState();
         self.host.resetTerminalState();
+        self.noteSourceWideVisualChange();
+        self.finishVisualMutation(visual_before);
     }
 
     // Applies DECSTR to active-bank state and terminal-global modes without erasing text or moving the cursor.
@@ -13104,6 +13300,7 @@ pub const Terminal = struct {
     /// Position is clamped to current dimensions and a saved pending wrap survives
     /// only when the restored position remains at the active right boundary.
     pub fn restoreCursor(self: *Terminal) bool {
+        const visual_before = self.visualMutationState();
         const active = self.screen_state.active();
         const cursor_before = active.cursor;
         const visibility_before = .{
@@ -13121,7 +13318,7 @@ pub const Terminal = struct {
         const designations_before = self.designations;
 
         self.restoreCursorState();
-        return !std.meta.eql(cursor_before, active.cursor) or
+        const changed = !std.meta.eql(cursor_before, active.cursor) or
             !std.meta.eql(visibility_before, .{
                 self.screen_state.primary.cursor.visible,
                 self.screen_state.alternate.cursor.visible,
@@ -13134,6 +13331,8 @@ pub const Terminal = struct {
             gl_before != self.gl_index or gr_before != self.gr_index or
             single_shift_before != self.single_shift or
             !std.mem.eql(u8, designations_before[0..], self.designations[0..]);
+        if (changed) self.finishVisualMutation(visual_before);
+        return changed;
     }
 
     fn restoreCursorState(self: *Terminal) void {
@@ -13168,6 +13367,7 @@ pub const Terminal = struct {
 
     /// Switches primary or alternate screen with explicit clear and cursor-save behavior.
     pub fn switchScreenMode(self: *Terminal, enable_alt: bool, clear_alt: bool, save_restore_cursor: bool) bool {
+        const visual_before = self.visualMutationState();
         if (enable_alt) {
             if (self.screen_state.alt_active) return false;
             if (save_restore_cursor) self.activeSavepoint().* = self.captureSavepoint();
@@ -13177,6 +13377,7 @@ pub const Terminal = struct {
             if (clear_alt) self.screen_state.alternate.clearVisibleCells();
             self.screen_state.alternate.resetCursorForAltEntry();
             self.screen_state.alternate.markAllRowsDirty();
+            self.finishVisualMutation(visual_before);
             return true;
         }
 
@@ -13186,11 +13387,19 @@ pub const Terminal = struct {
         self.screen_state.activeSelection().clear();
         if (save_restore_cursor) self.restoreCursorState();
         self.screen_state.primary.markAllRowsDirty();
+        self.finishVisualMutation(visual_before);
         return true;
     }
 
     /// Apply one canonical semantic mode event.
     pub fn applyModeEvent(self: *Terminal, event: SemanticEvent) bool {
+        const visual_before = self.visualMutationState();
+        const changed = self.applyModeEventInner(event);
+        if (changed) self.finishVisualMutation(visual_before);
+        return changed;
+    }
+
+    fn applyModeEventInner(self: *Terminal, event: SemanticEvent) bool {
         switch (event) {
             .application_cursor_keys => |enabled| return replaceBool(&self.modes.application_cursor_keys, enabled),
             .application_keypad => |enabled| return replaceBool(&self.modes.application_keypad, enabled),
@@ -13483,15 +13692,23 @@ pub const Terminal = struct {
         return true;
     }
 
-    /// Acknowledges a published snapshot and retires dirty state only for valid identities.
-    pub fn ackSurface(self: *Terminal, snapshot_seq: u64) bool {
-        if (!self.surface_publication.canAck(snapshot_seq, self.dirty_generation)) return false;
+    /// Retires cumulative visual dirtiness only for the current unacknowledged token.
+    pub fn ackVisual(self: *Terminal, token: DirtyToken) bool {
+        const generation = @intFromEnum(token);
+        if (generation != self.visual_generation or
+            generation == self.visual_acknowledged_generation)
+        {
+            return false;
+        }
         clearDirtyRows(&self.screen_state);
+        self.visual_full = false;
+        self.visual_acknowledged_generation = generation;
         return true;
     }
 
     /// Applies one caller-owned history projection within retained bounds.
     pub fn scrollViewport(self: *Terminal, behavior: ScrollViewport) bool {
+        const visual_before = self.visualMutationState();
         const history_count = self.visibleHistoryCount();
         const previous = self.scrollback_offset;
         self.scrollback_offset = switch (behavior) {
@@ -13512,7 +13729,9 @@ pub const Terminal = struct {
             .absolute => |offset| @intCast(@min(offset, history_count)),
         };
         std.debug.assert(self.scrollback_offset <= history_count);
-        return self.scrollback_offset != previous;
+        const changed = self.scrollback_offset != previous;
+        if (changed) self.finishVisualMutation(visual_before);
+        return changed;
     }
 
     /// Returns history rows currently reachable above the active screen.
@@ -13562,19 +13781,52 @@ pub const Terminal = struct {
         std.debug.assert(self.scrollback_offset <= history_after);
     }
 
-    /// Publishes and borrows the current surface until terminal mutation.
-    pub fn surfaceSnapshot(self: *Terminal) SurfacePublication {
-        const snapshot = projectSurface(&self.screen_state, self.scrollback_offset);
+    fn projectDirtyRows(view: View, source: Screen.DirtyRows) ?VisualDirtyRows {
+        const viewport_end = view.start + @as(u32, view.rows);
+        const screen_source_end = view.history_count + @as(u32, view.rows);
+        const visible_source_start = @max(view.start, view.history_count);
+        const visible_source_end = @min(viewport_end, screen_source_end);
+        if (visible_source_start >= visible_source_end) return null;
+
+        const visible_screen_start: u16 = @intCast(visible_source_start - view.history_count);
+        const visible_screen_end: u16 = @intCast(visible_source_end - view.history_count);
+        const dirty_start = @max(source.start_row, visible_screen_start);
+        const dirty_end: u16 = @intCast(@min(
+            @as(u32, source.end_row) + 1,
+            @as(u32, visible_screen_end),
+        ));
+        if (dirty_start >= dirty_end) return null;
+
+        const projected: VisualDirtyRows = .{
+            .start_row = @intCast(view.history_count + @as(u32, dirty_start) - view.start),
+            .end_row = @intCast(view.history_count + @as(u32, dirty_end - 1) - view.start),
+            .dirty_cols_start = source.dirty_cols_start[dirty_start..dirty_end],
+            .dirty_cols_end = source.dirty_cols_end[dirty_start..dirty_end],
+        };
+        return if (projected.hasRows()) projected else null;
+    }
+
+    /// Borrows coherent visual-only terminal state until the next terminal mutation.
+    ///
+    /// The caller supplies no allocator because this operation allocates and owns
+    /// nothing. Borrowed cells, palette, selection, and dirty spans become invalid
+    /// on terminal mutation. Cursor overlay facts remain outside `VisualDirty`.
+    pub fn visualView(self: *const Terminal) VisualView {
+        const source = projectVisualSource(&self.screen_state, self.scrollback_offset);
         const active = self.screen_state.activeConst();
         const colors = self.host.terminalColorState();
         return .{
-            .snapshot_seq = self.surface_publication.publish(
-                snapshot.view,
-                self.scrollback_offset,
-                self.dirty_generation,
-            ),
-            .dirty_generation = self.dirty_generation,
-            .snapshot = snapshot,
+            .view = source.view,
+            .dirty = if (self.visual_full)
+                .full
+            else if (peekDirtyRows(&self.screen_state)) |rows|
+                if (projectDirtyRows(source.view, rows)) |projected|
+                    .{ .rows = projected }
+                else
+                    .none
+            else
+                .none,
+            .selected_rows = .{ .selected = source.selection },
             .presentation = .{
                 .palette = colors.palette,
                 .foreground = colors.foreground,
@@ -13583,6 +13835,14 @@ pub const Terminal = struct {
                 .cursor_text = active.cursor.cursor_text_color orelse colors.cursor_text,
                 .reverse_screen = self.modes.reverse_screen_mode,
             },
+            .dirty_token = @enumFromInt(self.visual_generation),
+        };
+    }
+
+    /// Borrows retained host consequences and input-policy facts until terminal mutation.
+    pub fn stateSnapshot(self: *const Terminal) StateSnapshot {
+        const view = visibleView(&self.screen_state, self.scrollback_offset);
+        return .{
             .title = self.host.current_title,
             .icon = self.host.current_icon,
             .working_directory = self.host.working_directory_report,
@@ -13618,25 +13878,24 @@ pub const Terminal = struct {
             .report_key_up = self.modes.report_key_up,
             .bell_generation = self.host.bell_generation,
             .history_loss_generation = self.screen_state.primary.history_loss_generation,
-            .is_alternate_screen = snapshot.view.is_alternate_screen,
-            .history_row_base = snapshot.view.history_row_base,
-            .history_count = snapshot.view.history_count,
-            .scrollback_offset = snapshot.view.scrollback_offset,
+            .is_alternate_screen = view.is_alternate_screen,
+            .history_row_base = view.history_row_base,
+            .history_count = view.history_count,
+            .scrollback_offset = view.scrollback_offset,
             .mouse_reporting = self.mouseReportingEnabled(),
         };
     }
 
     /// Returns copied dimensions, cursor, history, and active-screen metadata.
-    pub fn visibleMeta(self: *Terminal) VisibleMeta {
-        const publication = self.surfaceSnapshot();
-        const view = publication.snapshot.view;
+    pub fn visibleMeta(self: *const Terminal) VisibleMeta {
+        const visual = self.visualView();
+        const view = visual.view;
         return .{
             .rows = view.rows,
             .cols = view.cols,
             .history_count = view.history_count,
             .is_alternate_screen = view.is_alternate_screen,
-            .snapshot_seq = publication.snapshot_seq,
-            .dirty_generation = publication.dirty_generation,
+            .dirty_token = visual.dirty_token,
         };
     }
 
@@ -13723,7 +13982,7 @@ pub const Terminal = struct {
         errdefer allocator.free(owned_text);
         const owned_losses = try losses.toOwnedSlice(allocator);
         errdefer allocator.free(owned_losses);
-        const publication = self.surfaceSnapshot().snapshot_seq;
+        const publication = self.dirty_generation;
         return .{ .output = .{
             .allocator = allocator,
             .text = owned_text,
@@ -13752,25 +14011,24 @@ pub const Terminal = struct {
         };
     }
 
-    /// Borrows a cell hyperlink URI only when snapshot identity and coordinates are valid.
+    /// Borrows a cell hyperlink URI only for the current visual identity and coordinates.
+    ///
+    /// Acknowledgement does not invalidate that identity; any later visual mutation does.
     pub fn visibleCellHyperlinkUri(
-        self: *Terminal,
-        snapshot_seq: u64,
+        self: *const Terminal,
+        token: DirtyToken,
         row: u16,
         col: u16,
     ) error{InvalidArgument}!?[]const u8 {
-        if (snapshot_seq == 0) return error.InvalidArgument;
-        const publication = self.surfaceSnapshot();
-        if (publication.snapshot_seq != snapshot_seq) return error.InvalidArgument;
-        const view = publication.snapshot.view;
+        if (@intFromEnum(token) != self.visual_generation) return error.InvalidArgument;
+        const view = self.visualView().view;
         if (row >= view.rows or col >= view.cols) return error.InvalidArgument;
         return self.host.hyperlinkUriForId(view.cellInfoAt(row, col).attrs.link_id);
     }
 
     /// Borrows the current cell hyperlink URI, or null for invalid coordinates or no link.
     pub fn visibleCellHyperlinkUriCurrent(self: *Terminal, row: u16, col: u16) ?[]const u8 {
-        const publication = self.surfaceSnapshot();
-        const view = publication.snapshot.view;
+        const view = self.visualView().view;
         if (row >= view.rows or col >= view.cols) return null;
         return self.host.hyperlinkUriForId(view.cellInfoAt(row, col).attrs.link_id);
     }
@@ -13782,17 +14040,24 @@ pub const Terminal = struct {
 
     /// Starts selection at a clamped column and VT/history row.
     pub fn startSelection(self: *Terminal, row: i32, col: u16) void {
+        const visual_before = self.visualMutationState();
+        const view_before = visibleView(&self.screen_state, self.scrollback_offset);
+        const selection_before = self.selectionState();
         self.screen_state.activeSelection().start(self.selectionAbsoluteRow(row), col);
-        self.noteSelectionChanged();
+        self.noteSelectionChanged(view_before, selection_before);
+        self.finishVisualMutation(visual_before);
     }
 
     /// Moves the active selection endpoint to a clamped column.
     pub fn updateSelection(self: *Terminal, row: i32, col: u16) void {
+        const visual_before = self.visualMutationState();
+        const view_before = visibleView(&self.screen_state, self.scrollback_offset);
         const before = self.selectionState() orelse return;
         self.screen_state.activeSelection().update(self.selectionAbsoluteRow(row), col);
         const after = self.selectionState() orelse return;
         if (before.end.row == after.end.row and before.end.col == after.end.col) return;
-        self.noteSelectionChanged();
+        self.noteSelectionChanged(view_before, before);
+        self.finishVisualMutation(visual_before);
     }
 
     /// Marks the active selection complete without changing its endpoints.
@@ -13801,14 +14066,17 @@ pub const Terminal = struct {
         self.screen_state.activeSelection().finish();
         const after = self.selectionState() orelse return;
         if (before.selecting == after.selecting) return;
-        self.noteSelectionChanged();
+        self.dirty_generation +%= 1;
     }
 
     /// Clears active-screen selection state.
     pub fn clearSelection(self: *Terminal) void {
-        if (self.selectionState() == null) return;
+        const visual_before = self.visualMutationState();
+        const view_before = visibleView(&self.screen_state, self.scrollback_offset);
+        const before = self.selectionState() orelse return;
         self.screen_state.activeSelection().clear();
-        self.noteSelectionChanged();
+        self.noteSelectionChanged(view_before, before);
+        self.finishVisualMutation(visual_before);
     }
 
     /// Copy selected terminal text into caller-owned memory.
@@ -14056,9 +14324,31 @@ pub const Terminal = struct {
         self.dirty_generation +%= 1;
     }
 
-    fn noteSelectionChanged(self: *Terminal) void {
-        self.screen_state.active().markAllRowsDirty();
+    fn noteSelectionChanged(self: *Terminal, previous_view: View, previous: ?TerminalSelection) void {
+        self.markSelectionAppearance(previous_view, previous);
+        self.markSelectionAppearance(
+            visibleView(&self.screen_state, self.scrollback_offset),
+            self.selectionState(),
+        );
         self.dirty_generation +%= 1;
+    }
+
+    fn markSelectionAppearance(self: *Terminal, view: View, selection: ?TerminalSelection) void {
+        const selected = selection orelse return;
+        var row: u16 = 0;
+        while (row < view.rows) : (row += 1) {
+            const range = visibleRange(view, selected, row) orelse continue;
+            switch (view.rowSource(row)) {
+                .screen => |screen_row| self.screen_state.active().markDirtyCols(
+                    screen_row,
+                    range.start,
+                    range.end_exclusive - 1,
+                ),
+                // Active-screen dirty storage cannot name retained-history rows.
+                // A selection appearance change there requires reconstruction.
+                .history => self.visual_full = true,
+            }
+        }
     }
 
     fn selectionAbsoluteRow(self: *const Terminal, row: i32) i32 {
@@ -14088,12 +14378,8 @@ pub const Terminal = struct {
         active.cursor.setPositionStructural(bounded_row, bounded_col);
     }
 
-    /// Pairs a borrowed complete surface and metadata until terminal mutation.
-    pub const SurfacePublication = struct {
-        snapshot_seq: u64,
-        dirty_generation: u64,
-        snapshot: SurfaceSnapshot,
-        presentation: Presentation,
+    /// Borrows retained host consequences and input-policy facts until terminal mutation.
+    pub const StateSnapshot = struct {
         title: ?[]const u8,
         icon: ?[]const u8,
         /// Borrows the latest OSC 7 URI or iTerm CurrentDir path until terminal mutation.
@@ -14166,7 +14452,7 @@ pub const Terminal = struct {
     };
 
     /// Copies the palette, dynamic defaults, cursor colors, and screen-wide
-    /// reverse state that resolve one complete surface publication.
+    /// reverse state used to resolve terminal visual values.
     pub const Presentation = struct {
         palette: [256]Terminal.Rgb,
         foreground: Terminal.Rgb,
@@ -14194,8 +14480,7 @@ pub const Terminal = struct {
         cols: u16,
         history_count: u32,
         is_alternate_screen: bool,
-        snapshot_seq: u64,
-        dirty_generation: u64,
+        dirty_token: DirtyToken,
     };
 
     /// Returns the active G0, G1, and GL charset selection for DECCIR reporting.
@@ -14261,14 +14546,14 @@ test "terminal feed preserves scrolled viewport as history grows" {
     const initial_feed = try vt.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
     try std.testing.expect(initial_feed.state_changed);
     try std.testing.expect(vt.scrollViewport(.{ .absolute = 1 }));
-    const before = vt.surfaceSnapshot().snapshot.view.cellAt(0, 0);
+    const before = vt.visualView().view.cellAt(0, 0);
     const offset_before = vt.scrollback_offset;
 
     const append_feed = try vt.feed("\r\n5EEEE");
     try std.testing.expect(append_feed.state_changed);
 
     try std.testing.expect(vt.scrollback_offset > offset_before);
-    try std.testing.expectEqual(before, vt.surfaceSnapshot().snapshot.view.cellAt(0, 0));
+    try std.testing.expectEqual(before, vt.visualView().view.cellAt(0, 0));
 }
 
 test "history allocation failures publish loss and preserve paired state" {
@@ -14317,7 +14602,7 @@ test "history clone allocation failure preserves the open wrapped line" {
     try std.testing.expectEqual(open_len * 2, screen.open_history_line.?.cells.items.len);
 }
 
-test "feed summary and surface publish dropped history" {
+test "feed summary and state snapshot publish dropped history" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var terminal = try Terminal.initWithHistory(failing.allocator(), 1, 2, 4);
     defer terminal.deinit();
@@ -14328,7 +14613,7 @@ test "feed summary and surface publish dropped history" {
     try std.testing.expect(dropped.history_lost);
     try std.testing.expectEqual(
         @as(u64, 1),
-        terminal.surfaceSnapshot().history_loss_generation,
+        terminal.stateSnapshot().history_loss_generation,
     );
 
     failing.fail_index = std.math.maxInt(usize);
@@ -14336,7 +14621,7 @@ test "feed summary and surface publish dropped history" {
     try std.testing.expect(!retained.history_lost);
     try std.testing.expectEqual(
         @as(u64, 1),
-        terminal.surfaceSnapshot().history_loss_generation,
+        terminal.stateSnapshot().history_loss_generation,
     );
 }
 
@@ -14346,13 +14631,13 @@ test "terminal publishes every bounded bell and remains reusable" {
 
     const first = try vt.feed("\x07");
     try std.testing.expect(first.state_changed);
-    try std.testing.expectEqual(@as(u64, 1), vt.surfaceSnapshot().bell_generation);
+    try std.testing.expectEqual(@as(u64, 1), vt.stateSnapshot().bell_generation);
 
     const second = try vt.feed("\x07x");
     try std.testing.expect(second.state_changed);
-    const publication = vt.surfaceSnapshot();
+    const publication = vt.stateSnapshot();
     try std.testing.expectEqual(@as(u64, 2), publication.bell_generation);
-    try std.testing.expectEqual(@as(u21, 'x'), publication.snapshot.view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'x'), vt.visualView().view.cellAt(0, 0));
 
     vt.host.bell_generation = std.math.maxInt(u64);
     try std.testing.expectError(error.ConsequenceLimit, vt.feed("\x07"));
@@ -14360,7 +14645,7 @@ test "terminal publishes every bounded bell and remains reusable" {
     vt.host.bell_generation = 2;
     const reused = try vt.feed("y");
     try std.testing.expect(reused.state_changed);
-    try std.testing.expectEqual(@as(u21, 'y'), vt.surfaceSnapshot().snapshot.view.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'y'), vt.visualView().view.cellAt(0, 1));
 }
 
 test "logical output aggregate evicts whole lines and preserves exact cursor loss" {
