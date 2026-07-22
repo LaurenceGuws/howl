@@ -1,28 +1,23 @@
 # Render capability reset scratchpad
 
-Current slice: `rebuild_run_text_preparation`
+Current slice: `remove_render_runtime_and_control_coupling`
 
-The terminal text boundary was accepted at `53de279`. This slice implements
-that exact contract without widening cache, pane, frame, generation, GPU, or
-executable policy.
+Terminal text preparation was accepted at `48592c6`. This slice deletes the
+remaining render-owned runtime publication and removes its control coupling
+without reconstructing executable policy.
 
-## Current implementation checklist
+## Current runtime-coupling deletion checklist
 
-- add the selected `terminal_text` namespace only when terminal projection and
-  at least one text source are enabled;
-- implement exact one-run discovery, complete source coverage, and terminating
-  dirty-span iteration;
-- implement allocation-free generated and no-glyph payloads and one owned
-  positioned slice for native runs;
-- implement the bounded native `FontMap`, exact native glyph identity, reverse
-  cleanup, and missing-configuration failure;
-- rasterize native and generated keys without exposing font selection to the
-  caller;
-- prove compile-time API absence, malformed bounds, allocation rollback,
-  cluster coverage, ligatures, combining glyphs, generated glyphs, blanks,
-  invisibility, font tuples, and map-scoped identity;
-- preserve existing native-text, generated-glyph, and terminal projection
-  behavior; do not edit control or executable source.
+- account for every remaining declaration and consumer of
+  `howl-render/src/howl_frame.zig` before deletion;
+- delete publication slots, locks, borrow/acknowledgement state, resize staging,
+  runtime generations, and their architecture-only proofs without aliases;
+- remove render/frame dependencies and publication vocabulary from control;
+- preserve accepted PTY/VT composition and terminal-ID behavior in control;
+- change build and durable source references only where deleted paths require
+  it; do not rebuild an executable mailbox, frame owner, or scheduling policy;
+- run the independent render, control, PTY, and VT owner checks that remain
+  valid, and record exact quarantined root blockers rather than patching them.
 
 The rejected mixed renderer was deleted at `93cb1c6`. This slice is decision
 evidence and implementation guidance for the accepted contiguous visual-run

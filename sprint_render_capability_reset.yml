@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: rebuild_run_text_preparation
+  current_slice: remove_render_runtime_and_control_coupling
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -178,13 +178,18 @@ slices:
       run-aware text preparation is implemented.
 
   - id: rebuild_run_text_preparation
-    status: active
+    status: accepted
+    commit: 48592c6
+    outcome: >-
+      Render now prepares one exact native, generated, or no-glyph terminal run under the selected compile-time graph;
+      native font ownership, glyph identity, source coverage, allocation, cleanup, and raster selection are explicit,
+      while unresolved baseline and DEC geometry remain render facts rather than executable policy.
     purpose: >-
       Rebuild only accepted run-aware text behavior under the approved caller-buffer or allocator-owned lifetime,
       without cache, pane, generation, frame, or GPU policy.
 
   - id: remove_render_runtime_and_control_coupling
-    status: pending
+    status: active
     purpose: >-
       Delete publication slots, locks, borrowing, acknowledgement, runtime generations, and control frame coupling;
       do not reconstruct executable policy during this sprint.
