@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: bootstrap_durable_workflow
+  current_slice: classify_terminal_visual_values
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -50,7 +50,8 @@ slices:
       placeholder API or native dependency.
 
   - id: bootstrap_durable_workflow
-    status: active
+    status: accepted
+    commit: bcbf050
     purpose: >-
       Establish the marathon, sprint, slice, and scratchpad lifetimes; index this sprint and its first substantive
       authority-alignment slice without changing product implementation.
@@ -66,7 +67,10 @@ slices:
       - no render API, executable topology, or control interface shape is inferred
 
   - id: align_durable_authorities
-    status: pending
+    status: accepted
+    outcome: >-
+      Permanent authorities now state only settled capability ownership, retain enduring protocol and embedder facts,
+      and explicitly quarantine rejected source without certifying its architecture.
     purpose: >-
       Make project_design.yml, project_rules.yml, project_source_map.yml, and project_version_scope.yml describe only
       the settled ownership model and explicitly quarantined reconstruction work before source implementation resumes.
@@ -81,7 +85,7 @@ slices:
       - turning current file locations into architectural authority
 
   - id: classify_terminal_visual_values
-    status: pending
+    status: active
     purpose: >-
       Classify every symbol in howl-render/src/howl_frame.zig as retained visual meaning, rejected runtime policy,
       executable evidence, or removable proof before changing implementation.

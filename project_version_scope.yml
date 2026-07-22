@@ -1,98 +1,57 @@
-objective: consolidate the family, pay down VT source debt, and establish reusable native terminal ownership
+version:
+  current: 0.1.3-dev
+  status: supervised capability reset
 
-capabilities:
-  - name: single_repository_family
-    acceptance: one atomic Git history and development workspace without making the root a product package
+objective: >-
+  Retain only independently useful terminal capabilities with settled ownership; delete rejected package and runtime
+  boundaries before rebuilding an executable path.
 
-  - name: independent_child_packages
-    acceptance: >-
-      each howl-* directory owns a Zig package identity, direct dependencies, native facts, public module, and proofs;
-      executable children also own conventional install and run steps
+settled_capabilities:
+  - name: vt
+    acceptance: owns terminal semantics, state, dirty facts, input encoding, replies, and consequences
+  - name: pty
+    acceptance: owns exact Linux PTY transport and child-process lifecycle
+  - name: control
+    acceptance: optional ID-addressable PTY and VT composition with bounded operations and no rendering relation
+  - name: render
+    acceptance: backend-neutral terminal visual knowledge and plain values without runtime policy
+  - name: executable
+    acceptance: owns runtime and presentation resources without a settled noun, topology, or API
 
-  - name: terminal_frame_publication
-    acceptance: >-
-      one bounded owner copies complete terminal-local visual truth, accumulates damage across skipped generations,
-      rejects stale release, sizes storage to admitted geometry, transactionally replaces unborrowed storage on resize,
-      keeps renderer frame use outside its mutex, and reports slot saturation immediately
+accepted_implementation:
+  - VT protocol behavior and deterministic evidence remain the terminal-semantics baseline.
+  - PTY Linux transport, transfer, process-lifecycle, cancellation, and cleanup behavior remain the transport baseline.
+  - >-
+    Render independently selects native text and generated terminal glyphs; either or both may be absent, and only
+    native text selection links libc, FreeType, and HarfBuzz.
 
-  - name: shared_render_preparation
-    acceptance: >-
-      one owner shares native text and a fixed byte/count-bounded glyph-mask cache across terminal frames,
-      validates pane composition, and prepares only complete or damaged rows without retaining frame borrows
+invariants:
+  - every module allocation uses an explicit caller-provided allocator
+  - bounds, errors, rollback, cleanup, and ownership are exact at each capability boundary
+  - control contains no rendering relation
+  - render contains no thread, publication lifecycle, GPU device, window, layout, or presentation policy
+  - executable ownership does not settle its package noun, thread topology, backend, or public API
+  - private development carries no downstream source or ABI compatibility obligation
 
-  - name: native_window_vertical
-    acceptance: >-
-      one Wayland/xkb loop routes live terminal wakes and input while one render thread owns EGL/GLES, the shared
-      glyph and texture caches, frame release, swap, and completion notification for the native window
-
-  - name: pane_composition
-    acceptance: >-
-      the bounded workspace creates and retires live tab/pane terminal owners, routes input through stable focused pane
-      identity, transactionally resizes available terminals from pane layout, and shares one render thread, text owner,
-      mask cache, and GLES device while one reserved label row shares that same text/cache path and exact tab identity
-
-  - name: pane_scrollback_viewport
-    acceptance: >-
-      each pane independently reconciles host-owned follow/anchor state against VT history eviction and alternate-screen
-      truth, routes wheel input by terminal mouse mode, and paints one bounded scrollbar through the shared renderer
-
-  - name: workspace_model
-    acceptance: >-
-      one platform-independent bounded owner provides stable tab and pane identities, transactional names and
-      topology, direct and directional focus, exact pane retirement and close fallback, bounded divider movement, and
-      transactional terminal-grid resize with recursive minimum geometry
-
-  - name: window_interaction
-    acceptance: >-
-      the Wayland loop owns bounded cancellable keyboard repeat, routes cell/pixel mouse facts only to the focused
-      available pane, and processes compositor, terminal, renderer, and timer readiness without hiding simultaneous facts
-
-  - name: development_orchestration
-    acceptance: >-
-      howl_workspace exports no product modules or artifacts and invokes child-owned checks, tests, simulations,
-      fuzzing, benchmarks, hosts, and temporary measurements
-
-  - name: direct_vt_source
-    acceptance: terminal behavior and proof survive while production characters, hops, and public surface decrease
-
-  - name: qagent_embedding
-    acceptance: QAgent builds and dogfoods with direct howl-control and howl-vt package dependencies
-
-  - name: reusable_native_pty
-    acceptance: >-
-      one curated Linux module owns PTY creation, copied launch values, child process groups, exact partial transfers,
-      resize, concurrent cancellation, native errors, and cleanup
-
-  - name: reusable_terminal_control
-    acceptance: >-
-      one curated native owner composes PTY, VT, immutable frame publication, live input, replies, resize,
-      semantic surfaces, wakes, and cleanup
-
-  - name: local_terminal_control
-    acceptance: >-
-      Howl owns canonical terminal identity, optional same-user endpoint, shared mutation admission, bounded
-      hostile-input-checked server and one-shot client for status, screen, logical output, input batches, resize,
-      and process-group signal
-
-  - name: focused_source_audit
-    acceptance: one direct root-owned audit enforces settled patterns and exact reviewed uses
-
-  - name: protocol_evidence_index
-    acceptance: >-
-      one root-owned source-pinned YAML index accounts for libvterm, iTerm2, Kitty, implementation support,
-      remaining-residual disposition, concrete module ownership, and exact proof
-
-limitations:
-  - name: source_layout
-    description: final VT file boundaries follow the completed direct-source review
-
-  - name: compatibility
-    description: private development packages carry no downstream source or ABI promise
+reconstruction:
+  status: active
+  work:
+    - classify and retain only earned terminal visual values and behavior
+    - classify and resolve the unselected render preparation source
+    - classify control identity, endpoint, codec, request, composition, and lifecycle evidence
+    - remove rendering publication and dependencies from control
+    - inventory executable evidence before approving its noun, topology, API, or source
+    - remove stale workspace wiring after surviving child dependencies are settled
+  excluded_until_approved:
+    - compatibility aliases or adapters for deleted boundaries
+    - render-owned runtime publication or synchronization
+    - control-owned rendering values or publication
+    - a concrete executable topology, GPU backend, or render API
 
 gates:
-  - active YAML parses and the protocol catalogue schema validates
-  - root aliases and every independent child package use Zig 0.16
-  - consumer-vt proves selecting howl-vt does not compile unrelated family packages or native libraries
-  - all accepted VT tests, simulations, fuzzing, and benchmarks pass in four optimization modes
-  - control, text, window, and QAgent embedding checks pass
-  - source audit and git diff checks pass
+  - permanent authorities and active planning YAML parse
+  - every accepted allocation boundary exposes its caller-provided allocator
+  - selected render capability graphs prove native and generated dependency exclusion
+  - retained VT, PTY, control, and render behavior has exact focused proof
+  - source audit and protocol catalogue validation pass for accepted source
+  - rejected source is deleted or remains explicitly quarantined rather than certified

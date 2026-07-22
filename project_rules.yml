@@ -1,17 +1,18 @@
 rules:
   - Every retained character buys capability, correctness, clarity, or deterministic evidence.
-  - Terminal protocol behavior follows primary evidence and exact host-owned facts.
-  - >-
-    Protocol support, remaining-residual disposition, and concrete module ownership are recorded as orthogonal
-    catalogue facts.
+  - Terminal protocol behavior follows primary evidence and exact owned facts.
+  - Implemented support, residual disposition, and concrete owner remain orthogonal protocol-catalogue facts.
+  - Every module allocation uses an explicit caller-provided allocator.
   - Inputs, retained state, queues, payloads, grids, and platform consequences have explicit bounds.
   - Construction failure and deinitialization release completed resources in reverse ownership order.
   - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.
   - Domain quantities use types sized for their meaning.
-  - Each howl-* package exposes its own curated native Zig module and owns every direct build and native dependency.
-  - The root workspace reconstructs no child module, dependency edge, native fact, proof, executable, or artifact.
-  - >-
-    Howl-pty owns Linux PTY mechanics and exact partial transfer outcomes; the window loop owns Wayland/xkb and
-    admission while its render thread owns the concrete EGL/GLES lifetime, shared text/mask preparation, and swap.
-  - Tests prove product behavior, failure, cleanup, bounds, and deterministic protocol semantics.
+  - VT owns terminal semantics, state, dirty facts, input encoding, replies, and terminal consequences.
+  - PTY owns Linux transport, descriptors, child processes, cancellation, and cleanup.
+  - Control optionally composes PTY and VT through bounded operations and has no rendering relation.
+  - Render owns backend-neutral terminal visual knowledge and plain values without runtime policy.
+  - The executable owns runtime and presentation resources; its noun, topology, and API require separate approval.
+  - Each surviving library package exposes a curated Zig module and owns its direct build and native dependencies.
+  - The root workspace reconstructs no child module, dependency, native fact, proof, executable, or artifact.
+  - Tests prove behavior, failure, cleanup, bounds, and deterministic semantics rather than rejected architecture.
   - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.

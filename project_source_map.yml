@@ -1,43 +1,37 @@
-sources:
-  build.zig: development-only child-build aliases plus root audit and protocol validation
-  build.zig.zon: howl_workspace identity and the source boundary required by those operations
-  consumer-vt: isolated external package proof that imports only the standalone howl-vt module
-  howl-*/build.zig: child-owned module, proof, native dependency, executable, and command construction
-  howl-*/build.zig.zon: child-owned package identity, direct sibling dependencies, and source boundary
-  howl-vt/src: current terminal model implementation preserved through source-shape simplification
-  protocol_coverage.yml: >-
-    root-owned pinned libvterm, iTerm2, and Kitty evidence with normalized support, disposition, owner, and proof facts
-  protocol_coverage.nu: >-
-    root-owned catalogue normalization, validation, structured queries, and compact human views
-  howl-text/src: current text loading, shaping, and rasterization implementation
-  howl-frame/src/howl_frame.zig: >-
-    geometry-sized immutable terminal-local frames, transactional resize storage, cumulative cell damage,
-    bounded publication slots, and exact renderer acknowledgement
-  howl-render/src/howl_render.zig: >-
-    shared font ownership, bounded cross-terminal glyph-mask cache, pane/frame validation, and damage-aware draw preparation
-  howl-window/src: >-
-    sole Wayland/xkb host loop, workspace-backed terminal lifecycle and tab/pane commands, keyboard repeat,
-    stable pane wake, label/tab and focused-pointer routing, transactional PTY geometry, one EGL/GLES render thread,
-    shared label/pane text and texture representation, and live host route
-  howl-window/src/labels.zig: >-
-    platform-independent bounded tab-label cells, terminal-availability presentation facts, deterministic truncation,
-    and exact cell/pixel hit geometry without workspace mutation policy
-  howl-window/src/viewport.zig: >-
-    pane-local follow and retained-row anchor reconciliation plus exact bounded scrollbar paint/hit geometry
-  howl-window/src/workspace.zig: >-
-    platform-independent bounded session, tab identity/order/names, split-pane topology and cell extents, direct and
-    directional focus, exact pane retirement, transactional outer resize, and hostile-state invariant validation
-  howl-pty/src/howl_pty.zig: >-
-    Linux PTY creation, copied launch values, process-group lifecycle, bounded transfer outcomes, resize,
-    concurrent cancellation, exact native errors, and cleanup
-  howl-control/src/howl_control.zig: >-
-    curated PTY and terminal-model lifecycle, immutable frame publication and recovery, optional local endpoint server,
-    shared mutation admission, primitive operations, and exact shutdown ownership
-  howl-control/src/client.zig: >-
-    terminal identity, endpoint facts, private protocol codec, Linux socket mechanics, and one-shot client
-  howl-control/src/test.zig: live PTY, immutable frame publication, and semantic control proofs
-  howl-window/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host
-  tools/audit_source.sh: maintained non-vendor Zig source policy and reviewed construct uses
-  howl-window/build/probe_enabled.zig: temporary bounded development event worker and Linux resource sampling
-  howl-window/build/probe_disabled.zig: compile-time disabled normal-window probe boundary
-  howl-window/build/probe_scenario.zig: temporary deterministic PTY-to-render measurement owned by howl-window
+accepted:
+  protocol_coverage.yml: pinned protocol evidence and normalized ownership facts
+  protocol_coverage.nu: catalogue normalization, validation, and query commands
+  tools/audit_source.sh: maintained-source audit
+  tools/source_audit.allow: reviewed sensitive-source sites
+  howl-vt/build.zig: VT package build and proof commands
+  howl-vt/build.zig.zon: VT package identity and source boundary
+  howl-vt/src: terminal parser, semantics, state, input, replies, consequences, and dirty facts
+  howl-vt/test: external VT behavior proofs
+  howl-vt/test_unit.zig: package-owned VT unit proofs
+  howl-vt/simulation: deterministic VT simulations
+  howl-vt/simulation_main.zig: simulation entry point
+  howl-vt/benchmark: VT benchmark evidence
+  howl-vt/benchmark_m7_baseline.zig: benchmark comparison entry point
+  howl-pty/build.zig: PTY package build and proofs
+  howl-pty/build.zig.zon: PTY package identity and source boundary
+  howl-pty/src/howl_pty.zig: Linux PTY transport and child-process lifecycle
+  howl-render/build.zig: independently selected text and generated-glyph capability graphs
+  howl-render/build.zig.zon: render package identity, owned assets, and licenses
+  howl-render/src/root*.zig: curated roots for selected render capabilities
+  howl-render/src/native_text.zig: native font loading, shaping, metrics, and alpha rasterization
+  howl-render/src/generated*.zig: generated terminal-glyph classification, geometry, and rasterization
+  howl-render/src/*_test.zig: selected render capability proofs
+  howl-render/testdata: deterministic render test fonts
+  howl-render/LICENSES: render-owned asset and native-library provenance
+
+quarantined:
+  build.zig: workspace commands still name deleted packages and rejected runtime machinery
+  build.zig.zon: workspace path list still names deleted packages
+  howl-render/src/howl_frame.zig: visual-value evidence mixed with rejected publication and synchronization policy
+  howl-render/src/howl_render.zig: unselected cache and draw-preparation evidence awaiting classification
+  howl-control/build.zig: current package graph retains a rejected rendering dependency
+  howl-control/build.zig.zon: current dependency list retains a rejected rendering package edge
+  howl-control/src/client.zig: identity, endpoint, codec, and request evidence awaiting the control inventory
+  howl-control/src/howl_control.zig: accepted PTY/VT behavior mixed with rejected rendering publication
+  howl-control/src/test.zig: behavior evidence mixed with rejected rendering-publication proofs
+  howl-host: executable evidence only; its surviving noun, topology, API, and source have not been accepted

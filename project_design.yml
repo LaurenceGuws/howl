@@ -1,51 +1,41 @@
 project:
   name: howl
   mission: an exceptionally small, correct, embeddable native Zig terminal family
-  shape: atomic monorepo of independent small Zig packages with a development-only root curator
+  shape: atomic monorepo of independently useful capabilities with a development-only root curator
 
-components:
-  - name: vt
-    role: host-neutral terminal parsing, state, input encoding, and consequences
+capabilities:
+  vt:
+    role: terminal parsing, semantics, state, dirty facts, input encoding, replies, and terminal consequences
+  pty:
+    role: Linux PTY transport and child-process lifecycle
+  control:
+    role: optional ID-addressable composition of PTY and VT with bounded operations and interfaces
+  render:
+    role: backend-neutral terminal visual knowledge and plain rendering values without runtime policy
+  executable:
+    role: threads, publication storage, GPU resources, windowing, layout, sessions, tabs, panes, and presentation
+    status: noun, topology, and API unsettled
 
-  - name: text
-    role: explicit font loading, shaping, and alpha-mask rasterization
+ownership:
+  allocation: every module allocation uses an explicit caller-provided allocator
+  composition:
+    - embedders may use VT and PTY independently
+    - control has no rendering relation
+    - render owns no threads, publication lifecycle, GPU device, window, layout, or presentation policy
+    - executable ownership does not prescribe one topology or the only valid route through the family
 
-  - name: pty
-    role: Linux PTY creation, child process-group lifecycle, bounded transfer outcomes, resize, cancellation, and cleanup
+workspace:
+  purpose: Git, agent, and development ergonomics plus atomic history
+  children: each surviving capability owns its package identity, direct dependencies, native facts, and proofs
+  root: exports no product module or artifact
+  evidence: protocol evidence is family-owned at the root
+  embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
 
-  - name: control
-    role: bounded PTY, terminal, and frame publication with native identity, local endpoint facts, and one-shot control client
-
-  - name: frame
-    role: bounded immutable terminal-local visual publications and renderer acknowledgement
-
-  - name: render
-    role: shared text preparation, bounded glyph-mask cache, pane validation, and frame draw preparation
-
-  - name: host
-    role: concrete Wayland/xkb window loop and one shared EGL/GLES render thread
-
-relationships:
-  - vt owns terminal truth and accepts host facts through native Zig values
-  - text owns terminal text preparation without owning terminal state or presentation
-  - pty owns copied launch values and exact Linux process, descriptor, cancellation, and bounded I/O mechanics
-  - control composes pty, vt, and frame and owns publication plus the bounded local byte-stream protocol
-  - frame copies complete VT visual truth and cumulative cell damage without owning layout, text, platform, or GPU policy
-  - render borrows immutable frames and owns one text/cache preparation path shared across every terminal
-  - host composes control, frame, render, and Wayland while owning bounded tabs, label and pane layout, focus, and presentation lifecycles
-  - the platform-independent workspace owner supplies the native host's bounded tab and split-pane state
-  - the platform-independent label owner supplies one bounded top row and exact tab hit geometry without workspace policy
-  - VT retains projected history while each host pane owns follow/anchor policy and exact scrollbar geometry
-  - the window loop never walks terminal cells or issues GLES commands
-  - the render thread updates pane backing textures, releases every borrowed frame, and composites one visible tab
-  - qagent is the first real embedder and supplies integration pressure without Howl policy
-  - >-
-    protocol evidence is family-owned at the root; implemented support, residual disposition, and concrete code
-    ownership remain independent facts
-
-package:
-  repository: Git, agent, and development ergonomics plus atomic history only
-  children: each howl-* directory owns its package identity, dependencies, native facts, proofs, and executable steps
-  root_build: howl_workspace exports no product module or artifact and only invokes children, validates, and aliases
-  isolation_proof: consumer-vt depends only on the standalone howl-vt package
-  first_embedder: QAgent directly depends on howl-control and howl-vt
+reconstruction:
+  status: active supervised deletion intervention
+  quarantined:
+    - mixed render source that combines visual facts with runtime publication
+    - control source and build wiring that depend on rendering publication
+    - unselected render preparation source awaiting symbol-level classification
+    - executable source whose surviving noun, topology, and API have not been accepted
+    - workspace wiring that names deleted packages or rejected runtime machinery
