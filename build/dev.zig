@@ -13,6 +13,17 @@ pub fn add(
     pty: *std.Build.Module,
     control: *std.Build.Module,
 ) void {
+    const probe_enabled = b.createModule(.{
+        .root_source_file = b.path("tools/probe.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const probe_disabled = b.createModule(.{
+        .root_source_file = b.path("tools/probe_noop.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const check = b.step("check", "Compile every active Howl component and proof");
     const test_step = b.step("test", "Run every active Howl correctness proof");
     const audit = b.addSystemCommand(&.{"bash"});
@@ -28,10 +39,122 @@ pub fn add(
     addText(b, target, optimize, check, test_step);
     addFrame(b, frame, check, test_step);
     addRender(b, render, check, test_step);
-    addWindow(b, target, optimize, vt, text, frame, render, control, check, test_step);
+    addWindow(
+        b,
+        target,
+        optimize,
+        vt,
+        text,
+        frame,
+        render,
+        control,
+        probe_disabled,
+        probe_enabled,
+        check,
+        test_step,
+    );
     addPty(b, pty, check, test_step);
     addControl(b, target, optimize, control, check, test_step);
+    addProbe(
+        b,
+        target,
+        optimize,
+        vt,
+        frame,
+        render,
+        pty,
+        probe_disabled,
+        probe_enabled,
+        check,
+        test_step,
+    );
     b.default_step = check;
+}
+
+fn addProbe(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    vt: *std.Build.Module,
+    frame: *std.Build.Module,
+    render: *std.Build.Module,
+    pty: *std.Build.Module,
+    disabled: *std.Build.Module,
+    enabled: *std.Build.Module,
+    check: *std.Build.Step,
+    test_step: *std.Build.Step,
+) void {
+    const enabled_tests = addTest(b, "howl-probe", enabled);
+    const disabled_tests = addTest(b, "howl-probe-disabled", disabled);
+    check.dependOn(&enabled_tests.step);
+    check.dependOn(&disabled_tests.step);
+    test_step.dependOn(&addTestRun(b, enabled_tests).step);
+    test_step.dependOn(&addTestRun(b, disabled_tests).step);
+
+    const paths = b.addOptions();
+    paths.addOption([]const u8, "font", b.pathFromRoot("howl-text/testdata/primary.ttf"));
+    paths.addOption(bool, "probe_scenario", true);
+    const enabled_scenario = probeScenario(
+        b,
+        "howl-probe-scenario",
+        target,
+        optimize,
+        vt,
+        frame,
+        render,
+        pty,
+        enabled,
+        paths.createModule(),
+    );
+    const disabled_scenario = probeScenario(
+        b,
+        "howl-probe-noop-scenario",
+        target,
+        optimize,
+        vt,
+        frame,
+        render,
+        pty,
+        disabled,
+        paths.createModule(),
+    );
+    check.dependOn(&enabled_scenario.step);
+    check.dependOn(&disabled_scenario.step);
+
+    const run_enabled = b.addRunArtifact(enabled_scenario);
+    run_enabled.addArg(b.pathFromRoot("howl-probe.jsonl"));
+    b.step("measure:probe", "Measure the deterministic PTY-to-render pipeline").dependOn(&run_enabled.step);
+    const run_disabled = b.addRunArtifact(disabled_scenario);
+    b.step("measure:probe-disabled", "Measure the compile-time disabled probe boundary").dependOn(&run_disabled.step);
+}
+
+fn probeScenario(
+    b: *std.Build,
+    name: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    vt: *std.Build.Module,
+    frame: *std.Build.Module,
+    render: *std.Build.Module,
+    pty: *std.Build.Module,
+    probe: *std.Build.Module,
+    paths: *std.Build.Module,
+) *std.Build.Step.Compile {
+    const module = b.createModule(.{
+        .root_source_file = b.path("tools/probe_scenario.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    module.addImport("howl_probe", probe);
+    module.addImport("howl_vt", vt);
+    module.addImport("howl_frame", frame);
+    module.addImport("howl_render", render);
+    module.addImport("howl_pty", pty);
+    module.addImport("probe_paths", paths);
+    const executable = b.addExecutable(.{ .name = name, .root_module = module });
+    executable.use_llvm = true;
+    return executable;
 }
 
 fn addWindow(
@@ -43,6 +166,8 @@ fn addWindow(
     frame: *std.Build.Module,
     render: *std.Build.Module,
     control: *std.Build.Module,
+    probe_disabled: *std.Build.Module,
+    probe_enabled: *std.Build.Module,
     check: *std.Build.Step,
     test_step: *std.Build.Step,
 ) void {
@@ -61,7 +186,7 @@ fn addWindow(
         .optimize = optimize,
         .link_libc = true,
     });
-    addWindowImports(b, module, vt, text, frame, render, control);
+    addWindowImports(b, module, vt, text, frame, render, control, probe_disabled);
     const tests = addTest(b, "howl-window", module);
     check.dependOn(&tests.step);
     test_step.dependOn(&addTestRun(b, tests).step);
@@ -72,7 +197,7 @@ fn addWindow(
         .optimize = optimize,
         .link_libc = true,
     });
-    addWindowImports(b, executable_module, vt, text, frame, render, control);
+    addWindowImports(b, executable_module, vt, text, frame, render, control, probe_disabled);
     const executable = b.addExecutable(.{ .name = "howl-window", .root_module = executable_module });
     executable.use_llvm = true;
     check.dependOn(&executable.step);
@@ -80,6 +205,20 @@ fn addWindow(
     const run = b.addRunArtifact(executable);
     if (b.args) |arguments| run.addArgs(arguments);
     b.step("run:window", "Run the native Wayland window").dependOn(&run.step);
+
+    const probe_module = b.createModule(.{
+        .root_source_file = b.path("howl-window/src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    addWindowImports(b, probe_module, vt, text, frame, render, control, probe_enabled);
+    const probe_executable = b.addExecutable(.{ .name = "howl-window-probe", .root_module = probe_module });
+    probe_executable.use_llvm = true;
+    check.dependOn(&probe_executable.step);
+    const run_probe = b.addRunArtifact(probe_executable);
+    if (b.args) |arguments| run_probe.addArgs(arguments);
+    b.step("run:window-probe", "Run the native window with bounded development probes").dependOn(&run_probe.step);
 }
 
 fn addWindowImports(
@@ -90,12 +229,14 @@ fn addWindowImports(
     frame: *std.Build.Module,
     render: *std.Build.Module,
     control: *std.Build.Module,
+    probe: *std.Build.Module,
 ) void {
     module.addImport("howl_vt", vt);
     module.addImport("howl_text", text);
     module.addImport("howl_frame", frame);
     module.addImport("howl_render", render);
     module.addImport("howl_control", control);
+    module.addImport("howl_probe", probe);
     module.addIncludePath(b.path("howl-window/vendor/xdg-shell"));
     module.addCSourceFile(.{
         .file = b.path("howl-window/vendor/xdg-shell/xdg-shell-protocol.c"),

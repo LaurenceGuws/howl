@@ -36,3 +36,6 @@ sources:
   howl-control/src/test.zig: live PTY, immutable frame publication, and semantic control proofs
   howl-window/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host
   tools/audit_source.sh: maintained non-vendor Zig source policy and reviewed construct uses
+  tools/probe.zig: removable bounded development event worker, JSONL serialization, and Linux resource sampling
+  tools/probe_noop.zig: compile-time disabled development probe boundary
+  tools/probe_scenario.zig: deterministic PTY, VT, frame, and shared render-preparation measurement

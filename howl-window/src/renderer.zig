@@ -3,6 +3,7 @@
 const std = @import("std");
 const howl_control = @import("howl_control");
 const howl_frame = @import("howl_frame");
+const howl_probe = @import("howl_probe");
 const howl_render = @import("howl_render");
 const howl_text = @import("howl_text");
 const howl_vt = @import("howl_vt");
@@ -37,8 +38,10 @@ pub const Size = struct {
     height: u32,
 };
 
+const ProbeError = if (howl_probe.enabled) error{ThreadName} else error{};
+
 /// Reports exact shared preparation, frame release, EGL/GLES, or wake failure.
-pub const Error = howl_render.Error || howl_control.FrameReleaseError || error{
+pub const Error = howl_render.Error || howl_control.FrameReleaseError || ProbeError || error{
     EglDisplay,
     EglInitialize,
     EglConfig,
@@ -120,6 +123,11 @@ const Mailbox = struct {
     fn admit(self: *Mailbox, work: Work) void {
         var newest = work;
         if (self.pending) |pending| {
+            howl_probe.emit(.window, .mailbox, .{
+                .count = 1,
+                .generation = pending.generation,
+                .auxiliary = newest.generation,
+            });
             for (pending.dirty[0..pending.dirty_count]) |terminal| {
                 if (!containsAvailableTerminal(newest.panes[0..newest.pane_count], terminal) or
                     containsDirty(newest.dirty[0..newest.dirty_count], terminal)) continue;
@@ -184,6 +192,8 @@ const Device = struct {
     backing_count: u8 = 0,
     backing_bytes: usize = 0,
     size: Size,
+    draw_quads: u64 = 0,
+    draw_uploads: u64 = 0,
 
     fn init(allocator: std.mem.Allocator, values: Init) StartError!Device {
         try validateInit(values);
@@ -290,6 +300,9 @@ const Device = struct {
         borrowed: *[max_visible_panes]Borrowed,
         borrowed_count: *usize,
     ) Error!void {
+        const draw_start = howl_probe.now();
+        self.draw_quads = 0;
+        self.draw_uploads = 0;
         if (!std.meta.eql(self.size, work.size)) {
             c.wl_egl_window_resize(
                 self.window,
@@ -331,13 +344,25 @@ const Device = struct {
                     .frame = complete,
                 };
             }
+            const prepare_start = howl_probe.now();
             const prepared = try self.core.prepare(
                 work.generation,
                 work.size.width,
                 work.size.height,
                 prepared_panes[0..borrowed_count.*],
             );
+            const prepare_end = howl_probe.now();
             std.debug.assert(prepared.panes == borrowed_count.*);
+            howl_probe.emit(.render, .render_prepare, .{
+                .duration_ns = prepare_end -| prepare_start,
+                .bytes = prepared.cache_bytes,
+                .count = prepared.cells,
+                .generation = work.generation,
+                .auxiliary = prepared.glyphs,
+                .detail = @as(u64, @intCast(prepared.cache_hits)) << 32 |
+                    (std.math.cast(u32, prepared.cache_misses) orelse std.math.maxInt(u32)),
+                .flags = @intFromBool(prepared.cache_misses != 0),
+            });
         }
         var label_cells: [workspace.max_cols]howl_frame.Cell = undefined;
         for (work.label_cells[0..work.label_count], label_cells[0..work.label_count]) |source, *cell|
@@ -440,7 +465,20 @@ const Device = struct {
             }
         }
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+        const present_start = howl_probe.now();
+        howl_probe.emit(.render, .draw, .{
+            .duration_ns = present_start -| draw_start,
+            .bytes = self.texture_bytes + self.backing_bytes,
+            .count = self.draw_quads,
+            .generation = work.generation,
+            .auxiliary = self.draw_uploads,
+            .detail = self.backing_count,
+        });
         if (c.eglSwapBuffers(self.display, self.surface) != c.EGL_TRUE) return error.Swap;
+        howl_probe.emit(.render, .present, .{
+            .duration_ns = howl_probe.now() -| present_start,
+            .generation = work.generation,
+        });
     }
 
     fn drawFrame(
@@ -650,11 +688,12 @@ const Device = struct {
         };
         self.texture_count += 1;
         self.texture_bytes += glyph.pixels.len;
+        self.draw_uploads += 1;
         return name;
     }
 
     fn quad(
-        _: *Device,
+        self: *Device,
         x: i32,
         y: i32,
         width: u16,
@@ -664,6 +703,7 @@ const Device = struct {
         extent: Size,
         flip_vertical: bool,
     ) Error!void {
+        self.draw_quads += 1;
         const left = pixelToNdc(x, extent.width);
         const right = pixelToNdc(x + width, extent.width);
         const top = -pixelToNdc(y, extent.height);
@@ -1053,6 +1093,18 @@ pub const Render = struct {
             .signal_fd = signal_fd,
         };
         self.thread = try .spawn(.{}, threadMain, .{self});
+        if (howl_probe.enabled) {
+            self.thread.setName(io, "howl-render") catch {
+                self.mutex.lockUncancelable(io);
+                self.stopping = true;
+                self.condition.signal(io);
+                self.mutex.unlock(io);
+                self.thread.join();
+                if (!closeSignal(signal_fd)) @panic("render eventfd rollback failed");
+                allocator.destroy(self);
+                return error.ThreadName;
+            };
+        }
         self.mutex.lockUncancelable(io);
         while (!self.started) self.condition.waitUncancelable(io, &self.mutex);
         const failure = self.startup_failure;
@@ -1155,6 +1207,7 @@ pub const Render = struct {
     }
 
     fn threadMain(self: *Render) void {
+        howl_probe.emit(.render, .thread_start, .{});
         var device = Device.init(self.allocator, self.init_values) catch |failure| {
             self.finishStart(failure);
             return;

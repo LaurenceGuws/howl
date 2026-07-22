@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const howl_control = @import("howl_control");
+const howl_probe = @import("howl_probe");
 const howl_vt = @import("howl_vt");
 const labels = @import("labels.zig");
 const renderer = @import("renderer.zig");
@@ -332,6 +333,7 @@ const Loop = struct {
     title: [128]u8 = undefined,
 
     fn init(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const u8) Error!*Loop {
+        howl_probe.emit(.window, .thread_start, .{});
         if (font_paths.len == 0) return error.FontOpen;
         const display = c.wl_display_connect(null) orelse return error.WaylandConnect;
         errdefer c.wl_display_disconnect(display);

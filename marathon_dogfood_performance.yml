@@ -1,0 +1,112 @@
+marathon:
+  name: dogfood_performance
+  status: active
+
+objective: >-
+  Make sustained Neovim scrolling smooth and proportional to real terminal damage, then establish runtime font sizing,
+  bounded tab metadata, and correct icon-cell geometry for daily Java-work dogfood.
+
+references:
+  performance: /home/home/personal/projects/dev_references/terminals/kitty
+  directness: /home/home/personal/projects/dev_references/terminals/foot
+  defensiveness: /home/home/personal/projects/dev_references/zig_maturity/tigerbeetle
+  trace_lesson: /home/home/personal/projects/qagent/tools/trace
+
+boundaries:
+  - Trace instrumentation is disposable development machinery, not a public Howl module or runtime abstraction.
+  - Structured records remain bounded; product threads never block on serialization or file IO.
+  - Measurements cover PTY, VT, frame, text/cache, renderer, presentation, and named thread resource use on one clock.
+  - Performance work preserves latest-frame and cursor correctness; coalescing never legitimizes stale visual state.
+  - Font resize, tab metadata, and icon-cell work begin only after the measured render path is understood.
+  - Icon appearance is reviewed by the operator; automated screenshot work does not guess visual correctness.
+
+categories:
+  - id: measurement
+    status: accepted
+    goal: >-
+      Add a removable bounded probe worker, stable thread identities, high-level module spans/counters, Linux process and
+      per-thread resource samples, and deterministic burst scenarios without tracing cells, glyphs, or bytes individually.
+    gate: >-
+      Disabled probes compile to negligible work; enabled producers allocate nothing, never perform file IO, report
+      drops and high-water marks, and measure their own overhead.
+    result:
+      ownership: >-
+        tools/probe.zig owns one removable worker and a fixed 4096-event MPSC queue; tools/probe_noop.zig preserves the
+        call shape while compiling normal product builds to zero retained storage, files, threads, or timestamps.
+      events:
+        - thread_start
+        - producer_baseline
+        - pty_read
+        - vt_feed
+        - frame_publish
+        - frame_saturated
+        - frame_borrow_release
+        - mailbox
+        - render_prepare
+        - draw
+        - present
+        - process_sample
+        - thread_sample
+        - summary
+      bounds: >-
+        Each queued event is 72 bytes; the complete fixed queue owner is 327712 bytes. Producers perform one monotonic
+        timestamp, stable logical-owner/TID capture, and a bounded lock-free admission attempt. Rejection increments an
+        explicit drop counter; the worker reports a high-water mark and drains admitted records before shutdown. One
+        packed atomic gate linearizes run epoch, revocation, and up to 1048575 concurrent entered producers; epoch
+        exhaustion is an exact startup failure rather than allowing an old producer observation to match a later run.
+      sampling: >-
+        The named howl-probe worker samples /proc every 100 ms on the same monotonic clock. Process records retain CPU,
+        RSS, faults, context switches, thread count, and state; retained named producer records retain per-thread CPU,
+        faults, context switches, and state, including the probe worker itself. A final post-drain sample closes the
+        worker interval. The worker polls at 5 ms without producer syscalls: from its initial through 172 ms final
+        sample it remained below one 10 ms Linux CPU tick and added 34 voluntary and 7 involuntary context switches.
+      deterministic_scenario: >-
+        measure:probe drives 20000 colored scrolling rows through /bin/sh PTY, howl-vt, howl-frame, and howl-render text
+        preparation without a GUI. The companion disabled scenario proves zero probe storage and worker/file activity.
+      baseline_release_safe: >-
+        Seven local runs measured 24-35 ns per admitted producer event (24 ns latest), zero drops, and a 2050/4096 peak
+        caused by the deliberate 2048-event burst. The disabled build measured 0 ns/event at clock resolution. The
+        latest pipeline run recorded 222 PTY/feed/publication/preparation cycles, two periodic samples, and one final
+        sample. Median spans were 6.2 us PTY read, 400 us VT feed, 111 us frame publication, 12.5 us text/cache
+        preparation, and 40 ns frame borrow/release; the first-cache preparation maximum was 858 us.
+      query: >-
+        Run `zig build measure:probe -Doptimize=ReleaseSafe` and inspect howl-probe.jsonl. Run
+        `zig build measure:probe-disabled -Doptimize=ReleaseSafe` for the compile-time-disabled receipt. For live GLES
+        draw/upload/backing/present evidence, run `zig build run:window-probe -- /path/to/font.ttf` and inspect
+        howl-window-probe.jsonl.
+      remaining_evidence: >-
+        The deterministic route attributes one composed PTY/VT/frame/text-preparation pipeline, not live terminals or
+        the Wayland host. Live window instrumentation separately records aggregate mailbox, render preparation,
+        draw/upload/backing, and present spans but does not attribute shared rendering cost per terminal. A cooperative
+        live window run is still required before damage_path changes; no damage optimization is included here.
+
+  - id: damage_path
+    status: queued
+    goal: >-
+      Use evidence to remove unconditional full-grid copy, shaping, draw, upload, synchronization, and presentation work
+      while preserving exact cursor and newest-generation behavior.
+
+  - id: font_resize
+    status: queued
+    goal: >-
+      Apply increase, decrease, and reset transactionally across metrics, caches, workspace geometry, PTYs, frames, and
+      renderer resources.
+
+  - id: tab_metadata
+    status: queued
+    goal: >-
+      Route bounded terminal title and icon facts through VT, control, and host labels with deterministic fallback and
+      truncation.
+
+  - id: icon_cells
+    status: queued
+    goal: >-
+      Preserve terminal cell spans for Nerd Font and generated glyphs without clipping, overlap, or cursor drift.
+
+completion:
+  - sustained Neovim scrolling has explained bounded cost at every measured seam
+  - cursor and latest-frame presentation remain stable under deterministic bursts
+  - runtime font resizing is transactional and bounded
+  - tab labels consume bounded terminal metadata
+  - icon cells obey terminal width independently from raster pixel bounds
+  - disposable probes and marathon state are deleted after their lessons land
