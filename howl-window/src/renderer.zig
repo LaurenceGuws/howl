@@ -771,11 +771,6 @@ fn containsPaneId(values: []const PaneId, id: PaneId) bool {
     return false;
 }
 
-fn containsTerminal(panes: []const Pane, terminal: *howl_control.Terminal) bool {
-    for (panes) |pane| if (pane.terminal == terminal) return true;
-    return false;
-}
-
 fn containsAvailableTerminal(panes: []const Pane, terminal: *howl_control.Terminal) bool {
     for (panes) |pane| if (pane.terminal == terminal) return pane.terminal_available;
     return false;

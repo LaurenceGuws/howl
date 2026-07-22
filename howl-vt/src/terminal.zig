@@ -747,23 +747,6 @@ pub const Screen = struct {
         self.open_history_line = null;
     }
 
-    /// Rebuild projected history rows from retained logical authority.
-    fn rebuildHistoryProjection(self: *Screen, allocator: std.mem.Allocator) std.mem.Allocator.Error!void {
-        self.history_count = 0;
-        self.history_write_idx = 0;
-
-        if (self.history_capacity == 0 or self.cols == 0) return;
-
-        var line_idx: u32 = 0;
-        while (line_idx < self.historyLineCount()) : (line_idx += 1) {
-            const line = self.historyLineAt(line_idx);
-            try self.appendProjectionRows(allocator, line.cells.items, false);
-        }
-        if (self.open_history_line) |line| {
-            try self.appendProjectionRows(allocator, line.cells.items, true);
-        }
-    }
-
     /// Clone retained, open, and visible content into one allocator-owned logical snapshot.
     ///
     /// Allocation failure releases partial clones and leaves this Screen unchanged.
@@ -2714,13 +2697,6 @@ pub const Screen = struct {
         return self.historySlotForLogicalRow(self.history_count - 1 - history_idx);
     }
 
-    /// Return whether a newest-first projected history row continues logically.
-    fn historyRowWrapped(self: *const Screen, history_idx: u32) bool {
-        const flags = self.history_flags orelse return false;
-        const slot = self.historySlotForRecency(history_idx) orelse return false;
-        return flags[@intCast(slot)] & row_wrapped_bit != 0;
-    }
-
     fn historyLineGeometry(self: *const Screen, history_idx: u32) LineGeometry {
         const flags = self.history_flags orelse return .single_width;
         const slot = self.historySlotForRecency(history_idx) orelse return .single_width;
@@ -2842,13 +2818,6 @@ pub const Screen = struct {
         var attrs = self.current_attrs;
         attrs.protected = .none;
         return .{ .codepoint = 0, .attrs = attrs };
-    }
-
-    fn clearFullRow(self: *Screen, row: u16) void {
-        if (self.cols == 0) return;
-        self.clearRowRange(row, 0, self.cols);
-        self.setRowWrapped(row, false);
-        self.resetLineGeometry(row);
     }
 
     fn copyRowRange(self: *Screen, dst_row: u16, src_row: u16, start_col: u16, end_col_exclusive: u16) bool {
@@ -3503,17 +3472,9 @@ const ScreenSemanticCursor = struct {
         self.setPositionByClient(row, self.col);
     }
 
-    fn setRowStructural(self: *ScreenSemanticCursor, row: u16) void {
-        self.setPositionStructural(row, self.col);
-    }
-
     /// Moves the column and advances client-movement identity.
     pub fn setColByClient(self: *ScreenSemanticCursor, col: u16) void {
         self.setPositionByClient(self.row, col);
-    }
-
-    fn setColStructural(self: *ScreenSemanticCursor, col: u16) void {
-        self.setPositionStructural(self.row, col);
     }
 
     fn applyStyle(self: *ScreenSemanticCursor, style: ScreenCursorStyle) void {
@@ -8487,21 +8448,6 @@ fn zeroQuery(params: []const i32) bool {
     return (queryParam(params) orelse return false) == 0;
 }
 
-fn requestStatusPayload(data: []const u8) ?[]const u8 {
-    if (data.len >= 2 and data[0] == '$' and data[1] == 'q') return data[2..];
-    return null;
-}
-
-fn requestTermcapPayload(data: []const u8) ?[]const u8 {
-    if (data.len >= 2 and data[0] == '+' and data[1] == 'q') return data[2..];
-    return null;
-}
-
-fn requestResourcePayload(data: []const u8) ?[]const u8 {
-    if (data.len >= 2 and data[0] == '+' and data[1] == 'Q') return data[2..];
-    return null;
-}
-
 const DcsEvent = @FieldType(parser_mod.Event, "dcs");
 
 // Decodes one completed borrowed DCS payload; unsupported commands return null.
@@ -9474,22 +9420,6 @@ fn projectSurface(screen_state: *const Set, scrollback_offset: u64) SurfaceSnaps
 
 fn peekDirtyRows(screen_state: *const Set) ?Screen.DirtyRows {
     return screen_state.activeConst().peekDirtyRows();
-}
-
-fn copyDirtyRows(dirty_rows_out: []u8, cols_start: []u16, cols_end: []u16, dirty: ?Screen.DirtyRows) void {
-    @memset(dirty_rows_out, 0);
-    @memset(cols_start, 0);
-    @memset(cols_end, 0);
-    if (dirty) |value| {
-        std.debug.assert(value.dirty_cols_start.len == dirty_rows_out.len);
-        std.debug.assert(value.dirty_cols_end.len == dirty_rows_out.len);
-        @memcpy(cols_start, value.dirty_cols_start);
-        @memcpy(cols_end, value.dirty_cols_end);
-        var dirty_row = value.start_row;
-        while (dirty_row <= value.end_row and dirty_row < dirty_rows_out.len) : (dirty_row += 1) {
-            dirty_rows_out[dirty_row] = 1;
-        }
-    }
 }
 
 /// Acknowledges dirty state on the active screen.
