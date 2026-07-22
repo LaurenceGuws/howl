@@ -88,13 +88,14 @@ pub const CellMetrics = struct {
   It selects work, not shaping context. The caller starts iteration at
   `affected_start`; render expands only the current run to its complete source
   coverage.
-- `geometry` is the retained row geometry. It is necessary for effective
-  horizontal cell extent and DEC double-height placement. It is row-local and
-  conveys no pane or layout coordinate.
-- `metrics` is validated nonzero render text geometry. Width times the
-  geometry's horizontal scale and height/baseline transformations use checked
-  `u32` intermediates before narrowing. Pane position, window scale, clipping,
-  GPU pixel format, and device limits are not inputs.
+- `geometry` is the retained row geometry. It is necessary for later DEC
+  width/height presentation and is copied unchanged into the result.
+  Preparation does not scale, crop, or offset glyphs from it. It is row-local
+  and conveys no pane or layout coordinate.
+- `metrics` is validated nonzero normal render text geometry. Preparation uses
+  its ordinary cell width, height, and baseline without applying DEC line
+  geometry or raised/lowered displacement. Pane position, window scale,
+  clipping, GPU pixel format, and device limits are not inputs.
 - Each `terminal.Cell` already supplies base and combining scalars, font slot,
   normal/raised/lowered baseline, bold/italic style, invisibility, selection,
   and final colors. Font slot, bold, italic, baseline, invisibility, and
@@ -126,13 +127,16 @@ grid.
 
 A native run is a maximal
 contiguous row interval with equal `(font slot, bold, italic, CellBaseline)`
-and visible textual content. A maximal contiguous blank/invisible interval is
-a no-glyph run with exact source coverage; returning it is necessary to clear
-previous retained glyph draw state and guarantees iteration cannot stall. A
+and visible textual content. A maximal contiguous blank/invisible interval
+with one `CellBaseline` is a no-glyph run with exact source coverage; returning
+it is necessary to clear previous retained glyph draw state, preserve the
+unresolved baseline fact, and guarantee iteration cannot stall. A
 cell whose base scalar is generated and has no combining scalar is a one-cell
 generated run. A generated-range scalar with combining content remains native
 text so its complete grapheme is not discarded. Row geometry is constant and
-therefore not repeated in the split key.
+therefore neither splits runs nor enters `FontKey`/`GlyphKey`; it is copied once
+to every `PreparedRun`. Baseline splits runs but does not enter font or mask
+identity because this stage shapes and rasterizes at normal metrics.
 
 One cell contributes its nonzero base scalar followed by its initialized
 combining scalars. Every scalar receives that cell column as the HarfBuzz
@@ -144,10 +148,11 @@ array order. A ligature may therefore cover many cells and combining glyphs
 may share one cell. No pane/layout policy enters that mapping.
 
 Native face fallback remains whole-run, matching current `FontSet.shape`.
-`MissingGlyph` retries the same run with U+FFFD once; failure of U+FFFD remains
-`MissingGlyph`. Generated classification precedes native shaping only for the
-exact generated case above. This preserves deterministic replacement without
-inventing mixed-face cluster splicing.
+`MissingGlyph` propagates transactionally and returns no `PreparedRun`.
+Replacement glyph choice is a separately gated future render decision;
+preparation neither invents replacement coverage nor splices faces. Generated
+classification precedes native shaping only for the exact generated case
+above.
 
 ### Output and lifetime
 
@@ -191,6 +196,8 @@ pub const PreparedGlyphs = union(enum) {
 pub const PreparedRun = struct {
     first_cell: u16,
     end_cell: u16, // Exclusive.
+    baseline: terminal.CellBaseline,
+    geometry: terminal.LineGeometry,
     glyphs: PreparedGlyphs,
     pub fn deinit(self: *PreparedRun) void;
 };
@@ -213,8 +220,11 @@ one-element array plus a separate length because the three cases have distinct
 cleanup contracts. Native keys remain valid only while the exact render-owned
 font configuration used for preparation remains alive; generated keys have
 value lifetime. Coordinates are row-local, relative to the run's first cell
-and the supplied baseline. Baseline displacement and row geometry are resolved
-into placement here. The output has no colors, pane coordinates,
+and the normal supplied baseline. `baseline` and `geometry` preserve unresolved
+render-owned visual facts exactly. A later render draw-preparation boundary
+must apply superscript/subscript and DEC line scale/crop while it still owns
+terminal visual interpretation; the executable must not interpret either
+enum. The output has no colors, pane coordinates,
 texture/cache residency identity, generation, frame identity, GPU handle,
 backend command, or scheduling fact. `GlyphKey` is render-owned glyph identity
 suitable for lookup; it is not a cache slot or admission token.
@@ -225,6 +235,11 @@ coverage: a ligature can span several cells while multiple combining glyphs
 can each cover one. Retaining that exact derived span in the key is necessary
 after the row borrow ends: native raster fitting and cache equality both depend
 on it. It is not the former vague whole-run span.
+
+Generated key dimensions are the normal `CellMetrics.width_px` and
+`height_px`. Line geometry and baseline do not alter native/generated mask
+identity in this slice; later render draw preparation consumes the retained
+facts when it defines scaling, cropping, and displacement.
 
 The native-selected
 `rasterizeGlyph(allocator, font_map, key) -> Raster` normalizes both sources to
@@ -376,10 +391,11 @@ and uses the exact projected `font` slot. Lookup never silently falls back to
 slot 0, normal, or another style. An unconfigured requested tuple returns the
 preparation error `MissingFontConfiguration` before shaping or output
 allocation. Callers that want the same files for several tuples list those
-mappings explicitly; the
-executable supplies configuration data but never interprets a run or chooses a
-font during preparation. Once selected, that entry's existing ordered native
-face fallback handles Unicode coverage, and U+FFFD retry uses the same entry.
+mappings explicitly; the executable supplies configuration data but never
+interprets a run or chooses a font during preparation. Once selected, that
+entry's existing ordered native face fallback handles Unicode coverage. If no
+configured face covers the complete run, `MissingGlyph` propagates and no
+output ownership changes.
 
 `FontMap` and native `prepareNextRun`/raster variants exist only when native
 text is selected. A generated-only terminal-text graph has neither the type nor
@@ -398,6 +414,9 @@ cache, runtime, or backend ownership.
 - The exclusive coverage invariant advances across native, generated, blank,
   and invisible intervals, so dirty-span iteration visits every intersecting
   run once and cannot stall.
+- `PreparedRun` retains exact baseline and line geometry. Preparation uses
+  normal metrics only; later render draw preparation owns their visual
+  transformation, and the executable never interprets them.
 - Native `GlyphKey` contains the exact six-bit map key, face, glyph, and
   per-glyph span required for map-scoped raster/cache equality. The span is
   derived from exact source coverage rather than copied from the complete run.
@@ -409,6 +428,11 @@ cache, runtime, or backend ownership.
   explicit missing-entry error. No product decision remains in this boundary.
 - Caller buffers, `ArrayList`, duplicate shaping, multi-run aggregation, and
   cache/runtime ownership are absent.
+- Native `MissingGlyph` is returned transactionally. No replacement scalar,
+  coverage, glyph, or mask policy remains in this slice.
+- Ordinary native, generated, and no-glyph implementation is now unblocked:
+  all prepare at existing normal metrics, retain unresolved baseline/geometry,
+  and require no invented pixel transformation or replacement behavior.
 
 ## Accepted renderer deletion checkpoint
 
@@ -1162,9 +1186,9 @@ owner.
 | `813-836` no second mask allocation | successful admission consumes exact owned pixels | Executable-owned cache transfer proof; rebuild. |
 | `837-857` oversized mask rejection | rejection preserves caller allocation and cache | Executable-owned cache transfer proof; rebuild. |
 | `858-908` eviction preflight | impossible admission rejects before eviction | Executable-owned cache transaction proof; rebuild. |
-| `909-960` missing glyph replacement | one U+FFFD fallback mask is shared and reusable | `howl-render` text-preparation semantics; rebuild after the gate below. |
-| `961-988` generated allocation failure | failed caller allocation leaves cache/generation unchanged | Split proof: render-generated raster owns no allocation; future executable cache owns allocation/admission. Rebuild at those owners. |
-| `989-1023` generated raster failure | staged pixels are freed before transfer | Same split; rebuild only if the future composition operation stages owned pixels. |
+| `909-960` missing glyph replacement | old renderer chose one fallback mask | Delete this policy proof; current preparation propagates `MissingGlyph`, and replacement requires a separate render decision. |
+| `961-988` generated allocation failure | failed mask allocation changes no caller state | Render-owned generated raster cleanup proof; cache generation/admission remains executable policy. |
+| `989-1023` generated raster failure | staged pixels are freed before transfer | Render-owned generated raster cleanup proof; no cache transfer belongs in preparation. |
 
 The current source emits no grid backgrounds, selection/cursor effects,
 decorations, quads, draw commands, or backend-neutral paint list. `Prepared`
@@ -1183,10 +1207,11 @@ later direct reconstruction:
    insufficient for ligature context. Every allocation must receive the
    caller allocator. Output must be backend-neutral positioned glyph/raster
    facts with explicit owned cleanup or caller buffers; it may not carry pane,
-   frame generation, cache identity, or GPU facts. Bounds/errors derive from
-   accepted `native_text` and `generated` APIs. Preserve U+FFFD fallback,
-   generated-glyph dispatch, combining input, pen-offset overflow checks, and
-   raster cleanup proofs. A direct rebuild is smaller than untangling
+   frame generation, cache residency/admission identity, or GPU facts.
+   Bounds/errors derive from accepted `native_text` and `generated` APIs.
+   Preserve generated-glyph dispatch, combining input, transactional
+   `MissingGlyph`, pen-offset overflow checks, and raster cleanup proofs. A
+   direct rebuild is smaller than untangling
    `Renderer.resolveCell`, which is per-cell and mixes four owners.
 2. **Bounded mask reuse — future executable owner.** Input is an exact
    render-produced mask key plus one caller-owned pixel allocation; rejection
