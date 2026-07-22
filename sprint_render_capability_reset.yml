@@ -68,6 +68,7 @@ slices:
 
   - id: align_durable_authorities
     status: accepted
+    commit: 4a10c7b
     outcome: >-
       Permanent authorities now state only settled capability ownership, retain enduring protocol and embedder facts,
       and explicitly quarantine rejected source without certifying its architecture.
