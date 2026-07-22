@@ -1,6 +1,31 @@
 # Render capability reset scratchpad
 
-Current slice: `vt_visual_view_contract`
+Current slice: `render_delta_projection`
+
+VT's visual observation contract was accepted at `f9be93f`. This slice now
+implements only render's stateless projection into caller-provided buffers.
+Executable admission/storage, retained-grid ownership, text shaping,
+rasterization, GPU commands, control, and compatibility adapters remain out of
+scope.
+
+## Current implementation checklist
+
+- add the direct selected `howl-render` dependency on `howl-vt` without making
+  unrelated text/generated selections compile VT;
+- replace retained visual values from the rejected frame source with the
+  accepted terminal projection vocabulary;
+- preflight exact cell and row-patch counts before writing either caller buffer;
+- project full and sparse viewport rows, resolved colors, selection appearance,
+  line geometry, multicell clusters, and old/new cursor overlay damage;
+- return only `FullRequired`, `InsufficientCells`, or `InsufficientPatches`;
+- prove short buffers remain byte-for-byte unchanged and projection allocates
+  nothing;
+- prove one-cell, cursor-only, mixed scrollback, geometry, selection, full,
+  and baseline-discontinuity cases;
+- run render owner checks for every selected capability combination and the VT
+  owner checks affected by the direct dependency.
+
+## Accepted VT checkpoint
 
 The VT/render boundary was accepted at `4a95571`. This slice implements only
 VT's side of that contract: visual borrowing, cumulative dirty evidence, exact

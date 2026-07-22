@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: vt_visual_view_contract
+  current_slice: render_delta_projection
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -119,7 +119,11 @@ slices:
       - selecting an API merely to compile quarantined consumers
 
   - id: vt_visual_view_contract
-    status: active
+    status: accepted
+    commit: f9be93f
+    outcome: >-
+      VT now exposes an allocation-free visual view, viewport-resolved cumulative dirty rows, VT-resolved selection
+      spans, non-wrapping exact acknowledgement, and consequence-only state snapshots without compatibility aliases.
     purpose: >-
       Replace VT's overloaded visual publication surface with a borrowed visual-only view, cumulative dirty evidence,
       and exact acknowledgement token; prove sparse mutation, full discontinuity, and declined acknowledgement.
@@ -131,7 +135,7 @@ slices:
       - all borrowed facts remain valid only under caller-enforced terminal mutation exclusion
 
   - id: render_delta_projection
-    status: pending
+    status: active
     purpose: >-
       Implement the accepted stateless terminal visual projection, caller-provided buffers, exact capacity failures,
       sparse/full row patches, cursor overlay damage, and direct howl-render dependency on howl-vt.

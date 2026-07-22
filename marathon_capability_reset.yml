@@ -198,7 +198,9 @@ sprints:
         commit: 0ea9f52
       - id: settle_vt_render_boundary
         commit: 4a95571
-    next_slice: vt_visual_view_contract
+      - id: vt_visual_view_contract
+        commit: f9be93f
+    next_slice: render_delta_projection
 
   - id: control_capability_reset
     status: pending
