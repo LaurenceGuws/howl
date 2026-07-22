@@ -702,6 +702,7 @@ test "parsed events: maps OSC title command to typed osc event" {
     try std.testing.expect(events[0] == .osc);
     try std.testing.expectEqual(std.meta.Tag(parser_mod.OscAction).title, std.meta.activeTag(events[0].osc));
     try std.testing.expectEqual(@as(?u16, 0), events[0].osc.command());
+    try std.testing.expectEqual(parser_mod.OscTerminator.bel, events[0].osc.term());
     try std.testing.expectEqualSlices(u8, "My Window", events[0].osc.payload());
 }
 
@@ -734,6 +735,7 @@ test "parsed events: parses OSC command without semicolon payload" {
     try std.testing.expect(events[0] == .osc);
     try std.testing.expectEqual(std.meta.Tag(parser_mod.OscAction).kitty_color_stack_push, std.meta.activeTag(events[0].osc));
     try std.testing.expectEqual(@as(?u16, 30001), events[0].osc.command());
+    try std.testing.expectEqual(parser_mod.OscTerminator.st, events[0].osc.term());
     try std.testing.expectEqualSlices(u8, "", events[0].osc.payload());
 }
 

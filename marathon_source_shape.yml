@@ -35,10 +35,16 @@ categories:
       the indexed owners; no systemic offender remains concrete enough to justify a watch list at this checkpoint.
 
   - id: vt_shape
-    status: queued
+    status: accepted
     goal: >-
       Make terminal and parser state-machine flow navigable while preserving one direct VT owner and exact protocol
       behavior.
+    result: >-
+      Established sparse owner boundaries for screen storage/reflow, input encoding, modes and host consequences,
+      canonical parser semantics, screen publication, semantic application/replies, fragmented streams, and Terminal
+      lifecycle. Moved SemanticEvent ahead of every decoder that constructs it, collapsed duplicated OSC payload and
+      terminator projection into one exhaustive parser owner, and deleted the processOscEvent alias hop. Existing tests
+      remain beside the behavior they probe; no unresolved systemic offender justified a watch list.
 
   - id: control_frame_shape
     status: queued

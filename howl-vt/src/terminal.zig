@@ -2931,6 +2931,8 @@ pub const Screen = struct {
     }
 };
 
+// Screen storage, reflow, and cell-value support.
+
 fn screenColCount(value: u16) u32 {
     return value;
 }
@@ -4092,6 +4094,8 @@ fn copyTabStops(dst: ?[]bool, src: ?[]const bool) void {
     const s = src orelse return;
     @memcpy(d[0..@min(d.len, s.len)], s[0..@min(d.len, s.len)]);
 }
+
+// Host-to-child input encoding.
 
 /// Caller-owned fixed storage for nonallocating input encodings.
 pub const Scratch = struct {
@@ -5349,6 +5353,8 @@ test "mouse protocols encode boundaries without partial sequences" {
     ));
     try std.testing.expectEqual(@as(u32, 1), mouseRow1(std.math.minInt(i32)));
 }
+
+// Terminal modes, replies, and bounded host-neutral consequences.
 
 // Carries Kitty keyboard flags and the set, add, or remove operation mode.
 const KeyFormatChange = struct {
@@ -7666,6 +7672,193 @@ const TerminalColorControlCommand = struct {
     payload: []const u8,
 };
 
+// Parser events to canonical terminal semantics.
+
+/// Canonical parser-to-domain event consumed synchronously by terminal state owners.
+pub const SemanticEvent = union(enum) {
+    cursor_up: u16,
+    cursor_down: u16,
+    cursor_forward: u16,
+    cursor_back: u16,
+    cursor_next_line: u16,
+    cursor_prev_line: u16,
+    cursor_horizontal_absolute: u16,
+    cursor_vertical_absolute: u16,
+    cursor_position: struct { row: u16, col: u16 },
+    write_text: []const u8,
+    write_codepoint: u21,
+    repeat_preceding: u16,
+    bell,
+    line_feed,
+    next_line,
+    reverse_index,
+    forward_index,
+    back_index,
+    carriage_return,
+    backspace,
+    horizontal_tab,
+    horizontal_tab_forward: u16,
+    horizontal_tab_back: u16,
+    horizontal_tab_set,
+    tab_clear_current,
+    tab_clear_all,
+    cursor_visible: bool,
+    cursor_blink: bool,
+    cursor_style: CursorStyleCommand,
+    cursor_shape: ScreenCursorShape,
+    cursor_color: ?ScreenRgb,
+    cursor_text_color: ?ScreenRgb,
+    reverse_screen_mode: bool,
+    eight_bit_controls: bool,
+    auto_wrap: bool,
+    auto_repeat: bool,
+    origin_mode: bool,
+    insert_mode: bool,
+    application_cursor_keys: bool,
+    application_keypad: bool,
+    column_mode_132: bool,
+    allow_column_mode: bool,
+    preserve_screen_on_column_mode: bool,
+    more_fix: bool,
+    ansi_mode_set: ModeParams,
+    ansi_mode_reset: ModeParams,
+    ansi_mode_query: u16,
+    modify_other_keys_set: i8,
+    modify_other_keys_query,
+    modify_other_keys_disable,
+    key_format_change: KeyFormatChange,
+    key_format_query: u8,
+    pointer_mode: u2,
+    reverse_wraparound_mode: bool,
+    extended_reverse_wraparound_mode: bool,
+    focus_reporting: bool,
+    alternate_scroll: bool,
+    meta_sends_escape: bool,
+    report_key_up: bool,
+    bracketed_paste: bool,
+    synchronized_output: bool,
+    inband_resize_notifications: bool,
+    color_preference_notifications: bool,
+    paste_events: bool,
+    termios_signals: bool,
+    mouse_tracking_off,
+    mouse_tracking_x10,
+    mouse_tracking_normal,
+    mouse_tracking_button_event,
+    mouse_tracking_any_event,
+    mouse_protocol_utf8: bool,
+    mouse_protocol_sgr: bool,
+    mouse_protocol_urxvt: bool,
+    mouse_protocol_sgr_pixel: bool,
+    kitty_keyboard_set: struct { flags: u8, mode: u8 },
+    kitty_keyboard_query,
+    kitty_keyboard_push: u8,
+    kitty_keyboard_pop: u16,
+    shell_mark: ItermShellMark,
+    notification: struct { kind: NotificationKind, command: u16, payload: []const u8 },
+    pointer_shape: []const u8,
+    window_request: WindowRequest,
+    color_preference_query,
+    kitty_color_stack: KittyColorCommand,
+    sgr_stack_push: ModeParams,
+    sgr_stack_pop,
+    title_and_icon_set: []const u8,
+    title_set: []const u8,
+    icon_set: []const u8,
+    shell_integration_set: ItermShellIntegration,
+    working_directory_report: WorkingDirectoryReport,
+    remote_host_report: []const u8,
+    clear_buffer,
+    iterm_report_cell_size,
+    iterm_set_colors: []const u8,
+    color_control: TerminalColorControlCommand,
+    hyperlink_set: HyperlinkSpec,
+    hyperlink_clear,
+    clipboard_set: []const u8,
+    kitty_clipboard_packet: []const u8,
+    file_transfer_packet: struct { protocol: FileTransferProtocol, payload: []const u8 },
+    dec_mode_query: u16,
+    dec_mode_set: ModeParams,
+    dec_mode_reset: ModeParams,
+    dec_mode_save: ModeParams,
+    dec_mode_restore: ModeParams,
+    dcs_request_status: []const u8,
+    dcs_request_termcap: []const u8,
+    dcs_request_resource: []const u8,
+    restore_cursor_information: []const u8,
+    restore_tab_stops: []const u8,
+    restore_cursor_appearance,
+    dcs_payload: DcsPayload,
+    string_payload: StringPayload,
+    device_status_report,
+    dec_device_status_report: u16,
+    cursor_position_report,
+    dec_cursor_position_report,
+    primary_device_attributes,
+    secondary_device_attributes,
+    tertiary_device_attributes,
+    xtversion,
+    xttitlepos,
+    xtchecksum: u16,
+    rect_checksum_request: struct { request_id: u16, page: u16, area: RectArea },
+    selected_graphic_rendition_report: RectArea,
+    screen_extent_report,
+    parameters_report: u16,
+    size_report: SizeReport,
+    window_title_report,
+    title_stack: struct { command: TitleStackCommand, option: u16 },
+    xtreportcolors,
+    locator_reporting: struct { mode: u16, unit: u16 },
+    locator_filter: OptionalRectArea,
+    locator_events: ModeParams,
+    locator_request: u16,
+    media_copy_request: MediaCopyRequest,
+    legacy_control: LegacyControlKind,
+    sgr: struct {
+        params: []const i32,
+        separators: parser_mod.CsiSeparatorList,
+    },
+    enter_alt_screen: struct { clear: bool, save_cursor: bool },
+    exit_alt_screen: struct { restore_cursor: bool },
+    save_cursor,
+    restore_cursor,
+    insert_lines: u16,
+    delete_lines: u16,
+    insert_chars: u16,
+    delete_chars: u16,
+    scroll_up_lines: u16,
+    scroll_down_lines: u16,
+    scroll_down_from_history: u16,
+    set_scroll_region: struct {
+        top: u16,
+        bottom: ?u16,
+    },
+    hard_reset,
+    soft_reset,
+    erase_display_below: bool,
+    erase_display_above: bool,
+    erase_display_complete: bool,
+    erase_display_scrollback: bool,
+    erase_display_scroll_complete: bool,
+    erase_line: ScreenEraseMode,
+    selective_erase_line: ScreenEraseMode,
+    erase_chars: u16,
+    shift_left_columns: u16,
+    shift_right_columns: u16,
+    character_protection: ScreenProtection,
+    rect_erase: RectArea,
+    rect_selective_erase: RectArea,
+    rect_fill: struct { area: RectArea, ch: u21 },
+    rect_copy: RectCopy,
+    rect_attrs_change: struct { area: RectArea, attrs: AttrParams, reverse: bool },
+    insert_columns: u16,
+    delete_columns: u16,
+    attr_change_extent_rect: bool,
+    left_right_margin_mode: bool,
+    set_left_right_margins: struct { left: u16, right: ?u16 },
+    reset_default_tab_stops,
+};
+
 // Selects one terminal-owned cell or host-supplied pixel size report.
 const SizeReport = enum {
     window_pixels,
@@ -9034,190 +9227,7 @@ test "OSC Kitty host-policy payloads expose only retained terminal facts" {
     } }) == null);
 }
 
-/// Canonical parser-to-domain event consumed synchronously by terminal state owners.
-pub const SemanticEvent = union(enum) {
-    cursor_up: u16,
-    cursor_down: u16,
-    cursor_forward: u16,
-    cursor_back: u16,
-    cursor_next_line: u16,
-    cursor_prev_line: u16,
-    cursor_horizontal_absolute: u16,
-    cursor_vertical_absolute: u16,
-    cursor_position: struct { row: u16, col: u16 },
-    write_text: []const u8,
-    write_codepoint: u21,
-    repeat_preceding: u16,
-    bell,
-    line_feed,
-    next_line,
-    reverse_index,
-    forward_index,
-    back_index,
-    carriage_return,
-    backspace,
-    horizontal_tab,
-    horizontal_tab_forward: u16,
-    horizontal_tab_back: u16,
-    horizontal_tab_set,
-    tab_clear_current,
-    tab_clear_all,
-    cursor_visible: bool,
-    cursor_blink: bool,
-    cursor_style: CursorStyleCommand,
-    cursor_shape: ScreenCursorShape,
-    cursor_color: ?ScreenRgb,
-    cursor_text_color: ?ScreenRgb,
-    reverse_screen_mode: bool,
-    eight_bit_controls: bool,
-    auto_wrap: bool,
-    auto_repeat: bool,
-    origin_mode: bool,
-    insert_mode: bool,
-    application_cursor_keys: bool,
-    application_keypad: bool,
-    column_mode_132: bool,
-    allow_column_mode: bool,
-    preserve_screen_on_column_mode: bool,
-    more_fix: bool,
-    ansi_mode_set: ModeParams,
-    ansi_mode_reset: ModeParams,
-    ansi_mode_query: u16,
-    modify_other_keys_set: i8,
-    modify_other_keys_query,
-    modify_other_keys_disable,
-    key_format_change: KeyFormatChange,
-    key_format_query: u8,
-    pointer_mode: u2,
-    reverse_wraparound_mode: bool,
-    extended_reverse_wraparound_mode: bool,
-    focus_reporting: bool,
-    alternate_scroll: bool,
-    meta_sends_escape: bool,
-    report_key_up: bool,
-    bracketed_paste: bool,
-    synchronized_output: bool,
-    inband_resize_notifications: bool,
-    color_preference_notifications: bool,
-    paste_events: bool,
-    termios_signals: bool,
-    mouse_tracking_off,
-    mouse_tracking_x10,
-    mouse_tracking_normal,
-    mouse_tracking_button_event,
-    mouse_tracking_any_event,
-    mouse_protocol_utf8: bool,
-    mouse_protocol_sgr: bool,
-    mouse_protocol_urxvt: bool,
-    mouse_protocol_sgr_pixel: bool,
-    kitty_keyboard_set: struct { flags: u8, mode: u8 },
-    kitty_keyboard_query,
-    kitty_keyboard_push: u8,
-    kitty_keyboard_pop: u16,
-    shell_mark: ItermShellMark,
-    notification: struct { kind: NotificationKind, command: u16, payload: []const u8 },
-    pointer_shape: []const u8,
-    window_request: WindowRequest,
-    color_preference_query,
-    kitty_color_stack: KittyColorCommand,
-    sgr_stack_push: ModeParams,
-    sgr_stack_pop,
-    title_and_icon_set: []const u8,
-    title_set: []const u8,
-    icon_set: []const u8,
-    shell_integration_set: ItermShellIntegration,
-    working_directory_report: WorkingDirectoryReport,
-    remote_host_report: []const u8,
-    clear_buffer,
-    iterm_report_cell_size,
-    iterm_set_colors: []const u8,
-    color_control: TerminalColorControlCommand,
-    hyperlink_set: HyperlinkSpec,
-    hyperlink_clear,
-    clipboard_set: []const u8,
-    kitty_clipboard_packet: []const u8,
-    file_transfer_packet: struct { protocol: FileTransferProtocol, payload: []const u8 },
-    dec_mode_query: u16,
-    dec_mode_set: ModeParams,
-    dec_mode_reset: ModeParams,
-    dec_mode_save: ModeParams,
-    dec_mode_restore: ModeParams,
-    dcs_request_status: []const u8,
-    dcs_request_termcap: []const u8,
-    dcs_request_resource: []const u8,
-    restore_cursor_information: []const u8,
-    restore_tab_stops: []const u8,
-    restore_cursor_appearance,
-    dcs_payload: DcsPayload,
-    string_payload: StringPayload,
-    device_status_report,
-    dec_device_status_report: u16,
-    cursor_position_report,
-    dec_cursor_position_report,
-    primary_device_attributes,
-    secondary_device_attributes,
-    tertiary_device_attributes,
-    xtversion,
-    xttitlepos,
-    xtchecksum: u16,
-    rect_checksum_request: struct { request_id: u16, page: u16, area: RectArea },
-    selected_graphic_rendition_report: RectArea,
-    screen_extent_report,
-    parameters_report: u16,
-    size_report: SizeReport,
-    window_title_report,
-    title_stack: struct { command: TitleStackCommand, option: u16 },
-    xtreportcolors,
-    locator_reporting: struct { mode: u16, unit: u16 },
-    locator_filter: OptionalRectArea,
-    locator_events: ModeParams,
-    locator_request: u16,
-    media_copy_request: MediaCopyRequest,
-    legacy_control: LegacyControlKind,
-    sgr: struct {
-        params: []const i32,
-        separators: parser_mod.CsiSeparatorList,
-    },
-    enter_alt_screen: struct { clear: bool, save_cursor: bool },
-    exit_alt_screen: struct { restore_cursor: bool },
-    save_cursor,
-    restore_cursor,
-    insert_lines: u16,
-    delete_lines: u16,
-    insert_chars: u16,
-    delete_chars: u16,
-    scroll_up_lines: u16,
-    scroll_down_lines: u16,
-    scroll_down_from_history: u16,
-    set_scroll_region: struct {
-        top: u16,
-        bottom: ?u16,
-    },
-    hard_reset,
-    soft_reset,
-    erase_display_below: bool,
-    erase_display_above: bool,
-    erase_display_complete: bool,
-    erase_display_scrollback: bool,
-    erase_display_scroll_complete: bool,
-    erase_line: ScreenEraseMode,
-    selective_erase_line: ScreenEraseMode,
-    erase_chars: u16,
-    shift_left_columns: u16,
-    shift_right_columns: u16,
-    character_protection: ScreenProtection,
-    rect_erase: RectArea,
-    rect_selective_erase: RectArea,
-    rect_fill: struct { area: RectArea, ch: u21 },
-    rect_copy: RectCopy,
-    rect_attrs_change: struct { area: RectArea, attrs: AttrParams, reverse: bool },
-    insert_columns: u16,
-    delete_columns: u16,
-    attr_change_extent_rect: bool,
-    left_right_margin_mode: bool,
-    set_left_right_margins: struct { left: u16, right: ?u16 },
-    reset_default_tab_stops,
-};
+// Screen banks, viewport projection, selection, and publication.
 
 // Identifies whether a visible row comes from history or the active screen.
 const RowSource = union(enum) {
@@ -9767,6 +9777,8 @@ const Publication = struct {
         return self.seq == snapshot_seq and self.dirty_generation == dirty_generation_current;
     }
 };
+
+// Semantic application and terminal reply generation.
 
 // Apply one host-directed semantic event and retain its bounded consequence.
 fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
@@ -11440,7 +11452,7 @@ pub fn process(event: parser_mod.Event) ?SemanticEvent {
         .text => |s| return SemanticEvent{ .write_text = s },
         .codepoint => |cp| return SemanticEvent{ .write_codepoint = cp },
         .control => |c| return controlProcess(c),
-        .osc => |osc_event| return processOscEvent(osc_event),
+        .osc => |osc_event| return oscProcess(osc_event),
         .screen_title => |title| return if (title.len == 0)
             null
         else
@@ -11463,10 +11475,6 @@ fn escDispatchProcess(final: u8, intermediates: []const u8) ?SemanticEvent {
     };
     if (intermediates.len != 0) return null;
     return escProcess(final);
-}
-
-fn processOscEvent(osc_event: parser_mod.OscAction) ?SemanticEvent {
-    return oscProcess(osc_event);
 }
 
 /// Apply one parser event and report whether terminal or title state changed.
@@ -11817,6 +11825,8 @@ const FeedSummary = struct {
     icon_changed: bool,
     history_lost: bool,
 };
+
+// Fragmented parser-stream ownership.
 
 const DcsCapture = struct {
     const StartError = error{OutOfMemory};
@@ -12527,6 +12537,8 @@ fn consumePresentationDesignation(payload: []const u8, offset: *usize) ?u8 {
     offset.* += 1;
     return byte;
 }
+
+// Public terminal composition and lifecycle.
 
 /// Host-neutral terminal state and protocol engine.
 pub const Terminal = struct {

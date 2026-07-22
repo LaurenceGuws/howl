@@ -51,6 +51,9 @@ pub const max_metadata_control_bytes = metadata_control_max_bytes;
 const max_clipboard_control_bytes = clipboard_control_max_bytes;
 /// Maximum complete payload accepted for one chunked Kitty control.
 pub const max_chunk_control_bytes = chunk_control_max_bytes;
+
+// Borrowed parser event vocabulary.
+
 /// Identifies BEL or ST termination for a completed OSC action.
 pub const OscTerminator = enum {
     bel,
@@ -103,30 +106,7 @@ pub const OscAction = union(enum) {
 
     /// Returns the borrowed payload slice carried by any OSC action variant.
     pub fn payload(self: OscAction) []const u8 {
-        return switch (self) {
-            .raw_title => |v| v.payload,
-            .raw_other => |v| v.payload,
-            .title => |v| v.payload,
-            .icon => |v| v.payload,
-            .palette_control => |v| v.payload,
-            .palette_reset => |v| v.payload,
-            .dynamic_color => |v| v.payload,
-            .dynamic_reset => |v| v.payload,
-            .report_pwd => |v| v.payload,
-            .hyperlink => |v| v.payload,
-            .notification => |v| v.payload,
-            .pointer_shape => |v| v.payload,
-            .clipboard => |v| v.payload,
-            .kitty_color => |v| v.payload,
-            .kitty_text_size => |v| v.payload,
-            .shell_mark => |v| v.payload,
-            .rxvt_extension => |v| v.payload,
-            .iterm2 => |v| v.payload,
-            .context_signal => |v| v.payload,
-            .kitty_color_stack_push, .kitty_color_stack_pop => "",
-            .kitty_file_transfer => |v| v.payload,
-            .kitty_clipboard => |v| v.payload,
-        };
+        return self.text().payload;
     }
 
     /// Returns the numeric OSC command when the variant has one.
@@ -159,30 +139,35 @@ pub const OscAction = union(enum) {
 
     /// Returns the delimiter that completed this OSC action.
     pub fn term(self: OscAction) OscTerminator {
+        return self.text().term;
+    }
+
+    fn text(self: OscAction) OscText {
         return switch (self) {
-            .raw_title => |v| v.term,
-            .raw_other => |v| v.term,
-            .title => |v| v.term,
-            .icon => |v| v.term,
-            .palette_control => |v| v.term,
-            .palette_reset => |v| v.term,
-            .dynamic_color => |v| v.term,
-            .dynamic_reset => |v| v.term,
-            .report_pwd => |v| v.term,
-            .hyperlink => |v| v.term,
-            .notification => |v| v.term,
-            .pointer_shape => |v| v.term,
-            .clipboard => |v| v.term,
-            .kitty_color => |v| v.term,
-            .kitty_text_size => |v| v.term,
-            .shell_mark => |v| v.term,
-            .rxvt_extension => |v| v.term,
-            .iterm2 => |v| v.term,
-            .context_signal => |v| v.term,
-            .kitty_color_stack_push => |v| v,
-            .kitty_color_stack_pop => |v| v,
-            .kitty_file_transfer => |v| v.term,
-            .kitty_clipboard => |v| v.term,
+            .raw_title,
+            .raw_other,
+            .icon,
+            .report_pwd,
+            .hyperlink,
+            .pointer_shape,
+            .kitty_text_size,
+            .shell_mark,
+            .rxvt_extension,
+            .context_signal,
+            .kitty_file_transfer,
+            .kitty_clipboard,
+            => |v| v,
+            .title,
+            .palette_control,
+            .palette_reset,
+            .dynamic_color,
+            .dynamic_reset,
+            .notification,
+            .clipboard,
+            .kitty_color,
+            .iterm2,
+            => |v| .{ .payload = v.payload, .term = v.term },
+            .kitty_color_stack_push, .kitty_color_stack_pop => |delimiter| .{ .payload = "", .term = delimiter },
         };
     }
 };
@@ -912,7 +897,7 @@ test "parser DCS hook stays on the hook boundary" {
     try expectPhaseTags(unhook, .dcs_unhook, null, null);
 }
 
-/// Parser output event.
+// Borrows one completed CSI rendition action.
 const StyleChange = struct {
     final: u8,
     params: []const i32,
@@ -950,6 +935,8 @@ pub const Event = union(enum) {
     esc_dispatch: EscAction,
     invalid_sequence,
 };
+
+// Generated ECMA-48 byte-state transition table.
 
 // Names every state in the generated VT parser automaton.
 const ParseState = enum {
@@ -1262,6 +1249,8 @@ fn range(t: *OptionalTable, from: u8, to: u8, s0: ParseState, s1: ParseState, a:
 fn parseTransition(state: ParseState, action: TransitionAction) Transition {
     return .{ .state = state, .action = action };
 }
+
+// Bounded OSC and generic string-control owners.
 
 const ByteLimit = u32;
 
@@ -2112,6 +2101,8 @@ fn feedEscState(state: *DelimitedState, byte: u8) ?FeedResult {
     return .{ .put = byte };
 }
 
+// Incremental text decoding.
+
 /// UTF-8 decode result union.
 const Utf8Result = union(enum) {
     codepoint: u21,
@@ -2197,6 +2188,8 @@ test "UTF8 decoder: invalid continuation resets partial sequence" {
     result = decoder.feed('B');
     try std.testing.expectEqual(@as(u21, 'B'), result.codepoint);
 }
+
+// Transactional event copying for simulation and fuzz ownership.
 
 /// Copies borrowed parser phase actions into arena-backed storage transactionally.
 pub fn appendOwnedPhases(
