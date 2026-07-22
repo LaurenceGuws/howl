@@ -17,11 +17,12 @@ The active projects are:
 - `howl-window`: the native Wayland host with bounded tabs, panes, input,
   shared text/GLES rendering, and terminal composition.
 
-The root package exports `howl_vt`, `howl_text`, `howl_frame`, `howl_render`,
-`howl_pty`, and `howl_control`. Native hosts and development proofs remain root
-workspace operations.
+Each `howl-*` directory is an independent Zig package and owns its module,
+dependencies, proofs, and executable steps. The repository root is only the
+`howl_workspace` development curator: it exports no product modules or
+artifacts. `consumer-vt` proves isolated use of the standalone VT package.
 
-Compile every active component and proof:
+Compile every active component and validate the workspace:
 
 ```sh
 zig build

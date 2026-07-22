@@ -71,10 +71,10 @@ categories:
         sample. Median spans were 6.2 us PTY read, 400 us VT feed, 111 us frame publication, 12.5 us text/cache
         preparation, and 40 ns frame borrow/release; the first-cache preparation maximum was 858 us.
       query: >-
-        Run `zig build measure:probe -Doptimize=ReleaseSafe` and inspect howl-probe.jsonl. Run
+        Run `zig build measure:probe -Doptimize=ReleaseSafe` and inspect howl-window/howl-probe.jsonl. Run
         `zig build measure:probe-disabled -Doptimize=ReleaseSafe` for the compile-time-disabled receipt. For live GLES
         draw/upload/backing/present evidence, run `zig build run:window-probe -- /path/to/font.ttf` and inspect
-        howl-window-probe.jsonl.
+        howl-window/howl-window-probe.jsonl.
       remaining_evidence: >-
         The deterministic route attributes one composed PTY/VT/frame/text-preparation pipeline, not live terminals or
         the Wayland host. Live window instrumentation separately records aggregate mailbox, render preparation,

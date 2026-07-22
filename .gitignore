@@ -1,4 +1,5 @@
 .zig-cache/
 zig-out/
-/howl-probe*.jsonl
+howl-probe*.jsonl
+howl-window-probe*.jsonl
 temp/

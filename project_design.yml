@@ -1,7 +1,7 @@
 project:
   name: howl
   mission: an exceptionally small, correct, embeddable native Zig terminal family
-  shape: one repository with curated modules and native development hosts
+  shape: atomic monorepo of independent small Zig packages with a development-only root curator
 
 components:
   - name: vt
@@ -44,12 +44,8 @@ relationships:
     ownership remain independent facts
 
 package:
-  root_build: public module and artifact graph
-  development_build: root-only workspace operations composed through build/dev.zig
-  modules:
-    - howl_vt
-    - howl_text
-    - howl_pty
-    - howl_control
-    - howl_frame
-    - howl_render
+  repository: Git, agent, and development ergonomics plus atomic history only
+  children: each howl-* directory owns its package identity, dependencies, native facts, proofs, and executable steps
+  root_build: howl_workspace exports no product module or artifact and only invokes children, validates, and aliases
+  isolation_proof: consumer-vt depends only on the standalone howl-vt package
+  first_embedder: QAgent directly depends on howl-control and howl-vt

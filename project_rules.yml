@@ -8,7 +8,8 @@ rules:
   - Construction failure and deinitialization release completed resources in reverse ownership order.
   - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.
   - Domain quantities use types sized for their meaning.
-  - Public modules expose curated native Zig values instead of internal source layout.
+  - Each howl-* package exposes its own curated native Zig module and owns every direct build and native dependency.
+  - The root workspace reconstructs no child module, dependency edge, native fact, proof, executable, or artifact.
   - >-
     Howl-pty owns Linux PTY mechanics and exact partial transfer outcomes; the window loop owns Wayland/xkb and
     admission while its render thread owns the concrete EGL/GLES lifetime, shared text/mask preparation, and swap.

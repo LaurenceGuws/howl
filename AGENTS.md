@@ -59,9 +59,11 @@ their characters through domain meaning or reduced ambiguity.
 
 ## Workspace boundary
 
-The root build exposes public modules and publication artifacts. Root-only
-development steps are composed through `build/dev.zig`. Tools implement their
-own narrow behavior and do not become product dependencies.
+The monorepo exists only for Git, agent, and development ergonomics plus atomic
+history. Every `howl-*` directory is an independent small Zig package that owns
+its build identity, dependencies, native facts, and proofs. The root
+`howl_workspace` exports no product module or artifact; it invokes child builds,
+validates root evidence, and provides development aliases.
 
-QAgent is Howl's first real embedder. It pressures Howl through use without
-owning Howl's domain or importing application policy into the terminal family.
+QAgent directly consumes the `howl-control` and `howl-vt` packages. It pressures
+Howl through use without owning Howl's domain or importing application policy.

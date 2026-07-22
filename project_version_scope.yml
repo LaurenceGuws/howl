@@ -2,11 +2,12 @@ objective: consolidate the family, pay down VT source debt, and establish reusab
 
 capabilities:
   - name: single_repository_family
-    acceptance: one version, package URL, dependency graph, build command surface, and atomic history
+    acceptance: one atomic Git history and development workspace without making the root a product package
 
-  - name: public_module_graph
+  - name: independent_child_packages
     acceptance: >-
-      the root package exports curated howl_vt, howl_text, howl_frame, howl_render, howl_pty, and howl_control modules
+      each howl-* directory owns a Zig package identity, direct dependencies, native facts, public module, and proofs;
+      executable children also own conventional install and run steps
 
   - name: terminal_frame_publication
     acceptance: >-
@@ -47,13 +48,15 @@ capabilities:
       available pane, and processes compositor, terminal, renderer, and timer readiness without hiding simultaneous facts
 
   - name: development_orchestration
-    acceptance: root-only checks, tests, simulations, fuzzing, benchmarks, dogfood, and hosts use build/dev.zig
+    acceptance: >-
+      howl_workspace exports no product modules or artifacts and invokes child-owned checks, tests, simulations,
+      fuzzing, benchmarks, hosts, and temporary measurements
 
   - name: direct_vt_source
     acceptance: terminal behavior and proof survive while production characters, hops, and public surface decrease
 
   - name: qagent_embedding
-    acceptance: QAgent builds and dogfoods against the local curated Howl terminal owner
+    acceptance: QAgent builds and dogfoods with direct howl-control and howl-vt package dependencies
 
   - name: reusable_native_pty
     acceptance: >-
@@ -84,11 +87,12 @@ limitations:
     description: final VT file boundaries follow the completed direct-source review
 
   - name: compatibility
-    description: private development modules carry no downstream source or ABI promise
+    description: private development packages carry no downstream source or ABI promise
 
 gates:
   - active YAML parses and the protocol catalogue schema validates
-  - root and module build graphs use Zig 0.16
+  - root aliases and every independent child package use Zig 0.16
+  - consumer-vt proves selecting howl-vt does not compile unrelated family packages or native libraries
   - all accepted VT tests, simulations, fuzzing, and benchmarks pass in four optimization modes
   - control, text, window, and QAgent embedding checks pass
   - source audit and git diff checks pass

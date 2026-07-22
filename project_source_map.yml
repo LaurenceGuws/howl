@@ -1,7 +1,9 @@
 sources:
-  build.zig: public package graph and root command surface
-  build.zig.zon: published package identity and source boundary
-  build/dev.zig: root-only checks, proofs, benchmarks, simulations, and native hosts
+  build.zig: development-only child-build aliases plus root audit and protocol validation
+  build.zig.zon: howl_workspace identity and the source boundary required by those operations
+  consumer-vt: isolated external package proof that imports only the standalone howl-vt module
+  howl-*/build.zig: child-owned module, proof, native dependency, executable, and command construction
+  howl-*/build.zig.zon: child-owned package identity, direct sibling dependencies, and source boundary
   howl-vt/src: current terminal model implementation preserved through source-shape simplification
   protocol_coverage.yml: >-
     root-owned pinned libvterm, iTerm2, and Kitty evidence with normalized support, disposition, owner, and proof facts
@@ -36,6 +38,6 @@ sources:
   howl-control/src/test.zig: live PTY, immutable frame publication, and semantic control proofs
   howl-window/vendor/xdg-shell: generated Wayland shell protocol source consumed by the native host
   tools/audit_source.sh: maintained non-vendor Zig source policy and reviewed construct uses
-  tools/probe.zig: removable bounded development event worker, JSONL serialization, and Linux resource sampling
-  tools/probe_noop.zig: compile-time disabled development probe boundary
-  tools/probe_scenario.zig: deterministic PTY, VT, frame, and shared render-preparation measurement
+  howl-window/build/probe_enabled.zig: temporary bounded development event worker and Linux resource sampling
+  howl-window/build/probe_disabled.zig: compile-time disabled normal-window probe boundary
+  howl-window/build/probe_scenario.zig: temporary deterministic PTY-to-render measurement owned by howl-window
