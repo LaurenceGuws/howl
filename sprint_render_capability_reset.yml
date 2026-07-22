@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: settle_run_text_boundary
+  current_slice: rebuild_run_text_preparation
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -167,13 +167,18 @@ slices:
       preparation, cache policy, executable scheduling, or compatibility APIs.
 
   - id: settle_run_text_boundary
-    status: active
+    status: accepted
+    commit: 53de279
+    outcome: >-
+      Accepted one-run-at-a-time terminal text preparation with exact source coverage, allocation only for native
+      positioned glyphs, inline generated glyphs, allocation-free blank runs, and a bounded render-owned font map
+      whose native glyph identity remains collision-safe within its explicit lifetime.
     purpose: >-
       Settle the smallest contiguous visual-run input and heterogeneous native/generated output lifetime before any
       run-aware text preparation is implemented.
 
   - id: rebuild_run_text_preparation
-    status: pending
+    status: active
     purpose: >-
       Rebuild only accepted run-aware text behavior under the approved caller-buffer or allocator-owned lifetime,
       without cache, pane, generation, frame, or GPU policy.

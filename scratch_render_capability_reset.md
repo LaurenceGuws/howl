@@ -1,11 +1,32 @@
 # Render capability reset scratchpad
 
-Current slice: `settle_run_text_boundary`
+Current slice: `rebuild_run_text_preparation`
+
+The terminal text boundary was accepted at `53de279`. This slice implements
+that exact contract without widening cache, pane, frame, generation, GPU, or
+executable policy.
+
+## Current implementation checklist
+
+- add the selected `terminal_text` namespace only when terminal projection and
+  at least one text source are enabled;
+- implement exact one-run discovery, complete source coverage, and terminating
+  dirty-span iteration;
+- implement allocation-free generated and no-glyph payloads and one owned
+  positioned slice for native runs;
+- implement the bounded native `FontMap`, exact native glyph identity, reverse
+  cleanup, and missing-configuration failure;
+- rasterize native and generated keys without exposing font selection to the
+  caller;
+- prove compile-time API absence, malformed bounds, allocation rollback,
+  cluster coverage, ligatures, combining glyphs, generated glyphs, blanks,
+  invisibility, font tuples, and map-scoped identity;
+- preserve existing native-text, generated-glyph, and terminal projection
+  behavior; do not edit control or executable source.
 
 The rejected mixed renderer was deleted at `93cb1c6`. This slice is decision
-evidence only: derive the smallest contiguous visual-run input and
-native/generated output lifetime that lets render prepare perfect terminal text
-without owning cache, pane, frame, generation, GPU, or executable policy.
+evidence and implementation guidance for the accepted contiguous visual-run
+input and native/generated output lifetime.
 
 ## Current decision checklist
 
