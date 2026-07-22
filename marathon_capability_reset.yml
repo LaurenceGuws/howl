@@ -190,7 +190,15 @@ sprints:
     accepted_slices:
       - id: selectable_text_and_generated
         commit: a5adeee
-    next_slice: settle_vt_render_boundary
+      - id: bootstrap_durable_workflow
+        commit: bcbf050
+      - id: align_durable_authorities
+        commit: 4a10c7b
+      - id: classify_terminal_visual_values
+        commit: 0ea9f52
+      - id: settle_vt_render_boundary
+        commit: 4a95571
+    next_slice: vt_visual_view_contract
 
   - id: control_capability_reset
     status: pending

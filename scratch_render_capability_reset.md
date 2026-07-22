@@ -1,6 +1,28 @@
 # Render capability reset scratchpad
 
-Current slice: `settle_vt_render_boundary`
+Current slice: `vt_visual_view_contract`
+
+The VT/render boundary was accepted at `4a95571`. This slice implements only
+VT's side of that contract: visual borrowing, cumulative dirty evidence, exact
+acknowledgement, and owner-local proofs. Render projection, executable storage,
+control coupling, GPU work, and compatibility adapters remain out of scope.
+
+## Implementation checklist
+
+- inventory the current VT visual publication and every mutation path that
+  contributes visual dirtiness;
+- replace the overloaded publication noun instead of aliasing it;
+- keep cursor overlay state separate from cell dirty spans;
+- prove cumulative sparse dirtiness and source-wide full discontinuities;
+- prove stale or mismatched acknowledgement cannot discard newer dirtiness;
+- preserve explicit caller allocation and borrowed lifetime boundaries;
+- run howl-vt owner checks and the workspace check before review.
+
+## Accepted boundary record
+
+The remainder of this file records the accepted design evidence from
+`4a95571`; implementation findings are appended above it while this slice is
+active.
 
 Scope: decision evidence only. No source or build contract is implemented by
 this slice. The symbol inventory accepted at `0ea9f52` remains the source

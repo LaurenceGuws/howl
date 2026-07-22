@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: settle_vt_render_boundary
+  current_slice: vt_visual_view_contract
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -97,7 +97,12 @@ slices:
     discussion_gate: vt_render_boundary
 
   - id: settle_vt_render_boundary
-    status: active
+    status: accepted
+    commit: 4a95571
+    outcome: >-
+      Accepted a stateless sparse visual projection: VT lends cumulative visual dirty truth under mutation
+      exclusion, render writes backend-neutral patches into caller buffers, and the executable admits storage before
+      acknowledging the exact VT dirty token.
     purpose: >-
       Derive and approve the smallest public render boundary that consumes VT semantic truth and produces
       backend-neutral visual work without owning executable publication or GPU policy.
@@ -113,11 +118,23 @@ slices:
       - hiding runtime policy in a render-owned object
       - selecting an API merely to compile quarantined consumers
 
-  - id: rebuild_terminal_visual_values
+  - id: vt_visual_view_contract
+    status: active
+    purpose: >-
+      Replace VT's overloaded visual publication surface with a borrowed visual-only view, cumulative dirty evidence,
+      and exact acknowledgement token; prove sparse mutation, full discontinuity, and declined acknowledgement.
+    validation:
+      - VT visual dirty state is cumulative until the exact token is acknowledged
+      - cursor overlay changes are not encoded as VT cell dirty spans
+      - row geometry and selection appearance dirty the exact required cells or rows
+      - resize and source-wide presentation discontinuities require full reconstruction
+      - all borrowed facts remain valid only under caller-enforced terminal mutation exclusion
+
+  - id: render_delta_projection
     status: pending
     purpose: >-
-      Retain only approved visual values and behavior, implementing the dependency, allocation, lifetime, and API
-      contract accepted at the VT/render discussion gate.
+      Implement the accepted stateless terminal visual projection, caller-provided buffers, exact capacity failures,
+      sparse/full row patches, cursor overlay damage, and direct howl-render dependency on howl-vt.
 
   - id: classify_remaining_render_code
     status: pending
