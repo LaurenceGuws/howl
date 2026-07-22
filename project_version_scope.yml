@@ -30,6 +30,11 @@ capabilities:
       identity, transactionally resizes available terminals from pane layout, and shares one render thread, text owner,
       mask cache, and GLES device while one reserved label row shares that same text/cache path and exact tab identity
 
+  - name: pane_scrollback_viewport
+    acceptance: >-
+      each pane independently reconciles host-owned follow/anchor state against VT history eviction and alternate-screen
+      truth, routes wheel input by terminal mouse mode, and paints one bounded scrollbar through the shared renderer
+
   - name: workspace_model
     acceptance: >-
       one platform-independent bounded owner provides stable tab and pane identities, transactional names and

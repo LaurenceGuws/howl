@@ -155,6 +155,14 @@ pub const TerminalFrame = struct {
     selection: ?Selection,
     /// Reports which VT screen supplied this publication.
     alternate_screen: bool,
+    /// Identifies the oldest retained projected history row.
+    history_row_base: u32,
+    /// Reports retained rows available above the primary screen.
+    history_count: u32,
+    /// Reports the projected-history offset copied into this frame.
+    scrollback_offset: u32,
+    /// Reports whether terminal mouse tracking owns pointer input.
+    mouse_reporting: bool,
     /// Borrows cumulative damage since the latest released frame.
     damage: Damage,
 };
@@ -201,6 +209,10 @@ const Slot = struct {
     cursor: Cursor = undefined,
     selection: ?Selection = null,
     alternate_screen: bool = false,
+    history_row_base: u32 = 0,
+    history_count: u32 = 0,
+    scrollback_offset: u32 = 0,
+    mouse_reporting: bool = false,
     full_redraw: bool = true,
 };
 
@@ -266,6 +278,7 @@ pub const Publisher = struct {
     last_rows: u16 = 0,
     last_cols: u16 = 0,
     last_geometry_generation: u64 = 0,
+    last_scrollback_offset: u32 = 0,
     resizing: bool = false,
 
     /// Allocates exactly two frame capacities and one cumulative-damage set.
@@ -344,7 +357,8 @@ pub const Publisher = struct {
         const view = surface.snapshot.view;
         if (self.last_generation == 0 or
             self.last_rows != view.rows or self.last_cols != view.cols or
-            self.last_geometry_generation != geometry_generation)
+            self.last_geometry_generation != geometry_generation or
+            self.last_scrollback_offset != surface.scrollback_offset)
             self.pending_full = true;
         self.accumulateDamage(surface);
 
@@ -371,6 +385,7 @@ pub const Publisher = struct {
         self.last_rows = view.rows;
         self.last_cols = view.cols;
         self.last_geometry_generation = geometry_generation;
+        self.last_scrollback_offset = surface.scrollback_offset;
         self.pending_unpublished = false;
         return .{ .published = generation };
     }
@@ -602,6 +617,10 @@ pub const Publisher = struct {
             .end = .{ .row = selection.end.row, .col = selection.end.col },
         } else null;
         slot.alternate_screen = view.is_alternate_screen;
+        slot.history_row_base = surface.history_row_base;
+        slot.history_count = surface.history_count;
+        slot.scrollback_offset = surface.scrollback_offset;
+        slot.mouse_reporting = surface.mouse_reporting;
         slot.full_redraw = self.pending_full;
     }
 };
@@ -621,6 +640,10 @@ fn frameFromSlot(slot: *const Slot) TerminalFrame {
         .cursor = slot.cursor,
         .selection = slot.selection,
         .alternate_screen = slot.alternate_screen,
+        .history_row_base = slot.history_row_base,
+        .history_count = slot.history_count,
+        .scrollback_offset = slot.scrollback_offset,
+        .mouse_reporting = slot.mouse_reporting,
         .damage = .{ .full = slot.full_redraw, .rows = slot.damage[0..slot.rows] },
     };
 }

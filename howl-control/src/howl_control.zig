@@ -54,6 +54,24 @@ pub const CellPixelSize = howl_frame.CellPixelSize;
 pub const Frame = howl_frame.Borrow;
 /// Reports stale frame release or exact pending-publication failure.
 pub const FrameReleaseError = howl_frame.ReleaseError || howl_frame.PublishError;
+/// Reports the exact visual publication failure of a deliberate viewport change.
+pub const ViewportError = howl_frame.PublishError;
+
+/// Copies retained-history projection and terminal mouse-routing facts.
+pub const ViewportFacts = struct {
+    /// Identifies the oldest retained projected primary row.
+    history_row_base: u32 = 0,
+    /// Reports retained projected primary rows.
+    history_count: u32 = 0,
+    /// Reports the applied host-requested offset.
+    offset: u32 = 0,
+    /// Reports current visible rows.
+    rows: u16 = 1,
+    /// Reports whether the alternate screen is active.
+    alternate_screen: bool = false,
+    /// Reports whether terminal mouse tracking owns pointer input.
+    mouse_reporting: bool = false,
+};
 
 /// Bounds one terminal surface width before model or PTY construction.
 pub const max_cols = client.max_cols;
@@ -224,6 +242,10 @@ pub const Terminal = struct {
     admission_sequence: u64 = 0,
     geometry_sequence: u64 = 0,
     frame_surface_generation: u64 = 0,
+    // This brief lock publishes coherent projection facts without exposing
+    // the model/full-frame copy lock to the window loop.
+    viewport_lock: std.Io.Mutex = .init,
+    viewport_facts: ViewportFacts = .{},
     lock: std.Io.Mutex = .init,
     write_lock: std.Io.Mutex = .init,
     // Lifecycle publication stays independent from the model lock used by hot surfaces.
@@ -782,6 +804,42 @@ pub const Terminal = struct {
         return self.frames.borrowNewest();
     }
 
+    /// Copies the current bounded viewport facts without walking terminal cells.
+    pub fn viewportFacts(self: *Terminal) ViewportFacts {
+        self.viewport_lock.lockUncancelable(self.io);
+        defer self.viewport_lock.unlock(self.io);
+        return self.viewport_facts;
+    }
+
+    /// Applies one absolute host viewport offset and publishes its complete frame.
+    /// The caller owns subsequent render submission; this deliberate operation
+    /// does not emit a duplicate terminal wake.
+    pub fn setViewport(self: *Terminal, offset: u32) ViewportError!ViewportFacts {
+        self.lock.lockUncancelable(self.io);
+        if (self.state_value.load(.acquire) != .running) {
+            const facts = viewportFactsFrom(self.model.surfaceSnapshot());
+            self.lock.unlock(self.io);
+            return facts;
+        }
+        const changed = self.model.scrollViewport(.{ .absolute = offset });
+        if (changed) {
+            const result = self.publishFrameLocked() catch |failure| {
+                const facts = viewportFactsFrom(self.model.surfaceSnapshot());
+                self.storeViewportFacts(facts);
+                self.lock.unlock(self.io);
+                self.finish(.failed, readerFailure(frameReaderError(failure)));
+                self.transport.cancel();
+                return failure;
+            };
+            switch (result) {
+                .published, .saturated => {},
+            }
+        }
+        const facts = viewportFactsFrom(self.model.surfaceSnapshot());
+        self.lock.unlock(self.io);
+        return facts;
+    }
+
     /// Releases one exact visual generation. If prior saturation retained a
     /// newer model state, this call copies it into the released slot and wakes
     /// the consumer before returning. The caller holds no semantic `Surface`
@@ -830,7 +888,14 @@ pub const Terminal = struct {
             },
             .saturated => {},
         }
+        self.storeViewportFacts(viewportFactsFrom(surface_value));
         return result;
+    }
+
+    fn storeViewportFacts(self: *Terminal, facts: ViewportFacts) void {
+        self.viewport_lock.lockUncancelable(self.io);
+        self.viewport_facts = facts;
+        self.viewport_lock.unlock(self.io);
     }
 
     fn readLoop(self: *Terminal) void {
@@ -1292,6 +1357,17 @@ fn frameResizeError(failure: howl_frame.PublishError) ResizeError {
     };
 }
 
+fn viewportFactsFrom(publication: howl_vt.Terminal.SurfacePublication) ViewportFacts {
+    return .{
+        .history_row_base = publication.history_row_base,
+        .history_count = publication.history_count,
+        .offset = publication.scrollback_offset,
+        .rows = publication.snapshot.view.rows,
+        .alternate_screen = publication.is_alternate_screen,
+        .mouse_reporting = publication.mouse_reporting,
+    };
+}
+
 fn decodeReaderFailure(failure: ReaderFailure) ?ReaderError {
     return switch (failure) {
         .none => null,
@@ -1467,6 +1543,48 @@ test "frame saturation recovers newest complete state through exact release" {
     try std.testing.expect(wake_count.load(.acquire) != 0);
     try terminal.releaseFrame(&second);
     try terminal.releaseFrame(&recovered);
+}
+
+test "host viewport projection publishes retained history and mouse ownership" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 3, .cols = 5, .history_rows = 8 },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+
+    terminal.lock.lockUncancelable(std.testing.io);
+    const summary = try terminal.model.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
+    try std.testing.expect(summary.state_changed);
+    try std.testing.expect(switch (try terminal.publishFrameLocked()) {
+        .published => true,
+        .saturated => false,
+    });
+    terminal.lock.unlock(std.testing.io);
+
+    const wakes_before = wake_count.load(.acquire);
+    const facts = try terminal.setViewport(1);
+    try std.testing.expectEqual(@as(u32, 1), facts.offset);
+    try std.testing.expect(facts.history_count >= 1);
+    try std.testing.expect(!facts.alternate_screen);
+    try std.testing.expect(!facts.mouse_reporting);
+    try std.testing.expectEqual(wakes_before, wake_count.load(.acquire));
+    var frame = terminal.borrowFrame().?;
+    try std.testing.expectEqual(facts.offset, frame.frame.scrollback_offset);
+    try std.testing.expect(frame.frame.damage.full);
+    try terminal.releaseFrame(&frame);
+
+    terminal.lock.lockUncancelable(std.testing.io);
+    const mouse = try terminal.model.feed("\x1b[?1000h");
+    try std.testing.expect(mouse.state_changed);
+    try std.testing.expect(switch (try terminal.publishFrameLocked()) {
+        .published => true,
+        .saturated => false,
+    });
+    terminal.lock.unlock(std.testing.io);
+    try std.testing.expect(terminal.viewportFacts().mouse_reporting);
 }
 
 test "alternate-screen sparse frame damage preserves terminal progress" {

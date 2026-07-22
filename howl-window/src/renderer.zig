@@ -7,6 +7,7 @@ const howl_render = @import("howl_render");
 const howl_text = @import("howl_text");
 const howl_vt = @import("howl_vt");
 const labels = @import("labels.zig");
+const viewport = @import("viewport.zig");
 const workspace = @import("workspace.zig");
 const c = @import("native.zig").c;
 
@@ -132,6 +133,8 @@ pub const Pane = struct {
     focused: bool,
     /// False preserves and scales the last backing without requesting a frame.
     terminal_available: bool,
+    /// Paints the exact pane-local history scrollbar when retained history is useful.
+    scrollbar: ?viewport.Scrollbar,
 };
 
 const Texture = struct {
@@ -363,6 +366,29 @@ const Device = struct {
                 self.size,
                 true,
             );
+            if (pane.scrollbar) |bar| {
+                c.glUseProgram(self.mask_program);
+                try self.quad(
+                    @intCast(bar.x),
+                    @intCast(bar.y),
+                    bar.width,
+                    @intCast(bar.height),
+                    .{ .r = 80, .g = 73, .b = 69 },
+                    self.white,
+                    self.size,
+                    false,
+                );
+                try self.quad(
+                    @intCast(bar.x),
+                    @intCast(bar.thumb_y),
+                    bar.width,
+                    @intCast(bar.thumb_height),
+                    .{ .r = 146, .g = 131, .b = 116 },
+                    self.white,
+                    self.size,
+                    false,
+                );
+            }
             if (pane.focused) {
                 c.glUseProgram(self.mask_program);
                 const focus = howl_vt.Terminal.Rgb{ .r = 142, .g = 192, .b = 124 };
@@ -718,6 +744,12 @@ fn validateSubmission(
             !containsPaneId(live, pane.id))
             return error.InvalidPane;
         if (pane.focused) focused += 1;
+        if (pane.scrollbar) |bar| if (bar.width == 0 or bar.height == 0 or
+            bar.thumb_height == 0 or bar.thumb_height > bar.height or
+            bar.x < pane.x or bar.x + bar.width > pane.x + pane.width or
+            bar.y < pane.y or bar.y + bar.height > pane.y + pane.height or
+            bar.thumb_y < bar.y or bar.thumb_y + bar.thumb_height > bar.y + bar.height)
+            return error.InvalidPane;
         bytes = std.math.add(usize, bytes, backingBytes(pane.width, pane.height)) catch
             return error.InvalidPane;
         if (bytes > max_backing_bytes) return error.InvalidPane;
@@ -1384,6 +1416,24 @@ test "public submission rejects invalid composition before mailbox mutation" {
         &test_label_cells,
         10,
     ));
+    var bad_scrollbar = testPane(1, terminal, 0, 100);
+    bad_scrollbar.scrollbar = .{
+        .x = 99,
+        .y = 10,
+        .width = 3,
+        .height = 90,
+        .thumb_y = 10,
+        .thumb_height = 10,
+    };
+    try std.testing.expectError(error.InvalidPane, render.submit(
+        1,
+        .{ .width = 100, .height = 100 },
+        &.{@as(PaneId, @enumFromInt(1))},
+        &.{bad_scrollbar},
+        &.{},
+        &test_label_cells,
+        10,
+    ));
     var overlap = testPane(1, terminal, 0, 100);
     overlap.y = 0;
     try std.testing.expectError(error.InvalidPane, render.submit(
@@ -1446,6 +1496,7 @@ fn testPane(
         .height = 90,
         .focused = id == 1,
         .terminal_available = true,
+        .scrollbar = null,
     };
 }
 

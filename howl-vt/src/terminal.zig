@@ -12799,7 +12799,7 @@ pub const Terminal = struct {
     surface_publication: Publication = .{},
     scrollback_offset: u32 = 0,
 
-    /// Selects absolute, relative, or edge-based history viewport movement.
+    /// Selects one bounded projection requested by an external viewport-policy owner.
     pub const ScrollViewport = union(enum) {
         top,
         bottom,
@@ -13548,7 +13548,7 @@ pub const Terminal = struct {
         return true;
     }
 
-    /// Moves the history viewport within current visible-history bounds.
+    /// Applies one caller-owned history projection within retained bounds.
     pub fn scrollViewport(self: *Terminal, behavior: ScrollViewport) bool {
         const history_count = self.visibleHistoryCount();
         const previous = self.scrollback_offset;
@@ -13577,6 +13577,11 @@ pub const Terminal = struct {
     pub fn visibleHistoryCount(self: *const Terminal) u32 {
         if (self.screen_state.alt_active) return 0;
         return self.screen_state.activeConst().historyCount();
+    }
+
+    /// Reports whether an enabled terminal mouse-tracking mode owns pointer input.
+    pub fn mouseReportingEnabled(self: *const Terminal) bool {
+        return self.modes.mouse_tracking != .off;
     }
 
     // Clears active display, history, cursor, viewport, and selection as one exact terminal mutation.
@@ -13672,6 +13677,10 @@ pub const Terminal = struct {
             .bell_generation = self.host.bell_generation,
             .history_loss_generation = self.screen_state.primary.history_loss_generation,
             .is_alternate_screen = snapshot.view.is_alternate_screen,
+            .history_row_base = snapshot.view.history_row_base,
+            .history_count = snapshot.view.history_count,
+            .scrollback_offset = snapshot.view.scrollback_offset,
+            .mouse_reporting = self.mouseReportingEnabled(),
         };
     }
 
@@ -14204,6 +14213,14 @@ pub const Terminal = struct {
         /// Monotonic count of history rows dropped after bounded allocation failure.
         history_loss_generation: u64,
         is_alternate_screen: bool,
+        /// Identifies the oldest projected primary history row.
+        history_row_base: u32,
+        /// Reports retained projected rows available above the screen.
+        history_count: u32,
+        /// Reports the currently applied projected-history offset.
+        scrollback_offset: u32,
+        /// Reports whether terminal mouse tracking owns pointer events.
+        mouse_reporting: bool,
     };
 
     /// Copies the palette, dynamic defaults, cursor colors, and screen-wide
@@ -14281,7 +14298,7 @@ comptime {
     std.debug.assert(maximum_cell_count <= std.math.maxInt(usize));
 }
 
-test "terminal scroll viewport owns bottom intent" {
+test "terminal applies bounded host viewport projections" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
     defer vt.deinit();
 

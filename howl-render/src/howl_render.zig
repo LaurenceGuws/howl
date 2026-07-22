@@ -585,6 +585,10 @@ fn testFrame(cells: []const howl_frame.Cell, generation: u64) howl_frame.Termina
         },
         .selection = null,
         .alternate_screen = false,
+        .history_row_base = 0,
+        .history_count = 0,
+        .scrollback_offset = 0,
+        .mouse_reporting = false,
         .damage = .{ .full = false, .rows = &damage },
     };
 }

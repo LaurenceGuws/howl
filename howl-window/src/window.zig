@@ -5,6 +5,7 @@ const howl_control = @import("howl_control");
 const howl_vt = @import("howl_vt");
 const labels = @import("labels.zig");
 const renderer = @import("renderer.zig");
+const viewport = @import("viewport.zig");
 const workspace_model = @import("workspace.zig");
 const c = @import("native.zig").c;
 const MouseInput = @FieldType(howl_control.Input, "mouse");
@@ -106,6 +107,10 @@ const HostAction = enum {
     resize_down,
     reorder_left,
     reorder_right,
+    scroll_page_up,
+    scroll_page_down,
+    scroll_top,
+    scroll_bottom,
 };
 
 fn hostAction(symbol: u32, mods: KeyModifiers) ?HostAction {
@@ -123,6 +128,10 @@ fn hostAction(symbol: u32, mods: KeyModifiers) ?HostAction {
         c.XKB_KEY_comma, c.XKB_KEY_less => .reorder_left,
         c.XKB_KEY_period, c.XKB_KEY_greater => .reorder_right,
         c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => .previous_tab,
+        c.XKB_KEY_Page_Up => .scroll_page_up,
+        c.XKB_KEY_Page_Down => .scroll_page_down,
+        c.XKB_KEY_Home => .scroll_top,
+        c.XKB_KEY_End => .scroll_bottom,
         else => null,
     };
     if (mods.control and !mods.shift and !mods.alt and !mods.super) return switch (symbol) {
@@ -157,6 +166,7 @@ const PointerState = struct {
     position: ?struct { x: u32, y: u32 } = null,
     pressed: [3]?PointerTarget = @splat(null),
     buttons_down: u8 = 0,
+    scrollbar_drag: ?PaneId = null,
 
     fn preparePress(self: *const PointerState, index: usize, target: PointerTarget) ?ButtonTransition {
         if (index >= self.pressed.len or self.pressed[index] != null) return null;
@@ -229,7 +239,25 @@ const PaneOwner = struct {
     terminal: ?*howl_control.Terminal = null,
     geometry: Geometry = .{ .cols = 1, .rows = 1 },
     unavailable: bool = false,
+    viewport: viewport.State = .{},
     wake: WakeContext = .{},
+
+    fn movedViewport(self: PaneOwner, delta: i64) ?viewport.State {
+        if (self.unavailable) return null;
+        var candidate = self.viewport;
+        return if (candidate.move(delta)) candidate else null;
+    }
+
+    fn soughtViewport(self: PaneOwner, bar: viewport.Scrollbar, y: u32) ?viewport.State {
+        if (self.unavailable) return null;
+        var candidate = self.viewport;
+        return if (candidate.seek(bar, y)) candidate else null;
+    }
+
+    fn scrollbar(self: PaneOwner, pixels: PixelRect) ?viewport.Scrollbar {
+        if (self.unavailable) return null;
+        return self.viewport.scrollbar(pixels.x, pixels.y, pixels.width, pixels.height);
+    }
 };
 
 pub const Error = renderer.StartError || renderer.Error || howl_control.InitError ||
@@ -407,6 +435,7 @@ const Loop = struct {
                     const value = pane.terminal orelse continue;
                     value.consumeWake();
                     pane.unavailable = value.state() != .running;
+                    if (!pane.unavailable) pane.viewport.observe(viewportFacts(value.viewportFacts()));
                 };
                 self.updateTitle();
                 if (changed != 0) try self.submitVisible(changed & self.visibleBits());
@@ -534,6 +563,7 @@ const Loop = struct {
                 .height = pixels.height,
                 .focused = layout.focused,
                 .terminal_available = !owned.unavailable,
+                .scrollbar = owned.scrollbar(pixels),
             };
         }
         return visible.len;
@@ -602,6 +632,7 @@ const Loop = struct {
                 .height = self.render.?.metrics().cell_height,
             },
         }, .{ .context = &owned.wake, .notify = terminalWake });
+        owned.viewport.observe(viewportFacts(owned.terminal.?.viewportFacts()));
     }
 
     fn retirePane(self: *Loop, pane_id: PaneId) void {
@@ -748,6 +779,19 @@ const Loop = struct {
                 self.updateTitle();
                 try self.submitVisible(self.visibleBits());
             },
+            .scroll_page_up, .scroll_page_down, .scroll_top, .scroll_bottom => {
+                const pane = self.workspace.?.focusedPane();
+                const index = self.slotIndex(pane) orelse return;
+                const state = self.panes[index].viewport;
+                const candidate = self.panes[index].movedViewport(switch (action) {
+                    .scroll_page_up => state.rows,
+                    .scroll_page_down => -@as(i64, state.rows),
+                    .scroll_top => std.math.maxInt(i64),
+                    .scroll_bottom => std.math.minInt(i64),
+                    else => unreachable,
+                }) orelse return;
+                try self.applyViewport(index, candidate);
+            },
         }
     }
 
@@ -893,6 +937,16 @@ const Loop = struct {
             .x = @intCast(c.wl_fixed_to_int(surface_x)),
             .y = @intCast(c.wl_fixed_to_int(surface_y)),
         };
+        if (self.pointer_state.scrollbar_drag) |pane_id| {
+            const position = self.pointer_state.position.?;
+            const bar = self.scrollbarForPane(pane_id) orelse return;
+            const index = self.slotIndex(pane_id) orelse return;
+            if (self.panes[index].soughtViewport(bar, position.y)) |candidate|
+                self.applyViewport(index, candidate) catch |failure| {
+                    retainFirstFailure(&self.failure, failure);
+                };
+            return;
+        }
         if (self.pointerMoveTarget()) |target| if (self.sendMouse(
             target,
             .move,
@@ -909,6 +963,12 @@ const Loop = struct {
             else => return,
         };
         const index = mouseButtonIndex(button).?;
+        if (button == .left and state_value == c.WL_POINTER_BUTTON_STATE_RELEASED and
+            self.pointer_state.scrollbar_drag != null)
+        {
+            self.pointer_state.scrollbar_drag = null;
+            return;
+        }
         if (button == .left and state_value == c.WL_POINTER_BUTTON_STATE_PRESSED) {
             const position = self.pointer_state.position orelse return;
             if (self.labelTab(position.x, position.y)) |tab| {
@@ -921,6 +981,20 @@ const Loop = struct {
                         retainFirstFailure(&self.failure, failure);
                     };
                 }
+                return;
+            }
+            if (self.scrollbarTarget(position.x, position.y)) |target| {
+                const focused = self.workspace.?.focusPane(target.pane) catch return;
+                const index_value = self.slotIndex(target.pane) orelse return;
+                if (self.panes[index_value].soughtViewport(target.bar, position.y)) |candidate|
+                    self.applyViewport(index_value, candidate) catch |failure| {
+                        retainFirstFailure(&self.failure, failure);
+                        return;
+                    };
+                self.pointer_state.scrollbar_drag = target.pane;
+                if (focused) self.submitVisible(self.visibleBits()) catch |failure| {
+                    retainFirstFailure(&self.failure, failure);
+                };
                 return;
             }
         }
@@ -973,6 +1047,15 @@ const Loop = struct {
             return;
         }
         const target = self.pointerTarget() orelse return;
+        const pane_index = self.slotIndex(target.pane) orelse return;
+        if (!self.panes[pane_index].viewport.mouse_reporting) {
+            const rows: i64 = @as(i64, magnitude) * 3;
+            if (self.panes[pane_index].movedViewport(if (discrete < 0) rows else -rows)) |candidate|
+                self.applyViewport(pane_index, candidate) catch |failure| {
+                    retainFirstFailure(&self.failure, failure);
+                };
+            return;
+        }
         var events: [max_wheel_steps]howl_control.BatchEvent = undefined;
         for (events[0..magnitude]) |*event| event.* = .{ .input = .{ .mouse = .{
             .kind = .wheel,
@@ -1044,6 +1127,35 @@ const Loop = struct {
             self.pointer_state.commitRelease(transition);
         }
         self.pointer_state.position = null;
+        self.pointer_state.scrollbar_drag = null;
+    }
+
+    fn scrollbarTarget(self: *Loop, x: u32, y: u32) ?struct { pane: PaneId, bar: viewport.Scrollbar } {
+        var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
+        for (panes[0..self.visiblePanes(&panes)]) |pane| if (pane.scrollbar) |bar|
+            if (bar.contains(x, y)) return .{ .pane = pane.id, .bar = bar };
+        return null;
+    }
+
+    fn scrollbarForPane(self: *Loop, pane_id: PaneId) ?viewport.Scrollbar {
+        var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
+        for (panes[0..self.visiblePanes(&panes)]) |pane|
+            if (pane.id == pane_id) return pane.scrollbar;
+        return null;
+    }
+
+    fn applyViewport(self: *Loop, index: usize, candidate_value: viewport.State) Error!void {
+        const owned = &self.panes[index];
+        if (owned.unavailable) return;
+        var candidate = candidate_value;
+        const facts = owned.terminal.?.setViewport(candidate.offset) catch |failure| {
+            candidate.observe(viewportFacts(owned.terminal.?.viewportFacts()));
+            owned.viewport = candidate;
+            return failure;
+        };
+        candidate.observe(viewportFacts(facts));
+        owned.viewport = candidate;
+        try self.submitVisible(@as(u64, 1) << @intCast(index));
     }
 
     fn sendMouse(
@@ -1172,6 +1284,17 @@ fn visibleBitsFor(
         }
     };
     return bits;
+}
+
+fn viewportFacts(facts: howl_control.ViewportFacts) viewport.Facts {
+    return .{
+        .history_row_base = facts.history_row_base,
+        .history_count = facts.history_count,
+        .offset = facts.offset,
+        .rows = facts.rows,
+        .alternate_screen = facts.alternate_screen,
+        .mouse_reporting = facts.mouse_reporting,
+    };
 }
 
 /// Runs the native Wayland window until compositor close or exact failure.
@@ -1661,6 +1784,30 @@ test "keyboard repeat replaces and cancels one bounded physical key" {
     try std.testing.expectError(error.InvalidRepeat, repeat.configure(-1, 0));
 }
 
+test "unavailable pane rejects every viewport candidate without mutation or hit geometry" {
+    var pane = PaneOwner{
+        .unavailable = true,
+        .viewport = .{
+            .offset = 4,
+            .anchor = 12,
+            .history_row_base = 2,
+            .history_count = 10,
+            .rows = 4,
+        },
+    };
+    const before = pane.viewport;
+    const bar = before.scrollbar(0, 10, 40, 80).?;
+    try std.testing.expect(pane.movedViewport(3) == null);
+    try std.testing.expect(pane.soughtViewport(bar, bar.y) == null);
+    try std.testing.expect(pane.scrollbar(.{ .x = 0, .y = 10, .width = 40, .height = 80 }) == null);
+    try std.testing.expect(std.meta.eql(before, pane.viewport));
+
+    pane.unavailable = false;
+    try std.testing.expect(pane.movedViewport(3) != null);
+    try std.testing.expect(pane.soughtViewport(bar, bar.y) != null);
+    try std.testing.expect(pane.scrollbar(.{ .x = 0, .y = 10, .width = 40, .height = 80 }) != null);
+}
+
 test "host chords capture sixteen concurrent physical releases exactly" {
     var captures = HostKeys{};
     for (10..26) |code| try std.testing.expect(captures.capture(@intCast(code)));
@@ -1702,6 +1849,10 @@ test "host actions require exact non-lock modifiers" {
         .{ .symbol = c.XKB_KEY_greater, .mods = control_shift, .action = .reorder_right },
         .{ .symbol = c.XKB_KEY_Tab, .mods = control_shift, .action = .previous_tab },
         .{ .symbol = c.XKB_KEY_ISO_Left_Tab, .mods = control_shift, .action = .previous_tab },
+        .{ .symbol = c.XKB_KEY_Page_Up, .mods = control_shift, .action = .scroll_page_up },
+        .{ .symbol = c.XKB_KEY_Page_Down, .mods = control_shift, .action = .scroll_page_down },
+        .{ .symbol = c.XKB_KEY_Home, .mods = control_shift, .action = .scroll_top },
+        .{ .symbol = c.XKB_KEY_End, .mods = control_shift, .action = .scroll_bottom },
         .{ .symbol = c.XKB_KEY_Tab, .mods = control, .action = .next_tab },
         .{ .symbol = c.XKB_KEY_Left, .mods = alt, .action = .focus_left },
         .{ .symbol = c.XKB_KEY_Right, .mods = alt, .action = .focus_right },

@@ -35,6 +35,7 @@ relationships:
   - host composes control, frame, render, and Wayland while owning bounded tabs, label and pane layout, focus, and presentation lifecycles
   - the platform-independent workspace owner supplies the native host's bounded tab and split-pane state
   - the platform-independent label owner supplies one bounded top row and exact tab hit geometry without workspace policy
+  - VT retains projected history while each host pane owns follow/anchor policy and exact scrollbar geometry
   - the window loop never walks terminal cells or issues GLES commands
   - the render thread updates pane backing textures, releases every borrowed frame, and composites one visible tab
   - qagent is the first real embedder and supplies integration pressure without Howl policy

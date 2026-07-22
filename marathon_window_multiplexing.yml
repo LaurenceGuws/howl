@@ -75,7 +75,7 @@ categories:
       candidate workspace transaction over the reduced content grid.
 
   - id: viewport_scrollbar
-    status: queued
+    status: accepted
     goal: >-
       Give every pane independent bounded history navigation, follow behavior, wheel and keyboard scrolling, and a
       proportional scrollbar over the terminal's retained logical history.
@@ -83,6 +83,13 @@ categories:
       Live output, resize/reflow, alternate-screen entry and exit, tab switching, pane focus, history eviction, drag,
       wheel bursts, and terminal mouse-reporting mode have explicit deterministic behavior; viewport state never
       changes another pane and never addresses evicted rows.
+    result: >-
+      Each pane retains a bounded follow/absolute-history anchor and reconciles it against VT-owned projected history
+      base/count facts. Deliberate wheel and Ctrl+Shift PageUp/PageDown/Home/End navigation publish complete frames;
+      terminal mouse tracking retains wheel ownership, while alternate-screen entry and exit return to live output.
+      One pure owner computes a three-pixel Gruvbox scrollbar whose paint and hit geometry are identical; click and drag
+      focus and seek only the addressed live pane. Hidden panes retain independent state and unavailable panes retain
+      their last frame without accepting navigation.
 
 completion:
   - all model mutation and geometry proofs run without Wayland or GLES

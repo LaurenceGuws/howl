@@ -20,6 +20,8 @@ sources:
   howl-window/src/labels.zig: >-
     platform-independent bounded tab-label cells, terminal-availability presentation facts, deterministic truncation,
     and exact cell/pixel hit geometry without workspace mutation policy
+  howl-window/src/viewport.zig: >-
+    pane-local follow and retained-row anchor reconciliation plus exact bounded scrollbar paint/hit geometry
   howl-window/src/workspace.zig: >-
     platform-independent bounded session, tab identity/order/names, split-pane topology and cell extents, direct and
     directional focus, exact pane retirement, transactional outer resize, and hostile-state invariant validation
