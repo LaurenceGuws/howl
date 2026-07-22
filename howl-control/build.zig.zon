@@ -5,7 +5,6 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .howl_vt = .{ .path = "../howl-vt" },
-        .howl_frame = .{ .path = "../howl-frame" },
         .howl_pty = .{ .path = "../howl-pty" },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src" },

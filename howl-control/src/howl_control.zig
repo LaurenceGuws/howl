@@ -1,8 +1,7 @@
-//! Composes one PTY child, VT model, frame publisher, and optional local control endpoint.
+//! Composes one PTY child, VT model, and optional local control endpoint.
 
 const builtin = @import("builtin");
 const std = @import("std");
-const howl_frame = @import("howl_frame");
 const howl_pty = @import("howl_pty");
 const howl_vt = @import("howl_vt");
 const client = @import("client.zig");
@@ -51,13 +50,7 @@ pub const Screen = client.Screen;
 /// Copies coherent lifecycle, geometry, sequence, and output facts.
 pub const Status = client.Status;
 /// Copies one nonzero host-provided terminal cell extent in logical pixels.
-pub const CellPixelSize = howl_frame.CellPixelSize;
-/// Borrows one immutable complete visual generation until exact release.
-pub const Frame = howl_frame.Borrow;
-/// Reports stale frame release or exact pending-publication failure.
-pub const FrameReleaseError = howl_frame.ReleaseError || howl_frame.PublishError;
-/// Reports the exact visual publication failure of a deliberate viewport change.
-pub const ViewportError = howl_frame.PublishError;
+pub const CellPixelSize = howl_vt.Terminal.CellPixelSize;
 
 // Construction bounds, copied observations, and exact failures.
 
@@ -120,8 +113,7 @@ pub const Wake = struct {
 
 /// Reports invalid bounds or failure before terminal ownership transfers.
 pub const InitError = howl_vt.Terminal.InitError || std.mem.Allocator.Error ||
-    howl_frame.PublishError || std.Thread.SpawnError ||
-    net.UnixAddress.InitError || net.UnixAddress.ListenError || error{
+    std.Thread.SpawnError || net.UnixAddress.InitError || net.UnixAddress.ListenError || error{
     InvalidDimensions,
     InvalidHistory,
     InvalidTransferTimeout,
@@ -193,54 +185,23 @@ const ReaderFailure = enum(u8) {
     pty_wait_failed,
     reply_allocation_failed,
     string_control_limit,
-    frame_surface_bounds,
-    frame_invalid_cell,
-    frame_invalid_cell_pixels,
-    frame_invalid_cursor,
-    frame_invalid_damage,
-    frame_invalid_selection,
-    frame_generation_exhausted,
-};
-
-// Locked semantic surface and terminal composition.
-
-/// Borrows one semantic surface while preventing concurrent terminal mutation.
-pub const Surface = struct {
-    /// Retains the locked owner until this borrow is released.
-    owner: *Terminal,
-    /// Borrows Howl's complete semantic publication until `deinit`.
-    publication: howl_vt.Terminal.SurfacePublication,
-
-    /// Releases the terminal lock after the publication is consumed.
-    pub fn deinit(self: *Surface) void {
-        self.owner.lock.unlock(self.owner.io);
-        self.* = undefined;
-    }
-
-    /// Confirms this surface was retained by the frame owner or retires it
-    /// directly when frame publication was saturated.
-    pub fn acknowledge(self: *Surface) bool {
-        if (self.owner.frame_surface_generation >= self.publication.snapshot_seq) return true;
-        return self.owner.model.ackSurface(self.publication.snapshot_seq);
-    }
 };
 
 /// Owns one PTY child, reader thread, terminal model, and wake lifecycle.
-/// The embedder serializes `deinit` against borrowed surfaces and public calls.
+/// The embedder serializes `deinit` against public calls.
 pub const Terminal = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     transport: howl_pty.Owned,
     model: howl_vt.Terminal,
-    frames: howl_frame.Publisher,
     reader: std.Thread,
     terminal_id: TerminalId,
     endpoint_path: ?[]u8,
     server: net.Server,
     control_thread: std.Thread,
     endpoint_enabled: bool,
-    // Nested acquisition is admission before model, then frame, viewport, or
-    // lifecycle publication. PTY writes begin only after the model lock is
+    // Nested acquisition is admission before model, viewport, or lifecycle
+    // state. PTY writes begin only after the model lock is
     // released; the active-peer lock never nests with terminal state locks.
     admission_lock: std.Io.Mutex = .init,
     peer_lock: std.Io.Mutex = .init,
@@ -250,14 +211,13 @@ pub const Terminal = struct {
     child_cwd: ?[]u8,
     admission_sequence: u64 = 0,
     geometry_sequence: u64 = 0,
-    frame_surface_generation: u64 = 0,
-    // This brief lock publishes coherent projection facts without exposing
-    // the model/full-frame copy lock to the window loop.
+    // This brief lock publishes coherent viewport facts without exposing the
+    // model lock to callers.
     viewport_lock: std.Io.Mutex = .init,
     viewport_facts: ViewportFacts = .{},
     lock: std.Io.Mutex = .init,
     write_lock: std.Io.Mutex = .init,
-    // Lifecycle publication stays independent from the model lock used by hot surfaces.
+    // Lifecycle state stays independent from the model lock used by snapshots.
     lifecycle_lock: std.Io.Mutex = .init,
     state_value: std.atomic.Value(State) = .init(.running),
     reader_failure: std.atomic.Value(ReaderFailure) = .init(.none),
@@ -274,8 +234,7 @@ pub const Terminal = struct {
 
     // Construction and externally serialized teardown.
 
-    /// Constructs every resource before returning a stable pointer, including
-    /// two frame slots sized to the admitted initial geometry.
+    /// Constructs every PTY, VT, endpoint, and reader resource before return.
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -302,16 +261,6 @@ pub const Terminal = struct {
         errdefer model.deinit();
         if (config.cell_pixels) |pixels|
             model.setCellPixelSize(pixels.width, pixels.height) catch return error.InvalidDimensions;
-        var frames = howl_frame.Publisher.init(
-            allocator,
-            io,
-            config.rows,
-            config.cols,
-        ) catch |failure| switch (failure) {
-            error.InvalidBounds => @panic("validated initial frame bounds are invalid"),
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-        errdefer frames.deinit();
         transport.start(config.cols, config.rows) catch |failure| switch (failure) {
             error.AlreadyStarted => @panic("fresh PTY owner reported already started"),
             else => |expected| return expected,
@@ -370,7 +319,6 @@ pub const Terminal = struct {
             .io = io,
             .transport = transport,
             .model = model,
-            .frames = frames,
             .reader = undefined,
             .terminal_id = terminal_id,
             .endpoint_path = endpoint_path,
@@ -384,10 +332,7 @@ pub const Terminal = struct {
             .cell_pixels = config.cell_pixels,
             .transfer_timeout_ms = config.transfer_timeout_ms,
         };
-        switch (try self.publishFrameLocked()) {
-            .published => {},
-            .saturated => @panic("fresh frame publisher reported saturation"),
-        }
+        self.storeViewportFacts(viewportFactsFrom(&self.model));
         self.reader = try .spawn(.{}, readLoop, .{self});
         errdefer {
             self.cancel();
@@ -397,8 +342,7 @@ pub const Terminal = struct {
         return self;
     }
 
-    /// Stops the reader and child before releasing frame, model, and allocation ownership.
-    /// Every frame borrow must be released before this externally serialized call.
+    /// Stops the reader and child before releasing model and allocation ownership.
     pub fn deinit(self: *Terminal) void {
         self.cancel();
         self.stopping.store(true, .release);
@@ -416,7 +360,6 @@ pub const Terminal = struct {
         }
         self.reader.join();
         self.transport.deinit();
-        self.frames.deinit();
         self.model.deinit();
         const allocator = self.allocator;
         if (self.child_cwd) |cwd| allocator.free(cwd);
@@ -552,7 +495,6 @@ pub const Terminal = struct {
     }
 
     /// Admits one resize and advances geometry only after an actual change.
-    /// Changed geometry is rejected before PTY mutation while a frame is borrowed.
     pub fn resize(self: *Terminal, cols: u16, rows: u16) ResizeError!ResizeResult {
         self.admission_lock.lockUncancelable(self.io);
         defer self.admission_lock.unlock(self.io);
@@ -578,12 +520,6 @@ pub const Terminal = struct {
             if (announce_failure) self.notify();
         }
         if (self.cols == cols and self.rows == rows) return false;
-        var frame_resize = self.frames.prepareResize(rows, cols) catch |failure| switch (failure) {
-            error.InvalidBounds => @panic("validated frame resize bounds became invalid"),
-            error.BorrowedFrames => return error.FrameBorrowed,
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-        defer frame_resize.deinit();
         self.transport.resize(cols, rows) catch |failure| switch (failure) {
             error.NotStarted => return error.NotStarted,
             error.ResizeFailed => return error.PtyResizeFailed,
@@ -602,19 +538,11 @@ pub const Terminal = struct {
         self.cols = cols;
         self.rows = rows;
         self.geometry_sequence = nextSequence(self.geometry_sequence);
-        frame_resize.commit();
-        const frame_result = self.publishFrameLocked() catch |failure| {
-            self.stopAfterFrameFailure(frameReaderError(failure));
-            announce_failure = true;
-            return frameResizeError(failure);
-        };
-        switch (frame_result) {
-            .published, .saturated => {},
-        }
+        self.storeViewportFacts(viewportFactsFrom(&self.model));
         return true;
     }
 
-    /// Copies bounded finalized primary output without acknowledging a surface.
+    /// Copies bounded finalized primary output from one cursor.
     pub fn output(
         self: *Terminal,
         allocator: std.mem.Allocator,
@@ -635,21 +563,21 @@ pub const Terminal = struct {
         defer self.lock.unlock(self.io);
         self.lifecycle_lock.lockUncancelable(self.io);
         defer self.lifecycle_lock.unlock(self.io);
-        const publication = self.model.surfaceSnapshot();
+        const snapshot = self.model.stateSnapshot();
         const output_range = self.model.logicalOutputRange();
         var shell_mark: ?ShellMark = null;
-        if (publication.shell_mark.generation != 0) {
+        if (snapshot.shell_mark.generation != 0) {
             var mark = ShellMark{
-                .generation = publication.shell_mark.generation,
-                .kind = publication.shell_mark.kind,
-                .status = publication.shell_mark.status,
+                .generation = snapshot.shell_mark.generation,
+                .kind = snapshot.shell_mark.kind,
+                .status = snapshot.shell_mark.status,
                 .metadata = @splat(0),
-                .metadata_len = @intCast(publication.shell_mark.metadata.len),
+                .metadata_len = @intCast(snapshot.shell_mark.metadata.len),
                 .shell = @splat(0),
                 .shell_len = 0,
             };
-            @memcpy(mark.metadata[0..mark.metadata_len], publication.shell_mark.metadata);
-            if (publication.shell_integration) |integration| if (integration.shell) |shell| {
+            @memcpy(mark.metadata[0..mark.metadata_len], snapshot.shell_mark.metadata);
+            if (snapshot.shell_integration) |integration| if (integration.shell) |shell| {
                 mark.shell_len = @intCast(shell.len);
                 @memcpy(mark.shell[0..mark.shell_len], shell);
             };
@@ -668,9 +596,8 @@ pub const Terminal = struct {
             .child_cwd = self.child_cwd,
             .cols = self.cols,
             .rows = self.rows,
-            .publication = publication.snapshot_seq,
-            .history_loss_generation = publication.history_loss_generation,
-            .alternate_screen = publication.is_alternate_screen,
+            .history_loss_generation = snapshot.history_loss_generation,
+            .alternate_screen = snapshot.is_alternate_screen,
             .admission_sequence = self.admission_sequence,
             .input_sequence = self.input_sequence.load(.acquire),
             .geometry_sequence = self.geometry_sequence,
@@ -680,17 +607,17 @@ pub const Terminal = struct {
         };
     }
 
-    /// Copies the current viewport without acknowledging its publication.
+    /// Copies the current bounded viewport without retaining model borrows.
     pub fn screen(
         self: *Terminal,
         allocator: std.mem.Allocator,
     ) (std.mem.Allocator.Error || error{ScreenLimit})!Screen {
         var bytes = try allocator.alloc(u8, max_screen_bytes);
         errdefer allocator.free(bytes);
-        var surface_value = self.surface();
-        defer surface_value.deinit();
-        const publication = surface_value.publication;
-        const view = publication.snapshot.view;
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        const visual = self.model.visualView();
+        const view = visual.view;
         var writer = std.Io.Writer.fixed(bytes);
         for (0..view.rows) |row_value| {
             const row: u16 = @intCast(row_value);
@@ -712,10 +639,9 @@ pub const Terminal = struct {
         return .{
             .allocator = allocator,
             .text = bytes,
-            .publication = publication.snapshot_seq,
             .cols = view.cols,
             .rows = view.rows,
-            .alternate_screen = publication.is_alternate_screen,
+            .alternate_screen = view.is_alternate_screen,
             .cursor_visible = view.cursor_visible,
             .cursor_col = view.cursor_col,
             .cursor_row = view.cursor_row,
@@ -795,13 +721,7 @@ pub const Terminal = struct {
         return buttons & mask != 0;
     }
 
-    // Frame publication, reader progress, wake delivery, and retained failure.
-
-    /// Borrows the newest complete visual generation without retaining the
-    /// terminal-model lock while the renderer uses it.
-    pub fn borrowFrame(self: *Terminal) ?Frame {
-        return self.frames.borrowNewest();
-    }
+    // Viewport facts, reader progress, and wake delivery.
 
     /// Copies the current bounded viewport facts without walking terminal cells.
     pub fn viewportFacts(self: *Terminal) ViewportFacts {
@@ -810,85 +730,20 @@ pub const Terminal = struct {
         return self.viewport_facts;
     }
 
-    /// Applies one absolute host viewport offset and publishes its complete frame.
-    /// The caller owns subsequent render submission; this deliberate operation
-    /// does not emit a duplicate terminal wake.
-    pub fn setViewport(self: *Terminal, offset: u32) ViewportError!ViewportFacts {
+    /// Applies one absolute host viewport offset and announces actual change.
+    pub fn setViewport(self: *Terminal, offset: u32) ViewportFacts {
         self.lock.lockUncancelable(self.io);
         if (self.state_value.load(.acquire) != .running) {
-            const facts = viewportFactsFrom(self.model.surfaceSnapshot());
+            const facts = viewportFactsFrom(&self.model);
             self.lock.unlock(self.io);
             return facts;
         }
         const changed = self.model.scrollViewport(.{ .absolute = offset });
-        if (changed) {
-            const result = self.publishFrameLocked() catch |failure| {
-                const facts = viewportFactsFrom(self.model.surfaceSnapshot());
-                self.storeViewportFacts(facts);
-                self.lock.unlock(self.io);
-                self.finish(.failed, readerFailure(frameReaderError(failure)));
-                self.transport.cancel();
-                return failure;
-            };
-            switch (result) {
-                .published, .saturated => {},
-            }
-        }
-        const facts = viewportFactsFrom(self.model.surfaceSnapshot());
+        const facts = viewportFactsFrom(&self.model);
+        self.storeViewportFacts(facts);
         self.lock.unlock(self.io);
+        if (changed) self.notify();
         return facts;
-    }
-
-    /// Releases one exact visual generation. If prior saturation retained a
-    /// newer model state, this call copies it into the released slot and wakes
-    /// the consumer before returning. The caller holds no semantic `Surface`
-    /// borrow because recovery requires the same terminal-model lock.
-    pub fn releaseFrame(self: *Terminal, frame: *Frame) FrameReleaseError!void {
-        self.lock.lockUncancelable(self.io);
-        const pending = frame.release() catch |failure| {
-            self.lock.unlock(self.io);
-            return failure;
-        };
-        if (!pending) {
-            self.lock.unlock(self.io);
-            return;
-        }
-        const recovered = self.publishFrameLocked() catch |failure| {
-            self.lock.unlock(self.io);
-            self.finish(.failed, readerFailure(frameReaderError(failure)));
-            self.transport.cancel();
-            return failure;
-        };
-        self.lock.unlock(self.io);
-        switch (recovered) {
-            .published => self.notify(),
-            .saturated => @panic("released frame slot was not reusable"),
-        }
-    }
-
-    /// Locks and borrows one complete semantic surface publication.
-    pub fn surface(self: *Terminal) Surface {
-        self.lock.lockUncancelable(self.io);
-        return .{ .owner = self, .publication = self.model.surfaceSnapshot() };
-    }
-
-    fn publishFrameLocked(self: *Terminal) howl_frame.PublishError!howl_frame.PublishResult {
-        const surface_value = self.model.surfaceSnapshot();
-        const result = try self.frames.publish(
-            surface_value,
-            self.geometry_sequence,
-            self.cell_pixels,
-        );
-        switch (result) {
-            .published => {
-                if (surface_value.snapshot.dirty != null)
-                    std.debug.assert(self.model.ackSurface(surface_value.snapshot_seq));
-                self.frame_surface_generation = surface_value.snapshot_seq;
-            },
-            .saturated => {},
-        }
-        self.storeViewportFacts(viewportFactsFrom(surface_value));
-        return result;
     }
 
     fn storeViewportFacts(self: *Terminal, facts: ViewportFacts) void {
@@ -936,16 +791,8 @@ pub const Terminal = struct {
             self.lock.unlock(self.io);
             return error.ReplyAllocationFailed;
         };
-        if (summary.state_changed or summary.history_lost) {
-            const frame_result = self.publishFrameLocked() catch |failure| {
-                self.lock.unlock(self.io);
-                self.allocator.free(reply);
-                return frameReaderError(failure);
-            };
-            switch (frame_result) {
-                .published, .saturated => {},
-            }
-        }
+        if (summary.state_changed or summary.history_lost)
+            self.storeViewportFacts(viewportFactsFrom(&self.model));
         self.lock.unlock(self.io);
         std.debug.assert(reply.len <= max_transfer_bytes);
         if (reply.len != 0) {
@@ -1017,16 +864,6 @@ pub const Terminal = struct {
         self.lifecycle_lock.lockUncancelable(self.io);
         if (self.state_value.load(.monotonic) == .running) {
             self.resize_rollback_failed.store(true, .monotonic);
-            self.state_value.store(.failed, .release);
-        }
-        self.lifecycle_lock.unlock(self.io);
-        self.transport.cancel();
-    }
-
-    fn stopAfterFrameFailure(self: *Terminal, failure: ReaderError) void {
-        self.lifecycle_lock.lockUncancelable(self.io);
-        if (self.state_value.load(.monotonic) == .running) {
-            self.reader_failure.store(readerFailure(failure), .monotonic);
             self.state_value.store(.failed, .release);
         }
         self.lifecycle_lock.unlock(self.io);
@@ -1280,17 +1117,9 @@ fn operationFailureStatus(failure: OperationError) client.ResponseStatus {
         error.OutOfMemory => .out_of_memory,
         error.ConsequenceLimit => .consequence_limit,
         error.ScreenLimit => .screen_limit,
-        error.FrameBorrowed => .frame_borrowed,
         error.ResizeRollbackFailed => .resize_rollback_failed,
         error.NotStarted,
         error.PtyResizeFailed,
-        error.FrameSurfaceBounds,
-        error.FrameInvalidCell,
-        error.FrameInvalidCellPixels,
-        error.FrameInvalidCursor,
-        error.FrameInvalidDamage,
-        error.FrameInvalidSelection,
-        error.FrameGenerationExhausted,
         error.ResponseWriteFailed,
         => .internal_failure,
     };
@@ -1326,48 +1155,18 @@ fn readerFailure(failure: ReaderError) ReaderFailure {
         error.PtyWaitFailed => .pty_wait_failed,
         error.ReplyAllocationFailed => .reply_allocation_failed,
         error.StringControlLimit => .string_control_limit,
-        error.FrameSurfaceBounds => .frame_surface_bounds,
-        error.FrameInvalidCell => .frame_invalid_cell,
-        error.FrameInvalidCellPixels => .frame_invalid_cell_pixels,
-        error.FrameInvalidCursor => .frame_invalid_cursor,
-        error.FrameInvalidDamage => .frame_invalid_damage,
-        error.FrameInvalidSelection => .frame_invalid_selection,
-        error.FrameGenerationExhausted => .frame_generation_exhausted,
     };
 }
 
-fn frameReaderError(failure: howl_frame.PublishError) ReaderError {
-    return switch (failure) {
-        error.SurfaceBounds => error.FrameSurfaceBounds,
-        error.InvalidCell => error.FrameInvalidCell,
-        error.InvalidCellPixels => error.FrameInvalidCellPixels,
-        error.InvalidCursor => error.FrameInvalidCursor,
-        error.InvalidDamage => error.FrameInvalidDamage,
-        error.InvalidSelection => error.FrameInvalidSelection,
-        error.GenerationExhausted => error.FrameGenerationExhausted,
-    };
-}
-
-fn frameResizeError(failure: howl_frame.PublishError) ResizeError {
-    return switch (failure) {
-        error.SurfaceBounds => error.FrameSurfaceBounds,
-        error.InvalidCell => error.FrameInvalidCell,
-        error.InvalidCellPixels => error.FrameInvalidCellPixels,
-        error.InvalidCursor => error.FrameInvalidCursor,
-        error.InvalidDamage => error.FrameInvalidDamage,
-        error.InvalidSelection => error.FrameInvalidSelection,
-        error.GenerationExhausted => error.FrameGenerationExhausted,
-    };
-}
-
-fn viewportFactsFrom(publication: howl_vt.Terminal.SurfacePublication) ViewportFacts {
+fn viewportFactsFrom(model: *const howl_vt.Terminal) ViewportFacts {
+    const snapshot = model.stateSnapshot();
     return .{
-        .history_row_base = publication.history_row_base,
-        .history_count = publication.history_count,
-        .offset = publication.scrollback_offset,
-        .rows = publication.snapshot.view.rows,
-        .alternate_screen = publication.is_alternate_screen,
-        .mouse_reporting = publication.mouse_reporting,
+        .history_row_base = snapshot.history_row_base,
+        .history_count = snapshot.history_count,
+        .offset = snapshot.scrollback_offset,
+        .rows = model.visibleMeta().rows,
+        .alternate_screen = snapshot.is_alternate_screen,
+        .mouse_reporting = snapshot.mouse_reporting,
     };
 }
 
@@ -1386,13 +1185,6 @@ fn decodeReaderFailure(failure: ReaderFailure) ?ReaderError {
         .pty_wait_failed => error.PtyWaitFailed,
         .reply_allocation_failed => error.ReplyAllocationFailed,
         .string_control_limit => error.StringControlLimit,
-        .frame_surface_bounds => error.FrameSurfaceBounds,
-        .frame_invalid_cell => error.FrameInvalidCell,
-        .frame_invalid_cell_pixels => error.FrameInvalidCellPixels,
-        .frame_invalid_cursor => error.FrameInvalidCursor,
-        .frame_invalid_damage => error.FrameInvalidDamage,
-        .frame_invalid_selection => error.FrameInvalidSelection,
-        .frame_generation_exhausted => error.FrameGenerationExhausted,
     };
 }
 
@@ -1519,36 +1311,7 @@ test "wake mutation between observation and acknowledgement is announced" {
     try std.testing.expectEqual(terminal.wake_generation.load(.acquire), terminal.wake_announced.load(.acquire));
 }
 
-test "frame saturation recovers newest complete state through exact release" {
-    var wake_count: std.atomic.Value(u32) = .init(0);
-    const terminal = try Terminal.init(
-        std.testing.allocator,
-        std.testing.io,
-        .{ .command = "sleep 30", .cols = 4, .rows = 1 },
-        .{ .context = &wake_count, .notify = countTestWake },
-    );
-    defer terminal.deinit();
-
-    var first = terminal.borrowFrame().?;
-    try terminal.consume("A");
-    var second = terminal.borrowFrame().?;
-    try terminal.consume("B");
-    try std.testing.expectEqual(@as(u64, 2), terminal.frames.newestGeneration());
-    try std.testing.expect(terminal.model.surfaceSnapshot().snapshot.dirty != null);
-
-    try terminal.releaseFrame(&first);
-    try std.testing.expectEqual(@as(u64, 3), terminal.frames.newestGeneration());
-    var recovered = terminal.borrowFrame().?;
-    try std.testing.expectEqual(@as(u21, 'A'), recovered.frame.cells[0].codepoint);
-    try std.testing.expectEqual(@as(u21, 'B'), recovered.frame.cells[1].codepoint);
-    try std.testing.expect(recovered.frame.damage.full);
-    try std.testing.expect(terminal.model.surfaceSnapshot().snapshot.dirty == null);
-    try std.testing.expect(wake_count.load(.acquire) != 0);
-    try terminal.releaseFrame(&second);
-    try terminal.releaseFrame(&recovered);
-}
-
-test "host viewport projection publishes retained history and mouse ownership" {
+test "host viewport operation retains history and mouse ownership facts" {
     var wake_count: std.atomic.Value(u32) = .init(0);
     const terminal = try Terminal.init(
         std.testing.allocator,
@@ -1558,39 +1321,23 @@ test "host viewport projection publishes retained history and mouse ownership" {
     );
     defer terminal.deinit();
 
-    terminal.lock.lockUncancelable(std.testing.io);
-    const summary = try terminal.model.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
-    try std.testing.expect(summary.state_changed);
-    try std.testing.expect(switch (try terminal.publishFrameLocked()) {
-        .published => true,
-        .saturated => false,
-    });
-    terminal.lock.unlock(std.testing.io);
+    try terminal.consume("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
+    terminal.consumeWake();
 
     const wakes_before = wake_count.load(.acquire);
-    const facts = try terminal.setViewport(1);
+    const facts = terminal.setViewport(1);
     try std.testing.expectEqual(@as(u32, 1), facts.offset);
     try std.testing.expect(facts.history_count >= 1);
     try std.testing.expect(!facts.alternate_screen);
     try std.testing.expect(!facts.mouse_reporting);
-    try std.testing.expectEqual(wakes_before, wake_count.load(.acquire));
-    var frame = terminal.borrowFrame().?;
-    try std.testing.expectEqual(facts.offset, frame.frame.scrollback_offset);
-    try std.testing.expect(frame.frame.damage.full);
-    try terminal.releaseFrame(&frame);
+    try std.testing.expectEqual(wakes_before + 1, wake_count.load(.acquire));
+    try std.testing.expectEqual(facts.offset, terminal.viewportFacts().offset);
 
-    terminal.lock.lockUncancelable(std.testing.io);
-    const mouse = try terminal.model.feed("\x1b[?1000h");
-    try std.testing.expect(mouse.state_changed);
-    try std.testing.expect(switch (try terminal.publishFrameLocked()) {
-        .published => true,
-        .saturated => false,
-    });
-    terminal.lock.unlock(std.testing.io);
+    try terminal.consume("\x1b[?1000h");
     try std.testing.expect(terminal.viewportFacts().mouse_reporting);
 }
 
-test "alternate-screen sparse frame damage preserves terminal progress" {
+test "alternate-screen sparse mutation preserves terminal progress" {
     const terminal = try Terminal.init(
         std.testing.allocator,
         std.testing.io,
@@ -1599,26 +1346,23 @@ test "alternate-screen sparse frame damage preserves terminal progress" {
     );
     defer terminal.deinit();
 
-    var initial = terminal.borrowFrame().?;
-    try terminal.releaseFrame(&initial);
     try terminal.consume("\x1b[?1049h");
-    var alternate = terminal.borrowFrame().?;
-    try std.testing.expect(alternate.frame.alternate_screen);
-    try terminal.releaseFrame(&alternate);
+    {
+        var alternate = try terminal.screen(std.testing.allocator);
+        defer alternate.deinit();
+        try std.testing.expect(alternate.alternate_screen);
+    }
 
     try terminal.consume("\x1b[1;1HA\x1b[3;4HZ");
     try std.testing.expectEqual(State.running, terminal.state());
     try std.testing.expectEqual(@as(?ReaderError, null), terminal.readerError());
-    var sparse = terminal.borrowFrame().?;
-    try std.testing.expectEqual(@as(u21, 'A'), sparse.frame.cells[0].codepoint);
-    try std.testing.expectEqual(@as(u21, 'Z'), sparse.frame.cells[11].codepoint);
-    try std.testing.expect(sparse.frame.damage.rows[0].dirty);
-    try std.testing.expect(!sparse.frame.damage.rows[1].dirty);
-    try std.testing.expect(sparse.frame.damage.rows[2].dirty);
-    try terminal.releaseFrame(&sparse);
+    var screen = try terminal.screen(std.testing.allocator);
+    defer screen.deinit();
+    try std.testing.expect(std.mem.startsWith(u8, screen.text, "A"));
+    try std.testing.expect(std.mem.indexOf(u8, screen.text, "Z") != null);
 }
 
-test "cell pixels publish and bound mouse coordinates with exact button state" {
+test "cell pixels bound mouse coordinates with exact button state" {
     const pixels = CellPixelSize{ .width = 8, .height = 16 };
     const terminal = try Terminal.init(
         std.testing.allocator,
@@ -1627,10 +1371,6 @@ test "cell pixels publish and bound mouse coordinates with exact button state" {
         .{},
     );
     defer terminal.deinit();
-
-    var frame = terminal.borrowFrame().?;
-    try std.testing.expectEqual(pixels, frame.frame.cell_pixels.?);
-    try terminal.releaseFrame(&frame);
 
     const press: Input = .{ .mouse = .{
         .kind = .press,
@@ -1666,29 +1406,6 @@ test "zero cell pixels reject terminal construction before child launch" {
         .{ .command = "sleep 30", .cell_pixels = .{ .width = 0, .height = 16 } },
         .{},
     ));
-}
-
-test "frame publication failures retain exact reader meanings" {
-    try std.testing.expectEqual(
-        @as(ReaderError, error.FrameSurfaceBounds),
-        frameReaderError(error.SurfaceBounds),
-    );
-    try std.testing.expectEqual(
-        @as(ReaderError, error.FrameInvalidDamage),
-        frameReaderError(error.InvalidDamage),
-    );
-    try std.testing.expectEqual(
-        @as(ReaderError, error.FrameGenerationExhausted),
-        frameReaderError(error.GenerationExhausted),
-    );
-    try std.testing.expectEqual(
-        ReaderFailure.frame_generation_exhausted,
-        readerFailure(error.FrameGenerationExhausted),
-    );
-    try std.testing.expectEqual(
-        @as(?ReaderError, error.FrameGenerationExhausted),
-        decodeReaderFailure(.frame_generation_exhausted),
-    );
 }
 
 test "resize rollback failure transition stops progress and preserves cleanup control" {

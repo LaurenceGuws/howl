@@ -4,7 +4,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const vt = b.dependency("howl_vt", .{ .target = target, .optimize = optimize });
-    const frame = b.dependency("howl_frame", .{ .target = target, .optimize = optimize });
     const pty = b.dependency("howl_pty", .{ .target = target, .optimize = optimize });
     const module = b.addModule("howl_control", .{
         .root_source_file = b.path("src/howl_control.zig"),
@@ -13,7 +12,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     module.addImport("howl_vt", vt.module("howl_vt"));
-    module.addImport("howl_frame", frame.module("howl_frame"));
     module.addImport("howl_pty", pty.module("howl_pty"));
 
     const api = b.addTest(.{ .name = "howl-control-api", .root_module = module, .filters = b.args orelse &.{} });

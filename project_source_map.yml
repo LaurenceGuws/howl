@@ -15,6 +15,11 @@ accepted:
   howl-pty/build.zig: PTY package build and proofs
   howl-pty/build.zig.zon: PTY package identity and source boundary
   howl-pty/src/howl_pty.zig: Linux PTY transport and child-process lifecycle
+  howl-control/build.zig: control package build and direct VT/PTY dependency graph
+  howl-control/build.zig.zon: control package identity and source boundary
+  howl-control/src/client.zig: identity, endpoint, codec, and bounded request ownership
+  howl-control/src/howl_control.zig: optional ID-addressable PTY and VT composition
+  howl-control/src/test.zig: control transport, lifecycle, and terminal-operation proofs
   howl-render/build.zig: independently selected text and generated-glyph capability graphs
   howl-render/build.zig.zon: render package identity, owned assets, and licenses
   howl-render/src/root*.zig: curated roots for selected render capabilities
@@ -27,10 +32,4 @@ accepted:
 quarantined:
   build.zig: workspace commands still name deleted packages and rejected runtime machinery
   build.zig.zon: workspace path list still names deleted packages
-  howl-render/src/howl_frame.zig: visual-value evidence mixed with rejected publication and synchronization policy
-  howl-control/build.zig: current package graph retains a rejected rendering dependency
-  howl-control/build.zig.zon: current dependency list retains a rejected rendering package edge
-  howl-control/src/client.zig: identity, endpoint, codec, and request evidence awaiting the control inventory
-  howl-control/src/howl_control.zig: accepted PTY/VT behavior mixed with rejected rendering publication
-  howl-control/src/test.zig: behavior evidence mixed with rejected rendering-publication proofs
   howl-host: executable evidence only; its surviving noun, topology, API, and source have not been accepted
