@@ -58,13 +58,21 @@ categories:
       and unavailable panes retain their last backing without joining resize admission.
 
   - id: labels_and_defaults
-    status: queued
+    status: accepted
     goal: >-
       Add one small bounded label-cell surface for the top tab bar and apply deliberate Kitty-informed defaults without
       importing Kitty configuration machinery.
     gate: >-
       Labels truncate deterministically, active/focused/unavailable facts remain legible, hit regions match painted
       cells, narrow windows remain valid, and the existing Howl visual language is preserved.
+    result: >-
+      One platform-independent fixed row formats workspace names into bounded Unicode cells and exact tab hit ranges.
+      Active tabs use the Gruvbox orange treatment, inactive tabs use the dark treatment, and '~'/'!' distinguish some
+      or all stopped pane terminals. The Wayland loop reserves label pixels above every terminal pane, aggregates hidden
+      and visible terminal state, switches tabs on left click, and captures Ctrl+Shift+comma/period tab reordering.
+      Labels use the render thread's existing font, mask cache, GLES textures, and generation coalescing; no second text
+      or platform owner exists. Narrow rows retain the active tab deterministically and terminal PTY resize remains one
+      candidate workspace transaction over the reduced content grid.
 
   - id: viewport_scrollbar
     status: queued

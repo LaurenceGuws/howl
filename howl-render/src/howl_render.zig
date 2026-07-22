@@ -290,6 +290,45 @@ pub const Renderer = struct {
         return prepared;
     }
 
+    /// Prepare additional caller-bounded presentation cells in the same cache
+    /// generation as terminal panes. Invalid cells reject before mutation. A
+    /// later shaping, raster, or cache failure may leave earlier masks reusable;
+    /// a label-only generation becomes accepted only after every cell resolves.
+    pub fn prepareCells(
+        self: *Renderer,
+        generation: u64,
+        cells: []const howl_frame.Cell,
+    ) Error!void {
+        if (generation == 0 or generation < self.last_generation)
+            return error.InvalidGeneration;
+        if (cells.len == 0) return error.InvalidFrame;
+        for (cells) |cell| if (cell.codepoint == 0 or cell.width != 1 or cell.height != 1 or
+            cell.x != 0 or cell.y != 0 or cell.combining_len > howl_frame.max_combining or
+            !std.unicode.utf8ValidCodepoint(cell.codepoint)) return error.InvalidFrame;
+        const starts_generation = generation > self.last_generation;
+        if (starts_generation) {
+            if (self.cache_generation == std.math.maxInt(u64))
+                return error.CacheGenerationExhausted;
+            self.cache_generation += 1;
+        }
+        var prepared = Prepared{
+            .generation = generation,
+            .panes = 0,
+            .cells = 0,
+            .clusters = 0,
+            .glyphs = 0,
+            .replacement_cells = 0,
+            .cache_hits = 0,
+            .cache_misses = 0,
+            .cache_bytes = self.cache.bytes,
+        };
+        for (cells) |cell| {
+            const glyphs = try self.resolveCell(self.cache_generation, cell, &prepared);
+            prepared.glyphs += glyphs.count;
+        }
+        if (starts_generation) self.last_generation = generation;
+    }
+
     fn preparePane(
         self: *Renderer,
         cache_generation: u64,
@@ -642,6 +681,40 @@ test "prepared glyphs borrow the admitted mask without allocation or identity dr
     try std.testing.expectEqual(first.values[0].identity, second.values[0].identity);
     try std.testing.expectEqual(first.values[0].pixels.ptr, second.values[0].pixels.ptr);
     try std.testing.expectEqualDeep(before, renderer.cache);
+}
+
+test "presentation cells share terminal masks and validate before generation mutation" {
+    const paths = @import("render_test_paths");
+    var renderer = try Renderer.init(std.testing.allocator, .{
+        .primary = paths.font,
+        .pixel_height = 18,
+    });
+    defer renderer.deinit();
+    const cell = testCell('A');
+    const cells = [_]howl_frame.Cell{ cell, testCell(0) };
+    const frame = testFrame(&cells, 1);
+    const metrics_value = renderer.metrics();
+    const pane = Pane{
+        .x = 0,
+        .y = 0,
+        .width = @as(u32, metrics_value.cell_width) * 2,
+        .height = metrics_value.cell_height,
+        .frame = frame,
+    };
+    const prepared = try renderer.prepare(1, pane.width, pane.height, &.{pane});
+    try std.testing.expectEqual(@as(u64, 1), prepared.generation);
+    const identity = renderer.cache.entries[0].identity;
+    try renderer.prepareCells(1, &.{cell});
+    try std.testing.expectEqual(@as(u16, 1), renderer.cache.count);
+    try std.testing.expectEqual(identity, (try renderer.preparedGlyphs(cell)).values[0].identity);
+
+    var invalid = cell;
+    invalid.width = 0;
+    const before_generation = renderer.cache_generation;
+    const before_last = renderer.last_generation;
+    try std.testing.expectError(error.InvalidFrame, renderer.prepareCells(2, &.{ cell, invalid }));
+    try std.testing.expectEqual(before_generation, renderer.cache_generation);
+    try std.testing.expectEqual(before_last, renderer.last_generation);
 }
 
 test "damage and generation validation reject stale work before cache mutation" {

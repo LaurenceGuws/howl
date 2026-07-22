@@ -3,6 +3,7 @@
 const std = @import("std");
 const howl_control = @import("howl_control");
 const howl_vt = @import("howl_vt");
+const labels = @import("labels.zig");
 const renderer = @import("renderer.zig");
 const workspace_model = @import("workspace.zig");
 const c = @import("native.zig").c;
@@ -103,6 +104,8 @@ const HostAction = enum {
     resize_right,
     resize_up,
     resize_down,
+    reorder_left,
+    reorder_right,
 };
 
 fn hostAction(symbol: u32, mods: KeyModifiers) ?HostAction {
@@ -117,6 +120,8 @@ fn hostAction(symbol: u32, mods: KeyModifiers) ?HostAction {
         c.XKB_KEY_Right => .resize_right,
         c.XKB_KEY_Up => .resize_up,
         c.XKB_KEY_Down => .resize_down,
+        c.XKB_KEY_comma, c.XKB_KEY_less => .reorder_left,
+        c.XKB_KEY_period, c.XKB_KEY_greater => .reorder_right,
         c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => .previous_tab,
         else => null,
     };
@@ -256,6 +261,7 @@ pub const Error = renderer.StartError || renderer.Error || howl_control.InitErro
     StalePane,
     LastTab,
     LastPane,
+    InvalidLabels,
 };
 
 const Loop = struct {
@@ -290,6 +296,7 @@ const Loop = struct {
     render_generation: u64 = 0,
     completed_generation: u64 = 0,
     workspace: ?workspace_model.Workspace = null,
+    label_row: labels.Row = .{},
     title: [128]u8 = undefined,
 
     fn init(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const u8) Error!*Loop {
@@ -339,7 +346,7 @@ const Loop = struct {
             if (c.wl_display_dispatch(display) < 0) return error.WaylandDispatch;
         if (self.failure) |failure| return failure;
         self.size = self.pending_size;
-        if (self.size.width < 2) return error.InvalidSize;
+        if (self.size.width < 2 or self.size.height < 2) return error.InvalidSize;
         const render = try renderer.Render.start(allocator, io, .{
             .display = display,
             .surface = surface,
@@ -402,8 +409,7 @@ const Loop = struct {
                     pane.unavailable = value.state() != .running;
                 };
                 self.updateTitle();
-                const visible_changed = changed & self.visibleBits();
-                if (visible_changed != 0) try self.submitVisible(visible_changed);
+                if (changed != 0) try self.submitVisible(changed & self.visibleBits());
             }
             if (sources.repeat) try self.repeatKey();
             if (sources.display_read and
@@ -438,6 +444,7 @@ const Loop = struct {
             }
         };
         if (self.render_generation == std.math.maxInt(u64)) return error.StaleGeneration;
+        const label_row = try self.formatLabels();
         self.render_generation += 1;
         try self.render.?.submit(
             self.render_generation,
@@ -445,13 +452,16 @@ const Loop = struct {
             live[0..live_count],
             panes[0..pane_count],
             dirty[0..dirty_count],
+            label_row.cellSlice(),
+            labelHeight(self.size, self.render.?.metrics()),
         );
+        self.label_row = label_row;
     }
 
     fn resizeAll(self: *Loop) Error!void {
         const render = self.render orelse return;
         if (self.completed_generation != self.render_generation) return;
-        if (self.pending_size.width < 2 or self.pending_size.height == 0 or
+        if (self.pending_size.width < 2 or self.pending_size.height < 2 or
             self.pending_size.width > renderer.max_window_dimension or
             self.pending_size.height > renderer.max_window_dimension) return error.InvalidSize;
         var candidate = self.workspace.?;
@@ -514,28 +524,43 @@ const Loop = struct {
         const metrics = self.render.?.metrics();
         for (visible, output[0..visible.len]) |layout, *pane| {
             const owned = &self.panes[self.slotIndex(layout.pane) orelse unreachable];
-            const x = @as(u32, layout.rect.col) * metrics.cell_width;
-            const y = @as(u32, layout.rect.row) * metrics.cell_height;
-            const right = if (layout.rect.col + layout.rect.cols == workspace.size.cols)
-                self.size.width
-            else
-                @as(u32, layout.rect.col + layout.rect.cols) * metrics.cell_width;
-            const bottom = if (layout.rect.row + layout.rect.rows == workspace.size.rows)
-                self.size.height
-            else
-                @as(u32, layout.rect.row + layout.rect.rows) * metrics.cell_height;
+            const pixels = panePixels(layout.rect, workspace.size, self.size, metrics);
             pane.* = .{
                 .id = layout.pane,
                 .terminal = owned.terminal.?,
-                .x = x,
-                .y = y,
-                .width = right - x,
-                .height = bottom - y,
+                .x = pixels.x,
+                .y = pixels.y,
+                .width = pixels.width,
+                .height = pixels.height,
                 .focused = layout.focused,
                 .terminal_available = !owned.unavailable,
             };
         }
         return visible.len;
+    }
+
+    fn formatLabels(self: *const Loop) Error!labels.Row {
+        const workspace = &self.workspace.?;
+        var order_storage: [workspace_model.max_tabs]TabId = undefined;
+        var layout_storage: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
+        var facts: [workspace_model.max_tabs]labels.Tab = undefined;
+        const order = workspace.tabOrder(&order_storage);
+        for (order, facts[0..order.len]) |tab, *fact| {
+            const panes = workspace.layout(tab, &layout_storage) catch return error.InvalidLabels;
+            var unavailable: u8 = 0;
+            for (panes) |pane| {
+                const index = self.slotIndex(pane.pane) orelse return error.InvalidLabels;
+                unavailable += @intFromBool(self.panes[index].unavailable);
+            }
+            fact.* = .{
+                .id = tab,
+                .name = workspace.tabName(tab) catch return error.InvalidLabels,
+                .active = tab == workspace.activeTab(),
+                .panes = @intCast(panes.len),
+                .unavailable_panes = unavailable,
+            };
+        }
+        return labels.format(workspace.size.cols, facts[0..order.len]) catch error.InvalidLabels;
     }
 
     fn updateTitle(self: *Loop) void {
@@ -706,6 +731,23 @@ const Loop = struct {
                 self.workspace.? = candidate;
                 try self.submitVisible(self.visibleBits());
             },
+            .reorder_left, .reorder_right => {
+                var order_storage: [workspace_model.max_tabs]TabId = undefined;
+                const order = self.workspace.?.tabOrder(&order_storage);
+                if (order.len < 2) return;
+                const active = self.workspace.?.activeTab();
+                const source = for (order, 0..) |tab, index| {
+                    if (tab == active) break index;
+                } else unreachable;
+                const target = switch (action) {
+                    .reorder_left => if (source == 0) return else source - 1,
+                    .reorder_right => if (source + 1 == order.len) return else source + 1,
+                    else => unreachable,
+                };
+                if (!(self.workspace.?.reorderTab(active, @intCast(target)) catch unreachable)) unreachable;
+                self.updateTitle();
+                try self.submitVisible(self.visibleBits());
+            },
         }
     }
 
@@ -867,6 +909,21 @@ const Loop = struct {
             else => return,
         };
         const index = mouseButtonIndex(button).?;
+        if (button == .left and state_value == c.WL_POINTER_BUTTON_STATE_PRESSED) {
+            const position = self.pointer_state.position orelse return;
+            if (self.labelTab(position.x, position.y)) |tab| {
+                self.cancelPointer();
+                if (self.failure != null) return;
+                const changed = self.workspace.?.switchTab(tab) catch return;
+                if (changed) {
+                    self.updateTitle();
+                    self.submitVisible(self.visibleBits()) catch |failure| {
+                        retainFirstFailure(&self.failure, failure);
+                    };
+                }
+                return;
+            }
+        }
         switch (state_value) {
             c.WL_POINTER_BUTTON_STATE_PRESSED => {
                 const position = self.pointer_state.position orelse return;
@@ -892,6 +949,17 @@ const Loop = struct {
             },
             else => {},
         }
+    }
+
+    fn labelTab(self: *const Loop, x: u32, y: u32) ?TabId {
+        const render = self.render orelse return null;
+        if (y >= labelHeight(self.size, render.metrics())) return null;
+        const col = labels.pixelColumn(
+            self.size.width,
+            self.label_row.cell_count,
+            x,
+        ) orelse return null;
+        return self.label_row.hit(col);
     }
 
     fn pointerWheel(self: *Loop, discrete: i32) void {
@@ -1146,12 +1214,39 @@ fn clearWakeBit(bits: *std.atomic.Value(u64), index: TerminalIndex) void {
 }
 
 const Geometry = struct { cols: u16, rows: u16 };
+const PixelRect = struct { x: u32, y: u32, width: u32, height: u32 };
+
+fn panePixels(
+    rect: workspace_model.Rect,
+    grid: workspace_model.Size,
+    size: renderer.Size,
+    metrics: @import("howl_text").Metrics,
+) PixelRect {
+    const label_height = labelHeight(size, metrics);
+    const x = @as(u32, rect.col) * metrics.cell_width;
+    const y = label_height + @as(u32, rect.row) * metrics.cell_height;
+    const right = if (rect.col + rect.cols == grid.cols)
+        size.width
+    else
+        @as(u32, rect.col + rect.cols) * metrics.cell_width;
+    const bottom = if (rect.row + rect.rows == grid.rows)
+        size.height
+    else
+        label_height + @as(u32, rect.row + rect.rows) * metrics.cell_height;
+    return .{ .x = x, .y = y, .width = right - x, .height = bottom - y };
+}
 
 fn gridSize(size: renderer.Size, metrics: @import("howl_text").Metrics) workspace_model.Size {
+    const content_height = size.height - labelHeight(size, metrics);
     return .{
-        .cols = @intCast(@min(workspace_model.max_cols, @max(1, size.width / metrics.cell_width))),
-        .rows = @intCast(@min(workspace_model.max_rows, @max(1, size.height / metrics.cell_height))),
+        .cols = @intCast(@min(workspace_model.max_cols, @max(2, size.width / metrics.cell_width))),
+        .rows = @intCast(@min(workspace_model.max_rows, @max(1, content_height / metrics.cell_height))),
     };
+}
+
+fn labelHeight(size: renderer.Size, metrics: @import("howl_text").Metrics) u16 {
+    std.debug.assert(size.height >= 2);
+    return @intCast(@min(metrics.cell_height, size.height - 1));
 }
 
 fn mouseButtonIndex(button: MouseButton) ?usize {
@@ -1480,10 +1575,73 @@ fn retainFirstFailure(current: *?Error, failure: Error) void {
     if (current.* == null) current.* = failure;
 }
 
-test "pixel geometry admits at least one bounded cell" {
-    const size = renderer.Size{ .width = 1, .height = 1 };
-    try std.testing.expectEqual(@as(u32, 1), @max(1, size.width / 8));
-    try std.testing.expectEqual(@as(u32, 1), @max(1, size.height / 16));
+test "grid geometry reserves one label row without losing a terminal row" {
+    const metrics: @import("howl_text").Metrics = .{
+        .cell_width = 10,
+        .cell_height = 20,
+        .baseline = 15,
+        .underline_y = 17,
+        .underline_height = 1,
+        .strike_y = 10,
+        .strike_height = 1,
+    };
+    try std.testing.expectEqual(@as(u16, 20), labelHeight(.{ .width = 100, .height = 100 }, metrics));
+    try std.testing.expectEqual(
+        workspace_model.Size{ .cols = 10, .rows = 4 },
+        gridSize(.{ .width = 100, .height = 100 }, metrics),
+    );
+    try std.testing.expectEqual(@as(u16, 1), labelHeight(.{ .width = 2, .height = 2 }, metrics));
+    try std.testing.expectEqual(
+        workspace_model.Size{ .cols = 2, .rows = 1 },
+        gridSize(.{ .width = 2, .height = 2 }, metrics),
+    );
+}
+
+test "pane pixels preserve label origin and exact horizontal mixed edges" {
+    const metrics: @import("howl_text").Metrics = .{
+        .cell_width = 10,
+        .cell_height = 20,
+        .baseline = 15,
+        .underline_y = 17,
+        .underline_height = 1,
+        .strike_y = 10,
+        .strike_height = 1,
+    };
+    const grid = workspace_model.Size{ .cols = 10, .rows = 4 };
+    const size = renderer.Size{ .width = 103, .height = 101 };
+    var model = try workspace_model.Workspace.init(std.testing.allocator, @enumFromInt(1), "one", grid);
+    defer model.deinit();
+    const left = model.focusedPane();
+    const right = try model.splitPane(model.activeTab(), left, .horizontal);
+    var storage: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
+    var placed = try model.layout(model.activeTab(), &storage);
+    const left_pixels = panePixels(placed[0].rect, grid, size, metrics);
+    const right_pixels = panePixels(placed[1].rect, grid, size, metrics);
+    try std.testing.expectEqual(@as(u32, 20), left_pixels.y);
+    try std.testing.expectEqual(left_pixels.x + left_pixels.width, right_pixels.x);
+    try std.testing.expectEqual(size.width, right_pixels.x + right_pixels.width);
+    try std.testing.expectEqual(size.height, left_pixels.y + left_pixels.height);
+    try std.testing.expectEqual(size.height, right_pixels.y + right_pixels.height);
+
+    const lower = try model.splitPane(model.activeTab(), right, .vertical);
+    placed = try model.layout(model.activeTab(), &storage);
+    var left_rect: PixelRect = undefined;
+    var upper_rect: PixelRect = undefined;
+    var lower_rect: PixelRect = undefined;
+    for (placed) |pane| {
+        const pixels = panePixels(pane.rect, grid, size, metrics);
+        try std.testing.expect(pixels.y >= 20);
+        if (pane.pane == left) left_rect = pixels else if (pane.pane == right) upper_rect = pixels else if (pane.pane == lower)
+            lower_rect = pixels
+        else
+            unreachable;
+    }
+    try std.testing.expectEqual(left_rect.x + left_rect.width, upper_rect.x);
+    try std.testing.expectEqual(upper_rect.x, lower_rect.x);
+    try std.testing.expectEqual(upper_rect.width, lower_rect.width);
+    try std.testing.expectEqual(upper_rect.y + upper_rect.height, lower_rect.y);
+    try std.testing.expectEqual(size.width, lower_rect.x + lower_rect.width);
+    try std.testing.expectEqual(size.height, lower_rect.y + lower_rect.height);
 }
 
 test "keyboard repeat replaces and cancels one bounded physical key" {
@@ -1538,6 +1696,10 @@ test "host actions require exact non-lock modifiers" {
         .{ .symbol = c.XKB_KEY_Right, .mods = control_shift, .action = .resize_right },
         .{ .symbol = c.XKB_KEY_Up, .mods = control_shift, .action = .resize_up },
         .{ .symbol = c.XKB_KEY_Down, .mods = control_shift, .action = .resize_down },
+        .{ .symbol = c.XKB_KEY_comma, .mods = control_shift, .action = .reorder_left },
+        .{ .symbol = c.XKB_KEY_less, .mods = control_shift, .action = .reorder_left },
+        .{ .symbol = c.XKB_KEY_period, .mods = control_shift, .action = .reorder_right },
+        .{ .symbol = c.XKB_KEY_greater, .mods = control_shift, .action = .reorder_right },
         .{ .symbol = c.XKB_KEY_Tab, .mods = control_shift, .action = .previous_tab },
         .{ .symbol = c.XKB_KEY_ISO_Left_Tab, .mods = control_shift, .action = .previous_tab },
         .{ .symbol = c.XKB_KEY_Tab, .mods = control, .action = .next_tab },
@@ -1634,6 +1796,56 @@ test "visible wake routing follows stable pane identity through tab churn" {
     try std.testing.expectEqualSlices(PaneId, &.{other.pane}, removed);
     panes[63] = .{};
     try std.testing.expectEqual((@as(u64, 1) << 5) | (@as(u64, 1) << 17), visibleBitsFor(&model, &panes));
+}
+
+test "host label facts aggregate every tab and hit the submitted geometry" {
+    var model = try workspace_model.Workspace.init(
+        std.testing.allocator,
+        @enumFromInt(1),
+        "one",
+        .{ .cols = 8, .rows = 2 },
+    );
+    defer model.deinit();
+    const first = model.focusedPane();
+    const split = try model.splitPane(model.activeTab(), first, .horizontal);
+    const second = try model.createTab("two");
+    var render: renderer.Render = undefined;
+    render.metrics_value = .{
+        .cell_width = 10,
+        .cell_height = 20,
+        .baseline = 15,
+        .underline_y = 17,
+        .underline_height = 1,
+        .strike_y = 10,
+        .strike_height = 1,
+    };
+    var owner: Loop = undefined;
+    owner.workspace = model;
+    owner.panes = @splat(.{});
+    owner.panes[0] = .{ .pane = first, .terminal = @ptrFromInt(16), .geometry = .{ .cols = 4, .rows = 2 } };
+    owner.panes[1] = .{
+        .pane = split,
+        .terminal = @ptrFromInt(32),
+        .geometry = .{ .cols = 4, .rows = 2 },
+        .unavailable = true,
+    };
+    owner.panes[2] = .{
+        .pane = second.pane,
+        .terminal = @ptrFromInt(48),
+        .geometry = .{ .cols = 8, .rows = 2 },
+        .unavailable = true,
+    };
+    owner.render = &render;
+    owner.size = .{ .width = 80, .height = 60 };
+    owner.label_row = try owner.formatLabels();
+    try std.testing.expectEqual(labels.Availability.degraded, owner.label_row.cells[0].availability);
+    try std.testing.expectEqual(labels.Availability.unavailable, owner.label_row.cells[4].availability);
+    try std.testing.expectEqual(model.activeTab(), owner.labelTab(0, 0).?);
+    try std.testing.expectEqual(second.tab, owner.labelTab(79, 19).?);
+    try std.testing.expectEqual(@as(?TabId, null), owner.labelTab(79, 20));
+    try std.testing.expect(try owner.workspace.?.switchTab(owner.labelTab(79, 19).?));
+    try std.testing.expectEqual(second.tab, owner.workspace.?.activeTab());
+    owner.workspace = null;
 }
 
 test "pane retirement clears stale wake ownership before slot reuse" {
@@ -1812,11 +2024,11 @@ test "pointer hit identifies a visible pane before active focus admission" {
         .geometry = .{ .cols = 5, .rows = 1 },
     };
     owner.render = &render;
-    owner.size = .{ .width = 100, .height = 20 };
-    try std.testing.expectEqual(second, owner.resolvePointer(75, 5, false).?.pane);
-    try std.testing.expectEqual(null, owner.resolvePointer(75, 5, true));
+    owner.size = .{ .width = 100, .height = 40 };
+    try std.testing.expectEqual(second, owner.resolvePointer(75, 25, false).?.pane);
+    try std.testing.expectEqual(null, owner.resolvePointer(75, 25, true));
     try std.testing.expect(try owner.workspace.?.focusPane(second));
-    try std.testing.expectEqual(second, owner.resolvePointer(75, 5, true).?.pane);
+    try std.testing.expectEqual(second, owner.resolvePointer(75, 25, true).?.pane);
     owner.workspace = null;
 }
 

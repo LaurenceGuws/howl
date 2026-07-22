@@ -28,7 +28,7 @@ capabilities:
     acceptance: >-
       the bounded workspace creates and retires live tab/pane terminal owners, routes input through stable focused pane
       identity, transactionally resizes available terminals from pane layout, and shares one render thread, text owner,
-      mask cache, and GLES device
+      mask cache, and GLES device while one reserved label row shares that same text/cache path and exact tab identity
 
   - name: workspace_model
     acceptance: >-

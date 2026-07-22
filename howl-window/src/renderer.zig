@@ -6,6 +6,7 @@ const howl_frame = @import("howl_frame");
 const howl_render = @import("howl_render");
 const howl_text = @import("howl_text");
 const howl_vt = @import("howl_vt");
+const labels = @import("labels.zig");
 const workspace = @import("workspace.zig");
 const c = @import("native.zig").c;
 
@@ -16,6 +17,14 @@ pub const max_visible_panes: usize = workspace.max_panes_per_tab;
 /// Bounds each nonzero Wayland/GLES width or height before C-int narrowing.
 pub const max_window_dimension: u32 = 8_192;
 const max_backing_bytes: usize = 128 * 1024 * 1024;
+const palette = struct {
+    const background = howl_vt.Terminal.Rgb{ .r = 0x28, .g = 0x28, .b = 0x28 };
+    const foreground = howl_vt.Terminal.Rgb{ .r = 0xeb, .g = 0xdb, .b = 0xb2 };
+    const active_foreground = howl_vt.Terminal.Rgb{ .r = 0xee, .g = 0xee, .b = 0xee };
+    const active_background = howl_vt.Terminal.Rgb{ .r = 0xd6, .g = 0x5d, .b = 0x0e };
+    const inactive_background = howl_vt.Terminal.Rgb{ .r = 0x20, .g = 0x20, .b = 0x20 };
+    const unavailable = howl_vt.Terminal.Rgb{ .r = 0xbd, .g = 0xae, .b = 0x93 };
+};
 
 /// Carries one nonzero logical Wayland surface extent in pixels.
 pub const Size = struct {
@@ -70,6 +79,9 @@ const Work = struct {
     live_count: u8,
     dirty: [workspace.max_panes]*howl_control.Terminal = undefined,
     dirty_count: u8,
+    label_cells: [workspace.max_cols]labels.Cell = undefined,
+    label_count: u16,
+    label_height: u16,
 };
 
 const Mailbox = struct {
@@ -319,13 +331,17 @@ const Device = struct {
                 prepared_panes[0..borrowed_count.*],
             );
             std.debug.assert(prepared.panes == borrowed_count.*);
-            for (borrowed[0..borrowed_count.*]) |owned| {
-                try self.drawFrame(work.generation, owned.pane, owned.frame.frame);
-                self.findBacking(owned.pane.id).?.initialized = true;
-            }
+        }
+        var label_cells: [workspace.max_cols]howl_frame.Cell = undefined;
+        for (work.label_cells[0..work.label_count], label_cells[0..work.label_count]) |source, *cell|
+            cell.* = labelFrameCell(source);
+        try self.core.prepareCells(work.generation, label_cells[0..work.label_count]);
+        for (borrowed[0..borrowed_count.*]) |owned| {
+            try self.drawFrame(work.generation, owned.pane, owned.frame.frame);
+            self.findBacking(owned.pane.id).?.initialized = true;
         }
         c.glViewport(0, 0, @intCast(self.size.width), @intCast(self.size.height));
-        c.glClearColor(0.035, 0.039, 0.045, 1.0);
+        clearColor(palette.background);
         c.glClear(c.GL_COLOR_BUFFER_BIT);
         c.glUseProgram(self.copy_program);
         c.glBindBuffer(c.GL_ARRAY_BUFFER, self.buffer);
@@ -333,6 +349,7 @@ const Device = struct {
         c.glEnableVertexAttribArray(1);
         c.glEnableVertexAttribArray(2);
         const white = howl_vt.Terminal.Rgb{ .r = 255, .g = 255, .b = 255 };
+        try self.drawLabels(work);
         for (work.panes[0..work.pane_count]) |pane| {
             const backing = self.findBacking(pane.id).?;
             c.glUseProgram(self.copy_program);
@@ -405,7 +422,7 @@ const Device = struct {
         const backing = self.findBacking(pane.id).?;
         c.glBindFramebuffer(c.GL_FRAMEBUFFER, backing.framebuffer);
         c.glViewport(0, 0, @intCast(pane.width), @intCast(pane.height));
-        c.glClearColor(0.035, 0.039, 0.045, 1.0);
+        clearColor(palette.background);
         c.glClear(c.GL_COLOR_BUFFER_BIT);
         c.glUseProgram(self.mask_program);
         c.glBindBuffer(c.GL_ARRAY_BUFFER, self.buffer);
@@ -454,6 +471,53 @@ const Device = struct {
         };
         c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+    }
+
+    fn drawLabels(self: *Device, work: Work) Error!void {
+        const metrics = self.core.metrics();
+        c.glEnable(c.GL_SCISSOR_TEST);
+        defer c.glDisable(c.GL_SCISSOR_TEST);
+        c.glScissor(
+            0,
+            @intCast(self.size.height - work.label_height),
+            @intCast(self.size.width),
+            work.label_height,
+        );
+        c.glUseProgram(self.mask_program);
+        for (work.label_cells[0..work.label_count], 0..) |source, col| {
+            const bounds = labels.pixelBounds(
+                self.size.width,
+                work.label_count,
+                @intCast(col),
+            ) catch return error.InvalidPane;
+            const colors = labelColors(source);
+            try self.quad(
+                @intCast(bounds.start),
+                0,
+                @intCast(bounds.end - bounds.start),
+                work.label_height,
+                colors.background,
+                self.white,
+                self.size,
+                false,
+            );
+            if (source.codepoint == ' ' or bounds.end - bounds.start < metrics.cell_width) continue;
+            const glyphs = try self.core.preparedGlyphs(labelFrameCell(source));
+            for (glyphs.slice()) |glyph| {
+                if (glyph.width == 0 or glyph.height == 0) continue;
+                const texture_name = try self.texture(work.generation, glyph);
+                try self.quad(
+                    @as(i32, @intCast(bounds.start)) + glyph.left + @divTrunc(glyph.x_offset, 64),
+                    @as(i32, metrics.baseline) - glyph.top - @divTrunc(glyph.y_offset, 64),
+                    glyph.width,
+                    glyph.height,
+                    colors.foreground,
+                    texture_name,
+                    self.size,
+                    false,
+                );
+            }
+        }
     }
 
     fn reconcile(self: *Device, live: []const PaneId, panes: []const Pane) Error!void {
@@ -631,11 +695,17 @@ fn validateSubmission(
     live: []const PaneId,
     panes: []const Pane,
     dirty: []const *howl_control.Terminal,
+    label_cells: []const labels.Cell,
+    label_height: u16,
 ) error{ InvalidSize, InvalidPane }!void {
     try validateSize(size);
     if (live.len == 0 or live.len > workspace.max_panes or panes.len == 0 or
-        panes.len > max_visible_panes or dirty.len > workspace.max_panes)
+        panes.len > max_visible_panes or dirty.len > workspace.max_panes or
+        label_cells.len == 0 or label_cells.len > workspace.max_cols or
+        label_cells.len > size.width or label_height == 0 or label_height >= size.height)
         return error.InvalidPane;
+    for (label_cells) |cell| if (cell.codepoint == 0 or
+        !std.unicode.utf8ValidCodepoint(cell.codepoint)) return error.InvalidPane;
     for (live, 0..) |id, index| {
         if (@intFromEnum(id) == 0 or containsPaneId(live[0..index], id)) return error.InvalidPane;
     }
@@ -643,7 +713,7 @@ fn validateSubmission(
     var focused: u8 = 0;
     for (panes, 0..) |pane, index| {
         if (@intFromEnum(pane.id) == 0 or pane.width == 0 or pane.height == 0 or
-            pane.x >= size.width or pane.y >= size.height or
+            pane.x >= size.width or pane.y < label_height or pane.y >= size.height or
             pane.width > size.width - pane.x or pane.height > size.height - pane.y or
             !containsPaneId(live, pane.id))
             return error.InvalidPane;
@@ -810,7 +880,7 @@ fn createBacking(pane: Pane) Error!Backing {
     if (c.glCheckFramebufferStatus(c.GL_FRAMEBUFFER) != c.GL_FRAMEBUFFER_COMPLETE)
         return error.Draw;
     c.glViewport(0, 0, @intCast(pane.width), @intCast(pane.height));
-    c.glClearColor(0.035, 0.039, 0.045, 1.0);
+    clearColor(palette.background);
     c.glClear(c.GL_COLOR_BUFFER_BIT);
     if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
     c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
@@ -831,6 +901,57 @@ fn destroyBacking(backing: Backing) void {
 
 fn backingBytes(width: u32, height: u32) usize {
     return @as(usize, width) * height * 4;
+}
+
+fn labelFrameCell(source: labels.Cell) howl_frame.Cell {
+    return .{
+        .codepoint = source.codepoint,
+        .combining_len = 0,
+        .combining = @splat(0),
+        .width = 1,
+        .height = 1,
+        .x = 0,
+        .y = 0,
+        .foreground = palette.foreground,
+        .background = palette.background,
+        .underline_color = palette.foreground,
+        .font = 0,
+        .baseline = .normal,
+        .bold = false,
+        .dim = false,
+        .italic = false,
+        .blink = false,
+        .blink_fast = false,
+        .invisible = false,
+        .underline = false,
+        .strikethrough = false,
+        .underline_style = .straight,
+        .link_id = 0,
+    };
+}
+
+fn labelColors(source: labels.Cell) struct {
+    foreground: howl_vt.Terminal.Rgb,
+    background: howl_vt.Terminal.Rgb,
+} {
+    return .{
+        .foreground = if (source.availability == .unavailable)
+            palette.unavailable
+        else if (source.active)
+            palette.active_foreground
+        else
+            palette.foreground,
+        .background = if (source.active) palette.active_background else palette.inactive_background,
+    };
+}
+
+fn clearColor(color: howl_vt.Terminal.Rgb) void {
+    c.glClearColor(
+        @as(f32, @floatFromInt(color.r)) / 255.0,
+        @as(f32, @floatFromInt(color.g)) / 255.0,
+        @as(f32, @floatFromInt(color.b)) / 255.0,
+        1.0,
+    );
 }
 
 fn compileShader(kind: c.GLenum, source: [:0]const u8) Error!c.GLuint {
@@ -926,8 +1047,10 @@ pub const Render = struct {
         live: []const PaneId,
         panes: []const Pane,
         dirty: []const *howl_control.Terminal,
+        label_cells: []const labels.Cell,
+        label_height: u16,
     ) Error!void {
-        try validateSubmission(size, live, panes, dirty);
+        try validateSubmission(size, live, panes, dirty, label_cells, label_height);
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.failure) |failure| return failure;
@@ -940,10 +1063,13 @@ pub const Render = struct {
             .pane_count = @intCast(panes.len),
             .live_count = @intCast(live.len),
             .dirty_count = @intCast(dirty.len),
+            .label_count = @intCast(label_cells.len),
+            .label_height = label_height,
         };
         @memcpy(work.panes[0..panes.len], panes);
         @memcpy(work.live[0..live.len], live);
         @memcpy(work.dirty[0..dirty.len], dirty);
+        @memcpy(work.label_cells[0..label_cells.len], label_cells);
         self.mailbox.admit(work);
         self.submitted_generation = generation;
         self.condition.signal(self.io);
@@ -1160,7 +1286,7 @@ test "failed render owner rejects late bounded metadata submission" {
         error.Draw,
         render.submit(1, .{ .width = 100, .height = 100 }, &.{@as(PaneId, @enumFromInt(1))}, &.{
             testPane(1, terminal, 0, 100),
-        }, &.{terminal}),
+        }, &.{terminal}, &test_label_cells, 10),
     );
     try std.testing.expect(render.mailbox.empty());
     try std.testing.expectEqual(@as(u64, 0), render.submitted_generation);
@@ -1243,6 +1369,8 @@ test "public submission rejects invalid composition before mailbox mutation" {
         &.{@as(PaneId, @enumFromInt(1))},
         &.{testPane(1, terminal, 0, 1)},
         &.{terminal},
+        &test_label_cells,
+        10,
     ));
     try std.testing.expectError(error.InvalidPane, render.submit(
         1,
@@ -1253,6 +1381,19 @@ test "public submission rejects invalid composition before mailbox mutation" {
             testPane(2, @ptrFromInt(32), 50, 50),
         },
         &.{terminal},
+        &test_label_cells,
+        10,
+    ));
+    var overlap = testPane(1, terminal, 0, 100);
+    overlap.y = 0;
+    try std.testing.expectError(error.InvalidPane, render.submit(
+        1,
+        .{ .width = 100, .height = 100 },
+        &.{@as(PaneId, @enumFromInt(1))},
+        &.{overlap},
+        &.{},
+        &test_label_cells,
+        10,
     ));
     var unavailable = testPane(1, terminal, 0, 100);
     unavailable.terminal_available = false;
@@ -1262,6 +1403,8 @@ test "public submission rejects invalid composition before mailbox mutation" {
         &.{@as(PaneId, @enumFromInt(1))},
         &.{unavailable},
         &.{terminal},
+        &test_label_cells,
+        10,
     ));
     try std.testing.expect(render.mailbox.empty());
     try std.testing.expectError(error.InvalidSize, validateInit(.{
@@ -1280,11 +1423,11 @@ test "renderer preserves full stable pane identity and bounded live roster" {
     var live: [workspace.max_panes]PaneId = undefined;
     for (&live, 1..) |*id, value| id.* = @enumFromInt(value);
     live[live.len - 1] = largest;
-    try validateSubmission(.{ .width = 100, .height = 100 }, &live, &.{pane}, &.{});
+    try validateSubmission(.{ .width = 100, .height = 100 }, &live, &.{pane}, &.{}, &test_label_cells, 10);
     live[1] = live[0];
     try std.testing.expectError(
         error.InvalidPane,
-        validateSubmission(.{ .width = 100, .height = 100 }, &live, &.{pane}, &.{}),
+        validateSubmission(.{ .width = 100, .height = 100 }, &live, &.{pane}, &.{}, &test_label_cells, 10),
     );
 }
 
@@ -1298,12 +1441,25 @@ fn testPane(
         .id = @enumFromInt(id),
         .terminal = terminal,
         .x = x,
-        .y = 0,
+        .y = 10,
         .width = width,
-        .height = 100,
+        .height = 90,
         .focused = id == 1,
         .terminal_available = true,
     };
+}
+
+const test_label_cells = [_]labels.Cell{.{ .codepoint = 't', .active = true }};
+
+test "label palette keeps active inactive and unavailable facts distinct" {
+    const active = labelColors(.{ .codepoint = 'a', .active = true });
+    const inactive = labelColors(.{ .codepoint = 'i' });
+    const unavailable = labelColors(.{ .codepoint = '!', .availability = .unavailable });
+    try std.testing.expectEqual(palette.active_foreground, active.foreground);
+    try std.testing.expectEqual(palette.active_background, active.background);
+    try std.testing.expectEqual(palette.foreground, inactive.foreground);
+    try std.testing.expectEqual(palette.inactive_background, inactive.background);
+    try std.testing.expectEqual(palette.unavailable, unavailable.foreground);
 }
 
 fn testWork(
@@ -1317,9 +1473,12 @@ fn testWork(
         .pane_count = @intCast(panes.len),
         .live_count = @intCast(panes.len),
         .dirty_count = @intCast(dirty.len),
+        .label_count = test_label_cells.len,
+        .label_height = 10,
     };
     @memcpy(work.panes[0..panes.len], panes);
     for (panes, work.live[0..panes.len]) |pane, *id| id.* = pane.id;
     @memcpy(work.dirty[0..dirty.len], dirty);
+    @memcpy(work.label_cells[0..test_label_cells.len], &test_label_cells);
     return work;
 }
