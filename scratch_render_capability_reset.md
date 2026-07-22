@@ -19,6 +19,40 @@ runtime/control-coupling deletion slice.
 - do not touch control, executable runtime, cache reconstruction, or the
   quarantined frame publication source.
 
+## Rejected renderer deletion result
+
+`howl-render/src/howl_render.zig` was deleted in full: 1,023 source lines,
+37,652 characters, 36 named non-test declarations, and 11 dead proof families.
+No alias, stub, replacement root, or compatibility surface was added. The
+selected `native_text`, `generated`, and `terminal` implementation and proof
+files were unchanged.
+
+The deleted file had no selected `howl-render` build edge. Its sole permanent
+source-map entry and the two durable reconstruction bullets that said its
+classification remained pending were removed. Historical inventory references
+below deliberately retain the deleted path and `Renderer` noun as classified
+deletion evidence. The quarantined executable evidence still contains direct
+calls to the removed `howl_render.Renderer`; those are rejected runtime source,
+not a render build edge or compatibility obligation, and this slice does not
+rewrite executable policy.
+
+Validation from `howl-render`:
+
+- all eight `terminal` x `native_text` x `generated_glyphs` selections passed
+  `zig build check`;
+- plain defaults passed `zig build check` and `zig build test`;
+- `zig fmt --check build.zig src/*.zig` passed;
+- repository tracked documentation/build search has no current
+  `howl_render.zig` or `Renderer` path claim outside this explicitly historical
+  scratch inventory; and
+- `git diff --check` passed with no product capability file changed besides
+  deletion of the rejected source.
+
+The optional repository source audit remains independently blocked: its stable
+allowlist names deleted `howl-window` and `howl-text` paths while the currently
+quarantined sources are under `howl-host` and `howl-render`. Correcting that
+workspace-wide reconstruction residue is outside this deletion slice.
+
 ## Accepted remaining-source classification
 
 Render's stateless terminal projection was accepted at `269a8c1`. This slice

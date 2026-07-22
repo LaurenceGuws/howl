@@ -36,6 +36,5 @@ reconstruction:
   quarantined:
     - mixed render source that combines visual facts with runtime publication
     - control source and build wiring that depend on rendering publication
-    - unselected render preparation source awaiting symbol-level classification
     - executable source whose surviving noun, topology, and API have not been accepted
     - workspace wiring that names deleted packages or rejected runtime machinery

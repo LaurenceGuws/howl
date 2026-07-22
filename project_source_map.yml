@@ -28,7 +28,6 @@ quarantined:
   build.zig: workspace commands still name deleted packages and rejected runtime machinery
   build.zig.zon: workspace path list still names deleted packages
   howl-render/src/howl_frame.zig: visual-value evidence mixed with rejected publication and synchronization policy
-  howl-render/src/howl_render.zig: unselected cache and draw-preparation evidence awaiting classification
   howl-control/build.zig: current package graph retains a rejected rendering dependency
   howl-control/build.zig.zon: current dependency list retains a rejected rendering package edge
   howl-control/src/client.zig: identity, endpoint, codec, and request evidence awaiting the control inventory

@@ -37,7 +37,6 @@ reconstruction:
   status: active
   work:
     - classify and retain only earned terminal visual values and behavior
-    - classify and resolve the unselected render preparation source
     - classify control identity, endpoint, codec, request, composition, and lifecycle evidence
     - remove rendering publication and dependencies from control
     - inventory executable evidence before approving its noun, topology, API, or source
