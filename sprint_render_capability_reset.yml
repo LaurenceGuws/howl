@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: render_delta_projection
+  current_slice: classify_remaining_render_code
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -135,13 +135,18 @@ slices:
       - all borrowed facts remain valid only under caller-enforced terminal mutation exclusion
 
   - id: render_delta_projection
-    status: active
+    status: accepted
+    commit: 269a8c1
+    outcome: >-
+      Render now projects borrowed VT observations into allocation-free caller-owned full or sparse patches; terminal,
+      native text, and generated glyph namespaces are independently selectable, and dormant multicell claims are
+      rejected until VT owns a real mutation contract.
     purpose: >-
       Implement the accepted stateless terminal visual projection, caller-provided buffers, exact capacity failures,
       sparse/full row patches, cursor overlay damage, and direct howl-render dependency on howl-vt.
 
   - id: classify_remaining_render_code
-    status: pending
+    status: active
     purpose: >-
       Classify the old renderer's text, cache, grid, effect, damage, and draw-preparation code independently of its
       current file and runtime consumers.

@@ -1,6 +1,29 @@
 # Render capability reset scratchpad
 
-Current slice: `render_delta_projection`
+Current slice: `classify_remaining_render_code`
+
+Render's stateless terminal projection was accepted at `269a8c1`. This slice
+changes no product behavior. It accounts for every remaining symbol and proof
+in the old renderer/cache/draw-preparation source after extracted visual values
+were deleted, then recommends deletion, retention evidence, or a separately
+owned rebuild without preserving compilation compatibility.
+
+## Current classification checklist
+
+- inventory every remaining declaration and test in `howl_frame.zig` and
+  `howl_render.zig` by exact line range;
+- classify runtime publication, synchronization, resize, cache, text
+  preparation, grid/effect, damage, and draw-preparation semantics separately;
+- identify all consumers and build edges without treating them as authority;
+- compare earned behavior against native text/generated glyph capabilities and
+  the accepted stateless terminal projection;
+- cite Foot, TigerBeetle, and relevant terminal-renderer evidence only where it
+  resolves ownership or source shape;
+- recommend deletion by default; retained behavior must name its exact owner,
+  invariant, proof, and reason it cannot be rebuilt more directly;
+- do not edit product source or make quarantined files compile.
+
+## Accepted render projection checkpoint
 
 VT's visual observation contract was accepted at `f9be93f`. This slice now
 implements only render's stateless projection into caller-provided buffers.

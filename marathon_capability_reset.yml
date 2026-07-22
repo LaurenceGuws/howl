@@ -200,7 +200,9 @@ sprints:
         commit: 4a95571
       - id: vt_visual_view_contract
         commit: f9be93f
-    next_slice: render_delta_projection
+      - id: render_delta_projection
+        commit: 269a8c1
+    next_slice: classify_remaining_render_code
 
   - id: control_capability_reset
     status: pending
