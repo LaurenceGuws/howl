@@ -47,9 +47,15 @@ categories:
       remain beside the behavior they probe; no unresolved systemic offender justified a watch list.
 
   - id: control_frame_shape
-    status: queued
+    status: accepted
     goal: >-
       Make PTY, control, publication, frame, and client ownership explicit without adding transport abstractions.
+    result: >-
+      Established direct lifecycle boundaries for control construction/admission, model and frame publication, reader
+      wakes/failures, endpoint execution, client payload/framing/Linux transport, and frame slot/resize/borrow ownership.
+      Inlined the sole output and signal lock wrappers, centralized success and failure response-header construction,
+      moved ClientError beside its owner, and documented the existing nested lock order. No unresolved systemic offender
+      justified a watch list.
 
   - id: host_render_shape
     status: queued

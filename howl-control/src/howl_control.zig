@@ -1,4 +1,4 @@
-//! Owns one native PTY child and its concurrent, host-neutral Howl terminal state.
+//! Composes one PTY child, VT model, frame publisher, and optional local control endpoint.
 
 const builtin = @import("builtin");
 const std = @import("std");
@@ -9,6 +9,8 @@ const client = @import("client.zig");
 const net = std.Io.net;
 const posix = std.posix;
 const linux = std.os.linux;
+
+// Curated remote and embedded terminal values.
 
 /// Identifies one process-lifetime terminal and its canonical local endpoint.
 pub const TerminalId = client.TerminalId;
@@ -56,6 +58,8 @@ pub const Frame = howl_frame.Borrow;
 pub const FrameReleaseError = howl_frame.ReleaseError || howl_frame.PublishError;
 /// Reports the exact visual publication failure of a deliberate viewport change.
 pub const ViewportError = howl_frame.PublishError;
+
+// Construction bounds, copied observations, and exact failures.
 
 /// Copies retained-history projection and terminal mouse-routing facts.
 pub const ViewportFacts = struct {
@@ -198,6 +202,8 @@ const ReaderFailure = enum(u8) {
     frame_generation_exhausted,
 };
 
+// Locked semantic surface and terminal composition.
+
 /// Borrows one semantic surface while preventing concurrent terminal mutation.
 pub const Surface = struct {
     /// Retains the locked owner until this borrow is released.
@@ -233,6 +239,9 @@ pub const Terminal = struct {
     server: net.Server,
     control_thread: std.Thread,
     endpoint_enabled: bool,
+    // Nested acquisition is admission before model, then frame, viewport, or
+    // lifecycle publication. PTY writes begin only after the model lock is
+    // released; the active-peer lock never nests with terminal state locks.
     admission_lock: std.Io.Mutex = .init,
     peer_lock: std.Io.Mutex = .init,
     input_sequence: std.atomic.Value(u64) = .init(0),
@@ -262,6 +271,8 @@ pub const Terminal = struct {
     rows: u16,
     cell_pixels: ?CellPixelSize,
     transfer_timeout_ms: u32,
+
+    // Construction and externally serialized teardown.
 
     /// Constructs every resource before returning a stable pointer, including
     /// two frame slots sized to the admitted initial geometry.
@@ -454,6 +465,8 @@ pub const Terminal = struct {
         self.transport.cancel();
     }
 
+    // Admitted input, geometry, output, status, and process control.
+
     /// Admits one bounded delayed event batch as one ordered mutation.
     pub fn send(self: *Terminal, events: []const BatchEvent) InputError!SendResult {
         if (events.len == 0 or events.len > max_send_events) return error.InputLimit;
@@ -609,17 +622,6 @@ pub const Terminal = struct {
         max_lines: u16,
         max_bytes: usize,
     ) LogicalOutputError!LogicalOutputResult {
-        return self.copyModelOutput(allocator, cursor, max_lines, max_bytes);
-    }
-
-    /// Copies finalized primary output and its publication-scoped open line.
-    fn copyModelOutput(
-        self: *Terminal,
-        allocator: std.mem.Allocator,
-        cursor: u64,
-        max_lines: u16,
-        max_bytes: usize,
-    ) LogicalOutputError!LogicalOutputResult {
         self.lock.lockUncancelable(self.io);
         defer self.lock.unlock(self.io);
         return self.model.copyLogicalOutput(allocator, cursor, max_lines, max_bytes);
@@ -721,22 +723,17 @@ pub const Terminal = struct {
     }
 
     /// Admits one process-group signal and returns its exact native outcome.
+    /// Process-group control remains available after terminal progress fails.
     pub fn signal(self: *Terminal, signal_value: ControlSignal) SignalResult {
         self.admission_lock.lockUncancelable(self.io);
         defer self.admission_lock.unlock(self.io);
+        self.write_lock.lockUncancelable(self.io);
+        defer self.write_lock.unlock(self.io);
         return .{
             .admission_sequence = self.nextAdmission(),
             .signal = signal_value,
-            .outcome = self.controlProcess(signal_value),
+            .outcome = self.transport.control(signal_value),
         };
-    }
-
-    /// Delivers one supported signal to the owned child process group.
-    /// Process-group control remains available after terminal progress fails.
-    fn controlProcess(self: *Terminal, signal_value: ControlSignal) ControlResult {
-        self.write_lock.lockUncancelable(self.io);
-        defer self.write_lock.unlock(self.io);
-        return self.transport.control(signal_value);
     }
 
     fn nextAdmission(self: *Terminal) u64 {
@@ -797,6 +794,8 @@ pub const Terminal = struct {
         };
         return buttons & mask != 0;
     }
+
+    // Frame publication, reader progress, wake delivery, and retained failure.
 
     /// Borrows the newest complete visual generation without retaining the
     /// terminal-model lock while the renderer uses it.
@@ -1049,6 +1048,8 @@ pub const Terminal = struct {
         };
     }
 
+    // One-shot endpoint admission and primitive execution.
+
     fn controlLoop(self: *Terminal) void {
         while (!self.stopping.load(.acquire)) {
             var peer = self.server.accept(self.io) catch |failure| switch (failure) {
@@ -1249,6 +1250,8 @@ pub const Terminal = struct {
         }
     }
 };
+
+// Exact internal failure translation and bounded sequence support.
 
 const OperationError = InputError || LogicalOutputError || ResizeError || error{
     InvalidPayload,

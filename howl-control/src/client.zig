@@ -9,6 +9,8 @@ const net = std.Io.net;
 const posix = std.posix;
 const linux = std.os.linux;
 
+// Protocol bounds and shared domain values.
+
 /// Bounds one exact control input before transport or PTY transfer.
 pub const max_transfer_bytes: usize = 64 * 1024;
 /// Applies the transfer bound to one admitted remote input batch.
@@ -296,6 +298,34 @@ pub const Status = struct {
     shell_mark: ?ShellMark,
 };
 
+// One-shot endpoint client and owned response values.
+
+/// Reports exact local construction, transport, identity, or remote rejection failure.
+pub const ClientError = std.mem.Allocator.Error || error{
+    BadMagic,
+    ConnectFailed,
+    EndpointPathTooLong,
+    InputLimit,
+    ConsequenceLimit,
+    InvalidText,
+    InvalidUtf8,
+    KeyTextLimit,
+    LengthOverflow,
+    InvalidPayload,
+    InvalidResponse,
+    ReadFailed,
+    FrameBorrowed,
+    RemoteRejected,
+    ResizeRollbackFailed,
+    ResponseLimit,
+    TerminalClosed,
+    Timeout,
+    Unauthorized,
+    WriteFailed,
+    WrongTerminal,
+    WrongVersion,
+};
+
 /// Owns one bounded coherent current terminal viewport copy.
 pub const Screen = struct {
     /// Owns the viewport text allocation.
@@ -472,32 +502,6 @@ pub const Client = struct {
     }
 };
 
-/// Reports exact local construction, transport, identity, or remote rejection failure.
-pub const ClientError = std.mem.Allocator.Error || error{
-    BadMagic,
-    ConnectFailed,
-    EndpointPathTooLong,
-    InputLimit,
-    ConsequenceLimit,
-    InvalidText,
-    InvalidUtf8,
-    KeyTextLimit,
-    LengthOverflow,
-    InvalidPayload,
-    InvalidResponse,
-    ReadFailed,
-    FrameBorrowed,
-    RemoteRejected,
-    ResizeRollbackFailed,
-    ResponseLimit,
-    TerminalClosed,
-    Timeout,
-    Unauthorized,
-    WriteFailed,
-    WrongTerminal,
-    WrongVersion,
-};
-
 /// Owns one decoded status response, including optional copied launch cwd.
 pub const ClientStatus = struct {
     allocator: std.mem.Allocator,
@@ -519,6 +523,8 @@ const RawResponse = struct {
         self.* = undefined;
     }
 };
+
+// Typed payload validation and result codecs.
 
 /// Proves a batch's encoded and scheduled bounds before mutation admission.
 pub fn validateBatchBound(events: []const BatchEvent) error{InputLimit}!void {
@@ -1105,6 +1111,8 @@ fn decodeOutput(allocator: std.mem.Allocator, payload: []const u8) ClientError!L
     } };
 }
 
+// Bounded input-batch wire codec.
+
 /// Owns decoded borrowed events until request execution finishes.
 pub const DecodedBatch = struct {
     allocator: std.mem.Allocator,
@@ -1401,6 +1409,8 @@ fn decodeModifiers(value: u8) Modifiers {
     };
 }
 
+// Fixed request and response framing.
+
 /// Names the six primitive protocol-v1 operations.
 pub const Operation = enum(u8) {
     status = 1,
@@ -1556,21 +1566,33 @@ fn decodeResponseHeader(
     return .{ .payload_len = payload_len };
 }
 
-fn encodeResponseHeader(header: *[response_header_bytes]u8, response: Response) void {
+fn encodeResponseHeader(
+    header: *[response_header_bytes]u8,
+    terminal_id: TerminalId,
+    operation: ?Operation,
+    status: ResponseStatus,
+    payload_len: usize,
+) void {
     @memcpy(header[0..4], "QTRS");
     std.mem.writeInt(u16, header[4..6], protocol_version, .big);
-    header[6] = @intFromEnum(ResponseStatus.ok);
-    header[7] = @intFromEnum(response.operation);
-    @memcpy(header[8..24], &response.terminal_id.bytes);
+    header[6] = @intFromEnum(status);
+    header[7] = if (operation) |value| @intFromEnum(value) else 0;
+    @memcpy(header[8..24], &terminal_id.bytes);
     @memset(header[24..40], 0);
-    std.mem.writeInt(u32, header[40..44], @intCast(response.payload.len), .big);
+    std.mem.writeInt(u32, header[40..44], @intCast(payload_len), .big);
     @memset(header[44..56], 0);
 }
 
 /// Writes one complete success header and payload under a single deadline.
 pub fn writeResponse(io: std.Io, peer: *net.Stream, response: Response) !void {
     var header: [response_header_bytes]u8 = undefined;
-    encodeResponseHeader(&header, response);
+    encodeResponseHeader(
+        &header,
+        response.terminal_id,
+        response.operation,
+        .ok,
+        response.payload.len,
+    );
     const started = std.Io.Clock.awake.now(io);
     try writeExact(io, peer.socket.handle, &header, started, transfer_timeout_ms);
     try writeExact(io, peer.socket.handle, response.payload, started, transfer_timeout_ms);
@@ -1584,12 +1606,8 @@ pub fn writeFailure(
     operation: ?Operation,
     status: ResponseStatus,
 ) !void {
-    var header: [response_header_bytes]u8 = @splat(0);
-    @memcpy(header[0..4], "QTRS");
-    std.mem.writeInt(u16, header[4..6], protocol_version, .big);
-    header[6] = @intFromEnum(status);
-    header[7] = if (operation) |value| @intFromEnum(value) else 0;
-    @memcpy(header[8..24], &id.bytes);
+    var header: [response_header_bytes]u8 = undefined;
+    encodeResponseHeader(&header, id, operation, status, 0);
     try writeExact(
         io,
         peer.socket.handle,
@@ -1598,6 +1616,8 @@ pub fn writeFailure(
         transfer_timeout_ms,
     );
 }
+
+// Linux local transport, deadlines, and same-user admission.
 
 fn connectLinux(io: std.Io, path: []const u8) ClientError!net.Stream {
     if (builtin.os.tag != .linux) return error.ConnectFailed;
@@ -1937,11 +1957,7 @@ test "unknown remote response status retains established rejection error" {
 test "response framing rejects hostile operation bounds and reserved values" {
     const id = TerminalId{ .bytes = .{0x72} ** 16 };
     var input: [response_header_bytes]u8 = undefined;
-    encodeResponseHeader(&input, .{
-        .operation = .send,
-        .terminal_id = id,
-        .payload = &.{},
-    });
+    encodeResponseHeader(&input, id, .send, .ok, 0);
 
     var hostile = input;
     hostile[24] = 1;

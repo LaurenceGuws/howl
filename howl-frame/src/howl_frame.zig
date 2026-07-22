@@ -8,6 +8,8 @@ pub const max_combining: usize = 3;
 /// Keeps one renderer borrow and one newer complete publication independent.
 pub const slot_count: usize = 2;
 
+// Immutable backend-neutral frame values.
+
 /// Distinguishes normal, raised, and lowered terminal-cell baselines.
 pub const Baseline = enum(u2) { normal, raised, lowered };
 
@@ -192,6 +194,8 @@ pub const PublishResult = union(enum) {
 /// Reports stale identity or release of a generation that is not borrowed.
 pub const ReleaseError = error{ StaleGeneration, NotBorrowed };
 
+// Slot, borrow, and prepared-resize ownership.
+
 const SlotState = enum { free, ready, borrowed };
 
 const Slot = struct {
@@ -258,6 +262,8 @@ pub const Borrow = struct {
         return publication_pending;
     }
 };
+
+// Publication lifecycle and cumulative damage retirement.
 
 /// Owns two bounded frame slots and cumulative unacknowledged damage.
 /// One mutex serializes the complete grid copy with renderer borrow and
@@ -624,6 +630,8 @@ pub const Publisher = struct {
         slot.full_redraw = self.pending_full;
     }
 };
+
+// Storage construction and immutable borrow projection.
 
 fn frameFromSlot(slot: *const Slot) TerminalFrame {
     const cell_count = @as(usize, slot.rows) * slot.cols;
