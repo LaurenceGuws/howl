@@ -9260,7 +9260,7 @@ pub const View = struct {
     start: u32,
     screen: *const Screen,
 
-    fn rowSource(self: View, row: u16) RowSource {
+    fn rowSource(self: *const View, row: u16) RowSource {
         if (self.rows == 0 or row >= self.rows) return .{ .screen = 0 };
         const src_row = self.start + rowIndex(row);
         std.debug.assert(self.start + rowIndex(self.rows) <= self.history_count + rowIndex(self.rows));
@@ -9271,7 +9271,7 @@ pub const View = struct {
     }
 
     /// Returns a copied cell from an already resolved row source.
-    pub fn sourceCellInfoAt(self: View, source: RowSource, col: u16) Screen.Cell {
+    pub fn sourceCellInfoAt(self: *const View, source: RowSource, col: u16) Screen.Cell {
         return switch (source) {
             .history => |recency| self.screen.historyCellAt(recency, col),
             .screen => |screen_row| self.screen.cellInfoAt(screen_row, col),
@@ -9279,17 +9279,17 @@ pub const View = struct {
     }
 
     /// Returns a copied viewport cell, clamping an invalid row to screen row zero.
-    pub fn cellInfoAt(self: View, row: u16, col: u16) Screen.Cell {
+    pub fn cellInfoAt(self: *const View, row: u16, col: u16) Screen.Cell {
         return self.sourceCellInfoAt(self.rowSource(row), col);
     }
 
     /// Returns the codepoint of one visible cell.
-    pub fn cellAt(self: View, row: u16, col: u16) u21 {
+    pub fn cellAt(self: *const View, row: u16, col: u16) u21 {
         return @intCast(self.cellInfoAt(row, col).codepoint);
     }
 
     /// Returns one visible row's DEC geometry without prescribing host scaling.
-    pub fn lineGeometry(self: View, row: u16) Screen.LineGeometry {
+    pub fn lineGeometry(self: *const View, row: u16) Screen.LineGeometry {
         return switch (self.rowSource(row)) {
             .history => |recency| self.screen.historyLineGeometry(recency),
             .screen => |screen_row| self.screen.lineGeometry(screen_row),
@@ -9297,14 +9297,14 @@ pub const View = struct {
     }
 
     /// Returns the display depth contributed by one visible row.
-    pub fn rowDepth(self: View, row: u16) u32 {
+    pub fn rowDepth(self: *const View, row: u16) u32 {
         if (self.rows == 0 or row >= self.rows) return self.scrollback_offset;
         std.debug.assert(self.scrollback_offset <= self.history_count);
         return self.scrollback_offset + rowIndex(self.rows - 1 - row);
     }
 
     /// Returns the first blank column after visible row content.
-    pub fn contentEndExclusive(self: View, row: u16) u16 {
+    pub fn contentEndExclusive(self: *const View, row: u16) u16 {
         if (self.scrollback_offset == 0 and row > self.cursor_row) return 0;
         var scan = self.cols;
         while (scan > 0) {
@@ -9326,7 +9326,7 @@ const VisualSource = struct {
 const VisibleSelection = struct {
     selected: ?TerminalSelection,
 
-    fn span(self: VisibleSelection, view: View, row: u16) ?Range {
+    fn span(self: *const VisibleSelection, view: *const View, row: u16) ?Range {
         if (row >= view.rows) return null;
         const selected = self.selected orelse return null;
         return visibleRange(view, selected, row);
@@ -9691,14 +9691,14 @@ fn contentEndExclusive(screen_state: *const Set, row: i32) u16 {
     return if (active.cols > 0) 1 else 0;
 }
 
-fn visibleRow(view: View, row: u16) i32 {
+fn visibleRow(view: *const View, row: u16) i32 {
     std.debug.assert(row < view.rows or view.rows == 0);
     const absolute = @as(u64, view.history_row_base) + @as(u64, view.start) + @as(u64, row);
     return std.math.cast(i32, absolute) orelse std.math.maxInt(i32);
 }
 
 /// Projects an ordered selection onto one visible row, or null outside the selection.
-pub fn visibleRange(view: View, selected: TerminalSelection, row: u16) ?Range {
+pub fn visibleRange(view: *const View, selected: TerminalSelection, row: u16) ?Range {
     std.debug.assert(row < view.rows or view.rows == 0);
     const ordered = orderedSelection(selected);
     const selected_row = visibleRow(view, row);
@@ -12731,9 +12731,9 @@ pub const Terminal = struct {
         ///
         /// Raw history and screen selection endpoints remain VT-owned. An invalid
         /// row has no selected span.
-        pub fn selectedSpan(self: VisualView, row: u16) ?Range {
+        pub fn selectedSpan(self: *const VisualView, row: u16) ?Range {
             if (row >= self.view.rows) return null;
-            return self.selected_rows.span(self.view, row);
+            return self.selected_rows.span(&self.view, row);
         }
     };
     /// Bounds each borrowed title or icon value in a state snapshot.
@@ -14337,7 +14337,7 @@ pub const Terminal = struct {
         const selected = selection orelse return;
         var row: u16 = 0;
         while (row < view.rows) : (row += 1) {
-            const range = visibleRange(view, selected, row) orelse continue;
+            const range = visibleRange(&view, selected, row) orelse continue;
             switch (view.rowSource(row)) {
                 .screen => |screen_row| self.screen_state.active().markDirtyCols(
                     screen_row,

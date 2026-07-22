@@ -13,9 +13,22 @@ pub fn build(b: *std.Build) void {
         "generated_glyphs",
         "Expose generated terminal-glyph rasterization",
     ) orelse true;
+    const terminal_enabled = b.option(
+        bool,
+        "terminal",
+        "Expose VT semantic-to-visual terminal projection",
+    ) orelse true;
 
-    const root_source = if (native_enabled and generated_enabled)
+    const root_source = if (terminal_enabled and native_enabled and generated_enabled)
         b.path("src/root_all.zig")
+    else if (terminal_enabled and native_enabled)
+        b.path("src/root_terminal_native.zig")
+    else if (terminal_enabled and generated_enabled)
+        b.path("src/root_terminal_generated.zig")
+    else if (terminal_enabled)
+        b.path("src/root_terminal.zig")
+    else if (native_enabled and generated_enabled)
+        b.path("src/root_native_generated.zig")
     else if (native_enabled)
         b.path("src/root_native.zig")
     else if (generated_enabled)
@@ -55,10 +68,34 @@ pub fn build(b: *std.Build) void {
         module.addImport("generated_glyphs", generated);
         test_module.addImport("generated_glyphs", generated);
     }
+    var terminal_proofs: ?*std.Build.Module = null;
+    if (terminal_enabled) {
+        const vt = (b.lazyDependency("howl_vt", .{
+            .target = target,
+            .optimize = optimize,
+        }) orelse return).module("howl_vt");
+        const terminal = b.createModule(.{
+            .root_source_file = b.path("src/terminal.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        terminal.addImport("howl_vt", vt);
+        module.addImport("terminal_projection", terminal);
+        test_module.addImport("terminal_projection", terminal);
+        const proofs = b.createModule(.{
+            .root_source_file = b.path("src/terminal_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        proofs.addImport("howl_render", test_module);
+        proofs.addImport("howl_vt", vt);
+        terminal_proofs = proofs;
+    }
 
     const selected = b.addOptions();
     selected.addOption(bool, "native_text", native_enabled);
     selected.addOption(bool, "generated_glyphs", generated_enabled);
+    selected.addOption(bool, "terminal", terminal_enabled);
     const capability_tests = b.createModule(.{
         .root_source_file = b.path("src/capability_test.zig"),
         .target = target,
@@ -78,7 +115,20 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&tests.step);
     const run_tests = b.addRunArtifact(tests);
     if (b.args != null) run_tests.has_side_effects = true;
-    b.step("test", "Run the selected rendering capability proofs").dependOn(&run_tests.step);
+    const test_step = b.step("test", "Run the selected rendering capability proofs");
+    test_step.dependOn(&run_tests.step);
+    if (terminal_proofs) |proofs| {
+        const proof_tests = b.addTest(.{
+            .name = "howl-render-terminal-proofs",
+            .root_module = proofs,
+            .filters = b.args orelse &.{},
+        });
+        proof_tests.use_llvm = true;
+        check.dependOn(&proof_tests.step);
+        const run_proofs = b.addRunArtifact(proof_tests);
+        if (b.args != null) run_proofs.has_side_effects = true;
+        test_step.dependOn(&run_proofs.step);
+    }
     b.default_step = check;
 }
 

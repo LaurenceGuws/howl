@@ -16,7 +16,7 @@ scope.
   accepted terminal projection vocabulary;
 - preflight exact cell and row-patch counts before writing either caller buffer;
 - project full and sparse viewport rows, resolved colors, selection appearance,
-  line geometry, multicell clusters, and old/new cursor overlay damage;
+  line geometry, and old/new cursor overlay damage;
 - return only `FullRequired`, `InsufficientCells`, or `InsufficientPatches`;
 - prove short buffers remain byte-for-byte unchanged and projection allocates
   nothing;
@@ -78,8 +78,7 @@ Required complexity:
 - one dirty cell with unchanged overlays is O(1) cells and one row;
 - a source cursor overlay change is O(1) rows/cells; executable blink phase
   changes require no VT scan or projection;
-- `r` dirty rows containing `c` visual cells after bounded multicell expansion
-  cost O(r + c);
+- `r` dirty rows containing `c` visual cells cost O(r + c);
 - full projection alone costs O(rows * cols).
 
 ## Dependency and VT input
@@ -108,8 +107,9 @@ Required complexity:
 row. VT guarantees, and render asserts, these sibling-module invariants:
 
 - every row/span/cursor/cell/selection fact is in bounds;
-- cells contain valid Unicode scalars, bounded combining data, and coherent
-  multicell geometry;
+- cells contain valid Unicode scalars and bounded combining data;
+- visual cells are currently 1x1 with zero cluster offsets; render asserts this
+  sibling invariant until VT deliberately earns broader cell geometry;
 - old and new selected spans are dirty when selection appearance changes;
 - a changed row geometry dirties its complete row;
 - viewport/screen/resize discontinuity and palette/default/reverse changes that
@@ -173,8 +173,8 @@ Public values:
 - `Cursor`: `row`, `col: u16`; `visible`, `blink: bool`; `CursorShape`;
   `color`, `text_color: Rgb`.
 - `Cell`: `codepoint: u21`; `combining_len: u8`; `combining: [3]u21`;
-  multicell `width`, `height`, `x`, `y: u8`; resolved foreground, background,
-  and underline `Rgb`; `font: u4`; `CellBaseline`; bold, dim, italic,
+  resolved foreground, background, and underline `Rgb`; `font: u4`;
+  `CellBaseline`; bold, dim, italic,
   ordinary/rapid blink, glyph visibility, underline, strikethrough, and
   selection booleans; `UnderlineStyle`; `link_id: u32`.
 - `LineGeometry`: single width, double width, double-height top, or
@@ -214,10 +214,8 @@ minimum-span model. `cell_offset` and `cell_count` select its row-major packed
 cells in `Update.cells`; `cell_count == 0` represents cursor-only visual damage
 and copies no cell. For that case `start_col = damage_start` and `cell_offset`
 is the used cell-buffer length, making the empty slice canonical.
-`damage_start...damage_end` is the inclusive union of the cell patch and old/new
-cursor cells. Render expands a semantic cell span only to complete affected
-multicell clusters; VT invariants make that bounded from cells at the span
-edges. Geometry is the current value for that row and can be applied
+`damage_start...damage_end` is the inclusive union of the exact VT dirty span
+and old/new cursor cells. Geometry is the current value for that row and can be applied
 idempotently when a cursor-only patch carries no changed cells. Pixel glyph
 overhang/filter expansion belongs to later text/backend preparation because it
 depends on metrics.
@@ -496,3 +494,89 @@ The root workspace check remains blocked before reaching this VT boundary:
 allowlist still describes those quarantined paths. The rejected
 `howl-render/src/howl_frame.zig` and control consumers still name
 `SurfacePublication`; changing them belongs to later approved slices.
+
+## `render_delta_projection` implementation findings
+
+`howl-render/src/terminal.zig` now owns the accepted stateless projection:
+
+- `project` borrows one `Terminal.VisualView`, writes only initialized prefixes
+  of caller `Buffers`, and retains no VT pointer or slice. It has no allocator,
+  deinitializer, lock, queue, publication identity, or backend value. The
+  accepted public value parameter is addressed once; every iterator and
+  per-row/per-cell helper borrows that one local value by pointer.
+- `WorkIterator` performs the same ordered pass for preflight and writing. It
+  merges sparse viewport dirty rows with at most two old/new cursor rows; full
+  mode alone enumerates every row. Capacity rejection precedes every write.
+- One selected span is resolved by VT per affected row, avoiding repeated
+  history/selection scans per cell. Cell colors resolve palette, defaults,
+  cell reverse, screen reverse, and caller selection appearance before copying
+  backend-neutral RGB values.
+- The basics-first decision supersedes the earlier multicell projection
+  assumption. Render `Cell` contains no cluster geometry and sparse work copies
+  the exact VT dirty span. `projectCell` asserts the current sibling invariant
+  `width == height == 1` and `x == y == 0`, so a future VT expansion fails
+  loudly until its mutation and render contracts are approved together.
+- VT retains dormant `ScreenCell.width`, `height`, `x`, and `y` vocabulary.
+  Production assigns only their 1x1 defaults; non-default assignments existed
+  only in removed synthetic tests. Those fields remain VT classification debt
+  and are intentionally neither deleted nor exposed by render in this slice.
+- The complete dirty-call audit is explicit: `changeRectAttrs`, combining
+  append, and selection appearance preserve cell geometry; `writeCell` marks
+  before replacing one cell; `fillRect`, `copyRect`, insert/delete characters
+  and columns, left/right shifts, structural clear, erase, and row copy mark
+  after destructive mutation. None of those paths creates a non-1x1 cell.
+  `markDirtyCols` therefore remains constant work for one cell and constant
+  union work for any supplied span; full-row callers do not rescan cells.
+- Hidden or `none` cursors canonicalize position, shape, blink, and colors.
+  Incremental old/new cursor damage is independent of VT cell dirtiness and
+  emits canonical zero-cell row patches. Admitted baseline cursors are a
+  programmer contract: visible values are asserted in bounds and hidden values
+  are asserted equal to the canonical zero form.
+- Incremental geometry or selection-style mismatch and VT `full` dirtiness
+  return `FullRequired`. Short row or cell buffers return only
+  `InsufficientPatches` or `InsufficientCells`; destination bytes remain exact.
+
+The child build adds `-Dterminal`, default false. Only that branch resolves the
+direct sibling `howl-vt` dependency and exposes `howl_render.terminal`; native
+text and generated glyph selections remain independent. Eight compile-time
+selection combinations are checked. Verbose receipts prove neither,
+generated-only, and native-only graphs omit `howl-vt`; terminal-only omits
+FreeType and HarfBuzz.
+
+The duplicate `Cell`, baseline, line-geometry, cursor, selection, and cell-pixel
+values were deleted from quarantined `howl_frame.zig` rather than aliased. Its
+remaining Publisher/Borrow/PreparedResize runtime source now has unresolved
+references by design and remains unselected reconstruction evidence until the
+approved runtime-deletion slice; no adapter was added.
+
+Proof covers complete reconstruction, RGB/rendition/selection/row geometry,
+one-cell and mixed-scrollback sparse work, declined cumulative work, selection
+and geometry spans, same-row and cross-row cursor-only updates, a dirty cell
+beneath an unchanged cursor, exact untouched capacity failures, and
+style/geometry full-recovery requirements.
+The projection API contains no allocation boundary. Preflight counts use
+geometry-derived assertions and direct bounded addition; buffer alias checking
+uses ordered pointer differences. No new `catch unreachable` site remains.
+
+The eight small public roots are deliberate Zig compile-time selection facts,
+not placeholder APIs: each root declares exactly one of the eight possible
+native/generated/terminal namespace sets. A conditional public declaration
+would keep a disabled namespace present, while source-file selection makes the
+declaration absent before module analysis. Shared capability implementations
+remain single-source imports, so the roots contain no behavior duplication.
+Terminal projection defaults enabled alongside native text and generated
+glyphs, so plain `zig build check` exercises the complete owner graph. A
+text-only consumer must explicitly select `-Dterminal=false`.
+
+Validation completed:
+
+- `howl-render`: all eight `native_text` × `generated_glyphs` × `terminal`
+  check combinations; terminal-only tests in Debug and ReleaseSafe; terminal
+  compile checks in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
+- `howl-render`: verbose graph receipts confirm lazy VT selection and native
+  library exclusion described above.
+- `howl-vt`: check in all four optimization modes and tests in Debug and
+  ReleaseSafe remain green against the selected sibling dependency.
+- formatting and `git diff --check` pass. The workspace root remains blocked
+  only by quarantined deleted-package aliases, control's deleted frame edge,
+  and the stale source-audit allowlist indexed by the active reset.

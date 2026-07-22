@@ -10,6 +10,7 @@ test "public namespaces exactly match compile-time selection" {
         selected.generated_glyphs,
         @hasDecl(render, "generated"),
     );
+    try std.testing.expectEqual(selected.terminal, @hasDecl(render, "terminal"));
 }
 
 comptime {
