@@ -1,198 +1,358 @@
 # Render capability reset scratchpad
 
-Current slice: `classify_terminal_visual_values`
+Current slice: `settle_vt_render_boundary`
 
-Scope: inventory only. Source and public API remain unchanged. Dispositions are
-`retain_render`, `executable_evidence`, `delete`, or `discussion`; they classify
-current evidence and do not approve a replacement API.
+Scope: decision evidence only. No source or build contract is implemented by
+this slice. The symbol inventory accepted at `0ea9f52` remains the source
+accounting baseline.
 
-## Baseline
+## Revised decision
 
-- Source: `howl-render/src/howl_frame.zig`, 1,083 lines, 44,111 UTF-8 bytes.
-- Imports: `std` and `howl_vt`; the file is not selected by the accepted
-  `howl_render` roots or current child build.
-- Direct import sites outside the file: stale control and host build graphs,
-  control, unselected render preparation, host renderer, and host measurement
-  evidence. No accepted current render root imports it; that current-tree fact
-  does not negate render's settled public embeddable role.
-- Allocation: seven allocations per storage set: one pending-damage array plus
-  two slots, each with cells, line geometry, and damage. Prepared resize owns a
-  second complete seven-allocation set until commit or rollback.
-- Synchronization: one retained `std.Io.Mutex`, one retained `std.Io`, seven
-  `lockUncancelable`/unlock pairs; no atomics.
-- Bounds: `max_combining = 3`, `slot_count = 2`, nonzero `u16` rows/columns,
-  checked `usize` cell-count multiplication, monotonic non-reused `u64`
-  publication identity.
+Recommend one public, stateless visual-delta projection under
+`howl_render.terminal`:
 
-## Exact source partition
+```zig
+pub fn project(
+    source: howl_vt.Terminal.VisualView,
+    mode: ProjectMode,
+    buffers: Buffers,
+    selection_style: SelectionStyle,
+) Error!Update
+```
 
-These non-overlapping ranges cover every source byte exactly once.
+Normal projection visits and copies only cumulative VT-dirty rows/cells plus
+bounded old/new overlay facts. Full projection is explicit recovery for first
+use, resize, lost backing continuity, or a source-wide visual change. Render
+does not retain a grid, publish, queue, lock, acknowledge, allocate, shape,
+rasterize, or issue backend commands.
 
-| Range | Bytes | Symbols/family | Disposition |
-|---|---:|---|---|
-| 1-5 | 139 | file contract; `std`, `howl_vt` imports | discussion |
-| 6-10 | 223 | `max_combining`, `slot_count` | split below |
-| 11-170 | 6,042 | visual value declarations | split below |
-| 171-196 | 851 | initialization, resize, publish, release errors/results | split below |
-| 197-221 | 696 | `SlotState`, `Slot` | executable_evidence |
-| 222-248 | 934 | `PreparedResize`, `commit`, `deinit` | executable_evidence |
-| 249-264 | 621 | `Borrow`, `Borrow.release` | executable_evidence |
-| 265-445 | 7,005 | `Publisher` state and public lifecycle; `writableSlot` | executable_evidence |
-| 446-470 | 937 | `commitResize`, `cancelResize` | executable_evidence |
-| 471-513 | 2,083 | `validateSurface` | discussion |
-| 514-538 | 925 | `accumulateDamage` | executable_evidence |
-| 539-633 | 4,426 | `copyFrame` and `Publisher` close | discussion |
-| 634-658 | 999 | `frameFromSlot` | executable_evidence |
-| 659-710 | 1,686 | `deinitSlot`, `Storage`, storage construction/cleanup | executable_evidence |
-| 711-717 | 185 | `expectPublished` test helper | delete |
-| 718-754 | 1,977 | complete visual reconstruction test | discussion |
-| 755-836 | 4,134 | cumulative and sparse-damage tests | split below |
-| 837-895 | 2,335 | ready replacement and invalid-publication tests | split below |
-| 896-970 | 3,414 | saturation, release identity, generation-exhaustion tests | executable_evidence |
-| 971-1004 | 1,144 | storage bounds/allocation and source-validation test | split below |
-| 1005-1072 | 2,948 | resize reservation/allocation/commit tests | executable_evidence |
-| 1073-1083 | 407 | allocation-failure test helpers | delete |
+Required complexity:
 
-## Symbol-family inventory
+- one dirty cell with unchanged overlays is O(1) cells and one row;
+- a source cursor overlay change is O(1) rows/cells; executable blink phase
+  changes require no VT scan or projection;
+- `r` dirty rows containing `c` visual cells after bounded multicell expansion
+  cost O(r + c);
+- full projection alone costs O(rows * cols).
 
-### Imports and constants
+## Dependency and VT input
 
-| Range | Symbols | Current purpose/consumers | Ownership and disposition | Independent evidence |
-|---|---|---|---|---|
-| 1-5 | file contract, `std`, `howl_vt` | `std` supplies allocator, IO mutex, checked math, memory operations, and tests. `howl_vt` supplies semantic surface and value types. | `discussion`: retained imports depend on the approved transformation and value types. The current file contract falsely combines visual facts with acknowledgement. | A transformation must validate scalar bounds and resolve semantic colors; no dependency direction is approved. |
-| 6-7 | `max_combining` | Sizes `Cell.combining`; old renderer derives its shaped-codepoint bound from it. | `retain_render`: fixed visual-cell storage needs an explicit bound. The exact value is proven by current VT source but the replacement public placement is undecided. | Reject over-bound clusters before destination mutation. |
-| 8-10 | `slot_count` | Fixes every slot/storage array and the two-borrow saturation policy. | `executable_evidence`: this is publication scheduling, not visual knowledge. | At most one consumed frame plus one newer frame was the old policy; that policy is not accepted merely because it is bounded. |
+- `howl-render` depends directly on the independently embeddable `howl-vt`
+  package. Render owns semantic-to-visual interpretation; an adapter or generic
+  iterator would make every embedder reproduce that interpretation.
+- `howl_render.terminal` is the core render namespace. Accepted `text` and
+  `generated` capabilities remain independently selectable and are not invoked
+  by `project`.
+- VT replaces the overloaded visual use of `Terminal.SurfacePublication` with
+  `Terminal.visualView() -> Terminal.VisualView`. The borrow contains only
+  coherent visual semantics, cumulative dirty evidence, and an opaque
+  `DirtyToken`; host consequences and runtime publication facts are absent.
 
-### Plain and mixed values
+`VisualView` supplies:
 
-| Range | Symbols | Current purpose/consumers | Ownership/lifetime | Disposition and proof worth preserving |
-|---|---|---|---|---|
-| 13-14 | `Baseline` | Cell baseline consumed by old render shaping. | Copied value; no allocation or cleanup. | `retain_render`: normal, raised, and lowered placement is visual meaning. |
-| 16-62 | `Cell` | Old render consumes every cluster/rendition field; host draw consumes codepoint, multicell placement, visibility, and resolved colors; host labels manufacture the same type. | Inline copied value. It currently embeds VT `Rgb` and `UnderlineStyle`, so the concrete dependency is unapproved. | `retain_render`: bounded cluster, multicell geometry, resolved colors, font/baseline, rendition, underline, and link identity are visual facts. Preserve exact color reversal/resolution and bounded cluster validation, not the current type identity. |
-| 64-70 | `LineGeometry` | Old render validates one value per row; no current host draw uses it. | Inline copied value. | `retain_render`: DEC row geometry affects terminal visual interpretation even though current drawing is incomplete. Preserve exact one-row association. |
-| 72-78 | `CellPixelSize` | Control aliases it; VT receives it; old render validates it; host dimensions are derived independently. | Inline value; nonzero is checked by publisher. | `discussion`: pixel cell size crosses VT, rendering, and executable layout. Current duplicate type and public owner are not justified. Preserve nonzero validation if the selected boundary carries it. |
-| 80-96 | `Cursor` | Host draw uses row/col, visibility, shape, and resolved colors; old render validates position. | Inline copied value; shape and RGB currently use VT types. | `retain_render`: cursor presentation is visual knowledge. Preserve position validation and explicit resolved foreground/background behavior; timer policy is not retained. |
-| 98-114 | `SelectionPoint`, `Selection` | `copyFrame` and the reconstruction test consume them; old render and host do not yet draw selection. Operator-approved scope requires primary-screen scrollback selection/copy. | Inline copied values borrowing no memory. VT owns selection semantics, render owns selection appearance, and the executable owns gesture and clipboard policy. | `discussion`: the duplicate types do not survive automatically, but selection's visual responsibility and semantic-to-visual evidence must survive. Exact visual values and ownership transfer belong to the VT/render API gate. |
-| 116-132 | `RowDamage`, `Damage` | Old render limits row/cell preparation; host measurement counts rows; host renderer forces complete redraw. | `Damage.rows` borrows publisher slot storage until release. Cumulative lifetime is acknowledgement-defined. | `executable_evidence`: VT owns dirty facts; accumulation across skipped work and redraw continuity are executable scheduling. Preserve the observed need for full-redraw fallback and bounded row spans, not these public nouns. |
-| 134-170 | `TerminalFrame` | Old render uses generation, dimensions, cells, row geometry, cursor, cell pixels, and damage. Host draw uses dimensions/cells/cursor. Current drawing omits selection, history base/count, alternate flag, scroll offset, and mouse mode. | Borrows slot cells/geometry/damage until exact `Borrow.release`; scalar fields copy VT and runtime facts. | `discussion`: the type cannot survive intact. Rows/columns/cells/row geometry/cursor and selection appearance are visual evidence; generation and damage are executable evidence; history/mouse remain VT or executable policy. Preserve complete reconstruction, not this aggregate or borrowed lifetime. |
+- nonzero `u16` rows and columns;
+- copied cursor position, visibility, shape, and blink intent;
+- borrowed cell lookup and DEC line geometry;
+- copied palette/default/cursor colors and reverse-screen state;
+- VT-resolved selected half-open span per visible row;
+- cumulative `VisualDirty` since the last successful `ackVisual`.
 
-### Errors and runtime state
+`VisualDirty` is either `full` or one inclusive minimum column span per dirty
+row. VT guarantees, and render asserts, these sibling-module invariants:
 
-| Range | Symbols | Current behavior | Ownership/cleanup | Disposition |
-|---|---|---|---|---|
-| 171-176 | `InitError`, `PrepareResizeError` | Report allocation/bounds and active-borrow resize rejection. | Coupled to allocated publication storage. | `executable_evidence`; replacement errors depend on executable storage policy. |
-| 177-186 | `PublishError` | Validates source/grid/cursor/damage/selection/cell pixels plus runtime generation exhaustion. Control translates it into reader/resize errors. | No retained resource. | `discussion`: source validation failure is worth preserving transactionally; `GenerationExhausted` and control translation are rejected runtime coupling. Do not retain this mixed error set. |
-| 188-192 | `PublishResult` | Returns generation or two-slot saturation. | Runtime admission result. | `executable_evidence`. |
-| 194-195 | `ReleaseError` | Distinguishes stale and non-borrowed generation. | Runtime acknowledgement result. | `executable_evidence`. |
-| 197-221 | `SlotState`, `Slot` | Stores two complete copies, visual scalars, generations, state, and redraw facts. | Each slot owns three allocations; bytes are immutable only while state is borrowed. | `executable_evidence`; the visual fields are already accounted for by their value families. |
-| 222-248 | `PreparedResize`, `commit`, `deinit` | Reserves publisher, owns replacement storage, atomically installs or frees it. | Owns seven replacement allocations; `commit` transfers, `deinit` cancels and frees. | `executable_evidence`; preserve rollback discipline if a future runtime owner chooses allocated publication. |
-| 249-264 | `Borrow`, `Borrow.release` | Couples immutable frame slices to publisher identity and reports pending recovery. | Holds publisher pointer; release invalidates itself, no allocation. | `executable_evidence`; renderer acknowledgement is explicitly rejected from render. |
-| 265-445 | `Publisher`, `init`, `deinit`, `prepareResize`, `publish`, `borrowNewest`, `newestGeneration`, `release`, `writableSlot` | Control owns it; host consumes through control; measurement uses it directly. Manages two slots, newest replacement, saturation, damage retirement, generation, and resize reservation. | Retains allocator, IO, mutex, seven allocations and all runtime state. `deinit` requires no borrow/resize and frees in reverse order. | `executable_evidence`; all publication, queueing, synchronization, generation, saturation, and acknowledgement policy belongs to the executable. Preserve only generic evidence for bounded nonblocking saturation, immutable consumed bytes, exact cleanup, and validation-before-mutation. |
-| 446-470 | `commitResize`, `cancelResize` | Swap/free replacement storage or revoke reservation under mutex. | Same executable-owned storage and lock lifetime. | `executable_evidence`; preserve atomic rollback behavior only if selected runtime storage needs it. |
+- every row/span/cursor/cell/selection fact is in bounds;
+- cells contain valid Unicode scalars, bounded combining data, and coherent
+  multicell geometry;
+- old and new selected spans are dirty when selection appearance changes;
+- a changed row geometry dirties its complete row;
+- viewport/screen/resize discontinuity and palette/default/reverse changes that
+  cannot be represented sparsely produce `full`;
+- dirty state is cumulative and unchanged until exact acknowledgement.
 
-### Transformation, damage, projection, and storage
+`VisualDirty` covers cell mutations, selection-span changes, row geometry, and
+source-wide presentation discontinuities. Cursor position, shape, visibility,
+blink intent, and resolved colors are a separate overlay: render compares the
+source `Cursor` with `ProjectionBaseline.cursor` and emits cursor-only
+`RowPatch` values for the old and new affected rows without changing VT cell
+dirty semantics.
 
-| Range | Symbols | Current behavior | Ownership/lifetime | Disposition and independent evidence |
-|---|---|---|---|---|
-| 471-513 | `validateSurface` | Checks destination capacity, cursor, optional pixel size, selection columns, dirty spans/sentinel, Unicode scalar range, and combining bound before locking or mutation. Walks the complete source grid. | Borrows `Terminal.SurfacePublication`; allocates nothing. Capacity comes from `Publisher`. | `discussion`: validation-before-mutation is required, but exact checks/output errors depend on the transformation contract. |
-| 514-538 | `accumulateDamage` | Merges VT row spans by min/max unless full redraw is already pending; ignores clean sentinel rows. | Mutates retained publisher damage until latest release. | `executable_evidence`: accumulation/retirement is publication policy. Preserve sparse sentinel handling as VT-to-runtime evidence. |
-| 539-633 | `copyFrame` | Walks every visible row/cell; maps line geometry; resolves palette/default colors; applies screen/cell reverse; copies clusters, rendition, cursor, selection, history, mouse, damage, and identities into a slot. | Borrows VT surface only during call; mutates caller-selected slot; allocates and locks nothing itself. | `discussion`: render's semantic-to-visual responsibility is settled, but runtime identities, history/mouse copying, slot destination, and damage are not one coherent transformation. Exact API, I/O, dependency, allocation, and lifetime require the supervised gate. |
-| 634-658 | `frameFromSlot` | Exposes initialized prefixes as borrowed `TerminalFrame` slices. | Lifetime ends at exact release; no allocation. | `executable_evidence`: projection exists only for the rejected slot/borrow API. |
-| 659-663 | `deinitSlot` | Frees damage, geometry, then cells. | Caller allocator must match construction allocator. | `executable_evidence`; reverse cleanup discipline is worth preserving, not the helper. |
-| 665-668 | `Storage` | Bundles pending damage and two slots for transactional construction. | Owns seven allocations after successful return. | `executable_evidence`. |
-| 670-687 | `initStorage` | Checks row×column multiplication, allocates pending damage, constructs two slots, and rolls back initialized prefixes. | Explicit caller allocator; transfers seven allocations on success. | `executable_evidence`; preserve checked sizing and complete allocation rollback if future runtime storage is allocated. |
-| 689-696 | `deinitStorage` | Frees both slots then pending damage. | Exact owner cleanup. | `executable_evidence`. |
-| 698-708 | `initSlot` | Allocates cells, geometry, damage with staged `errdefer`. | Explicit caller allocator; transfers three allocations. | `executable_evidence`. |
+The caller excludes mutation of the terminal for `visualView`, `project`,
+runtime admission, and optional acknowledgement. `project` retains no VT
+pointer or slice. Every returned variable-length fact resides in caller-owned
+buffers and remains valid after VT mutation.
 
-## Tests and proof disposition
+## Small retained baseline
 
-| Range | Test/helper | Current proof | Disposition; behavior worth preserving |
-|---|---|---|---|
-| 711-717 | `expectPublished` | Converts old publish result for tests. | `delete`; API-only helper. |
-| 718-754 | `complete immutable frame reconstructs VT visual truth` | Exact cells, italic, row geometry, selection, dimensions, pixel size, and three generations after VT feed. | `discussion`; preserve a dense semantic-to-visual transcript for cell/color/cursor/geometry and selection appearance. Drop publication identity; reshape selection assertions only after its visual contract is approved. |
-| 755-800 | `skipped publications retain cumulative damage until newest release` | Damage unions across unread generations and retires after latest release. | `executable_evidence`; this proves rejected acknowledgement policy, not render behavior. |
-| 802-836 | `alternate-screen sparse dirty rows publish without inventing middle damage` | Clean middle sentinel remains clean while outer dirty range spans rows. | `discussion`; preserve exact sparse VT dirty interpretation if the selected transformation/runtime boundary consumes it. Drop borrow/ack ceremony. |
-| 837-864 | `new publication replaces only the unread ready generation` | Newest complete slot replaces unread ready state and stale release rejects prior identity. | `executable_evidence`; no render-independent proof. |
-| 866-895 | `invalid publication cannot mutate retained frame or pending damage` | Invalid pixel size leaves generation, borrowed bytes, full flag, and pending damage unchanged. | `discussion`; preserve validation-before-mutation for the selected transformation. Runtime fields are not retained. |
-| 896-930 | `two borrowed slots saturate without consuming identity or damage` | Two borrowed slots saturate without consuming generation/damage; release permits recovery. | `executable_evidence`; current capacity and recovery policy are not accepted. |
-| 932-947 | `release rejects stale double and unborrowed generations` | Exact acknowledgement errors. | `executable_evidence`; current API-only proof. |
-| 949-970 | `generation exhaustion preserves the last complete publication` | `u64` identity never wraps and prior frame survives. | `executable_evidence`; preserve non-reused identity only if the future executable uses identities. |
-| 971-1003 | `publisher validates bounds and rolls back every allocation` | Rejects zero/capacity/pixel bounds and proves all seven init allocation failures clean. | Split: storage proof is `executable_evidence`; source-bound validation is `discussion`. Preserve checked arithmetic, rollback, and validation before output mutation under whatever owners are selected. |
-| 1005-1022 | `resize preparation rejects borrowed storage without mutation` | Active borrow prevents storage replacement without mutation. | `executable_evidence`; current runtime policy only. |
-| 1024-1044 | `resize allocation failure preserves ready storage and borrowing` | Failed replacement allocation leaves old ready storage borrowable. | `executable_evidence`; transactional replacement behavior may inform future executable storage. |
-| 1046-1063 | `resize commit replaces storage at exact geometry in both directions` | Exact replacement capacities in both directions. | `executable_evidence`; current storage API only. |
-| 1065-1071 | `resize preparation rolls back every partial allocation` | Every replacement-allocation failure cleans up. | `executable_evidence`; preserve rollback discipline if future executable allocates replacement storage. |
-| 1073-1083 | `initPublisher`, `preparePublisherResize` | Allocation-failure harness entry points. | `delete`; helpers exist only for rejected storage API. |
+Render requires no previous complete `Visual`. Incremental mode carries only:
 
-## Real consumer inventory
+```zig
+pub const ProjectionBaseline = struct {
+    rows: u16,
+    cols: u16,
+    cursor: Cursor,
+    selection_style: SelectionStyle,
+};
 
-| Consumer | Exact uses | Classification consequence |
-|---|---|---|
-| `howl-control/build.zig(.zon)` | Declares deleted standalone frame dependency and injects `howl_frame`. | Delete coupling; build evidence is quarantined. |
-| `howl-control/src/howl_control.zig` lines 5, 54-60, 108, 123, 235, 272, 304-305, 373, 387, 419, 581-606, 766, 802-803, 825, 846-887, 940, 1339-1361 | Re-exports pixel/frame/error types; owns publisher; couples initialization, reader publication, viewport, resize, borrow/release, recovery, wake, and error translation. | Confirms all runtime publication currently sits in forbidden control ownership; it does not prove the API should survive. |
-| control inline tests 1522-1718 | Saturation recovery, viewport, alternate sparse damage, cell pixels, publication failure, resize rollback. | Preserve terminal behavior proofs separately; publication-specific assertions are executable evidence. |
-| `howl-control/src/test.zig` 126-153, 437-590 | Live child visual copy plus resize/borrow/allocation/cancellation coupling. | Preserve PTY/VT lifecycle and geometry behavior; rejected borrow/storage API does not survive. |
-| `howl-render/src/howl_render.zig` lines 4, 42, 103, 306-565 | Uses `Cell`, `TerminalFrame`, `RowDamage`, `LineGeometry`, pixel size, cursor, damage, and generation for shaping/cache preparation and validation. It never uses Publisher/Slot/Borrow/PreparedResize. | Strong evidence for visual cell/cursor/grid facts. This unselected source does not define the exact public API; render's public embeddable role is already settled. |
-| old render tests 631-1007 | Shared cache, glyph borrowing, presentation cells, damage/generation validation, ownership transfer, OOM and raster cleanup. | Classify in the later render-code slice; only their frame fixtures consume current values. |
-| `howl-host/src/renderer.zig` lines 5, 321, 367, 488-535, 843, 979-1007 | Borrows via control, walks cells/cursor for drawing, releases via control, and manufactures terminal cells for labels. | Visual draw use is executable evidence. Label reuse shows accidental coupling, not a terminal-cell API requirement. |
-| host renderer tests 1279-1585 | Mailbox/coalescing/failure/release/composition behavior. | Executable evidence; not frame-value API proof. |
-| `howl-host/build/probe_scenario.zig` lines 4, 84, 154-192 | Direct Publisher lifecycle, dirty counting, old render preparation, release timing. | Delete with rejected measurement machinery; no architectural authority. |
-| stale host build graph | Declares and injects deleted standalone frame module. | Delete coupling. |
+pub const ProjectMode = union(enum) {
+    full,
+    incremental: ProjectionBaseline,
+};
+```
 
-No other maintained Zig/build consumer imports `howl_frame`. VT tests mentioning
-`LineGeometry` or cell pixels use VT-owned types and are not frame consumers.
+`ProjectionBaseline` is copied metadata for the last update admitted to
+caller-owned runtime storage. It exists to damage the prior cursor position and
+to reject a selection-style or geometry discontinuity that needs explicit full
+projection. It contains no cells, allocation, generation, borrow, lock, or
+cleanup.
 
-## Supervised VT/render boundary gate
+VT cumulative dirty owns prior selection, row-geometry, palette, and cell
+effects; duplicating them in render baseline would recreate a shadow terminal.
+Executable cursor blink phase is not terminal state: toggling it damages only
+the cursor cell identified by `ProjectionBaseline.cursor` and requires no VT
+scan or projection. Source cursor movement or presentation changes use the
+projection baseline's old cursor and the source's new cursor independently of
+cumulative VT dirty spans.
 
-Evidence established:
+## Backend-neutral delta vocabulary
 
-- `Terminal.SurfacePublication` is borrowed until VT mutation; cross-thread or
-  delayed consumption therefore requires an owner-selected copy or stronger
-  synchronization outside control.
-- Semantic-to-visual work currently includes bounded cluster conversion, DEC
-  row geometry, palette/default/underline/cursor color resolution, reverse
-  interaction, cursor and selection presentation, and scalar validation.
-- Current render preparation needs dimensions, cells, cursor, and dirty/full
-  facts; current host drawing needs dimensions, cells, and cursor. Neither
-  drawing consumer uses selection, history metadata, alternate-screen identity,
-  scrollback offset, or mouse mode. Selection is an implementation gap, not an
-  absent requirement: operator-approved daily scope includes primary-screen
-  scrollback selection/copy and render owns its appearance.
-- Current destination copy is allocation-free only because Publisher owns
-  preallocated slot arrays. Initial and resize storage use an explicit caller
-  allocator and exact rollback.
-- A public embeddable render capability is settled. It hides terminal visual
-  semantics from embedders that know their graphics backend but should not need
-  terminal-state-machine internals. Quarantined current consumers are evidence
-  for exact values and behavior, not the sole authority for capability scope.
+Public values:
 
-Questions requiring operator approval before implementation:
+- `Rgb`: `r`, `g`, `b: u8`.
+- `ProjectionBaseline`, `ProjectMode`, `Buffers`, `Update`, and `RowPatch`.
+- `CellBaseline`: `normal`, `raised`, `lowered`.
+- `UnderlineStyle`: `none`, `single`, `double`, `curly`, `dotted`, `dashed`.
+- `CursorShape`: `block`, `underline`, `bar`, `none`.
+- `SelectionStyle`: resolved `foreground`, `background: Rgb`.
+- `Cursor`: `row`, `col: u16`; `visible`, `blink: bool`; `CursorShape`;
+  `color`, `text_color: Rgb`.
+- `Cell`: `codepoint: u21`; `combining_len: u8`; `combining: [3]u21`;
+  multicell `width`, `height`, `x`, `y: u8`; resolved foreground, background,
+  and underline `Rgb`; `font: u4`; `CellBaseline`; bold, dim, italic,
+  ordinary/rapid blink, glyph visibility, underline, strikethrough, and
+  selection booleans; `UnderlineStyle`; `link_id: u32`.
+- `LineGeometry`: single width, double width, double-height top, or
+  double-height bottom.
 
-1. Transformation placement: render owns semantic-to-visual interpretation;
-   which selected render namespace and operation express it without importing
-   runtime policy?
-2. Input: borrowed VT publication, narrower semantic view, or another already
-   earned concrete type?
-3. Output: which exact visual values are required, and are dirty/full facts part
-   of that output or executable publication state?
-4. Dependency direction: may render depend directly on VT, or must a caller
-   provide already-decoupled semantic facts?
-5. Allocation/lifetime: caller-provided destination storage, one explicitly
-   allocated owned copy, or another proven lifetime? Which owner frees it?
-6. Public API: which exact operation and backend-neutral output vocabulary earn
-   exposure from the already-settled embeddable render capability?
+Caller buffers and initialized output:
 
-Gate: render's public role and transformation responsibility are settled. The
-exact API, input/output types, direct VT dependency shape, caller-provided
-allocator and storage lifetime, dirty/damage split, and backend command
-vocabulary remain unsettled. Those decisions block implementation of the
-replacement boundary only; the symbol inventory is complete.
+```zig
+pub const Buffers = struct {
+    cells: []Cell,
+    rows: []RowPatch,
+};
 
-## Validation
+pub const RowPatch = struct {
+    row: u16,
+    start_col: u16,
+    cell_offset: usize,
+    cell_count: u16,
+    geometry: LineGeometry,
+    damage_start: u16,
+    damage_end: u16,
+};
 
-- Every line and UTF-8 byte in `howl_frame.zig` is covered once by the source
-  partition.
-- Every declaration, method, helper, allocation, lock, import, and test belongs
-  to exactly one family above.
-- Visual semantics are separated from runtime publication and acknowledgement.
-- No transformation API, executable topology, or storage policy is selected.
+pub const Update = struct {
+    rows: u16,
+    cols: u16,
+    full: bool,
+    cells: []const Cell,
+    row_patches: []const RowPatch,
+    cursor: Cursor,
+    next_baseline: ProjectionBaseline,
+};
+```
+
+Each affected row yields exactly one `RowPatch`, matching VT's dense
+minimum-span model. `cell_offset` and `cell_count` select its row-major packed
+cells in `Update.cells`; `cell_count == 0` represents cursor-only visual damage
+and copies no cell. For that case `start_col = damage_start` and `cell_offset`
+is the used cell-buffer length, making the empty slice canonical.
+`damage_start...damage_end` is the inclusive union of the cell patch and old/new
+cursor cells. Render expands a semantic cell span only to complete affected
+multicell clusters; VT invariants make that bounded from cells at the span
+edges. Geometry is the current value for that row and can be applied
+idempotently when a cursor-only patch carries no changed cells. Pixel glyph
+overhang/filter expansion belongs to later text/backend preparation because it
+depends on metrics.
+
+Selected cells have final selection colors and retain a selection boolean for
+later non-color appearance. Reverse/default/indexed colors are resolved.
+Protection, palette indices, VT modes, pane coordinates, cell pixels, history
+policy, source generations, glyph masks, textures, and GPU values are absent.
+
+This is a render-owned delta, not a GPU command stream. The executable owns a
+complete retained visual grid and row geometry and applies admitted row patches
+in order. Applying a patch is structural copying of render-owned values; the
+embedder does not interpret VT colors, selection endpoints, protection, line
+flags, or state-machine modes. Later render text preparation may inspect the
+retained neighboring visual cells needed for shaping and ligature context, so
+the delta does not force shaping isolated dirty cells. Storage and ordering are
+runtime-owned; shaping rules remain render-owned. Accepted `howl_render.text`
+and `howl_render.generated` remain separate shaping and rasterization
+operations.
+
+## Storage, errors, and transaction
+
+- `project` allocates nothing. The caller allocates `Buffers` through its
+  explicit allocator and owns their lifetime and cleanup.
+- The caller first reserves one bounded runtime update buffer, then calls
+  `project` into it. `Update` borrows only initialized buffer prefixes.
+- Destination buffers are nonaliasing by programmer contract; render asserts
+  this internal boundary instead of adding a recoverable alias error.
+- Incremental required counts are computed from bounded dirty spans and overlay
+  rows before any destination mutation. Full required counts are checked from
+  `rows * cols`. A short buffer leaves every destination byte unchanged.
+- After bounds checks, typed VT invariants are assertions. There is no duplicate
+  full-grid validation pass and no `InvalidCell`, `InvalidCursor`,
+  `InvalidSelection`, or `InvalidDamage` error.
+
+Exact recoverable errors:
+
+```text
+FullRequired       incremental baseline geometry/style does not match source
+InsufficientCells caller cell-patch capacity is short
+InsufficientPatches caller row-patch capacity is short
+```
+
+There is no `OutOfMemory`, deinit, generation exhaustion, saturation, borrow,
+release, or resize error. Capacity arithmetic uses checked `usize`; overflow is
+an impossible VT `u16` invariant and is asserted after VT bounds establish it.
+
+## Admission, acknowledgement, and skipped work
+
+Projection is preparatory and does not mutate `ProjectionBaseline` or VT:
+
+1. Executable reserves caller-owned runtime storage.
+2. While VT mutation is excluded, it obtains `VisualView`, retains that view's
+   opaque `DirtyToken`, and calls `project`.
+3. It either declines the produced update, or admits the complete update to its
+   bounded runtime storage.
+4. Only after successful admission does it replace its small
+   `ProjectionBaseline` with `Update.next_baseline` and call
+   `Terminal.ackVisual(source.dirty_token)` with the exact token retained from
+   that serialized source view.
+
+Decline, capacity failure, or runtime saturation therefore leaves both baseline
+and VT cumulative dirty unchanged. A later projection includes every
+unacknowledged semantic change.
+
+An admitted delta may not subsequently disappear. Runtime may apply admitted
+deltas in order to its own retained backing and then coalesce presentation, or
+retain them in an ordered bounded queue until application. That choice, slot
+count, locking, wakeup, generation, and backpressure policy belong entirely to
+the executable. Render owns none of them.
+
+For a thread handoff, the producer writes a reserved executable-owned buffer;
+after admission its initialized `Update` bytes are immutable until the consumer
+returns that storage. No VT borrow crosses the handoff. Runtime can remain
+nonblocking with respect to terminal progress by declining before
+acknowledgement when no update storage is available; VT continues accumulating
+bounded dirty facts.
+
+## Full reconstruction and recovery
+
+`project(source, .full, ...)` emits one full-width `RowPatch` per row with
+`start_col = 0`, `cell_count = cols`, and damage `0...cols - 1`, plus the
+complete cursor and next baseline. It is used for init, resize, lost backing
+continuity, changed selection style, or a VT `VisualDirty.full`.
+
+Once admitted and applied, a full update reconstructs every render visual fact
+without prior state. Ordered nonvisual terminal consequences remain outside
+this contract and cannot be collapsed by visual update coalescing.
+
+## Current Howl evidence
+
+- `howl-vt/src/terminal.zig:9238-9309`, `View`: borrowed projected cells,
+  cursor, viewport, and line geometry until mutation.
+- `howl-vt/src/terminal.zig:9311-9316`, `SurfaceSnapshot`, and
+  `:9415-9428`, `projectSurface`: current coherent view, dirty, and selection.
+- `howl-vt/src/terminal.zig:3490-3539`, `ScreenDirtyRows`/`DirtyState`:
+  cumulative dense row spans and clean-row sentinel are already bounded.
+- `howl-vt/src/terminal.zig:9467-9698`, `TerminalSelection`, `visibleRange`:
+  VT already resolves selection semantics to visible row spans.
+- `howl-vt/src/terminal.zig:9742-9780`, `Publication`, and
+  `:13487-13491`, `ackSurface`: exact acknowledgement identity is useful VT
+  evidence, while current publication sequence policy does not enter render.
+- `howl-vt/src/terminal.zig:13566-13605`, `surfaceSnapshot`, and
+  `:14092-14177`, `SurfacePublication`/`Presentation`: coherent colors are
+  proven, but the aggregate is overloaded with nonvisual consequences.
+- `howl-render/src/howl_frame.zig:471-633`, `validateSurface`,
+  `accumulateDamage`, `copyFrame`: color/reverse/cluster/cursor translation and
+  sparse-span evidence survive; complete validation, slots, and cumulative
+  render damage do not.
+- `howl-render/src/native_text.zig:15-165` and `FontSet` at `:175`: accepted
+  text bounds and caller allocation remain separate from terminal projection.
+- `howl-render/src/generated.zig:9-123`, `classify` and
+  `rasterizeWithStroke`: accepted generated rasterization already uses bounded
+  caller storage and changes no terminal contract.
+
+## Reference lessons, not donated structure
+
+- Ghostty `src/terminal/render.zig:356-723`, `RenderState.beginUpdate`, rebuilds
+  only dirty rows in the common path and clears terminal dirty only after its
+  owned copy is complete. Howl borrows proportional dirty consumption, but not
+  retained render state, arenas, terminal mutation, or two-phase lifecycle.
+- Alacritty `alacritty/src/display/content.rs:27-220`, `RenderableContent` and
+  `RenderableCell`, resolves colors, selection, cursor, and wide-cell facts
+  before backend drawing. `alacritty/src/display/damage.rs:15-130`,
+  `DamageTracker`, retains only old cursor/selection metadata for damage;
+  `:215-250`, `RenderDamageIterator.overdamage`, keeps pixel expansion in the
+  backend. Howl borrows those separations, not its display architecture.
+- Foot `render.c:3293-3321`, `dirty_old_cursor`/`dirty_cursor`, demonstrates
+  explicit old/new cursor damage without scanning the grid.
+  `render.c:3207-3291`, `reapply_old_damage`, shows backing continuity is a
+  renderer/runtime concern rather than terminal dirty truth.
+- Libvaxis `src/Cell.zig:4-127`, `Cell`/`Style`, and
+  `src/Screen.zig:13-69`, caller-allocated `buf`, show that copied visual cells
+  and caller storage form a useful low-level boundary. Howl does not adopt its
+  application-screen or image architecture.
+- TigerBeetle `src/vsr/client_sessions.zig:50-69`, `init`/`deinit`, uses exact
+  allocator symmetry and asserts established capacity invariants after checked
+  construction. `src/vsr/grid.zig:230-351`, `Grid.init`/`deinit`, checks
+  recoverable allocation boundaries while asserting internal ownership facts.
+  Howl applies the lesson directly: caller capacity is recoverable; malformed
+  typed sibling VT facts are invariant violations, not duplicated hot errors.
+
+## Rejected alternatives
+
+1. **Complete `Visual` plus complete previous `Visual`.** Rejected because one
+   cursor or cell change scans/copies the grid and pressures 4K batching.
+2. **Have `project` mutate the executable's shared complete backing.** Rejected
+   because the projection call would then own runtime synchronization and
+   handoff policy. It instead emits immutable patches; the executable applies
+   admitted patches in order to its retained complete grid.
+3. **Trust VT dirty but acknowledge during projection.** Rejected because a
+   declined/saturated runtime admission would lose semantic changes.
+4. **Treat typed VT output as hostile.** Rejected because duplicate full-grid
+   validation adds hot work and two owners for the same invariants. Render
+   asserts sibling contracts; only caller storage/admission failures return.
+5. **Consume `Terminal.SurfacePublication`.** Rejected because it couples
+   render to title, clipboard, shell, pointer, file, window, DCS, and policy.
+6. **Generic callback/iterator adapter.** Rejected because it moves terminal
+   visual interpretation into every embedder and adds erased ownership.
+7. **Backend draw-command stream now.** Rejected because glyph placement,
+   masks, pixel overdamage, batching, and textures require later text/backend
+   evidence and would settle unapproved APIs.
+
+## Implementation gate
+
+No evidence blocker remains for this work unit. Approval permits the next slice
+to add the narrow VT `VisualView`/`VisualDirty`/`DirtyToken` contract, make VT
+dirty cumulative for cell, selection-span, row-geometry, and source-wide visual
+changes, add the direct render namespace and delta projection, and prove sparse
+cursor-overlay derivation, admission/ack rollback, full recovery, exact bounds,
+and no borrowed VT data after return.
+
+It does not approve runtime slots, queues, locks, generations, thread topology,
+GPU commands, concrete backend behavior, or graphics capability.
+
+## Validation receipt
+
+- [x] One cursor or dirty cell does not scan/copy the complete grid.
+- [x] Typed VT invariants have one owner and no duplicate recoverable errors.
+- [x] Projection-baseline metadata is bounded and contains no complete visual
+  state.
+- [x] Declined updates preserve baseline and cumulative VT dirty facts.
+- [x] Admitted updates are immutable caller storage with no VT borrow.
+- [x] Full reconstruction is explicit and independent of skipped projections.
+- [x] Render owns no runtime publication, synchronization, or GPU resource.

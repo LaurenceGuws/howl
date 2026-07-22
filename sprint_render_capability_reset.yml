@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: classify_terminal_visual_values
+  current_slice: settle_vt_render_boundary
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -86,11 +86,32 @@ slices:
       - turning current file locations into architectural authority
 
   - id: classify_terminal_visual_values
-    status: active
+    status: accepted
+    commit: 0ea9f52
+    outcome: >-
+      Every symbol and proof in the former frame source is classified; visual semantics are separated from rejected
+      executable publication policy, and the exact VT/render API remains deliberately unsettled.
     purpose: >-
       Classify every symbol in howl-render/src/howl_frame.zig as retained visual meaning, rejected runtime policy,
       executable evidence, or removable proof before changing implementation.
     discussion_gate: vt_render_boundary
+
+  - id: settle_vt_render_boundary
+    status: active
+    purpose: >-
+      Derive and approve the smallest public render boundary that consumes VT semantic truth and produces
+      backend-neutral visual work without owning executable publication or GPU policy.
+    validation:
+      - reference evidence covers dependency, lifetime, damage, storage, and backend command boundaries
+      - render's public role hides terminal visual semantics from GPU-aware embedders
+      - borrowed VT data never crosses its mutation lifetime
+      - allocation and cleanup are explicit
+      - executable publication and coalescing remain outside render
+    forbidden_shortcuts:
+      - copying a reference architecture wholesale
+      - making the executable interpret terminal visual semantics
+      - hiding runtime policy in a render-owned object
+      - selecting an API merely to compile quarantined consumers
 
   - id: rebuild_terminal_visual_values
     status: pending

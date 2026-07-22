@@ -190,7 +190,7 @@ sprints:
     accepted_slices:
       - id: selectable_text_and_generated
         commit: a5adeee
-    next_slice: classify_terminal_visual_values
+    next_slice: settle_vt_render_boundary
 
   - id: control_capability_reset
     status: pending
