@@ -7,7 +7,6 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/howl_vt.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
     });
     const check = b.step("check", "Compile the VT module and every owned proof");
     const test_step = b.step("test", "Run every owned VT proof");

@@ -23,6 +23,10 @@ pub fn build(b: *std.Build) void {
         addChildBuild(b, check, child, "check", optimize, target, cpu, b.args);
         addChildBuild(b, test_step, child, "test", optimize, target, cpu, b.args);
     }
+    const consumer = b.step("consumer:vt", "Run the isolated howl-vt package consumer");
+    addChildBuild(b, consumer, "consumer-vt", "test", optimize, target, cpu, b.args);
+    check.dependOn(consumer);
+    test_step.dependOn(consumer);
 
     const audit = b.addSystemCommand(&.{ "bash", "tools/audit_source.sh" });
     audit.setName("workspace source audit");
