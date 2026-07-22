@@ -3,9 +3,12 @@
     .version = "0.1.3-dev",
     .fingerprint = 0x42f92313e3ee4de0,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{
-        .howl_frame = .{ .path = "../howl-frame" },
-        .howl_text = .{ .path = "../howl-text" },
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "testdata",
+        "LICENSES",
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src" },
 }

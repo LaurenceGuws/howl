@@ -4,7 +4,9 @@ const std = @import("std");
 
 /// Configures bounded box lines with heavy geometry at least as wide as light.
 pub const BoxDrawingStroke = struct {
+    /// Sets the nonzero light-line width in pixels.
     light_stroke_px: u16,
+    /// Sets the heavy-line width, which must be at least the light width.
     heavy_stroke_px: u16,
 };
 

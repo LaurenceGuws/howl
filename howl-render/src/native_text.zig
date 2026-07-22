@@ -1,4 +1,4 @@
-//! Owns native font loading, metrics, shaping, alpha rasterization, and generated terminal glyphs.
+//! Owns native font loading, metrics, shaping, and alpha rasterization.
 
 const std = @import("std");
 
@@ -10,15 +10,9 @@ const c = @cImport({
     @cInclude("harfbuzz/hb-ft.h");
 });
 
-const generated_block = @import("generated_block.zig");
-const generated_box = @import("generated_box.zig");
-const generated_geometry = @import("generated_geometry.zig");
-const generated_legacy = @import("generated_legacy.zig");
-const generated_powerline = @import("generated_powerline.zig");
-
 // Public bounds, failures, and owned text values.
 
-/// Bounds ordered fallback ownership independently of host input.
+/// Bounds fallback paths supplied by one construction config.
 pub const max_fallbacks: u8 = 24;
 /// Bounds each copied font path to 4,096 bytes before native library access.
 pub const max_font_path_bytes: usize = 4_096;
@@ -28,35 +22,10 @@ pub const max_codepoints: u32 = 65_536;
 pub const max_glyphs: u32 = 65_536;
 /// Bounds one owned alpha mask to sixteen MiB.
 pub const max_raster_bytes: usize = 16 * 1024 * 1024;
-/// Bounds each generated terminal-cell dimension and stroke to 256 pixels,
-/// limiting the most expensive rounded glyph to 6,356,992 curve samples.
-pub const max_generated_extent_px: u16 = 256;
 // Four bytes per output pixel admit ordinary native row padding while keeping
 // the external bitmap finite before its pointer becomes a slice.
 const max_source_bitmap_bytes: usize = max_raster_bytes * 4;
 const PixelMode = @TypeOf(@as(c.FT_Bitmap, undefined).pixel_mode);
-
-/// Reports invalid generated-raster geometry, bounds, output, or identity.
-pub const GeneratedError = error{
-    InvalidSize,
-    RasterTooLarge,
-    InvalidStroke,
-    BufferTooSmall,
-    UnsupportedGlyph,
-};
-
-/// Classifies one implemented generated terminal glyph family.
-pub const GeneratedGlyph = enum {
-    box,
-    block,
-    braille,
-    sextant,
-    octant,
-    powerline,
-};
-
-/// Configures bounded box lines with heavy geometry at least as wide as light.
-pub const BoxDrawingStroke = generated_geometry.BoxDrawingStroke;
 
 /// Names construction failures before a complete native font set exists.
 pub const InitError = error{
@@ -100,46 +69,69 @@ pub const RasterError = error{
 /// Borrows one bounded NUL-free primary path, up to 24 bounded NUL-free
 /// fallback paths, and a nonzero pixel height during construction.
 pub const Config = struct {
+    /// Borrows the required primary font path for construction only.
     primary: []const u8,
+    /// Borrows ordered fallback font paths for construction only.
     fallbacks: []const []const u8 = &.{},
+    /// Sets the nonzero native font pixel height.
     pixel_height: u16,
 };
 
 /// Describes validated nonzero font-derived cell geometry. Decoration lines
 /// use native font facts when valid and bounded terminal fallbacks otherwise.
 pub const Metrics = struct {
+    /// Reports the nonzero terminal cell width.
     cell_width: u16,
+    /// Reports the nonzero terminal cell height.
     cell_height: u16,
+    /// Locates the baseline from the cell's top edge.
     baseline: u16,
+    /// Locates the underline from the cell's top edge.
     underline_y: u16,
+    /// Reports the nonzero underline thickness.
     underline_height: u16,
+    /// Locates the strike line from the cell's top edge.
     strike_y: u16,
+    /// Reports the nonzero strike-line thickness.
     strike_height: u16,
 };
 
 /// Borrows 1..65,536 valid Unicode scalars and one source-cluster identifier
 /// per scalar; `cell_span` describes the nonzero terminal width of the run.
 pub const Text = struct {
+    /// Borrows valid Unicode scalar values for the shaping call.
     codepoints: []const u32,
+    /// Borrows one caller-owned source identity per codepoint.
     clusters: []const u32,
+    /// Reports the nonzero terminal-cell width assigned to the complete run.
     cell_span: u16,
 };
 
 /// Records one exact HarfBuzz glyph, source cluster, and 26.6-position facts.
 pub const Glyph = struct {
+    /// Identifies the selected native face glyph.
     id: u32,
+    /// Retains the caller's source identity for this glyph.
     cluster: u32,
+    /// Reports horizontal pen movement in FreeType 26.6 units.
     x_advance: i32,
+    /// Reports vertical pen movement in FreeType 26.6 units.
     y_advance: i32,
+    /// Reports horizontal placement offset in FreeType 26.6 units.
     x_offset: i32,
+    /// Reports vertical placement offset in FreeType 26.6 units.
     y_offset: i32,
 };
 
 /// Owns at most 65,536 glyphs and identifies the selected configured face.
 pub const Run = struct {
+    /// Retains the allocator that owns `glyphs`.
     allocator: std.mem.Allocator,
+    /// Identifies the primary or ordered fallback face used for the whole run.
     face_index: u8,
+    /// Retains the caller-assigned nonzero terminal-cell width.
     cell_span: u16,
+    /// Owns the bounded shaped glyph sequence.
     glyphs: []Glyph,
 
     /// Releases the owned glyph slice exactly once.
@@ -152,11 +144,17 @@ pub const Run = struct {
 /// Owns one tightly packed alpha mask of at most sixteen MiB and validated
 /// signed placement relative to the baseline.
 pub const Raster = struct {
+    /// Retains the allocator that owns `pixels`.
     allocator: std.mem.Allocator,
+    /// Reports tightly packed mask width in pixels.
     width: u16,
+    /// Reports tightly packed mask height in pixels.
     height: u16,
+    /// Places the mask left edge relative to the shaped pen.
     left: i16,
+    /// Places the mask top edge relative to the text baseline.
     top: i16,
+    /// Owns `width × height` alpha bytes.
     pixels: []u8,
 
     /// Releases the owned alpha mask exactly once.
@@ -180,11 +178,17 @@ const Face = struct {
 /// state. A failed restoration after temporary raster fitting invalidates
 /// shaping and rasterization while preserving exact cleanup through deinit.
 pub const FontSet = struct {
+    /// Owns all Zig allocations retained by this font set.
     allocator: std.mem.Allocator,
+    /// Owns the initialized FreeType library until `deinit`.
     library: c.FT_Library,
+    /// Owns ordered copied paths and initialized FreeType/HarfBuzz faces.
     faces: []Face,
+    /// Retains validated terminal cell metrics for the configured size.
     metrics: Metrics,
+    /// Retains the configured nonzero native pixel height.
     pixel_height: u16,
+    /// Prevents native reuse after an unrecoverable size-restoration failure.
     usable: bool,
 
     /// Copies and transactionally opens the complete config. Invalid config,
@@ -260,7 +264,13 @@ pub const FontSet = struct {
         defer c.hb_buffer_destroy(buffer);
         if (c.hb_buffer_pre_allocate(buffer, @intCast(text.codepoints.len)) == 0)
             return error.HarfBuzzBuffer;
-        c.hb_buffer_add_utf32(buffer, text.codepoints.ptr, @intCast(text.codepoints.len), 0, @intCast(text.codepoints.len));
+        c.hb_buffer_add_utf32(
+            buffer,
+            text.codepoints.ptr,
+            @intCast(text.codepoints.len),
+            0,
+            @intCast(text.codepoints.len),
+        );
         try requireHbBuffer(buffer);
         c.hb_buffer_guess_segment_properties(buffer);
         try requireHbBuffer(buffer);
@@ -385,117 +395,6 @@ pub const FontSet = struct {
         return null;
     }
 };
-
-// Generated terminal glyph classification and rasterization.
-
-/// Returns a family only when its complete local raster implementation exists.
-pub fn classifyGenerated(codepoint: u32) ?GeneratedGlyph {
-    return switch (codepoint) {
-        0x2500...0x257f => .box,
-        0x2580...0x259f => .block,
-        0x2800...0x28ff => .braille,
-        0x1fb00...0x1fb3b => .sextant,
-        0x1cd00...0x1cde5, 0x1fbe6, 0x1fbe7 => .octant,
-        0xe0b0...0xe0bf, 0xe0d6...0xe0d7 => .powerline,
-        else => null,
-    };
-}
-
-/// Fills exactly `width_px × height_px` caller-owned bytes for one implemented
-/// glyph within the 256-pixel extent bound and leaves trailing output untouched.
-pub fn rasterizeGenerated(
-    pixels: []u8,
-    width_px: u16,
-    height_px: u16,
-    codepoint: u32,
-) GeneratedError!void {
-    const light: u16 = 2;
-    try rasterizeGeneratedWithStroke(pixels, width_px, height_px, codepoint, .{
-        .light_stroke_px = light,
-        .heavy_stroke_px = light * 2,
-    });
-}
-
-/// Rasterizes with ordered, bounded light and heavy box-drawing strokes,
-/// rejecting invalid input before changing caller-owned output.
-pub fn rasterizeGeneratedWithStroke(
-    pixels: []u8,
-    width_px: u16,
-    height_px: u16,
-    codepoint: u32,
-    box_drawing: BoxDrawingStroke,
-) GeneratedError!void {
-    if (width_px == 0 or height_px == 0) return error.InvalidSize;
-    if (width_px > max_generated_extent_px or height_px > max_generated_extent_px)
-        return error.RasterTooLarge;
-    if (box_drawing.light_stroke_px == 0 or box_drawing.heavy_stroke_px == 0 or
-        box_drawing.light_stroke_px > max_generated_extent_px or
-        box_drawing.heavy_stroke_px > max_generated_extent_px or
-        box_drawing.heavy_stroke_px < box_drawing.light_stroke_px)
-        return error.InvalidStroke;
-    const required = @as(usize, width_px) * height_px;
-    if (pixels.len < required) return error.BufferTooSmall;
-    const family = classifyGenerated(codepoint) orelse return error.UnsupportedGlyph;
-    @memset(pixels[0..required], 0);
-    rasterizeGeneratedClassified(
-        pixels,
-        width_px,
-        height_px,
-        codepoint,
-        box_drawing,
-        family,
-    );
-}
-
-fn rasterizeGeneratedClassified(
-    pixels: []u8,
-    width: u16,
-    height: u16,
-    codepoint: u32,
-    box_drawing: BoxDrawingStroke,
-    family: GeneratedGlyph,
-) void {
-    switch (family) {
-        .box => generated_box.rasterizeGeneratedBoxAlpha(
-            pixels,
-            width,
-            height,
-            codepoint,
-            box_drawing,
-        ),
-        .powerline => generated_powerline.rasterizeGeneratedPowerlineAlpha(
-            pixels,
-            width,
-            height,
-            codepoint,
-            box_drawing,
-        ),
-        .block => generated_block.rasterizeGeneratedBlockAlpha(
-            pixels,
-            width,
-            height,
-            codepoint,
-        ),
-        .braille => generated_block.rasterizeGeneratedBrailleAlpha(
-            pixels,
-            width,
-            height,
-            codepoint,
-        ),
-        .sextant => generated_legacy.rasterizeGeneratedSextantAlpha(
-            pixels,
-            width,
-            height,
-            codepoint,
-        ),
-        .octant => generated_legacy.rasterizeGeneratedOctantAlpha(
-            pixels,
-            width,
-            height,
-            codepoint,
-        ),
-    }
-}
 
 // Native raster, font metrics, and external-library validation.
 

@@ -113,7 +113,14 @@ discussion_gates:
 
   - id: render_selection
     trigger: concrete surviving render capabilities and dependency costs are indexed
-    decision: approve the initial comptime configurations without speculative option proliferation
+    status: accepted
+    decision: >-
+      Native text and generated terminal glyphs are independently selectable; either or both may be absent, and a
+      disabled capability exposes no placeholder API.
+    result: >-
+      howl-render now owns curated text and generated namespaces, deterministic font assets, and four independently
+      proven child build graphs selected by -Dnative_text and -Dgenerated_glyphs; only native selection links libc,
+      FreeType, and HarfBuzz.
 
   - id: executable_noun
     trigger: surviving executable responsibilities are concrete
