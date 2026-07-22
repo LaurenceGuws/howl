@@ -23,6 +23,372 @@ without owning cache, pane, frame, generation, GPU, or executable policy.
 - recommend one smallest contract or state the exact unresolved product choice;
 - do not edit implementation or build source.
 
+## Run-aware text boundary recommendation
+
+Recommend one stateless `howl_render.terminal_text.prepareNextRun` boundary. It
+borrows one complete retained visual row and discovers and prepares exactly one
+render-owned homogeneous run containing the supplied iteration cell. One call
+returns a tagged native, generated, or no-glyph payload; only the native case
+owns a positioned-glyph slice. It does not rasterize masks. A separate
+one-glyph raster operation produces an owned alpha mask only after an
+executable-owned cache has decided that the glyph is absent.
+
+This boundary is public only when terminal projection and at least one text
+source are selected. With native text absent, native preparation/raster entry
+points and native variants are absent. With generated glyphs absent, generated
+entry points and variants are absent. Existing `text`, `generated`, and
+`terminal` namespaces remain independently selectable; no disabled path
+returns a placeholder or `UnsupportedCapability` error.
+
+### Exact borrowed input
+
+```zig
+pub const RowInput = struct {
+    cells: []const terminal.Cell,
+    affected_start: u16,
+    affected_end: u16,
+    geometry: terminal.LineGeometry,
+    metrics: CellMetrics,
+};
+
+pub const CellMetrics = struct {
+    width_px: u16,
+    height_px: u16,
+    baseline_px: u16,
+};
+```
+
+- `cells` is the complete nonempty retained visual row after ordered
+  `RowPatch` application. Its length is at most `maxInt(u16)` and it remains
+  immutable for the call only. Supplying the complete row gives render the
+  left/right shaping context needed to expand sparse damage to complete runs;
+  no VT borrow crosses this boundary.
+- `affected_start...affected_end` is an in-bounds inclusive visual cell span.
+  It selects work, not shaping context. The caller starts iteration at
+  `affected_start`; render expands only the current run to its complete source
+  coverage.
+- `geometry` is the retained row geometry. It is necessary for effective
+  horizontal cell extent and DEC double-height placement. It is row-local and
+  conveys no pane or layout coordinate.
+- `metrics` is validated nonzero render text geometry. Width times the
+  geometry's horizontal scale and height/baseline transformations use checked
+  `u32` intermediates before narrowing. Pane position, window scale, clipping,
+  GPU pixel format, and device limits are not inputs.
+- Each `terminal.Cell` already supplies base and combining scalars, font slot,
+  normal/raised/lowered baseline, bold/italic style, invisibility, selection,
+  and final colors. Font slot, bold, italic, baseline, invisibility, and
+  generated classification affect run preparation. Selection and colors do
+  not split shaping; source-cell coverage lets later render-owned draw
+  preparation apply retained per-cell appearance without reshaping. Underline,
+  strike, dim, blink, hyperlink, background, and cursor facts are not text-run
+  inputs. Cursor ligature policy is not accepted and is not smuggled into this
+  boundary.
+
+The executable owns the retained row and chooses which damaged row/span to
+prepare. It repeatedly calls `prepareNextRun` with the returned exclusive
+`end_cell` until that value is greater than `affected_end`. Render owns
+interpretation of the cell fields, run expansion, shaping, fallback, and glyph
+placement. The executable never groups Unicode or decides font,
+generated-glyph, ligature, combining, blank, or invisible semantics.
+
+### Run splitting and source coverage
+
+`prepareNextRun(input, cell)` requires
+`affected_start <= cell <= affected_end`. On the first call, if `cell` lies
+inside a run that started before `affected_start`, render scans left to that
+run's boundary; later calls begin exactly at the preceding exclusive
+`end_cell`. Every result guarantees `first_cell <= cell < end_cell`, so
+iteration advances, visits each run intersecting the dirty span exactly once,
+and terminates without a caller-side semantic test. Work is linear in the
+reported run plus its one-time left-boundary discovery, never the complete
+grid.
+
+A native run is a maximal
+contiguous row interval with equal `(font slot, bold, italic, CellBaseline)`
+and visible textual content. A maximal contiguous blank/invisible interval is
+a no-glyph run with exact source coverage; returning it is necessary to clear
+previous retained glyph draw state and guarantees iteration cannot stall. A
+cell whose base scalar is generated and has no combining scalar is a one-cell
+generated run. A generated-range scalar with combining content remains native
+text so its complete grapheme is not discarded. Row geometry is constant and
+therefore not repeated in the split key.
+
+One cell contributes its nonzero base scalar followed by its initialized
+combining scalars. Every scalar receives that cell column as the HarfBuzz
+cluster identity. The shaped cluster value maps each output glyph to
+`source_start`; the next distinct cluster, or the run end, supplies the
+exclusive `source_end`. Decreasing HarfBuzz cluster order is accepted and
+coverage is derived from ordered distinct source identities rather than glyph
+array order. A ligature may therefore cover many cells and combining glyphs
+may share one cell. No pane/layout policy enters that mapping.
+
+Native face fallback remains whole-run, matching current `FontSet.shape`.
+`MissingGlyph` retries the same run with U+FFFD once; failure of U+FFFD remains
+`MissingGlyph`. Generated classification precedes native shaping only for the
+exact generated case above. This preserves deterministic replacement without
+inventing mixed-face cluster splicing.
+
+### Output and lifetime
+
+```zig
+pub const FontStyle = enum(u2) { normal, bold, italic, bold_italic };
+
+pub const FontKey = packed struct(u6) {
+    style: FontStyle,
+    slot: u4,
+};
+
+pub const GlyphKey = union(enum) {
+    native: struct {
+        font: FontKey,
+        face_index: u8,
+        glyph_id: u32,
+        cell_span: u16,
+    },
+    generated: struct { codepoint: u21, width_px: u16, height_px: u16 },
+};
+
+pub const PositionedGlyph = struct {
+    key: GlyphKey,
+    source_start: u16,
+    source_end: u16,
+    x_26_6: i32,
+    y_26_6: i32,
+    x_advance_26_6: i32,
+    y_advance_26_6: i32,
+};
+
+pub const PreparedGlyphs = union(enum) {
+    native: struct {
+        allocator: std.mem.Allocator,
+        values: []PositionedGlyph,
+    },
+    generated: PositionedGlyph,
+    none,
+};
+
+pub const PreparedRun = struct {
+    first_cell: u16,
+    end_cell: u16, // Exclusive.
+    glyphs: PreparedGlyphs,
+    pub fn deinit(self: *PreparedRun) void;
+};
+```
+
+Each `PreparedRun` describes exactly one native, generated, or no-glyph run.
+A native payload owns exactly one final glyph slice and its explicit caller
+allocator. A generated payload stores its one record inline. A no-glyph
+payload stores no record. `deinit` switches once: it frees only
+`native.values`, performs no cleanup for the other tags, and then invalidates
+the complete value. Coverage and iteration remain uniform in outer
+`first_cell...end_cell`; a consumer switches only to inspect glyph records.
+Any slice borrowed from a native payload, or pointer borrowed from the inline
+generated payload, ends before `PreparedRun` is moved or deinitialized.
+
+The tagged payload is earned and is smaller in ownership debt than a uniform
+slice: generated and blank runs need no allocator, allocation, synthetic empty
+owner, or special zero-length free rule. A union is also clearer than an inline
+one-element array plus a separate length because the three cases have distinct
+cleanup contracts. Native keys remain valid only while the exact render-owned
+font configuration used for preparation remains alive; generated keys have
+value lifetime. Coordinates are row-local, relative to the run's first cell
+and the supplied baseline. Baseline displacement and row geometry are resolved
+into placement here. The output has no colors, pane coordinates,
+texture/cache residency identity, generation, frame identity, GPU handle,
+backend command, or scheduling fact. `GlyphKey` is render-owned glyph identity
+suitable for lookup; it is not a cache slot or admission token.
+
+Native preparation derives each key's nonzero `cell_span` from
+`PositionedGlyph.source_end - source_start`. This is the glyph's actual source
+coverage: a ligature can span several cells while multiple combining glyphs
+can each cover one. Retaining that exact derived span in the key is necessary
+after the row borrow ends: native raster fitting and cache equality both depend
+on it. It is not the former vague whole-run span.
+
+The native-selected
+`rasterizeGlyph(allocator, font_map, key) -> Raster` normalizes both sources to
+one allocator-owned tightly packed alpha mask with validated signed placement.
+For a native key, render indexes `font_map` with `key.font`, selects
+`face_index` inside that exact `FontSet`, and passes the key's exact
+`cell_span`; the caller cannot select or substitute a font owner. Generated
+keys allocate exactly `width_px * height_px` bytes, call current generated
+rasterization, and free on failure. `Raster.deinit` releases exactly once. A
+cache caller retains pixels on rejection or transfers them under its own
+separately approved contract; render defines no cache count, byte budget,
+eviction, pinning, or admission policy.
+
+In a generated-only selection the operation omits the nonexistent `font_map`
+parameter and accepts only the generated key variant. The root exposes no
+native key constructor, `FontMap`, or native raster branch. This is compile-time
+API absence, not a nullable font owner.
+
+Within one mapping-immutable `FontMap`, native key equality is exactly
+`(FontKey, face_index, glyph_id, cell_span)`. Font pixel size, fallback order,
+and native face identity are fixed by that map entry for its complete lifetime.
+The key is therefore collision-safe for a cache scoped to that exact
+`FontMap`; keys from different maps are never comparable or admitted to the
+same cache without an additional executable-owned map identity. Deinitializing
+the map invalidates every native key and requires its scoped masks to have been
+retired first. Generated equality is its complete value tuple
+`(codepoint, width_px, height_px)` and is independent of a font map.
+
+### Bounds, transaction, and exact failures
+
+- A row has at most `maxInt(u16)` cells. Each cell contributes at most four
+  scalars (`terminal.max_combining + 1`). The exact scalar count is preflighted
+  with checked `usize`; a native run exceeding `text.max_codepoints` returns
+  `TextTooLong` rather than being split across a ligature boundary.
+- One native call stages exactly one `text.Run` and therefore produces at most
+  `text.max_glyphs` (65,536) final glyph records. One generated run is one cell
+  and exactly one inline record. One no-glyph run has zero records. There is no
+  aggregate multi-run allocation or aggregate glyph-count claim. Peak native
+  record storage is one staged slice of at most 65,536 `text.Glyph` values plus
+  one final slice of the same count of `PositionedGlyph` values; shaping occurs
+  once.
+- Pen accumulation uses checked `i64`; every final 26.6 position and advance
+  must fit `i32`, otherwise `InvalidPlacement`. Source coverage is nonempty and
+  bounded by the borrowed row.
+- Generated width/height are checked nonzero and against
+  `generated.max_extent_px`; mask bytes are at most 65,536. Native masks retain
+  the current sixteen-MiB bound.
+- Run discovery, validation, and scalar counting happen before final output
+  allocation. Native preparation stages exactly one existing owned `text.Run`,
+  then allocates one final positioned array, fills it, releases the staged run,
+  and returns; every error releases both staged and final allocations.
+  Generated preparation validates before assigning its inline record.
+  No-glyph preparation assigns only coverage. Neither allocates. No partial
+  `PreparedRun` escapes.
+
+Preparation's exact error set is the selected native/generated validation and
+shaping errors plus `OutOfMemory`, `InvalidSpan`, `InvalidMetrics`, and
+`InvalidPlacement`; native selection also adds
+`MissingFontConfiguration`. Rasterization exposes the selected source's
+current exact raster errors plus `OutOfMemory`; it does not translate them into
+a generic render failure. Typed terminal-cell invariants are assertions, as in
+accepted projection, rather than hostile-input errors.
+
+Explicit allocator-owned output is preferred over caller buffers here.
+HarfBuzz determines one native run's glyph count only after shaping, while
+current native shaping already owns that one bounded staged allocation. A
+caller-buffer API would need either duplicate shaping or the same hidden
+staging allocation and could not preflight capacity exactly. One final owned
+slice per native run and inline generated/no-glyph payloads keep rollback and
+cleanup visible without an `ArrayList`, reallocation, aggregate multi-run
+owner, or duplicate shaping. Masks remain demand-rasterized one at a time, so
+this choice does not recreate the deleted renderer's eager mask allocation.
+
+### Source evidence
+
+- `howl-render/src/terminal.zig:47-85,138-170,281-376` supplies retained visual
+  cells, row patches, and allocation-free semantic projection; later text may
+  inspect retained neighboring cells without VT knowledge.
+- `howl-render/src/native_text.zig:99-165,254-370,466-500` already owns bounded
+  scalar/cluster shaping, whole-sequence fallback, allocator-owned runs and
+  masks, placement validation, and exact cleanup.
+- `howl-render/src/generated.zig:9-83` owns exact generated classification and
+  transactional caller-buffer alpha rasterization up to 256 by 256 pixels.
+- Kitty `kitty/fonts.c:1584-1685,1689-1707,1817-1858,1883-1978` shapes complete
+  font-homogeneous runs, derives cell groups from HarfBuzz clusters, handles
+  combining and ligatures, and keeps generated/blank/missing handling distinct.
+  Howl borrows the run-and-cluster lesson, not Kitty's global scratch, sprite
+  cache, Python objects, or GPU-cell mutation.
+- Foot `render.c:900-1014` resolves generated, grapheme, fallback, cell-span,
+  and glyph-overhang facts directly before pixel composition. Howl borrows
+  explicit generated/grapheme separation and bounded source coverage, not
+  Foot's terminal-owned render cache or pixman backend.
+- TigerBeetle `src/lsm/set_associative_cache.zig:147-219,298-361` demonstrates
+  explicit allocator construction/cleanup and separately owned cache
+  admission. It supports keeping mask production ownership separate from the
+  future executable cache rather than retaining the deleted mixed owner.
+
+### Settled font configuration
+
+Current `native_text.FontSet` (`native_text.zig:180-252`) owns one copied
+primary/fallback chain, one FT library, and initialized FT/HB faces using its
+explicit construction allocator. It has no terminal slot/style mapping. The
+smallest mapping that preserves every projected fact is therefore:
+
+```zig
+pub const FontConfig = struct {
+    key: FontKey,
+    native: text.Config,
+};
+
+pub const FontMapInitError = text.InitError || error{
+    TooManyConfigurations,
+    DuplicateConfiguration,
+    MissingDefaultConfiguration,
+};
+
+pub const FontMap = struct {
+    sets: [16 * 4]?text.FontSet,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        configs: []const FontConfig,
+    ) FontMapInitError!FontMap;
+    pub fn deinit(self: *FontMap) void;
+};
+```
+
+`FontMap` is render-owned native-text state. Its 64 fixed optional entries are
+indexed by the exact six-bit `FontKey` value (`slot * 4 + style`); it allocates
+no map/index storage.
+`configs` is bounded to 64 unique tuples and borrows `text.Config` paths only
+for construction. `init` first validates the complete tuple set with a fixed
+64-bit seen mask, requires slot 0/normal, then transactionally constructs each
+present `FontSet` with the caller allocator. A duplicate tuple,
+over-capacity input, or missing slot 0/normal fails before native construction.
+Any `FontSet.init` failure destroys previously initialized entries in reverse
+construction order. `deinit` destroys every present set in reverse index order
+and invalidates the map. No global state or executable lifetime is retained.
+
+The direct fixed map deliberately does not alias or reference-count identical
+configs: assigning the same paths to several tuples constructs independent
+`FontSet` owners. The cost is explicit and bounded by 64 sets; the ordinary
+four-style slot-zero configuration constructs four. Sharing native owners
+would add a second identity/lifetime system and is deferred unless measured
+memory evidence earns it.
+
+Run discovery derives `FontStyle` directly from each cell's bold/italic bits
+and uses the exact projected `font` slot. Lookup never silently falls back to
+slot 0, normal, or another style. An unconfigured requested tuple returns the
+preparation error `MissingFontConfiguration` before shaping or output
+allocation. Callers that want the same files for several tuples list those
+mappings explicitly; the
+executable supplies configuration data but never interprets a run or chooses a
+font during preparation. Once selected, that entry's existing ordered native
+face fallback handles Unicode coverage, and U+FFFD retry uses the same entry.
+
+`FontMap` and native `prepareNextRun`/raster variants exist only when native
+text is selected. A generated-only terminal-text graph has neither the type nor
+the parameter. Native `PreparedRun` keys remain valid until that `FontMap` is
+deinitialized. This settles the only prior product choice without introducing
+cache, runtime, or backend ownership.
+
+### Correction self-review
+
+- One call now discovers and prepares exactly one homogeneous run. No wording
+  claims one allocation can contain alternating or multiple native/generated
+  runs.
+- Native preparation has exactly one staged `text.Run`, one final allocation,
+  and the existing 65,536-glyph maximum. Generated and no-glyph runs contain
+  exactly one and zero records respectively.
+- The exclusive coverage invariant advances across native, generated, blank,
+  and invisible intervals, so dirty-span iteration visits every intersecting
+  run once and cannot stall.
+- Native `GlyphKey` contains the exact six-bit map key, face, glyph, and
+  per-glyph span required for map-scoped raster/cache equality. The span is
+  derived from exact source coverage rather than copied from the complete run.
+- `PreparedGlyphs` owns native slices, stores generated records inline, and
+  represents no-glyph coverage without allocation; its tag is earned by three
+  distinct cleanup contracts.
+- `FontMap` preserves all 16 slots and four bold/italic styles with exact
+  lookup, fixed bounds, transactional construction, reverse cleanup, and an
+  explicit missing-entry error. No product decision remains in this boundary.
+- Caller buffers, `ArrayList`, duplicate shaping, multi-run aggregation, and
+  cache/runtime ownership are absent.
+
 ## Accepted renderer deletion checkpoint
 
 The remaining legacy render source was completely classified at `37f59ff`.
