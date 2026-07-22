@@ -4,23 +4,36 @@ const std = @import("std");
 
 /// Copies the VT facts needed to reconcile one host-owned viewport.
 pub const Facts = struct {
+    /// Identifies the oldest retained projected-history row.
     history_row_base: u32,
+    /// Reports retained projected-history rows available before the screen.
     history_count: u32,
+    /// Reports the VT-applied distance from live output.
     offset: u32,
+    /// Reports the current nonzero terminal screen height.
     rows: u16,
+    /// Excludes primary history while the alternate screen is active.
     alternate_screen: bool,
+    /// Routes wheel input to the terminal instead of host history.
     mouse_reporting: bool,
 };
 
 /// Describes one painted and clickable vertical scrollbar in window pixels.
 pub const Scrollbar = struct {
+    /// Locates the inclusive left edge in window pixels.
     x: u32,
+    /// Locates the inclusive top edge in window pixels.
     y: u32,
+    /// Reports the nonzero bar width.
     width: u16,
+    /// Reports the nonzero bar height.
     height: u32,
+    /// Locates the inclusive thumb top in window pixels.
     thumb_y: u32,
+    /// Reports the nonzero thumb height bounded by `height`.
     thumb_height: u32,
 
+    /// Reports whether one window pixel lies inside the complete bar.
     pub fn contains(self: Scrollbar, x: u32, y: u32) bool {
         return x >= self.x and x < self.x + self.width and y >= self.y and y < self.y + self.height;
     }
@@ -28,12 +41,19 @@ pub const Scrollbar = struct {
 
 /// Retains one pane's follow intent and stable projected-history anchor.
 pub const State = struct {
+    /// Retains the applied distance from live output.
     offset: u32 = 0,
+    /// Identifies the stable projected-history row at the viewport top.
     anchor: u64 = 0,
+    /// Copies the oldest retained row identity from the latest VT facts.
     history_row_base: u32 = 0,
+    /// Copies the retained projected-history row count from the latest VT facts.
     history_count: u32 = 0,
+    /// Copies the current nonzero terminal height.
     rows: u16 = 1,
+    /// Prevents primary-history navigation while alternate-screen content is visible.
     alternate_screen: bool = false,
+    /// Selects terminal-owned wheel reporting instead of host history movement.
     mouse_reporting: bool = false,
 
     /// Reconciles eviction/reflow facts while preserving bottom-follow or the

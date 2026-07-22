@@ -17,6 +17,8 @@ const c = @cImport({
     @cInclude("sys/wait.h");
 });
 
+// Public lifecycle failures, signals, and bounded transfer outcomes.
+
 /// Reports copied launch allocation or a non-Linux build.
 pub const InitError = std.mem.Allocator.Error || error{UnsupportedPlatform};
 
@@ -137,6 +139,8 @@ const WriteWait = enum { ready, timeout, canceled, closed, failed };
 const stop_hangup_grace_ns = 50 * std.time.ns_per_ms;
 const stop_terminate_grace_ns = 50 * std.time.ns_per_ms;
 const stop_wait_slice_ns = std.time.ns_per_ms;
+
+// Construction and deadline primitives used by the PTY owner.
 
 fn incomplete(transferred: usize, reason: TransferFailure) Transfer {
     return .{ .incomplete = .{ .transferred = transferred, .reason = reason } };
@@ -623,6 +627,8 @@ pub const Owned = struct {
         };
     }
 };
+
+// Linux descriptor, child-launch, and process-group mechanics.
 
 fn waitReadablePollResult(revents: i16) WaitReadableResult {
     if ((revents & posix.POLL.IN) != 0) return .ready;

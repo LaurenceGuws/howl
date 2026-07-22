@@ -25,6 +25,8 @@ comptime {
         @compileError("workspace pane capacity must fit the terminal wake-bit domain");
 }
 
+// Bounded keyboard, host chord, pointer, and readiness state.
+
 const Repeat = struct {
     interval_ns: ?u64 = null,
     delay_ns: u64 = 1,
@@ -291,6 +293,8 @@ pub const Error = renderer.StartError || renderer.Error || howl_control.InitErro
     LastPane,
     InvalidLabels,
 };
+
+// Wayland, workspace, terminal, and renderer lifecycle.
 
 const Loop = struct {
     allocator: std.mem.Allocator,
@@ -795,6 +799,8 @@ const Loop = struct {
         }
     }
 
+    // Keyboard and pointer admission into host or focused-terminal policy.
+
     fn key(self: *Loop, code: u32, state_value: u32) void {
         const action: @FieldType(@FieldType(howl_control.Input, "key"), "action") = switch (state_value) {
             c.WL_KEYBOARD_KEY_STATE_PRESSED => .press,
@@ -1205,6 +1211,8 @@ const Loop = struct {
         }
     }
 
+    // Reverse-order renderer, terminal, input, and Wayland cleanup.
+
     fn deinit(self: *Loop) Error!void {
         self.repeat.cancel();
         self.armRepeat(null) catch |failure| if (self.failure == null) {
@@ -1269,6 +1277,8 @@ const Loop = struct {
         self.xkb_context = null;
     }
 };
+
+// Pure wake, viewport, and cell/pixel geometry projection.
 
 fn visibleBitsFor(
     model: *const workspace_model.Workspace,
@@ -1409,6 +1419,8 @@ fn drainEvent(fd: c_int) Error!void {
         return error.TerminalSignal;
     }
 }
+
+// Wayland and xkb callbacks retain facts for the owning window loop.
 
 fn loop(data: ?*anyopaque) *Loop {
     return @ptrCast(@alignCast(data.?));

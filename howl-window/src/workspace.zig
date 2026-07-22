@@ -6,6 +6,8 @@
 
 const std = @import("std");
 
+// Public session bounds, identities, and geometry facts.
+
 /// A session admits at most sixteen ordered tabs.
 pub const max_tabs: u8 = 16;
 /// One tab admits at most sixteen terminal panes.
@@ -80,6 +82,8 @@ pub const CreatedTab = struct {
     pane: PaneId,
 };
 
+// Fixed tab topology and allocated-name ownership.
+
 const Split = struct {
     axis: SplitAxis,
     first: u8,
@@ -148,6 +152,8 @@ const Tab = struct {
         return depth_value;
     }
 };
+
+// Transactional workspace lifecycle and mutations.
 
 /// Owns one bounded, platform-independent session workspace.
 pub const Workspace = struct {
@@ -532,6 +538,8 @@ pub const Workspace = struct {
     }
 };
 
+// Hostile-state validation and exact recursive layout.
+
 fn validateTopology(
     tab: *const Tab,
     pane_ids: *[max_panes]PaneId,
@@ -753,6 +761,8 @@ fn findNodeRect(tab: *const Tab, node_index: u8, target: u8, rect: Rect) ?Rect {
         },
     };
 }
+
+// Directional focus and divider geometry.
 
 fn isInDirection(current: Rect, candidate: Rect, direction: Direction) bool {
     return switch (direction) {

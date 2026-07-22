@@ -1,4 +1,4 @@
-//! Owns one concrete EGL/GLES render thread and its coalesced terminal frame.
+//! Owns one concrete EGL/GLES render thread and its coalesced pane composition.
 
 const std = @import("std");
 const howl_control = @import("howl_control");
@@ -10,6 +10,8 @@ const labels = @import("labels.zig");
 const viewport = @import("viewport.zig");
 const workspace = @import("workspace.zig");
 const c = @import("native.zig").c;
+
+// Concrete device bounds and public composition facts.
 
 const texture_capacity = howl_render.cache_capacity;
 const texture_byte_capacity = howl_render.cache_byte_capacity;
@@ -71,6 +73,33 @@ pub const Init = struct {
     font_paths: []const []const u8,
 };
 
+/// Gives one stable nonzero identity to a composed pane.
+pub const PaneId = workspace.PaneId;
+
+/// Places one terminal in a bounded visible pane without borrowing its frame.
+pub const Pane = struct {
+    /// Identifies this pane backing; zero is invalid and identities are stable.
+    id: PaneId,
+    /// Borrows the terminal through render shutdown; the window loop owns it.
+    terminal: *howl_control.Terminal,
+    /// Places the pane's left edge within the submitted window width.
+    x: u32,
+    /// Places the pane's top edge within the submitted window height.
+    y: u32,
+    /// Supplies a nonzero extent contained by the submitted window width.
+    width: u32,
+    /// Supplies a nonzero extent contained by the submitted window height.
+    height: u32,
+    /// Marks exactly one submitted pane as the current input destination.
+    focused: bool,
+    /// False preserves and scales the last backing without requesting a frame.
+    terminal_available: bool,
+    /// Paints the exact pane-local history scrollbar when retained history is useful.
+    scrollbar: ?viewport.Scrollbar,
+};
+
+// Coalesced render work and render-thread-only device state.
+
 const Work = struct {
     generation: u64,
     size: Size,
@@ -110,31 +139,6 @@ const Mailbox = struct {
     fn empty(self: *const Mailbox) bool {
         return self.pending == null;
     }
-};
-
-/// Gives one stable nonzero identity to a composed pane.
-pub const PaneId = workspace.PaneId;
-
-/// Places one terminal in a bounded visible pane without borrowing its frame.
-pub const Pane = struct {
-    /// Identifies this pane backing; zero is invalid and identities are stable.
-    id: PaneId,
-    /// Borrows the terminal through render shutdown; the window loop owns it.
-    terminal: *howl_control.Terminal,
-    /// Places the pane's left edge within the submitted window width.
-    x: u32,
-    /// Places the pane's top edge within the submitted window height.
-    y: u32,
-    /// Supplies a nonzero extent contained by the submitted window width.
-    width: u32,
-    /// Supplies a nonzero extent contained by the submitted window height.
-    height: u32,
-    /// Marks exactly one submitted pane as the current input destination.
-    focused: bool,
-    /// False preserves and scales the last backing without requesting a frame.
-    terminal_available: bool,
-    /// Paints the exact pane-local history scrollbar when retained history is useful.
-    scrollbar: ?viewport.Scrollbar,
 };
 
 const Texture = struct {
@@ -709,6 +713,8 @@ const Device = struct {
     }
 };
 
+// Submission validation and concrete EGL/GLES construction.
+
 fn validateSize(size: Size) error{InvalidSize}!void {
     if (size.width == 0 or size.height == 0 or
         size.width > max_window_dimension or size.height > max_window_dimension or
@@ -1012,7 +1018,9 @@ fn closeSignal(fd: c_int) bool {
     return result == 0 or std.posix.errno(result) == .INTR;
 }
 
-/// Owns one render thread, one replaceable pending frame, and completion wake.
+// Render mailbox, completion, failure, and shutdown lifecycle.
+
+/// Owns one render thread, one replaceable pending composition, and completion wake.
 pub const Render = struct {
     allocator: std.mem.Allocator,
     io: std.Io,

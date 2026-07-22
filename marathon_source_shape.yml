@@ -58,10 +58,16 @@ categories:
       justified a watch list.
 
   - id: host_render_shape
-    status: queued
+    status: accepted
     goal: >-
       Make workspace, window, renderer, text, cache, and presentation lifecycles navigable without creating a UI
       framework.
+    result: >-
+      Established sparse boundaries for native font and generated-glyph ownership, shared cache admission and pane
+      preparation, workspace topology and geometry, Wayland policy/input/cleanup, and render mailbox/device/completion
+      lifecycles. Corrected stale singular and future-render wording, documented the complete public viewport facts, and
+      audited the PTY construction, transfer, cancellation, child, descriptor, and process-group lifecycle. The final
+      private-symbol and cross-owner review found no concrete systemic offender requiring a watch list.
 
 owner_index:
   - site: howl-vt/src/parser.zig:Parser

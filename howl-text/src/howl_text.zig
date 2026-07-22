@@ -16,6 +16,8 @@ const generated_geometry = @import("generated_geometry.zig");
 const generated_legacy = @import("generated_legacy.zig");
 const generated_powerline = @import("generated_powerline.zig");
 
+// Public bounds, failures, and owned text values.
+
 /// Bounds ordered fallback ownership independently of host input.
 pub const max_fallbacks: u8 = 24;
 /// Bounds each copied font path to 4,096 bytes before native library access.
@@ -169,6 +171,8 @@ const Face = struct {
     ft: c.FT_Face,
     hb: *c.hb_font_t,
 };
+
+// Native font construction, shaping, and rasterization.
 
 /// Owns copied paths, one FT library, and initialized FT/HB faces in fallback
 /// order. Its mutable native faces admit one exclusive caller at a time;
@@ -382,6 +386,8 @@ pub const FontSet = struct {
     }
 };
 
+// Generated terminal glyph classification and rasterization.
+
 /// Returns a family only when its complete local raster implementation exists.
 pub fn classifyGenerated(codepoint: u32) ?GeneratedGlyph {
     return switch (codepoint) {
@@ -490,6 +496,8 @@ fn rasterizeGeneratedClassified(
         ),
     }
 }
+
+// Native raster, font metrics, and external-library validation.
 
 fn rasterizeFace(
     allocator: std.mem.Allocator,

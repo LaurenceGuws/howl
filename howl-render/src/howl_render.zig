@@ -4,6 +4,8 @@ const std = @import("std");
 const howl_frame = @import("howl_frame");
 const howl_text = @import("howl_text");
 
+// Public preparation bounds and borrowed composition values.
+
 /// Bounds zero-byte glyph metadata and direct lookup work independently of the
 /// byte cap. One thousand twenty-four entries occupy 48 KiB on 64-bit targets.
 pub const cache_capacity: usize = 1_024;
@@ -43,7 +45,7 @@ pub const Pane = struct {
 /// Reports exact cache-backed preparation work for one accepted generation.
 /// This checkpoint emits no GLES draw commands: the result proves that every
 /// damaged visible glyph mask needed by the accepted frames is resident and
-/// gives a bounded generation/fact boundary for the later draw owner.
+/// gives a bounded generation/fact boundary for the concrete draw owner.
 pub const Prepared = struct {
     /// Identifies the accepted strictly increasing composition generation.
     generation: u64,
@@ -99,6 +101,8 @@ pub const CellGlyphs = struct {
 };
 
 const max_cell_codepoints = howl_frame.max_combining + 1;
+
+// Shared glyph-mask identity, admission, eviction, and cleanup.
 
 const Key = union(enum) {
     native: struct { face: u8, glyph: u32, span: u16 },
@@ -215,8 +219,10 @@ const Candidate = struct {
     top: i16,
 };
 
+// Shared text and cache preparation lifecycle.
+
 /// Owns one mutable font set and one glyph-mask cache shared by every pane.
-/// Calls are externally serialized on the future render thread. Frame slices
+/// Calls are externally serialized on the concrete render thread. Frame slices
 /// are borrowed only for `prepare`; no frame-publisher lock is held here.
 pub const Renderer = struct {
     allocator: std.mem.Allocator,
@@ -509,6 +515,8 @@ pub const Renderer = struct {
         return glyphs;
     }
 };
+
+// Prepared-mask projection and complete pane validation.
 
 fn glyphFromEntry(entry: Entry, x_offset: i32, y_offset: i32) Glyph {
     return .{
