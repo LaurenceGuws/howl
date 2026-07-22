@@ -1,6 +1,25 @@
 # Render capability reset scratchpad
 
-Current slice: `classify_remaining_render_code`
+Current slice: `delete_rejected_renderer_source`
+
+The remaining legacy render source was completely classified at `37f59ff`.
+This slice deletes only the mixed `howl_render.zig` implementation, its dead
+proofs, and exact stale references. Run-aware text preparation is not rebuilt
+until its input/output lifetime gate; `howl_frame.zig` remains for the later
+runtime/control-coupling deletion slice.
+
+## Current deletion checklist
+
+- delete `howl-render/src/howl_render.zig` without alias, stub, or replacement;
+- remove only references whose sole target is that deleted source;
+- keep accepted `native_text`, `generated`, and `terminal` capability roots and
+  proofs unchanged;
+- preserve classified lessons in this scratch until promoted or superseded;
+- prove all eight selected capability graphs remain green;
+- do not touch control, executable runtime, cache reconstruction, or the
+  quarantined frame publication source.
+
+## Accepted remaining-source classification
 
 Render's stateless terminal projection was accepted at `269a8c1`. This slice
 changes no product behavior. It accounts for every remaining symbol and proof

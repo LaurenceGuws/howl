@@ -202,7 +202,9 @@ sprints:
         commit: f9be93f
       - id: render_delta_projection
         commit: 269a8c1
-    next_slice: classify_remaining_render_code
+      - id: classify_remaining_render_code
+        commit: 37f59ff
+    next_slice: delete_rejected_renderer_source
 
   - id: control_capability_reset
     status: pending

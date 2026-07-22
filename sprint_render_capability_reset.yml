@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: classify_remaining_render_code
+  current_slice: delete_rejected_renderer_source
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -146,16 +146,33 @@ slices:
       sparse/full row patches, cursor overlay damage, and direct howl-render dependency on howl-vt.
 
   - id: classify_remaining_render_code
-    status: active
+    status: accepted
+    commit: 37f59ff
+    outcome: >-
+      Every remaining line and declaration in the two legacy render files is classified; neither file nor public API
+      survives, while run-aware text semantics earn a fresh boundary discussion and cache transactions remain
+      executable evidence only.
     purpose: >-
       Classify the old renderer's text, cache, grid, effect, damage, and draw-preparation code independently of its
       current file and runtime consumers.
 
-  - id: resolve_remaining_render_code
+  - id: delete_rejected_renderer_source
+    status: active
+    purpose: >-
+      Delete the unselected mixed renderer, its dead proofs, and stale build/source-map residue without rebuilding text
+      preparation, cache policy, executable scheduling, or compatibility APIs.
+
+  - id: settle_run_text_boundary
     status: pending
     purpose: >-
-      Delete or rebuild each classified cache, grid, effect, damage, and draw-preparation responsibility under its
-      approved owner without retaining the old renderer API for compilation convenience.
+      Settle the smallest contiguous visual-run input and heterogeneous native/generated output lifetime before any
+      run-aware text preparation is implemented.
+
+  - id: rebuild_run_text_preparation
+    status: pending
+    purpose: >-
+      Rebuild only accepted run-aware text behavior under the approved caller-buffer or allocator-owned lifetime,
+      without cache, pane, generation, frame, or GPU policy.
 
   - id: remove_render_runtime_and_control_coupling
     status: pending
