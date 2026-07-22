@@ -31,8 +31,9 @@ categories:
       drops and high-water marks, and measure their own overhead.
     result:
       ownership: >-
-        tools/probe.zig owns one removable worker and a fixed 4096-event MPSC queue; tools/probe_noop.zig preserves the
-        call shape while compiling normal product builds to zero retained storage, files, threads, or timestamps.
+        howl-window/build/probe_enabled.zig owns one removable worker and a fixed 4096-event MPSC queue;
+        howl-window/build/probe_disabled.zig preserves the call shape while compiling normal product builds to zero
+        retained storage, files, threads, or timestamps. Both are temporary child-local development support.
       events:
         - thread_start
         - producer_baseline

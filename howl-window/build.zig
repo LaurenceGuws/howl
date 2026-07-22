@@ -7,12 +7,21 @@ pub fn build(b: *std.Build) void {
     const text = b.dependency("howl_text", .{ .target = target, .optimize = optimize });
     const frame = b.dependency("howl_frame", .{ .target = target, .optimize = optimize });
     const render = b.dependency("howl_render", .{ .target = target, .optimize = optimize });
+    const pty = b.dependency("howl_pty", .{ .target = target, .optimize = optimize });
     const control = b.dependency("howl_control", .{ .target = target, .optimize = optimize });
-    const probe = b.createModule(.{
+    const probe_enabled = b.option(bool, "probe", "Enable temporary development measurements") orelse false;
+    const disabled_probe = b.createModule(.{
         .root_source_file = b.path("build/probe_disabled.zig"),
         .target = target,
         .optimize = optimize,
     });
+    const enabled_probe = b.createModule(.{
+        .root_source_file = b.path("build/probe_enabled.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const probe = if (probe_enabled) enabled_probe else disabled_probe;
     const dependencies = Dependencies{
         .vt = vt.module("howl_vt"),
         .text = text.module("howl_text"),
@@ -70,7 +79,75 @@ pub fn build(b: *std.Build) void {
     run.step.dependOn(b.getInstallStep());
     if (b.args) |arguments| run.addArgs(arguments);
     b.step("run", "Run the native Wayland terminal").dependOn(&run.step);
+
+    const probe_tests = b.addTest(.{ .name = "howl-window-probe", .root_module = enabled_probe });
+    probe_tests.use_llvm = true;
+    check.dependOn(&probe_tests.step);
+    test_step.dependOn(&b.addRunArtifact(probe_tests).step);
+
+    const paths = b.addOptions();
+    paths.addOption([]const u8, "font", text.path("testdata/primary.ttf").getPath(b));
+    paths.addOption(bool, "probe_scenario", true);
+    const scenario = probeScenario(
+        b,
+        target,
+        optimize,
+        vt,
+        frame,
+        render,
+        pty.module("howl_pty"),
+        enabled_probe,
+        paths.createModule(),
+    );
+    check.dependOn(&scenario.step);
+    const measure = b.addRunArtifact(scenario);
+    if (b.args) |arguments| measure.addArgs(arguments);
+    b.step("measure", "Measure the deterministic PTY-to-render pipeline").dependOn(&measure.step);
+
+    const disabled_scenario = probeScenario(
+        b,
+        target,
+        optimize,
+        vt,
+        frame,
+        render,
+        pty.module("howl_pty"),
+        disabled_probe,
+        paths.createModule(),
+    );
+    check.dependOn(&disabled_scenario.step);
+    const measure_disabled = b.addRunArtifact(disabled_scenario);
+    if (b.args) |arguments| measure_disabled.addArgs(arguments);
+    b.step("measure-disabled", "Measure the compile-time disabled probe boundary").dependOn(&measure_disabled.step);
     b.default_step = b.getInstallStep();
+}
+
+fn probeScenario(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    vt: *std.Build.Dependency,
+    frame: *std.Build.Dependency,
+    render: *std.Build.Dependency,
+    pty: *std.Build.Module,
+    probe: *std.Build.Module,
+    paths: *std.Build.Module,
+) *std.Build.Step.Compile {
+    const module = b.createModule(.{
+        .root_source_file = b.path("build/probe_scenario.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    module.addImport("howl_probe", probe);
+    module.addImport("howl_vt", vt.module("howl_vt"));
+    module.addImport("howl_frame", frame.module("howl_frame"));
+    module.addImport("howl_render", render.module("howl_render"));
+    module.addImport("howl_pty", pty);
+    module.addImport("probe_paths", paths);
+    const executable = b.addExecutable(.{ .name = "howl-window-probe-scenario", .root_module = module });
+    executable.use_llvm = true;
+    return executable;
 }
 
 const Dependencies = struct {

@@ -8,6 +8,7 @@
         .howl_text = .{ .path = "../howl-text" },
         .howl_frame = .{ .path = "../howl-frame" },
         .howl_render = .{ .path = "../howl-render" },
+        .howl_pty = .{ .path = "../howl-pty" },
         .howl_control = .{ .path = "../howl-control" },
     },
     .paths = .{
