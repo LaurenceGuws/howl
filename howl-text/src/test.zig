@@ -1,7 +1,7 @@
 //! Proves the public native text owner with deterministic licensed fonts.
 
 const std = @import("std");
-const text = @import("howl_text.zig");
+const text = @import("howl_text");
 const fonts = @import("test_fonts");
 
 test "public font operations retain exact error sets" {

@@ -1,0 +1,20 @@
+.{
+    .name = .howl_vt,
+    .version = "0.1.2-dev",
+    .fingerprint = 0xaf7816cf792bd20c,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "test",
+        "test_unit.zig",
+        "simulation",
+        "simulation_main.zig",
+        "benchmark",
+        "benchmark_m7_baseline.zig",
+        "vendor/zig-0.16-test-runner",
+        "design.md",
+    },
+}

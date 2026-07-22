@@ -1,0 +1,21 @@
+.{
+    .name = .howl_window,
+    .version = "0.1.2-dev",
+    .fingerprint = 0x5d4143a482d9e270,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .howl_vt = .{ .path = "../howl-vt" },
+        .howl_text = .{ .path = "../howl-text" },
+        .howl_frame = .{ .path = "../howl-frame" },
+        .howl_render = .{ .path = "../howl-render" },
+        .howl_control = .{ .path = "../howl-control" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "build",
+        "src",
+        "vendor/xdg-shell",
+        "LICENSES",
+    },
+}
