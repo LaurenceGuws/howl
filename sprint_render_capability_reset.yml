@@ -1,0 +1,118 @@
+sprint:
+  id: render_capability_reset
+  marathon: marathon_capability_reset.yml
+  status: active
+  current_slice: bootstrap_durable_workflow
+  scratchpad: scratch_render_capability_reset.md
+
+objective: >-
+  Leave howl-render as one comptime-selectable capability containing only backend-neutral terminal visual knowledge,
+  plain rendering values, and independently selectable text and generated-glyph code. Delete runtime publication,
+  package residue, and rejected ownership without moving them into control or preserving compatibility surfaces.
+
+entry_facts:
+  - commit a5adeee accepted independently selectable native text and generated-glyph capabilities
+  - former frame source mixes useful visual values with rejected runtime publication and acknowledgement policy
+  - control still depends on the rejected frame publication surface
+  - permanent project authorities still certify standalone text/frame packages and the rejected runtime topology
+
+invariants:
+  - every module allocation uses an explicit caller-provided allocator
+  - render owns terminal visual meaning but no thread, lock, queue, publication lifecycle, GPU device, window, or layout
+  - VT owns terminal semantic state and dirty facts
+  - control owns no rendering, text, frame publication, GPU, window, pane, tab, session, or thread policy
+  - executable runtime policy is not reconstructed until its concrete owner and noun are approved
+  - deleted architecture is not retained through aliases, adapters, placeholders, fake modules, or no-op implementations
+
+exclusions:
+  - performance optimization and rain targets
+  - protocol expansion and graphics
+  - executable thread or publication implementation
+  - concrete GPU backend design
+  - multiplexing, chrome, selection, and scrollback feature work
+  - stable API or ABI work
+
+exit_gate:
+  - durable authorities no longer certify rejected frame, text, control-publication, probe, or executable-topology claims
+  - howl-render exposes only selected rendering capabilities and plain backend-neutral values
+  - howl-render owns no runtime publication, synchronization, borrowing, acknowledgement, or executable scheduling policy
+  - control contains no render or frame dependency
+  - every retained allocation receives an explicit caller-provided allocator and has exact cleanup
+  - accepted visual behavior and proofs survive without preserving rejected APIs
+  - remaining executable rebuild work is indexed rather than guessed into this sprint
+
+slices:
+  - id: selectable_text_and_generated
+    status: accepted
+    commit: a5adeee
+    outcome: >-
+      Native text and generated terminal glyphs are independently selectable; disabled capabilities expose no
+      placeholder API or native dependency.
+
+  - id: bootstrap_durable_workflow
+    status: active
+    purpose: >-
+      Establish the marathon, sprint, slice, and scratchpad lifetimes; index this sprint and its first substantive
+      authority-alignment slice without changing product implementation.
+    files:
+      - AGENTS.md
+      - marathon_capability_reset.yml
+      - sprint_render_capability_reset.yml
+      - scratch_render_capability_reset.md
+    validation:
+      - planning YAML parses
+      - every active path resolves
+      - the diff contains workflow and planning changes only
+      - no render API, executable topology, or control interface shape is inferred
+
+  - id: align_durable_authorities
+    status: pending
+    purpose: >-
+      Make project_design.yml, project_rules.yml, project_source_map.yml, and project_version_scope.yml describe only
+      the settled ownership model and explicitly quarantined reconstruction work before source implementation resumes.
+    validation:
+      - all YAML parses
+      - no permanent authority certifies standalone howl-text or howl-frame packages
+      - no permanent authority assigns render publication to control or runtime policy to render
+      - no permanent authority retains deleted probe vocabulary
+    forbidden_shortcuts:
+      - describing unsettled executable topology as accepted design
+      - renaming rejected concepts instead of deleting their claims
+      - turning current file locations into architectural authority
+
+  - id: classify_terminal_visual_values
+    status: pending
+    purpose: >-
+      Classify every symbol in howl-render/src/howl_frame.zig as retained visual meaning, rejected runtime policy,
+      executable evidence, or removable proof before changing implementation.
+    discussion_gate: vt_render_boundary
+
+  - id: rebuild_terminal_visual_values
+    status: pending
+    purpose: >-
+      Retain only approved visual values and behavior, implementing the dependency, allocation, lifetime, and API
+      contract accepted at the VT/render discussion gate.
+
+  - id: classify_remaining_render_code
+    status: pending
+    purpose: >-
+      Classify the old renderer's text, cache, grid, effect, damage, and draw-preparation code independently of its
+      current file and runtime consumers.
+
+  - id: resolve_remaining_render_code
+    status: pending
+    purpose: >-
+      Delete or rebuild each classified cache, grid, effect, damage, and draw-preparation responsibility under its
+      approved owner without retaining the old renderer API for compilation convenience.
+
+  - id: remove_render_runtime_and_control_coupling
+    status: pending
+    purpose: >-
+      Delete publication slots, locks, borrowing, acknowledgement, runtime generations, and control frame coupling;
+      do not reconstruct executable policy during this sprint.
+
+  - id: render_sprint_audit
+    status: pending
+    purpose: >-
+      Verify source shape, allocation, ownership, cleanup, tests, build selection, stale paths, and sprint exit gates;
+      promote accepted outcomes to the marathon, update every active path, and delete this sprint and its scratchpad.

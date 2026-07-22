@@ -31,8 +31,23 @@ disposition to `none`; incomplete records normalize omission to `active`.
 
 ## Development flow
 
-Ordinary work uses a disposable marathon scratch for the objective, review
-findings, validation, and commit boundaries. Delete it when the work lands.
+Long interventions use four explicit lifetimes:
+
+- A marathon YAML owns the complete intervention, invariants, exclusions,
+  sprint order, and final acceptance gate.
+- The active sprint YAML owns one coherent capability or ownership milestone,
+  its ordered slices, and its sprint acceptance gate.
+- A slice is one reviewable deletion, decision, implementation, or proof unit
+  recorded by the sprint.
+- The active scratchpad owns current-slice commands, findings, compiler output,
+  review corrections, and immediate progress.
+
+Only one sprint and one slice are active unless the marathon explicitly proves
+that independent work can proceed. Accepted slice facts and commits move from
+the scratchpad into the sprint; accepted sprint facts and commits move into the
+marathon. Reset the scratchpad for the next slice or delete it when no slice is
+active. Delete the sprint when its accepted outcome is recorded by the
+marathon, and delete the marathon when its final gate lands.
 
 When ordinary work exposes systemic debt, record the concrete offenders in
 `watch_list.yml`, preserve working capability, and finish the intervention

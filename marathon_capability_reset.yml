@@ -2,6 +2,8 @@ marathon:
   name: capability_reset
   status: active
   mode: supervised deletion intervention
+  active_sprint: sprint_render_capability_reset.yml
+  active_scratch: scratch_render_capability_reset.md
 
 objective: >-
   Delete unearned packages, runtime abstractions, vocabulary, and build ceremony until the surviving Howl capabilities
@@ -17,6 +19,23 @@ working_rules:
   - No autonomous architecture changes, broad rewrites, commits, or compatibility work are authorized.
   - Tests proving accepted behavior may survive; tests proving only rejected architecture do not.
 
+settled_ownership:
+  allocation: every module allocation uses an explicit caller-provided allocator
+  vt: owns terminal parsing, semantics, state, input encoding, replies, and terminal consequences
+  pty: owns Linux PTY transport and child-process lifecycle
+  control: optionally composes PTY and VT into ID-addressable terminal instances with bounded interfaces
+  render: owns backend-neutral terminal visual knowledge and plain rendering values without runtime policy
+  executable: owns threads, publication storage, GPU resources, windowing, layout, sessions, tabs, panes, and presentation
+
+workflow:
+  marathon: owns this complete intervention and its final gate
+  sprint: owns one coherent capability or ownership milestone and its ordered slices
+  slice: owns one reviewable deletion, decision, implementation, or proof checkpoint
+  scratchpad: owns only current-slice working state and is reset for the next slice or deleted when none is active
+  promotion:
+    - accepted slice facts and commits move from the scratchpad into the sprint
+    - accepted sprint facts and commits move from the sprint into this marathon
+
 survivors:
   - capability: howl-vt
     contract: independently embeddable terminal emulator capability
@@ -26,8 +45,8 @@ survivors:
 
   - capability: howl-control
     contract: >-
-      optional composition of PTY and VT into ID-addressable terminal instances exposed through more than one bounded
-      interface shape; embedders may always compose PTY and VT themselves
+      optional composition of PTY and VT into ID-addressable terminal instances with bounded operations and
+      interfaces; embedders may always compose PTY and VT themselves
 
   - capability: howl-render
     contract: >-
@@ -36,8 +55,8 @@ survivors:
 
   - capability: first_party_executable
     contract: >-
-      concrete embedder that currently chooses howl-control and uses howl-render while owning its runtime, threads,
-      windowing, GPU resources, sessions, tabs, panes, and presentation
+      concrete embedder that owns runtime, threads, publication storage, windowing, GPU resources, sessions, tabs,
+      panes, and presentation; its final selection of control and render surfaces remains under reconstruction
     noun: unsettled
 
 confirmed_deletions:
@@ -46,6 +65,15 @@ confirmed_deletions:
 
   - offender: standalone howl-frame package
     reason: unearned package boundary inside the accepted rendering capability
+
+  - offender: render-owned runtime publication
+    includes:
+      - Publisher
+      - Borrow
+      - PreparedResize
+      - publication slots and mutexes
+      - runtime generations and acknowledgement policy
+    reason: executable scheduling and publication policy cannot survive inside backend-neutral rendering knowledge
 
   - offender: standalone howl-text package
     reason: text is a comptime-selectable part of the accepted rendering capability
@@ -86,11 +114,15 @@ investigations:
       replacement decision; do not propose a speculative aggregate noun.
 
   - id: render_inventory
-    status: required
+    status: in_progress
     question: >-
       Which existing text, frame, grid, style, effect, damage, cache, and generated-glyph code expresses accepted
       rendering behavior, and which code encodes rejected runtime or package architecture?
     gate: Classify concrete symbols before moving or rebuilding them; file location does not establish ownership.
+    evidence:
+      - text and generated capability selection accepted at commit a5adeee
+      - former frame source inventory identified visual values mixed with rejected publication runtime
+      - old unselected renderer cache and draw-preparation code still requires independent classification
 
   - id: control_inventory
     status: required
@@ -107,6 +139,21 @@ investigations:
     gate: The executable noun remains unsettled and is decided separately from source survival.
 
 discussion_gates:
+  - id: durable_authority_alignment
+    trigger: before the first render source implementation slice
+    status: active
+    decision: >-
+      Remove or quarantine permanent design, rules, source-map, and version-scope claims that certify standalone text
+      or frame packages, control-owned rendering publication, render-owned runtime policy, deleted probe vocabulary,
+      or the previous executable topology.
+
+  - id: vt_render_boundary
+    trigger: terminal visual values are classified and the transformation owner can be decided from concrete types
+    status: pending
+    decision: >-
+      Approve the transformation owner, input and output types, dependency direction, allocation and lifetime contract,
+      and whether a public transformation API is earned.
+
   - id: vt_outputs
     trigger: reference evidence for one current host-prefixed VT responsibility is ready
     decision: approve the exact concept and API before implementation
@@ -135,6 +182,31 @@ quarantined_evidence:
     treatment: >-
       Mine measured performance facts that remain reproducible, then delete the marathon; its probe vocabulary,
       package ownership, commands, and accepted architecture are not authority for this intervention.
+
+sprints:
+  - id: render_capability_reset
+    file: sprint_render_capability_reset.yml
+    status: active
+    accepted_slices:
+      - id: selectable_text_and_generated
+        commit: a5adeee
+    next_slice: bootstrap_durable_workflow
+
+  - id: control_capability_reset
+    status: pending
+    entry_gate: render owns no runtime publication and the durable authorities describe the settled ownership model
+
+  - id: executable_runtime_rebuild
+    status: pending
+    entry_gate: render and control expose only accepted capabilities and the executable noun has been settled
+
+  - id: basic_byte_to_pixels
+    status: pending
+    entry_gate: executable runtime ownership and the backend-neutral render boundary are accepted
+
+  - id: final_compile_and_ownership_audit
+    status: pending
+    entry_gate: one basic PTY-to-pixels path exists without compatibility scaffolding
 
 completion:
   - every tracked package corresponds to an explicitly accepted independently useful capability
