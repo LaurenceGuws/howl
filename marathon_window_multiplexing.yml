@@ -38,16 +38,24 @@ categories:
       divider movement saturates at recursive pane minima, and outer resize preserves those extents or transactionally
       clamps them for every tab. Dense proofs cover stable identities, exact pane retirement, tab CRUD/order, split and
       close fallback, direct and directional focus, nested divider movement, odd geometry, hostile topology rejection,
-      depth/count/size rejection, and allocation rollback. The fixed native host remains unchanged until host_adoption.
+      depth/count/size rejection, and allocation rollback.
 
   - id: host_adoption
-    status: queued
+    status: accepted
     goal: >-
       Replace fixed terminals and layouts with the workspace model, create and retire terminal owners with panes,
       transactionally resize affected PTYs, and retain unavailable-pane isolation and clean shutdown.
     gate: >-
       Recognizable tab and pane commands work through real xkb input; release and repeat cannot leak into terminals;
       close fallback, failed terminal state, renderer reconciliation, and process cleanup are exact.
+    result: >-
+      The Wayland host now owns the bounded workspace directly and creates one PTY/VT terminal plus stable wake slot per
+      pane. Sixty-four live pane identities remain u64 through renderer work and backing reconciliation; one visible tab
+      admits sixteen panes. Ctrl+Shift+T/Enter/backslash/W/Q, Ctrl+Tab, Ctrl+Shift+Tab, Alt+arrows, and
+      Ctrl+Shift+arrows provide captured non-repeating CRUD, focus, tab cycling, and divider movement. Candidate
+      topology and PTY resize commit together; failed resize restores every earlier terminal. Close submits and waits
+      for renderer retirement before process-group teardown, stale slot wakes are cleared, hidden terminals remain live,
+      and unavailable panes retain their last backing without joining resize admission.
 
   - id: labels_and_defaults
     status: queued

@@ -10,11 +10,14 @@ const std = @import("std");
 pub const max_tabs: u8 = 16;
 /// One tab admits at most sixteen terminal panes.
 pub const max_panes_per_tab: u8 = 16;
-const max_panes: u8 = 64;
+/// One session admits at most sixty-four terminal panes across all tabs.
+pub const max_panes: u8 = 64;
 const max_split_depth: u8 = 8;
 const max_name_bytes: u8 = 128;
-const max_cols: u16 = 512;
-const max_rows: u16 = 256;
+/// Maximum admitted workspace grid width used by native host layout.
+pub const max_cols: u16 = 512;
+/// Maximum admitted workspace grid height used by native host layout.
+pub const max_rows: u16 = 256;
 const min_pane_cols: u16 = 2;
 const min_pane_rows: u16 = 1;
 

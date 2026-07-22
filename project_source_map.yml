@@ -14,8 +14,9 @@ sources:
   howl-render/src/howl_render.zig: >-
     shared font ownership, bounded cross-terminal glyph-mask cache, pane/frame validation, and damage-aware draw preparation
   howl-window/src: >-
-    sole Wayland/xkb host loop, bounded tabs/panes/focus, keyboard repeat, focused-pane pointer routing,
-    terminal wake bits, one EGL/GLES render thread, shared pane backings and texture representation, and live host route
+    sole Wayland/xkb host loop, workspace-backed terminal lifecycle and tab/pane commands, keyboard repeat,
+    stable pane wake and focused-pointer routing, transactional PTY geometry, one EGL/GLES render thread,
+    shared pane backings and texture representation, and live host route
   howl-window/src/workspace.zig: >-
     platform-independent bounded session, tab identity/order/names, split-pane topology and cell extents, direct and
     directional focus, exact pane retirement, transactional outer resize, and hostile-state invariant validation

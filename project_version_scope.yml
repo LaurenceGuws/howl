@@ -26,8 +26,8 @@ capabilities:
 
   - name: pane_composition
     acceptance: >-
-      two stable tabs include one split, keep three terminal owners live, route input through explicit focus,
-      transactionally resize available terminals from pane layout, and share one render thread, text owner,
+      the bounded workspace creates and retires live tab/pane terminal owners, routes input through stable focused pane
+      identity, transactionally resizes available terminals from pane layout, and shares one render thread, text owner,
       mask cache, and GLES device
 
   - name: workspace_model

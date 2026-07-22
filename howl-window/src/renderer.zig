@@ -6,14 +6,13 @@ const howl_frame = @import("howl_frame");
 const howl_render = @import("howl_render");
 const howl_text = @import("howl_text");
 const howl_vt = @import("howl_vt");
+const workspace = @import("workspace.zig");
 const c = @import("native.zig").c;
 
 const texture_capacity = howl_render.cache_capacity;
 const texture_byte_capacity = howl_render.cache_byte_capacity;
-/// Bounds terminal identities retained by one render owner and its mailbox.
-pub const max_terminals: usize = 8;
 /// Bounds simultaneously composed panes and frame borrows in one visible tab.
-pub const max_visible_panes: usize = 4;
+pub const max_visible_panes: usize = workspace.max_panes_per_tab;
 /// Bounds each nonzero Wayland/GLES width or height before C-int narrowing.
 pub const max_window_dimension: u32 = 8_192;
 const max_backing_bytes: usize = 128 * 1024 * 1024;
@@ -67,7 +66,9 @@ const Work = struct {
     size: Size,
     panes: [max_visible_panes]Pane = undefined,
     pane_count: u8,
-    dirty: [max_terminals]*howl_control.Terminal = undefined,
+    live: [workspace.max_panes]PaneId = undefined,
+    live_count: u8,
+    dirty: [workspace.max_panes]*howl_control.Terminal = undefined,
     dirty_count: u8,
 };
 
@@ -99,7 +100,7 @@ const Mailbox = struct {
 };
 
 /// Gives one stable nonzero identity to a composed pane.
-pub const PaneId = enum(u8) { _ };
+pub const PaneId = workspace.PaneId;
 
 /// Places one terminal in a bounded visible pane without borrowing its frame.
 pub const Pane = struct {
@@ -160,7 +161,7 @@ const Device = struct {
     textures: [texture_capacity]Texture = undefined,
     texture_count: u16 = 0,
     texture_bytes: usize = 0,
-    backings: [max_terminals]Backing = undefined,
+    backings: [workspace.max_panes]Backing = undefined,
     backing_count: u8 = 0,
     backing_bytes: usize = 0,
     size: Size,
@@ -280,7 +281,7 @@ const Device = struct {
             );
             self.size = work.size;
         }
-        try self.reconcile(work.panes[0..work.pane_count]);
+        try self.reconcile(work.live[0..work.live_count], work.panes[0..work.pane_count]);
         for (work.panes[0..work.pane_count]) |pane| {
             const backing = self.findBacking(pane.id).?;
             const dirty = containsDirty(work.dirty[0..work.dirty_count], pane.terminal);
@@ -455,7 +456,15 @@ const Device = struct {
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
     }
 
-    fn reconcile(self: *Device, panes: []const Pane) Error!void {
+    fn reconcile(self: *Device, live: []const PaneId, panes: []const Pane) Error!void {
+        var backing_index: u8 = 0;
+        while (backing_index < self.backing_count) {
+            if (containsPaneId(live, self.backings[backing_index].id)) {
+                backing_index += 1;
+            } else {
+                self.removeBacking(backing_index);
+            }
+        }
         for (panes) |pane| {
             if (self.findBacking(pane.id)) |existing| {
                 if (existing.terminal != pane.terminal) return error.InvalidPane;
@@ -474,7 +483,7 @@ const Device = struct {
                 destroyBacking(old);
                 continue;
             }
-            if (self.backing_count == max_terminals) return error.InvalidPane;
+            if (self.backing_count == workspace.max_panes) return error.InvalidPane;
             const bytes = backingBytes(pane.width, pane.height);
             if (bytes > max_backing_bytes - self.backing_bytes) return error.BackingLimit;
             self.backings[self.backing_count] = try createBacking(pane);
@@ -619,18 +628,24 @@ fn validateSize(size: Size) error{InvalidSize}!void {
 
 fn validateSubmission(
     size: Size,
+    live: []const PaneId,
     panes: []const Pane,
     dirty: []const *howl_control.Terminal,
 ) error{ InvalidSize, InvalidPane }!void {
     try validateSize(size);
-    if (panes.len == 0 or panes.len > max_visible_panes or dirty.len > max_terminals)
+    if (live.len == 0 or live.len > workspace.max_panes or panes.len == 0 or
+        panes.len > max_visible_panes or dirty.len > workspace.max_panes)
         return error.InvalidPane;
+    for (live, 0..) |id, index| {
+        if (@intFromEnum(id) == 0 or containsPaneId(live[0..index], id)) return error.InvalidPane;
+    }
     var bytes: usize = 0;
     var focused: u8 = 0;
     for (panes, 0..) |pane, index| {
         if (@intFromEnum(pane.id) == 0 or pane.width == 0 or pane.height == 0 or
             pane.x >= size.width or pane.y >= size.height or
-            pane.width > size.width - pane.x or pane.height > size.height - pane.y)
+            pane.width > size.width - pane.x or pane.height > size.height - pane.y or
+            !containsPaneId(live, pane.id))
             return error.InvalidPane;
         if (pane.focused) focused += 1;
         bytes = std.math.add(usize, bytes, backingBytes(pane.width, pane.height)) catch
@@ -647,6 +662,11 @@ fn validateSubmission(
             containsDirty(dirty[0..index], terminal))
             return error.InvalidPane;
     }
+}
+
+fn containsPaneId(values: []const PaneId, id: PaneId) bool {
+    for (values) |value| if (value == id) return true;
+    return false;
 }
 
 fn containsTerminal(panes: []const Pane, terminal: *howl_control.Terminal) bool {
@@ -903,10 +923,11 @@ pub const Render = struct {
         self: *Render,
         generation: u64,
         size: Size,
+        live: []const PaneId,
         panes: []const Pane,
         dirty: []const *howl_control.Terminal,
     ) Error!void {
-        try validateSubmission(size, panes, dirty);
+        try validateSubmission(size, live, panes, dirty);
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.failure) |failure| return failure;
@@ -917,13 +938,26 @@ pub const Render = struct {
             .generation = generation,
             .size = size,
             .pane_count = @intCast(panes.len),
+            .live_count = @intCast(live.len),
             .dirty_count = @intCast(dirty.len),
         };
         @memcpy(work.panes[0..panes.len], panes);
+        @memcpy(work.live[0..live.len], live);
         @memcpy(work.dirty[0..dirty.len], dirty);
         self.mailbox.admit(work);
         self.submitted_generation = generation;
         self.condition.signal(self.io);
+    }
+
+    /// Wait until the render thread has consumed one admitted generation.
+    /// This is the terminal-retirement boundary; it never borrows a frame.
+    pub fn quiesce(self: *Render, generation: u64) Error!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        while (self.completed_generation < generation and self.failure == null and !self.stopping)
+            self.condition.waitUncancelable(self.io, &self.mutex);
+        if (self.failure) |failure| return failure;
+        if (self.completed_generation < generation) return error.Stopping;
     }
 
     /// Drains completion wake and returns the newest swapped generation.
@@ -987,6 +1021,7 @@ pub const Render = struct {
             };
             self.mutex.lockUncancelable(self.io);
             self.completed_generation = work.generation;
+            self.condition.broadcast(self.io);
             self.mutex.unlock(self.io);
             self.signal();
         }
@@ -1004,6 +1039,7 @@ pub const Render = struct {
     fn storeFailure(self: *Render, failure: Error) void {
         self.mutex.lockUncancelable(self.io);
         if (self.failure == null) self.failure = failure;
+        self.condition.broadcast(self.io);
         self.mutex.unlock(self.io);
     }
 
@@ -1122,12 +1158,27 @@ test "failed render owner rejects late bounded metadata submission" {
     const terminal: *howl_control.Terminal = @ptrFromInt(16);
     try std.testing.expectError(
         error.Draw,
-        render.submit(1, .{ .width = 100, .height = 100 }, &.{
+        render.submit(1, .{ .width = 100, .height = 100 }, &.{@as(PaneId, @enumFromInt(1))}, &.{
             testPane(1, terminal, 0, 100),
         }, &.{terminal}),
     );
     try std.testing.expect(render.mailbox.empty());
     try std.testing.expectEqual(@as(u64, 0), render.submitted_generation);
+}
+
+test "terminal retirement quiescence reports completed and failed render facts" {
+    var render = Render{
+        .allocator = std.testing.allocator,
+        .io = std.testing.io,
+        .thread = undefined,
+        .init_values = undefined,
+        .started = true,
+        .completed_generation = 7,
+        .signal_fd = -1,
+    };
+    try render.quiesce(7);
+    render.failure = error.Draw;
+    try std.testing.expectError(error.Draw, render.quiesce(8));
 }
 
 test "shutdown joins a dead failed render owner with pending metadata" {
@@ -1189,12 +1240,14 @@ test "public submission rejects invalid composition before mailbox mutation" {
     try std.testing.expectError(error.InvalidSize, render.submit(
         1,
         .{ .width = 0, .height = 1 },
+        &.{@as(PaneId, @enumFromInt(1))},
         &.{testPane(1, terminal, 0, 1)},
         &.{terminal},
     ));
     try std.testing.expectError(error.InvalidPane, render.submit(
         1,
         .{ .width = 100, .height = 100 },
+        &.{ @as(PaneId, @enumFromInt(1)), @enumFromInt(2) },
         &.{
             testPane(1, terminal, 0, 60),
             testPane(2, @ptrFromInt(32), 50, 50),
@@ -1206,6 +1259,7 @@ test "public submission rejects invalid composition before mailbox mutation" {
     try std.testing.expectError(error.InvalidPane, render.submit(
         1,
         .{ .width = 100, .height = 100 },
+        &.{@as(PaneId, @enumFromInt(1))},
         &.{unavailable},
         &.{terminal},
     ));
@@ -1218,8 +1272,24 @@ test "public submission rejects invalid composition before mailbox mutation" {
     }));
 }
 
+test "renderer preserves full stable pane identity and bounded live roster" {
+    const terminal: *howl_control.Terminal = @ptrFromInt(16);
+    const largest: PaneId = @enumFromInt(std.math.maxInt(u64));
+    var pane = testPane(1, terminal, 0, 100);
+    pane.id = largest;
+    var live: [workspace.max_panes]PaneId = undefined;
+    for (&live, 1..) |*id, value| id.* = @enumFromInt(value);
+    live[live.len - 1] = largest;
+    try validateSubmission(.{ .width = 100, .height = 100 }, &live, &.{pane}, &.{});
+    live[1] = live[0];
+    try std.testing.expectError(
+        error.InvalidPane,
+        validateSubmission(.{ .width = 100, .height = 100 }, &live, &.{pane}, &.{}),
+    );
+}
+
 fn testPane(
-    id: u8,
+    id: u64,
     terminal: *howl_control.Terminal,
     x: u32,
     width: u32,
@@ -1245,9 +1315,11 @@ fn testWork(
         .generation = generation,
         .size = .{ .width = 100, .height = 100 },
         .pane_count = @intCast(panes.len),
+        .live_count = @intCast(panes.len),
         .dirty_count = @intCast(dirty.len),
     };
     @memcpy(work.panes[0..panes.len], panes);
+    for (panes, work.live[0..panes.len]) |pane, *id| id.* = pane.id;
     @memcpy(work.dirty[0..dirty.len], dirty);
     return work;
 }

@@ -4,6 +4,7 @@ const std = @import("std");
 const howl_control = @import("howl_control");
 const howl_vt = @import("howl_vt");
 const renderer = @import("renderer.zig");
+const workspace_model = @import("workspace.zig");
 const c = @import("native.zig").c;
 const MouseInput = @FieldType(howl_control.Input, "mouse");
 const MouseButton = @FieldType(MouseInput, "button");
@@ -11,48 +12,16 @@ const MouseKind = @FieldType(MouseInput, "kind");
 
 const initial_size = renderer.Size{ .width = 960, .height = 600 };
 const max_wheel_steps: usize = 32;
+const PaneId = workspace_model.PaneId;
+const TabId = workspace_model.TabId;
+const TerminalIndex = u6;
+const KeyModifiers = @FieldType(@FieldType(howl_control.Input, "key"), "mods");
 
-const TerminalSpec = struct { shell: []const u8 = "/bin/bash" };
-const terminal_specs = [_]TerminalSpec{ .{}, .{}, .{} };
-const terminal_count = terminal_specs.len;
-
-const TabId = enum(u8) { split = 1, full = 2 };
-const PaneId = enum(u8) { left = 1, right = 2, full = 3 };
-
-const PaneSpec = struct { id: PaneId, terminal: u8 };
-const Tab = struct { id: TabId, panes: []const PaneSpec };
-
-const split_panes = [_]PaneSpec{
-    .{ .id = .left, .terminal = 0 },
-    .{ .id = .right, .terminal = 1 },
-};
-const full_panes = [_]PaneSpec{.{ .id = .full, .terminal = 2 }};
-const tabs = [_]Tab{
-    .{ .id = .split, .panes = &split_panes },
-    .{ .id = .full, .panes = &full_panes },
-};
-
-const Workspace = struct {
-    tab: u8 = 0,
-    focus: [tabs.len]u8 = @splat(0),
-
-    fn switchTab(self: *Workspace, index: u8) bool {
-        if (index >= tabs.len or self.tab == index) return false;
-        self.tab = index;
-        return true;
-    }
-
-    fn focusNext(self: *Workspace) bool {
-        const count: u8 = @intCast(tabs[self.tab].panes.len);
-        if (count < 2) return false;
-        self.focus[self.tab] = (self.focus[self.tab] + 1) % count;
-        return true;
-    }
-
-    fn focusedTerminal(self: *const Workspace) u8 {
-        return tabs[self.tab].panes[self.focus[self.tab]].terminal;
-    }
-};
+comptime {
+    if (workspace_model.max_panes != @bitSizeOf(u64) or
+        workspace_model.max_panes - 1 > std.math.maxInt(TerminalIndex))
+        @compileError("workspace pane capacity must fit the terminal wake-bit domain");
+}
 
 const Repeat = struct {
     interval_ns: ?u64 = null,
@@ -93,7 +62,7 @@ const Repeat = struct {
 };
 
 const HostKeys = struct {
-    values: [3]u32 = undefined,
+    values: [16]u32 = undefined,
     count: u8 = 0,
 
     fn capture(self: *HostKeys, code: u32) bool {
@@ -118,10 +87,55 @@ const HostKeys = struct {
     }
 };
 
-const HostAction = enum { first_tab, second_tab, next_pane };
+const HostAction = enum {
+    new_tab,
+    split_horizontal,
+    split_vertical,
+    close_pane,
+    close_tab,
+    next_tab,
+    previous_tab,
+    focus_left,
+    focus_right,
+    focus_up,
+    focus_down,
+    resize_left,
+    resize_right,
+    resize_up,
+    resize_down,
+};
+
+fn hostAction(symbol: u32, mods: KeyModifiers) ?HostAction {
+    if (mods.hyper or mods.meta) return null;
+    if (mods.control and mods.shift and !mods.alt and !mods.super) return switch (symbol) {
+        c.XKB_KEY_t, c.XKB_KEY_T => .new_tab,
+        c.XKB_KEY_Return => .split_horizontal,
+        c.XKB_KEY_backslash, c.XKB_KEY_bar => .split_vertical,
+        c.XKB_KEY_w, c.XKB_KEY_W => .close_pane,
+        c.XKB_KEY_q, c.XKB_KEY_Q => .close_tab,
+        c.XKB_KEY_Left => .resize_left,
+        c.XKB_KEY_Right => .resize_right,
+        c.XKB_KEY_Up => .resize_up,
+        c.XKB_KEY_Down => .resize_down,
+        c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => .previous_tab,
+        else => null,
+    };
+    if (mods.control and !mods.shift and !mods.alt and !mods.super) return switch (symbol) {
+        c.XKB_KEY_Tab => .next_tab,
+        else => null,
+    };
+    if (mods.alt and !mods.control and !mods.shift and !mods.super) return switch (symbol) {
+        c.XKB_KEY_Left => .focus_left,
+        c.XKB_KEY_Right => .focus_right,
+        c.XKB_KEY_Up => .focus_up,
+        c.XKB_KEY_Down => .focus_down,
+        else => null,
+    };
+    return null;
+}
 
 const PointerTarget = struct {
-    terminal: u8,
+    pane: PaneId,
     row: i32,
     col: u16,
     pixel_x: u32,
@@ -176,7 +190,7 @@ const PointerState = struct {
 
     fn move(self: *PointerState, target: PointerTarget) bool {
         for (self.pressed) |pressed| if (pressed) |value|
-            if (value.terminal != target.terminal) return false;
+            if (value.pane != target.pane) return false;
         for (&self.pressed) |*pressed| {
             if (pressed.* != null) pressed.* = target;
         }
@@ -203,7 +217,15 @@ const Ready = packed struct(u8) {
     }
 };
 
-const WakeContext = struct { owner: ?*anyopaque = null, index: u3 = 0 };
+const WakeContext = struct { owner: ?*anyopaque = null, index: TerminalIndex = 0 };
+
+const PaneOwner = struct {
+    pane: ?PaneId = null,
+    terminal: ?*howl_control.Terminal = null,
+    geometry: Geometry = .{ .cols = 1, .rows = 1 },
+    unavailable: bool = false,
+    wake: WakeContext = .{},
+};
 
 pub const Error = renderer.StartError || renderer.Error || howl_control.InitError ||
     howl_control.InputError || howl_control.ResizeError || error{
@@ -223,6 +245,17 @@ pub const Error = renderer.StartError || renderer.Error || howl_control.InitErro
     InputIncomplete,
     ResizeResultMismatch,
     ResizeTransactionFailed,
+    InvalidSession,
+    InvalidName,
+    TabLimit,
+    PaneLimit,
+    DepthLimit,
+    GeometryLimit,
+    IdExhausted,
+    StaleTab,
+    StalePane,
+    LastTab,
+    LastPane,
 };
 
 const Loop = struct {
@@ -246,13 +279,8 @@ const Loop = struct {
     repeat: Repeat = .{},
     host_keys: HostKeys = .{},
     pointer_state: PointerState = .{},
-    wake_bits: std.atomic.Value(u8) = .init(0),
-    wake_contexts: [terminal_count]WakeContext = @splat(.{}),
-    terminals: [terminal_count]?*howl_control.Terminal = @splat(null),
-    terminal_geometry: [terminal_count]Geometry = undefined,
-    // A stopped or failed pane keeps its last backing and rejects only focused
-    // input; sibling terminals, rendering, and tab ownership remain live.
-    unavailable: [terminal_count]bool = @splat(false),
+    wake_bits: std.atomic.Value(u64) = .init(0),
+    panes: [workspace_model.max_panes]PaneOwner = @splat(.{}),
     render: ?*renderer.Render = null,
     size: renderer.Size = initial_size,
     pending_size: renderer.Size = initial_size,
@@ -261,7 +289,8 @@ const Loop = struct {
     failure: ?Error = null,
     render_generation: u64 = 0,
     completed_generation: u64 = 0,
-    workspace: Workspace = .{},
+    workspace: ?workspace_model.Workspace = null,
+    title: [128]u8 = undefined,
 
     fn init(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const u8) Error!*Loop {
         if (font_paths.len == 0) return error.FontOpen;
@@ -284,10 +313,6 @@ const Loop = struct {
             .registry = registry,
             .terminal_signal = terminal_signal,
             .repeat_fd = repeat_fd,
-        };
-        for (&self.wake_contexts, 0..) |*context, index| context.* = .{
-            .owner = self,
-            .index = @intCast(index),
         };
         errdefer self.destroyWayland();
         if (c.wl_registry_add_listener(registry, &registry_listener, self) != 0)
@@ -325,30 +350,17 @@ const Loop = struct {
         errdefer render.deinit() catch |failure|
             @panic(@errorName(failure));
         errdefer {
-            for (&self.terminals) |*terminal| if (terminal.*) |value| {
-                value.deinit();
-                terminal.* = null;
-            };
+            self.deinitTerminals();
         }
-        for (&self.terminals, terminal_specs, 0..) |*terminal, spec, index| {
-            const geometry = terminalGeometry(@intCast(index), self.size, render.metrics());
-            terminal.* = try howl_control.Terminal.init(allocator, io, .{
-                .shell = spec.shell,
-                .cols = geometry.cols,
-                .rows = geometry.rows,
-                .cell_pixels = .{
-                    .width = render.metrics().cell_width,
-                    .height = render.metrics().cell_height,
-                },
-            }, .{ .context = &self.wake_contexts[index], .notify = terminalWake });
-            self.terminal_geometry[index] = geometry;
-        }
+        const grid = gridSize(self.size, render.metrics());
+        self.workspace = try workspace_model.Workspace.init(allocator, @enumFromInt(1), "tab", grid);
+        try self.initPane(self.workspace.?.focusedPane(), .{ .cols = grid.cols, .rows = grid.rows });
         self.updateTitle();
         return self;
     }
 
     fn run(self: *Loop) Error!void {
-        try self.submitVisible(visibleMask(self.workspace.tab));
+        try self.submitVisible(self.visibleBits());
         while (!self.closed and self.failure == null) {
             if (c.wl_display_dispatch_pending(self.display) < 0) return error.WaylandDispatch;
             if (self.closed or self.failure != null) continue;
@@ -384,13 +396,13 @@ const Loop = struct {
             if (sources.terminal) {
                 try drainEvent(self.terminal_signal);
                 const changed = self.wake_bits.swap(0, .acq_rel);
-                for (&self.terminals, 0..) |*terminal, index| if (changed & (@as(u8, 1) << @intCast(index)) != 0) {
-                    const value = terminal.*.?;
+                for (&self.panes, 0..) |*pane, index| if (changed & (@as(u64, 1) << @intCast(index)) != 0) {
+                    const value = pane.terminal orelse continue;
                     value.consumeWake();
-                    self.unavailable[index] = value.state() != .running;
+                    pane.unavailable = value.state() != .running;
                 };
                 self.updateTitle();
-                const visible_changed = changed & visibleMask(self.workspace.tab);
+                const visible_changed = changed & self.visibleBits();
                 if (visible_changed != 0) try self.submitVisible(visible_changed);
             }
             if (sources.repeat) try self.repeatKey();
@@ -405,26 +417,32 @@ const Loop = struct {
         if (self.failure) |failure| return failure;
     }
 
-    fn submitVisible(self: *Loop, dirty_mask: u8) Error!void {
+    fn submitVisible(self: *Loop, dirty_mask: u64) Error!void {
         var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
         const pane_count = self.visiblePanes(&panes);
-        var dirty: [renderer.max_terminals]*howl_control.Terminal = undefined;
+        var live: [workspace_model.max_panes]renderer.PaneId = undefined;
+        var live_count: usize = 0;
+        for (self.panes) |pane| if (pane.pane) |id| {
+            live[live_count] = id;
+            live_count += 1;
+        };
+        var dirty: [workspace_model.max_panes]*howl_control.Terminal = undefined;
         var dirty_count: usize = 0;
-        const admitted_dirty = availableMask(dirty_mask, self.unavailable);
-        for (panes[0..pane_count]) |pane| {
-            for (self.terminals, 0..) |terminal, index| if (terminal == pane.terminal and
-                admitted_dirty & (@as(u8, 1) << @intCast(index)) != 0)
+        for (panes[0..pane_count]) |pane| for (&self.panes, 0..) |*owned, index| {
+            if (owned.terminal == pane.terminal and !owned.unavailable and
+                dirty_mask & (@as(u64, 1) << @intCast(index)) != 0)
             {
                 dirty[dirty_count] = pane.terminal;
                 dirty_count += 1;
                 break;
-            };
-        }
+            }
+        };
         if (self.render_generation == std.math.maxInt(u64)) return error.StaleGeneration;
         self.render_generation += 1;
         try self.render.?.submit(
             self.render_generation,
             self.size,
+            live[0..live_count],
             panes[0..pane_count],
             dirty[0..dirty_count],
         );
@@ -436,103 +454,259 @@ const Loop = struct {
         if (self.pending_size.width < 2 or self.pending_size.height == 0 or
             self.pending_size.width > renderer.max_window_dimension or
             self.pending_size.height > renderer.max_window_dimension) return error.InvalidSize;
-        const plan = ResizePlan.init(
-            self.pending_size,
-            render.metrics(),
-            self.terminal_geometry,
-            self.unavailable,
-        );
-        var applied: [terminal_count]bool = @splat(false);
-        for (self.terminals, 0..) |terminal, index| {
-            if (!plan.change[index]) continue;
-            const target = plan.target[index];
-            const result = terminal.?.resize(target.cols, target.rows) catch |failure| {
-                if (!self.rollbackResize(applied, index)) return error.ResizeTransactionFailed;
-                return failure;
-            };
-            if (result.cols != target.cols or result.rows != target.rows) {
-                const prior = self.terminal_geometry[index];
-                const restored = terminal.?.resize(prior.cols, prior.rows) catch
-                    return error.ResizeTransactionFailed;
-                if (restored.cols != prior.cols or restored.rows != prior.rows or
-                    !self.rollbackResize(applied, index)) return error.ResizeTransactionFailed;
-                return error.ResizeResultMismatch;
-            }
-            applied[index] = true;
-        }
-        if (!plan.commit(&self.terminal_geometry, applied)) return error.ResizeTransactionFailed;
+        var candidate = self.workspace.?;
+        const grid = gridSize(self.pending_size, render.metrics());
+        if (try candidate.resize(grid)) try self.applyWorkspaceGeometry(&candidate);
+        self.workspace.? = candidate;
         self.size = self.pending_size;
-        try self.submitVisible(visibleMask(self.workspace.tab));
+        try self.submitVisible(self.visibleBits());
     }
 
-    fn rollbackResize(self: *Loop, applied: [terminal_count]bool, end: usize) bool {
+    fn rollbackResize(self: *Loop, applied: [workspace_model.max_panes]bool, end: usize) bool {
         var index = end;
         while (index != 0) {
             index -= 1;
             if (!applied[index]) continue;
-            const prior = self.terminal_geometry[index];
-            const restored = self.terminals[index].?.resize(prior.cols, prior.rows) catch return false;
+            const prior = self.panes[index].geometry;
+            const restored = self.panes[index].terminal.?.resize(prior.cols, prior.rows) catch return false;
             if (restored.cols != prior.cols or restored.rows != prior.rows) return false;
         }
         return true;
     }
 
-    fn visiblePanes(self: *Loop, output: *[renderer.max_visible_panes]renderer.Pane) usize {
-        const selected = tabs[self.workspace.tab];
-        const split = self.size.width / 2;
-        for (selected.panes, 0..) |spec, index| {
-            const rect: renderer.Pane = switch (selected.id) {
-                .split => if (index == 0) .{
-                    .id = @enumFromInt(@intFromEnum(spec.id)),
-                    .terminal = self.terminals[spec.terminal].?,
-                    .x = 0,
-                    .y = 0,
-                    .width = split,
-                    .height = self.size.height,
-                    .focused = self.workspace.focus[self.workspace.tab] == index,
-                    .terminal_available = !self.unavailable[spec.terminal],
-                } else .{
-                    .id = @enumFromInt(@intFromEnum(spec.id)),
-                    .terminal = self.terminals[spec.terminal].?,
-                    .x = split,
-                    .y = 0,
-                    .width = self.size.width - split,
-                    .height = self.size.height,
-                    .focused = self.workspace.focus[self.workspace.tab] == index,
-                    .terminal_available = !self.unavailable[spec.terminal],
-                },
-                .full => .{
-                    .id = @enumFromInt(@intFromEnum(spec.id)),
-                    .terminal = self.terminals[spec.terminal].?,
-                    .x = 0,
-                    .y = 0,
-                    .width = self.size.width,
-                    .height = self.size.height,
-                    .focused = true,
-                    .terminal_available = !self.unavailable[spec.terminal],
-                },
+    fn applyWorkspaceGeometry(self: *Loop, candidate: *const workspace_model.Workspace) Error!void {
+        var target: [workspace_model.max_panes]Geometry = undefined;
+        var change: [workspace_model.max_panes]bool = @splat(false);
+        for (self.panes, 0..) |pane, index| target[index] = pane.geometry;
+        var tab_ids: [workspace_model.max_tabs]TabId = undefined;
+        var layouts: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
+        for (candidate.tabOrder(&tab_ids)) |tab| for (try candidate.layout(tab, &layouts)) |layout| {
+            const index = self.slotIndex(layout.pane) orelse return error.StalePane;
+            if (self.panes[index].unavailable) continue;
+            target[index] = .{ .cols = layout.rect.cols, .rows = layout.rect.rows };
+            change[index] = !std.meta.eql(target[index], self.panes[index].geometry);
+        };
+        var applied: [workspace_model.max_panes]bool = @splat(false);
+        for (&self.panes, 0..) |*pane, index| {
+            if (!change[index]) continue;
+            const result = pane.terminal.?.resize(target[index].cols, target[index].rows) catch |failure| {
+                if (!self.rollbackResize(applied, index)) return error.ResizeTransactionFailed;
+                return failure;
             };
-            output[index] = rect;
+            if (result.cols != target[index].cols or result.rows != target[index].rows) {
+                const restored = pane.terminal.?.resize(pane.geometry.cols, pane.geometry.rows) catch
+                    return error.ResizeTransactionFailed;
+                if (restored.cols != pane.geometry.cols or restored.rows != pane.geometry.rows or
+                    !self.rollbackResize(applied, index)) return error.ResizeTransactionFailed;
+                return error.ResizeResultMismatch;
+            }
+            applied[index] = true;
         }
-        return selected.panes.len;
+        for (&self.panes, target, change) |*pane, geometry, changed| {
+            if (changed) pane.geometry = geometry;
+        }
+    }
+
+    fn visiblePanes(self: *Loop, output: *[renderer.max_visible_panes]renderer.Pane) usize {
+        const workspace = &self.workspace.?;
+        var layouts: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
+        const visible = workspace.layout(workspace.activeTab(), &layouts) catch unreachable;
+        const metrics = self.render.?.metrics();
+        for (visible, output[0..visible.len]) |layout, *pane| {
+            const owned = &self.panes[self.slotIndex(layout.pane) orelse unreachable];
+            const x = @as(u32, layout.rect.col) * metrics.cell_width;
+            const y = @as(u32, layout.rect.row) * metrics.cell_height;
+            const right = if (layout.rect.col + layout.rect.cols == workspace.size.cols)
+                self.size.width
+            else
+                @as(u32, layout.rect.col + layout.rect.cols) * metrics.cell_width;
+            const bottom = if (layout.rect.row + layout.rect.rows == workspace.size.rows)
+                self.size.height
+            else
+                @as(u32, layout.rect.row + layout.rect.rows) * metrics.cell_height;
+            pane.* = .{
+                .id = layout.pane,
+                .terminal = owned.terminal.?,
+                .x = x,
+                .y = y,
+                .width = right - x,
+                .height = bottom - y,
+                .focused = layout.focused,
+                .terminal_available = !owned.unavailable,
+            };
+        }
+        return visible.len;
     }
 
     fn updateTitle(self: *Loop) void {
-        const focused = self.workspace.focusedTerminal();
-        const title: [*:0]const u8 = switch (self.workspace.tab) {
-            0 => if (self.unavailable[focused])
-                "Howl · tab 1/2 · pane unavailable"
-            else if (self.workspace.focus[0] == 0)
-                "Howl · tab 1/2 · pane 1/2"
-            else
-                "Howl · tab 1/2 · pane 2/2",
-            1 => if (self.unavailable[focused])
-                "Howl · tab 2/2 · pane unavailable"
-            else
-                "Howl · tab 2/2 · pane 1/1",
-            else => unreachable,
-        };
+        var order: [workspace_model.max_tabs]TabId = undefined;
+        const tabs = self.workspace.?.tabOrder(&order);
+        const active = self.workspace.?.activeTab();
+        const ordinal = for (tabs, 1..) |tab, index| {
+            if (tab == active) break index;
+        } else unreachable;
+        const title = std.fmt.bufPrintZ(&self.title, "Howl · tab {d}/{d}", .{ ordinal, tabs.len }) catch unreachable;
         c.xdg_toplevel_set_title(self.toplevel.?, title);
+    }
+
+    fn slotIndex(self: *const Loop, pane_id: PaneId) ?usize {
+        for (self.panes, 0..) |pane, index| if (pane.pane == pane_id) return index;
+        return null;
+    }
+
+    fn initPane(self: *Loop, pane_id: PaneId, geometry: Geometry) Error!void {
+        const index = for (&self.panes, 0..) |*pane, candidate| {
+            if (pane.pane == null) break candidate;
+        } else return error.PaneLimit;
+        const owned = &self.panes[index];
+        owned.* = .{
+            .pane = pane_id,
+            .geometry = geometry,
+            .wake = .{ .owner = self, .index = @intCast(index) },
+        };
+        errdefer {
+            clearWakeBit(&self.wake_bits, @intCast(index));
+            owned.* = .{};
+        }
+        owned.terminal = try howl_control.Terminal.init(self.allocator, self.io, .{
+            .shell = "/bin/bash",
+            .cols = geometry.cols,
+            .rows = geometry.rows,
+            .cell_pixels = .{
+                .width = self.render.?.metrics().cell_width,
+                .height = self.render.?.metrics().cell_height,
+            },
+        }, .{ .context = &owned.wake, .notify = terminalWake });
+    }
+
+    fn retirePane(self: *Loop, pane_id: PaneId) void {
+        const index = self.slotIndex(pane_id) orelse return;
+        const owned = &self.panes[index];
+        owned.terminal.?.deinit();
+        clearWakeBit(&self.wake_bits, @intCast(index));
+        owned.* = .{};
+    }
+
+    fn paneGeometry(model: *const workspace_model.Workspace, pane_id: PaneId) ?Geometry {
+        var tabs: [workspace_model.max_tabs]TabId = undefined;
+        var layouts: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
+        for (model.tabOrder(&tabs)) |tab| for (model.layout(tab, &layouts) catch return null) |layout| {
+            if (layout.pane == pane_id) return .{ .cols = layout.rect.cols, .rows = layout.rect.rows };
+        };
+        return null;
+    }
+
+    fn visibleBits(self: *const Loop) u64 {
+        return visibleBitsFor(&self.workspace.?, &self.panes);
+    }
+
+    fn submitAndQuiesce(self: *Loop) Error!void {
+        try self.submitVisible(self.visibleBits());
+        try self.render.?.quiesce(self.render_generation);
+        self.completed_generation = self.render_generation;
+    }
+
+    fn performHostAction(self: *Loop, action: HostAction) Error!void {
+        switch (action) {
+            .new_tab => {
+                const created = try self.workspace.?.createTab("tab");
+                self.initPane(created.pane, paneGeometry(&self.workspace.?, created.pane).?) catch |failure| {
+                    var removed: [workspace_model.max_panes_per_tab]PaneId = undefined;
+                    const rolled_back = self.workspace.?.closeTab(created.tab, &removed) catch unreachable;
+                    std.debug.assert(rolled_back.len == 1 and rolled_back[0] == created.pane);
+                    return failure;
+                };
+                if (!try self.workspace.?.switchTab(created.tab)) unreachable;
+                self.updateTitle();
+                try self.submitVisible(self.visibleBits());
+            },
+            .split_horizontal, .split_vertical => {
+                var candidate = self.workspace.?;
+                const tab = candidate.activeTab();
+                const pane = try candidate.splitPane(
+                    tab,
+                    candidate.focusedPane(),
+                    if (action == .split_horizontal) .horizontal else .vertical,
+                );
+                try self.initPane(pane, paneGeometry(&candidate, pane).?);
+                self.applyWorkspaceGeometry(&candidate) catch |failure| {
+                    self.retirePane(pane);
+                    return failure;
+                };
+                self.workspace.? = candidate;
+                try self.submitVisible(self.visibleBits());
+            },
+            .close_pane => {
+                const pane = self.workspace.?.focusedPane();
+                var candidate = self.workspace.?;
+                const removed = candidate.closePane(candidate.activeTab(), pane) catch |failure| switch (failure) {
+                    error.LastPane => return,
+                    else => return failure,
+                };
+                std.debug.assert(removed == pane);
+                try self.applyWorkspaceGeometry(&candidate);
+                self.cancelPointer();
+                self.workspace.? = candidate;
+                try self.submitAndQuiesce();
+                self.retirePane(pane);
+            },
+            .close_tab => {
+                var retired: [workspace_model.max_panes_per_tab]PaneId = undefined;
+                const removed = self.workspace.?.closeTab(
+                    self.workspace.?.activeTab(),
+                    &retired,
+                ) catch |failure| switch (failure) {
+                    error.LastTab => return,
+                    else => return failure,
+                };
+                const count = removed.len;
+                self.cancelPointer();
+                try self.submitAndQuiesce();
+                for (retired[0..count]) |pane| self.retirePane(pane);
+                self.updateTitle();
+            },
+            .next_tab, .previous_tab => {
+                var tabs: [workspace_model.max_tabs]TabId = undefined;
+                const order = self.workspace.?.tabOrder(&tabs);
+                if (order.len < 2) return;
+                const active = self.workspace.?.activeTab();
+                const index = for (order, 0..) |tab, candidate| {
+                    if (tab == active) break candidate;
+                } else unreachable;
+                const target = if (action == .next_tab)
+                    order[(index + 1) % order.len]
+                else
+                    order[if (index == 0) order.len - 1 else index - 1];
+                if (!try self.workspace.?.switchTab(target)) unreachable;
+                self.updateTitle();
+                try self.submitVisible(self.visibleBits());
+            },
+            .focus_left, .focus_right, .focus_up, .focus_down => {
+                const direction: workspace_model.Direction = switch (action) {
+                    .focus_left => .left,
+                    .focus_right => .right,
+                    .focus_up => .up,
+                    .focus_down => .down,
+                    else => unreachable,
+                };
+                if (!self.workspace.?.focus(direction)) return;
+                try self.submitVisible(self.visibleBits());
+            },
+            .resize_left, .resize_right, .resize_up, .resize_down => {
+                const direction: workspace_model.Direction = switch (action) {
+                    .resize_left => .left,
+                    .resize_right => .right,
+                    .resize_up => .up,
+                    .resize_down => .down,
+                    else => unreachable,
+                };
+                var candidate = self.workspace.?;
+                if (!try candidate.resizePane(candidate.activeTab(), candidate.focusedPane(), direction, 1)) return;
+                try self.applyWorkspaceGeometry(&candidate);
+                self.workspace.? = candidate;
+                try self.submitVisible(self.visibleBits());
+            },
+        }
     }
 
     fn key(self: *Loop, code: u32, state_value: u32) void {
@@ -573,7 +747,7 @@ const Loop = struct {
         const count = c.xkb_state_key_get_utf8(state, code + 8, &bytes, bytes.len);
         if (count < 0 or count >= bytes.len) return false;
         const text = if (action == .release) bytes[0..0] else bytes[0..@intCast(count)];
-        const mods: @FieldType(@FieldType(howl_control.Input, "key"), "mods") = .{
+        const mods: KeyModifiers = .{
             .shift = modifierActive(state, c.XKB_MOD_NAME_SHIFT),
             .alt = modifierActive(state, c.XKB_MOD_NAME_ALT),
             .control = modifierActive(state, c.XKB_MOD_NAME_CTRL),
@@ -581,29 +755,15 @@ const Loop = struct {
             .caps_lock = modifierActive(state, c.XKB_MOD_NAME_CAPS),
             .num_lock = modifierActive(state, c.XKB_MOD_NAME_NUM),
         };
-        if (action == .press and mods.control and mods.shift) {
-            const host_action: ?HostAction = switch (symbol) {
-                c.XKB_KEY_F1 => .first_tab,
-                c.XKB_KEY_F2 => .second_tab,
-                c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => .next_pane,
-                else => null,
-            };
-            if (host_action) |host| {
+        if (action == .press) {
+            if (hostAction(symbol, mods)) |host| {
                 if (!self.host_keys.capture(code)) {
                     self.failure = error.HostKeyLimit;
                     return false;
                 }
-                const changed = switch (host) {
-                    .first_tab => self.workspace.switchTab(0),
-                    .second_tab => self.workspace.switchTab(1),
-                    .next_pane => self.workspace.focusNext(),
+                self.performHostAction(host) catch |failure| {
+                    self.failure = failure;
                 };
-                if (changed) {
-                    self.updateTitle();
-                    self.submitVisible(visibleMask(self.workspace.tab)) catch |failure| {
-                        self.failure = failure;
-                    };
-                }
                 return false;
             }
         }
@@ -650,8 +810,9 @@ const Loop = struct {
                 .text = text,
             } };
         };
-        const focused = focusedAvailable(self.workspace, self.unavailable) orelse return false;
-        const result = self.terminals[focused].?.send(&.{.{ .input = input }}) catch |failure| {
+        const focused = self.slotIndex(self.workspace.?.focusedPane()) orelse return false;
+        if (self.panes[focused].unavailable) return false;
+        const result = self.panes[focused].terminal.?.send(&.{.{ .input = input }}) catch |failure| {
             self.failure = failure;
             return false;
         };
@@ -708,7 +869,13 @@ const Loop = struct {
         const index = mouseButtonIndex(button).?;
         switch (state_value) {
             c.WL_POINTER_BUTTON_STATE_PRESSED => {
-                const target = self.pointerTarget() orelse return;
+                const position = self.pointer_state.position orelse return;
+                const target = self.resolvePointer(position.x, position.y, false) orelse return;
+                const focused = self.workspace.?.focusPane(target.pane) catch return;
+                if (focused) self.submitVisible(self.visibleBits()) catch |failure| {
+                    retainFirstFailure(&self.failure, failure);
+                    return;
+                };
                 const transition = self.pointer_state.preparePress(index, target) orelse return;
                 if (!self.sendMouse(target, .press, button, transition.buttons_down)) return;
                 self.pointer_state.commitPress(transition);
@@ -749,26 +916,43 @@ const Loop = struct {
             .mod = self.mouseModifiers(),
             .buttons_down = self.pointer_state.buttons_down,
         } } };
-        if (!self.sendBatch(target.terminal, events[0..magnitude])) return;
+        if (!self.sendBatch(target.pane, events[0..magnitude])) return;
     }
 
     fn pointerTarget(self: *Loop) ?PointerTarget {
         const position = self.pointer_state.position orelse return null;
-        return resolvePointerTarget(
-            self.workspace,
-            self.size,
-            self.render.?.metrics(),
-            self.terminal_geometry,
-            self.unavailable,
-            position.x,
-            position.y,
-        );
+        return self.resolvePointer(position.x, position.y, true);
+    }
+
+    fn resolvePointer(self: *Loop, x: u32, y: u32, focused_only: bool) ?PointerTarget {
+        var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
+        const visible = self.visiblePanes(&panes);
+        const focused = self.workspace.?.focusedPane();
+        for (panes[0..visible]) |pane| {
+            if ((focused_only and pane.id != focused) or !pane.terminal_available or
+                x < pane.x or x >= pane.x + pane.width or y < pane.y or y >= pane.y + pane.height) continue;
+            const index = self.slotIndex(pane.id) orelse return null;
+            const local_x = x - pane.x;
+            const local_y = y - pane.y;
+            const metrics = self.render.?.metrics();
+            const geometry = self.panes[index].geometry;
+            if (local_x >= @as(u32, geometry.cols) * metrics.cell_width or
+                local_y >= @as(u32, geometry.rows) * metrics.cell_height) return null;
+            return .{
+                .pane = pane.id,
+                .row = @intCast(local_y / metrics.cell_height),
+                .col = @intCast(local_x / metrics.cell_width),
+                .pixel_x = local_x,
+                .pixel_y = local_y,
+            };
+        }
+        return null;
     }
 
     fn pointerMoveTarget(self: *Loop) ?PointerTarget {
         const target = self.pointerTarget() orelse return null;
         for (self.pointer_state.pressed) |pressed| if (pressed) |value|
-            if (value.terminal != target.terminal) return null;
+            if (value.pane != target.pane) return null;
         return target;
     }
 
@@ -801,7 +985,7 @@ const Loop = struct {
         button: MouseButton,
         buttons_down: u8,
     ) bool {
-        return self.sendBatch(target.terminal, &.{.{ .input = .{ .mouse = .{
+        return self.sendBatch(target.pane, &.{.{ .input = .{ .mouse = .{
             .kind = kind,
             .button = button,
             .row = target.row,
@@ -825,9 +1009,10 @@ const Loop = struct {
         };
     }
 
-    fn sendBatch(self: *Loop, terminal: u8, events: []const howl_control.BatchEvent) bool {
-        if (self.unavailable[terminal]) return false;
-        const result = self.terminals[terminal].?.send(events) catch |failure| {
+    fn sendBatch(self: *Loop, pane_id: PaneId, events: []const howl_control.BatchEvent) bool {
+        const index = self.slotIndex(pane_id) orelse return false;
+        if (self.panes[index].unavailable) return false;
+        const result = self.panes[index].terminal.?.send(events) catch |failure| {
             retainFirstFailure(&self.failure, failure);
             return false;
         };
@@ -864,10 +1049,12 @@ const Loop = struct {
     }
 
     fn deinitTerminals(self: *Loop) void {
-        for (&self.terminals) |*terminal| if (terminal.*) |value| {
-            value.deinit();
-            terminal.* = null;
+        for (&self.panes) |*pane| if (pane.terminal) |terminal| {
+            terminal.deinit();
+            pane.* = .{};
         };
+        if (self.workspace) |*workspace| workspace.deinit();
+        self.workspace = null;
     }
 
     fn destroyWayland(self: *Loop) void {
@@ -903,6 +1090,22 @@ const Loop = struct {
     }
 };
 
+fn visibleBitsFor(
+    model: *const workspace_model.Workspace,
+    panes: *const [workspace_model.max_panes]PaneOwner,
+) u64 {
+    var layouts: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
+    const visible = model.layout(model.activeTab(), &layouts) catch unreachable;
+    var bits: u64 = 0;
+    for (visible) |layout| for (panes, 0..) |pane, index| {
+        if (pane.pane == layout.pane) {
+            bits |= @as(u64, 1) << @intCast(index);
+            break;
+        }
+    };
+    return bits;
+}
+
 /// Runs the native Wayland window until compositor close or exact failure.
 pub fn run(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const u8) Error!void {
     const owner = try Loop.init(allocator, io, font_paths);
@@ -921,7 +1124,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const
 fn terminalWake(context: ?*anyopaque) void {
     const wake: *WakeContext = @ptrCast(@alignCast(context.?));
     const self: *Loop = @ptrCast(@alignCast(wake.owner.?));
-    const bit = @as(u8, 1) << wake.index;
+    const bit = @as(u64, 1) << wake.index;
     if (!markTerminalWake(&self.wake_bits, bit)) return;
     const value: u64 = 1;
     const count = c.write(self.terminal_signal, &value, @sizeOf(u64));
@@ -929,82 +1132,25 @@ fn terminalWake(context: ?*anyopaque) void {
         @panic("terminal wake eventfd write failed");
 }
 
-fn markTerminalWake(bits: *std.atomic.Value(u8), bit: u8) bool {
+fn markTerminalWake(bits: *std.atomic.Value(u64), bit: u64) bool {
     std.debug.assert(bit != 0 and bit & (bit - 1) == 0);
     return bits.fetchOr(bit, .release) & bit == 0;
 }
 
-const Geometry = struct { cols: u16, rows: u16 };
-
-const ResizePlan = struct {
-    target: [terminal_count]Geometry,
-    change: [terminal_count]bool,
-
-    fn init(
-        size: renderer.Size,
-        metrics: @import("howl_text").Metrics,
-        current: [terminal_count]Geometry,
-        unavailable: [terminal_count]bool,
-    ) ResizePlan {
-        var plan = ResizePlan{ .target = current, .change = @splat(false) };
-        for (&plan.target, 0..) |*target, index| {
-            if (unavailable[index]) continue;
-            target.* = terminalGeometry(@intCast(index), size, metrics);
-            plan.change[index] = !std.meta.eql(target.*, current[index]);
-        }
-        return plan;
+fn clearWakeBit(bits: *std.atomic.Value(u64), index: TerminalIndex) void {
+    const bit = @as(u64, 1) << index;
+    var current = bits.load(.acquire);
+    while (current & bit != 0) {
+        current = bits.cmpxchgWeak(current, current & ~bit, .acq_rel, .acquire) orelse return;
     }
-
-    fn commit(
-        self: ResizePlan,
-        current: *[terminal_count]Geometry,
-        applied: [terminal_count]bool,
-    ) bool {
-        if (!std.meta.eql(self.change, applied)) return false;
-        current.* = self.target;
-        return true;
-    }
-};
-
-fn terminalGeometry(index: u8, size: renderer.Size, metrics: @import("howl_text").Metrics) Geometry {
-    const width = if (index < 2)
-        if (index == 0) size.width / 2 else size.width - size.width / 2
-    else
-        size.width;
-    return .{
-        .cols = @intCast(@max(1, width / metrics.cell_width)),
-        .rows = @intCast(@max(1, size.height / metrics.cell_height)),
-    };
 }
 
-fn resolvePointerTarget(
-    workspace: Workspace,
-    size: renderer.Size,
-    metrics: @import("howl_text").Metrics,
-    geometry: [terminal_count]Geometry,
-    unavailable: [terminal_count]bool,
-    x: u32,
-    y: u32,
-) ?PointerTarget {
-    const pane_index = workspace.focus[workspace.tab];
-    const pane = tabs[workspace.tab].panes[pane_index];
-    if (unavailable[pane.terminal]) return null;
-    const left: u32 = if (workspace.tab == 0 and pane_index == 1) size.width / 2 else 0;
-    const width: u32 = if (workspace.tab == 0)
-        if (pane_index == 0) size.width / 2 else size.width - size.width / 2
-    else
-        size.width;
-    if (x < left or x >= left + width or y >= size.height) return null;
-    const local_x = x - left;
-    const used_width = @as(u32, geometry[pane.terminal].cols) * metrics.cell_width;
-    const used_height = @as(u32, geometry[pane.terminal].rows) * metrics.cell_height;
-    if (local_x >= used_width or y >= used_height) return null;
+const Geometry = struct { cols: u16, rows: u16 };
+
+fn gridSize(size: renderer.Size, metrics: @import("howl_text").Metrics) workspace_model.Size {
     return .{
-        .terminal = pane.terminal,
-        .row = @intCast(y / metrics.cell_height),
-        .col = @intCast(local_x / metrics.cell_width),
-        .pixel_x = local_x,
-        .pixel_y = y,
+        .cols = @intCast(@min(workspace_model.max_cols, @max(1, size.width / metrics.cell_width))),
+        .rows = @intCast(@min(workspace_model.max_rows, @max(1, size.height / metrics.cell_height))),
     };
 }
 
@@ -1033,25 +1179,6 @@ fn setRepeatTimer(fd: c_int, duration_ns: ?u64) error{KeyboardRepeat}!void {
         timer.it_value.tv_nsec = @intCast(duration % std.time.ns_per_s);
         if (c.timerfd_settime(fd, 0, &timer, null) != 0) return error.KeyboardRepeat;
     }
-}
-
-fn visibleMask(tab: u8) u8 {
-    var mask: u8 = 0;
-    for (tabs[tab].panes) |pane| mask |= @as(u8, 1) << @intCast(pane.terminal);
-    return mask;
-}
-
-fn availableMask(requested: u8, unavailable: [terminal_count]bool) u8 {
-    var admitted = requested;
-    for (unavailable, 0..) |blocked, index| {
-        if (blocked) admitted &= ~(@as(u8, 1) << @intCast(index));
-    }
-    return admitted;
-}
-
-fn focusedAvailable(workspace: Workspace, unavailable: [terminal_count]bool) ?u8 {
-    const terminal = workspace.focusedTerminal();
-    return if (unavailable[terminal]) null else terminal;
 }
 
 fn drainEvent(fd: c_int) Error!void {
@@ -1359,31 +1486,6 @@ test "pixel geometry admits at least one bounded cell" {
     try std.testing.expectEqual(@as(u32, 1), @max(1, size.height / 16));
 }
 
-test "two stable tabs retain split focus independently" {
-    var workspace = Workspace{};
-    try std.testing.expectEqual(TabId.split, tabs[workspace.tab].id);
-    try std.testing.expectEqual(@as(u8, 0), workspace.focusedTerminal());
-    try std.testing.expect(workspace.focusNext());
-    try std.testing.expectEqual(@as(u8, 1), workspace.focusedTerminal());
-    try std.testing.expect(workspace.switchTab(1));
-    try std.testing.expectEqual(TabId.full, tabs[workspace.tab].id);
-    try std.testing.expectEqual(@as(u8, 2), workspace.focusedTerminal());
-    try std.testing.expect(!workspace.focusNext());
-    try std.testing.expect(workspace.switchTab(0));
-    try std.testing.expectEqual(@as(u8, 1), workspace.focusedTerminal());
-    try std.testing.expectEqual(@intFromEnum(PaneId.left), 1);
-    try std.testing.expectEqual(@intFromEnum(PaneId.right), 2);
-    try std.testing.expectEqual(@intFromEnum(PaneId.full), 3);
-}
-
-test "hidden terminal wakes stay outside visible work until tab switch" {
-    try std.testing.expectEqual(@as(u8, 0b011), visibleMask(0));
-    try std.testing.expectEqual(@as(u8, 0b100), visibleMask(1));
-    const hidden_wake: u8 = 0b100;
-    try std.testing.expectEqual(@as(u8, 0), hidden_wake & visibleMask(0));
-    try std.testing.expectEqual(hidden_wake, hidden_wake & visibleMask(1));
-}
-
 test "keyboard repeat replaces and cancels one bounded physical key" {
     var repeat = Repeat{};
     try repeat.configure(25, 400);
@@ -1401,23 +1503,84 @@ test "keyboard repeat replaces and cancels one bounded physical key" {
     try std.testing.expectError(error.InvalidRepeat, repeat.configure(-1, 0));
 }
 
-test "host chords capture three concurrent physical releases exactly" {
+test "host chords capture sixteen concurrent physical releases exactly" {
     var captures = HostKeys{};
+    for (10..26) |code| try std.testing.expect(captures.capture(@intCast(code)));
     try std.testing.expect(captures.capture(10));
-    try std.testing.expect(captures.capture(11));
-    try std.testing.expect(captures.capture(12));
-    try std.testing.expect(captures.capture(10));
-    try std.testing.expectEqual(@as(u8, 3), captures.count);
-    try std.testing.expect(!captures.capture(13));
+    try std.testing.expectEqual(@as(u8, 16), captures.count);
+    try std.testing.expect(!captures.capture(26));
     try std.testing.expect(captures.release(11));
     try std.testing.expect(!captures.release(11));
-    try std.testing.expect(captures.release(10));
-    try std.testing.expect(captures.release(12));
+    for (10..26) |code| if (code != 11) try std.testing.expect(captures.release(@intCast(code)));
     try std.testing.expectEqual(@as(u8, 0), captures.count);
 
     try std.testing.expect(captures.capture(20));
     captures.clear();
     try std.testing.expect(!captures.release(20));
+}
+
+test "host actions require exact non-lock modifiers" {
+    const Case = struct { symbol: u32, mods: KeyModifiers, action: HostAction };
+    const control_shift: KeyModifiers = .{ .control = true, .shift = true };
+    const control: KeyModifiers = .{ .control = true };
+    const alt: KeyModifiers = .{ .alt = true };
+    const cases = [_]Case{
+        .{ .symbol = c.XKB_KEY_t, .mods = control_shift, .action = .new_tab },
+        .{ .symbol = c.XKB_KEY_T, .mods = control_shift, .action = .new_tab },
+        .{ .symbol = c.XKB_KEY_Return, .mods = control_shift, .action = .split_horizontal },
+        .{ .symbol = c.XKB_KEY_backslash, .mods = control_shift, .action = .split_vertical },
+        .{ .symbol = c.XKB_KEY_bar, .mods = control_shift, .action = .split_vertical },
+        .{ .symbol = c.XKB_KEY_w, .mods = control_shift, .action = .close_pane },
+        .{ .symbol = c.XKB_KEY_W, .mods = control_shift, .action = .close_pane },
+        .{ .symbol = c.XKB_KEY_q, .mods = control_shift, .action = .close_tab },
+        .{ .symbol = c.XKB_KEY_Q, .mods = control_shift, .action = .close_tab },
+        .{ .symbol = c.XKB_KEY_Left, .mods = control_shift, .action = .resize_left },
+        .{ .symbol = c.XKB_KEY_Right, .mods = control_shift, .action = .resize_right },
+        .{ .symbol = c.XKB_KEY_Up, .mods = control_shift, .action = .resize_up },
+        .{ .symbol = c.XKB_KEY_Down, .mods = control_shift, .action = .resize_down },
+        .{ .symbol = c.XKB_KEY_Tab, .mods = control_shift, .action = .previous_tab },
+        .{ .symbol = c.XKB_KEY_ISO_Left_Tab, .mods = control_shift, .action = .previous_tab },
+        .{ .symbol = c.XKB_KEY_Tab, .mods = control, .action = .next_tab },
+        .{ .symbol = c.XKB_KEY_Left, .mods = alt, .action = .focus_left },
+        .{ .symbol = c.XKB_KEY_Right, .mods = alt, .action = .focus_right },
+        .{ .symbol = c.XKB_KEY_Up, .mods = alt, .action = .focus_up },
+        .{ .symbol = c.XKB_KEY_Down, .mods = alt, .action = .focus_down },
+    };
+
+    for (cases) |case| {
+        try std.testing.expectEqual(@as(?HostAction, case.action), hostAction(case.symbol, case.mods));
+
+        var lock_state = case.mods;
+        lock_state.caps_lock = true;
+        lock_state.num_lock = true;
+        try std.testing.expectEqual(@as(?HostAction, case.action), hostAction(case.symbol, lock_state));
+
+        if (!case.mods.shift and !(case.symbol == c.XKB_KEY_Tab and case.mods.control)) {
+            var augmented = case.mods;
+            augmented.shift = true;
+            try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
+        }
+        if (!case.mods.alt) {
+            var augmented = case.mods;
+            augmented.alt = true;
+            try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
+        }
+        if (!case.mods.control) {
+            var augmented = case.mods;
+            augmented.control = true;
+            try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
+        }
+        var augmented = case.mods;
+        augmented.super = true;
+        try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
+        augmented = case.mods;
+        augmented.hyper = true;
+        try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
+        augmented = case.mods;
+        augmented.meta = true;
+        try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
+    }
+    try std.testing.expectEqual(@as(?HostAction, null), hostAction(c.XKB_KEY_Escape, control_shift));
 }
 
 test "one poll result preserves every simultaneous ready source" {
@@ -1436,12 +1599,125 @@ test "one poll result preserves every simultaneous ready source" {
 }
 
 test "terminal output wake coalesces until the window drains its exact bit" {
-    var bits: std.atomic.Value(u8) = .init(0);
+    var bits: std.atomic.Value(u64) = .init(0);
     try std.testing.expect(markTerminalWake(&bits, 0b001));
     try std.testing.expect(!markTerminalWake(&bits, 0b001));
     try std.testing.expect(markTerminalWake(&bits, 0b100));
-    try std.testing.expectEqual(@as(u8, 0b101), bits.swap(0, .acq_rel));
+    try std.testing.expectEqual(@as(u64, 0b101), bits.swap(0, .acq_rel));
     try std.testing.expect(markTerminalWake(&bits, 0b001));
+}
+
+test "visible wake routing follows stable pane identity through tab churn" {
+    var model = try workspace_model.Workspace.init(
+        std.testing.allocator,
+        @enumFromInt(1),
+        "one",
+        .{ .cols = 80, .rows = 24 },
+    );
+    defer model.deinit();
+    const first_tab = model.activeTab();
+    const first = model.focusedPane();
+    const second = try model.splitPane(first_tab, first, .horizontal);
+    const other = try model.createTab("two");
+    var panes: [workspace_model.max_panes]PaneOwner = @splat(.{});
+    panes[5].pane = first;
+    panes[17].pane = second;
+    panes[63].pane = other.pane;
+    try std.testing.expectEqual((@as(u64, 1) << 5) | (@as(u64, 1) << 17), visibleBitsFor(&model, &panes));
+    try std.testing.expect(try model.reorderTab(first_tab, 1));
+    try std.testing.expectEqual((@as(u64, 1) << 5) | (@as(u64, 1) << 17), visibleBitsFor(&model, &panes));
+    try std.testing.expect(try model.switchTab(other.tab));
+    try std.testing.expectEqual(@as(u64, 1) << 63, visibleBitsFor(&model, &panes));
+
+    var retired: [workspace_model.max_panes_per_tab]PaneId = undefined;
+    const removed = try model.closeTab(other.tab, &retired);
+    try std.testing.expectEqualSlices(PaneId, &.{other.pane}, removed);
+    panes[63] = .{};
+    try std.testing.expectEqual((@as(u64, 1) << 5) | (@as(u64, 1) << 17), visibleBitsFor(&model, &panes));
+}
+
+test "pane retirement clears stale wake ownership before slot reuse" {
+    const terminal = try howl_control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 2, .rows = 1 },
+        .{},
+    );
+    var owner: Loop = undefined;
+    owner.panes = @splat(.{});
+    owner.wake_bits = .init(0);
+    const pane: PaneId = @enumFromInt(9);
+    owner.panes[63] = .{ .pane = pane, .terminal = terminal, .geometry = .{ .cols = 2, .rows = 1 } };
+    try std.testing.expect(markTerminalWake(&owner.wake_bits, @as(u64, 1) << 63));
+    owner.retirePane(pane);
+    try std.testing.expectEqual(@as(u64, 0), owner.wake_bits.load(.acquire));
+    try std.testing.expectEqual(null, owner.panes[63].pane);
+    owner.panes[63].pane = @enumFromInt(10);
+    try std.testing.expectEqual(@as(u64, 0), owner.wake_bits.load(.acquire));
+}
+
+test "terminal construction allocation failure leaves its pane slot reusable" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var render: renderer.Render = undefined;
+    render.metrics_value = .{
+        .cell_width = 10,
+        .cell_height = 20,
+        .baseline = 15,
+        .underline_y = 17,
+        .underline_height = 1,
+        .strike_y = 10,
+        .strike_height = 1,
+    };
+    var owner: Loop = undefined;
+    owner.allocator = failing.allocator();
+    owner.io = std.testing.io;
+    owner.panes = @splat(.{});
+    owner.wake_bits = .init(0);
+    owner.render = &render;
+    const pane: PaneId = @enumFromInt(7);
+    try std.testing.expectError(error.OutOfMemory, owner.initPane(pane, .{ .cols = 2, .rows = 1 }));
+    try std.testing.expectEqual(null, owner.panes[0].pane);
+    try std.testing.expectEqual(@as(u64, 0), owner.wake_bits.load(.acquire));
+}
+
+test "failed live PTY resize rolls back earlier pane before workspace commit" {
+    var model = try workspace_model.Workspace.init(
+        std.testing.allocator,
+        @enumFromInt(1),
+        "one",
+        .{ .cols = 8, .rows = 2 },
+    );
+    defer model.deinit();
+    const first = model.focusedPane();
+    const second = try model.splitPane(model.activeTab(), first, .horizontal);
+    try std.testing.expect(try model.focusPane(first));
+    const first_terminal = try howl_control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 4, .rows = 2 },
+        .{},
+    );
+    defer first_terminal.deinit();
+    const second_terminal = try howl_control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 4, .rows = 2 },
+        .{},
+    );
+    defer second_terminal.deinit();
+    second_terminal.cancel();
+    var owner: Loop = undefined;
+    owner.panes = @splat(.{});
+    owner.panes[0] = .{ .pane = first, .terminal = first_terminal, .geometry = .{ .cols = 4, .rows = 2 } };
+    owner.panes[1] = .{ .pane = second, .terminal = second_terminal, .geometry = .{ .cols = 4, .rows = 2 } };
+    var candidate = model;
+    try std.testing.expect(try candidate.resizePane(candidate.activeTab(), second, .left, 1));
+    try std.testing.expectError(error.NotStarted, owner.applyWorkspaceGeometry(&candidate));
+    try std.testing.expectEqual(Geometry{ .cols = 4, .rows = 2 }, owner.panes[0].geometry);
+    try std.testing.expectEqual(Geometry{ .cols = 4, .rows = 2 }, owner.panes[1].geometry);
+    const status = first_terminal.status();
+    try std.testing.expectEqual(@as(u16, 4), status.cols);
+    try std.testing.expectEqual(@as(u16, 2), status.rows);
 }
 
 test "compositor close is an idempotent loop termination fact" {
@@ -1452,67 +1728,9 @@ test "compositor close is an idempotent loop termination fact" {
     try std.testing.expect(closed);
 }
 
-test "pointer translation admits only focused available pane cell pixels" {
-    const metrics = testMetrics();
-    const size = renderer.Size{ .width = 101, .height = 61 };
-    const geometry = [_]Geometry{
-        .{ .cols = 5, .rows = 3 },
-        .{ .cols = 5, .rows = 3 },
-        .{ .cols = 10, .rows = 3 },
-    };
-    var unavailable: [terminal_count]bool = @splat(false);
-    var workspace = Workspace{};
-    try std.testing.expectEqual(PointerTarget{
-        .terminal = 0,
-        .row = 1,
-        .col = 2,
-        .pixel_x = 20,
-        .pixel_y = 20,
-    }, resolvePointerTarget(workspace, size, metrics, geometry, unavailable, 20, 20).?);
-    try std.testing.expectEqual(null, resolvePointerTarget(
-        workspace,
-        size,
-        metrics,
-        geometry,
-        unavailable,
-        60,
-        20,
-    ));
-
-    try std.testing.expect(workspace.focusNext());
-    try std.testing.expectEqual(PointerTarget{
-        .terminal = 1,
-        .row = 1,
-        .col = 1,
-        .pixel_x = 10,
-        .pixel_y = 20,
-    }, resolvePointerTarget(workspace, size, metrics, geometry, unavailable, 60, 20).?);
-    unavailable[1] = true;
-    try std.testing.expectEqual(null, resolvePointerTarget(
-        workspace,
-        size,
-        metrics,
-        geometry,
-        unavailable,
-        60,
-        20,
-    ));
-    unavailable[1] = false;
-    try std.testing.expect(workspace.switchTab(1));
-    try std.testing.expectEqual(@as(u8, 2), resolvePointerTarget(
-        workspace,
-        size,
-        metrics,
-        geometry,
-        unavailable,
-        60,
-        20,
-    ).?.terminal);
-}
-
 test "pointer button transitions commit only after successful admission" {
     const target = PointerTarget{
-        .terminal = 1,
+        .pane = @enumFromInt(1),
         .row = 2,
         .col = 3,
         .pixel_x = 30,
@@ -1532,7 +1750,7 @@ test "pointer button transitions commit only after successful admission" {
     try std.testing.expectEqual(@as(u8, 0b011), middle.buttons_down);
     state.commitPress(middle);
     const moved = PointerTarget{
-        .terminal = 1,
+        .pane = @enumFromInt(1),
         .row = 4,
         .col = 5,
         .pixel_x = 50,
@@ -1554,9 +1772,52 @@ test "pointer button transitions commit only after successful admission" {
 
     state.commitPress(state.preparePress(0, target).?);
     var other = moved;
-    other.terminal = 2;
+    other.pane = @enumFromInt(2);
     try std.testing.expect(!state.move(other));
     try std.testing.expectEqual(target, state.prepareRelease(0).?.target);
+}
+
+test "pointer hit identifies a visible pane before active focus admission" {
+    var model = try workspace_model.Workspace.init(
+        std.testing.allocator,
+        @enumFromInt(1),
+        "one",
+        .{ .cols = 10, .rows = 1 },
+    );
+    defer model.deinit();
+    const first = model.focusedPane();
+    const second = try model.splitPane(model.activeTab(), first, .horizontal);
+    try std.testing.expect(try model.focusPane(first));
+    var render: renderer.Render = undefined;
+    render.metrics_value = .{
+        .cell_width = 10,
+        .cell_height = 20,
+        .baseline = 15,
+        .underline_y = 17,
+        .underline_height = 1,
+        .strike_y = 10,
+        .strike_height = 1,
+    };
+    var owner: Loop = undefined;
+    owner.workspace = model;
+    owner.panes = @splat(.{});
+    owner.panes[0] = .{
+        .pane = first,
+        .terminal = @ptrFromInt(16),
+        .geometry = .{ .cols = 5, .rows = 1 },
+    };
+    owner.panes[1] = .{
+        .pane = second,
+        .terminal = @ptrFromInt(32),
+        .geometry = .{ .cols = 5, .rows = 1 },
+    };
+    owner.render = &render;
+    owner.size = .{ .width = 100, .height = 20 };
+    try std.testing.expectEqual(second, owner.resolvePointer(75, 5, false).?.pane);
+    try std.testing.expectEqual(null, owner.resolvePointer(75, 5, true));
+    try std.testing.expect(try owner.workspace.?.focusPane(second));
+    try std.testing.expectEqual(second, owner.resolvePointer(75, 5, true).?.pane);
+    owner.workspace = null;
 }
 
 test "pointer cleanup retains the first exact loop failure" {
@@ -1566,64 +1827,4 @@ test "pointer cleanup retains the first exact loop failure" {
     failure = null;
     retainFirstFailure(&failure, error.InputIncomplete);
     try std.testing.expectEqual(@as(?Error, error.InputIncomplete), failure);
-}
-
-test "one failed pane rejects only its focused input" {
-    var workspace = Workspace{};
-    var unavailable: [terminal_count]bool = @splat(false);
-    unavailable[0] = true;
-    try std.testing.expectEqual(null, focusedAvailable(workspace, unavailable));
-    try std.testing.expect(workspace.focusNext());
-    try std.testing.expectEqual(@as(u8, 1), focusedAvailable(workspace, unavailable).?);
-    try std.testing.expect(workspace.switchTab(1));
-    try std.testing.expectEqual(@as(u8, 2), focusedAvailable(workspace, unavailable).?);
-    try std.testing.expectEqual(@as(u8, 0b010), availableMask(visibleMask(0), unavailable));
-    try std.testing.expectEqual(@as(u8, 0b100), availableMask(visibleMask(1), unavailable));
-}
-
-test "split and full terminal geometry cover admitted pixels deterministically" {
-    const metrics = testMetrics();
-    const size = renderer.Size{ .width = 101, .height = 61 };
-    try std.testing.expectEqual(Geometry{ .cols = 5, .rows = 3 }, terminalGeometry(0, size, metrics));
-    try std.testing.expectEqual(Geometry{ .cols = 5, .rows = 3 }, terminalGeometry(1, size, metrics));
-    try std.testing.expectEqual(Geometry{ .cols = 10, .rows = 3 }, terminalGeometry(2, size, metrics));
-}
-
-test "resize plan excludes unavailable geometry and commits every live result together" {
-    const metrics = testMetrics();
-    const current = [_]Geometry{
-        .{ .cols = 40, .rows = 20 },
-        .{ .cols = 40, .rows = 20 },
-        .{ .cols = 80, .rows = 20 },
-    };
-    const unavailable = [_]bool{ false, true, false };
-    const plan = ResizePlan.init(
-        .{ .width = 1_000, .height = 500 },
-        metrics,
-        current,
-        unavailable,
-    );
-    try std.testing.expectEqual([_]bool{ true, false, true }, plan.change);
-    try std.testing.expectEqual(current[1], plan.target[1]);
-
-    var uncommitted = current;
-    try std.testing.expect(!plan.commit(&uncommitted, .{ true, false, false }));
-    try std.testing.expectEqual(current, uncommitted);
-
-    var committed = current;
-    try std.testing.expect(plan.commit(&committed, plan.change));
-    try std.testing.expectEqual(plan.target, committed);
-    try std.testing.expectEqual(current[1], committed[1]);
-}
-
-fn testMetrics() @import("howl_text").Metrics {
-    return .{
-        .cell_width = 10,
-        .cell_height = 20,
-        .baseline = 15,
-        .underline_y = 17,
-        .underline_height = 1,
-        .strike_y = 10,
-        .strike_height = 1,
-    };
 }
