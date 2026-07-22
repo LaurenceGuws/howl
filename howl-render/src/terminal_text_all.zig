@@ -1,0 +1,42 @@
+//! Exposes terminal run preparation with native and generated glyph sources.
+
+const impl = @import("terminal_text_impl");
+
+/// Selects one exact normal/bold/italic native configuration.
+pub const FontStyle = impl.FontStyle;
+/// Identifies one terminal font slot and style configuration.
+pub const FontKey = impl.FontKey;
+/// Supplies ordinary cell metrics without resolving presentation effects.
+pub const CellMetrics = impl.CellMetrics;
+/// Borrows one complete retained row and affected cell span.
+pub const RowInput = impl.RowInput;
+/// Identifies one native raster within an exact font map.
+pub const NativeGlyphKey = impl.NativeGlyphKey;
+/// Identifies one generated raster and ordinary baseline placement.
+pub const GeneratedGlyphKey = impl.GeneratedGlyphKey;
+/// Identifies exact native or generated raster input.
+pub const GlyphKey = impl.GlyphKey;
+/// Places one glyph and records its source-cell coverage.
+pub const PositionedGlyph = impl.PositionedGlyph;
+/// Owns one native shaping call's positioned output.
+pub const NativeGlyphs = impl.NativeGlyphs;
+/// Stores owned native, inline generated, or absent glyph output.
+pub const PreparedGlyphs = impl.PreparedGlyphs;
+/// Owns one homogeneous run and its unresolved visual facts.
+pub const PreparedRun = impl.PreparedRun;
+/// Owns one tightly packed alpha mask.
+pub const Raster = impl.Raster;
+/// Configures one exact native font tuple.
+pub const FontConfig = impl.FontConfig;
+/// Reports exact native map validation and construction failure.
+pub const FontMapInitError = impl.FontMapInitError;
+/// Owns the bounded terminal font tuple map.
+pub const FontMap = impl.FontMap;
+/// Reports exact run discovery and preparation failure.
+pub const PrepareError = impl.PrepareError;
+/// Reports exact rasterization failure.
+pub const RasterError = impl.RasterError;
+/// Discovers and prepares one complete homogeneous run.
+pub const prepareNextRun = impl.prepareNextRunNative;
+/// Rasterizes one exact selected glyph key.
+pub const rasterizeGlyph = impl.rasterizeGlyphNative;

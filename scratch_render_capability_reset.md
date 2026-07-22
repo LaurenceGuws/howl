@@ -171,7 +171,12 @@ pub const GlyphKey = union(enum) {
         glyph_id: u32,
         cell_span: u16,
     },
-    generated: struct { codepoint: u21, width_px: u16, height_px: u16 },
+    generated: struct {
+        codepoint: u21,
+        width_px: u16,
+        height_px: u16,
+        baseline_px: u16,
+    },
 };
 
 pub const PositionedGlyph = struct {
@@ -236,10 +241,12 @@ can each cover one. Retaining that exact derived span in the key is necessary
 after the row borrow ends: native raster fitting and cache equality both depend
 on it. It is not the former vague whole-run span.
 
-Generated key dimensions are the normal `CellMetrics.width_px` and
-`height_px`. Line geometry and baseline do not alter native/generated mask
-identity in this slice; later render draw preparation consumes the retained
-facts when it defines scaling, cropping, and displacement.
+Generated key dimensions and `baseline_px` are the normal `CellMetrics` facts.
+The baseline is required to reproduce the full-cell mask's ordinary
+`Raster.top` after preparation and is therefore part of generated raster/cache
+identity. `CellBaseline` and line geometry do not alter mask identity in this
+slice; later render draw preparation consumes those retained facts when it
+defines scaling, cropping, and displacement.
 
 The native-selected
 `rasterizeGlyph(allocator, font_map, key) -> Raster` normalizes both sources to
@@ -266,31 +273,36 @@ The key is therefore collision-safe for a cache scoped to that exact
 same cache without an additional executable-owned map identity. Deinitializing
 the map invalidates every native key and requires its scoped masks to have been
 retired first. Generated equality is its complete value tuple
-`(codepoint, width_px, height_px)` and is independent of a font map.
+`(codepoint, width_px, height_px, baseline_px)` and is independent of a font
+map.
 
 ### Bounds, transaction, and exact failures
 
 - A row has at most `maxInt(u16)` cells. Each cell contributes at most four
   scalars (`terminal.max_combining + 1`). The exact scalar count is preflighted
-  with checked `usize`; a native run exceeding `text.max_codepoints` returns
-  `TextTooLong` rather than being split across a ligature boundary.
-- One native call stages exactly one `text.Run` and therefore produces at most
-  `text.max_glyphs` (65,536) final glyph records. One generated run is one cell
-  and exactly one inline record. One no-glyph run has zero records. There is no
-  aggregate multi-run allocation or aggregate glyph-count claim. Peak native
-  record storage is one staged slice of at most 65,536 `text.Glyph` values plus
-  one final slice of the same count of `PositionedGlyph` values; shaping occurs
-  once.
+  in `usize` under that fixed row bound; a native run exceeding
+  `text.max_codepoints` returns `TextTooLong` rather than being split across a
+  ligature boundary.
+- One native call has three explicit caller-allocator Zig allocations at its
+  peak: one combined `u32` block containing `scalar_count` flattened codepoints
+  and `scalar_count` run-local clusters; one `text.Run` slice of at most 65,536
+  `text.Glyph` values owned by `FontSet.shape`; and one final slice of the same
+  count of `PositionedGlyph` values. Shaping occurs once. One generated run is
+  one cell and exactly one inline record. One no-glyph run has zero records.
+  There is no aggregate multi-run allocation or aggregate glyph-count claim.
 - Pen accumulation uses checked `i64`; every final 26.6 position and advance
   must fit `i32`, otherwise `InvalidPlacement`. Source coverage is nonempty and
   bounded by the borrowed row.
 - Generated width/height are checked nonzero and against
   `generated.max_extent_px`; mask bytes are at most 65,536. Native masks retain
   the current sixteen-MiB bound.
-- Run discovery, validation, and scalar counting happen before final output
-  allocation. Native preparation stages exactly one existing owned `text.Run`,
-  then allocates one final positioned array, fills it, releases the staged run,
-  and returns; every error releases both staged and final allocations.
+- Run discovery, validation, and scalar counting precede allocation. Native
+  preparation allocates one combined flattened scalar/cluster block, asks
+  `FontSet.shape` for one owned `text.Run`, then allocates and fills one final
+  positioned array. On every failure, the final slice if present, shaped run
+  if present, and combined staging block are released in reverse ownership
+  order. Success releases the shaped run and staging block before returning
+  only the final slice.
   Generated preparation validates before assigning its inline record.
   No-glyph preparation assigns only coverage. Neither allocates. No partial
   `PreparedRun` escapes.
@@ -304,14 +316,19 @@ a generic render failure. Typed terminal-cell invariants are assertions, as in
 accepted projection, rather than hostile-input errors.
 
 Explicit allocator-owned output is preferred over caller buffers here.
-HarfBuzz determines one native run's glyph count only after shaping, while
-current native shaping already owns that one bounded staged allocation. A
-caller-buffer API would need either duplicate shaping or the same hidden
-staging allocation and could not preflight capacity exactly. One final owned
-slice per native run and inline generated/no-glyph payloads keep rollback and
-cleanup visible without an `ArrayList`, reallocation, aggregate multi-run
-owner, or duplicate shaping. Masks remain demand-rasterized one at a time, so
-this choice does not recreate the deleted renderer's eager mask allocation.
+HarfBuzz determines one native run's glyph count only after shaping.
+`native_text.Text` requires contiguous codepoint and cluster slices, but
+retained terminal cells interleave each base scalar and fixed combining array
+with other cell facts. They cannot be borrowed as either slice. One combined
+`u32` allocation is smaller than two allocations and avoids a bounded
+multi-megabyte stack buffer. A caller-buffer API would introduce caller scratch
+or require duplicate shaping and could not preflight final capacity exactly.
+The current three transactional allocations and inline generated/no-glyph
+payloads keep rollback and cleanup visible without an `ArrayList`,
+reallocation, aggregate multi-run owner, duplicate shaping, or widening
+`native_text`'s independently useful API. Masks remain demand-rasterized one at
+a time, so this choice does not recreate the deleted renderer's eager mask
+allocation.
 
 ### Source evidence
 
@@ -408,9 +425,11 @@ cache, runtime, or backend ownership.
 - One call now discovers and prepares exactly one homogeneous run. No wording
   claims one allocation can contain alternating or multiple native/generated
   runs.
-- Native preparation has exactly one staged `text.Run`, one final allocation,
-  and the existing 65,536-glyph maximum. Generated and no-glyph runs contain
-  exactly one and zero records respectively.
+- Native preparation has one combined flattened scalar/cluster allocation, one
+  shaped `text.Run` allocation, one final positioned allocation, and the
+  existing 65,536-glyph maximum. Exhaustive allocation-failure proof exercises
+  cleanup and reuse across all three owners. Generated and no-glyph runs
+  contain exactly one and zero records respectively.
 - The exclusive coverage invariant advances across native, generated, blank,
   and invisible intervals, so dirty-span iteration visits every intersecting
   run once and cannot stall.

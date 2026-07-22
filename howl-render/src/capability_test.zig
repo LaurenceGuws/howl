@@ -11,9 +11,14 @@ test "public namespaces exactly match compile-time selection" {
         @hasDecl(render, "generated"),
     );
     try std.testing.expectEqual(selected.terminal, @hasDecl(render, "terminal"));
+    try std.testing.expectEqual(
+        selected.terminal_text,
+        @hasDecl(render, "terminal_text"),
+    );
 }
 
 comptime {
-    if (selected.native_text) _ = @import("native_test.zig");
-    if (selected.generated_glyphs) _ = @import("generated_test.zig");
+    if (selected.native_text) std.testing.refAllDecls(@import("native_test.zig"));
+    if (selected.generated_glyphs) std.testing.refAllDecls(@import("generated_test.zig"));
+    if (selected.terminal_text) std.testing.refAllDecls(@import("terminal_text_test.zig"));
 }
