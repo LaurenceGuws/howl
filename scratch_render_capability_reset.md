@@ -603,3 +603,169 @@ Validation completed:
 - formatting and `git diff --check` pass. The workspace root remains blocked
   only by quarantined deleted-package aliases, control's deleted frame edge,
   and the stale source-audit allowlist indexed by the active reset.
+
+## `classify_remaining_render_code` inventory
+
+Baseline: HEAD `65554f4`, after projection commit `269a8c1`. This inventory is
+classification only. Neither quarantined file is selected by
+`howl-render/build.zig`: current roots import only `native_text`,
+`generated_glyphs`, and `terminal_projection`. The stale control and host build
+graphs name the deleted sibling package `howl-frame`; they do not create a live
+edge to `howl-render/src/howl_frame.zig`. The stale host source names the old
+`howl_render.Renderer`, but current curated roots do not expose it. QAgent has
+no edge to either file.
+
+### Complete source accounting
+
+| file/range | lines | chars | declarations and disposition |
+|---|---:|---:|---|
+| `howl_frame.zig:1-4` | 4 | 138 | Module claim and `std`/`howl_vt` imports. Delete with the file. |
+| `howl_frame.zig:5-88` | 84 | 3,195 | `slot_count`, `RowDamage`, `Damage`, `TerminalFrame`, and five error/result types. Damage and visual copying are superseded by `terminal.RowPatch`/`Update`; generations, cell pixels, history, mouse facts, and saturation are executable policy. Delete. |
+| `howl_frame.zig:89-157` | 69 | 2,252 | `SlotState`, `Slot`, `PreparedResize.commit/deinit`, and `Borrow.release`. Two-slot state, borrowing, acknowledgement, and resize reservation are rejected executable runtime policy. Delete. |
+| `howl_frame.zig:158-525` | 368 | 15,375 | `Publisher`, seven public lifecycle methods, and six private publication helpers. Delete: mutex, slot selection, generation, saturation, cumulative retirement, resize transaction, and complete-grid copy are executable runtime state. `validateSurface` duplicates trusted VT validation; `copyFrame` is superseded by terminal projection. |
+| `howl_frame.zig:526-603` | 78 | 2,686 | `frameFromSlot`, `deinitSlot`, `Storage`, `initStorage`, `deinitStorage`, and `initSlot`. Seven allocations per storage set (pending damage plus cells/geometry/damage for two slots) and their rollback exist only for rejected publication. Delete. |
+| `howl_frame.zig:604-976` | 373 | 16,544 | `expectPublished`, thirteen tests, and two allocation-failure helpers. Delete after the proof classification below. |
+| `howl_render.zig:1-5` | 5 | 183 | Module claim and `std`/old frame/text imports. Unselected stale imports; delete with the file. |
+| `howl_render.zig:6-103` | 98 | 3,767 | Three bounds, mixed `Error`, `Pane`, `Prepared`, `Glyph`, `CellGlyphs.slice`, and `max_cell_codepoints`. Pane/layout and generation counters are executable policy. Glyph values combine accepted native raster facts with cache identity/lifetime. No type survives directly. |
+| `howl_render.zig:104-220` | 117 | 3,974 | `Key`, `Entry`, `Cache` with five methods, and `Candidate`. Mutable retained mask storage, recency, identity, eviction, and byte/count policy belong to an executable runtime owner. Delete current implementation; preserve transactional-cache evidence only. |
+| `howl_render.zig:221-517` | 297 | 11,584 | `Renderer`, six public methods, and three private resolvers. It couples accepted `FontSet`, executable generations/panes/cache, per-cell shaping, generated dispatch, replacement policy, and borrowed cache masks. Delete as a unit; rebuild only the text semantics identified below. |
+| `howl_render.zig:518-570` | 53 | 2,075 | `glyphFromEntry` and `validatePanes`. The former projects executable cache entries; the latter validates window/layout/frame publication. Delete. |
+| `howl_render.zig:571-1023` | 453 | 16,069 | `testFrame`, `testCell`, and eleven tests. Old frame fixtures are dead. Preserve only independently useful behavior evidence listed below. |
+
+The ranges are contiguous and total exactly 976 lines/40,190 characters for
+`howl_frame.zig` and 1,023 lines/37,652 characters for `howl_render.zig`.
+There are no unclassified source lines.
+
+### Declaration census
+
+`howl_frame.zig` contains 41 named non-test declarations and 13 tests:
+
+- 12 public constants/types: `slot_count`, `RowDamage`, `Damage`,
+  `TerminalFrame`, `InitError`, `PrepareResizeError`, `PublishError`,
+  `PublishResult`, `ReleaseError`, `PreparedResize`, `Borrow`, `Publisher`;
+- 10 public methods: two resize-value methods, one borrow method, and seven
+  publisher lifecycle methods;
+- 5 private imports/types: `std`, `howl_vt`, `SlotState`, `Slot`, `Storage`;
+- 14 private methods/functions: six publisher helpers, six storage/borrow
+  helpers, and two allocation-test helpers.
+
+Every declaration above is deletion. Earlier projection work already removed
+the plain visual types it referenced, so this unselected file also contains
+unresolved `Cell`, `Cursor`, `Selection`, `LineGeometry`, and `CellPixelSize`
+names. Lazy non-selection is its only reason for compiling owners to remain
+green; it is reconstruction residue, not a partial module.
+
+`howl_render.zig` contains 36 named non-test declarations and 11 tests:
+
+- 9 public constants/types: three bounds, `Error`, `Pane`, `Prepared`, `Glyph`,
+  `CellGlyphs`, and `Renderer`;
+- 7 public methods: `CellGlyphs.slice` plus six renderer methods;
+- 8 private imports/types: three imports, `max_cell_codepoints`, `Key`, `Entry`,
+  `Cache`, and `Candidate`;
+- 12 private methods/functions: five cache methods, three renderer resolvers,
+  `glyphFromEntry`, `validatePanes`, `testFrame`, and `testCell`.
+
+No declaration survives as-is. Fields of each named struct/union are included
+in its range and disposition above; anonymous key variants add no independent
+owner.
+
+### Frame proof disposition
+
+| test/range | independent evidence | disposition |
+|---|---|---|
+| `611-647` complete reconstruction | VT-to-RGB/style/geometry copying | Superseded by `terminal_test` full projection; delete. |
+| `648-694` skipped cumulative damage | decline must not lose dirty facts | Superseded by VT cumulative dirty plus exact acknowledgement; delete. |
+| `695-729` sparse alternate screen | sparse rows do not invent middle damage | Superseded by viewport-resolved `VisualDirty`; delete. |
+| `730-758` unread-ready replacement | mailbox coalescing | Executable policy; delete. |
+| `759-788` invalid publication rollback | hostile duplicate validation | Typed VT facts are trusted; destination preflight is proven by projection; delete. |
+| `789-824` two-borrow saturation | two-slot backpressure | Executable topology evidence only; delete. |
+| `825-841` stale/double release | borrow identity | Executable policy; delete. |
+| `842-863` generation exhaustion | non-wrapping runtime identity | Executable policy; delete. |
+| `864-897` storage bounds/allocation rollback | seven-allocation cleanup | Storage exists only for rejected publication; delete. |
+| `898-916` resize with borrow | resize reservation | Executable policy; delete. |
+| `917-938` resize allocation rollback | old storage survives failure | Useful general discipline, but tied only to rejected storage; delete. |
+| `939-957` resize grow/shrink commit | slot replacement | Executable policy; delete. |
+| `958-976` exhaustive resize allocation failure | reverse cleanup | Tied to rejected storage; delete with helpers. |
+
+### Text/cache/draw-preparation proof disposition
+
+| test/range | behavior worth preserving | future owner/disposition |
+|---|---|---|
+| `631-668` mirrored frames share masks | identical glyph facts reuse one mask | Executable-owned mask cache proof; rebuild without pane/frame nouns. |
+| `669-697` prepared glyph borrows admitted mask | admission takes one allocation and lookup does not allocate | Executable-owned cache lifetime proof; rebuild. |
+| `698-731` presentation cells share masks | terminal and nonterminal visual text can share cache identity | Old label/frame API is deleted; the shared-cache claim requires a later executable input contract. |
+| `732-758` stale composition generation | generation rejects before cache mutation | Executable scheduling policy; delete. |
+| `759-812` capacity/pinning/eviction | fixed count/bytes, current-work pinning, oldest eviction | Executable-owned cache evidence; exact 1,024/8 MiB bounds are not yet accepted. |
+| `813-836` no second mask allocation | successful admission consumes exact owned pixels | Executable-owned cache transfer proof; rebuild. |
+| `837-857` oversized mask rejection | rejection preserves caller allocation and cache | Executable-owned cache transfer proof; rebuild. |
+| `858-908` eviction preflight | impossible admission rejects before eviction | Executable-owned cache transaction proof; rebuild. |
+| `909-960` missing glyph replacement | one U+FFFD fallback mask is shared and reusable | `howl-render` text-preparation semantics; rebuild after the gate below. |
+| `961-988` generated allocation failure | failed caller allocation leaves cache/generation unchanged | Split proof: render-generated raster owns no allocation; future executable cache owns allocation/admission. Rebuild at those owners. |
+| `989-1023` generated raster failure | staged pixels are freed before transfer | Same split; rebuild only if the future composition operation stages owned pixels. |
+
+The current source emits no grid backgrounds, selection/cursor effects,
+decorations, quads, draw commands, or backend-neutral paint list. `Prepared`
+is counters plus cache warming, not draw preparation. Pane geometry and damage
+walking duplicate executable layout and the accepted terminal row-patch
+boundary. There is therefore no grid/effects implementation to retain.
+
+### Earned rebuild candidates
+
+Deletion remains the source boundary. These behaviors, not current APIs, earn
+later direct reconstruction:
+
+1. **Run-aware terminal text preparation — owner `howl-render`.** Input must be
+   borrowed contiguous retained visual cells plus explicit row/run bounds and
+   selected native/generated capabilities; isolated dirty cells are
+   insufficient for ligature context. Every allocation must receive the
+   caller allocator. Output must be backend-neutral positioned glyph/raster
+   facts with explicit owned cleanup or caller buffers; it may not carry pane,
+   frame generation, cache identity, or GPU facts. Bounds/errors derive from
+   accepted `native_text` and `generated` APIs. Preserve U+FFFD fallback,
+   generated-glyph dispatch, combining input, pen-offset overflow checks, and
+   raster cleanup proofs. A direct rebuild is smaller than untangling
+   `Renderer.resolveCell`, which is per-cell and mixes four owners.
+2. **Bounded mask reuse — future executable owner.** Input is an exact
+   render-produced mask key plus one caller-owned pixel allocation; rejection
+   leaves it caller-owned and success consumes that allocation. Output is a
+   borrowed mask identity valid under the executable cache lifetime. The owner
+   must accept explicit count/byte bounds, allocator/deinit symmetry,
+   non-reused identity, eviction/pinning policy, and `CacheFull`/
+   `MaskTooLarge`/identity-exhaustion behavior. Current tests establish useful
+   transaction evidence, but current 1,024-entry and 8 MiB choices are not
+   durable decisions. A rebuild avoids importing pane generations into render.
+
+Accepted `native_text.FontSet`, `Run`, `Raster`, and `generated.rasterize`
+already own font construction, shaping, native raster allocation, generated
+caller-buffer rasterization, errors, bounds, and cleanup. The old `Renderer`
+wrapper duplicates those lifecycles and is not a retained candidate.
+
+### Reference evidence and discussion gate
+
+- Foot `render.c:948-990`, `render_cell`, resolves grapheme or scalar glyphs
+  directly at drawing while its font layer owns raster caching. This supports
+  retaining semantic dispatch evidence, not Howl's old pane/generation owner.
+- Kitty `kitty/fonts.c:1689`, `shape_run`, and `:1904`, `render_run`, shape
+  contiguous cell runs and preserve cluster context. This rejects rebuilding
+  the old one-cell `resolveCell` as the terminal text boundary.
+- TigerBeetle `src/lsm/set_associative_cache.zig:147-210`, `init`/`deinit`, and
+  `:298-360`, `upsert`, keep allocation, fixed capacity, eviction, and returned
+  ownership in one exact cache owner. The lesson supports rebuilding cache
+  transactions at the executable owner, not retaining this mixed renderer.
+
+One genuine supervised gate remains before text preparation is rebuilt: settle
+the exact contiguous visual-run input and heterogeneous native/generated
+output lifetime across compile-time capability selections. The public role is
+already settled (`howl-render` owns semantic-to-visual/text interpretation),
+but current evidence does not choose caller buffers versus allocator-owned
+prepared output. No executable topology, cache API, or backend command shape
+is decided by this inventory.
+
+### Proposed deletion/rebuild boundaries
+
+- Delete `howl-render/src/howl_frame.zig` completely; preserve no alias.
+- Delete `howl-render/src/howl_render.zig` completely; preserve no `Renderer`,
+  `Pane`, `Prepared`, generation, or cache compatibility surface.
+- Rebuild run-aware text preparation only after its input/output lifetime gate.
+- Rebuild a mask cache only inside an approved executable owner, using the
+  classified transaction proofs rather than copying this file.
