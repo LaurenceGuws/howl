@@ -204,7 +204,9 @@ sprints:
         commit: 269a8c1
       - id: classify_remaining_render_code
         commit: 37f59ff
-    next_slice: delete_rejected_renderer_source
+      - id: delete_rejected_renderer_source
+        commit: 93cb1c6
+    next_slice: settle_run_text_boundary
 
   - id: control_capability_reset
     status: pending

@@ -2,7 +2,7 @@ sprint:
   id: render_capability_reset
   marathon: marathon_capability_reset.yml
   status: active
-  current_slice: delete_rejected_renderer_source
+  current_slice: settle_run_text_boundary
   scratchpad: scratch_render_capability_reset.md
 
 objective: >-
@@ -157,13 +157,17 @@ slices:
       current file and runtime consumers.
 
   - id: delete_rejected_renderer_source
-    status: active
+    status: accepted
+    commit: 93cb1c6
+    outcome: >-
+      Deleted the entire unselected mixed renderer and its stale durable claims without aliases, replacement APIs,
+      cache reconstruction, or changes to accepted text, generated-glyph, and terminal projection capabilities.
     purpose: >-
       Delete the unselected mixed renderer, its dead proofs, and stale build/source-map residue without rebuilding text
       preparation, cache policy, executable scheduling, or compatibility APIs.
 
   - id: settle_run_text_boundary
-    status: pending
+    status: active
     purpose: >-
       Settle the smallest contiguous visual-run input and heterogeneous native/generated output lifetime before any
       run-aware text preparation is implemented.

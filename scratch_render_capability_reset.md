@@ -1,6 +1,29 @@
 # Render capability reset scratchpad
 
-Current slice: `delete_rejected_renderer_source`
+Current slice: `settle_run_text_boundary`
+
+The rejected mixed renderer was deleted at `93cb1c6`. This slice is decision
+evidence only: derive the smallest contiguous visual-run input and
+native/generated output lifetime that lets render prepare perfect terminal text
+without owning cache, pane, frame, generation, GPU, or executable policy.
+
+## Current decision checklist
+
+- inventory exact `native_text` run/shape/raster ownership and generated-glyph
+  input/output lifetimes;
+- derive run boundaries from retained visual cells without moving terminal
+  semantics back into the executable;
+- compare caller-buffer and explicit-allocator-owned output using concrete
+  maximum counts, rollback, and cleanup;
+- preserve ligature, combining, fallback, font-slot, baseline, generated-glyph,
+  and cell-placement facts needed for Kitty-quality text;
+- keep mask cache identity/admission/eviction outside render;
+- prove every compile-time capability combination has a direct, absent-when-
+  disabled API shape;
+- recommend one smallest contract or state the exact unresolved product choice;
+- do not edit implementation or build source.
+
+## Accepted renderer deletion checkpoint
 
 The remaining legacy render source was completely classified at `37f59ff`.
 This slice deletes only the mixed `howl_render.zig` implementation, its dead
