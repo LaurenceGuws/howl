@@ -153,7 +153,7 @@ test "oversized finalized line records loss and terminal continues rendering" {
 }
 
 test "terminal history retention is transactional at every allocation failure" {
-    var probe = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var probe = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = 0 });
     var terminal = try Terminal.initWithHistory(probe.allocator(), 2, 4, 8);
     defer terminal.deinit();
     try feedChanged(&terminal, "AAAA\r\nBBBB");
@@ -167,7 +167,7 @@ test "terminal history retention is transactional at every allocation failure" {
         try historyRetentionFailure(fail_index);
     }
 
-    var wrapped_probe = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var wrapped_probe = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = 0 });
     var wrapped_terminal = try Terminal.initWithHistory(wrapped_probe.allocator(), 2, 4, 8);
     defer wrapped_terminal.deinit();
     try feedChanged(&wrapped_terminal, "ABCDEFGHIJKL");
@@ -181,7 +181,7 @@ test "terminal history retention is transactional at every allocation failure" {
         try openHistoryRetentionFailure(fail_index);
     }
 
-    var full_probe = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var full_probe = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = 0 });
     var full_terminal = try Terminal.initWithHistory(full_probe.allocator(), 2, 4, 2);
     defer full_terminal.deinit();
     try feedChanged(&full_terminal, "AAAA\r\nBBBB\r\nCCCC\r\nDDDD");
@@ -197,7 +197,10 @@ test "terminal history retention is transactional at every allocation failure" {
 }
 
 fn historyRetentionFailure(fail_index: usize) !void {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{
+        .fail_index = fail_index,
+        .resize_fail_index = 0,
+    });
     var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 8);
     defer terminal.deinit();
     try feedChanged(&terminal, "AAAA\r\nBBBB");
@@ -224,7 +227,10 @@ fn historyRetentionFailure(fail_index: usize) !void {
 }
 
 fn openHistoryRetentionFailure(fail_index: usize) !void {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{
+        .fail_index = fail_index,
+        .resize_fail_index = 0,
+    });
     var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 8);
     defer terminal.deinit();
     try feedChanged(&terminal, "ABCDEFGHIJKL");
@@ -246,7 +252,10 @@ fn openHistoryRetentionFailure(fail_index: usize) !void {
 }
 
 fn fullHistoryRetentionFailure(fail_index: usize) !void {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{
+        .fail_index = fail_index,
+        .resize_fail_index = 0,
+    });
     var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 2);
     defer terminal.deinit();
     try feedChanged(&terminal, "AAAA\r\nBBBB\r\nCCCC\r\nDDDD");

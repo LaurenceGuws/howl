@@ -329,6 +329,7 @@ pub const Plane = struct {
             else
                 self.allocateKittyId() orelse
                     return .{ .response_number = command_value.image_number, .failure = .quota, .quiet = command_value.quiet };
+            const input = try self.allocator.alloc(u8, input_bytes);
             self.loading = .{
                 .action = command_value.action,
                 .format = command_value.format,
@@ -348,7 +349,7 @@ pub const Plane = struct {
                 .width = command_value.width,
                 .height = command_value.height,
                 .quiet = command_value.quiet,
-                .bytes = try self.allocator.alloc(u8, input_bytes),
+                .bytes = input,
             };
         } else {
             if (command_value.width != 0 or command_value.height != 0 or
@@ -418,6 +419,7 @@ pub const Plane = struct {
             return .{ .response_id = image_value.kitty_id, .failure = .quota, .quiet = command_value.quiet };
         const byte_count = std.math.mul(usize, input_bytes, channels) catch
             return .{ .response_id = image_value.kitty_id, .failure = .quota, .quiet = command_value.quiet };
+        const input = try self.allocator.alloc(u8, byte_count);
         self.loading = .{
             .action = 'f',
             .format = command_value.format,
@@ -437,7 +439,7 @@ pub const Plane = struct {
             .width = width,
             .height = height,
             .quiet = command_value.quiet,
-            .bytes = try self.allocator.alloc(u8, byte_count),
+            .bytes = input,
         };
         var continuation = command_value;
         continuation.action = 't';
