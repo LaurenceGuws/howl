@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{
         .name = "howl-host",
-        .root_module = module,
+        .root_module = testModule(b, target, optimize, control, render),
         .filters = b.args orelse &.{},
     });
     tests.use_llvm = true;
@@ -43,6 +43,24 @@ pub fn build(b: *std.Build) void {
     if (b.args) |arguments| run.addArgs(arguments);
     b.step("run", "Run the control-backed host").dependOn(&run.step);
     b.default_step = b.getInstallStep();
+}
+
+fn testModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    control: *std.Build.Dependency,
+    render: *std.Build.Dependency,
+) *std.Build.Module {
+    const module = b.createModule(.{
+        .root_source_file = b.path("src/test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    module.addImport("howl_control", control.module("howl_control"));
+    module.addImport("howl_render", render.module("howl_render"));
+    configureNative(b, module);
+    return module;
 }
 
 fn configureNative(b: *std.Build, module: *std.Build.Module) void {

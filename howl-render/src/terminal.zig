@@ -43,6 +43,26 @@ pub const SelectionStyle = struct {
     background: Rgb,
 };
 
+/// Copies one bounded Kitty OSC 66 multicell placement.
+pub const TextSizing = struct {
+    /// Reports the complete block width in physical cells.
+    width: u8 = 1,
+    /// Reports the complete block height in physical cells.
+    height: u8 = 1,
+    /// Locates this cell horizontally within the block.
+    x: u8 = 0,
+    /// Locates this row vertically within the block.
+    y: u8 = 0,
+    /// Retains fractional-scale numerator zero through fifteen.
+    subscale_n: u4 = 0,
+    /// Retains fractional-scale denominator zero through fifteen.
+    subscale_d: u4 = 0,
+    /// Retains top, bottom, center, or reserved vertical alignment.
+    vertical_align: u2 = 0,
+    /// Retains left, right, center, or reserved horizontal alignment.
+    horizontal_align: u2 = 0,
+};
+
 /// Copies one complete backend-neutral terminal visual cell.
 pub const Cell = struct {
     /// Stores the base Unicode scalar, or zero for a blank cell.
@@ -51,6 +71,8 @@ pub const Cell = struct {
     combining_len: u8,
     /// Stores up to three trailing Unicode scalars.
     combining: [max_combining]u21,
+    /// Copies complete ordinary or Kitty multicell placement.
+    sizing: TextSizing = .{},
     /// Copies final foreground color.
     foreground: Rgb,
     /// Copies final background color.
@@ -423,16 +445,26 @@ fn projectCell(
     source: *const VtTerminal.VisualView,
     row: u16,
     col: u16,
-    selected: bool,
+    selected_direct: bool,
     selection_style: SelectionStyle,
 ) Cell {
     const cell = source.view.cellInfoAt(row, col);
-    std.debug.assert(cell.width == 1 and cell.height == 1);
-    std.debug.assert(cell.x == 0 and cell.y == 0);
+    std.debug.assert(cell.width > 0 and cell.height > 0);
+    std.debug.assert(cell.x < cell.width and cell.y < cell.height);
     std.debug.assert(cell.combining_len <= max_combining);
     std.debug.assert(cell.codepoint <= std.math.maxInt(u21));
     const codepoint: u21 = @intCast(cell.codepoint);
     std.debug.assert(std.unicode.utf8ValidCodepoint(codepoint));
+    var selected = selected_direct;
+    const cluster_top = row - cell.y;
+    const cluster_left = col - cell.x;
+    var cluster_row = cluster_top;
+    while (!selected and cluster_row < @min(source.view.rows, cluster_top + cell.height)) : (cluster_row += 1) {
+        if (source.selectedSpan(cluster_row)) |span| {
+            selected = span.start < cluster_left + cell.width and
+                span.end_exclusive > cluster_left;
+        }
+    }
     var foreground = cell.attrs.fg.resolve(
         source.presentation.foreground,
         &source.presentation.palette,
@@ -451,6 +483,16 @@ fn projectCell(
         .codepoint = codepoint,
         .combining_len = cell.combining_len,
         .combining = @splat(0),
+        .sizing = .{
+            .width = cell.width,
+            .height = cell.height,
+            .x = cell.x,
+            .y = cell.y,
+            .subscale_n = cell.subscale_n,
+            .subscale_d = cell.subscale_d,
+            .vertical_align = cell.vertical_align,
+            .horizontal_align = cell.horizontal_align,
+        },
         .foreground = if (selected) selection_style.foreground else rgb(foreground),
         .background = if (selected) selection_style.background else rgb(background),
         .underline_color = rgb(underline_color),

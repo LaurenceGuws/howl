@@ -46,6 +46,33 @@ test "full projection resolves terminal colors selection geometry and cursor" {
     try std.testing.expect(update.cursor.visible);
 }
 
+test "OSC 66 projection copies complete sizing and expands selection appearance" {
+    var source = try vt.Terminal.init(std.testing.allocator, 3, 6);
+    defer source.deinit();
+    try std.testing.expect((try source.feed("\x1b]66;s=2:w=2:n=1:d=2:v=2:h=1;Hi\x1b\\")).state_changed);
+    source.startSelection(0, 2);
+    source.updateSelection(0, 3);
+    try std.testing.expect(source.visualView().selectedSpan(0) != null);
+
+    var storage: Storage = .{};
+    const update = try full(source.visualView(), &storage);
+    const expected = terminal.TextSizing{
+        .width = 4,
+        .height = 2,
+        .subscale_n = 1,
+        .subscale_d = 2,
+        .vertical_align = 2,
+        .horizontal_align = 1,
+    };
+    try std.testing.expectEqual(expected, update.cells[0].sizing);
+    try std.testing.expect(update.cells[0].selected);
+    try std.testing.expect(update.cells[3].selected);
+    try std.testing.expect(update.cells[6].selected);
+    try std.testing.expect(update.cells[9].selected);
+    try std.testing.expectEqual(@as(u8, 3), update.cells[9].sizing.x);
+    try std.testing.expectEqual(@as(u8, 1), update.cells[9].sizing.y);
+}
+
 test "dynamic colors resolve complete cell cursor and selection presentation" {
     var source = try vt.Terminal.init(std.testing.allocator, 1, 2);
     defer source.deinit();

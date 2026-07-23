@@ -1962,7 +1962,7 @@ pub const OscControl = struct {
             .c22 => .{ .command = 22, .class = .pointer_shape, .max_len = self.metadata_max_len },
             .c50 => .{ .command = 50, .class = .iterm2, .max_len = self.metadata_max_len },
             .c52 => .{ .command = 52, .class = .clipboard, .max_len = self.clipboard_max_len },
-            .c66 => .{ .command = 66, .class = .kitty_text_size, .max_len = self.metadata_max_len },
+            .c66 => .{ .command = 66, .class = .kitty_text_size, .max_len = self.chunk_max_len },
             .c104 => .{ .command = 104, .class = .palette_reset, .max_len = self.metadata_max_len },
             .c110, .c111, .c112, .c113, .c114, .c115, .c116, .c117, .c118, .c119 => .{
                 .command = prefixDynamicCommand(self.prefix),

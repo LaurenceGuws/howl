@@ -5,6 +5,7 @@ const control = @import("howl_control");
 
 const c = @cImport({
     @cDefine("_FORTIFY_SOURCE", "0");
+    @cDefine("_GNU_SOURCE", "1");
     @cInclude("errno.h");
     @cInclude("fcntl.h");
     @cInclude("sys/random.h");
@@ -556,16 +557,16 @@ test "Kitty paste event and granted read use exact bounded framing" {
     const event = try pasteEvent(std.testing.allocator, grant, .{ .plain = true, .utf8 = true });
     defer std.testing.allocator.free(event);
     try std.testing.expectEqualStrings(
-        "\x1b]5522;type=read:status=OK:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYg==\x1b\\" ++
-            "\x1b]5522;type=read:status=DATA:mime=Lg==:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYg==;" ++
+        "\x1b]5522;type=read:status=OK:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWI=\x1b\\" ++
+            "\x1b]5522;type=read:status=DATA:mime=Lg==:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWI=;" ++
             "dGV4dC9wbGFpbjtjaGFyc2V0PXV0Zi04IHRleHQvcGxhaW4K\x1b\\" ++
-            "\x1b]5522;type=read:status=DONE:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYg==\x1b\\",
+            "\x1b]5522;type=read:status=DONE:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWI=\x1b\\",
         event,
     );
 
     var scratch: [256]u8 = undefined;
     const request = parseKittyRequest(
-        "type=read:id=a!b:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYg==:" ++
+        "type=read:id=a!b:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWI=:" ++
             "name=" ++ paste_name_encoded ++ ";dGV4dC9wbGFpbjtjaGFyc2V0PXV0Zi04",
         &scratch,
     );
@@ -662,10 +663,10 @@ test "nonblocking receive is bounded and preserves partial progress" {
     var transfers = Transfers.init(std.testing.allocator);
     defer transfers.deinit();
     try transfers.beginReceive(fds[0]);
-    try std.posix.writeAll(fds[1], "first");
+    try writeAllFd(fds[1], "first");
     try transfers.service(fds[0], std.posix.POLL.IN);
     try std.testing.expect(transfers.received() == null);
-    try std.posix.writeAll(fds[1], "-second");
+    try writeAllFd(fds[1], "-second");
     closeFd(fds[1]);
     try transfers.service(fds[0], std.posix.POLL.IN | std.posix.POLL.HUP);
     try std.testing.expectEqualStrings("first-second", transfers.received().?);
@@ -685,7 +686,7 @@ test "source replacement and outgoing transfer own independent bytes" {
     try std.testing.expectEqual(@as(usize, 1), count);
     try transfers.service(descriptors[0].fd, std.posix.POLL.OUT);
     var bytes: [3]u8 = undefined;
-    try std.posix.readAtLeast(fds[0], &bytes, bytes.len);
+    try readExactFd(fds[0], &bytes);
     try std.testing.expectEqualStrings("old", &bytes);
     transfers.clearSource();
     try std.testing.expectEqualStrings("", transfers.sourceBytes());
@@ -695,7 +696,7 @@ test "nonblocking send preserves partial progress until peer capacity returns" {
     const fds = try pipe();
     defer closeFd(fds[0]);
     defer closeFd(fds[1]);
-    const pipe_capacity = c.fcntl(fds[1], c.F_SETPIPE_SZ, 4096);
+    const pipe_capacity = c.fcntl(fds[1], c.F_SETPIPE_SZ, @as(c_int, 4096));
     try std.testing.expect(pipe_capacity >= 4096);
     const bytes = try std.testing.allocator.alloc(u8, @intCast(pipe_capacity * 2));
     defer std.testing.allocator.free(bytes);
@@ -707,7 +708,7 @@ test "nonblocking send preserves partial progress until peer capacity returns" {
 
     const drained = try std.testing.allocator.alloc(u8, send.offset);
     defer std.testing.allocator.free(drained);
-    try std.posix.readAtLeast(fds[0], drained, drained.len);
+    try readExactFd(fds[0], drained);
     try writeAvailable(&send);
     try std.testing.expectEqual(send.bytes.len, send.offset);
 }
@@ -751,8 +752,34 @@ test "receive overflow and peer HUP are exact" {
     defer closeFd(fds[0]);
     var buffer: [4]u8 = undefined;
     var receive = Receive{ .fd = fds[0], .bytes = &buffer };
-    try std.posix.writeAll(fds[1], "12345");
+    try writeAllFd(fds[1], "12345");
     closeFd(fds[1]);
     try std.testing.expectError(error.ClipboardLimit, readAvailable(&receive));
     try std.testing.expectEqual(@as(usize, 4), receive.len);
+}
+
+fn writeAllFd(fd: c_int, bytes: []const u8) !void {
+    var written: usize = 0;
+    while (written < bytes.len) {
+        const count = c.write(fd, bytes[written..].ptr, bytes.len - written);
+        if (count > 0) {
+            written += @intCast(count);
+            continue;
+        }
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        return error.TestUnexpectedResult;
+    }
+}
+
+fn readExactFd(fd: c_int, bytes: []u8) !void {
+    var read: usize = 0;
+    while (read < bytes.len) {
+        const count = c.read(fd, bytes[read..].ptr, bytes.len - read);
+        if (count > 0) {
+            read += @intCast(count);
+            continue;
+        }
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        return error.TestUnexpectedResult;
+    }
 }

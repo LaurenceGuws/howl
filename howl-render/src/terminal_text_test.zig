@@ -81,6 +81,41 @@ test "generated and no-glyph runs retain exact coverage without allocation" {
     }
 }
 
+test "multicell anchor prepares once and continuations are no-glyph coverage" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    const codepoint: u21 = if (selected.native_text) 'A' else 0x2500;
+    var cells = [_]terminal.Cell{ cell(codepoint), cell(codepoint), cell(codepoint), cell(codepoint) };
+    const sizing = terminal.TextSizing{
+        .width = 4,
+        .height = 2,
+        .subscale_n = 1,
+        .subscale_d = 2,
+        .vertical_align = 2,
+        .horizontal_align = 1,
+    };
+    cells[0].sizing = sizing;
+    for (cells[1..], 1..) |*continuation, x| {
+        continuation.sizing = sizing;
+        continuation.sizing.x = @intCast(x);
+    }
+    var anchor = try prepare(&map, input(&cells, 0, 3), 0);
+    defer anchor.deinit();
+    try std.testing.expectEqual(@as(u16, 0), anchor.first_cell);
+    try std.testing.expectEqual(@as(u16, 1), anchor.end_cell);
+    try std.testing.expectEqual(sizing, anchor.sizing);
+    if (comptime selected.native_text) {
+        try std.testing.expect(anchor.glyphs == .native);
+    } else {
+        try std.testing.expect(anchor.glyphs == .generated);
+    }
+    var continuation = try prepare(&map, input(&cells, 0, 3), 1);
+    defer continuation.deinit();
+    try std.testing.expectEqual(@as(u16, 1), continuation.first_cell);
+    try std.testing.expectEqual(@as(u16, 4), continuation.end_cell);
+    try std.testing.expect(continuation.glyphs == .none);
+}
+
 test "run discovery rejects malformed spans and metrics before ownership" {
     var map = try initMap();
     defer deinitMap(&map);

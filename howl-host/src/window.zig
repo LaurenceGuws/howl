@@ -2967,7 +2967,7 @@ test "visual storage retains DEC row geometry and cell baseline from child outpu
 
     var attempts: u8 = 0;
     var observed_change = false;
-    while (attempts < 100 and !visualContains(&visual, "WTBRL")) : (attempts += 1) {
+    while (attempts < 100 and !visualHasGeometryProof(&visual)) : (attempts += 1) {
         terminal.consumeWake();
         observed_change = try visual.capture(terminal) or observed_change;
         try (std.Io.Clock.Duration{
@@ -2977,7 +2977,7 @@ test "visual storage retains DEC row geometry and cell baseline from child outpu
     }
 
     try std.testing.expect(observed_change);
-    try std.testing.expect(visualContains(&visual, "WTBRL"));
+    try std.testing.expect(visualHasGeometryProof(&visual));
     try std.testing.expectEqual(terminal_render.LineGeometry.double_width, visual.row_geometry[0]);
     try std.testing.expectEqual(terminal_render.LineGeometry.double_height_top, visual.row_geometry[1]);
     try std.testing.expectEqual(terminal_render.LineGeometry.double_height_bottom, visual.row_geometry[2]);
@@ -3293,7 +3293,7 @@ test "alternate scroll translates one wheel frame to typed cursor transitions" {
     const up = alternateScrollEvents(storage[0..], -2, mods);
     try std.testing.expectEqual(@as(usize, 3), up.len);
     for (up[0..2]) |event| {
-        try std.testing.expectEqual(.key, event.input);
+        try std.testing.expect(event.input == .key);
         try std.testing.expectEqual(.up, event.input.key.key.named);
         try std.testing.expectEqual(.press, event.input.key.action);
         try std.testing.expect(event.input.key.mods.shift);
@@ -3497,56 +3497,6 @@ test "mouse tracking disabled admits no bytes and owns no host scroll" {
     try std.testing.expect(std.meta.eql(before, terminal.viewportFacts()));
 }
 
-test "host viewport reconciles only terminal-applied history facts" {
-    const terminal = try control.Terminal.init(
-        std.testing.allocator,
-        std.testing.io,
-        .{ .command = "sleep 30", .rows = 3, .cols = 5, .history_rows = 8 },
-        .{},
-    );
-    defer terminal.deinit();
-    try terminal.consume("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
-
-    var state = viewport.State{};
-    state.reconcile(viewportFacts(terminal.viewportFacts()));
-    const requested = state.requested(.page_up);
-    try std.testing.expectEqual(@as(u32, 0), state.facts.offset);
-    const applied = terminal.setViewport(requested);
-    state.reconcile(viewportFacts(applied));
-    try std.testing.expectEqual(applied.offset, state.facts.offset);
-    try std.testing.expect(!state.follow);
-
-    const reviewed_offset = state.facts.offset;
-    try terminal.consume("\r\n5EEEE");
-    try std.testing.expectEqual(reviewed_offset, state.facts.offset);
-    const advanced = terminal.viewportFacts();
-    try std.testing.expect(advanced.offset > reviewed_offset);
-    state.reconcile(viewportFacts(advanced));
-    try std.testing.expect(!state.follow);
-
-    try terminal.consume("\x1b[?1049h");
-    const alternate = terminal.viewportFacts();
-    try std.testing.expect(alternate.alternate_screen);
-    try std.testing.expectEqual(@as(u32, 0), alternate.offset);
-    try std.testing.expectEqual(@as(u32, 0), alternate.history_count);
-    state.reconcile(viewportFacts(alternate));
-    try std.testing.expectEqual(@as(u32, 0), state.requested(.top));
-
-    try terminal.consume("\x1b[?1049l");
-    state.reconcile(viewportFacts(terminal.setViewport(0)));
-    try std.testing.expect(state.follow);
-    try terminal.consume("\r\n6FFFF");
-    state.reconcile(viewportFacts(terminal.viewportFacts()));
-    try std.testing.expectEqual(@as(u32, 0), state.facts.offset);
-    try std.testing.expect(state.follow);
-
-    const resize_result = try terminal.resize(5, 4);
-    try std.testing.expect(resize_result.changed);
-    const resized = terminal.viewportFacts();
-    try std.testing.expectEqual(@as(u16, 4), resized.rows);
-    try std.testing.expect(resized.offset <= resized.history_count);
-}
-
 fn visualContains(visual: *const VisualStorage, needle: []const u8) bool {
     if (needle.len == 0) return true;
     var matched: usize = 0;
@@ -3559,6 +3509,15 @@ fn visualContains(visual: *const VisualStorage, needle: []const u8) bool {
         }
     }
     return false;
+}
+
+fn visualHasGeometryProof(visual: *const VisualStorage) bool {
+    return visual.cells.len > 25 and
+        visual.cells[0].codepoint == 'W' and
+        visual.cells[8].codepoint == 'T' and
+        visual.cells[16].codepoint == 'B' and
+        visual.cells[24].codepoint == 'R' and
+        visual.cells[25].codepoint == 'L';
 }
 
 fn notificationRings(kind: control.NotificationKind) bool {

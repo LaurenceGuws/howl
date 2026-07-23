@@ -3355,8 +3355,26 @@ references:
               source: howl-host/src/window.zig, symbol: Window.applyKittyClipboard, proof: {
               path: howl-control/src/howl_control.zig,
               symbol: "Kitty clipboard packet copy and reply preserve exact FIFO identity"}}
-          - {id: kitty.osc.text_size, raw: "OSC TEXT_SIZE_CODE ; Pt (BEL|ST)", effect: control text sizing,
-            relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-host, milestone: text_presentation}}
+          - id: kitty.osc.text_size
+            raw: "OSC TEXT_SIZE_CODE ; Pt (BEL|ST)"
+            effect: control text sizing
+            relevance: terminal presentation
+            conditions: >-
+              Howl parses fragmented s/w/n/d/v/h metadata, retains bounded 7x7 cell clusters, expands mutation and
+              selection damage across complete clusters, and renders scale/fraction/alignment through its copied visual
+              facts and GLES owner.
+            howl:
+              support: partial
+              residual: >-
+                Howl currently bounds one fixed or natural cluster to four scalars, uses base-plus-combining natural
+                segmentation rather than Kitty's full grapheme/width algorithm, removes clusters at structural and
+                rectangle-attribute mutation boundaries, rejects rectangular copies containing clusters, conservatively
+                removes clusters crossing scroll boundaries, drops clusters on resize, and scales the ordinary raster
+                rather than constructing a separately sized native font.
+              source: howl-vt/src/terminal.zig
+              symbol: Screen.writeSizedText
+              proof: {path: howl-render/src/terminal_test.zig,
+                symbol: "OSC 66 projection copies complete sizing and expands selection appearance"}
           - {id: kitty.osc.drag_drop, raw: "OSC DND_CODE ; Pt (BEL|ST)", effect: drag and drop control,
             relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-host, milestone: host_input}}
           - id: kitty.osc.shell_mark

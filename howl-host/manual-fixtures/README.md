@@ -10,6 +10,7 @@ are not installed, and contain no product policy or reusable fixture framework.
 - `osc52.sh`: exact OSC 52 reply plus Wayland clipboard ownership.
 - `window-control.sh`: exact ordered replies and one-way minimize request dispatch.
 - `pointer-shape.sh`: cursor-shape set, stack, screen-bank, and reset presentation.
+- `text-sizing.sh`: Kitty OSC 66 scale, fixed width, fractional alignment, decoration, and clipping.
 
 From `howl-host`, run a receipt with:
 

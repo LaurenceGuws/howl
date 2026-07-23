@@ -377,7 +377,8 @@ const Device = struct {
         c.glEnableVertexAttribArray(0);
         c.glEnableVertexAttribArray(1);
         c.glEnableVertexAttribArray(2);
-        for (0..work.rows) |row| try self.drawRow(work, @intCast(row));
+        for (0..work.rows) |row| try self.drawRowBackground(work, @intCast(row));
+        for (0..work.rows) |row| try self.drawRowContent(work, @intCast(row));
         try self.drawCursor(work);
         try self.drawScrollbar(work.scrollbar);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
@@ -404,14 +405,13 @@ const Device = struct {
         );
     }
 
-    fn drawRow(self: *Device, work: Submission, row: u16) Error!void {
+    fn drawRowBackground(self: *Device, work: Submission, row: u16) Error!void {
         const start = @as(usize, row) * work.cols;
         const cells = work.cells[start..][0..work.cols];
         const geometry = work.row_geometry[row];
         const logical_cols = rowColumns(geometry, work.cols);
         for (cells[0..logical_cols], 0..) |cell, col| {
-            const cursor_block = work.cursor.visible and work.cursor.shape == .block and
-                work.cursor.row == row and work.cursor.col == col;
+            const cursor_block = cursorBlockCovers(work, row, @intCast(col));
             const rect = planCell(row, @intCast(col), geometry, self.metrics) orelse
                 return error.InvalidSubmission;
             try self.quad(
@@ -436,6 +436,13 @@ const Device = struct {
                 self.white,
             );
         }
+    }
+
+    fn drawRowContent(self: *Device, work: Submission, row: u16) Error!void {
+        const start = @as(usize, row) * work.cols;
+        const cells = work.cells[start..][0..work.cols];
+        const geometry = work.row_geometry[row];
+        const logical_cols = rowColumns(geometry, work.cols);
         var at: u16 = 0;
         while (at < logical_cols) {
             var prepared = try text.prepareNextRun(self.allocator, &self.fonts, .{
@@ -446,7 +453,7 @@ const Device = struct {
                 .metrics = self.metrics,
             }, at);
             defer prepared.deinit();
-            try self.drawPrepared(work.generation, row, cells, work.cursor, prepared);
+            try self.drawPrepared(work, row, cells, prepared);
             std.debug.assert(prepared.end_cell > at);
             at = prepared.end_cell;
         }
@@ -455,31 +462,29 @@ const Device = struct {
 
     fn drawPrepared(
         self: *Device,
-        generation: u64,
+        work: Submission,
         row: u16,
         cells: []const terminal.Cell,
-        cursor: terminal.Cursor,
         prepared: text.PreparedRun,
     ) Error!void {
         switch (prepared.glyphs) {
             .none => {},
-            .generated => |glyph| try self.drawGlyph(generation, row, cells, cursor, prepared, glyph),
+            .generated => |glyph| try self.drawGlyph(work, row, cells, prepared, glyph),
             .native => |owned| for (owned.values) |glyph|
-                try self.drawGlyph(generation, row, cells, cursor, prepared, glyph),
+                try self.drawGlyph(work, row, cells, prepared, glyph),
         }
     }
 
     fn drawGlyph(
         self: *Device,
-        generation: u64,
+        work: Submission,
         row: u16,
         cells: []const terminal.Cell,
-        cursor: terminal.Cursor,
         prepared: text.PreparedRun,
         glyph: text.PositionedGlyph,
     ) Error!void {
         std.debug.assert(glyph.source_start < glyph.source_end and glyph.source_end <= cells.len);
-        const cached = try self.texture(generation, glyph.key);
+        const cached = try self.texture(work.generation, glyph.key);
         if (cached.width == 0 or cached.height == 0) return;
         const base_x = glyphPixelX(
             prepared.first_cell,
@@ -495,15 +500,38 @@ const Device = struct {
             prepared.geometry,
             prepared.baseline,
             self.metrics,
-            .{
+            planTextSizing(prepared.first_cell, prepared.sizing, self.metrics, .{
                 .x = base_x,
                 .y = base_y,
                 .width = cached.width,
                 .height = cached.height,
-            },
+            }) orelse return error.InvalidSubmission,
         ) orelse return error.InvalidSubmission;
         c.glEnable(c.GL_SCISSOR_TEST);
         defer c.glDisable(c.GL_SCISSOR_TEST);
+        const cursor_block = cursorBlockCovers(work, row, prepared.first_cell);
+        if (prepared.sizing.width > 1 or prepared.sizing.height > 1) {
+            const clip = clipToSurface(
+                clusterCellRect(
+                    row,
+                    prepared.first_cell,
+                    prepared.geometry,
+                    prepared.sizing,
+                    self.metrics,
+                ) orelse return error.InvalidSubmission,
+                self.size,
+            ) orelse return;
+            setScissor(clip, self.size);
+            try self.quad(
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                glyphColor(cells[glyph.source_start], work.cursor, cursor_block),
+                cached.name,
+            );
+            return;
+        }
         var col = glyph.source_start;
         while (col < glyph.source_end) : (col += 1) {
             const clip = clipToSurface(
@@ -512,14 +540,12 @@ const Device = struct {
                 self.size,
             ) orelse continue;
             setScissor(clip, self.size);
-            const cursor_block = cursor.visible and cursor.shape == .block and
-                cursor.row == row and cursor.col == col;
             try self.quad(
                 rect.x,
                 rect.y,
                 rect.width,
                 rect.height,
-                glyphColor(cells[col], cursor, cursor_block),
+                glyphColor(cells[col], work.cursor, cursorBlockCovers(work, row, col)),
                 cached.name,
             );
         }
@@ -532,6 +558,7 @@ const Device = struct {
         geometry: terminal.LineGeometry,
     ) Error!void {
         for (cells, 0..) |cell, col_usize| {
+            if (cell.sizing.x != 0 or cell.sizing.y != 0) continue;
             if (!cell.strikethrough and !cell.underline) continue;
             const col: u16 = @intCast(col_usize);
             const decorations = self.fonts.decorationMetrics(cellFontKey(cell)) orelse
@@ -541,6 +568,7 @@ const Device = struct {
                 col,
                 geometry,
                 cell.baseline,
+                cell.sizing,
                 decorations.strike_y,
                 decorations.strike_height,
                 .single,
@@ -551,6 +579,7 @@ const Device = struct {
                 col,
                 geometry,
                 cell.baseline,
+                cell.sizing,
                 decorations.underline_y,
                 decorations.underline_height,
                 cell.underline_style,
@@ -565,13 +594,15 @@ const Device = struct {
         col: u16,
         geometry: terminal.LineGeometry,
         baseline: terminal.CellBaseline,
+        sizing: terminal.TextSizing,
         y: u16,
         height: u16,
         style: terminal.UnderlineStyle,
         color: terminal.Rgb,
     ) Error!void {
         const clip = clipToSurface(
-            planCell(row, col, geometry, self.metrics) orelse return error.InvalidSubmission,
+            clusterCellRect(row, col, geometry, sizing, self.metrics) orelse
+                return error.InvalidSubmission,
             self.size,
         ) orelse return;
         c.glEnable(c.GL_SCISSOR_TEST);
@@ -580,29 +611,30 @@ const Device = struct {
         const base = PixelRect{
             .x = @as(i32, col) * self.metrics.width_px,
             .y = y,
-            .width = self.metrics.width_px,
+            .width = std.math.cast(u16, @as(u32, self.metrics.width_px) * sizing.width) orelse
+                return error.InvalidSubmission,
             .height = height,
         };
         switch (style) {
             .none => {},
-            .single => try self.drawDecorationRect(row, col, geometry, baseline, base, color),
+            .single => try self.drawDecorationRect(row, col, geometry, baseline, sizing, base, color),
             .double => {
                 const upper_y = y -| (height + 1);
                 var upper = base;
                 upper.y = upper_y;
-                try self.drawDecorationRect(row, col, geometry, baseline, upper, color);
-                try self.drawDecorationRect(row, col, geometry, baseline, base, color);
+                try self.drawDecorationRect(row, col, geometry, baseline, sizing, upper, color);
+                try self.drawDecorationRect(row, col, geometry, baseline, sizing, base, color);
             },
             .curly, .dotted, .dashed => {
                 const unit = @max(@as(u16, 1), height);
                 var x: u16 = 0;
-                while (x < self.metrics.width_px) : (x += 1) {
+                while (x < base.width) : (x += 1) {
                     const rise = decorationRise(style, x, unit) orelse continue;
                     var segment = base;
                     segment.x += x;
                     segment.width = 1;
                     segment.y -|= @min(segment.y, rise);
-                    try self.drawDecorationRect(row, col, geometry, baseline, segment, color);
+                    try self.drawDecorationRect(row, col, geometry, baseline, sizing, segment, color);
                 }
             },
         }
@@ -614,10 +646,13 @@ const Device = struct {
         col: u16,
         geometry: terminal.LineGeometry,
         baseline: terminal.CellBaseline,
+        sizing: terminal.TextSizing,
         base: PixelRect,
         color: terminal.Rgb,
     ) Error!void {
-        const rect = planContent(row, col, geometry, baseline, self.metrics, base) orelse
+        const sized = planTextSizing(col, sizing, self.metrics, base) orelse
+            return error.InvalidSubmission;
+        const rect = planContent(row, col, geometry, baseline, self.metrics, sized) orelse
             return error.InvalidSubmission;
         try self.quad(rect.x, rect.y, rect.width, rect.height, color, self.white);
     }
@@ -625,35 +660,52 @@ const Device = struct {
     fn drawCursor(self: *Device, work: Submission) Error!void {
         if (!work.cursor.visible or work.cursor.shape == .block) return;
         std.debug.assert(work.cursor.row < work.rows and work.cursor.col < work.cols);
+        const cursor_cell = work.cells[@as(usize, work.cursor.row) * work.cols + work.cursor.col];
+        const anchor_row = work.cursor.row -| cursor_cell.sizing.y;
+        const anchor_col = work.cursor.col -| cursor_cell.sizing.x;
         const width: u16 = switch (work.cursor.shape) {
             .bar => @max(1, self.metrics.width_px / 8),
-            else => self.metrics.width_px,
+            else => std.math.cast(
+                u16,
+                @as(u32, self.metrics.width_px) * cursor_cell.sizing.width,
+            ) orelse return error.InvalidSubmission,
         };
         const height: u16 = switch (work.cursor.shape) {
             .underline => @max(1, self.metrics.height_px / 8),
             .none => return,
-            else => self.metrics.height_px,
+            else => std.math.cast(
+                u16,
+                @as(u32, self.metrics.height_px) * cursor_cell.sizing.height,
+            ) orelse return error.InvalidSubmission,
         };
-        const y_offset: u16 = if (work.cursor.shape == .underline) self.metrics.height_px - height else 0;
-        const geometry = work.row_geometry[work.cursor.row];
+        const cluster_height = @as(u32, self.metrics.height_px) * cursor_cell.sizing.height;
+        const y_offset: u16 = if (work.cursor.shape == .underline)
+            std.math.cast(u16, cluster_height - height) orelse return error.InvalidSubmission
+        else
+            0;
+        const geometry = work.row_geometry[anchor_row];
         const rect = planContent(
-            work.cursor.row,
-            work.cursor.col,
+            anchor_row,
+            anchor_col,
             geometry,
             .normal,
             self.metrics,
             .{
-                .x = @as(i32, work.cursor.col) * self.metrics.width_px,
+                .x = @as(i32, anchor_col) * self.metrics.width_px,
                 .y = y_offset,
                 .width = width,
                 .height = height,
             },
         ) orelse return error.InvalidSubmission;
-        const clip = clipToSurface(
-            planCell(work.cursor.row, work.cursor.col, geometry, self.metrics) orelse
-                return error.InvalidSubmission,
-            self.size,
-        ) orelse return;
+        var cluster = planCell(anchor_row, anchor_col, geometry, self.metrics) orelse
+            return error.InvalidSubmission;
+        const cluster_width = @as(u64, cluster.width) * cursor_cell.sizing.width;
+        const cluster_height_u64 = @as(u64, cluster.height) * cursor_cell.sizing.height;
+        if (cluster_width > std.math.maxInt(u32) or cluster_height_u64 > std.math.maxInt(u32))
+            return error.InvalidSubmission;
+        cluster.width = @intCast(cluster_width);
+        cluster.height = @intCast(cluster_height_u64);
+        const clip = clipToSurface(cluster, self.size) orelse return;
         c.glEnable(c.GL_SCISSOR_TEST);
         defer c.glDisable(c.GL_SCISSOR_TEST);
         setScissor(clip, self.size);
@@ -1167,6 +1219,68 @@ fn planCell(
     };
 }
 
+fn clusterCellRect(
+    row: u16,
+    col: u16,
+    geometry: terminal.LineGeometry,
+    sizing: terminal.TextSizing,
+    metrics: text.CellMetrics,
+) ?PixelRect {
+    var rect = planCell(row, col, geometry, metrics) orelse return null;
+    const width = @as(u64, rect.width) * sizing.width;
+    const height = @as(u64, rect.height) * sizing.height;
+    if (width > std.math.maxInt(u32) or height > std.math.maxInt(u32)) return null;
+    rect.width = @intCast(width);
+    rect.height = @intCast(height);
+    return rect;
+}
+
+fn planTextSizing(
+    anchor_col: u16,
+    sizing: terminal.TextSizing,
+    metrics: text.CellMetrics,
+    base: PixelRect,
+) ?PixelRect {
+    std.debug.assert(sizing.width > 0 and sizing.height > 0);
+    std.debug.assert(sizing.x == 0 and sizing.y == 0);
+    const fractional = sizing.subscale_n > 0 and sizing.subscale_d > 0 and
+        sizing.subscale_n < sizing.subscale_d;
+    const numerator: u32 = @as(u32, sizing.height) *
+        (if (fractional) sizing.subscale_n else 1);
+    const denominator: u32 = if (fractional) sizing.subscale_d else 1;
+    const block_width = @as(u64, sizing.width) * metrics.width_px;
+    const block_height = @as(u64, sizing.height) * metrics.height_px;
+    const area_width = block_width * numerator / (@as(u64, sizing.height) * denominator);
+    const area_height = block_height * numerator / (@as(u64, sizing.height) * denominator);
+    const x_offset: u64 = switch (sizing.horizontal_align) {
+        1 => block_width - area_width,
+        2 => (block_width - area_width) / 2,
+        else => 0,
+    };
+    const y_offset: u64 = switch (sizing.vertical_align) {
+        1 => block_height - area_height,
+        2 => (block_height - area_height) / 2,
+        else => 0,
+    };
+    const anchor_x = @as(i64, anchor_col) * metrics.width_px;
+    const x = anchor_x + @divFloor((@as(i64, base.x) - anchor_x) * numerator, denominator) +
+        @as(i64, @intCast(x_offset));
+    const y = @divFloor(@as(i64, base.y) * numerator, denominator) +
+        @as(i64, @intCast(y_offset));
+    const width = @as(u64, base.width) * numerator / denominator;
+    const height = @as(u64, base.height) * numerator / denominator;
+    if (x < std.math.minInt(i32) or x > std.math.maxInt(i32) or
+        y < std.math.minInt(i32) or y > std.math.maxInt(i32) or
+        width > std.math.maxInt(u32) or height > std.math.maxInt(u32))
+        return null;
+    return .{
+        .x = @intCast(x),
+        .y = @intCast(y),
+        .width = @intCast(width),
+        .height = @intCast(height),
+    };
+}
+
 fn planContent(
     row: u16,
     anchor_col: u16,
@@ -1244,6 +1358,17 @@ fn setScissor(rect: PixelRect, size: PixelSize) void {
 
 fn glyphPixelX(run_start: u16, cell_width: u16, raster_left: i16, shaped_x_26_6: i32) i32 {
     return @as(i32, run_start) * cell_width + raster_left + @divTrunc(shaped_x_26_6, 64);
+}
+
+fn cursorBlockCovers(work: Submission, row: u16, col: u16) bool {
+    if (!work.cursor.visible or work.cursor.shape != .block or
+        row >= work.rows or col >= work.cols or
+        work.cursor.row >= work.rows or work.cursor.col >= work.cols)
+        return false;
+    const candidate = work.cells[@as(usize, row) * work.cols + col];
+    const cursor_cell = work.cells[@as(usize, work.cursor.row) * work.cols + work.cursor.col];
+    return row -| candidate.sizing.y == work.cursor.row -| cursor_cell.sizing.y and
+        col -| candidate.sizing.x == work.cursor.col -| cursor_cell.sizing.x;
 }
 
 fn cellFill(cell: terminal.Cell, cursor: terminal.Cursor, cursor_block: bool) terminal.Rgb {
@@ -1636,6 +1761,91 @@ test "cursor and decoration rectangles share geometry and baseline transforms" {
         PixelRect{ .x = 18, .y = 26, .width = 10, .height = 2 },
         planContent(0, 1, .double_height_top, .lowered, metrics, underline).?,
     );
+}
+
+test "OSC 66 draw planning scales and aligns within the exact cell block" {
+    const metrics = text.CellMetrics{ .width_px = 8, .height_px = 16, .baseline_px = 12 };
+    const base = PixelRect{ .x = 0, .y = 4, .width = 8, .height = 8 };
+    try std.testing.expectEqual(
+        PixelRect{ .x = 0, .y = 8, .width = 16, .height = 16 },
+        planTextSizing(0, .{ .width = 4, .height = 2 }, metrics, base).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 26, .y = 8, .width = 16, .height = 16 },
+        planTextSizing(
+            3,
+            .{ .width = 4, .height = 2 },
+            metrics,
+            .{ .x = 25, .y = 4, .width = 8, .height = 8 },
+        ).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 16, .y = 12, .width = 8, .height = 8 },
+        planTextSizing(0, .{
+            .width = 4,
+            .height = 2,
+            .subscale_n = 1,
+            .subscale_d = 2,
+            .vertical_align = 2,
+            .horizontal_align = 1,
+        }, metrics, base).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 8, .y = 16, .width = 32, .height = 32 },
+        clusterCellRect(1, 1, .single_width, .{ .width = 4, .height = 2 }, metrics).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 24, .y = 16, .width = 8, .height = 16 },
+        planCell(1, 3, .single_width, metrics).?,
+    );
+
+    var cells: [8]terminal.Cell = @splat(testCell('x'));
+    for (&cells, 0..) |*cell, index| {
+        cell.sizing = .{
+            .width = 4,
+            .height = 2,
+            .x = @intCast(index % 4),
+            .y = @intCast(index / 4),
+        };
+    }
+    var cursor = testCursor();
+    cursor.visible = true;
+    cursor.shape = .block;
+    cursor.row = 1;
+    cursor.col = 2;
+    const geometry = [_]terminal.LineGeometry{ .single_width, .single_width };
+    const work = Submission{
+        .generation = 1,
+        .rows = 2,
+        .cols = 4,
+        .cells = &cells,
+        .row_geometry = &geometry,
+        .cursor = cursor,
+        .size = .{ .width = 32, .height = 32 },
+    };
+    try std.testing.expect(cursorBlockCovers(work, 0, 0));
+    try std.testing.expect(cursorBlockCovers(work, 1, 3));
+    const native_metrics = text.CellMetrics{ .width_px = 8, .height_px = 20, .baseline_px = 16 };
+    const raster = PixelRect{ .x = 0, .y = 3, .width = 8, .height = 13 };
+    const scale_two = planTextSizing(0, .{ .width = 2, .height = 2 }, native_metrics, raster).?;
+    const scale_two_clip = clusterCellRect(
+        0,
+        0,
+        .single_width,
+        .{ .width = 2, .height = 2 },
+        native_metrics,
+    ).?;
+    try std.testing.expectEqual(scale_two, intersectRect(scale_two, scale_two_clip).?);
+    const scale_three = planTextSizing(0, .{ .width = 3, .height = 3 }, native_metrics, raster).?;
+    const scale_three_clip = clusterCellRect(
+        0,
+        0,
+        .single_width,
+        .{ .width = 3, .height = 3 },
+        native_metrics,
+    ).?;
+    try std.testing.expectEqual(PixelRect{ .x = 0, .y = 9, .width = 24, .height = 39 }, scale_three);
+    try std.testing.expectEqual(scale_three, intersectRect(scale_three, scale_three_clip).?);
 }
 
 test "decoration patterns are bounded and deterministic" {

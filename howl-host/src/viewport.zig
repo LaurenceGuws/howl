@@ -116,7 +116,7 @@ pub const Drag = struct {
         if (history_count == 0) return 0;
         const travel = self.track.height - self.thumb_height;
         if (travel == 0) return 0;
-        const requested_top = y - @as(i64, self.track.y) - self.anchor;
+        const requested_top = (y -| @as(i64, self.track.y)) -| self.anchor;
         const top: u64 = @intCast(std.math.clamp(requested_top, 0, @as(i64, travel)));
         const distance_from_top = @min(
             @as(u64, history_count),

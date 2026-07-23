@@ -133,6 +133,8 @@ pub const PreparedRun = struct {
     baseline: terminal.CellBaseline,
     /// Preserves DEC row presentation for later render draw preparation.
     geometry: terminal.LineGeometry,
+    /// Preserves ordinary or Kitty multicell sizing for draw preparation.
+    sizing: terminal.TextSizing,
     /// Stores native ownership, one inline generated glyph, or no glyph.
     glyphs: PreparedGlyphs,
 
@@ -269,8 +271,12 @@ pub const RasterError = error{OutOfMemory} ||
 
 const RunKind = union(enum) {
     none: terminal.CellBaseline,
-    native: struct { font: FontKey, baseline: terminal.CellBaseline },
-    generated,
+    native: struct {
+        font: FontKey,
+        baseline: terminal.CellBaseline,
+        sizing: terminal.TextSizing,
+    },
+    generated: terminal.TextSizing,
 };
 
 const Bounds = struct { first: u16, end: u16, kind: RunKind };
@@ -359,10 +365,11 @@ fn validateInput(input: RowInput, cell: u16) PrepareError!void {
 }
 
 fn kindAt(cell: terminal.Cell) RunKind {
+    if (cell.sizing.x != 0 or cell.sizing.y != 0) return .{ .none = cell.baseline };
     if (cell.invisible or cell.codepoint == 0) return .{ .none = cell.baseline };
     if (features.generated_glyphs and cell.combining_len == 0 and
         generated.classify(cell.codepoint) != null)
-        return .generated;
+        return .{ .generated = cell.sizing };
     if (features.native_text) return .{ .native = .{
         .font = .{
             .slot = cell.font,
@@ -376,6 +383,7 @@ fn kindAt(cell: terminal.Cell) RunKind {
                 .normal,
         },
         .baseline = cell.baseline,
+        .sizing = cell.sizing,
     } };
     return .{ .none = cell.baseline };
 }
@@ -386,6 +394,7 @@ fn noGlyphRun(input: RowInput, bounds: Bounds) PreparedRun {
         .end_cell = bounds.end,
         .baseline = baselineOf(bounds.kind),
         .geometry = input.geometry,
+        .sizing = .{},
         .glyphs = .none,
     };
 }
@@ -400,6 +409,7 @@ fn generatedRun(input: RowInput, bounds: Bounds) PrepareError!PreparedRun {
         .end_cell = bounds.end,
         .baseline = cell.baseline,
         .geometry = input.geometry,
+        .sizing = cell.sizing,
         .glyphs = .{ .generated = .{
             .key = .{ .generated = .{
                 .codepoint = cell.codepoint,
@@ -492,6 +502,10 @@ fn nativeRun(
         .end_cell = bounds.end,
         .baseline = baselineOf(bounds.kind),
         .geometry = input.geometry,
+        .sizing = switch (bounds.kind) {
+            .native => |facts| facts.sizing,
+            else => .{},
+        },
         .glyphs = .{ .native = .{ .allocator = allocator, .values = positioned } },
     };
 }

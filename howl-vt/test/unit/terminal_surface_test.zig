@@ -250,6 +250,24 @@ test "visual view accumulates sparse cells and derives cursor overlay independen
     try std.testing.expect(metadata_only.dirty == .none);
 }
 
+test "OSC 66 dirtiness and selection expand across the complete cluster" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x1b\\")).state_changed);
+    const created = terminal.visualView();
+    try expectVisualDirtyRow(created, 0, 0, 3);
+    try expectVisualDirtyRow(created, 1, 0, 3);
+    try std.testing.expect(terminal.ackVisual(created.dirty_token));
+
+    terminal.startSelection(0, 2);
+    terminal.updateSelection(0, 3);
+    const selected = terminal.visualView();
+    try expectVisualDirtyRow(selected, 0, 0, 3);
+    try expectVisualDirtyRow(selected, 1, 0, 3);
+}
+
 test "semantic sequence spans visual and host consequence mutation truth" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

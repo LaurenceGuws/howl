@@ -300,6 +300,12 @@ pub const Screen = struct {
     ) std.mem.Allocator.Error!Screen {
         var lines = try self.collectLogicalSnapshot(allocator);
         defer lines.deinit(allocator);
+        for (lines.logical_lines.items) |*line| {
+            for (line.cells.items) |*cell| {
+                if (cell.width != 1 or cell.height != 1 or cell.x != 0 or cell.y != 0)
+                    cell.* = blank_cell;
+            }
+        }
 
         var reflow = try reflowLogicalLines(allocator, lines, cols);
         defer reflow.deinit(allocator);
@@ -1582,6 +1588,12 @@ pub const Screen = struct {
         const cells = self.cells orelse return changed;
         if (attrs.len == 0) return changed;
         const bounds = self.rectBounds(area) orelse return changed;
+        changed = self.clearClustersIntersecting(
+            bounds.top,
+            bounds.bottom + 1,
+            bounds.left,
+            bounds.right + 1,
+        ) or changed;
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
             const row_start = self.rowStart(row);
@@ -1620,6 +1632,12 @@ pub const Screen = struct {
         var changed = self.cancelPendingWrap();
         const cells = self.cells orelse return changed;
         const bounds = self.rectBounds(area) orelse return changed;
+        changed = self.clearClustersIntersecting(
+            bounds.top,
+            bounds.bottom + 1,
+            bounds.left,
+            bounds.right + 1,
+        ) or changed;
         const fill = Cell{ .codepoint = codepoint, .attrs = self.current_attrs };
         var row = bounds.top;
         while (row <= bounds.bottom) : (row += 1) {
@@ -1653,6 +1671,22 @@ pub const Screen = struct {
         const copy_height = @min(height, origin.bottom - dest_top + 1);
         const copy_width = @min(width, origin.right - dest_left + 1);
         if (copy_height == 0 or copy_width == 0) return changed;
+        var source_row = source.top;
+        while (source_row < source.top + copy_height) : (source_row += 1) {
+            var source_col = source.left;
+            while (source_col < source.left + copy_width) : (source_col += 1) {
+                const source_cell = cells[@intCast(self.rowStart(source_row) + source_col)];
+                if (source_cell.width != 1 or source_cell.height != 1 or
+                    source_cell.x != 0 or source_cell.y != 0)
+                    return changed;
+            }
+        }
+        changed = self.clearClustersIntersecting(
+            dest_top,
+            dest_top + copy_height,
+            dest_left,
+            dest_left + copy_width,
+        ) or changed;
 
         var copied_rows: u16 = 0;
         while (copied_rows < copy_height) : (copied_rows += 1) {
@@ -1743,12 +1777,18 @@ pub const Screen = struct {
     /// Insert at least one erase cell at the cursor within the right boundary.
     /// Returns exact cell, continuation, or pending-wrap mutation.
     pub fn insertChars(self: *Screen, count: u16) bool {
-        const changed = self.cancelPendingWrap();
+        var changed = self.cancelPendingWrap();
         if (self.rows == 0 or self.cols == 0) return changed;
         if (self.cursor.col >= self.cols) return changed;
         if (!self.cursorWithinHorizontalMargins()) return changed;
 
         const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
+        changed = self.clearClustersIntersecting(
+            self.cursor.row,
+            self.cursor.row + 1,
+            self.cursor.col,
+            self.rightBoundary() + 1,
+        ) or changed;
         const row = self.rowCells(self.cursor.row) orelse return changed;
         const src_col = screenColCount(self.cursor.col);
         const dst_col = src_col + screenColCount(amount);
@@ -1785,12 +1825,18 @@ pub const Screen = struct {
     /// Delete at least one cell at the cursor within the right boundary.
     /// Returns exact cell, continuation, or pending-wrap mutation.
     pub fn deleteChars(self: *Screen, count: u16) bool {
-        const changed = self.cancelPendingWrap();
+        var changed = self.cancelPendingWrap();
         if (self.rows == 0 or self.cols == 0) return changed;
         if (self.cursor.col >= self.cols) return changed;
         if (!self.cursorWithinHorizontalMargins()) return changed;
 
         const amount = @min(@max(count, 1), self.rightBoundary() - self.cursor.col + 1);
+        changed = self.clearClustersIntersecting(
+            self.cursor.row,
+            self.cursor.row + 1,
+            self.cursor.col,
+            self.rightBoundary() + 1,
+        ) or changed;
         const row = self.rowCells(self.cursor.row) orelse return changed;
         const dst_col = screenColCount(self.cursor.col);
         const src_col = @min(dst_col + screenColCount(amount), screenColCount(self.rightBoundary() + 1));
@@ -1832,6 +1878,7 @@ pub const Screen = struct {
         const right = if (self.left_right_margin_mode) @min(self.right_margin, line_right) else line_right;
         if (self.cursor.col > right) return false;
         const amount = @min(@max(count, 1), right - self.cursor.col + 1);
+        var changed = self.clearClustersIntersecting(row, row + 1, self.cursor.col, right + 1);
         const amount_cols = screenColCount(amount);
         const cells = self.rowCells(row) orelse return false;
         const cursor_col = screenColCount(self.cursor.col);
@@ -1839,7 +1886,6 @@ pub const Screen = struct {
         const end = screenColCount(right + 1);
         const move_len = end - dst_col;
         const erase = self.eraseCell();
-        var changed = false;
         var col = cursor_col;
         while (col < end) : (col += 1) {
             const replacement = if (col < dst_col) erase else cells[@intCast(col - amount_cols)];
@@ -1872,6 +1918,7 @@ pub const Screen = struct {
         const right = if (self.left_right_margin_mode) @min(self.right_margin, line_right) else line_right;
         if (self.cursor.col > right) return false;
         const amount = @min(@max(count, 1), right - self.cursor.col + 1);
+        var changed = self.clearClustersIntersecting(row, row + 1, self.cursor.col, right + 1);
         const amount_cols = screenColCount(amount);
         const cells = self.rowCells(row) orelse return false;
         const cursor_col = screenColCount(self.cursor.col);
@@ -1880,7 +1927,6 @@ pub const Screen = struct {
         const move_len = end - src_col;
         const tail_start = end - amount_cols;
         const erase = self.eraseCell();
-        var changed = false;
         var col = cursor_col;
         while (col < end) : (col += 1) {
             const replacement = if (col < tail_start) cells[@intCast(col + amount_cols)] else erase;
@@ -1912,6 +1958,7 @@ pub const Screen = struct {
     fn shiftRowLeft(self: *Screen, row: u16, count: u16, left: u16, right: u16) bool {
         if (left > right or right >= self.cols) return false;
 
+        var changed = self.clearClustersIntersecting(row, row + 1, left, right + 1);
         const width = right - left + 1;
         const amount = @min(@max(count, 1), width);
         const cells = self.rowCells(row) orelse return false;
@@ -1919,7 +1966,6 @@ pub const Screen = struct {
         const move_len = screenColCount(width - amount);
         const end = left_idx + screenColCount(width);
         const erase = self.eraseCell();
-        var changed = false;
         var col = left_idx;
         while (col < end) : (col += 1) {
             const replacement = if (col < left_idx + move_len)
@@ -1953,6 +1999,7 @@ pub const Screen = struct {
     fn shiftRowRight(self: *Screen, row: u16, count: u16, left: u16, right: u16) bool {
         if (left > right or right >= self.cols) return false;
 
+        var changed = self.clearClustersIntersecting(row, row + 1, left, right + 1);
         const width = right - left + 1;
         const amount = @min(@max(count, 1), width);
         const cells = self.rowCells(row) orelse return false;
@@ -1961,7 +2008,6 @@ pub const Screen = struct {
         const amount_cols = screenColCount(amount);
         const end = left_idx + screenColCount(width);
         const erase = self.eraseCell();
-        var changed = false;
         var col = left_idx;
         while (col < end) : (col += 1) {
             const replacement = if (col < left_idx + amount_cols) erase else cells[@intCast(col - amount_cols)];
@@ -2017,6 +2063,121 @@ pub const Screen = struct {
         return true;
     }
 
+    // Applies one validated OSC 66 payload as fixed bounded cell clusters.
+    fn writeSizedText(self: *Screen, payload: []const u8) bool {
+        const parsed = parseTextSize(payload) orelse return false;
+        if (!validateSizedText(parsed)) return false;
+        var changed = false;
+        var iterator = std.unicode.Utf8View.initUnchecked(parsed.text).iterator();
+        if (parsed.width != 0) {
+            var scalars: [4]u21 = undefined;
+            var count: u8 = 0;
+            while (iterator.nextCodepoint()) |cp| {
+                if (isIgnoredSizedTextCodepoint(cp)) continue;
+                scalars[count] = @intCast(cp);
+                count += 1;
+            }
+            if (count != 0) changed = self.writeSizedCluster(parsed, scalars[0..count], parsed.width);
+            return changed;
+        }
+
+        var scalars: [4]u21 = undefined;
+        var count: u8 = 0;
+        while (iterator.nextCodepoint()) |cp| {
+            if (isIgnoredSizedTextCodepoint(cp)) continue;
+            if (count != 0 and !isTrailingCombiningCodepoint(cp)) {
+                changed = self.writeSizedCluster(parsed, scalars[0..count], 1) or changed;
+                count = 0;
+            }
+            scalars[count] = @intCast(cp);
+            count += 1;
+        }
+        if (count != 0) changed = self.writeSizedCluster(parsed, scalars[0..count], 1) or changed;
+        return changed;
+    }
+
+    fn writeSizedCluster(
+        self: *Screen,
+        parsed: ParsedTextSize,
+        scalars: []const u21,
+        width_cells: u8,
+    ) bool {
+        std.debug.assert(scalars.len > 0 and scalars.len <= 4);
+        const physical_width = @as(u16, parsed.scale) * width_cells;
+        const height: u16 = parsed.scale;
+        const left = self.leftBoundary();
+        const right = self.rightBoundary();
+        const available_width = right - left + 1;
+        const available_height = self.scrollBottom() - self.scroll_top + 1;
+        if (physical_width > available_width or height > available_height) return false;
+
+        var changed = self.cancelPendingWrap();
+        if (self.cursor.col + physical_width - 1 > right) {
+            if (self.auto_wrap) {
+                self.setRowWrapped(self.cursor.row, true);
+                self.lineFeed();
+                self.cursor.setColByClient(left);
+                changed = true;
+            } else {
+                self.cursor.setColByClient(right - physical_width + 1);
+                changed = true;
+            }
+        }
+        const bottom = self.scrollBottom();
+        if (self.cursor.row + height - 1 > bottom) {
+            const amount = self.cursor.row + height - 1 - bottom;
+            changed = self.scrollUpRegion(self.scroll_top, bottom, amount) or changed;
+            self.cursor.setPositionByClient(self.cursor.row - amount, self.cursor.col);
+        }
+
+        const cells = self.cells orelse return changed;
+        const top = self.cursor.row;
+        const start_col = self.cursor.col;
+        var row = top;
+        while (row < top + height) : (row += 1) {
+            var col = start_col;
+            while (col < start_col + physical_width) : (col += 1)
+                changed = self.clearClusterAt(row, col, false) or changed;
+        }
+
+        var cell = Cell{
+            .codepoint = scalars[0],
+            .combining_len = @intCast(scalars.len - 1),
+            .width = @intCast(physical_width),
+            .height = parsed.scale,
+            .subscale_n = parsed.subscale_n,
+            .subscale_d = parsed.subscale_d,
+            .vertical_align = parsed.vertical_align,
+            .horizontal_align = parsed.horizontal_align,
+            .attrs = self.current_attrs,
+        };
+        for (scalars[1..], 0..) |cp, index| cell.combining[index] = cp;
+        row = top;
+        while (row < top + height) : (row += 1) {
+            cell.y = @intCast(row - top);
+            var col = start_col;
+            while (col < start_col + physical_width) : (col += 1) {
+                cell.x = @intCast(col - start_col);
+                const index = self.rowStart(row) + col;
+                if (!std.meta.eql(cells[@intCast(index)], cell)) {
+                    cells[@intCast(index)] = cell;
+                    changed = true;
+                }
+            }
+            self.markDirtyCols(row, start_col, start_col + physical_width - 1);
+        }
+        self.last_graphic = null;
+        if (start_col + physical_width <= right) {
+            self.cursor.setColByClient(start_col + physical_width);
+        } else if (self.auto_wrap) {
+            self.cursor.setColByClient(right);
+            self.wrap_pending = true;
+        } else {
+            self.cursor.setColByClient(right);
+        }
+        return changed;
+    }
+
     /// Write one codepoint with combining, insertion, wrapping, dirty, and cursor semantics.
     fn writeCell(self: *Screen, cp: u21) void {
         if (self.cols == 0 or self.rows == 0) return;
@@ -2031,12 +2192,32 @@ pub const Screen = struct {
                 self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
             }
         }
+        if (self.cells) |cells| {
+            const target = cells[@intCast(self.rowStart(self.cursor.row) + self.cursor.col)];
+            if (target.y > 0 and target.width > 0 and target.x < target.width) {
+                const after = self.cursor.col -| target.x + target.width;
+                if (after <= right) {
+                    self.cursor.setColByClient(after);
+                } else {
+                    self.lineFeed();
+                    self.cursor.setColByClient(if (self.left_right_margin_mode) self.left_margin else 0);
+                }
+            }
+        }
         if (self.insert_mode) {
             const inserted = self.insertChars(1);
             std.debug.assert(inserted or !self.wrap_pending);
         }
         if (self.cells) |cells| {
             const start = self.rowStart(self.cursor.row);
+            const target = cells[@intCast(start + @as(u32, self.cursor.col))];
+            if (target.width != 1 or target.height != 1 or target.x != 0 or target.y != 0) {
+                std.debug.assert(self.clearClusterAt(
+                    self.cursor.row,
+                    self.cursor.col,
+                    self.cursor.col != self.clusterAnchorCol(self.cursor.row, self.cursor.col),
+                ));
+            }
             self.markDirtyCols(self.cursor.row, self.cursor.col, self.cursor.col);
             cells[@intCast(start + @as(u32, self.cursor.col))] = .{
                 .codepoint = cp,
@@ -2056,20 +2237,31 @@ pub const Screen = struct {
 
         const pos = self.previousLeadCellPos() orelse return false;
         const cells = self.cells orelse return false;
-        const idx = self.rowStart(pos.row) + @as(u32, pos.col);
+        const observed = cells[@intCast(self.rowStart(pos.row) + pos.col)];
+        const anchor_row = pos.row -| observed.y;
+        const anchor_col = pos.col -| observed.x;
+        const idx = self.rowStart(anchor_row) + @as(u32, anchor_col);
         const lead_cell = &cells[@intCast(idx)];
         if (lead_cell.codepoint == 0) return false;
         if (lead_cell.combining_len >= lead_cell.combining.len) return true;
 
-        lead_cell.combining[lead_cell.combining_len] = cp;
-        lead_cell.combining_len += 1;
+        const combining_index = lead_cell.combining_len;
+        var row = anchor_row;
+        while (row < @min(self.rows, anchor_row + lead_cell.height)) : (row += 1) {
+            var col = anchor_col;
+            while (col < @min(self.cols, anchor_col + lead_cell.width)) : (col += 1) {
+                const member = &cells[@intCast(self.rowStart(row) + col)];
+                member.combining[combining_index] = cp;
+                member.combining_len = combining_index + 1;
+            }
+            self.markDirtyCols(row, anchor_col, anchor_col + lead_cell.width - 1);
+        }
         if (self.last_graphic) |*graphic| {
             if (graphic.combining_len < graphic.combining.len) {
                 graphic.combining[graphic.combining_len] = cp;
                 graphic.combining_len += 1;
             }
         }
-        self.markDirtyCols(pos.row, pos.col, pos.col);
         return true;
     }
 
@@ -2318,6 +2510,7 @@ pub const Screen = struct {
     fn scrollUp(self: *Screen) void {
         const cells = self.cells orelse return;
         if (self.rows == 0 or self.cols == 0) return;
+        if (self.clearClustersIntersecting(0, 1, 0, self.cols)) self.markDirtyRow(0);
         self.markDirtyRow(self.rows - 1);
         const row_len = @as(u32, self.cols);
         self.storeHistoryRow(0);
@@ -2445,6 +2638,8 @@ pub const Screen = struct {
         const region_len: u16 = bounded_bottom - top + 1;
         const amount = @min(count, region_len);
         if (amount == 0) return changed;
+        changed = self.clearClustersIntersecting(top, top + amount, 0, self.cols) or changed;
+        changed = self.clearClustersIntersecting(bounded_bottom, bounded_bottom + 1, 0, self.cols) or changed;
 
         if (top == 0 and bounded_bottom == self.rows - 1) {
             var remaining = amount;
@@ -2454,6 +2649,9 @@ pub const Screen = struct {
 
         const left = if (self.left_right_margin_mode) self.left_margin else 0;
         const right = if (self.left_right_margin_mode) self.right_margin else self.cols -| 1;
+        if (left != 0 or right + 1 != self.cols) {
+            changed = self.clearClustersIntersecting(top, bounded_bottom + 1, left, right + 1) or changed;
+        }
 
         var dst = top;
         while (dst + amount <= bounded_bottom) : (dst += 1) {
@@ -2462,6 +2660,7 @@ pub const Screen = struct {
 
         var clear_row = bounded_bottom - amount + 1;
         while (clear_row <= bounded_bottom) : (clear_row += 1) {
+            changed = self.clearClustersIntersecting(clear_row, clear_row + 1, left, right + 1) or changed;
             changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
         }
         return changed;
@@ -2476,9 +2675,19 @@ pub const Screen = struct {
         const region_len: u16 = bounded_bottom - top + 1;
         const amount = @min(count, region_len);
         if (amount == 0) return changed;
+        changed = self.clearClustersIntersecting(
+            bounded_bottom - amount + 1,
+            bounded_bottom + 1,
+            0,
+            self.cols,
+        ) or changed;
+        changed = self.clearClustersIntersecting(top, top + 1, 0, self.cols) or changed;
 
         const left = if (self.left_right_margin_mode) self.left_margin else 0;
         const right = if (self.left_right_margin_mode) self.right_margin else self.cols -| 1;
+        if (left != 0 or right + 1 != self.cols) {
+            changed = self.clearClustersIntersecting(top, bounded_bottom + 1, left, right + 1) or changed;
+        }
 
         var dst = bounded_bottom;
         while (dst >= top + amount) {
@@ -2489,6 +2698,7 @@ pub const Screen = struct {
 
         var clear_row = top;
         while (clear_row < top + amount) : (clear_row += 1) {
+            changed = self.clearClustersIntersecting(clear_row, clear_row + 1, left, right + 1) or changed;
             changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
         }
         return changed;
@@ -2783,6 +2993,10 @@ pub const Screen = struct {
         while (col < end_col_exclusive) : (col += 1) {
             const cell = &cells[@intCast(start + @as(u32, col))];
             if (cell.attrs.protected == .iso or (selective and cell.attrs.protected == .dec)) continue;
+            if (cell.width != 1 or cell.height != 1 or cell.x != 0 or cell.y != 0) {
+                changed = self.clearClusterAt(row, col, false) or changed;
+                continue;
+            }
             if (std.meta.eql(cell.*, erase_cell)) continue;
             cell.* = erase_cell;
             self.markDirtyCols(row, col, col);
@@ -2824,6 +3038,76 @@ pub const Screen = struct {
         var attrs = self.current_attrs;
         attrs.protected = .none;
         return .{ .codepoint = 0, .attrs = attrs };
+    }
+
+    fn clusterAnchorCol(self: *const Screen, row: u16, col: u16) u16 {
+        const cells = self.cells orelse return col;
+        if (row >= self.rows or col >= self.cols) return col;
+        const cell = cells[@intCast(self.rowStart(row) + col)];
+        return col -| cell.x;
+    }
+
+    // Clears one complete bounded multicell cluster intersecting an in-bounds cell.
+    fn clearClusterAt(self: *Screen, row: u16, col: u16, replace_with_space: bool) bool {
+        const cells = self.cells orelse return false;
+        if (row >= self.rows or col >= self.cols) return false;
+        const observed = cells[@intCast(self.rowStart(row) + col)];
+        if (observed.width == 1 and observed.height == 1 and observed.x == 0 and observed.y == 0)
+            return false;
+        if (observed.width == 0 or observed.height == 0 or observed.x >= observed.width or
+            observed.y >= observed.height or col < observed.x or row < observed.y)
+        {
+            cells[@intCast(self.rowStart(row) + col)] = self.eraseCell();
+            self.markDirtyCols(row, col, col);
+            return true;
+        }
+        const top = row - observed.y;
+        const left = col - observed.x;
+        const bottom = @min(self.rows, top + observed.height);
+        const right = @min(self.cols, left + observed.width);
+        const replacement = if (replace_with_space) Cell{
+            .codepoint = ' ',
+            .attrs = self.current_attrs,
+        } else self.eraseCell();
+        var changed = false;
+        var y = top;
+        while (y < bottom) : (y += 1) {
+            var first: ?u16 = null;
+            var last: u16 = left;
+            var x = left;
+            while (x < right) : (x += 1) {
+                const candidate = &cells[@intCast(self.rowStart(y) + x)];
+                if (candidate.width != observed.width or candidate.height != observed.height or
+                    candidate.x != x - left or candidate.y != y - top)
+                    continue;
+                if (!std.meta.eql(candidate.*, replacement)) {
+                    candidate.* = replacement;
+                    if (first == null) first = x;
+                    last = x;
+                    changed = true;
+                }
+            }
+            if (first) |start| self.markDirtyCols(y, start, last);
+        }
+        return changed;
+    }
+
+    // Removes every multicell intersecting one bounded mutation rectangle.
+    fn clearClustersIntersecting(
+        self: *Screen,
+        top: u16,
+        bottom_exclusive: u16,
+        left: u16,
+        right_exclusive: u16,
+    ) bool {
+        var changed = false;
+        var row = top;
+        while (row < bottom_exclusive) : (row += 1) {
+            var col = left;
+            while (col < right_exclusive) : (col += 1)
+                changed = self.clearClusterAt(row, col, false) or changed;
+        }
+        return changed;
     }
 
     fn copyRowRange(self: *Screen, dst_row: u16, src_row: u16, start_col: u16, end_col_exclusive: u16) bool {
@@ -2880,6 +3164,29 @@ pub const Screen = struct {
         const end = @min(end_col, self.cols -| 1);
         const lo = @min(start, end);
         const hi = @max(start, end);
+        self.markDirtyColsRaw(row, lo, hi);
+        const cells = self.cells orelse return;
+        var col = lo;
+        while (true) {
+            const cell = cells[@intCast(self.rowStart(row) + col)];
+            if (!(cell.width == 1 and cell.height == 1 and cell.x == 0 and cell.y == 0) and
+                cell.width != 0 and cell.height != 0 and cell.x < cell.width and
+                cell.y < cell.height and col >= cell.x and row >= cell.y)
+            {
+                const top = row - cell.y;
+                const left = col - cell.x;
+                const bottom = @min(self.rows, top + cell.height);
+                const right = @min(self.cols, left + cell.width);
+                var cluster_row = top;
+                while (cluster_row < bottom) : (cluster_row += 1)
+                    self.markDirtyColsRaw(cluster_row, left, right - 1);
+            }
+            if (col == hi) break;
+            col += 1;
+        }
+    }
+
+    fn markDirtyColsRaw(self: *Screen, row: u16, lo: u16, hi: u16) void {
         if (self.dirty_state.rows) |*d| {
             d.start_row = @min(d.start_row, row);
             d.end_row = @max(d.end_row, row);
@@ -3242,7 +3549,7 @@ const SgrStackEntry = struct {
     selection: u16 = 0,
 };
 
-// Stores one Unicode codepoint, display width, and complete cell attributes.
+// Stores one bounded Unicode cluster, ordinary or OSC 66 placement, and complete attributes.
 const ScreenCell = struct {
     codepoint: u32,
     combining_len: u8 = 0,
@@ -3251,6 +3558,10 @@ const ScreenCell = struct {
     height: u8 = 1,
     x: u8 = 0,
     y: u8 = 0,
+    subscale_n: u4 = 0,
+    subscale_d: u4 = 0,
+    vertical_align: u2 = 0,
+    horizontal_align: u2 = 0,
     attrs: ScreenCellAttrs,
 };
 
@@ -7717,6 +8028,11 @@ const TerminalColorControlCommand = struct {
     payload: []const u8,
 };
 
+// Borrows one complete OSC 66 metadata and text payload for synchronous application.
+const TextSizeCommand = struct {
+    payload: []const u8,
+};
+
 // Parser events to canonical terminal semantics.
 
 /// Canonical parser-to-domain event consumed synchronously by terminal state owners.
@@ -7802,6 +8118,7 @@ pub const SemanticEvent = union(enum) {
     shell_mark: ItermShellMark,
     notification: struct { kind: NotificationKind, command: u16, payload: []const u8 },
     pointer_shape: []const u8,
+    text_size: TextSizeCommand,
     window_request: WindowRequest,
     color_preference_query,
     kitty_color_stack: KittyColorCommand,
@@ -9040,8 +9357,74 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
             .protocol = .kitty_5113,
             .payload = v.payload,
         } },
+        .kitty_text_size => |v| SemanticEvent{ .text_size = .{ .payload = v.payload } },
         else => null,
     };
+}
+
+const ParsedTextSize = struct {
+    text: []const u8,
+    scale: u8 = 1,
+    width: u8 = 0,
+    subscale_n: u4 = 0,
+    subscale_d: u4 = 0,
+    vertical_align: u2 = 0,
+    horizontal_align: u2 = 0,
+};
+
+fn parseTextSize(payload: []const u8) ?ParsedTextSize {
+    const separator = std.mem.indexOfScalar(u8, payload, ';') orelse return null;
+    var result = ParsedTextSize{ .text = payload[separator + 1 ..] };
+    var fields = std.mem.splitScalar(u8, payload[0..separator], ':');
+    while (fields.next()) |field| {
+        if (field.len == 0) continue;
+        if (field.len < 3 or field[1] != '=') return null;
+        const value = parseTextSizeNumber(field[2..]) orelse return null;
+        switch (field[0]) {
+            's' => result.scale = @intCast(@max(1, @min(value, 7))),
+            'w' => result.width = @intCast(@min(value, 7)),
+            'n' => result.subscale_n = @intCast(@min(value, 15)),
+            'd' => result.subscale_d = @intCast(@min(value, 15)),
+            'v' => result.vertical_align = @intCast(@min(value, 3)),
+            'h' => result.horizontal_align = @intCast(@min(value, 3)),
+            else => return null,
+        }
+    }
+    if (!std.unicode.utf8ValidateSlice(result.text)) return null;
+    return result;
+}
+
+fn parseTextSizeNumber(bytes: []const u8) ?u32 {
+    if (bytes.len == 0 or bytes.len > 10) return null;
+    var value: u64 = 0;
+    for (bytes) |byte| {
+        if (byte < '0' or byte > '9') return null;
+        value = value * 10 + byte - '0';
+        if (value > std.math.maxInt(u32)) return null;
+    }
+    return @intCast(value);
+}
+
+fn isIgnoredSizedTextCodepoint(cp: u21) bool {
+    return cp < 0x20 or (cp >= 0x7f and cp <= 0x9f);
+}
+
+// Validates the bounded current cell payload before any terminal mutation.
+fn validateSizedText(parsed: ParsedTextSize) bool {
+    var iterator = std.unicode.Utf8View.initUnchecked(parsed.text).iterator();
+    var cluster_len: u8 = 0;
+    var cluster_count: usize = 0;
+    while (iterator.nextCodepoint()) |cp| {
+        if (isIgnoredSizedTextCodepoint(cp)) continue;
+        if (parsed.width == 0 and cluster_len != 0 and !isTrailingCombiningCodepoint(cp)) {
+            cluster_count += 1;
+            cluster_len = 0;
+        }
+        if (cluster_len == 4) return false;
+        cluster_len += 1;
+    }
+    if (cluster_len != 0) cluster_count += 1;
+    return cluster_count != 0 and (parsed.width == 0 or cluster_count == 1);
 }
 
 // Parses one OSC 8 URI and its first nonempty `id=` parameter without retaining parser memory.
@@ -9266,10 +9649,10 @@ test "OSC Kitty host-policy payloads expose only retained terminal facts" {
     } }).?.file_transfer_packet;
     try std.testing.expect(transfer.protocol == .kitty_5113);
     try std.testing.expectEqualStrings("cmd=data", transfer.payload);
-    try std.testing.expect(oscProcess(.{ .kitty_text_size = .{
+    try std.testing.expectEqualStrings("s=2;Big", oscProcess(.{ .kitty_text_size = .{
         .payload = "s=2;Big",
         .term = .st,
-    } }) == null);
+    } }).?.text_size.payload);
 }
 
 // Screen banks, viewport projection, selection, and visual observation.
@@ -11611,6 +11994,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             if (!std.meta.eql(colors_before, vt.host.colors)) vt.noteSourceWideVisualChange();
             return changed;
         },
+        .text_size => |command| return vt.screen_state.active().writeSizedText(command.payload),
         .sgr_stack_push => |params| return vt.pushSgr(params),
         .sgr_stack_pop => return vt.popSgr(),
         .restore_cursor_information => |payload| return vt.restoreCursorInformation(payload),
@@ -15071,6 +15455,159 @@ test "logical output accepts the maximum copyable line" {
         error.InvalidLimit,
         terminal.copyLogicalOutput(std.testing.allocator, 1, 1, logical_output_bytes_max + 1),
     );
+}
+
+test "OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    const before = terminal.semanticSequence();
+    const parts = [_][]const u8{
+        "\x1b]66;s=2:w=2:n=1:",
+        "d=2:v=1:h=2;Hi",
+        "\x1b\\",
+    };
+    for (parts) |part| {
+        const summary = try terminal.feed(part);
+        std.debug.assert(!summary.title_changed and !summary.icon_changed);
+    }
+    try std.testing.expect(terminal.semanticSequence() > before);
+    const screen = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u16, 4), screen.cursor.col);
+    var row: u16 = 0;
+    while (row < 2) : (row += 1) {
+        var col: u16 = 0;
+        while (col < 4) : (col += 1) {
+            const cell = screen.cellInfoAt(row, col);
+            try std.testing.expectEqual(@as(u8, 4), cell.width);
+            try std.testing.expectEqual(@as(u8, 2), cell.height);
+            try std.testing.expectEqual(@as(u8, @intCast(col)), cell.x);
+            try std.testing.expectEqual(@as(u8, @intCast(row)), cell.y);
+            try std.testing.expectEqual(@as(u4, 1), cell.subscale_n);
+            try std.testing.expectEqual(@as(u4, 2), cell.subscale_d);
+            try std.testing.expectEqual(@as(u2, 1), cell.vertical_align);
+            try std.testing.expectEqual(@as(u2, 2), cell.horizontal_align);
+            try std.testing.expectEqual(@as(u32, 'H'), cell.codepoint);
+            try std.testing.expectEqual(@as(u8, 1), cell.combining_len);
+            try std.testing.expectEqual(@as(u32, 'i'), cell.combining[0]);
+        }
+    }
+
+    try std.testing.expect((try terminal.feed("\x1b[2;2HX")).state_changed);
+    try std.testing.expectEqual(@as(u32, 'H'), terminal.screen_state.activeConst().cellInfoAt(1, 1).codepoint);
+    try std.testing.expectEqual(@as(u32, 'X'), terminal.screen_state.activeConst().cellInfoAt(1, 4).codepoint);
+    try std.testing.expect((try terminal.feed("\x1b[1;2HX")).state_changed);
+    try std.testing.expectEqual(@as(u32, 'X'), terminal.screen_state.activeConst().cellInfoAt(0, 1).codepoint);
+    try std.testing.expectEqual(@as(u32, ' '), terminal.screen_state.activeConst().cellInfoAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u32, ' '), terminal.screen_state.activeConst().cellInfoAt(1, 3).codepoint);
+}
+
+test "OSC 66 malformed and overlong cell text preserve terminal state" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const sequence = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b]66;s=x;bad\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]66;w=2;abcde\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]66;s=8:w=8;A\x07")).state_changed);
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+}
+
+test "OSC 66 natural width splits bounded base and combining clusters" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2;A\xcc\x81B\x07")).state_changed);
+    const screen = terminal.screen_state.activeConst();
+    try std.testing.expectEqual(@as(u16, 4), screen.cursor.col);
+    try std.testing.expectEqual(@as(u32, 'A'), screen.cellInfoAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(0, 0).combining_len);
+    try std.testing.expectEqual(@as(u32, 0x301), screen.cellInfoAt(0, 0).combining[0]);
+    try std.testing.expectEqual(@as(u32, 'B'), screen.cellInfoAt(0, 2).codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cellInfoAt(1, 3).width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(1, 3).y);
+}
+
+test "OSC 66 resize drops complete clusters without stale continuations" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).state_changed);
+    try terminal.resize(3, 5);
+    const screen = terminal.screen_state.activeConst();
+    var row: u16 = 0;
+    while (row < screen.rows) : (row += 1) {
+        var col: u16 = 0;
+        while (col < screen.cols) : (col += 1) {
+            const cell = screen.cellInfoAt(row, col);
+            try std.testing.expectEqual(@as(u8, 1), cell.width);
+            try std.testing.expectEqual(@as(u8, 1), cell.height);
+            try std.testing.expectEqual(@as(u8, 0), cell.x);
+            try std.testing.expectEqual(@as(u8, 0), cell.y);
+        }
+    }
+}
+
+test "OSC 66 cluster survives whole-grid scroll and erase repairs every member" {
+    var terminal = try Terminal.init(std.testing.allocator, 5, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b]66;s=2:w=2;Hi\x07")).state_changed);
+    const screen = terminal.screen_state.active();
+    try std.testing.expect(screen.scrollUpRegion(0, 4, 1));
+    try std.testing.expectEqual(@as(u8, 0), screen.cellInfoAt(0, 0).y);
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(1, 3).y);
+    try std.testing.expect(screen.eraseRect(.{
+        .top = 1,
+        .left = 3,
+        .bottom = 1,
+        .right = 3,
+    }, false));
+    var row: u16 = 0;
+    while (row < 2) : (row += 1) {
+        var col: u16 = 0;
+        while (col < 4) : (col += 1) {
+            const cell = screen.cellInfoAt(row, col);
+            try std.testing.expectEqual(@as(u8, 1), cell.width);
+            try std.testing.expectEqual(@as(u8, 1), cell.height);
+            try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+        }
+    }
+}
+
+test "OSC 66 rectangular copy rejects cluster source without destination mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).state_changed);
+    const screen = terminal.screen_state.active();
+    const before = screen.cellInfoAt(3, 6);
+    try std.testing.expect(!screen.copyRect(.{
+        .area = .{ .top = 0, .left = 0, .bottom = 1, .right = 3 },
+        .source_page = 1,
+        .dest_top = 2,
+        .dest_left = 4,
+        .dest_page = 1,
+    }));
+    try std.testing.expectEqualDeep(before, screen.cellInfoAt(3, 6));
+    try std.testing.expectEqual(@as(u8, 4), screen.cellInfoAt(1, 3).width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(1, 3).y);
+}
+
+test "OSC 66 character insertion removes the whole intersecting cluster" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).state_changed);
+    const screen = terminal.screen_state.active();
+    screen.cursor.row = 0;
+    screen.cursor.col = 1;
+    try std.testing.expect(screen.insertChars(1));
+    var row: u16 = 0;
+    while (row < 2) : (row += 1) {
+        var col: u16 = 0;
+        while (col < 4) : (col += 1) {
+            const cell = screen.cellInfoAt(row, col);
+            try std.testing.expectEqual(@as(u8, 1), cell.width);
+            try std.testing.expectEqual(@as(u8, 1), cell.height);
+            try std.testing.expectEqual(@as(u8, 0), cell.x);
+            try std.testing.expectEqual(@as(u8, 0), cell.y);
+        }
+    }
 }
 
 const CursorSavepoint = struct {
