@@ -4,6 +4,7 @@ const std = @import("std");
 const control = @import("howl_control");
 const howl_render = @import("howl_render");
 const renderer = @import("renderer.zig");
+const viewport = @import("viewport.zig");
 const terminal_render = howl_render.terminal;
 const text = howl_render.terminal_text;
 
@@ -209,6 +210,8 @@ const PointerTarget = struct {
     pixel_y: u32,
 };
 
+const PointerPosition = struct { x: u32, y: u32 };
+
 const ButtonTransition = struct {
     index: usize,
     target: PointerTarget,
@@ -216,7 +219,7 @@ const ButtonTransition = struct {
 };
 
 const PointerState = struct {
-    position: ?struct { x: u32, y: u32 } = null,
+    position: ?PointerPosition = null,
     pressed: [3]?PointerTarget = @splat(null),
     buttons_down: u8 = 0,
 
@@ -478,6 +481,8 @@ const Window = struct {
     physical_keys: PhysicalKeys = .{},
     pointer_state: PointerState = .{},
     axis_frame: AxisFrame = .{},
+    viewport_state: viewport.State = .{},
+    viewport_drag: ?viewport.Drag = null,
     wake: TerminalWake,
     render: ?*renderer.Renderer = null,
     terminal: ?*control.Terminal = null,
@@ -578,6 +583,7 @@ const Window = struct {
         if (self.keyboard_focused) sendFocus(self, .in);
         if (self.failure) |failure| return failure;
         self.visual = try VisualStorage.init(allocator, grid.rows, grid.cols);
+        self.viewport_state.reconcile(viewportFacts(self.terminal.?.viewportFacts()));
         var captured = false;
         while (true) {
             self.terminal.?.consumeWake();
@@ -654,6 +660,7 @@ const Window = struct {
         while (self.wake.pending.swap(false, .acq_rel)) {
             const terminal = self.terminal.?;
             terminal.consumeWake();
+            self.viewport_state.reconcile(viewportFacts(terminal.viewportFacts()));
             try self.captureAndSubmit();
             if (terminal.state() != .running) self.finishTerminal();
         }
@@ -684,6 +691,13 @@ const Window = struct {
             .row_geometry = visual.row_geometry,
             .cursor = visual.baseline.?.cursor,
             .size = pixelSize(size),
+            .scrollbar = viewport.scrollbar(
+                self.viewport_state.facts,
+                size.width,
+                size.height,
+                self.render.?.metrics().width_px,
+                self.render.?.metrics().height_px,
+            ),
         });
         self.draw.admit(next);
     }
@@ -708,6 +722,7 @@ const Window = struct {
         }
         const visual_changed = try self.visual.?.capture(terminal);
         if (geometry_changed and !visual_changed) return error.GeometryUnstable;
+        self.viewport_state.reconcile(viewportFacts(terminal.viewportFacts()));
         try self.submitVisual(target);
         self.size = target;
         if (terminal.state() != .running) self.finishTerminal();
@@ -754,11 +769,16 @@ const Window = struct {
     fn routeKey(self: *Window, code: u32, action: KeyAction) bool {
         const state = if (self.keymap) |keymap| keymap.state else return false;
         const symbol = c.xkb_state_key_get_one_sym(state, code + 8);
+        const modifiers = keyModifiers(state);
+        if (viewportMove(symbol, modifiers)) |move| {
+            if (action != .release) self.applyViewport(move);
+            return true;
+        }
         var bytes: [64]u8 = undefined;
         const count = c.xkb_state_key_get_utf8(state, code + 8, &bytes, bytes.len);
         if (count < 0 or count >= bytes.len) return false;
         const text_bytes = if (action == .release) bytes[0..0] else bytes[0..@intCast(count)];
-        const input = keyInput(symbol, text_bytes, keyModifiers(state), action) orelse return false;
+        const input = keyInput(symbol, text_bytes, modifiers, action) orelse return false;
         const result = self.terminal.?.send(&.{.{ .input = input }}) catch |failure| {
             retainFailure(self, failure);
             return false;
@@ -796,11 +816,18 @@ const Window = struct {
 
     fn pointerMotion(self: *Window, x: i64, y: i64) void {
         if (!inputAdmissionOpen(self.closed, self.failure)) return;
-        const target = self.pointerTarget(x, y) orelse {
+        const position = self.surfacePosition(x, y) orelse {
             self.pointer_state.position = null;
             return;
         };
-        self.pointer_state.position = .{ .x = target.pixel_x, .y = target.pixel_y };
+        self.pointer_state.position = position;
+        if (self.viewport_drag) |drag| {
+            self.applyViewportAbsolute(drag.offset(y, self.viewport_state.facts.history_count));
+            return;
+        }
+        const target = self.pointerTarget(x, y) orelse {
+            return;
+        };
         if (!self.sendMouse(target, .move, .none, self.pointer_state.buttons_down)) return;
         self.pointer_state.commitMove(target);
     }
@@ -822,12 +849,28 @@ const Window = struct {
         switch (state_value) {
             c.WL_POINTER_BUTTON_STATE_PRESSED => {
                 const position = self.pointer_state.position orelse return;
+                if (button == .left) {
+                    if (self.currentScrollbar()) |value| if (value.begin(position.x, position.y)) |drag| {
+                        self.viewport_drag = drag;
+                        self.applyViewportAbsolute(drag.offset(position.y, value.history_count));
+                        return;
+                    };
+                }
                 const target = self.pointerTarget(position.x, position.y) orelse return;
                 const transition = self.pointer_state.preparePress(index, target) orelse return;
                 if (!self.sendMouse(target, .press, button, transition.buttons_down)) return;
                 self.pointer_state.commitPress(transition);
             },
             c.WL_POINTER_BUTTON_STATE_RELEASED => {
+                if (button == .left and self.viewport_drag != null) {
+                    if (self.pointer_state.position) |position|
+                        self.applyViewportAbsolute(self.viewport_drag.?.offset(
+                            position.y,
+                            self.viewport_state.facts.history_count,
+                        ));
+                    self.viewport_drag = null;
+                    return;
+                }
                 const transition = self.pointer_state.prepareRelease(index) orelse return;
                 if (!self.sendMouse(transition.target, .release, button, transition.buttons_down)) return;
                 self.pointer_state.commitRelease(transition);
@@ -838,6 +881,10 @@ const Window = struct {
 
     fn pointerWheel(self: *Window, discrete: i32) void {
         if (discrete == 0 or !inputAdmissionOpen(self.closed, self.failure)) return;
+        if (!self.viewport_state.facts.mouse_reporting) {
+            self.applyViewport(.{ .lines = -discrete });
+            return;
+        }
         const position = self.pointer_state.position orelse return;
         const target = self.pointerTarget(position.x, position.y) orelse return;
         const magnitude: usize = @intCast(@abs(@as(i64, discrete)));
@@ -860,6 +907,34 @@ const Window = struct {
         const visual = if (self.visual) |*value| value else return null;
         const render = self.render orelse return null;
         return resolvePointerTarget(x, y, visual.rows, visual.cols, render.metrics());
+    }
+
+    fn surfacePosition(self: *Window, x: i64, y: i64) ?PointerPosition {
+        if (x < 0 or y < 0 or x >= self.size.width or y >= self.size.height) return null;
+        return .{ .x = @intCast(x), .y = @intCast(y) };
+    }
+
+    fn currentScrollbar(self: *Window) ?viewport.Scrollbar {
+        const render = self.render orelse return null;
+        const metrics = render.metrics();
+        return viewport.scrollbar(
+            self.viewport_state.facts,
+            self.size.width,
+            self.size.height,
+            metrics.width_px,
+            metrics.height_px,
+        );
+    }
+
+    fn applyViewport(self: *Window, move: viewport.Move) void {
+        self.applyViewportAbsolute(self.viewport_state.requested(move));
+    }
+
+    fn applyViewportAbsolute(self: *Window, offset: u32) void {
+        if (!inputAdmissionOpen(self.closed, self.failure)) return;
+        const terminal = self.terminal orelse return;
+        if (terminal.state() != .running) return;
+        self.viewport_state.reconcile(viewportFacts(terminal.setViewport(offset)));
     }
 
     fn sendMouse(
@@ -917,6 +992,7 @@ const Window = struct {
     }
 
     fn cancelPointer(self: *Window) Error!void {
+        self.viewport_drag = null;
         for (0..self.pointer_state.pressed.len) |index| {
             const transition = self.pointer_state.prepareRelease(index) orelse continue;
             const button: MouseButton = switch (index) {
@@ -1162,6 +1238,29 @@ fn keyModifiers(state: *c.struct_xkb_state) KeyModifiers {
         .super = modifierActive(state, c.XKB_MOD_NAME_LOGO),
         .caps_lock = modifierActive(state, c.XKB_MOD_NAME_CAPS),
         .num_lock = modifierActive(state, c.XKB_MOD_NAME_NUM),
+    };
+}
+
+fn viewportMove(symbol: u32, modifiers: KeyModifiers) ?viewport.Move {
+    if (!modifiers.control or !modifiers.shift or modifiers.alt or modifiers.super or
+        modifiers.hyper or modifiers.meta)
+        return null;
+    return switch (symbol) {
+        c.XKB_KEY_Page_Up => .page_up,
+        c.XKB_KEY_Page_Down => .page_down,
+        c.XKB_KEY_Home => .top,
+        c.XKB_KEY_End => .bottom,
+        else => null,
+    };
+}
+
+fn viewportFacts(facts: control.ViewportFacts) viewport.Facts {
+    return .{
+        .history_count = facts.history_count,
+        .offset = facts.offset,
+        .rows = facts.rows,
+        .alternate_screen = facts.alternate_screen,
+        .mouse_reporting = facts.mouse_reporting,
     };
 }
 
@@ -2007,6 +2106,26 @@ test "key translation retains named unicode modifier and transition facts" {
     try std.testing.expect(keyInput(c.XKB_KEY_VoidSymbol, "", .{}, .press) == null);
 }
 
+test "viewport key chords require exact host modifiers" {
+    const required = KeyModifiers{ .control = true, .shift = true };
+    try std.testing.expectEqual(viewport.Move.page_up, viewportMove(c.XKB_KEY_Page_Up, required).?);
+    try std.testing.expectEqual(viewport.Move.page_down, viewportMove(c.XKB_KEY_Page_Down, required).?);
+    try std.testing.expectEqual(viewport.Move.top, viewportMove(c.XKB_KEY_Home, required).?);
+    try std.testing.expectEqual(viewport.Move.bottom, viewportMove(c.XKB_KEY_End, required).?);
+
+    const rejected = [_]KeyModifiers{
+        .{ .shift = true },
+        .{ .control = true },
+        .{ .control = true, .shift = true, .alt = true },
+        .{ .control = true, .shift = true, .super = true },
+        .{ .control = true, .shift = true, .hyper = true },
+        .{ .control = true, .shift = true, .meta = true },
+    };
+    for (rejected) |modifiers|
+        try std.testing.expect(viewportMove(c.XKB_KEY_Page_Up, modifiers) == null);
+    try std.testing.expect(viewportMove(c.XKB_KEY_Up, required) == null);
+}
+
 test "keyboard repeat has one bounded replacement and release owner" {
     var repeat = Repeat{};
     try repeat.configure(25, 400);
@@ -2284,6 +2403,56 @@ test "mouse tracking disabled admits no bytes and owns no host scroll" {
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expect(std.meta.eql(before, terminal.viewportFacts()));
+}
+
+test "host viewport reconciles only terminal-applied history facts" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 3, .cols = 5, .history_rows = 8 },
+        .{},
+    );
+    defer terminal.deinit();
+    try terminal.consume("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
+
+    var state = viewport.State{};
+    state.reconcile(viewportFacts(terminal.viewportFacts()));
+    const requested = state.requested(.page_up);
+    try std.testing.expectEqual(@as(u32, 0), state.facts.offset);
+    const applied = terminal.setViewport(requested);
+    state.reconcile(viewportFacts(applied));
+    try std.testing.expectEqual(applied.offset, state.facts.offset);
+    try std.testing.expect(!state.follow);
+
+    const reviewed_offset = state.facts.offset;
+    try terminal.consume("\r\n5EEEE");
+    try std.testing.expectEqual(reviewed_offset, state.facts.offset);
+    const advanced = terminal.viewportFacts();
+    try std.testing.expect(advanced.offset > reviewed_offset);
+    state.reconcile(viewportFacts(advanced));
+    try std.testing.expect(!state.follow);
+
+    try terminal.consume("\x1b[?1049h");
+    const alternate = terminal.viewportFacts();
+    try std.testing.expect(alternate.alternate_screen);
+    try std.testing.expectEqual(@as(u32, 0), alternate.offset);
+    try std.testing.expectEqual(@as(u32, 0), alternate.history_count);
+    state.reconcile(viewportFacts(alternate));
+    try std.testing.expectEqual(@as(u32, 0), state.requested(.top));
+
+    try terminal.consume("\x1b[?1049l");
+    state.reconcile(viewportFacts(terminal.setViewport(0)));
+    try std.testing.expect(state.follow);
+    try terminal.consume("\r\n6FFFF");
+    state.reconcile(viewportFacts(terminal.viewportFacts()));
+    try std.testing.expectEqual(@as(u32, 0), state.facts.offset);
+    try std.testing.expect(state.follow);
+
+    const resize_result = try terminal.resize(5, 4);
+    try std.testing.expect(resize_result.changed);
+    const resized = terminal.viewportFacts();
+    try std.testing.expectEqual(@as(u16, 4), resized.rows);
+    try std.testing.expect(resized.offset <= resized.history_count);
 }
 
 fn visualContains(visual: *const VisualStorage, needle: []const u8) bool {

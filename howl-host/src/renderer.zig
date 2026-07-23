@@ -9,6 +9,7 @@ const std = @import("std");
 const render = @import("howl_render");
 const terminal = render.terminal;
 const text = render.terminal_text;
+const viewport = @import("viewport.zig");
 
 const c = @cImport({
     @cDefine("_FORTIFY_SOURCE", "0");
@@ -70,6 +71,8 @@ pub const Submission = struct {
     cursor: terminal.Cursor,
     /// Sets the current nonzero presentation extent.
     size: PixelSize,
+    /// Copies optional host-owned scrollbar pixels for this visual state.
+    scrollbar: ?viewport.Scrollbar = null,
 };
 
 /// Reports exact construction, admission, preparation, or device failure.
@@ -102,6 +105,7 @@ const Snapshot = struct {
     cols: u16 = 0,
     cursor: terminal.Cursor = undefined,
     size: PixelSize = undefined,
+    scrollbar: ?viewport.Scrollbar = null,
 
     fn init(allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!Snapshot {
         const cells = try allocator.alloc(terminal.Cell, @as(usize, rows) * cols);
@@ -151,6 +155,7 @@ const Snapshot = struct {
         self.cols = submission.cols;
         self.cursor = submission.cursor;
         self.size = submission.size;
+        self.scrollbar = submission.scrollbar;
     }
 
     fn view(self: *const Snapshot) Submission {
@@ -163,6 +168,7 @@ const Snapshot = struct {
             .row_geometry = self.row_geometry[0..self.rows],
             .cursor = self.cursor,
             .size = self.size,
+            .scrollbar = self.scrollbar,
         };
     }
 };
@@ -361,8 +367,29 @@ const Device = struct {
         c.glEnableVertexAttribArray(2);
         for (0..work.rows) |row| try self.drawRow(work, @intCast(row));
         try self.drawCursor(work);
+        try self.drawScrollbar(work.scrollbar);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
         if (c.eglSwapBuffers(self.display, self.surface) != c.EGL_TRUE) return error.Swap;
+    }
+
+    fn drawScrollbar(self: *Device, value: ?viewport.Scrollbar) Error!void {
+        const scrollbar = value orelse return;
+        try self.quad(
+            @intCast(scrollbar.track.x),
+            @intCast(scrollbar.track.y),
+            scrollbar.track.width,
+            @intCast(scrollbar.track.height),
+            .{ .r = 0x50, .g = 0x49, .b = 0x45 },
+            self.white,
+        );
+        try self.quad(
+            @intCast(scrollbar.thumb.x),
+            @intCast(scrollbar.thumb.y),
+            scrollbar.thumb.width,
+            @intCast(scrollbar.thumb.height),
+            .{ .r = 0x92, .g = 0x83, .b = 0x74 },
+            self.white,
+        );
     }
 
     fn drawRow(self: *Device, work: Submission, row: u16) Error!void {
@@ -812,6 +839,23 @@ fn validateSubmission(value: Submission) error{InvalidSubmission}!void {
     if (value.cursor.visible and
         (value.cursor.row >= value.rows or value.cursor.col >= value.cols))
         return error.InvalidSubmission;
+    if (value.scrollbar) |scrollbar| {
+        if (!validRect(scrollbar.track, value.size) or
+            !validRect(scrollbar.thumb, value.size) or
+            scrollbar.thumb.x != scrollbar.track.x or
+            scrollbar.thumb.width != scrollbar.track.width or
+            scrollbar.thumb.y < scrollbar.track.y or
+            @as(u64, scrollbar.thumb.y) + scrollbar.thumb.height >
+                @as(u64, scrollbar.track.y) + scrollbar.track.height or
+            scrollbar.history_count == 0 or scrollbar.offset > scrollbar.history_count)
+            return error.InvalidSubmission;
+    }
+}
+
+fn validRect(rect: viewport.Rect, size: PixelSize) bool {
+    return rect.width != 0 and rect.height != 0 and
+        @as(u64, rect.x) + rect.width <= size.width and
+        @as(u64, rect.y) + rect.height <= size.height;
 }
 
 fn validateRowPresentation(
@@ -1050,6 +1094,13 @@ test "snapshot copy has no caller lifetime and preserves newest identity" {
     defer snapshot.deinit();
     var cells = [_]terminal.Cell{ testCell('a'), testCell('b') };
     const geometry = [_]terminal.LineGeometry{.single_width};
+    const bar = viewport.scrollbar(
+        .{ .history_count = 20, .offset = 4, .rows = 1 },
+        20,
+        10,
+        10,
+        10,
+    ).?;
     snapshot.write(.{
         .generation = 7,
         .rows = 1,
@@ -1058,11 +1109,13 @@ test "snapshot copy has no caller lifetime and preserves newest identity" {
         .row_geometry = &geometry,
         .cursor = testCursor(),
         .size = .{ .width = 20, .height = 10 },
+        .scrollbar = bar,
     });
     cells[0].codepoint = 'z';
     const copy = snapshot.view();
     try std.testing.expectEqual(@as(u21, 'a'), copy.cells[0].codepoint);
     try std.testing.expectEqual(@as(u64, 7), copy.generation);
+    try std.testing.expectEqual(bar, copy.scrollbar.?);
 }
 
 test "snapshot growth is transactional and unchanged geometry allocates nothing" {
@@ -1109,6 +1162,22 @@ test "submission rejects hostile bounds before snapshot mutation" {
         .size = .{ .width = 1, .height = 1 },
     }));
     try std.testing.expectEqual(@as(u64, 19), snapshot.generation);
+
+    try std.testing.expectError(error.InvalidSubmission, validateSubmission(.{
+        .generation = 1,
+        .rows = 1,
+        .cols = 1,
+        .cells = (&cell)[0..1],
+        .row_geometry = &geometry,
+        .cursor = testCursor(),
+        .size = .{ .width = 10, .height = 10 },
+        .scrollbar = .{
+            .track = .{ .x = 9, .y = 0, .width = 1, .height = 10 },
+            .thumb = .{ .x = 9, .y = 9, .width = 1, .height = 2 },
+            .history_count = 1,
+            .offset = 0,
+        },
+    }));
 }
 
 test "renderer construction rejects missing fonts before device work" {

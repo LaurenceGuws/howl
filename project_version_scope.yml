@@ -31,6 +31,9 @@ accepted_implementation:
   - >-
     Howl-host directly composes one Control terminal, one Wayland window, and one EGL/GLES render thread with bounded
     keyboard and pointer admission, title and bell presentation, exact terminal completion, and cleanup.
+  - >-
+    Howl-host owns primary-history viewport intent and exact scrollbar presentation while VT retains history,
+    projection, eviction, reflow, and alternate-screen truth.
 
 invariants:
   - every module allocation uses an explicit caller-provided allocator
@@ -41,7 +44,6 @@ invariants:
   - private development carries no downstream source or ABI compatibility obligation
 
 deferred:
-  - primary-screen viewport and scrollback presentation
   - selection and clipboard policy
   - tabs, panes, sessions, and multiplexing
   - unsupported DEC line-geometry and baseline drawing
