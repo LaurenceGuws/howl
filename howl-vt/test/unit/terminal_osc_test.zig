@@ -1796,3 +1796,105 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
     try std.testing.expectEqual(fill.len, terminal.host.pendingOutput().len);
     try std.testing.expectEqual(@as(u8, 'x'), terminal.host.pendingOutput()[fill.len - 1]);
 }
+
+test "OSC 72 parses fragmented ordered commands with exact rejection and acknowledgement" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const before = terminal.semanticSequence();
+
+    try std.testing.expect(!(try terminal.feed("\x1b]72;t=a:i=7:m=1;text/")).state_changed);
+    try std.testing.expect((try terminal.feed("uri-list\x1b\\\x1b]72;m=0;plain\x1b\\")).state_changed);
+    var head = terminal.pendingDragDrop().?;
+    try std.testing.expectEqual(.enable, head.kind);
+    try std.testing.expectEqual(@as(?u32, 7), head.client_id);
+    try std.testing.expect(head.more);
+    try std.testing.expectEqualStrings("text/uri-list", head.payload);
+    const first_generation = head.generation;
+    try terminal.acknowledgeDragDrop(first_generation);
+
+    head = terminal.pendingDragDrop().?;
+    try std.testing.expectEqual(.continuation, head.kind);
+    try std.testing.expect(!head.more);
+    try std.testing.expectEqualStrings("plain", head.payload);
+    try std.testing.expect(head.generation > first_generation);
+    try std.testing.expectError(error.StaleDragDrop, terminal.acknowledgeDragDrop(first_generation));
+    try terminal.acknowledgeDragDrop(head.generation);
+    try std.testing.expect(terminal.pendingDragDrop() == null);
+    try std.testing.expect(terminal.semanticSequence() > before);
+
+    const stable = terminal.semanticSequence();
+    try std.testing.expect((try terminal.feed("\x1b]72;t=r:x=0\x1b\\")).state_changed);
+    const unsupported = terminal.pendingDragDrop().?;
+    try std.testing.expectEqual(.unsupported, unsupported.kind);
+    try terminal.acknowledgeDragDrop(unsupported.generation);
+    const after_rejection = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x1b]72;t=m:o=9\x1b\\")).state_changed);
+    try std.testing.expect(after_rejection > stable);
+    try std.testing.expectEqual(after_rejection, terminal.semanticSequence());
+}
+
+test "OSC 72 queue saturation and aggregate allocation failure preserve exact head" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    for (0..Terminal.drag_drop_max_count) |index| {
+        var bytes: [64]u8 = undefined;
+        const command = try std.fmt.bufPrint(&bytes, "\x1b]72;t=q:i={d}\x1b\\", .{index});
+        try std.testing.expect((try terminal.feed(command)).state_changed);
+    }
+    const head = terminal.pendingDragDrop().?;
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]72;t=q:i=99\x1b\\"));
+    try std.testing.expectEqual(head.generation, terminal.pendingDragDrop().?.generation);
+    try std.testing.expectEqual(Terminal.drag_drop_max_count, terminal.stateSnapshot().drag_drop_count);
+}
+
+test "OSC 72 aggregate payload budget rejects a valid ninth chunk transactionally" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const payload = try std.testing.allocator.alloc(u8, Terminal.drag_drop_payload_max_bytes);
+    defer std.testing.allocator.free(payload);
+    @memset(payload, 'x');
+    const prefix = "\x1b]72;t=a:m=1;";
+    const suffix = "\x1b\\";
+    const packet = try std.testing.allocator.alloc(u8, prefix.len + payload.len + suffix.len);
+    defer std.testing.allocator.free(packet);
+    @memcpy(packet[0..prefix.len], prefix);
+    @memcpy(packet[prefix.len..][0..payload.len], payload);
+    @memcpy(packet[prefix.len + payload.len ..], suffix);
+
+    for (0..8) |_| try std.testing.expect((try terminal.feed(packet)).state_changed);
+    const head = terminal.pendingDragDrop().?;
+    const sequence = terminal.semanticSequence();
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(packet));
+    try std.testing.expectEqual(head.generation, terminal.pendingDragDrop().?.generation);
+    try std.testing.expectEqual(@as(u8, 8), terminal.stateSnapshot().drag_drop_count);
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+}
+
+test "OSC 72 host events use exact framing bounds and opaque base64" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const query = try terminal.prepareDragDropEvent(
+        .{ .query = .{ .client_id = 42 } },
+        std.testing.allocator,
+    );
+    defer std.testing.allocator.free(query);
+    try std.testing.expectEqualStrings("\x1b]72;t=q:i=42;\x1b\\", query);
+
+    const data = try terminal.prepareDragDropEvent(.{ .data = .{
+        .client_id = null,
+        .index = 2,
+        .more = true,
+        .bytes = "file:///tmp/harmless\n",
+    } }, std.testing.allocator);
+    defer std.testing.allocator.free(data);
+    try std.testing.expectEqualStrings(
+        "\x1b]72;t=r:x=2:m=1;ZmlsZTovLy90bXAvaGFybWxlc3MK\x1b\\",
+        data,
+    );
+    try std.testing.expectError(error.InvalidArgument, terminal.prepareDragDropEvent(.{ .data = .{
+        .client_id = null,
+        .index = 0,
+        .more = false,
+        .bytes = "",
+    } }, std.testing.allocator));
+}

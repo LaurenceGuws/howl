@@ -510,6 +510,7 @@ fn oscActionFromMeta(meta: ParsedEvents.OscMeta, payload: []const u8) parser_mod
         .clipboard => .{ .clipboard = .{ .command = meta.command.?, .payload = payload, .term = meta.terminator } },
         .kitty_color => .{ .kitty_color = .{ .command = meta.command.?, .payload = payload, .term = meta.terminator } },
         .kitty_text_size => .{ .kitty_text_size = .{ .payload = payload, .term = meta.terminator } },
+        .kitty_drag_drop => .{ .kitty_drag_drop = .{ .payload = payload, .term = meta.terminator } },
         .shell_mark => .{ .shell_mark = .{ .payload = payload, .term = meta.terminator } },
         .rxvt_extension => .{ .rxvt_extension = .{ .payload = payload, .term = meta.terminator } },
         .iterm2 => .{ .iterm2 = .{

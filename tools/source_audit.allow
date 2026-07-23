@@ -11,8 +11,8 @@ howl-control/src/test.zig|anyopaque|fn countWake(context: ?*anyopaque) void {
 howl-host/src/main.zig|anyopaque|fn terminalWake(context: ?*anyopaque) void {
 howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
@@ -37,9 +37,9 @@ howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
-howl-host/src/window.zig|anyopaque|fn dataDeviceDrop(data: ?*anyopaque, device: ?*c.struct_wl_data_device) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn dataDeviceDrop(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn dataDeviceLeave(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {
-howl-host/src/window.zig|anyopaque|fn dataOfferAction(_: ?*anyopaque, _: ?*c.struct_wl_data_offer, _: u32) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn dataOfferAction(data: ?*anyopaque, offer: ?*c.struct_wl_data_offer, action: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn dataSourceAction(_: ?*anyopaque, _: ?*c.struct_wl_data_source, _: u32) callconv(.c) void {}
 howl-host/src/window.zig|anyopaque|fn dataSourceDrop(_: ?*anyopaque, _: ?*c.struct_wl_data_source) callconv(.c) void {}
 howl-host/src/window.zig|anyopaque|fn dataSourceFinished(_: ?*anyopaque, _: ?*c.struct_wl_data_source) callconv(.c) void {}

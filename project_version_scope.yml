@@ -49,6 +49,9 @@ accepted_implementation:
     Howl-host validates ordered OSC 22 operations, retains independent bounded primary and alternate pointer stacks,
     answers exact queries, and applies supported shapes through optional Wayland cursor-shape-v1.
   - >-
+    Howl-host accepts application-opted-in incoming Wayland drops as copy-only opaque bounded MIME bytes through
+    Kitty OSC 72; filesystem, remote-file, move, and outgoing-drag behavior is excluded.
+  - >-
     Howl-host consumes ordered window operations, requests Wayland minimization, and transactionally reports only
     normal state, unavailable zero position/screen facts, and its retained title.
 

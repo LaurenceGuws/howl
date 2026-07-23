@@ -3375,8 +3375,27 @@ references:
               symbol: Screen.writeSizedText
               proof: {path: howl-render/src/terminal_test.zig,
                 symbol: "OSC 66 projection copies complete sizing and expands selection appearance"}
-          - {id: kitty.osc.drag_drop, raw: "OSC DND_CODE ; Pt (BEL|ST)", effect: drag and drop control,
-            relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-host, milestone: host_input}}
+          - id: kitty.osc.drag_drop
+            raw: "OSC DND_CODE ; Pt (BEL|ST)"
+            effect: drag and drop control
+            relevance: host consequence
+            conditions: >-
+              Howl parses and retains bounded ordered OSC 72 commands, supports chunked incoming MIME registration,
+              advertises copy-only Wayland offers with exact terminal-local cell/pixel coordinates, and returns opaque
+              requested MIME bytes in bounded base64 chunks. It never interprets text/uri-list or accesses paths.
+            howl:
+              support: partial
+              disposition: excluded
+              residual: >-
+                Remote file and directory requests, move/delete effects, outgoing drags, filesystem traversal, and
+                primary-selection policy are absent.
+              rationale: >-
+                Howl deliberately limits OSC 72 to application-opted-in incoming opaque Wayland copy data; filesystem,
+                remote-transfer, move, and outgoing-source authority are outside the terminal family.
+              source: howl-vt/src/terminal.zig
+              symbol: parseDragDrop
+              proof: {path: howl-host/src/drop.zig,
+                symbol: "chunk chain is ordered bounded and registration commits on completion"}
           - id: kitty.osc.shell_mark
             raw: "OSC 133 ; mark [; metadata] (BEL|ST)"
             effect: update shell integration mark

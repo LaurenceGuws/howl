@@ -749,3 +749,11 @@ test "screen: structural edits report wrap row and dirty mutation exactly" {
     try std.testing.expect(!screen.scrollDownRegion(1, 2, 999));
     try std.testing.expect(screen.peekDirtyRows() == null);
 }
+
+test "one-row full downward scroll clears without unsigned underflow" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 3);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeText("x");
+    try std.testing.expect(screen.scrollDownRegion(0, 0, 1));
+    try std.testing.expectEqual(@as(u21, 0), screen.cells.?[0].codepoint);
+}

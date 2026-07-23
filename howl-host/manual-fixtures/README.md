@@ -11,6 +11,7 @@ are not installed, and contain no product policy or reusable fixture framework.
 - `window-control.sh`: exact ordered replies and one-way minimize request dispatch.
 - `pointer-shape.sh`: cursor-shape set, stack, screen-bank, and reset presentation.
 - `text-sizing.sh`: Kitty OSC 66 scale, fixed width, fractional alignment, decoration, and clipping.
+- `drag-drop.py`: Kitty OSC 72 incoming copy-only `text/uri-list` bytes from one real Wayland drop.
 
 From `howl-host`, run a receipt with:
 

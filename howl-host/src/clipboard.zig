@@ -1,4 +1,4 @@
-//! Owns bounded UTF-8 clipboard bytes and nonblocking transfer progress.
+//! Owns bounded clipboard bytes and concrete nonblocking Wayland pipe progress.
 
 const std = @import("std");
 const control = @import("howl_control");
@@ -353,7 +353,7 @@ pub const Send = struct {
     offset: usize = 0,
 };
 
-/// Owns copied clipboard text and every active nonblocking transfer descriptor.
+/// Owns copied clipboard or opaque drop bytes and active nonblocking transfer descriptors.
 pub const Transfers = struct {
     /// Allocates every retained clipboard byte buffer.
     allocator: std.mem.Allocator,

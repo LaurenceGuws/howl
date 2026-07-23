@@ -228,6 +228,12 @@ pub const kitty_clipboard_packet_max_bytes = howl_vt.Terminal.kitty_clipboard_pa
 pub const clipboard_max_count = howl_vt.Terminal.clipboard_max_count;
 /// Matches the VT owner's bounded ordered file-transfer packet capacity.
 pub const file_transfer_max_count = howl_vt.Terminal.file_transfer_max_count;
+/// Matches the VT owner's bounded ordered Kitty OSC 72 command capacity.
+pub const drag_drop_max_count = howl_vt.Terminal.drag_drop_max_count;
+/// Matches one exact Kitty OSC 72 command payload bound.
+pub const drag_drop_payload_max_bytes = howl_vt.Terminal.drag_drop_payload_max_bytes;
+/// Matches one raw host-to-child data chunk before base64 encoding.
+pub const drag_drop_data_max_bytes = howl_vt.Terminal.drag_drop_data_max_bytes;
 /// Matches the VT owner's bounded ordered media-copy command capacity.
 pub const media_copy_max_count = howl_vt.Terminal.media_copy_max_count;
 /// Matches the VT owner's bounded ordered DCS consequence capacity.
@@ -318,6 +324,41 @@ pub const ClipboardHead = struct {
 
 /// Retains exact complete or partial OSC 52 reply transfer truth.
 pub const ClipboardReplyTransfer = client.InputTransfer;
+/// Copies one parsed Kitty OSC 72 command without retaining VT borrows.
+pub const DragDropHead = struct {
+    /// Monotonic FIFO identity never reused during one terminal lifetime.
+    generation: u64,
+    /// Selects the accepted incoming-drop command or an unsupported family.
+    kind: @FieldType(howl_vt.Terminal.DragDropCommand, "kind"),
+    /// Preserves the exact protocol type byte.
+    command: u8,
+    /// Copies the optional multiplexer identity.
+    client_id: ?u32,
+    /// Copies the chunk continuation fact.
+    more: bool,
+    /// Copies the requested or completed operation.
+    operation: ?u2,
+    /// Copies the one-based MIME index for a data request.
+    index: ?u32,
+    /// Reports excluded remote-file or directory semantics.
+    remote: bool,
+    /// Stores exact payload bytes selected by `payload_len`.
+    payload: [drag_drop_payload_max_bytes]u8,
+    /// Bounds meaningful bytes in `payload`.
+    payload_len: u16,
+
+    /// Borrows the copied payload.
+    pub fn payloadBytes(self: *const DragDropHead) []const u8 {
+        return self.payload[0..self.payload_len];
+    }
+};
+/// Supplies one typed host-to-child Kitty OSC 72 event.
+pub const DragDropEvent = howl_vt.Terminal.DragDropEvent;
+/// Reports exact OSC 72 preparation or PTY transfer failure.
+pub const DragDropSendError = std.mem.Allocator.Error || error{
+    ConsequenceLimit,
+    InvalidArgument,
+};
 /// Reports copied-set admission failure without consuming the FIFO head.
 pub const ClipboardSetError = std.mem.Allocator.Error || error{
     ClipboardLimit,
@@ -901,6 +942,63 @@ pub const Terminal = struct {
         self.lock.unlock(self.io);
         try result;
         self.notify();
+    }
+
+    /// Copies one parsed Kitty OSC 72 FIFO head without retaining VT borrows.
+    pub fn dragDropHead(self: *Terminal) ?DragDropHead {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        const command = self.model.pendingDragDrop() orelse return null;
+        std.debug.assert(command.payload.len <= drag_drop_payload_max_bytes);
+        var result = DragDropHead{
+            .generation = command.generation,
+            .kind = command.kind,
+            .command = command.command,
+            .client_id = command.client_id,
+            .more = command.more,
+            .operation = command.operation,
+            .index = command.index,
+            .remote = command.remote,
+            .payload = @splat(0),
+            .payload_len = @intCast(command.payload.len),
+        };
+        @memcpy(result.payload[0..command.payload.len], command.payload);
+        return result;
+    }
+
+    /// Consumes only the exact Kitty OSC 72 FIFO head after executable policy.
+    pub fn acknowledgeDragDrop(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleDragDrop}!void {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgeDragDrop(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
+    }
+
+    /// Serializes and completely transfers one typed Kitty OSC 72 host event.
+    pub fn sendDragDrop(
+        self: *Terminal,
+        event: DragDropEvent,
+    ) DragDropSendError!InputTransfer {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const prepared = self.model.prepareDragDropEvent(event, self.allocator) catch |failure| {
+            self.lock.unlock(self.io);
+            return failure;
+        };
+        self.lock.unlock(self.io);
+        defer self.allocator.free(prepared);
+        if (prepared.len > max_transfer_bytes) return error.ConsequenceLimit;
+        self.write_lock.lockUncancelable(self.io);
+        const transfer = self.transport.transfer(self.io, prepared, self.transfer_timeout_ms);
+        self.write_lock.unlock(self.io);
+        return transfer;
     }
 
     /// Copies the FIFO-head media-copy command identity.
@@ -2329,10 +2427,21 @@ test "Kitty clipboard packet copy and reply preserve exact FIFO identity" {
     const terminal = try Terminal.init(
         std.testing.allocator,
         std.testing.io,
-        .{ .command = "sleep 30" },
+        .{ .command = "stty -echo; printf '\\033]0;ready\\a'; sleep 30" },
         .{ .context = &wake_count, .notify = countTestWake },
     );
     defer terminal.deinit();
+    var ready = false;
+    for (0..100_000) |_| {
+        if (terminal.hostPresentation().titleBytes()) |title| {
+            if (std.mem.eql(u8, title, "ready")) {
+                ready = true;
+                break;
+            }
+        }
+        try std.Thread.yield();
+    }
+    try std.testing.expect(ready);
     try std.testing.expect(!terminal.pasteEvents());
     try terminal.consume("\x1b[?5522h");
     try std.testing.expect(terminal.pasteEvents());
@@ -2765,6 +2874,33 @@ test "endpoint shutdown interrupts a held partial request" {
     try writer.interface.flush();
     try waitForConsumedPartialRequest(terminal);
     terminal.deinit();
+}
+
+test "local OSC 72 head copies payload and exact acknowledgement identity" {
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{},
+    );
+    defer terminal.deinit();
+
+    terminal.lock.lockUncancelable(std.testing.io);
+    const applied = terminal.model.feed("\x1b]72;t=a:i=9;text/uri-list\x1b\\");
+    terminal.lock.unlock(std.testing.io);
+    try std.testing.expect((try applied).state_changed);
+
+    const head_value = terminal.dragDropHead().?;
+    try std.testing.expectEqual(.enable, head_value.kind);
+    try std.testing.expectEqual(@as(?u32, 9), head_value.client_id);
+    try std.testing.expectEqualStrings("text/uri-list", head_value.payloadBytes());
+    try std.testing.expectError(
+        error.StaleDragDrop,
+        terminal.acknowledgeDragDrop(head_value.generation + 1),
+    );
+    try std.testing.expectEqual(head_value.generation, terminal.dragDropHead().?.generation);
+    try terminal.acknowledgeDragDrop(head_value.generation);
+    try std.testing.expect(terminal.dragDropHead() == null);
 }
 
 fn waitForConsumedPartialRequest(terminal: *Terminal) !void {

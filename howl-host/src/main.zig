@@ -406,9 +406,11 @@ test "manual fixture invocation follows the exact window command shape" {
     const fixtures = [_][]const u8{
         "manual-fixtures/basic-live.sh",
         "manual-fixtures/cursor-blink.sh",
+        "manual-fixtures/drag-drop.py",
         "manual-fixtures/geometry.sh",
         "manual-fixtures/osc52.sh",
         "manual-fixtures/pointer-shape.sh",
+        "manual-fixtures/text-sizing.sh",
         "manual-fixtures/window-control.sh",
     };
     for (fixtures) |path|

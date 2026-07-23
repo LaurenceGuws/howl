@@ -2658,7 +2658,7 @@ pub const Screen = struct {
             changed = self.copyRowRange(dst, dst + amount, left, right + 1) or changed;
         }
 
-        var clear_row = bounded_bottom - amount + 1;
+        var clear_row = bounded_bottom - (amount - 1);
         while (clear_row <= bounded_bottom) : (clear_row += 1) {
             changed = self.clearClustersIntersecting(clear_row, clear_row + 1, left, right + 1) or changed;
             changed = self.clearStructuralRowRange(clear_row, left, right + 1) or changed;
@@ -2676,7 +2676,7 @@ pub const Screen = struct {
         const amount = @min(count, region_len);
         if (amount == 0) return changed;
         changed = self.clearClustersIntersecting(
-            bounded_bottom - amount + 1,
+            bounded_bottom - (amount - 1),
             bounded_bottom + 1,
             0,
             self.cols,
@@ -6266,6 +6266,105 @@ const FileTransferPacketOwned = struct {
     }
 };
 
+const drag_drop_capacity: u8 = 16;
+const drag_drop_packet_max_bytes: u32 = 4096;
+const drag_drop_aggregate_max_bytes: u32 = 32 * 1024;
+
+/// Classifies one syntactically valid Kitty OSC 72 command from the child.
+pub const DragDropCommandKind = enum {
+    enable,
+    disable,
+    accept,
+    request,
+    complete,
+    query,
+    continuation,
+    unsupported,
+};
+
+/// Borrows one ordered, parsed Kitty OSC 72 command until terminal mutation.
+pub const DragDropCommandView = struct {
+    /// Monotonic occurrence identity never reused during one terminal lifetime.
+    generation: u64,
+    /// Selects the supported incoming-drop command or an explicitly unsupported family.
+    kind: DragDropCommandKind,
+    /// Preserves the protocol type byte for exact unsupported-family policy.
+    command: u8,
+    /// Retains Kitty's optional multiplexer identity.
+    client_id: ?u32,
+    /// Retains the chunk continuation flag.
+    more: bool,
+    /// Retains the requested or completed operation.
+    operation: ?u2,
+    /// Retains the one-based offered MIME index for a data request.
+    index: ?u32,
+    /// Reports a remote-file or directory request excluded from Howl policy.
+    remote: bool,
+    /// Borrows the exact bounded payload bytes.
+    payload: []const u8,
+};
+
+const DragDropCommandOwned = struct {
+    generation: u64,
+    kind: DragDropCommandKind,
+    command: u8,
+    client_id: ?u32,
+    more: bool,
+    operation: ?u2,
+    index: ?u32,
+    remote: bool,
+    payload: []u8,
+
+    fn view(self: *const DragDropCommandOwned) DragDropCommandView {
+        return .{
+            .generation = self.generation,
+            .kind = self.kind,
+            .command = self.command,
+            .client_id = self.client_id,
+            .more = self.more,
+            .operation = self.operation,
+            .index = self.index,
+            .remote = self.remote,
+            .payload = self.payload,
+        };
+    }
+};
+
+/// Selects one bounded Kitty OSC 72 error returned to the child.
+pub const DragDropError = enum {
+    invalid,
+    permission,
+    io,
+    resource,
+
+    fn bytes(self: DragDropError) []const u8 {
+        return switch (self) {
+            .invalid => "EINVAL",
+            .permission => "EPERM",
+            .io => "EIO",
+            .resource => "EMFILE",
+        };
+    }
+};
+
+/// Supplies one host fact serialized through Kitty OSC 72 framing.
+pub const DragDropEventValue = union(enum) {
+    query: struct { client_id: ?u32 },
+    move: struct {
+        client_id: ?u32,
+        cell_x: u16,
+        cell_y: u16,
+        pixel_x: i32,
+        pixel_y: i32,
+        operation: u2,
+        mimes: []const u8,
+        drop: bool,
+    },
+    leave: struct { client_id: ?u32 },
+    data: struct { client_id: ?u32, index: u32, more: bool, bytes: []const u8 },
+    failure: struct { client_id: ?u32, index: ?u32, reason: DragDropError },
+};
+
 /// Names one host-neutral request from the child to manipulate its containing window.
 pub const WindowRequest = union(enum) {
     deiconify,
@@ -6451,6 +6550,11 @@ pub const HostState = struct {
     file_transfer_packets: [file_transfer_capacity]FileTransferPacketOwned = undefined,
     file_transfer_start: u8 = 0,
     file_transfer_count: u8 = 0,
+    drag_drop_generation: u64 = 0,
+    drag_drop_commands: [drag_drop_capacity]DragDropCommandOwned = undefined,
+    drag_drop_start: u8 = 0,
+    drag_drop_count: u8 = 0,
+    drag_drop_retained_bytes: u32 = 0,
     window_request_generation: u64 = 0,
     window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
     window_requests_start: u8 = 0,
@@ -6496,6 +6600,10 @@ pub const HostState = struct {
         for (0..self.file_transfer_count) |offset| {
             const index = (@as(usize, self.file_transfer_start) + offset) % file_transfer_capacity;
             self.allocator.free(self.file_transfer_packets[index].payload);
+        }
+        for (0..self.drag_drop_count) |offset| {
+            const index = (@as(usize, self.drag_drop_start) + offset) % drag_drop_capacity;
+            self.allocator.free(self.drag_drop_commands[index].payload);
         }
         if (self.current_title) |title| self.allocator.free(title);
         if (self.current_icon) |icon| self.allocator.free(icon);
@@ -6707,6 +6815,49 @@ pub const HostState = struct {
         self.allocator.free(packet.payload);
         self.file_transfer_start = (self.file_transfer_start + 1) % file_transfer_capacity;
         self.file_transfer_count -= 1;
+    }
+
+    fn retainDragDrop(self: *HostState, command: ParsedDragDrop) ApplyError!void {
+        try ensureRetainedBound(byteCount(command.payload), drag_drop_packet_max_bytes);
+        if (self.drag_drop_count == drag_drop_capacity) return error.ConsequenceLimit;
+        const retained = std.math.add(
+            u32,
+            self.drag_drop_retained_bytes,
+            @intCast(command.payload.len),
+        ) catch return error.ConsequenceLimit;
+        if (retained > drag_drop_aggregate_max_bytes) return error.ConsequenceLimit;
+        if (self.drag_drop_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const payload = try self.allocator.dupe(u8, command.payload);
+        const index = (self.drag_drop_start + self.drag_drop_count) % drag_drop_capacity;
+        self.drag_drop_generation += 1;
+        self.drag_drop_commands[index] = .{
+            .generation = self.drag_drop_generation,
+            .kind = command.kind,
+            .command = command.command,
+            .client_id = command.client_id,
+            .more = command.more,
+            .operation = command.operation,
+            .index = command.index,
+            .remote = command.remote,
+            .payload = payload,
+        };
+        self.drag_drop_count += 1;
+        self.drag_drop_retained_bytes = retained;
+    }
+
+    fn dragDropHead(self: *const HostState) ?DragDropCommandView {
+        if (self.drag_drop_count == 0) return null;
+        return self.drag_drop_commands[self.drag_drop_start].view();
+    }
+
+    fn consumeDragDrop(self: *HostState) void {
+        std.debug.assert(self.drag_drop_count > 0);
+        const command = &self.drag_drop_commands[self.drag_drop_start];
+        std.debug.assert(command.payload.len <= self.drag_drop_retained_bytes);
+        self.drag_drop_retained_bytes -= @intCast(command.payload.len);
+        self.allocator.free(command.payload);
+        self.drag_drop_start = (self.drag_drop_start + 1) % drag_drop_capacity;
+        self.drag_drop_count -= 1;
     }
 
     /// Retain one window request occurrence without executing host policy.
@@ -7268,6 +7419,11 @@ test "file-transfer enqueue preserves the retained FIFO on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFileTransferAllocation, .{});
 }
 
+test "drag-drop enqueue preserves the retained FIFO on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDragDropAllocation, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareDragDropAllocation, .{});
+}
+
 test "title replacement preserves the retained title on allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, replaceTitleAllocation, .{});
 }
@@ -7412,6 +7568,50 @@ fn retainFileTransferAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(u64, 2), packet.generation);
     try std.testing.expect(packet.protocol == .kitty_5113);
     try std.testing.expectEqualStrings("ac=send;d=bmV3", packet.payload);
+}
+
+fn retainDragDropAllocation(allocator: std.mem.Allocator) !void {
+    var state = HostState.init(allocator);
+    defer state.deinit();
+    try state.retainDragDrop(.{
+        .kind = .query,
+        .command = 'q',
+        .client_id = 1,
+        .payload = "old",
+    });
+    state.retainDragDrop(.{
+        .kind = .enable,
+        .command = 'a',
+        .client_id = 2,
+        .payload = "new",
+    }) catch |failure| {
+        const command = state.dragDropHead().?;
+        try std.testing.expectEqual(@as(u64, 1), command.generation);
+        try std.testing.expectEqualStrings("old", command.payload);
+        try std.testing.expectEqual(@as(u8, 1), state.drag_drop_count);
+        return failure;
+    };
+    try std.testing.expectEqual(@as(u8, 2), state.drag_drop_count);
+    state.consumeDragDrop();
+    const command = state.dragDropHead().?;
+    try std.testing.expectEqual(@as(u64, 2), command.generation);
+    try std.testing.expectEqualStrings("new", command.payload);
+}
+
+fn prepareDragDropAllocation(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.init(allocator, 2, 2);
+    defer terminal.deinit();
+    const bytes = try terminal.prepareDragDropEvent(.{ .data = .{
+        .client_id = 7,
+        .index = 1,
+        .more = true,
+        .bytes = "opaque",
+    } }, allocator);
+    defer allocator.free(bytes);
+    try std.testing.expectEqualStrings(
+        "\x1b]72;t=r:i=7:x=1:m=1;b3BhcXVl\x1b\\",
+        bytes,
+    );
 }
 
 test "hyperlink interning preserves prior identities on allocation failure" {
@@ -8139,6 +8339,7 @@ pub const SemanticEvent = union(enum) {
     clipboard_set: []const u8,
     kitty_clipboard_packet: []const u8,
     file_transfer_packet: struct { protocol: FileTransferProtocol, payload: []const u8 },
+    drag_drop: ParsedDragDrop,
     dec_mode_query: u16,
     dec_mode_set: ModeParams,
     dec_mode_reset: ModeParams,
@@ -9358,7 +9559,119 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
             .payload = v.payload,
         } },
         .kitty_text_size => |v| SemanticEvent{ .text_size = .{ .payload = v.payload } },
+        .kitty_drag_drop => |v| if (parseDragDrop(v.payload)) |command|
+            SemanticEvent{ .drag_drop = command }
+        else
+            null,
         else => null,
+    };
+}
+
+const ParsedDragDrop = struct {
+    kind: DragDropCommandKind,
+    command: u8,
+    client_id: ?u32 = null,
+    more: bool = false,
+    operation: ?u2 = null,
+    index: ?u32 = null,
+    remote: bool = false,
+    payload: []const u8,
+};
+
+fn parseDragDrop(bytes: []const u8) ?ParsedDragDrop {
+    const separator = std.mem.indexOfScalar(u8, bytes, ';');
+    const metadata = if (separator) |index| bytes[0..index] else bytes;
+    const payload = if (separator) |index| bytes[index + 1 ..] else "";
+    if (payload.len > drag_drop_packet_max_bytes) return null;
+    var command: ?u8 = null;
+    var client_id: ?u32 = null;
+    var more = false;
+    var operation: ?u2 = null;
+    var x: ?i32 = null;
+    var y: ?i32 = null;
+    var pixel_x: ?i32 = null;
+    var pixel_y: ?i32 = null;
+    var seen: u8 = 0;
+    var fields = std.mem.splitScalar(u8, metadata, ':');
+    while (fields.next()) |field| {
+        const equals = std.mem.indexOfScalar(u8, field, '=') orelse return null;
+        if (equals != 1 or equals + 1 == field.len) return null;
+        const key = field[0];
+        const value = field[equals + 1 ..];
+        const bit: u8 = switch (key) {
+            't' => 1 << 0,
+            'm' => 1 << 1,
+            'i' => 1 << 2,
+            'o' => 1 << 3,
+            'x' => 1 << 4,
+            'y' => 1 << 5,
+            'X' => 1 << 6,
+            'Y' => 1 << 7,
+            else => return null,
+        };
+        if (seen & bit != 0) return null;
+        seen |= bit;
+        switch (key) {
+            't' => {
+                if (value.len != 1) return null;
+                command = value[0];
+            },
+            'm' => {
+                const parsed = std.fmt.parseInt(u32, value, 10) catch return null;
+                if (parsed > 1) return null;
+                more = parsed == 1;
+            },
+            'i' => client_id = std.fmt.parseInt(u32, value, 10) catch return null,
+            'o' => {
+                const parsed = std.fmt.parseInt(u32, value, 10) catch return null;
+                if (parsed > 3) return null;
+                operation = @intCast(parsed);
+            },
+            'x' => x = std.fmt.parseInt(i32, value, 10) catch return null,
+            'y' => y = std.fmt.parseInt(i32, value, 10) catch return null,
+            'X' => pixel_x = std.fmt.parseInt(i32, value, 10) catch return null,
+            'Y' => pixel_y = std.fmt.parseInt(i32, value, 10) catch return null,
+            else => unreachable,
+        }
+    }
+    const kind: DragDropCommandKind = if (command == null) continuation: {
+        if (seen & ~(@as(u8, (1 << 1) | (1 << 2))) != 0) return null;
+        break :continuation .continuation;
+    } else switch (command.?) {
+        'a' => if (x == null and y == null and pixel_x == null and pixel_y == null and operation == null)
+            .enable
+        else
+            .unsupported,
+        'A' => if (x == null and y == null and pixel_x == null and pixel_y == null and operation == null)
+            .disable
+        else
+            .unsupported,
+        'm' => if (operation != null and x == null and y == null and pixel_x == null and pixel_y == null)
+            .accept
+        else
+            .unsupported,
+        'r' => if (x != null and x.? > 0 and y == null and pixel_x == null and pixel_y == null and operation == null)
+            .request
+        else if (operation != null and x == null and y == null and pixel_x == null and pixel_y == null)
+            .complete
+        else
+            .unsupported,
+        'q' => if (x == null and y == null and pixel_x == null and pixel_y == null and operation == null)
+            .query
+        else
+            .unsupported,
+        else => .unsupported,
+    };
+    return .{
+        .kind = kind,
+        .command = command orelse 0,
+        .client_id = client_id,
+        .more = more,
+        .operation = operation,
+        .index = if (x != null and x.? > 0) @intCast(x.?) else null,
+        .remote = kind == .unsupported and (y != null or pixel_x != null or pixel_y != null or
+            (command.? == 'a' and x != null)),
+        .payload = payload,
     };
 }
 
@@ -10264,6 +10577,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .clipboard_set => |payload| return try vt.host.retainClipboard(payload),
         .kitty_clipboard_packet => |payload| try vt.host.retainKittyClipboard(payload),
         .file_transfer_packet => |packet| try vt.host.retainFileTransfer(packet.protocol, packet.payload),
+        .drag_drop => |command| try vt.host.retainDragDrop(command),
         .locator_reporting => |cfg| setReporting(&vt.host.locator, cfg.mode, cfg.unit),
         .locator_filter => |area| setFilter(&vt.host.locator, area),
         .locator_events => |modes| setEvents(&vt.host.locator, modes.params[0..modes.param_count]),
@@ -12098,6 +12412,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .clipboard_set,
         .kitty_clipboard_packet,
         .file_transfer_packet,
+        .drag_drop,
         .locator_reporting,
         .locator_filter,
         .locator_events,
@@ -13045,6 +13360,20 @@ pub const Terminal = struct {
     pub const iterm_file_transfer_max_bytes = parser_mod.max_metadata_control_bytes;
     /// Exposes the fixed pending file-transfer packet capacity.
     pub const file_transfer_max_count = file_transfer_capacity;
+    /// Bounds one Kitty OSC 72 command payload before ordered retention.
+    pub const drag_drop_payload_max_bytes = drag_drop_packet_max_bytes;
+    /// Bounds aggregate retained Kitty OSC 72 command payload bytes.
+    pub const drag_drop_max_bytes = drag_drop_aggregate_max_bytes;
+    /// Exposes the fixed pending Kitty OSC 72 command capacity.
+    pub const drag_drop_max_count = drag_drop_capacity;
+    /// Exposes one parsed ordered Kitty OSC 72 command.
+    pub const DragDropCommand = DragDropCommandView;
+    /// Exposes one typed host-to-child Kitty OSC 72 event.
+    pub const DragDropEvent = DragDropEventValue;
+    /// Bounds raw bytes carried by one OSC 72 data response before base64 encoding.
+    pub const drag_drop_data_max_bytes: u32 = 3072;
+    /// Reports bounded OSC 72 event construction failure.
+    pub const DragDropEventError = error{ OutOfMemory, ConsequenceLimit, InvalidArgument };
     /// Exposes the fixed pending media-copy command capacity.
     pub const media_copy_max_count = media_copy_capacity;
     /// Exposes the fixed pending DCS consequence capacity.
@@ -14376,6 +14705,8 @@ pub const Terminal = struct {
             .pointer_shape_reset_generation = self.host.pointer_shape_reset_generation,
             .file_transfer = self.host.fileTransferHead(),
             .file_transfer_count = self.host.file_transfer_count,
+            .drag_drop = self.host.dragDropHead(),
+            .drag_drop_count = self.host.drag_drop_count,
             .window_request = self.host.windowRequestHead(),
             .window_request_count = self.host.window_requests_count,
             .color_preference_query_generation = self.host.colorPreferenceQueryGeneration(),
@@ -14922,6 +15253,116 @@ pub const Terminal = struct {
         return packet.generation;
     }
 
+    /// Borrows the parsed FIFO-head Kitty OSC 72 command until terminal mutation.
+    pub fn pendingDragDrop(self: *const Terminal) ?DragDropCommand {
+        return self.host.dragDropHead();
+    }
+
+    /// Consumes only the exact FIFO-head Kitty OSC 72 command after host policy.
+    pub fn acknowledgeDragDrop(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleDragDrop}!void {
+        const command = self.host.dragDropHead() orelse return error.StaleDragDrop;
+        if (command.generation != generation) return error.StaleDragDrop;
+        self.host.consumeDragDrop();
+        advanceIdentity(&self.semantic_sequence);
+    }
+
+    /// Serializes one host-owned Kitty OSC 72 event without retaining caller borrows.
+    pub fn prepareDragDropEvent(
+        self: *Terminal,
+        event: DragDropEvent,
+        allocator: std.mem.Allocator,
+    ) DragDropEventError![]u8 {
+        var output = PendingOutput.init();
+        output.eight_bit_controls = self.host.pending_output.eight_bit_controls;
+        errdefer output.bytes.deinit(allocator);
+        try appendReplyControl(&output, allocator, .terminal, .osc);
+        try appendOutput(&output, allocator, "72;");
+        var metadata: [192]u8 = undefined;
+        switch (event) {
+            .query => |value| {
+                const header = if (value.client_id) |id|
+                    std.fmt.bufPrint(&metadata, "t=q:i={d};", .{id}) catch
+                        return error.ConsequenceLimit
+                else
+                    "t=q;";
+                try appendOutput(&output, allocator, header);
+            },
+            .move => |value| {
+                if (value.mimes.len > drag_drop_packet_max_bytes) return error.ConsequenceLimit;
+                const header = if (value.client_id) |id|
+                    std.fmt.bufPrint(
+                        &metadata,
+                        "t={c}:i={d}:x={d}:y={d}:X={d}:Y={d}:o={d};",
+                        .{ if (value.drop) @as(u8, 'M') else 'm', id, value.cell_x, value.cell_y, value.pixel_x, value.pixel_y, value.operation },
+                    ) catch return error.ConsequenceLimit
+                else
+                    std.fmt.bufPrint(
+                        &metadata,
+                        "t={c}:x={d}:y={d}:X={d}:Y={d}:o={d};",
+                        .{ if (value.drop) @as(u8, 'M') else 'm', value.cell_x, value.cell_y, value.pixel_x, value.pixel_y, value.operation },
+                    ) catch return error.ConsequenceLimit;
+                try appendOutput(&output, allocator, header);
+                try appendOutput(&output, allocator, value.mimes);
+            },
+            .leave => |value| {
+                const header = if (value.client_id) |id|
+                    std.fmt.bufPrint(&metadata, "t=m:i={d}:x=-1:y=-1:X=0:Y=0:o=1;", .{id}) catch
+                        return error.ConsequenceLimit
+                else
+                    "t=m:x=-1:y=-1:X=0:Y=0:o=1;";
+                try appendOutput(&output, allocator, header);
+            },
+            .data => |value| {
+                if (value.index == 0 or value.bytes.len > drag_drop_data_max_bytes)
+                    return error.InvalidArgument;
+                const header = if (value.client_id) |id|
+                    std.fmt.bufPrint(
+                        &metadata,
+                        "t=r:i={d}:x={d}:m={d};",
+                        .{ id, value.index, @intFromBool(value.more) },
+                    ) catch return error.ConsequenceLimit
+                else
+                    std.fmt.bufPrint(
+                        &metadata,
+                        "t=r:x={d}:m={d};",
+                        .{ value.index, @intFromBool(value.more) },
+                    ) catch return error.ConsequenceLimit;
+                try appendOutput(&output, allocator, header);
+                const encoded_len = std.base64.standard.Encoder.calcSize(value.bytes.len);
+                if (encoded_len > drag_drop_packet_max_bytes) return error.InvalidArgument;
+                const encoded = try allocator.alloc(u8, encoded_len);
+                defer allocator.free(encoded);
+                const encoded_bytes = std.base64.standard.Encoder.encode(encoded, value.bytes);
+                std.debug.assert(encoded_bytes.len == encoded.len);
+                try appendOutput(&output, allocator, encoded);
+            },
+            .failure => |value| {
+                const header = if (value.index) |index|
+                    if (value.client_id) |id|
+                        std.fmt.bufPrint(
+                            &metadata,
+                            "t=R:i={d}:x={d};",
+                            .{ id, index },
+                        ) catch return error.ConsequenceLimit
+                    else
+                        std.fmt.bufPrint(&metadata, "t=R:x={d};", .{index}) catch
+                            return error.ConsequenceLimit
+                else if (value.client_id) |id|
+                    std.fmt.bufPrint(&metadata, "t=R:i={d};", .{id}) catch
+                        return error.ConsequenceLimit
+                else
+                    "t=R;";
+                try appendOutput(&output, allocator, header);
+                try appendOutput(&output, allocator, value.reason.bytes());
+            },
+        }
+        try appendReplyControl(&output, allocator, .terminal, .st);
+        return output.bytes.toOwnedSlice(allocator);
+    }
+
     /// Queue one exact reply for the matching FIFO-head query, consuming it only after serialization.
     pub fn replyWindowRequest(
         self: *Terminal,
@@ -15113,6 +15554,10 @@ pub const Terminal = struct {
         file_transfer: ?FileTransferPacket,
         /// Reports the bounded number of pending file-transfer packets, including the head.
         file_transfer_count: u8,
+        /// Borrows the next parsed Kitty OSC 72 command until terminal mutation.
+        drag_drop: ?Terminal.DragDropCommand,
+        /// Reports the bounded number of pending Kitty OSC 72 commands including the head.
+        drag_drop_count: u8,
         /// Borrows the next FIFO host-neutral CSI `t` request until terminal mutation.
         window_request: ?WindowRequestOccurrence,
         /// Reports the bounded number of pending FIFO window requests, including the exposed head.

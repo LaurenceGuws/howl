@@ -608,6 +608,7 @@ fn cloneOscAction(osc: parser_mod.OscAction, payload: []u8) parser_mod.OscAction
         .clipboard => |v| .{ .clipboard = .{ .command = v.command, .payload = payload, .term = v.term } },
         .kitty_color => |v| .{ .kitty_color = .{ .command = v.command, .payload = payload, .term = v.term } },
         .kitty_text_size => .{ .kitty_text_size = .{ .payload = payload, .term = osc.term() } },
+        .kitty_drag_drop => .{ .kitty_drag_drop = .{ .payload = payload, .term = osc.term() } },
         .shell_mark => .{ .shell_mark = .{ .payload = payload, .term = osc.term() } },
         .rxvt_extension => .{ .rxvt_extension = .{ .payload = payload, .term = osc.term() } },
         .iterm2 => |v| .{ .iterm2 = .{

@@ -95,6 +95,7 @@ pub const OscAction = union(enum) {
     clipboard: OscCommandText,
     kitty_color: OscCommandText,
     kitty_text_size: OscText,
+    kitty_drag_drop: OscText,
     shell_mark: OscText,
     rxvt_extension: OscText,
     iterm2: OscCommandText,
@@ -126,6 +127,7 @@ pub const OscAction = union(enum) {
             .pointer_shape => 22,
             .clipboard => |v| v.command,
             .kitty_text_size => 66,
+            .kitty_drag_drop => 72,
             .shell_mark => 133,
             .rxvt_extension => 777,
             .iterm2 => |v| v.command,
@@ -151,6 +153,7 @@ pub const OscAction = union(enum) {
             .hyperlink,
             .pointer_shape,
             .kitty_text_size,
+            .kitty_drag_drop,
             .shell_mark,
             .rxvt_extension,
             .context_signal,
@@ -1300,6 +1303,7 @@ pub const OscControl = struct {
         clipboard,
         kitty_color,
         kitty_text_size,
+        kitty_drag_drop,
         shell_mark,
         rxvt_extension,
         iterm2,
@@ -1368,6 +1372,7 @@ pub const OscControl = struct {
         c52,
         c55,
         c66,
+        c72,
         c77,
         c99,
         c104,
@@ -1506,6 +1511,7 @@ pub const OscControl = struct {
                 .term = term,
             } },
             .kitty_text_size => .{ .kitty_text_size = .{ .payload = self.buffer.items, .term = term } },
+            .kitty_drag_drop => .{ .kitty_drag_drop = .{ .payload = self.buffer.items, .term = term } },
             .shell_mark => .{ .shell_mark = .{ .payload = self.buffer.items, .term = term } },
             .rxvt_extension => .{ .rxvt_extension = .{ .payload = self.buffer.items, .term = term } },
             .iterm2 => .{ .iterm2 = .{
@@ -1815,6 +1821,7 @@ pub const OscControl = struct {
 
     fn advanceC7(byte: u8) ?PrefixState {
         return switch (byte) {
+            '2' => .c72,
             '7' => .c77,
             else => null,
         };
@@ -1963,6 +1970,7 @@ pub const OscControl = struct {
             .c50 => .{ .command = 50, .class = .iterm2, .max_len = self.metadata_max_len },
             .c52 => .{ .command = 52, .class = .clipboard, .max_len = self.clipboard_max_len },
             .c66 => .{ .command = 66, .class = .kitty_text_size, .max_len = self.chunk_max_len },
+            .c72 => .{ .command = 72, .class = .kitty_drag_drop, .max_len = self.chunk_max_len },
             .c104 => .{ .command = 104, .class = .palette_reset, .max_len = self.metadata_max_len },
             .c110, .c111, .c112, .c113, .c114, .c115, .c116, .c117, .c118, .c119 => .{
                 .command = prefixDynamicCommand(self.prefix),
@@ -2257,6 +2265,7 @@ fn appendOwnedAction(
                 .clipboard => |v| .{ .clipboard = .{ .command = v.command, .payload = owned, .term = v.term } },
                 .kitty_color => |v| .{ .kitty_color = .{ .command = v.command, .payload = owned, .term = v.term } },
                 .kitty_text_size => .{ .kitty_text_size = .{ .payload = owned, .term = osc.term() } },
+                .kitty_drag_drop => .{ .kitty_drag_drop = .{ .payload = owned, .term = osc.term() } },
                 .shell_mark => .{ .shell_mark = .{ .payload = owned, .term = osc.term() } },
                 .rxvt_extension => .{ .rxvt_extension = .{ .payload = owned, .term = osc.term() } },
                 .iterm2 => |v| .{ .iterm2 = .{

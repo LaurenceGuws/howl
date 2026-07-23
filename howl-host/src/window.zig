@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const clipboard = @import("clipboard.zig");
+const drop = @import("drop.zig");
 const control = @import("howl_control");
 const howl_render = @import("howl_render");
 const renderer = @import("renderer.zig");
@@ -66,6 +67,7 @@ const max_bells_per_turn: u8 = 32;
 const cursor_blink_ns: u64 = 500 * std.time.ns_per_ms;
 const default_title = "Howl";
 const clipboard_poll_count = 1 + clipboard.max_sends;
+const drop_poll_count = 1;
 
 const PresentationChange = struct {
     title: bool,
@@ -331,7 +333,8 @@ pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitErro
     control.SelectionError || control.ClipboardSetError || control.ClipboardReplyError ||
     control.KittyClipboardPacketError || control.KittyClipboardReplyError ||
     control.WindowReplyError || control.ColorPreferenceReplyError ||
-    control.PointerShapeReplyError ||
+    control.PointerShapeReplyError || error{ MimeLimit, ChunkLimit, InvalidChain } ||
+    control.DragDropSendError ||
     control.ResizeError || control.ReaderError ||
     terminal_render.Error || renderer.Error || error{
     StaleDcsPayload,
@@ -341,6 +344,7 @@ pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitErro
     StalePointerShape,
     StaleStringPayload,
     StaleWindowRequest,
+    StaleDragDrop,
     WindowReplyRequired,
 } || error{
     InvalidSize,
@@ -531,9 +535,27 @@ const Window = struct {
     cursor_shape_device: ?*c.struct_wp_cursor_shape_device_v1 = null,
     seat: ?*c.struct_wl_seat = null,
     data_device_manager: ?*c.struct_wl_data_device_manager = null,
+    data_device_manager_version: u32 = 0,
     data_device: ?*c.struct_wl_data_device = null,
     pending_offer: ?*c.struct_wl_data_offer = null,
     pending_offer_mimes: clipboard.Offer = .{},
+    pending_drop_mimes: drop.MimeList = .{},
+    pending_drop_valid: bool = true,
+    pending_drop_source_actions: u32 = 0,
+    pending_drop_action: u32 = 0,
+    drop_offer: ?*c.struct_wl_data_offer = null,
+    drop_valid: bool = false,
+    drop_mimes: drop.MimeList = .{},
+    drop_serial: u32 = 0,
+    drop_position: ?PointerTarget = null,
+    drop_source_actions: u32 = 0,
+    drop_action: u32 = 0,
+    drop_performed: bool = false,
+    drop_data_delivered: bool = false,
+    drop_state: drop.State = .{},
+    drop_transfers: clipboard.Transfers,
+    drop_receive_index: ?u32 = null,
+    drop_request_generation: ?u64 = null,
     selection_offer: ?*c.struct_wl_data_offer = null,
     selection_offer_mimes: clipboard.Offer = .{},
     data_source: ?*c.struct_wl_data_source = null,
@@ -617,6 +639,7 @@ const Window = struct {
             .cursor_signal = cursor_signal,
             .wake = .{ .fd = terminal_signal },
             .clipboard_transfers = clipboard.Transfers.init(allocator),
+            .drop_transfers = clipboard.Transfers.init(allocator),
         };
         display_owned = false;
         registry_owned = false;
@@ -705,7 +728,7 @@ const Window = struct {
             const flush = c.wl_display_flush(self.display);
             const flush_blocked = flush < 0 and std.posix.errno(flush) == .AGAIN;
             if (flush < 0 and !flush_blocked) return error.WaylandFlush;
-            var fds: [5 + clipboard_poll_count]std.posix.pollfd = undefined;
+            var fds: [5 + clipboard_poll_count + drop_poll_count]std.posix.pollfd = undefined;
             fds[0] = .{
                 .fd = c.wl_display_get_fd(self.display),
                 .events = std.posix.POLL.IN |
@@ -717,7 +740,9 @@ const Window = struct {
             fds[3] = .{ .fd = self.repeat_signal, .events = std.posix.POLL.IN, .revents = 0 };
             fds[4] = .{ .fd = self.cursor_signal, .events = std.posix.POLL.IN, .revents = 0 };
             const clipboard_count = self.clipboard_transfers.pollDescriptors(fds[5..]);
-            const active_fds = fds[0 .. 5 + clipboard_count];
+            const drop_start = 5 + clipboard_count;
+            const drop_count = self.drop_transfers.pollDescriptors(fds[drop_start..]);
+            const active_fds = fds[0 .. drop_start + drop_count];
             const ready_count = std.posix.poll(active_fds, -1) catch return error.Poll;
             std.debug.assert(ready_count != 0);
             const faults = std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL;
@@ -748,6 +773,11 @@ const Window = struct {
             for (fds[5 .. 5 + clipboard_count]) |descriptor|
                 if (descriptor.revents != 0)
                     try self.clipboard_transfers.service(descriptor.fd, descriptor.revents);
+            for (fds[drop_start .. drop_start + drop_count]) |descriptor|
+                if (descriptor.revents != 0)
+                    self.drop_transfers.service(descriptor.fd, descriptor.revents) catch |failure| {
+                        try self.failDropReceive(if (failure == error.ClipboardLimit) .resource else .io);
+                    };
             if (self.clipboard_transfers.received()) |text_bytes| {
                 defer self.clipboard_transfers.finishReceive();
                 const receive = self.clipboard_receive orelse return error.ClipboardRead;
@@ -759,6 +789,12 @@ const Window = struct {
                     .kitty => |request| try self.replyKittyRead(request, text_bytes),
                 }
                 self.clipboard_receive = null;
+            }
+            if (self.drop_transfers.received()) |bytes| {
+                const index = self.drop_receive_index orelse return error.ClipboardRead;
+                try self.sendDropData(index, bytes);
+                self.drop_transfers.finishReceive();
+                self.drop_receive_index = null;
             }
             if (self.failure) |failure| return failure;
         }
@@ -779,6 +815,7 @@ const Window = struct {
         try self.applyWindowRequests();
         try self.applyColorPreferenceQueries();
         try self.applyPointerShapeRequests();
+        try self.applyDragDropConsequences();
         try self.discardUnsupportedConsequences();
         self.applyCurrentPointerShape();
     }
@@ -1371,6 +1408,211 @@ const Window = struct {
         }
     }
 
+    fn applyDragDropConsequences(self: *Window) Error!void {
+        const terminal = self.terminal.?;
+        if (self.drop_request_generation != null) return;
+        var handled: u8 = 0;
+        while (handled < control.drag_drop_max_count) : (handled += 1) {
+            const head = terminal.dragDropHead() orelse return;
+            const action = self.drop_state.consume(&head) catch {
+                self.drop_state.cancelChunk();
+                self.cancelDrop(false);
+                try terminal.acknowledgeDragDrop(head.generation);
+                continue;
+            };
+            if (action) |work| switch (work) {
+                .enable => {},
+                .disable => self.cancelDrop(false),
+                .query => |query| {
+                    try self.sendDropEvent(.{ .query = .{ .client_id = query.client_id } });
+                },
+                .accept => |accept| self.acceptDrop(accept.operation, accept.mimes),
+                .request => |request| {
+                    if (!try self.beginDropReceive(head.generation, request.index)) {
+                        try terminal.acknowledgeDragDrop(head.generation);
+                    }
+                    return;
+                },
+                .complete => |complete| {
+                    if (dropCompletionAllowed(
+                        complete.operation,
+                        self.drop_data_delivered,
+                        self.drop_action,
+                    ) and self.drop_offer != null and dropProtocolAvailable(self.data_device_manager_version)) {
+                        c.wl_data_offer_finish(self.drop_offer.?);
+                    }
+                    self.cancelDrop(true);
+                },
+                .reject => |rejected| {
+                    if (rejected.command == 'r') {
+                        try self.sendDropEvent(.{ .failure = .{
+                            .client_id = rejected.client_id,
+                            .index = rejected.index,
+                            .reason = if (rejected.remote) .permission else .invalid,
+                        } });
+                    } else {
+                        self.acceptDrop(0, "");
+                    }
+                },
+            };
+            try terminal.acknowledgeDragDrop(head.generation);
+        }
+        terminalWake(&self.wake);
+    }
+
+    fn sendDropEvent(self: *Window, event: control.DragDropEvent) Error!void {
+        switch (try self.terminal.?.sendDragDrop(event)) {
+            .complete => {},
+            .incomplete => return error.InputIncomplete,
+        }
+    }
+
+    fn sendDropMove(self: *Window, target: PointerTarget, is_drop: bool) Error!void {
+        var mime_bytes: [drop.max_mime_bytes + drop.max_mimes]u8 = undefined;
+        const mimes = try self.drop_mimes.format(&mime_bytes);
+        try self.sendDropEvent(.{ .move = .{
+            .client_id = self.drop_state.client_id,
+            .cell_x = target.col,
+            .cell_y = @intCast(target.row),
+            .pixel_x = @intCast(target.pixel_x),
+            .pixel_y = @intCast(target.pixel_y),
+            .operation = if (self.drop_source_actions & c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY != 0) 1 else 0,
+            .mimes = mimes,
+            .drop = is_drop,
+        } });
+    }
+
+    fn acceptDrop(self: *Window, operation: u2, preferences: []const u8) void {
+        const offer = self.drop_offer orelse return;
+        if (!self.drop_valid or !dropProtocolAvailable(self.data_device_manager_version)) return;
+        const accepted = if (operation == 1 and
+            self.drop_source_actions & c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY != 0)
+            drop.preferred(&self.drop_mimes, preferences)
+        else
+            null;
+        const mime = if (accepted) |index| self.drop_mimes.at(index).? else null;
+        var mime_z: [drop.max_mime_bytes + 1]u8 = undefined;
+        const mime_pointer: ?[*:0]const u8 = if (mime) |bytes| pointer: {
+            @memcpy(mime_z[0..bytes.len], bytes);
+            mime_z[bytes.len] = 0;
+            break :pointer @ptrCast(&mime_z);
+        } else null;
+        c.wl_data_offer_accept(
+            offer,
+            self.drop_serial,
+            mime_pointer,
+        );
+        c.wl_data_offer_set_actions(
+            offer,
+            if (mime != null) c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY else c.WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE,
+            if (mime != null) c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY else c.WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE,
+        );
+    }
+
+    fn beginDropReceive(self: *Window, generation: u64, index: u32) Error!bool {
+        const offer = if (self.drop_valid and dropProtocolAvailable(self.data_device_manager_version))
+            self.drop_offer
+        else
+            null;
+        const valid_offer = offer orelse {
+            try self.sendDropEvent(.{ .failure = .{
+                .client_id = self.drop_state.client_id,
+                .index = index,
+                .reason = .invalid,
+            } });
+            return false;
+        };
+        const mime = self.drop_mimes.at(index) orelse {
+            try self.sendDropEvent(.{ .failure = .{
+                .client_id = self.drop_state.client_id,
+                .index = index,
+                .reason = .invalid,
+            } });
+            return false;
+        };
+        var mime_z: [drop.max_mime_bytes + 1]u8 = undefined;
+        @memcpy(mime_z[0..mime.len], mime);
+        mime_z[mime.len] = 0;
+        if (self.drop_transfers.receiving()) {
+            try self.sendDropEvent(.{ .failure = .{
+                .client_id = self.drop_state.client_id,
+                .index = index,
+                .reason = .resource,
+            } });
+            return false;
+        }
+        const fds = try clipboard.pipe();
+        var read_owned = true;
+        errdefer if (read_owned) closeOwned(fds[0]);
+        defer closeOwned(fds[1]);
+        try self.drop_transfers.beginReceive(fds[0]);
+        read_owned = false;
+        self.drop_receive_index = index;
+        self.drop_request_generation = generation;
+        c.wl_data_offer_receive(valid_offer, @ptrCast(&mime_z), fds[1]);
+        return true;
+    }
+
+    fn sendDropData(self: *Window, index: u32, bytes: []const u8) Error!void {
+        var offset: usize = 0;
+        while (offset < bytes.len) {
+            const end = @min(offset + control.drag_drop_data_max_bytes, bytes.len);
+            try self.sendDropEvent(.{ .data = .{
+                .client_id = self.drop_state.client_id,
+                .index = index,
+                .more = true,
+                .bytes = bytes[offset..end],
+            } });
+            offset = end;
+        }
+        try self.sendDropEvent(.{ .data = .{
+            .client_id = self.drop_state.client_id,
+            .index = index,
+            .more = false,
+            .bytes = "",
+        } });
+        const generation = self.drop_request_generation orelse return error.InputIncomplete;
+        try self.terminal.?.acknowledgeDragDrop(generation);
+        self.drop_request_generation = null;
+        self.drop_data_delivered = true;
+    }
+
+    fn failDropReceive(self: *Window, reason: @FieldType(
+        @FieldType(control.DragDropEvent, "failure"),
+        "reason",
+    )) Error!void {
+        const generation = self.drop_request_generation orelse return error.InputIncomplete;
+        try self.sendDropEvent(.{ .failure = .{
+            .client_id = self.drop_state.client_id,
+            .index = self.drop_receive_index,
+            .reason = reason,
+        } });
+        self.drop_transfers.finishReceive();
+        self.drop_receive_index = null;
+        self.drop_request_generation = null;
+        try self.terminal.?.acknowledgeDragDrop(generation);
+        self.cancelDrop(false);
+    }
+
+    fn cancelDrop(self: *Window, finished: bool) void {
+        self.drop_transfers.finishReceive();
+        self.drop_receive_index = null;
+        self.drop_request_generation = null;
+        if (self.drop_offer) |offer| {
+            if (!finished) c.wl_data_offer_accept(offer, self.drop_serial, null);
+            c.wl_data_offer_destroy(offer);
+        }
+        self.drop_offer = null;
+        self.drop_valid = false;
+        self.drop_mimes = .{};
+        self.drop_position = null;
+        self.drop_source_actions = 0;
+        self.drop_action = 0;
+        self.drop_performed = false;
+        self.drop_data_delivered = false;
+        self.drop_serial = 0;
+    }
+
     fn applyCurrentPointerShape(self: *Window) void {
         const reset_generation = self.terminal.?.pointerShapeResetGeneration();
         if (reset_generation != self.pointer_shape_reset_generation) {
@@ -1526,6 +1768,8 @@ const Window = struct {
         setCursorTimer(self.cursor_signal, false) catch |failure|
             retainCleanupFailure(&cleanup_failure, failure);
         self.clipboard_transfers.deinit();
+        self.drop_transfers.deinit();
+        self.drop_state.reset();
         if (self.visual) |*visual| visual.deinit();
         self.visual = null;
         if (self.terminal) |terminal| terminal.deinit();
@@ -1557,6 +1801,8 @@ const Window = struct {
         self.data_source = null;
         if (self.pending_offer) |value| c.wl_data_offer_destroy(value);
         self.pending_offer = null;
+        if (self.drop_offer) |value| c.wl_data_offer_destroy(value);
+        self.drop_offer = null;
         if (self.selection_offer) |value| c.wl_data_offer_destroy(value);
         self.selection_offer = null;
         if (self.data_device) |value| c.wl_data_device_release(value);
@@ -1565,6 +1811,7 @@ const Window = struct {
         self.seat = null;
         if (self.data_device_manager) |value| c.wl_data_device_manager_destroy(value);
         self.data_device_manager = null;
+        self.data_device_manager_version = 0;
         if (self.system_bell) |value| c.xdg_system_bell_v1_destroy(value);
         self.system_bell = null;
         if (self.cursor_shape_manager) |value| c.wp_cursor_shape_manager_v1_destroy(value);
@@ -1849,6 +2096,15 @@ fn selectionOverridesMouse(mouse_reporting: bool, modifiers: KeyModifiers) bool 
         !modifiers.hyper and !modifiers.meta;
 }
 
+fn dropCompletionAllowed(operation: u2, delivered: bool, selected_action: u32) bool {
+    return operation == 1 and delivered and
+        selected_action == c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+}
+
+fn dropProtocolAvailable(data_device_manager_version: u32) bool {
+    return data_device_manager_version >= 3;
+}
+
 fn resolveSelectionPoint(
     x: i64,
     y: i64,
@@ -2063,16 +2319,18 @@ fn registryGlobal(
             @min(version, 4),
         ));
     } else if (std.mem.eql(u8, value, "wl_data_device_manager") and self.data_device_manager == null) {
+        const bound_version = @min(version, 3);
         self.data_device_manager = @ptrCast(c.wl_registry_bind(
             registry,
             name,
             &c.wl_data_device_manager_interface,
-            @min(version, 3),
+            bound_version,
         ));
         if (self.data_device_manager == null) {
             retainFailure(self, error.WaylandProtocol);
             return;
         }
+        self.data_device_manager_version = bound_version;
         self.ensureDataDevice();
     } else if (std.mem.eql(u8, value, "xdg_wm_base") and self.wm_base == null) {
         self.wm_base = @ptrCast(c.wl_registry_bind(
@@ -2147,16 +2405,34 @@ fn dataOfferMime(
         retainFailure(self, error.WaylandProtocol);
         return;
     }
-    self.pending_offer_mimes.admit(std.mem.span(mime));
+    const bytes = std.mem.span(mime);
+    self.pending_offer_mimes.admit(bytes);
+    self.pending_drop_mimes.append(bytes) catch {
+        self.pending_drop_valid = false;
+    };
 }
 
 fn dataOfferSourceActions(
-    _: ?*anyopaque,
-    _: ?*c.struct_wl_data_offer,
-    _: u32,
-) callconv(.c) void {}
+    data: ?*anyopaque,
+    offer: ?*c.struct_wl_data_offer,
+    actions: u32,
+) callconv(.c) void {
+    const self = owner(data);
+    if (offer == self.drop_offer) {
+        self.drop_source_actions = actions;
+    } else if (offer == self.pending_offer) {
+        self.pending_drop_source_actions = actions;
+    }
+}
 
-fn dataOfferAction(_: ?*anyopaque, _: ?*c.struct_wl_data_offer, _: u32) callconv(.c) void {}
+fn dataOfferAction(data: ?*anyopaque, offer: ?*c.struct_wl_data_offer, action: u32) callconv(.c) void {
+    const self = owner(data);
+    if (offer == self.drop_offer) {
+        self.drop_action = action;
+    } else if (offer == self.pending_offer) {
+        self.pending_drop_action = action;
+    }
+}
 
 const data_offer_listener = c.struct_wl_data_offer_listener{
     .offer = dataOfferMime,
@@ -2177,6 +2453,10 @@ fn dataDeviceOffer(
     if (self.pending_offer) |prior| c.wl_data_offer_destroy(prior);
     self.pending_offer = value;
     self.pending_offer_mimes = .{};
+    self.pending_drop_mimes = .{};
+    self.pending_drop_valid = true;
+    self.pending_drop_source_actions = 0;
+    self.pending_drop_action = 0;
     if (c.wl_data_offer_add_listener(value, &data_offer_listener, self) != 0)
         retainFailure(self, error.WaylandProtocol);
 }
@@ -2185,33 +2465,80 @@ fn dataDeviceEnter(
     data: ?*anyopaque,
     _: ?*c.struct_wl_data_device,
     serial: u32,
-    _: ?*c.struct_wl_surface,
-    _: c.wl_fixed_t,
-    _: c.wl_fixed_t,
+    surface: ?*c.struct_wl_surface,
+    x: c.wl_fixed_t,
+    y: c.wl_fixed_t,
     offer: ?*c.struct_wl_data_offer,
 ) callconv(.c) void {
     const self = owner(data);
-    if (offer) |value| c.wl_data_offer_accept(value, serial, null);
-    if (offer != self.pending_offer) retainFailure(self, error.WaylandProtocol);
+    if (surface != self.surface or offer != self.pending_offer or self.drop_offer != null) {
+        retainFailure(self, error.WaylandProtocol);
+        return;
+    }
+    const value = offer orelse {
+        retainFailure(self, error.WaylandProtocol);
+        return;
+    };
+    self.drop_offer = value;
+    self.drop_valid = self.pending_drop_valid and dropProtocolAvailable(self.data_device_manager_version);
+    self.drop_mimes = self.pending_drop_mimes;
+    self.drop_source_actions = self.pending_drop_source_actions;
+    self.drop_action = self.pending_drop_action;
+    self.drop_serial = serial;
+    self.pending_offer = null;
+    self.pending_offer_mimes = .{};
+    self.pending_drop_mimes = .{};
+    self.pending_drop_source_actions = 0;
+    self.pending_drop_action = 0;
+    c.wl_data_offer_accept(value, serial, null);
+    if (dropProtocolAvailable(self.data_device_manager_version)) {
+        c.wl_data_offer_set_actions(
+            value,
+            c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY,
+            if (self.drop_source_actions & c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY != 0)
+                c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+            else
+                c.WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE,
+        );
+    }
+    if (!self.drop_state.enabled or !self.drop_valid) return;
+    const target = self.pointerTarget(fixedCoordinate(x) orelse return, fixedCoordinate(y) orelse return) orelse return;
+    self.drop_position = target;
+    self.sendDropMove(target, false) catch |failure| retainFailure(self, failure);
 }
 
 fn dataDeviceLeave(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {
     const self = owner(data);
-    if (self.pending_offer) |offer| c.wl_data_offer_destroy(offer);
-    self.pending_offer = null;
-    self.pending_offer_mimes = .{};
+    if (self.drop_performed) return;
+    if (self.drop_offer != null and self.drop_state.enabled)
+        self.sendDropEvent(.{ .leave = .{ .client_id = self.drop_state.client_id } }) catch |failure|
+            retainFailure(self, failure);
+    self.cancelDrop(false);
 }
 
 fn dataDeviceMotion(
-    _: ?*anyopaque,
+    data: ?*anyopaque,
     _: ?*c.struct_wl_data_device,
     _: u32,
-    _: c.wl_fixed_t,
-    _: c.wl_fixed_t,
-) callconv(.c) void {}
+    x: c.wl_fixed_t,
+    y: c.wl_fixed_t,
+) callconv(.c) void {
+    const self = owner(data);
+    if (!self.drop_state.enabled or self.drop_offer == null or !self.drop_valid) return;
+    const target = self.pointerTarget(fixedCoordinate(x) orelse return, fixedCoordinate(y) orelse return) orelse return;
+    self.drop_position = target;
+    self.sendDropMove(target, false) catch |failure| retainFailure(self, failure);
+}
 
-fn dataDeviceDrop(data: ?*anyopaque, device: ?*c.struct_wl_data_device) callconv(.c) void {
-    dataDeviceLeave(data, device);
+fn dataDeviceDrop(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {
+    const self = owner(data);
+    if (!self.drop_state.enabled or self.drop_offer == null or !self.drop_valid) {
+        self.cancelDrop(false);
+        return;
+    }
+    const target = self.drop_position orelse return;
+    self.drop_performed = true;
+    self.sendDropMove(target, true) catch |failure| retainFailure(self, failure);
 }
 
 fn dataDeviceSelection(
@@ -2233,6 +2560,10 @@ fn dataDeviceSelection(
     self.selection_offer_mimes = self.pending_offer_mimes;
     self.pending_offer = null;
     self.pending_offer_mimes = .{};
+    self.pending_drop_mimes = .{};
+    self.pending_drop_valid = true;
+    self.pending_drop_source_actions = 0;
+    self.pending_drop_action = 0;
 }
 
 const data_device_listener = c.struct_wl_data_device_listener{
@@ -3270,6 +3601,35 @@ test "pointer buttons and drag coordinates commit only after admission" {
     state.clear();
     try std.testing.expectEqual(@as(u8, 0), state.buttons_down);
     for (state.pressed) |pressed| try std.testing.expectEqual(null, pressed);
+}
+
+test "drop completion requires delivered copy data and compositor copy selection" {
+    try std.testing.expect(dropCompletionAllowed(
+        1,
+        true,
+        c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY,
+    ));
+    try std.testing.expect(!dropCompletionAllowed(
+        2,
+        true,
+        c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY,
+    ));
+    try std.testing.expect(!dropCompletionAllowed(
+        1,
+        false,
+        c.WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY,
+    ));
+    try std.testing.expect(!dropCompletionAllowed(
+        1,
+        true,
+        c.WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE,
+    ));
+}
+
+test "drop protocol requires negotiated data-device version three" {
+    try std.testing.expect(!dropProtocolAvailable(0));
+    try std.testing.expect(!dropProtocolAvailable(2));
+    try std.testing.expect(dropProtocolAvailable(3));
 }
 
 test "pointer axis accumulates one bounded frame in callback order" {
