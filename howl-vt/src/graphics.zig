@@ -36,6 +36,8 @@ pub const ImageView = struct {
 pub const Placement = struct {
     /// Image identity resolved by the plane.
     image_id: u32,
+    /// Optional application-selected Kitty placement identity.
+    kitty_id: u32,
     /// Monotonic placement identity.
     generation: u64,
     /// Screen bank owning this placement.
@@ -73,6 +75,7 @@ const Loading = struct {
     action: u8,
     format: u8,
     id: u32,
+    placement_id: u32,
     width: u32,
     height: u32,
     quiet: u2,
@@ -120,6 +123,7 @@ const Command = struct {
     more: bool = false,
     quiet: u2 = 0,
     delete: u8 = 0,
+    placement_id: u32 = 0,
     x: u32 = 0,
     y: u32 = 0,
     payload: []const u8 = "",
@@ -231,13 +235,16 @@ pub const Plane = struct {
                 .action = command_value.action,
                 .format = command_value.format,
                 .id = command_value.id,
+                .placement_id = command_value.placement_id,
                 .width = command_value.width,
                 .height = command_value.height,
                 .quiet = command_value.quiet,
                 .bytes = try self.allocator.alloc(u8, input_bytes),
             };
         } else {
-            if (command_value.width != 0 or command_value.height != 0 or command_value.id != 0) {
+            if (command_value.width != 0 or command_value.height != 0 or
+                command_value.id != 0 or command_value.placement_id != 0)
+            {
                 self.cancel();
                 return self.transmit(command_value, bank, row, col, cell_width, cell_height);
             }
@@ -299,7 +306,11 @@ pub const Plane = struct {
         if (prior_index == null and self.image_count == max_images)
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
         const display = loading.action == 'T';
-        if (display and self.placement_count == max_placements)
+        const replaced_placement = if (display and prior_index != null)
+            self.placementIndex(self.images[prior_index.?].id, loading.placement_id)
+        else
+            null;
+        if (display and self.placement_count == max_placements and replaced_placement == null)
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
         const rgba = try self.allocator.alloc(u8, rgba_len);
         errdefer self.allocator.free(rgba);
@@ -344,17 +355,34 @@ pub const Plane = struct {
             self.image_count += 1;
         }
         self.storage_bytes += rgba.len;
-        if (display) self.addPlacement(
-            self.images[prior_index orelse self.image_count - 1].id,
-            bank,
-            row,
-            col,
-            cell_width,
-            cell_height,
-            loading.width,
-            loading.height,
-            content_generation,
-        );
+        if (display) {
+            const image_id = self.images[prior_index orelse self.image_count - 1].id;
+            if (replaced_placement) |index| {
+                self.placements[index] = makePlacement(
+                    image_id,
+                    loading.placement_id,
+                    bank,
+                    row,
+                    col,
+                    cell_width,
+                    cell_height,
+                    loading.width,
+                    loading.height,
+                    content_generation,
+                );
+            } else self.addPlacement(
+                image_id,
+                loading.placement_id,
+                bank,
+                row,
+                col,
+                cell_width,
+                cell_height,
+                loading.width,
+                loading.height,
+                content_generation,
+            );
+        }
         return .{
             .changed = true,
             .response_id = loading.id,
@@ -373,13 +401,28 @@ pub const Plane = struct {
     ) Result {
         const image_index = self.kittyImageIndex(command_value.id) orelse
             return .{ .response_id = nonzero(command_value.id), .failure = .missing, .quiet = command_value.quiet };
+        const retained = self.images[image_index];
         if (self.placement_count == max_placements)
-            return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
+            if (self.placementIndex(retained.id, command_value.placement_id) == null)
+                return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
         self.advance();
         const placement_generation = self.next_generation;
-        const retained = self.images[image_index];
-        self.addPlacement(
+        if (self.placementIndex(retained.id, command_value.placement_id)) |index| {
+            self.placements[index] = makePlacement(
+                retained.id,
+                command_value.placement_id,
+                bank,
+                row,
+                col,
+                cell_width,
+                cell_height,
+                retained.width,
+                retained.height,
+                placement_generation,
+            );
+        } else self.addPlacement(
             retained.id,
+            command_value.placement_id,
             bank,
             row,
             col,
@@ -514,6 +557,7 @@ pub const Plane = struct {
         self.storage_bytes += pixels.len;
         self.addPlacement(
             image_id,
+            0,
             bank,
             row,
             col,
@@ -694,6 +738,7 @@ pub const Plane = struct {
     fn addPlacement(
         self: *Plane,
         image_id: u32,
+        kitty_id: u32,
         bank: Bank,
         row: u64,
         col: u16,
@@ -703,11 +748,46 @@ pub const Plane = struct {
         pixel_height: u32,
         placement_generation: u64,
     ) void {
+        self.placements[self.placement_count] = makePlacement(
+            image_id,
+            kitty_id,
+            bank,
+            row,
+            col,
+            cell_width,
+            cell_height,
+            pixel_width,
+            pixel_height,
+            placement_generation,
+        );
+        self.placement_count += 1;
+    }
+
+    fn placementIndex(self: *const Plane, image_id: u32, kitty_id: u32) ?usize {
+        if (kitty_id == 0) return null;
+        for (self.placements[0..self.placement_count], 0..) |retained, index|
+            if (retained.image_id == image_id and retained.kitty_id == kitty_id) return index;
+        return null;
+    }
+
+    fn makePlacement(
+        image_id: u32,
+        kitty_id: u32,
+        bank: Bank,
+        row: u64,
+        col: u16,
+        cell_width: u32,
+        cell_height: u32,
+        pixel_width: u32,
+        pixel_height: u32,
+        placement_generation: u64,
+    ) Placement {
         std.debug.assert(cell_width != 0 and cell_height != 0);
         const occupied_cols = (pixel_width + cell_width - 1) / cell_width;
         const occupied_rows = (pixel_height + cell_height - 1) / cell_height;
-        self.placements[self.placement_count] = .{
+        return .{
             .image_id = image_id,
+            .kitty_id = kitty_id,
             .generation = placement_generation,
             .bank = bank,
             .row = row,
@@ -715,7 +795,6 @@ pub const Plane = struct {
             .rows = @intCast(@min(occupied_rows, std.math.maxInt(u16))),
             .cols = @intCast(@min(occupied_cols, std.math.maxInt(u16))),
         };
-        self.placement_count += 1;
     }
 
     fn removePlacements(self: *Plane, image_id: u32) void {
@@ -795,6 +874,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'd' => 1 << 8,
             'x' => 1 << 9,
             'y' => 1 << 10,
+            'p' => 1 << 11,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -826,6 +906,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             } else return null,
             'x' => result.x = std.fmt.parseInt(u32, value, 10) catch return null,
             'y' => result.y = std.fmt.parseInt(u32, value, 10) catch return null,
+            'p' => result.placement_id = std.fmt.parseInt(u32, value, 10) catch return null,
             else => return null,
         }
     }
@@ -849,7 +930,8 @@ fn deleteMatches(
         std.math.add(u64, screen_origin, command_value.y - 1) catch null;
     return switch (selector) {
         'a' => true,
-        'i' => kitty_id == command_value.id,
+        'i' => kitty_id == command_value.id and
+            (command_value.placement_id == 0 or placement_value.kitty_id == command_value.placement_id),
         'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
         'p' => command_value.x != 0 and explicit_row != null and
             placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right and
@@ -1076,6 +1158,32 @@ test "plane identities survive Kitty replacement and isolate decoded images from
         plane.generation(),
         plane.imageGeneration(),
     });
+}
+
+test "Kitty placement identity replaces and deletes only the exact retained placement" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=9;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command("a=p,i=9,p=4", .primary, 0, 2, 3, 1, 1)).changed);
+    const first_generation = plane.placement(0).?.generation;
+    try std.testing.expect((try plane.command("a=p,i=9,p=4", .primary, 0, 5, 6, 1, 1)).changed);
+    try std.testing.expectEqual(@as(usize, 1), plane.placement_count);
+    try std.testing.expectEqual(@as(u64, 5), plane.placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 6), plane.placement(0).?.col);
+    try std.testing.expect(plane.placement(0).?.generation > first_generation);
+
+    try std.testing.expect(!(try plane.command("a=d,d=i,i=9,p=3", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=d,d=i,i=9,p=4", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(usize, 0), plane.placement_count);
+    try std.testing.expectEqual(@as(usize, 1), plane.image_count);
 }
 
 test "static image allocation failure leaves the plane reusable" {

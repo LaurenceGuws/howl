@@ -3803,13 +3803,13 @@ references:
             relevance: graphics, howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.put, raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl supports ordinary cursor-relative placement by image id; crop, offset, z-order, parent and virtual placement remain.",
+              residual: "Howl supports cursor-relative placement by image id with exact nonzero placement-id replacement; crop, offset, z-order, parent and virtual placement remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
-                symbol: "static plane admission is transactional across chunks replacement put and delete"}}}
+                symbol: "Kitty placement identity replaces and deletes only the exact retained placement"}}}
           - {id: kitty.graphics.delete, raw: "APC G a=d,d=selector,Pm ST", effect: delete image placements or data,
             relevance: graphics, howl: &howl_static_graphics_delete {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl implements silent lower/uppercase placement/data deletion for all, image-id, id-range, point, row, column and cursor selectors; placement ids, image numbers, z selectors and animation frames remain.",
+              residual: "Howl implements silent lower/uppercase placement/data deletion for all, image-id with optional placement id, id-range, point, row, column and cursor selectors; image numbers, z selectors and animation frames remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "static delete selectors preserve placement and image ownership distinctions"}}}
           - {id: kitty.graphics.compose, raw: "APC G a=c,Pm ST", effect: compose animation frames, relevance: graphics,
