@@ -3858,11 +3858,9 @@ references:
           - {id: kitty.graphics.delete_number, raw: "APC G a=d,d=n|N,I=Ps ST",
             effect: delete by image number optionally including data, relevance: graphics, howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_frame, raw: "APC G a=d,d=f|F,Pm ST", effect: delete animation frame or image,
-            relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
-              milestone: advanced_graphics,
-              residual: "Howl silently deletes or promotes bounded coalesced frames and uppercase-deletes a frame-less image; transient cache/frame-chain policy remains.",
+            relevance: graphics, howl: {support: full,
               source: howl-vt/src/graphics.zig, symbol: Plane.deleteFrame, proof: {path: howl-vt/src/graphics.zig,
-                symbol: "Kitty frames compose transactionally and advance on monotonic gaps"}}}
+                symbol: "Kitty frame deletion defaults to root and uppercase retires frame-less image"}}}
           - {id: kitty.graphics.delete_default, raw: "APC G a=d,Pm ST", effect: delete all non-cell placements,
             relevance: graphics, howl: *howl_static_graphics_delete}
 

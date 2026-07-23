@@ -906,7 +906,7 @@ pub const Plane = struct {
             return .{ .changed = true, .quiet = 2 };
         }
         const requested = if (command_value.rows == 0)
-            frame_count + 1
+            1
         else
             @min(std.math.cast(u16, command_value.rows) orelse return .{ .quiet = 2 }, frame_count + 1);
         const prior_current = self.images[image_index].current_frame;
@@ -1204,7 +1204,9 @@ pub const Plane = struct {
         var semantic_changed = false;
         var next_ms: ?u32 = null;
         for (self.images[0..self.image_count]) |*image_value| {
-            if (image_value.animation == .stopped or self.frameCount(image_value.id) == 0) continue;
+            if (image_value.animation == .stopped or self.frameCount(image_value.id) == 0 or
+                !self.hasPlacement(image_value.id) or self.animationDuration(image_value.*) == 0)
+                continue;
             if (image_value.frame_started_ms == null) image_value.frame_started_ms = now_ms;
             const gap = self.currentGap(image_value.*);
             const elapsed = now_ms -| image_value.frame_started_ms.?;
@@ -1505,8 +1507,17 @@ pub const Plane = struct {
     }
 
     fn removePlacement(self: *Plane, index: usize) void {
+        const image_id = self.placements[index].image_id;
         self.placement_count -= 1;
         if (index != self.placement_count) self.placements[index] = self.placements[self.placement_count];
+        if (!self.hasPlacement(image_id)) {
+            for (self.images[0..self.image_count]) |*image_value| {
+                if (image_value.id == image_id) {
+                    image_value.frame_started_ms = null;
+                    break;
+                }
+            }
+        }
     }
 
     fn removeImage(self: *Plane, index: usize) void {
@@ -1574,6 +1585,14 @@ pub const Plane = struct {
             if (retained_frame.image_id == image_id) bytes += retained_frame.pixels.len;
         }
         return bytes;
+    }
+
+    fn animationDuration(self: *const Plane, image_value: Image) u64 {
+        var duration: u64 = image_value.root_gap_ms;
+        for (self.frames[0..self.frame_count]) |retained_frame| {
+            if (retained_frame.image_id == image_value.id) duration += retained_frame.gap_ms;
+        }
+        return duration;
     }
 
     fn nextFrameNumber(self: *const Plane, image_id: u32) ?u16 {
@@ -2320,6 +2339,79 @@ test "Kitty composition owns root and nonoverlapping same-frame edits" {
         plane.images[0].pixels,
     );
     try std.testing.expectEqual(storage, plane.storage_bytes);
+}
+
+test "Kitty frame deletion defaults to root and uppercase retires frame-less image" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=40,q=2;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=1,v=1,i=40,r=2,C=1,q=2;BQYHCA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const after_root = try plane.command("a=d,d=f,i=40", .primary, 0, 0, 0, 1, 1);
+    try std.testing.expect(after_root.changed);
+    try std.testing.expect(after_root.visual_changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, plane.image(0).?.pixels);
+    try std.testing.expect(!(try plane.command("a=d,d=f,i=40", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=d,d=F,i=40", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+    try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
+}
+
+test "Kitty animation requires a placement and nonzero total duration" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=41,q=2;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=1,v=1,i=41,r=2,z=-1,C=1,q=2;BQYHCA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command("a=a,i=41,s=3,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(100).next_ms);
+    try std.testing.expect((try plane.command("a=p,i=41,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(100).next_ms);
+    try std.testing.expect((try plane.command("a=d,d=a", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(1000).next_ms);
+    try std.testing.expect((try plane.command("a=p,i=41,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(1000).next_ms);
+    try std.testing.expect((try plane.command(
+        "a=a,i=41,r=1,z=-1,q=2",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(200).next_ms);
 }
 
 test "static image allocation failure leaves the plane reusable" {
