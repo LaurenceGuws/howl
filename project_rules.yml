@@ -11,7 +11,7 @@ rules:
   - PTY owns Linux transport, descriptors, child processes, cancellation, and cleanup.
   - Control optionally composes PTY and VT through bounded operations and has no rendering relation.
   - Render owns backend-neutral terminal visual knowledge and plain values without runtime policy.
-  - The executable owns runtime and presentation resources; its noun, topology, and API require separate approval.
+  - Howl-host owns its concrete Wayland, EGL/GLES, input, retained-visual, render-thread, and presentation lifecycle.
   - Each surviving library package exposes a curated Zig module and owns its direct build and native dependencies.
   - The root workspace reconstructs no child module, dependency, native fact, proof, executable, or artifact.
   - Tests prove behavior, failure, cleanup, bounds, and deterministic semantics rather than rejected architecture.

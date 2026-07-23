@@ -1,13 +1,44 @@
 howl-control/src/client.zig|anyerror|fn transportClientError(failure: anyerror, fallback: ClientError) ClientError {
 howl-control/src/howl_control.zig|anyopaque|context: ?*anyopaque = null,
+howl-control/src/howl_control.zig|anyopaque|context: ?*anyopaque,
 howl-control/src/howl_control.zig|anyopaque|fn countTestWake(context: ?*anyopaque) void {
 howl-control/src/howl_control.zig|anyopaque|fn ignoreWake(_: ?*anyopaque) void {}
+howl-control/src/howl_control.zig|anyopaque|fn inspectStatusOnWake(context: ?*anyopaque) void {
+howl-control/src/howl_control.zig|anyopaque|fn inspectVisualProof(context: ?*anyopaque, view: VisualView) ?DirtyToken {
+howl-control/src/howl_control.zig|anyopaque|inspect: *const fn (?*anyopaque, VisualView) ?DirtyToken,
 howl-control/src/howl_control.zig|anyopaque|notify: *const fn (?*anyopaque) void = ignoreWake,
 howl-control/src/test.zig|anyopaque|fn countWake(context: ?*anyopaque) void {
-howl-control/src/test.zig|anytype|fn rowStartsWith(view: anytype, expected: []const u8) bool {
-howl-control/src/test.zig|anytype|fn viewContains(view: anytype, expected: []const u8) bool {
-howl-text/src/generated_geometry.zig|anytype|comptime inside: anytype,
-howl-text/src/generated_geometry.zig|anytype|context: anytype,
+howl-host/src/main.zig|anyopaque|fn terminalWake(context: ?*anyopaque) void {
+howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn owner(data: ?*anyopaque) *Window {
+howl-host/src/window.zig|anyopaque|fn pointerFrame(data: ?*anyopaque, _: ?*c.struct_wl_pointer) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn projectVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?control.DirtyToken {
+howl-host/src/window.zig|anyopaque|fn registryRemove(_: ?*anyopaque, _: ?*c.struct_wl_registry, _: u32) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn shellPing(_: ?*anyopaque, base: ?*c.struct_xdg_wm_base, serial: u32) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn surfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_xdg_surface, serial: u32) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn terminalWake(context: ?*anyopaque) void {
+howl-host/src/window.zig|anyopaque|fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
+howl-render/src/generated_geometry.zig|anytype|comptime inside: anytype,
+howl-render/src/generated_geometry.zig|anytype|context: anytype,
 howl-vt/benchmark/pty_feed_record.zig|discard|_ = try std.fmt.hexToBytes(chunk, hex);
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
@@ -92,31 +123,3 @@ howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_osc_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_snapshot_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_surface_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_test.zig");
-howl-window/src/window.zig|anyopaque|_: ?*anyopaque,
-howl-window/src/window.zig|anyopaque|const WakeContext = struct { owner: ?*anyopaque = null, index: TerminalIndex = 0 };
-howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-window/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-window/src/window.zig|anyopaque|fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
-howl-window/src/window.zig|anyopaque|fn keyboardKey(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: u32, code: u32, state: u32) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn keyboardKeymap(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn keyboardLeave(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn keyboardRepeat(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn loop(data: ?*anyopaque) *Loop {
-howl-window/src/window.zig|anyopaque|fn pointerAxis(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: u32, _: c.wl_fixed_t) callconv(.c) void {}
-howl-window/src/window.zig|anyopaque|fn pointerAxisSource(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32) callconv(.c) void {}
-howl-window/src/window.zig|anyopaque|fn pointerAxisStop(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: u32) callconv(.c) void {}
-howl-window/src/window.zig|anyopaque|fn pointerFrame(_: ?*anyopaque, _: ?*c.struct_wl_pointer) callconv(.c) void {}
-howl-window/src/window.zig|anyopaque|fn pointerLeave(data: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn registryRemove(_: ?*anyopaque, _: ?*c.struct_wl_registry, _: u32) callconv(.c) void {}
-howl-window/src/window.zig|anyopaque|fn seatCapabilities(data: ?*anyopaque, seat: ?*c.struct_wl_seat, capabilities: u32) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}
-howl-window/src/window.zig|anyopaque|fn shellPing(_: ?*anyopaque, base: ?*c.struct_xdg_wm_base, serial: u32) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn surfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_xdg_surface, serial: u32) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn terminalWake(context: ?*anyopaque) void {
-howl-window/src/window.zig|anyopaque|fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
-howl-window/src/window.zig|anyopaque|fn wmCapabilities(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: ?*c.struct_wl_array) callconv(.c) void {}

@@ -116,6 +116,43 @@ test "owner captures one child semantic surface" {
     terminal.consumeWake();
 }
 
+test "owner selects a stable terminal child environment" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "printf '%s|%s' \"$TERM\" \"$COLORTERM\"" },
+        .{},
+    );
+    defer terminal.deinit();
+    try waitForPrefix(std.testing.io, terminal, "xterm-256color|truecolor");
+
+    try std.testing.expectError(error.InvalidEnvironment, control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .term = "invalid=value", .command = "exit 0" },
+        .{},
+    ));
+}
+
+test "owner copies title and bell facts without retaining model storage" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "printf '\x1b]2;first\x07\x07\x1b]2;second\x07'" },
+        .{},
+    );
+    defer terminal.deinit();
+    try wait(std.testing.io, terminal);
+
+    var facts = terminal.hostPresentation();
+    try std.testing.expectEqualStrings("second", facts.titleBytes().?);
+    try std.testing.expectEqual(@as(u64, 1), facts.bell_generation);
+    @memset(&facts.title, 'x');
+    const repeated = terminal.hostPresentation();
+    try std.testing.expectEqualStrings("second", repeated.titleBytes().?);
+    try std.testing.expectEqual(@as(u64, 1), repeated.bell_generation);
+}
+
 test "local endpoint shares identity operations ordering and owned unlink" {
     const runtime_dir = try testRuntimeDir();
     defer std.testing.allocator.free(runtime_dir);
@@ -167,6 +204,47 @@ test "local endpoint shares identity operations ordering and owned unlink" {
     );
 }
 
+test "endpoint construction rollback never leaves a discoverable owner" {
+    const runtime_dir = try testRuntimeDir();
+    defer std.testing.allocator.free(runtime_dir);
+    defer std.Io.Dir.cwd().deleteTree(std.testing.io, runtime_dir) catch {};
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        endpointInitAllocation,
+        .{runtime_dir},
+    );
+}
+
+fn endpointInitAllocation(allocator: std.mem.Allocator, runtime_dir: []const u8) !void {
+    var terminal = control.Terminal.init(
+        allocator,
+        std.testing.io,
+        .{ .runtime_dir = runtime_dir, .command = "sleep 30", .cwd = "/tmp" },
+        .{},
+    ) catch |failure| {
+        try expectNoEndpoints(runtime_dir);
+        return failure;
+    };
+    terminal.deinit();
+    try expectNoEndpoints(runtime_dir);
+}
+
+fn expectNoEndpoints(runtime_dir: []const u8) !void {
+    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "{s}/{s}",
+        .{ runtime_dir, control.endpoint_directory },
+    );
+    var directory = std.Io.Dir.openDirAbsolute(std.testing.io, path, .{ .iterate = true }) catch |failure| switch (failure) {
+        error.FileNotFound => return,
+        else => return failure,
+    };
+    defer directory.close(std.testing.io);
+    var iterator = directory.iterate();
+    try std.testing.expect(try iterator.next(std.testing.io) == null);
+}
+
 test "direct and client primitives return the same control evidence" {
     const runtime_dir = try testRuntimeDir();
     defer std.testing.allocator.free(runtime_dir);
@@ -209,6 +287,7 @@ test "direct and client primitives return the same control evidence" {
     var status = try client.status();
     defer status.deinit();
     try std.testing.expectEqual(signaled.admission_sequence, status.value.admission_sequence);
+    try std.testing.expectEqual(screen.semantic_sequence, status.value.semantic_sequence);
 }
 
 test "direct and client input share complete noninterleaved admission" {
@@ -280,6 +359,34 @@ test "status and logical output form one coherent control observation" {
     defer output.deinit();
     try std.testing.expectEqualStrings("one\ntwo", output.text);
     try std.testing.expectEqualStrings("open", output.open_line);
+}
+
+test "status and screen copy one stable semantic sequence" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 8, .rows = 2 },
+        .{},
+    );
+    defer terminal.deinit();
+
+    const initial_status = terminal.status();
+    var initial_screen = try terminal.screen(std.testing.allocator);
+    defer initial_screen.deinit();
+    try std.testing.expectEqual(initial_status.semantic_sequence, initial_screen.semantic_sequence);
+    try std.testing.expectEqual(initial_status.semantic_sequence, terminal.status().semantic_sequence);
+
+    const resized = try terminal.resize(9, 3);
+    try std.testing.expect(resized.changed);
+    const resized_status = terminal.status();
+    var resized_screen = try terminal.screen(std.testing.allocator);
+    defer resized_screen.deinit();
+    try std.testing.expect(resized_status.semantic_sequence > initial_status.semantic_sequence);
+    try std.testing.expectEqual(resized_status.semantic_sequence, resized_screen.semantic_sequence);
+
+    const unchanged = try terminal.resize(9, 3);
+    try std.testing.expect(!unchanged.changed);
+    try std.testing.expectEqual(resized_status.semantic_sequence, terminal.status().semantic_sequence);
 }
 
 test "status copies retained shell mark facts and shell identity" {

@@ -76,7 +76,7 @@ test "alternate-screen output does not enter finalized primary output" {
     try std.testing.expectEqual(before, after);
 }
 
-test "open logical output is publication scoped and does not advance its cursor" {
+test "open logical output is semantic-observation scoped and does not advance its cursor" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.initWithHistory(allocator, 2, 8, 4);
     defer terminal.deinit();
@@ -97,7 +97,7 @@ test "open logical output is publication scoped and does not advance its cursor"
     defer second.deinit();
     try std.testing.expectEqualStrings("open-line", second.open_line);
     try std.testing.expectEqual(first.cursor, second.cursor);
-    try std.testing.expect(second.publication > first.publication);
+    try std.testing.expect(second.semantic_sequence > first.semantic_sequence);
 }
 
 test "logical output identity advances only after retained text allocation succeeds" {
@@ -315,7 +315,7 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
     const primary_history_cell = terminal.screen_state.primary.historyRowAt(0, 0);
     const alternate_cell = terminal.screen_state.alternate.cellAt(0, 0);
     const selection_before = terminal.selectionState();
-    const dirty_generation_before = terminal.dirty_generation;
+    const semantic_sequence_before = terminal.semantic_sequence;
 
     terminal.resize(3, 3) catch |err| {
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
@@ -327,7 +327,7 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
         try std.testing.expectEqual(alternate_cell, terminal.screen_state.alternate.cellAt(0, 0));
         try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
         try std.testing.expectEqual(selection_before, terminal.selectionState());
-        try std.testing.expectEqual(dirty_generation_before, terminal.dirty_generation);
+        try std.testing.expectEqual(semantic_sequence_before, terminal.semantic_sequence);
         try std.testing.expect(terminal.screen_state.primary.left_right_margin_mode);
         try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.left_margin);
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
@@ -347,7 +347,7 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
     try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
     try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
     try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
-    try std.testing.expectEqual(dirty_generation_before + 1, terminal.dirty_generation);
+    try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semantic_sequence);
 }
 
 test "selection copy owns exact allocation and codepoint failures" {

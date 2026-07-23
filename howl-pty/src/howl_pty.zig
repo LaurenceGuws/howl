@@ -19,8 +19,21 @@ const c = @cImport({
 
 // Public lifecycle failures, signals, and bounded transfer outcomes.
 
-/// Reports copied launch allocation or a non-Linux build.
-pub const InitError = std.mem.Allocator.Error || error{UnsupportedPlatform};
+/// Reports copied launch allocation, invalid environment, or a non-Linux build.
+pub const InitError = std.mem.Allocator.Error || error{
+    EnvironmentByteLimit,
+    EnvironmentCountLimit,
+    InvalidEnvironment,
+    UnsupportedPlatform,
+};
+
+/// Selects terminal-owned child identity values copied with the inherited environment.
+pub const ChildEnvironment = struct {
+    /// Selects one nonempty installed TERM identity without `=` or NUL bytes.
+    term: []const u8,
+    /// Optionally selects COLORTERM under the same value constraints.
+    colorterm: ?[]const u8,
+};
 
 /// Reports an invalid lifecycle transition or failed Linux child construction.
 pub const StartError = error{
@@ -139,6 +152,119 @@ const WriteWait = enum { ready, timeout, canceled, closed, failed };
 const stop_hangup_grace_ns = 50 * std.time.ns_per_ms;
 const stop_terminate_grace_ns = 50 * std.time.ns_per_ms;
 const stop_wait_slice_ns = std.time.ns_per_ms;
+const environment_max_entries: usize = 1024;
+const environment_max_bytes: usize = 1024 * 1024;
+
+const LaunchEnvironment = struct {
+    allocator: std.mem.Allocator,
+    bytes: []u8,
+    entries: []?[*:0]u8,
+
+    fn init(
+        allocator: std.mem.Allocator,
+        inherited: []const []const u8,
+        selected: ChildEnvironment,
+    ) InitError!LaunchEnvironment {
+        try validateEnvironmentValue(selected.term);
+        if (selected.colorterm) |value| try validateEnvironmentValue(value);
+
+        var retained_count: usize = 0;
+        var byte_count: usize = 0;
+        for (inherited) |entry| {
+            const separator = std.mem.indexOfScalar(u8, entry, '=') orelse
+                return error.InvalidEnvironment;
+            if (separator == 0 or std.mem.indexOfScalar(u8, entry, 0) != null)
+                return error.InvalidEnvironment;
+            if (environmentVariable(entry, "TERM") or environmentVariable(entry, "COLORTERM")) continue;
+            retained_count = std.math.add(usize, retained_count, 1) catch
+                return error.EnvironmentCountLimit;
+            byte_count = environmentBytes(byte_count, entry.len) catch |failure| return failure;
+        }
+        const override_count: usize = 1 + @as(usize, @intFromBool(selected.colorterm != null));
+        const entry_count = std.math.add(usize, retained_count, override_count) catch
+            return error.EnvironmentCountLimit;
+        if (entry_count > environment_max_entries) return error.EnvironmentCountLimit;
+        byte_count = try environmentBytes(byte_count, "TERM=".len + selected.term.len);
+        if (selected.colorterm) |value|
+            byte_count = try environmentBytes(byte_count, "COLORTERM=".len + value.len);
+        if (byte_count > environment_max_bytes) return error.EnvironmentByteLimit;
+
+        const bytes = try allocator.alloc(u8, byte_count);
+        errdefer allocator.free(bytes);
+        const entries = try allocator.alloc(?[*:0]u8, entry_count + 1);
+        errdefer allocator.free(entries);
+        var offset: usize = 0;
+        var index: usize = 0;
+        for (inherited) |entry| {
+            if (environmentVariable(entry, "TERM") or environmentVariable(entry, "COLORTERM")) continue;
+            copyEnvironmentEntry(bytes, entries, &offset, &index, entry);
+        }
+        copyEnvironmentOverride(bytes, entries, &offset, &index, "TERM", selected.term);
+        if (selected.colorterm) |value|
+            copyEnvironmentOverride(bytes, entries, &offset, &index, "COLORTERM", value);
+        std.debug.assert(offset == bytes.len and index == entry_count);
+        entries[index] = null;
+        return .{ .allocator = allocator, .bytes = bytes, .entries = entries };
+    }
+
+    fn deinit(self: *LaunchEnvironment) void {
+        self.allocator.free(self.entries);
+        self.allocator.free(self.bytes);
+        self.* = undefined;
+    }
+};
+
+fn environmentBytes(current: usize, entry_len: usize) error{EnvironmentByteLimit}!usize {
+    const with_entry = std.math.add(usize, current, entry_len) catch
+        return error.EnvironmentByteLimit;
+    const total = std.math.add(usize, with_entry, 1) catch return error.EnvironmentByteLimit;
+    if (total > environment_max_bytes) return error.EnvironmentByteLimit;
+    return total;
+}
+
+fn environmentVariable(entry: []const u8, name: []const u8) bool {
+    return entry.len > name.len and entry[name.len] == '=' and std.mem.eql(u8, entry[0..name.len], name);
+}
+
+fn validateEnvironmentValue(value: []const u8) error{InvalidEnvironment}!void {
+    if (value.len == 0 or std.mem.indexOfAny(u8, value, "=\x00") != null)
+        return error.InvalidEnvironment;
+}
+
+fn copyEnvironmentEntry(
+    bytes: []u8,
+    entries: []?[*:0]u8,
+    offset: *usize,
+    index: *usize,
+    entry: []const u8,
+) void {
+    entries[index.*] = @ptrCast(bytes[offset.*..].ptr);
+    @memcpy(bytes[offset.* .. offset.* + entry.len], entry);
+    offset.* += entry.len;
+    bytes[offset.*] = 0;
+    offset.* += 1;
+    index.* += 1;
+}
+
+fn copyEnvironmentOverride(
+    bytes: []u8,
+    entries: []?[*:0]u8,
+    offset: *usize,
+    index: *usize,
+    name: []const u8,
+    value: []const u8,
+) void {
+    entries[index.*] = @ptrCast(bytes[offset.*..].ptr);
+    @memcpy(bytes[offset.* .. offset.* + name.len], name);
+    offset.* += name.len;
+    bytes[offset.*] = '=';
+    offset.* += 1;
+    @memcpy(bytes[offset.* .. offset.* + value.len], value);
+    offset.* += value.len;
+    bytes[offset.*] = 0;
+    offset.* += 1;
+    index.* += 1;
+}
 
 // Construction and deadline primitives used by the PTY owner.
 
@@ -186,6 +312,7 @@ pub const Owned = struct {
     command_ptr: ?[*:0]u8,
     start_path: ?[:0]u8,
     start_path_ptr: ?[*:0]u8,
+    environment: LaunchEnvironment,
     started: bool,
     master_fd: ?posix.fd_t,
     wake_read_fd: ?posix.fd_t,
@@ -213,9 +340,36 @@ pub const Owned = struct {
         shell_path: []const u8,
         command: ?[]const u8,
         start_path: ?[]const u8,
+        child_environment: ChildEnvironment,
     ) InitError!Self {
         if (builtin.os.tag != .linux) return error.UnsupportedPlatform;
 
+        var inherited: [environment_max_entries][]const u8 = undefined;
+        var inherited_count: usize = 0;
+        var cursor = std.c.environ;
+        while (cursor[0]) |entry| : (cursor += 1) {
+            if (inherited_count == inherited.len) return error.EnvironmentCountLimit;
+            inherited[inherited_count] = std.mem.span(entry);
+            inherited_count += 1;
+        }
+        return initInherited(
+            allocator,
+            shell_path,
+            command,
+            start_path,
+            child_environment,
+            inherited[0..inherited_count],
+        );
+    }
+
+    fn initInherited(
+        allocator: std.mem.Allocator,
+        shell_path: []const u8,
+        command: ?[]const u8,
+        start_path: ?[]const u8,
+        child_environment: ChildEnvironment,
+        inherited: []const []const u8,
+    ) InitError!Self {
         const shell_path_z = try allocator.dupeZ(u8, shell_path);
         errdefer allocator.free(shell_path_z);
 
@@ -225,6 +379,9 @@ pub const Owned = struct {
         const start_path_z = if (start_path) |bytes| try allocator.dupeZ(u8, bytes) else null;
         errdefer if (start_path_z) |bytes| allocator.free(bytes);
 
+        var environment = try LaunchEnvironment.init(allocator, inherited, child_environment);
+        errdefer environment.deinit();
+
         return .{
             .allocator = allocator,
             .shell_path = shell_path_z,
@@ -232,6 +389,7 @@ pub const Owned = struct {
             .command_ptr = optionalZPtr(command_z),
             .start_path = start_path_z,
             .start_path_ptr = optionalZPtr(start_path_z),
+            .environment = environment,
             .started = false,
             .master_fd = null,
             .wake_read_fd = null,
@@ -249,6 +407,7 @@ pub const Owned = struct {
         self.allocator.free(self.shell_path);
         if (self.command) |bytes| self.allocator.free(bytes);
         if (self.start_path) |bytes| self.allocator.free(bytes);
+        self.environment.deinit();
         self.* = undefined;
     }
 
@@ -315,6 +474,7 @@ pub const Owned = struct {
                 self.shell_path,
                 self.command_ptr,
                 self.start_path_ptr,
+                self.environment.entries.ptr,
             );
         }
         return pid;
@@ -791,6 +951,7 @@ fn childProcess(
     shell_path: [:0]const u8,
     command: ?[*:0]const u8,
     cwd: ?[*:0]const u8,
+    environment: [*]const ?[*:0]u8,
 ) noreturn {
     setupChildProcessFds(.{
         .master_fd = master_fd,
@@ -805,13 +966,13 @@ fn childProcess(
 
     if (command) |cmd| {
         const argv = [_:null][*c]u8{ cArg(shell_path.ptr), cArg("-c"), cArg(cmd) };
-        const envp: [*c]const [*c]u8 = @ptrCast(@constCast(std.c.environ));
+        const envp: [*c]const [*c]u8 = @ptrCast(environment);
         if (c.execve(shell_path.ptr, argv[0..].ptr, envp) != 0) childLaunchExit(status_fd, .exec);
         childLaunchExit(status_fd, .exec);
     }
 
     const argv = [_:null][*c]u8{ cArg(shell_path.ptr), cArg("-i") };
-    const envp: [*c]const [*c]u8 = @ptrCast(@constCast(std.c.environ));
+    const envp: [*c]const [*c]u8 = @ptrCast(environment);
     if (c.execve(shell_path.ptr, argv[0..].ptr, envp) != 0) childLaunchExit(status_fd, .exec);
     childLaunchExit(status_fd, .exec);
 }
@@ -926,6 +1087,7 @@ const test_cols: u16 = 80;
 const test_rows: u16 = 24;
 const test_wait_ms: i32 = 100;
 const test_waits_max: u8 = 50;
+const test_environment = ChildEnvironment{ .term = "xterm-256color", .colorterm = "truecolor" };
 
 fn expectOutput(owned: *Owned, expected: []const u8) !void {
     var buffer: [512]u8 = undefined;
@@ -959,8 +1121,21 @@ fn descriptorCount() !usize {
 }
 
 fn initAllocation(allocator: std.mem.Allocator) !void {
-    var owned = try Owned.init(allocator, "/bin/sh", "printf allocation", "/tmp");
+    var owned = try Owned.init(allocator, "/bin/sh", "printf allocation", "/tmp", test_environment);
     owned.deinit();
+}
+
+fn environmentAllocation(allocator: std.mem.Allocator) !void {
+    var environment = try LaunchEnvironment.init(
+        allocator,
+        &.{ "PATH=/bin", "TERM=dumb", "HOWL_RETAINED=yes" },
+        test_environment,
+    );
+    environment.deinit();
+}
+
+fn expectEnvironmentEntry(environment: *const LaunchEnvironment, index: usize, expected: []const u8) !void {
+    try std.testing.expectEqualStrings(expected, std.mem.span(environment.entries[index].?));
 }
 
 const TransferContext = struct {
@@ -983,9 +1158,125 @@ test "initialization releases every partial allocation" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, initAllocation, .{});
 }
 
+test "launch environment replaces identities and owns one immutable snapshot" {
+    var inherited_term = [_]u8{ 'T', 'E', 'R', 'M', '=', 'd', 'u', 'm', 'b' };
+    var selected_term = [_]u8{ 'x', 't', 'e', 'r', 'm', '-', '2', '5', '6', 'c', 'o', 'l', 'o', 'r' };
+    var environment = try LaunchEnvironment.init(
+        std.testing.allocator,
+        &.{ "A=one", &inherited_term, "COLORTERM=old", "TERM=duplicate", "B=two" },
+        .{ .term = &selected_term, .colorterm = "truecolor" },
+    );
+    defer environment.deinit();
+
+    @memset(&inherited_term, 'x');
+    @memset(&selected_term, 'y');
+    try std.testing.expectEqual(@as(usize, 4), environment.entries.len - 1);
+    try expectEnvironmentEntry(&environment, 0, "A=one");
+    try expectEnvironmentEntry(&environment, 1, "B=two");
+    try expectEnvironmentEntry(&environment, 2, "TERM=xterm-256color");
+    try expectEnvironmentEntry(&environment, 3, "COLORTERM=truecolor");
+    try std.testing.expectEqual(@as(?[*:0]u8, null), environment.entries[4]);
+}
+
+test "launch environment handles absent identities and optional color identity" {
+    var environment = try LaunchEnvironment.init(
+        std.testing.allocator,
+        &.{ "PATH=/bin", "COLORTERM=inherited" },
+        .{ .term = "xterm-256color", .colorterm = null },
+    );
+    defer environment.deinit();
+    try std.testing.expectEqual(@as(usize, 2), environment.entries.len - 1);
+    try expectEnvironmentEntry(&environment, 0, "PATH=/bin");
+    try expectEnvironmentEntry(&environment, 1, "TERM=xterm-256color");
+}
+
+test "launch environment rejects malformed and bounded input transactionally" {
+    try std.testing.expectError(
+        error.InvalidEnvironment,
+        LaunchEnvironment.init(std.testing.allocator, &.{"BROKEN"}, test_environment),
+    );
+    try std.testing.expectError(
+        error.InvalidEnvironment,
+        LaunchEnvironment.init(std.testing.allocator, &.{"=value"}, test_environment),
+    );
+    try std.testing.expectError(
+        error.InvalidEnvironment,
+        LaunchEnvironment.init(std.testing.allocator, &.{"BAD=a\x00b"}, test_environment),
+    );
+    try std.testing.expectError(
+        error.InvalidEnvironment,
+        LaunchEnvironment.init(
+            std.testing.allocator,
+            &.{"PATH=/bin"},
+            .{ .term = "bad=value", .colorterm = null },
+        ),
+    );
+
+    const inherited = try std.testing.allocator.alloc([]const u8, environment_max_entries);
+    defer std.testing.allocator.free(inherited);
+    @memset(inherited, "A=1");
+    var count_boundary = try LaunchEnvironment.init(
+        std.testing.allocator,
+        inherited[0 .. environment_max_entries - 1],
+        .{ .term = "xterm-256color", .colorterm = null },
+    );
+    try std.testing.expectEqual(environment_max_entries + 1, count_boundary.entries.len);
+    count_boundary.deinit();
+    try std.testing.expectError(
+        error.EnvironmentCountLimit,
+        LaunchEnvironment.init(std.testing.allocator, inherited, test_environment),
+    );
+
+    const term_prefix_bytes = "TERM=".len + 1;
+    const byte_boundary = try std.testing.allocator.alloc(u8, environment_max_bytes - term_prefix_bytes);
+    defer std.testing.allocator.free(byte_boundary);
+    @memset(byte_boundary, 'x');
+    var byte_environment = try LaunchEnvironment.init(
+        std.testing.allocator,
+        &.{},
+        .{ .term = byte_boundary, .colorterm = null },
+    );
+    try std.testing.expectEqual(environment_max_bytes, byte_environment.bytes.len);
+    byte_environment.deinit();
+
+    const oversized = try std.testing.allocator.alloc(u8, byte_boundary.len + 1);
+    defer std.testing.allocator.free(oversized);
+    @memset(oversized, 'x');
+    try std.testing.expectError(
+        error.EnvironmentByteLimit,
+        LaunchEnvironment.init(
+            std.testing.allocator,
+            &.{},
+            .{ .term = oversized, .colorterm = null },
+        ),
+    );
+}
+
+test "launch environment releases both allocations under every failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, environmentAllocation, .{});
+}
+
+test "child receives selected identities and retained environment across restart" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var owned = try Owned.initInherited(
+        std.testing.allocator,
+        "/bin/sh",
+        "printf '%s|%s|%s' \"$TERM\" \"$COLORTERM\" \"$HOWL_RETAINED\"",
+        null,
+        test_environment,
+        &.{ "TERM=dumb", "COLORTERM=old", "HOWL_RETAINED=kept", "PATH=/bin:/usr/bin" },
+    );
+    defer owned.deinit();
+    try owned.start(test_cols, test_rows);
+    try expectOutput(&owned, "xterm-256color|truecolor|kept");
+    owned.stop();
+    try owned.start(test_cols, test_rows);
+    try expectOutput(&owned, "xterm-256color|truecolor|kept");
+}
+
 test "idle owner reports exact lifecycle outcomes and remains startable" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "cat", null);
+    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "cat", null, test_environment);
     defer owned.deinit();
     var buffer: [16]u8 = undefined;
     try std.testing.expectEqual(
@@ -1005,7 +1296,13 @@ test "idle owner reports exact lifecycle outcomes and remains startable" {
 test "start rejects unavailable and duplicate child transitions without descriptor leaks" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     const before = try descriptorCount();
-    var unavailable = try Owned.init(std.testing.allocator, "/definitely/missing/howl-shell", null, null);
+    var unavailable = try Owned.init(
+        std.testing.allocator,
+        "/definitely/missing/howl-shell",
+        null,
+        null,
+        test_environment,
+    );
     try std.testing.expectError(error.ShellUnavailable, unavailable.start(test_cols, test_rows));
     unavailable.deinit();
     try std.testing.expectEqual(before, try descriptorCount());
@@ -1015,18 +1312,19 @@ test "start rejects unavailable and duplicate child transitions without descript
         "/bin/sh",
         null,
         "/definitely/missing/howl-cwd",
+        test_environment,
     );
     try std.testing.expectError(error.ChildCwdFailed, invalid_cwd.start(test_cols, test_rows));
     invalid_cwd.deinit();
     try std.testing.expectEqual(before, try descriptorCount());
 
     // A searchable executable directory passes access(X_OK) but cannot execve.
-    var unlaunchable = try Owned.init(std.testing.allocator, "/tmp", null, null);
+    var unlaunchable = try Owned.init(std.testing.allocator, "/tmp", null, null, test_environment);
     try std.testing.expectError(error.ChildExecFailed, unlaunchable.start(test_cols, test_rows));
     unlaunchable.deinit();
     try std.testing.expectEqual(before, try descriptorCount());
 
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "sleep 30", null);
+    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "sleep 30", null, test_environment);
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try std.testing.expectError(error.AlreadyStarted, owned.start(test_cols, test_rows));
@@ -1034,7 +1332,7 @@ test "start rejects unavailable and duplicate child transitions without descript
 
 test "zero deadline rejects nonempty input before the first write" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "cat >/dev/null", null);
+    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "cat >/dev/null", null, test_environment);
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try std.testing.expectEqual(
@@ -1050,6 +1348,7 @@ test "deadline stops a continuously accepting transfer with its exact prefix" {
         "/bin/sh",
         "stty raw -echo; printf ready; cat >/dev/null",
         null,
+        test_environment,
     );
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
@@ -1070,6 +1369,7 @@ test "complete transfer reports every accepted byte" {
         "/bin/sh",
         "stty raw -echo; dd bs=1 count=5 2>/dev/null; printf complete",
         null,
+        test_environment,
     );
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
@@ -1085,6 +1385,7 @@ test "non-reading child saturates with a bounded partial timeout" {
         "/bin/sh",
         "stty raw -echo; printf ready; kill -STOP $$",
         null,
+        test_environment,
     );
     try owned.start(test_cols, test_rows);
     try expectOutput(&owned, "ready");
@@ -1107,6 +1408,7 @@ test "child consuming a strict prefix retains the partial timeout count" {
         "/bin/sh",
         "stty raw -echo; printf ready; dd bs=1024 count=1 of=/dev/null 2>/dev/null; kill -STOP $$",
         null,
+        test_environment,
     );
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
@@ -1127,6 +1429,7 @@ test "concurrent cancellation wakes a saturated writable wait without descriptor
         "/bin/sh",
         "stty raw -echo; printf ready; kill -STOP $$",
         null,
+        test_environment,
     );
     errdefer owned.deinit();
     try owned.start(test_cols, test_rows);
@@ -1153,7 +1456,13 @@ test "concurrent cancellation wakes a saturated writable wait without descriptor
 test "child exit closes read and write paths before exact cleanup" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     const before = try descriptorCount();
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "sleep 0.02; exit 0", null);
+    var owned = try Owned.init(
+        std.testing.allocator,
+        "/bin/sh",
+        "sleep 0.02; exit 0",
+        null,
+        test_environment,
+    );
     errdefer owned.deinit();
     try owned.start(test_cols, test_rows);
     const bytes = try std.testing.allocator.alloc(u8, 1024 * 1024);
@@ -1191,7 +1500,7 @@ test "wake resize read and process-group signal share one owner" {
     const command =
         "trap 'printf interrupted; exit 0' INT; printf ready; read line; " ++
         "stty size; printf '%s' \"$line\"; while :; do sleep 1; done";
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", command, null);
+    var owned = try Owned.init(std.testing.allocator, "/bin/sh", command, null, test_environment);
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try expectOutput(&owned, "ready");

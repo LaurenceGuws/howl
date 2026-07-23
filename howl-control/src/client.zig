@@ -263,6 +263,8 @@ pub const Status = struct {
     cols: u16,
     /// Reports current terminal height.
     rows: u16,
+    /// Copies the nonzero VT-owned semantic mutation identity.
+    semantic_sequence: u64,
     /// Counts primary history rows dropped after bounded allocation failure.
     history_loss_generation: u64,
     /// Reports whether the current viewport is alternate-screen state.
@@ -318,6 +320,8 @@ pub const Screen = struct {
     cols: u16,
     /// Reports viewport height.
     rows: u16,
+    /// Copies the nonzero VT-owned semantic mutation identity.
+    semantic_sequence: u64,
     /// Reports whether this is alternate-screen state.
     alternate_screen: bool,
     /// Reports whether the cursor is visible in terminal truth.
@@ -591,7 +595,7 @@ pub fn encodeStatus(allocator: std.mem.Allocator, value: Status) std.mem.Allocat
     const cwd = value.child_cwd orelse "";
     const mark_metadata = if (value.shell_mark) |*mark| mark.metadataBytes() else "";
     const shell = if (value.shell_mark) |*mark| mark.shellBytes() orelse "" else "";
-    const bytes = try allocator.alloc(u8, 82 + cwd.len + mark_metadata.len + shell.len);
+    const bytes = try allocator.alloc(u8, 90 + cwd.len + mark_metadata.len + shell.len);
     bytes[0] = encodeWireState(value.state);
     bytes[1] = encodeReaderError(value.reader_error);
     std.mem.writeInt(u16, bytes[2..4], value.cols, .big);
@@ -620,7 +624,8 @@ pub fn encodeStatus(allocator: std.mem.Allocator, value: Status) std.mem.Allocat
         .big,
     );
     std.mem.writeInt(u64, bytes[74..82], value.history_loss_generation, .big);
-    var offset: usize = 82;
+    std.mem.writeInt(u64, bytes[82..90], value.semantic_sequence, .big);
+    var offset: usize = 90;
     @memcpy(bytes[offset..][0..cwd.len], cwd);
     offset += cwd.len;
     @memcpy(bytes[offset..][0..mark_metadata.len], mark_metadata);
@@ -631,15 +636,16 @@ pub fn encodeStatus(allocator: std.mem.Allocator, value: Status) std.mem.Allocat
 
 /// Encodes one owned viewport observation into a bounded response payload.
 pub fn encodeScreen(allocator: std.mem.Allocator, value: *const Screen) std.mem.Allocator.Error![]u8 {
-    const bytes = try allocator.alloc(u8, 14 + value.text.len);
+    const bytes = try allocator.alloc(u8, 22 + value.text.len);
     std.mem.writeInt(u16, bytes[0..2], value.cols, .big);
     std.mem.writeInt(u16, bytes[2..4], value.rows, .big);
     bytes[4] = @intFromBool(value.alternate_screen);
     bytes[5] = @intFromBool(value.cursor_visible);
     std.mem.writeInt(u16, bytes[6..8], value.cursor_col, .big);
     std.mem.writeInt(u16, bytes[8..10], value.cursor_row, .big);
-    std.mem.writeInt(u32, bytes[10..14], @intCast(value.text.len), .big);
-    @memcpy(bytes[14..], value.text);
+    std.mem.writeInt(u64, bytes[10..18], value.semantic_sequence, .big);
+    std.mem.writeInt(u32, bytes[18..22], @intCast(value.text.len), .big);
+    @memcpy(bytes[22..], value.text);
     return bytes;
 }
 
@@ -665,7 +671,7 @@ pub fn encodeOutputResult(
             std.mem.writeInt(u64, bytes[1..9], output_value.oldest, .big);
             std.mem.writeInt(u64, bytes[9..17], output_value.cursor, .big);
             std.mem.writeInt(u64, bytes[17..25], output_value.newest, .big);
-            std.mem.writeInt(u64, bytes[25..33], output_value.publication, .big);
+            std.mem.writeInt(u64, bytes[25..33], output_value.semantic_sequence, .big);
             std.mem.writeInt(u16, bytes[33..35], output_value.line_count, .big);
             bytes[35] = @intFromBool(output_value.more);
             bytes[36] = @intFromBool(output_value.open_line_omitted);
@@ -810,7 +816,7 @@ fn decodeStatus(
     terminal_id: TerminalId,
     payload: []const u8,
 ) ClientError!ClientStatus {
-    if (payload.len < 82) return error.InvalidResponse;
+    if (payload.len < 90) return error.InvalidResponse;
     const metadata_len = std.mem.readInt(u16, payload[62..64], .big);
     const shell_len = payload[64];
     const cwd_len = std.mem.readInt(u32, payload[65..69], .big);
@@ -818,7 +824,7 @@ fn decodeStatus(
         return error.InvalidResponse;
     const expected_len = std.math.add(usize, variable_len, shell_len) catch
         return error.InvalidResponse;
-    if (expected_len != payload.len - 82 or
+    if (expected_len != payload.len - 90 or
         metadata_len > howl_vt.Terminal.shell_mark_metadata_max_bytes or
         shell_len > howl_vt.Terminal.shell_name_max_bytes or
         payload[6] > 1 or payload[47] > 1 or payload[57] > 1 or payload[69] > 1 or
@@ -845,7 +851,9 @@ fn decodeStatus(
     if (cols == 0 or rows == 0 or cols > max_cols or rows > max_rows) {
         return error.InvalidResponse;
     }
-    var offset: usize = 82;
+    const semantic_sequence = std.mem.readInt(u64, payload[82..90], .big);
+    if (semantic_sequence == 0) return error.InvalidResponse;
+    var offset: usize = 90;
     const cwd = if (cwd_len == 0) null else try allocator.dupe(u8, payload[offset..][0..cwd_len]);
     errdefer if (cwd) |owned| allocator.free(owned);
     offset += cwd_len;
@@ -877,6 +885,7 @@ fn decodeStatus(
         .child_cwd = cwd,
         .cols = cols,
         .rows = rows,
+        .semantic_sequence = semantic_sequence,
         .history_loss_generation = std.mem.readInt(u64, payload[74..82], .big),
         .alternate_screen = payload[6] == 1,
         .admission_sequence = std.mem.readInt(u64, payload[7..15], .big),
@@ -933,22 +942,26 @@ fn decodeReaderError(value: u8) error{InvalidResponse}!?ReaderError {
 }
 
 fn decodeScreen(allocator: std.mem.Allocator, payload: []const u8) ClientError!Screen {
-    if (payload.len < 14 or payload[4] > 1 or payload[5] > 1) return error.InvalidResponse;
-    const text_len = std.mem.readInt(u32, payload[10..14], .big);
-    if (text_len != payload.len - 14) return error.InvalidResponse;
+    if (payload.len < 22 or payload[4] > 1 or payload[5] > 1) return error.InvalidResponse;
+    const text_len = std.mem.readInt(u32, payload[18..22], .big);
+    if (text_len != payload.len - 22) return error.InvalidResponse;
     const cols = std.mem.readInt(u16, payload[0..2], .big);
     const rows = std.mem.readInt(u16, payload[2..4], .big);
     const cursor_col = std.mem.readInt(u16, payload[6..8], .big);
     const cursor_row = std.mem.readInt(u16, payload[8..10], .big);
+    const semantic_sequence = std.mem.readInt(u64, payload[10..18], .big);
     if (cols == 0 or rows == 0 or cols > max_cols or rows > max_rows) {
         return error.InvalidResponse;
     }
-    if (payload[5] == 1 and (cursor_col >= cols or cursor_row >= rows)) return error.InvalidResponse;
+    if (semantic_sequence == 0 or
+        payload[5] == 1 and (cursor_col >= cols or cursor_row >= rows))
+        return error.InvalidResponse;
     return .{
         .allocator = allocator,
-        .text = try allocator.dupe(u8, payload[14..]),
+        .text = try allocator.dupe(u8, payload[22..]),
         .cols = cols,
         .rows = rows,
+        .semantic_sequence = semantic_sequence,
         .alternate_screen = payload[4] == 1,
         .cursor_visible = payload[5] == 1,
         .cursor_col = cursor_col,
@@ -1030,6 +1043,8 @@ fn decodeOutput(allocator: std.mem.Allocator, payload: []const u8) ClientError!L
     const content = std.math.add(usize, text_len, open_len) catch return error.InvalidResponse;
     const expected = std.math.add(usize, 49 + loss_bytes, content) catch return error.InvalidResponse;
     if (expected != payload.len) return error.InvalidResponse;
+    const semantic_sequence = std.mem.readInt(u64, payload[25..33], .big);
+    if (semantic_sequence == 0) return error.InvalidResponse;
     const text = try allocator.dupe(u8, payload[49..][0..text_len]);
     errdefer allocator.free(text);
     const open_start = 49 + text_len;
@@ -1059,7 +1074,7 @@ fn decodeOutput(allocator: std.mem.Allocator, payload: []const u8) ClientError!L
         .oldest = std.mem.readInt(u64, payload[1..9], .big),
         .cursor = std.mem.readInt(u64, payload[9..17], .big),
         .newest = std.mem.readInt(u64, payload[17..25], .big),
-        .publication = std.mem.readInt(u64, payload[25..33], .big),
+        .semantic_sequence = semantic_sequence,
         .line_count = std.mem.readInt(u16, payload[33..35], .big),
         .more = payload[35] == 1,
     } };
@@ -1954,6 +1969,7 @@ test "hostile status validation releases an already copied cwd" {
         .child_cwd = "/tmp",
         .cols = 80,
         .rows = 24,
+        .semantic_sequence = 1,
         .history_loss_generation = 0,
         .alternate_screen = false,
         .admission_sequence = 0,
@@ -1982,6 +1998,7 @@ test "status wire validates lifecycle and bounded loss evidence" {
         .child_cwd = null,
         .cols = 80,
         .rows = 24,
+        .semantic_sequence = 17,
         .history_loss_generation = 9,
         .alternate_screen = false,
         .admission_sequence = 4,
@@ -1998,6 +2015,18 @@ test "status wire validates lifecycle and bounded loss evidence" {
     try std.testing.expect(!decoded.value.resize_rollback_failed);
     try std.testing.expectEqual(@as(?usize, 7), decoded.value.reply_failure_transferred);
     try std.testing.expectEqual(@as(u64, 9), decoded.value.history_loss_generation);
+    try std.testing.expectEqual(@as(u64, 17), decoded.value.semantic_sequence);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeStatus(std.testing.allocator, id, payload[0..89]),
+    );
+
+    std.mem.writeInt(u64, payload[82..90], 0, .big);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeStatus(std.testing.allocator, id, payload),
+    );
+    std.mem.writeInt(u64, payload[82..90], 17, .big);
 
     std.mem.writeInt(u32, payload[70..74], 0, .big);
     var rejected = try decodeStatus(std.testing.allocator, id, payload);
@@ -2073,6 +2102,7 @@ test "hostile observations reject dimensions outside the owned surface bounds" {
         .child_cwd = null,
         .cols = 80,
         .rows = 24,
+        .semantic_sequence = 1,
         .history_loss_generation = 0,
         .alternate_screen = false,
         .admission_sequence = 0,
@@ -2097,7 +2127,21 @@ test "hostile observations reject dimensions outside the owned surface bounds" {
         );
     }
 
-    var screen_payload: [14]u8 = @splat(0);
+    var screen_payload: [22]u8 = @splat(0);
+    std.mem.writeInt(u16, screen_payload[0..2], 80, .big);
+    std.mem.writeInt(u16, screen_payload[2..4], 24, .big);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeScreen(std.testing.allocator, &screen_payload),
+    );
+    std.mem.writeInt(u64, screen_payload[10..18], 1, .big);
+    var decoded_screen = try decodeScreen(std.testing.allocator, &screen_payload);
+    defer decoded_screen.deinit();
+    try std.testing.expectEqual(@as(u64, 1), decoded_screen.semantic_sequence);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeScreen(std.testing.allocator, screen_payload[0..21]),
+    );
     inline for (.{
         .{ @as(u16, 0), @as(u16, 24) },
         .{ @as(u16, 80), @as(u16, 0) },
@@ -2111,6 +2155,25 @@ test "hostile observations reject dimensions outside the owned surface bounds" {
             decodeScreen(std.testing.allocator, &screen_payload),
         );
     }
+}
+
+test "logical output wire requires a complete nonzero semantic sequence" {
+    var payload: [49]u8 = @splat(0);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeOutput(std.testing.allocator, &payload),
+    );
+    std.mem.writeInt(u64, payload[25..33], 1, .big);
+    try std.testing.expectError(
+        error.InvalidResponse,
+        decodeOutput(std.testing.allocator, payload[0..48]),
+    );
+    var decoded = try decodeOutput(std.testing.allocator, &payload);
+    defer switch (decoded) {
+        .output => |*output| output.deinit(),
+        else => {},
+    };
+    try std.testing.expectEqual(@as(u64, 1), decoded.output.semantic_sequence);
 }
 
 test "hostile mutation responses must match bounded request facts" {

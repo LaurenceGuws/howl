@@ -1503,11 +1503,11 @@ test "window query replies require matching live intent and serialize transactio
         terminal.replyWindowRequest(1, .{ .position = .{ .x = 1, .y = 2 } }),
     );
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
-    const generation_before_reply = terminal.dirty_generation;
+    const sequence_before_reply = terminal.semantic_sequence;
     try terminal.replyWindowRequest(1, .{ .state = .iconified });
     try std.testing.expectEqualStrings("\x1b[2t", pendingOutput(&terminal));
     const publication_after_reply = terminal.stateSnapshot();
-    try std.testing.expect(terminal.dirty_generation != generation_before_reply);
+    try std.testing.expect(terminal.semantic_sequence != sequence_before_reply);
     try std.testing.expectEqual(@as(u64, 2), publication_after_reply.window_request.?.generation);
     try std.testing.expectEqual(@as(u8, 1), publication_after_reply.window_request_count);
     try std.testing.expectError(

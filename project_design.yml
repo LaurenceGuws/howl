@@ -13,8 +13,8 @@ capabilities:
   render:
     role: backend-neutral terminal visual knowledge and plain rendering values without runtime policy
   executable:
-    role: threads, publication storage, GPU resources, windowing, layout, sessions, tabs, panes, and presentation
-    status: noun, topology, and API unsettled
+    role: first-party single-terminal Wayland, EGL/GLES, input, retained visuals, rendering, and presentation
+    status: accepted foundation; viewport, selection, clipboard, and multiplexing remain outside the current cut
 
 ownership:
   allocation: every module allocation uses an explicit caller-provided allocator
@@ -22,7 +22,7 @@ ownership:
     - embedders may use VT and PTY independently
     - control has no rendering relation
     - render owns no threads, publication lifecycle, GPU device, window, layout, or presentation policy
-    - executable ownership does not prescribe one topology or the only valid route through the family
+    - howl-host is one concrete first-party composition, not the only valid route through the family
 
 workspace:
   purpose: Git, agent, and development ergonomics plus atomic history
@@ -32,9 +32,4 @@ workspace:
   embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
 
 reconstruction:
-  status: active supervised deletion intervention
-  quarantined:
-    - mixed render source that combines visual facts with runtime publication
-    - control source and build wiring that depend on rendering publication
-    - executable source whose surviving noun, topology, and API have not been accepted
-    - workspace wiring that names deleted packages or rejected runtime machinery
+  status: single-terminal foundation implemented; deferred capabilities remain separate work

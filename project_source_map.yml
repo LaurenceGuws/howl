@@ -3,6 +3,8 @@ accepted:
   protocol_coverage.nu: catalogue normalization, validation, and query commands
   tools/audit_source.sh: maintained-source audit
   tools/source_audit.allow: reviewed sensitive-source sites
+  build.zig: development-only aliases that invoke surviving child build graphs
+  build.zig.zon: workspace identity and surviving child source paths
   howl-vt/build.zig: VT package build and proof commands
   howl-vt/build.zig.zon: VT package identity and source boundary
   howl-vt/src: terminal parser, semantics, state, input, replies, consequences, and dirty facts
@@ -25,11 +27,17 @@ accepted:
   howl-render/src/root*.zig: curated roots for selected render capabilities
   howl-render/src/native_text.zig: native font loading, shaping, metrics, and alpha rasterization
   howl-render/src/generated*.zig: generated terminal-glyph classification, geometry, and rasterization
+  howl-render/src/terminal.zig: stateless VT semantic-to-visual projection into caller buffers
+  howl-render/src/terminal_test.zig: terminal projection bounds, sparse damage, cursor, and rollback proofs
+  howl-render/src/terminal_text*.zig: one-run terminal text preparation and exact raster identity
+  howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs
   howl-render/src/*_test.zig: selected render capability proofs
   howl-render/testdata: deterministic render test fonts
   howl-render/LICENSES: render-owned asset and native-library provenance
-
-quarantined:
-  build.zig: workspace commands still name deleted packages and rejected runtime machinery
-  build.zig.zon: workspace path list still names deleted packages
-  howl-host: executable evidence only; its surviving noun, topology, API, and source have not been accepted
+  howl-host/build.zig: first-party executable build, install, run, and proof ownership
+  howl-host/build.zig.zon: host package identity and direct standalone dependencies
+  howl-host/src/main.zig: operator shell selection, window entry, serve, and primitive control inspection
+  howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, and lifecycle
+  howl-host/src/renderer.zig: one render thread and concrete EGL/GLES drawing owner
+  howl-host/vendor/xdg-system-bell: generated optional Wayland system-bell protocol bindings
+  howl-host/LICENSES: host native-library and generated-protocol provenance

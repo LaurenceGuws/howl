@@ -1,22 +1,18 @@
 .{
-    .name = .howl_window,
+    .name = .howl_host,
     .version = "0.1.3-dev",
-    .fingerprint = 0x5d4143a482d9e270,
+    .fingerprint = 0xaa0307af645c6d9,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .howl_vt = .{ .path = "../howl-vt" },
-        .howl_text = .{ .path = "../howl-text" },
-        .howl_frame = .{ .path = "../howl-frame" },
-        .howl_render = .{ .path = "../howl-render" },
-        .howl_pty = .{ .path = "../howl-pty" },
         .howl_control = .{ .path = "../howl-control" },
+        .howl_render = .{ .path = "../howl-render" },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "build",
         "src",
         "vendor/xdg-shell",
+        "vendor/xdg-system-bell",
         "LICENSES",
     },
 }

@@ -10,12 +10,12 @@ test "native root owns the complete embedding contract" {
     const feed = try terminal.feed("ABCD");
     try std.testing.expect(feed.state_changed);
 
-    const publication = terminal.visualView();
-    try std.testing.expectEqual(@as(u16, 2), publication.view.rows);
-    try std.testing.expectEqual(@as(u16, 8), publication.view.cols);
-    try std.testing.expectEqual(@as(u21, 'A'), publication.view.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'D'), publication.view.cellAt(0, 3));
-    try std.testing.expect(terminal.ackVisual(publication.dirty_token));
+    const visual = terminal.visualView();
+    try std.testing.expectEqual(@as(u16, 2), visual.view.rows);
+    try std.testing.expectEqual(@as(u16, 8), visual.view.cols);
+    try std.testing.expectEqual(@as(u21, 'A'), visual.view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'D'), visual.view.cellAt(0, 3));
+    try std.testing.expect(terminal.ackVisual(visual.dirty_token));
 
     const stale = terminal.visualView();
     _ = try terminal.feed("E");

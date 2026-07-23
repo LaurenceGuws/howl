@@ -1,32 +1,135 @@
-//! Owns one direct Wayland/xkb loop around bounded tabs, panes, and terminals.
+//! Owns one Wayland window, one Control terminal, retained visuals, and render admission.
 
 const std = @import("std");
-const howl_control = @import("howl_control");
-const howl_probe = @import("howl_probe");
-const howl_vt = @import("howl_vt");
-const labels = @import("labels.zig");
+const control = @import("howl_control");
+const howl_render = @import("howl_render");
 const renderer = @import("renderer.zig");
-const viewport = @import("viewport.zig");
-const workspace_model = @import("workspace.zig");
-const c = @import("native.zig").c;
-const MouseInput = @FieldType(howl_control.Input, "mouse");
+const terminal_render = howl_render.terminal;
+const text = howl_render.terminal_text;
+
+const c = @cImport({
+    @cDefine("_FORTIFY_SOURCE", "0");
+    @cInclude("errno.h");
+    @cInclude("linux/input-event-codes.h");
+    @cInclude("poll.h");
+    @cInclude("stdlib.h");
+    @cInclude("sys/eventfd.h");
+    @cInclude("sys/mman.h");
+    @cInclude("sys/timerfd.h");
+    @cInclude("unistd.h");
+    @cInclude("wayland-client.h");
+    @cInclude("xkbcommon/xkbcommon.h");
+    @cInclude("xkbcommon/xkbcommon-keysyms.h");
+    @cInclude("xdg-system-bell-v1-client-protocol.h");
+    @cInclude("xdg-shell-client-protocol.h");
+});
+
+const initial_size = Size{ .width = 960, .height = 600 };
+const initial_rows: u16 = 24;
+const initial_cols: u16 = 80;
+const font_pixel_height: u16 = 18;
+const selection_style = terminal_render.SelectionStyle{
+    .foreground = .{ .r = 0xee, .g = 0xee, .b = 0xee },
+    .background = .{ .r = 0xd6, .g = 0x5d, .b = 0x0e },
+};
+
+// Bounds dimensions before Wayland and EGL C integer narrowing.
+const max_dimension: u32 = 8_192;
+
+const Size = struct { width: u32, height: u32 };
+const KeyInput = @FieldType(control.Input, "key");
+const KeyAction = @FieldType(KeyInput, "action");
+const KeyModifiers = @FieldType(KeyInput, "mods");
+const MouseInput = @FieldType(control.Input, "mouse");
 const MouseButton = @FieldType(MouseInput, "button");
 const MouseKind = @FieldType(MouseInput, "kind");
-
-const initial_size = renderer.Size{ .width = 960, .height = 600 };
+const physical_key_count: usize = @as(usize, c.KEY_MAX) + 1;
 const max_wheel_steps: usize = 32;
-const PaneId = workspace_model.PaneId;
-const TabId = workspace_model.TabId;
-const TerminalIndex = u6;
-const KeyModifiers = @FieldType(@FieldType(howl_control.Input, "key"), "mods");
+const max_bells_per_turn: u8 = 32;
+const default_title = "Howl";
 
-comptime {
-    if (workspace_model.max_panes != @bitSizeOf(u64) or
-        workspace_model.max_panes - 1 > std.math.maxInt(TerminalIndex))
-        @compileError("workspace pane capacity must fit the terminal wake-bit domain");
-}
+const PresentationChange = struct {
+    title: bool,
+    bells: u8,
+    bells_pending: bool,
+};
 
-// Bounded keyboard, host chord, pointer, and readiness state.
+const PresentationState = struct {
+    title: [control.title_max_bytes + 1]u8 = @splat(0),
+    title_len: u16 = 0,
+    title_set: bool = false,
+    bell_generation: u64 = 0,
+
+    fn apply(self: *PresentationState, facts: control.HostPresentation, bell_available: bool) PresentationChange {
+        const reported_title = facts.titleBytes();
+        // Wayland title strings are UTF-8 C strings; an invalid child report
+        // leaves the last admitted compositor title intact.
+        const next_title = if (reported_title) |bytes|
+            if (std.unicode.utf8ValidateSlice(bytes) and std.mem.indexOfScalar(u8, bytes, 0) == null)
+                bytes
+            else
+                null
+        else
+            null;
+        const title_accepted = reported_title == null or next_title != null;
+        const title_changed = title_accepted and (self.title_set != (next_title != null) or
+            if (next_title) |bytes|
+                !std.mem.eql(u8, self.title[0..self.title_len], bytes)
+            else
+                false);
+        if (title_changed) {
+            self.title_set = next_title != null;
+            self.title_len = if (next_title) |bytes| @intCast(bytes.len) else 0;
+            if (next_title) |bytes| @memcpy(self.title[0..bytes.len], bytes);
+            self.title[self.title_len] = 0;
+        }
+        std.debug.assert(facts.bell_generation >= self.bell_generation);
+        if (!bell_available) {
+            self.bell_generation = facts.bell_generation;
+            return .{ .title = title_changed, .bells = 0, .bells_pending = false };
+        }
+        const pending = facts.bell_generation - self.bell_generation;
+        const bells: u8 = @intCast(@min(pending, max_bells_per_turn));
+        self.bell_generation += bells;
+        return .{
+            .title = title_changed,
+            .bells = bells,
+            .bells_pending = self.bell_generation != facts.bell_generation,
+        };
+    }
+
+    fn titlePointer(self: *const PresentationState) [*:0]const u8 {
+        return if (self.title_set) @ptrCast(&self.title) else default_title;
+    }
+};
+
+// Wayland key events use Linux input-event codes, whose inclusive bound is
+// KEY_MAX from linux/input-event-codes.h.
+const PhysicalKeys = struct {
+    admitted: std.StaticBitSet(physical_key_count) = .initEmpty(),
+
+    fn canPress(self: *const PhysicalKeys, code: u32) bool {
+        return code <= c.KEY_MAX and !self.admitted.isSet(@intCast(code));
+    }
+
+    fn admitPress(self: *PhysicalKeys, code: u32) void {
+        std.debug.assert(self.canPress(code));
+        self.admitted.set(@intCast(code));
+    }
+
+    fn canRelease(self: *const PhysicalKeys, code: u32) bool {
+        return code <= c.KEY_MAX and self.admitted.isSet(@intCast(code));
+    }
+
+    fn admitRelease(self: *PhysicalKeys, code: u32) void {
+        std.debug.assert(self.canRelease(code));
+        self.admitted.unset(@intCast(code));
+    }
+
+    fn clear(self: *PhysicalKeys) void {
+        self.admitted = .initEmpty();
+    }
+};
 
 const Repeat = struct {
     interval_ns: ?u64 = null,
@@ -57,7 +160,7 @@ const Repeat = struct {
         return true;
     }
 
-    fn fire(self: *const Repeat) ?struct { key: u32, next_ns: u64 } {
+    fn firing(self: *const Repeat) ?struct { key: u32, next_ns: u64 } {
         return .{ .key = self.key orelse return null, .next_ns = self.interval_ns orelse return null };
     }
 
@@ -66,93 +169,40 @@ const Repeat = struct {
     }
 };
 
-const HostKeys = struct {
-    values: [16]u32 = undefined,
-    count: u8 = 0,
+const KeyboardMap = struct {
+    context: *c.struct_xkb_context,
+    keymap: *c.struct_xkb_keymap,
+    state: *c.struct_xkb_state,
 
-    fn capture(self: *HostKeys, code: u32) bool {
-        for (self.values[0..self.count]) |value| if (value == code) return true;
-        if (self.count == self.values.len) return false;
-        self.values[self.count] = code;
-        self.count += 1;
-        return true;
-    }
-
-    fn release(self: *HostKeys, code: u32) bool {
-        for (self.values[0..self.count], 0..) |value, index| if (value == code) {
-            self.count -= 1;
-            if (index != self.count) self.values[index] = self.values[self.count];
-            return true;
+    fn init(text_bytes: [*:0]const u8) error{ KeyboardContext, KeyboardMap, KeyboardState }!KeyboardMap {
+        const context = c.xkb_context_new(c.XKB_CONTEXT_NO_FLAGS) orelse
+            return error.KeyboardContext;
+        const keymap = c.xkb_keymap_new_from_string(
+            context,
+            text_bytes,
+            c.XKB_KEYMAP_FORMAT_TEXT_V1,
+            c.XKB_KEYMAP_COMPILE_NO_FLAGS,
+        ) orelse {
+            c.xkb_context_unref(context);
+            return error.KeyboardMap;
         };
-        return false;
+        const state = c.xkb_state_new(keymap) orelse {
+            c.xkb_keymap_unref(keymap);
+            c.xkb_context_unref(context);
+            return error.KeyboardState;
+        };
+        return .{ .context = context, .keymap = keymap, .state = state };
     }
 
-    fn clear(self: *HostKeys) void {
-        self.count = 0;
+    fn deinit(self: *KeyboardMap) void {
+        c.xkb_state_unref(self.state);
+        c.xkb_keymap_unref(self.keymap);
+        c.xkb_context_unref(self.context);
+        self.* = undefined;
     }
 };
-
-const HostAction = enum {
-    new_tab,
-    split_horizontal,
-    split_vertical,
-    close_pane,
-    close_tab,
-    next_tab,
-    previous_tab,
-    focus_left,
-    focus_right,
-    focus_up,
-    focus_down,
-    resize_left,
-    resize_right,
-    resize_up,
-    resize_down,
-    reorder_left,
-    reorder_right,
-    scroll_page_up,
-    scroll_page_down,
-    scroll_top,
-    scroll_bottom,
-};
-
-fn hostAction(symbol: u32, mods: KeyModifiers) ?HostAction {
-    if (mods.hyper or mods.meta) return null;
-    if (mods.control and mods.shift and !mods.alt and !mods.super) return switch (symbol) {
-        c.XKB_KEY_t, c.XKB_KEY_T => .new_tab,
-        c.XKB_KEY_Return => .split_horizontal,
-        c.XKB_KEY_backslash, c.XKB_KEY_bar => .split_vertical,
-        c.XKB_KEY_w, c.XKB_KEY_W => .close_pane,
-        c.XKB_KEY_q, c.XKB_KEY_Q => .close_tab,
-        c.XKB_KEY_Left => .resize_left,
-        c.XKB_KEY_Right => .resize_right,
-        c.XKB_KEY_Up => .resize_up,
-        c.XKB_KEY_Down => .resize_down,
-        c.XKB_KEY_comma, c.XKB_KEY_less => .reorder_left,
-        c.XKB_KEY_period, c.XKB_KEY_greater => .reorder_right,
-        c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => .previous_tab,
-        c.XKB_KEY_Page_Up => .scroll_page_up,
-        c.XKB_KEY_Page_Down => .scroll_page_down,
-        c.XKB_KEY_Home => .scroll_top,
-        c.XKB_KEY_End => .scroll_bottom,
-        else => null,
-    };
-    if (mods.control and !mods.shift and !mods.alt and !mods.super) return switch (symbol) {
-        c.XKB_KEY_Tab => .next_tab,
-        else => null,
-    };
-    if (mods.alt and !mods.control and !mods.shift and !mods.super) return switch (symbol) {
-        c.XKB_KEY_Left => .focus_left,
-        c.XKB_KEY_Right => .focus_right,
-        c.XKB_KEY_Up => .focus_up,
-        c.XKB_KEY_Down => .focus_down,
-        else => null,
-    };
-    return null;
-}
 
 const PointerTarget = struct {
-    pane: PaneId,
     row: i32,
     col: u16,
     pixel_x: u32,
@@ -169,7 +219,6 @@ const PointerState = struct {
     position: ?struct { x: u32, y: u32 } = null,
     pressed: [3]?PointerTarget = @splat(null),
     buttons_down: u8 = 0,
-    scrollbar_drag: ?PaneId = null,
 
     fn preparePress(self: *const PointerState, index: usize, target: PointerTarget) ?ButtonTransition {
         if (index >= self.pressed.len or self.pressed[index] != null) return null;
@@ -182,8 +231,6 @@ const PointerState = struct {
 
     fn commitPress(self: *PointerState, transition: ButtonTransition) void {
         std.debug.assert(self.pressed[transition.index] == null);
-        std.debug.assert(transition.buttons_down ==
-            self.buttons_down | (@as(u8, 1) << @intCast(transition.index)));
         self.pressed[transition.index] = transition.target;
         self.buttons_down = transition.buttons_down;
     }
@@ -200,165 +247,293 @@ const PointerState = struct {
 
     fn commitRelease(self: *PointerState, transition: ButtonTransition) void {
         std.debug.assert(std.meta.eql(self.pressed[transition.index].?, transition.target));
-        std.debug.assert(transition.buttons_down ==
-            self.buttons_down & ~(@as(u8, 1) << @intCast(transition.index)));
         self.pressed[transition.index] = null;
         self.buttons_down = transition.buttons_down;
     }
 
-    fn move(self: *PointerState, target: PointerTarget) bool {
-        for (self.pressed) |pressed| if (pressed) |value|
-            if (value.pane != target.pane) return false;
+    fn commitMove(self: *PointerState, target: PointerTarget) void {
         for (&self.pressed) |*pressed| {
             if (pressed.* != null) pressed.* = target;
         }
-        return true;
+    }
+
+    fn clear(self: *PointerState) void {
+        self.* = .{};
     }
 };
 
-const Ready = packed struct(u8) {
-    display_read: bool,
-    display_write: bool,
-    terminal: bool,
-    render: bool,
-    repeat: bool,
-    padding: u3 = 0,
+const AxisFrame = struct {
+    vertical_discrete: i32 = 0,
+    saw_continuous: bool = false,
+    source: ?u32 = null,
 
-    fn from(fds: [4]std.posix.pollfd) Ready {
-        return .{
-            .display_read = fds[0].revents & std.posix.POLL.IN != 0,
-            .display_write = fds[0].revents & std.posix.POLL.OUT != 0,
-            .terminal = fds[1].revents & std.posix.POLL.IN != 0,
-            .render = fds[2].revents & std.posix.POLL.IN != 0,
-            .repeat = fds[3].revents & std.posix.POLL.IN != 0,
-        };
+    fn discrete(self: *AxisFrame, value: i32) error{Pointer}!void {
+        const sum = std.math.add(i32, self.vertical_discrete, value) catch return error.Pointer;
+        if (@abs(@as(i64, sum)) > max_wheel_steps) return error.Pointer;
+        self.vertical_discrete = sum;
+    }
+
+    fn clear(self: *AxisFrame) void {
+        self.* = .{};
     }
 };
 
-const WakeContext = struct { owner: ?*anyopaque = null, index: TerminalIndex = 0 };
-
-const PaneOwner = struct {
-    pane: ?PaneId = null,
-    terminal: ?*howl_control.Terminal = null,
-    geometry: Geometry = .{ .cols = 1, .rows = 1 },
-    unavailable: bool = false,
-    viewport: viewport.State = .{},
-    wake: WakeContext = .{},
-
-    fn movedViewport(self: PaneOwner, delta: i64) ?viewport.State {
-        if (self.unavailable) return null;
-        var candidate = self.viewport;
-        return if (candidate.move(delta)) candidate else null;
-    }
-
-    fn soughtViewport(self: PaneOwner, bar: viewport.Scrollbar, y: u32) ?viewport.State {
-        if (self.unavailable) return null;
-        var candidate = self.viewport;
-        return if (candidate.seek(bar, y)) candidate else null;
-    }
-
-    fn scrollbar(self: PaneOwner, pixels: PixelRect) ?viewport.Scrollbar {
-        if (self.unavailable) return null;
-        return self.viewport.scrollbar(pixels.x, pixels.y, pixels.width, pixels.height);
-    }
-};
-
-pub const Error = renderer.StartError || renderer.Error || howl_control.InitError ||
-    howl_control.InputError || howl_control.ResizeError || error{
+/// Reports exact executable construction, dispatch, projection, or rendering failure.
+pub const Error = std.mem.Allocator.Error || control.InitError || control.InputError ||
+    control.ResizeError || control.ReaderError || terminal_render.Error || renderer.Error || error{
+    InvalidSize,
+    GeometryUnstable,
     WaylandConnect,
     WaylandRegistry,
     WaylandProtocol,
     WaylandDispatch,
     WaylandFlush,
-    KeyboardContext,
-    KeyboardMap,
-    KeyboardState,
-    KeyboardRepeat,
-    HostKeyLimit,
-    Pointer,
-    TerminalSignal,
     Poll,
     InputIncomplete,
-    ResizeResultMismatch,
-    ResizeTransactionFailed,
-    InvalidSession,
-    InvalidName,
-    TabLimit,
-    PaneLimit,
-    DepthLimit,
-    GeometryLimit,
-    IdExhausted,
-    StaleTab,
-    StalePane,
-    LastTab,
-    LastPane,
-    InvalidLabels,
+    KeyboardContext,
+    KeyboardMap,
+    KeyboardRepeat,
+    KeyboardState,
+    Pointer,
+    TerminalSignal,
+    VisualInspectionDeclined,
+    StaleVisualInspection,
+    GenerationExhausted,
 };
 
-// Wayland, workspace, terminal, and renderer lifecycle.
+const GridSize = struct { rows: u16, cols: u16 };
 
-const Loop = struct {
+const TerminalWake = struct {
+    pending: std.atomic.Value(bool) = .init(true),
+    fd: c_int,
+};
+
+const DrawProgress = struct {
+    submitted: u64 = 0,
+    completed: u64 = 0,
+    final: ?u64 = null,
+
+    fn next(self: DrawProgress) error{GenerationExhausted}!u64 {
+        if (self.submitted == std.math.maxInt(u64)) return error.GenerationExhausted;
+        return self.submitted + 1;
+    }
+
+    fn admit(self: *DrawProgress, generation: u64) void {
+        std.debug.assert(generation == self.submitted + 1);
+        self.submitted = generation;
+        if (self.final != null) self.final = generation;
+    }
+
+    fn finish(self: *DrawProgress) void {
+        self.final = self.submitted;
+    }
+
+    fn complete(self: *DrawProgress, generation: u64) void {
+        std.debug.assert(generation >= self.completed);
+        std.debug.assert(generation <= self.submitted);
+        self.completed = generation;
+    }
+
+    fn done(self: DrawProgress) bool {
+        return if (self.final) |generation| self.completed >= generation else false;
+    }
+};
+
+const VisualStorage = struct {
+    allocator: std.mem.Allocator,
+    cells: []terminal_render.Cell,
+    scratch: []terminal_render.Cell,
+    row_geometry: []terminal_render.LineGeometry,
+    patches: []terminal_render.RowPatch,
+    rows: u16,
+    cols: u16,
+    baseline: ?terminal_render.ProjectionBaseline = null,
+
+    fn init(allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!VisualStorage {
+        const cell_count = @as(usize, rows) * cols;
+        const all_cells = try allocator.alloc(terminal_render.Cell, cell_count * 2);
+        errdefer allocator.free(all_cells);
+        const geometry = try allocator.alloc(terminal_render.LineGeometry, rows);
+        errdefer allocator.free(geometry);
+        const patches = try allocator.alloc(terminal_render.RowPatch, rows);
+        return .{
+            .allocator = allocator,
+            .cells = all_cells[0..cell_count],
+            .scratch = all_cells[cell_count..],
+            .row_geometry = geometry,
+            .patches = patches,
+            .rows = rows,
+            .cols = cols,
+        };
+    }
+
+    fn deinit(self: *VisualStorage) void {
+        self.allocator.free(self.cells.ptr[0 .. self.cells.len + self.scratch.len]);
+        self.allocator.free(self.row_geometry);
+        self.allocator.free(self.patches);
+        self.* = undefined;
+    }
+
+    fn capture(self: *VisualStorage, terminal: *control.Terminal) Error!bool {
+        var attempts: u8 = 0;
+        while (attempts < 4) : (attempts += 1) {
+            var context = ProjectionContext{ .storage = self };
+            const inspection = terminal.inspectVisual(&context, projectVisual);
+            if (context.failure) |failure| return failure;
+            if (context.projected) {
+                switch (inspection) {
+                    .acknowledged, .already_acknowledged => {},
+                    .stale => return error.StaleVisualInspection,
+                    .declined => return error.VisualInspectionDeclined,
+                }
+                return context.changed;
+            }
+            if (inspection == .stale) return error.StaleVisualInspection;
+            std.debug.assert(inspection == .declined);
+            const required_rows = context.required_rows orelse return error.GeometryUnstable;
+            const required_cols = context.required_cols orelse return error.GeometryUnstable;
+            var replacement = try VisualStorage.init(self.allocator, required_rows, required_cols);
+            var replacement_context = ProjectionContext{ .storage = &replacement };
+            const replacement_inspection = terminal.inspectVisual(&replacement_context, projectVisual);
+            if (replacement_context.failure) |failure| {
+                replacement.deinit();
+                return failure;
+            }
+            if (!replacement_context.projected) {
+                if (replacement_inspection == .stale) {
+                    replacement.deinit();
+                    return error.StaleVisualInspection;
+                }
+                std.debug.assert(replacement_inspection == .declined);
+                replacement.deinit();
+                continue;
+            }
+            switch (replacement_inspection) {
+                .acknowledged, .already_acknowledged => {},
+                .stale => {
+                    replacement.deinit();
+                    return error.StaleVisualInspection;
+                },
+                .declined => {
+                    replacement.deinit();
+                    return error.VisualInspectionDeclined;
+                },
+            }
+            const previous = self.*;
+            self.* = replacement;
+            replacement = previous;
+            replacement.deinit();
+            return true;
+        }
+        return error.GeometryUnstable;
+    }
+
+    fn apply(self: *VisualStorage, update: terminal_render.Update) void {
+        std.debug.assert(update.rows == self.rows and update.cols == self.cols);
+        for (update.row_patches) |patch| {
+            std.debug.assert(patch.row < self.rows);
+            std.debug.assert(patch.start_col <= self.cols);
+            std.debug.assert(patch.cell_count <= self.cols - patch.start_col);
+            const destination = @as(usize, patch.row) * self.cols + patch.start_col;
+            const source_end = patch.cell_offset + patch.cell_count;
+            std.debug.assert(source_end <= update.cells.len);
+            @memcpy(
+                self.cells[destination..][0..patch.cell_count],
+                update.cells[patch.cell_offset..source_end],
+            );
+            self.row_geometry[patch.row] = patch.geometry;
+        }
+        self.baseline = update.next_baseline;
+    }
+};
+
+const ProjectionContext = struct {
+    storage: *VisualStorage,
+    failure: ?terminal_render.Error = null,
+    projected: bool = false,
+    changed: bool = false,
+    required_rows: ?u16 = null,
+    required_cols: ?u16 = null,
+};
+
+const Window = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     display: *c.struct_wl_display,
     registry: *c.struct_wl_registry,
     compositor: ?*c.struct_wl_compositor = null,
     wm_base: ?*c.struct_xdg_wm_base = null,
-    surface: ?*c.struct_wl_surface = null,
-    xdg_surface: ?*c.struct_xdg_surface = null,
-    toplevel: ?*c.struct_xdg_toplevel = null,
+    system_bell: ?*c.struct_xdg_system_bell_v1 = null,
     seat: ?*c.struct_wl_seat = null,
     keyboard: ?*c.struct_wl_keyboard = null,
     pointer: ?*c.struct_wl_pointer = null,
-    xkb_context: ?*c.struct_xkb_context = null,
-    xkb_keymap: ?*c.struct_xkb_keymap = null,
-    xkb_state: ?*c.struct_xkb_state = null,
+    keymap: ?KeyboardMap = null,
+    keyboard_focused: bool = false,
+    surface: ?*c.struct_wl_surface = null,
+    xdg_surface: ?*c.struct_xdg_surface = null,
+    toplevel: ?*c.struct_xdg_toplevel = null,
     terminal_signal: c_int,
-    repeat_fd: c_int,
+    repeat_signal: c_int,
     repeat: Repeat = .{},
-    host_keys: HostKeys = .{},
+    physical_keys: PhysicalKeys = .{},
     pointer_state: PointerState = .{},
-    wake_bits: std.atomic.Value(u64) = .init(0),
-    panes: [workspace_model.max_panes]PaneOwner = @splat(.{}),
-    render: ?*renderer.Render = null,
-    size: renderer.Size = initial_size,
-    pending_size: renderer.Size = initial_size,
+    axis_frame: AxisFrame = .{},
+    wake: TerminalWake,
+    render: ?*renderer.Renderer = null,
+    terminal: ?*control.Terminal = null,
+    visual: ?VisualStorage = null,
+    size: Size = initial_size,
+    pending_size: Size = initial_size,
     configured: bool = false,
     closed: bool = false,
     failure: ?Error = null,
-    render_generation: u64 = 0,
-    completed_generation: u64 = 0,
-    workspace: ?workspace_model.Workspace = null,
-    label_row: labels.Row = .{},
-    title: [128]u8 = undefined,
+    draw: DrawProgress = .{},
+    terminal_failure: ?control.ReaderError = null,
+    presentation: PresentationState = .{},
 
-    fn init(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const u8) Error!*Loop {
-        howl_probe.emit(.window, .thread_start, .{});
-        if (font_paths.len == 0) return error.FontOpen;
+    fn init(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        runtime_dir: []const u8,
+        font_path: []const u8,
+        shell: []const u8,
+        command: ?[]const u8,
+    ) Error!*Window {
+        if (font_path.len == 0) return error.FontOpen;
         const display = c.wl_display_connect(null) orelse return error.WaylandConnect;
-        errdefer c.wl_display_disconnect(display);
+        var display_owned = true;
+        errdefer if (display_owned) c.wl_display_disconnect(display);
         const registry = c.wl_display_get_registry(display) orelse return error.WaylandRegistry;
-        errdefer c.wl_registry_destroy(registry);
+        var registry_owned = true;
+        errdefer if (registry_owned) c.wl_registry_destroy(registry);
         const terminal_signal = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (terminal_signal < 0) return error.TerminalSignal;
-        errdefer closeOwned(terminal_signal);
-        const repeat_fd = c.timerfd_create(c.CLOCK_MONOTONIC, c.TFD_CLOEXEC | c.TFD_NONBLOCK);
-        if (repeat_fd < 0) return error.KeyboardRepeat;
-        errdefer closeOwned(repeat_fd);
-        const self = try allocator.create(Loop);
-        errdefer allocator.destroy(self);
+        var signal_owned = true;
+        errdefer if (signal_owned) closeOwned(terminal_signal);
+        const repeat_signal = c.timerfd_create(c.CLOCK_MONOTONIC, c.TFD_CLOEXEC | c.TFD_NONBLOCK);
+        if (repeat_signal < 0) return error.KeyboardRepeat;
+        var repeat_owned = true;
+        errdefer if (repeat_owned) closeOwned(repeat_signal);
+        const self = try allocator.create(Window);
         self.* = .{
             .allocator = allocator,
             .io = io,
             .display = display,
             .registry = registry,
             .terminal_signal = terminal_signal,
-            .repeat_fd = repeat_fd,
+            .repeat_signal = repeat_signal,
+            .wake = .{ .fd = terminal_signal },
         };
-        errdefer self.destroyWayland();
+        display_owned = false;
+        registry_owned = false;
+        signal_owned = false;
+        repeat_owned = false;
+        errdefer self.rollback();
+
         if (c.wl_registry_add_listener(registry, &registry_listener, self) != 0)
             return error.WaylandRegistry;
         if (c.wl_display_roundtrip(display) < 0) return error.WaylandDispatch;
+        if (self.failure) |failure| return failure;
         const compositor = self.compositor orelse return error.WaylandProtocol;
         const wm_base = self.wm_base orelse return error.WaylandProtocol;
         const surface = c.wl_compositor_create_surface(compositor) orelse
@@ -374,697 +549,300 @@ const Loop = struct {
         self.toplevel = toplevel;
         if (c.xdg_toplevel_add_listener(toplevel, &toplevel_listener, self) != 0)
             return error.WaylandProtocol;
-        c.xdg_toplevel_set_title(toplevel, "Howl");
+        c.xdg_toplevel_set_title(toplevel, default_title);
         c.wl_surface_commit(surface);
-        while (!self.configured and self.failure == null)
+        while (!self.configured and self.failure == null) {
             if (c.wl_display_dispatch(display) < 0) return error.WaylandDispatch;
-        if (self.failure) |failure| return failure;
-        self.size = self.pending_size;
-        if (self.size.width < 2 or self.size.height < 2) return error.InvalidSize;
-        const render = try renderer.Render.start(allocator, io, .{
-            .display = display,
-            .surface = surface,
-            .size = self.size,
-            .font_paths = font_paths,
-        });
-        self.render = render;
-        errdefer render.deinit() catch |failure|
-            @panic(@errorName(failure));
-        errdefer {
-            self.deinitTerminals();
         }
-        const grid = gridSize(self.size, render.metrics());
-        self.workspace = try workspace_model.Workspace.init(allocator, @enumFromInt(1), "tab", grid);
-        try self.initPane(self.workspace.?.focusedPane(), .{ .cols = grid.cols, .rows = grid.rows });
-        self.updateTitle();
+        if (self.failure) |failure| return failure;
+
+        const configs = fontConfigs(font_path);
+        self.render = try renderer.Renderer.start(allocator, io, .{
+            .display = @ptrCast(display),
+            .surface = @ptrCast(surface),
+            .size = pixelSize(self.size),
+            .rows = initial_rows,
+            .cols = initial_cols,
+            .fonts = &configs,
+        });
+        const metrics = self.render.?.metrics();
+        const grid = gridSize(self.size, metrics);
+        self.terminal = try control.Terminal.init(allocator, io, .{
+            .runtime_dir = runtime_dir,
+            .shell = shell,
+            .command = command,
+            .rows = grid.rows,
+            .cols = grid.cols,
+            .cell_pixels = .{ .width = metrics.width_px, .height = metrics.height_px },
+        }, .{ .context = &self.wake, .notify = terminalWake });
+        if (self.keyboard_focused) sendFocus(self, .in);
+        if (self.failure) |failure| return failure;
+        self.visual = try VisualStorage.init(allocator, grid.rows, grid.cols);
+        var captured = false;
+        while (true) {
+            self.terminal.?.consumeWake();
+            if (try self.visual.?.capture(self.terminal.?)) captured = true;
+            if (!self.wake.pending.swap(false, .acq_rel)) break;
+        }
+        self.applyTerminalPresentation();
+        if (!captured) return error.GeometryUnstable;
+        try self.submitVisual(self.size);
+        if (self.terminal.?.state() != .running) self.finishTerminal();
         return self;
     }
 
-    fn run(self: *Loop) Error!void {
-        try self.submitVisible(self.visibleBits());
-        while (!self.closed and self.failure == null) {
+    fn runLoop(self: *Window) Error!void {
+        while (!self.closed) {
             if (c.wl_display_dispatch_pending(self.display) < 0) return error.WaylandDispatch;
-            if (self.closed or self.failure != null) continue;
-            if (!std.meta.eql(self.pending_size, self.size) and
-                self.completed_generation == self.render_generation) try self.resizeAll();
+            if (self.failure) |failure| return failure;
+            if (!std.meta.eql(self.pending_size, self.size)) try self.applyResize();
+            if (self.draw.done()) break;
+
+            while (c.wl_display_prepare_read(self.display) != 0) {
+                if (c.wl_display_dispatch_pending(self.display) < 0)
+                    return error.WaylandDispatch;
+                if (self.failure) |failure| return failure;
+            }
+            var read_prepared = true;
+            defer if (read_prepared) c.wl_display_cancel_read(self.display);
             const flush = c.wl_display_flush(self.display);
             const flush_blocked = flush < 0 and std.posix.errno(flush) == .AGAIN;
             if (flush < 0 and !flush_blocked) return error.WaylandFlush;
             var fds = [_]std.posix.pollfd{
                 .{
                     .fd = c.wl_display_get_fd(self.display),
-                    .events = @as(i16, std.posix.POLL.IN) |
+                    .events = std.posix.POLL.IN |
                         if (flush_blocked) @as(i16, std.posix.POLL.OUT) else 0,
                     .revents = 0,
                 },
                 .{ .fd = self.terminal_signal, .events = std.posix.POLL.IN, .revents = 0 },
                 .{ .fd = self.render.?.signalFd(), .events = std.posix.POLL.IN, .revents = 0 },
-                .{ .fd = self.repeat_fd, .events = std.posix.POLL.IN, .revents = 0 },
+                .{ .fd = self.repeat_signal, .events = std.posix.POLL.IN, .revents = 0 },
             };
-            const ready = std.posix.poll(&fds, -1) catch return error.Poll;
-            std.debug.assert(ready != 0);
+            const ready_count = std.posix.poll(&fds, -1) catch return error.Poll;
+            std.debug.assert(ready_count != 0);
             const faults = std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL;
-            if (fds[2].revents & faults != 0) return error.Signal;
-            if (fds[1].revents & faults != 0) return error.TerminalSignal;
-            if (fds[3].revents & faults != 0) return error.KeyboardRepeat;
             if (fds[0].revents & faults != 0) return error.WaylandDispatch;
-            const sources = Ready.from(fds);
-            if (sources.render) {
-                self.completed_generation = try self.render.?.completed();
-                std.debug.assert(self.completed_generation != 0);
-                if (!std.meta.eql(self.pending_size, self.size)) try self.resizeAll();
+            if (fds[1].revents & faults != 0) return error.TerminalSignal;
+            if (fds[2].revents & faults != 0) return error.Signal;
+            if (fds[3].revents & faults != 0) return error.KeyboardRepeat;
+
+            if (fds[0].revents & std.posix.POLL.IN != 0) {
+                if (c.wl_display_read_events(self.display) < 0) return error.WaylandDispatch;
+                read_prepared = false;
+            } else {
+                c.wl_display_cancel_read(self.display);
+                read_prepared = false;
             }
-            if (sources.terminal) {
-                try drainEvent(self.terminal_signal);
-                const changed = self.wake_bits.swap(0, .acq_rel);
-                for (&self.panes, 0..) |*pane, index| if (changed & (@as(u64, 1) << @intCast(index)) != 0) {
-                    const value = pane.terminal orelse continue;
-                    value.consumeWake();
-                    pane.unavailable = value.state() != .running;
-                    if (!pane.unavailable) pane.viewport.observe(viewportFacts(value.viewportFacts()));
-                };
-                self.updateTitle();
-                if (changed != 0) try self.submitVisible(changed & self.visibleBits());
-            }
-            if (sources.repeat) try self.repeatKey();
-            if (sources.display_read and
-                c.wl_display_dispatch(self.display) < 0) return error.WaylandDispatch;
-            if (sources.display_write) {
+            if (c.wl_display_dispatch_pending(self.display) < 0) return error.WaylandDispatch;
+            if (fds[0].revents & std.posix.POLL.OUT != 0) {
                 const resumed = c.wl_display_flush(self.display);
                 if (resumed < 0 and std.posix.errno(resumed) != .AGAIN)
                     return error.WaylandFlush;
             }
+            if (fds[2].revents & std.posix.POLL.IN != 0)
+                self.draw.complete(try self.render.?.completedGeneration());
+            if (fds[1].revents & std.posix.POLL.IN != 0) try self.handleTerminalWake();
+            if (!self.closed and fds[3].revents & std.posix.POLL.IN != 0) try self.repeatKey();
+            if (self.failure) |failure| return failure;
         }
-        if (self.failure) |failure| return failure;
+        if (self.terminal_failure) |failure| return failure;
     }
 
-    fn submitVisible(self: *Loop, dirty_mask: u64) Error!void {
-        var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
-        const pane_count = self.visiblePanes(&panes);
-        var live: [workspace_model.max_panes]renderer.PaneId = undefined;
-        var live_count: usize = 0;
-        for (self.panes) |pane| if (pane.pane) |id| {
-            live[live_count] = id;
-            live_count += 1;
-        };
-        var dirty: [workspace_model.max_panes]*howl_control.Terminal = undefined;
-        var dirty_count: usize = 0;
-        for (panes[0..pane_count]) |pane| for (&self.panes, 0..) |*owned, index| {
-            if (owned.terminal == pane.terminal and !owned.unavailable and
-                dirty_mask & (@as(u64, 1) << @intCast(index)) != 0)
-            {
-                dirty[dirty_count] = pane.terminal;
-                dirty_count += 1;
-                break;
-            }
-        };
-        if (self.render_generation == std.math.maxInt(u64)) return error.StaleGeneration;
-        const label_row = try self.formatLabels();
-        self.render_generation += 1;
-        try self.render.?.submit(
-            self.render_generation,
-            self.size,
-            live[0..live_count],
-            panes[0..pane_count],
-            dirty[0..dirty_count],
-            label_row.cellSlice(),
-            labelHeight(self.size, self.render.?.metrics()),
-        );
-        self.label_row = label_row;
-    }
-
-    fn resizeAll(self: *Loop) Error!void {
-        const render = self.render orelse return;
-        if (self.completed_generation != self.render_generation) return;
-        if (self.pending_size.width < 2 or self.pending_size.height < 2 or
-            self.pending_size.width > renderer.max_window_dimension or
-            self.pending_size.height > renderer.max_window_dimension) return error.InvalidSize;
-        var candidate = self.workspace.?;
-        const grid = gridSize(self.pending_size, render.metrics());
-        if (try candidate.resize(grid)) try self.applyWorkspaceGeometry(&candidate);
-        self.workspace.? = candidate;
-        self.size = self.pending_size;
-        try self.submitVisible(self.visibleBits());
-    }
-
-    fn rollbackResize(self: *Loop, applied: [workspace_model.max_panes]bool, end: usize) bool {
-        var index = end;
-        while (index != 0) {
-            index -= 1;
-            if (!applied[index]) continue;
-            const prior = self.panes[index].geometry;
-            const restored = self.panes[index].terminal.?.resize(prior.cols, prior.rows) catch return false;
-            if (restored.cols != prior.cols or restored.rows != prior.rows) return false;
+    fn handleTerminalWake(self: *Window) Error!void {
+        try drainEvent(self.terminal_signal);
+        while (self.wake.pending.swap(false, .acq_rel)) {
+            const terminal = self.terminal.?;
+            terminal.consumeWake();
+            try self.captureAndSubmit();
+            if (terminal.state() != .running) self.finishTerminal();
         }
-        return true;
+        self.applyTerminalPresentation();
     }
 
-    fn applyWorkspaceGeometry(self: *Loop, candidate: *const workspace_model.Workspace) Error!void {
-        var target: [workspace_model.max_panes]Geometry = undefined;
-        var change: [workspace_model.max_panes]bool = @splat(false);
-        for (self.panes, 0..) |pane, index| target[index] = pane.geometry;
-        var tab_ids: [workspace_model.max_tabs]TabId = undefined;
-        var layouts: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
-        for (candidate.tabOrder(&tab_ids)) |tab| for (try candidate.layout(tab, &layouts)) |layout| {
-            const index = self.slotIndex(layout.pane) orelse return error.StalePane;
-            if (self.panes[index].unavailable) continue;
-            target[index] = .{ .cols = layout.rect.cols, .rows = layout.rect.rows };
-            change[index] = !std.meta.eql(target[index], self.panes[index].geometry);
-        };
-        var applied: [workspace_model.max_panes]bool = @splat(false);
-        for (&self.panes, 0..) |*pane, index| {
-            if (!change[index]) continue;
-            const result = pane.terminal.?.resize(target[index].cols, target[index].rows) catch |failure| {
-                if (!self.rollbackResize(applied, index)) return error.ResizeTransactionFailed;
-                return failure;
+    fn applyTerminalPresentation(self: *Window) void {
+        const bell = self.system_bell;
+        const change = self.presentation.apply(self.terminal.?.hostPresentation(), bell != null);
+        if (change.title) c.xdg_toplevel_set_title(self.toplevel.?, self.presentation.titlePointer());
+        for (0..change.bells) |_| c.xdg_system_bell_v1_ring(bell.?, self.surface.?);
+        if (change.bells_pending) terminalWake(&self.wake);
+    }
+
+    fn captureAndSubmit(self: *Window) Error!void {
+        const terminal = self.terminal.?;
+        if (try self.visual.?.capture(terminal)) try self.submitVisual(self.size);
+    }
+
+    fn submitVisual(self: *Window, size: Size) Error!void {
+        const visual = &self.visual.?;
+        const next = try self.draw.next();
+        try self.render.?.submit(.{
+            .generation = next,
+            .rows = visual.rows,
+            .cols = visual.cols,
+            .cells = visual.cells,
+            .row_geometry = visual.row_geometry,
+            .cursor = visual.baseline.?.cursor,
+            .size = pixelSize(size),
+        });
+        self.draw.admit(next);
+    }
+
+    fn applyResize(self: *Window) Error!void {
+        const target = self.pending_size;
+        const terminal = self.terminal.?;
+        const grid = gridSize(target, self.render.?.metrics());
+        const status = terminal.status();
+        var geometry_changed = false;
+        if (terminal.state() == .running and
+            (status.rows != grid.rows or status.cols != grid.cols))
+        {
+            const resized = terminal.resize(grid.cols, grid.rows) catch |failure| switch (failure) {
+                error.NotStarted => null,
+                else => return failure,
             };
-            if (result.cols != target[index].cols or result.rows != target[index].rows) {
-                const restored = pane.terminal.?.resize(pane.geometry.cols, pane.geometry.rows) catch
-                    return error.ResizeTransactionFailed;
-                if (restored.cols != pane.geometry.cols or restored.rows != pane.geometry.rows or
-                    !self.rollbackResize(applied, index)) return error.ResizeTransactionFailed;
-                return error.ResizeResultMismatch;
+            if (resized) |result| {
+                std.debug.assert(result.changed);
+                geometry_changed = true;
             }
-            applied[index] = true;
         }
-        for (&self.panes, target, change) |*pane, geometry, changed| {
-            if (changed) pane.geometry = geometry;
-        }
+        const visual_changed = try self.visual.?.capture(terminal);
+        if (geometry_changed and !visual_changed) return error.GeometryUnstable;
+        try self.submitVisual(target);
+        self.size = target;
+        if (terminal.state() != .running) self.finishTerminal();
     }
 
-    fn visiblePanes(self: *Loop, output: *[renderer.max_visible_panes]renderer.Pane) usize {
-        const workspace = &self.workspace.?;
-        var layouts: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
-        const visible = workspace.layout(workspace.activeTab(), &layouts) catch unreachable;
-        const metrics = self.render.?.metrics();
-        for (visible, output[0..visible.len]) |layout, *pane| {
-            const owned = &self.panes[self.slotIndex(layout.pane) orelse unreachable];
-            const pixels = panePixels(layout.rect, workspace.size, self.size, metrics);
-            pane.* = .{
-                .id = layout.pane,
-                .terminal = owned.terminal.?,
-                .x = pixels.x,
-                .y = pixels.y,
-                .width = pixels.width,
-                .height = pixels.height,
-                .focused = layout.focused,
-                .terminal_available = !owned.unavailable,
-                .scrollbar = owned.scrollbar(pixels),
-            };
-        }
-        return visible.len;
+    fn finishTerminal(self: *Window) void {
+        self.draw.finish();
+        if (self.terminal_failure == null)
+            self.terminal_failure = self.terminal.?.readerError();
     }
 
-    fn formatLabels(self: *const Loop) Error!labels.Row {
-        const workspace = &self.workspace.?;
-        var order_storage: [workspace_model.max_tabs]TabId = undefined;
-        var layout_storage: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
-        var facts: [workspace_model.max_tabs]labels.Tab = undefined;
-        const order = workspace.tabOrder(&order_storage);
-        for (order, facts[0..order.len]) |tab, *fact| {
-            const panes = workspace.layout(tab, &layout_storage) catch return error.InvalidLabels;
-            var unavailable: u8 = 0;
-            for (panes) |pane| {
-                const index = self.slotIndex(pane.pane) orelse return error.InvalidLabels;
-                unavailable += @intFromBool(self.panes[index].unavailable);
-            }
-            fact.* = .{
-                .id = tab,
-                .name = workspace.tabName(tab) catch return error.InvalidLabels,
-                .active = tab == workspace.activeTab(),
-                .panes = @intCast(panes.len),
-                .unavailable_panes = unavailable,
-            };
-        }
-        return labels.format(workspace.size.cols, facts[0..order.len]) catch error.InvalidLabels;
-    }
-
-    fn updateTitle(self: *Loop) void {
-        var order: [workspace_model.max_tabs]TabId = undefined;
-        const tabs = self.workspace.?.tabOrder(&order);
-        const active = self.workspace.?.activeTab();
-        const ordinal = for (tabs, 1..) |tab, index| {
-            if (tab == active) break index;
-        } else unreachable;
-        const title = std.fmt.bufPrintZ(&self.title, "Howl · tab {d}/{d}", .{ ordinal, tabs.len }) catch unreachable;
-        c.xdg_toplevel_set_title(self.toplevel.?, title);
-    }
-
-    fn slotIndex(self: *const Loop, pane_id: PaneId) ?usize {
-        for (self.panes, 0..) |pane, index| if (pane.pane == pane_id) return index;
-        return null;
-    }
-
-    fn initPane(self: *Loop, pane_id: PaneId, geometry: Geometry) Error!void {
-        const index = for (&self.panes, 0..) |*pane, candidate| {
-            if (pane.pane == null) break candidate;
-        } else return error.PaneLimit;
-        const owned = &self.panes[index];
-        owned.* = .{
-            .pane = pane_id,
-            .geometry = geometry,
-            .wake = .{ .owner = self, .index = @intCast(index) },
-        };
-        errdefer {
-            clearWakeBit(&self.wake_bits, @intCast(index));
-            owned.* = .{};
-        }
-        owned.terminal = try howl_control.Terminal.init(self.allocator, self.io, .{
-            .shell = "/bin/bash",
-            .cols = geometry.cols,
-            .rows = geometry.rows,
-            .cell_pixels = .{
-                .width = self.render.?.metrics().cell_width,
-                .height = self.render.?.metrics().cell_height,
-            },
-        }, .{ .context = &owned.wake, .notify = terminalWake });
-        owned.viewport.observe(viewportFacts(owned.terminal.?.viewportFacts()));
-    }
-
-    fn retirePane(self: *Loop, pane_id: PaneId) void {
-        const index = self.slotIndex(pane_id) orelse return;
-        const owned = &self.panes[index];
-        owned.terminal.?.deinit();
-        clearWakeBit(&self.wake_bits, @intCast(index));
-        owned.* = .{};
-    }
-
-    fn paneGeometry(model: *const workspace_model.Workspace, pane_id: PaneId) ?Geometry {
-        var tabs: [workspace_model.max_tabs]TabId = undefined;
-        var layouts: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
-        for (model.tabOrder(&tabs)) |tab| for (model.layout(tab, &layouts) catch return null) |layout| {
-            if (layout.pane == pane_id) return .{ .cols = layout.rect.cols, .rows = layout.rect.rows };
-        };
-        return null;
-    }
-
-    fn visibleBits(self: *const Loop) u64 {
-        return visibleBitsFor(&self.workspace.?, &self.panes);
-    }
-
-    fn submitAndQuiesce(self: *Loop) Error!void {
-        try self.submitVisible(self.visibleBits());
-        try self.render.?.quiesce(self.render_generation);
-        self.completed_generation = self.render_generation;
-    }
-
-    fn performHostAction(self: *Loop, action: HostAction) Error!void {
-        switch (action) {
-            .new_tab => {
-                const created = try self.workspace.?.createTab("tab");
-                self.initPane(created.pane, paneGeometry(&self.workspace.?, created.pane).?) catch |failure| {
-                    var removed: [workspace_model.max_panes_per_tab]PaneId = undefined;
-                    const rolled_back = self.workspace.?.closeTab(created.tab, &removed) catch unreachable;
-                    std.debug.assert(rolled_back.len == 1 and rolled_back[0] == created.pane);
-                    return failure;
-                };
-                if (!try self.workspace.?.switchTab(created.tab)) unreachable;
-                self.updateTitle();
-                try self.submitVisible(self.visibleBits());
-            },
-            .split_horizontal, .split_vertical => {
-                var candidate = self.workspace.?;
-                const tab = candidate.activeTab();
-                const pane = try candidate.splitPane(
-                    tab,
-                    candidate.focusedPane(),
-                    if (action == .split_horizontal) .horizontal else .vertical,
-                );
-                try self.initPane(pane, paneGeometry(&candidate, pane).?);
-                self.applyWorkspaceGeometry(&candidate) catch |failure| {
-                    self.retirePane(pane);
-                    return failure;
-                };
-                self.workspace.? = candidate;
-                try self.submitVisible(self.visibleBits());
-            },
-            .close_pane => {
-                const pane = self.workspace.?.focusedPane();
-                var candidate = self.workspace.?;
-                const removed = candidate.closePane(candidate.activeTab(), pane) catch |failure| switch (failure) {
-                    error.LastPane => return,
-                    else => return failure,
-                };
-                std.debug.assert(removed == pane);
-                try self.applyWorkspaceGeometry(&candidate);
-                self.cancelPointer();
-                self.workspace.? = candidate;
-                try self.submitAndQuiesce();
-                self.retirePane(pane);
-            },
-            .close_tab => {
-                var retired: [workspace_model.max_panes_per_tab]PaneId = undefined;
-                const removed = self.workspace.?.closeTab(
-                    self.workspace.?.activeTab(),
-                    &retired,
-                ) catch |failure| switch (failure) {
-                    error.LastTab => return,
-                    else => return failure,
-                };
-                const count = removed.len;
-                self.cancelPointer();
-                try self.submitAndQuiesce();
-                for (retired[0..count]) |pane| self.retirePane(pane);
-                self.updateTitle();
-            },
-            .next_tab, .previous_tab => {
-                var tabs: [workspace_model.max_tabs]TabId = undefined;
-                const order = self.workspace.?.tabOrder(&tabs);
-                if (order.len < 2) return;
-                const active = self.workspace.?.activeTab();
-                const index = for (order, 0..) |tab, candidate| {
-                    if (tab == active) break candidate;
-                } else unreachable;
-                const target = if (action == .next_tab)
-                    order[(index + 1) % order.len]
-                else
-                    order[if (index == 0) order.len - 1 else index - 1];
-                if (!try self.workspace.?.switchTab(target)) unreachable;
-                self.updateTitle();
-                try self.submitVisible(self.visibleBits());
-            },
-            .focus_left, .focus_right, .focus_up, .focus_down => {
-                const direction: workspace_model.Direction = switch (action) {
-                    .focus_left => .left,
-                    .focus_right => .right,
-                    .focus_up => .up,
-                    .focus_down => .down,
-                    else => unreachable,
-                };
-                if (!self.workspace.?.focus(direction)) return;
-                try self.submitVisible(self.visibleBits());
-            },
-            .resize_left, .resize_right, .resize_up, .resize_down => {
-                const direction: workspace_model.Direction = switch (action) {
-                    .resize_left => .left,
-                    .resize_right => .right,
-                    .resize_up => .up,
-                    .resize_down => .down,
-                    else => unreachable,
-                };
-                var candidate = self.workspace.?;
-                if (!try candidate.resizePane(candidate.activeTab(), candidate.focusedPane(), direction, 1)) return;
-                try self.applyWorkspaceGeometry(&candidate);
-                self.workspace.? = candidate;
-                try self.submitVisible(self.visibleBits());
-            },
-            .reorder_left, .reorder_right => {
-                var order_storage: [workspace_model.max_tabs]TabId = undefined;
-                const order = self.workspace.?.tabOrder(&order_storage);
-                if (order.len < 2) return;
-                const active = self.workspace.?.activeTab();
-                const source = for (order, 0..) |tab, index| {
-                    if (tab == active) break index;
-                } else unreachable;
-                const target = switch (action) {
-                    .reorder_left => if (source == 0) return else source - 1,
-                    .reorder_right => if (source + 1 == order.len) return else source + 1,
-                    else => unreachable,
-                };
-                if (!(self.workspace.?.reorderTab(active, @intCast(target)) catch unreachable)) unreachable;
-                self.updateTitle();
-                try self.submitVisible(self.visibleBits());
-            },
-            .scroll_page_up, .scroll_page_down, .scroll_top, .scroll_bottom => {
-                const pane = self.workspace.?.focusedPane();
-                const index = self.slotIndex(pane) orelse return;
-                const state = self.panes[index].viewport;
-                const candidate = self.panes[index].movedViewport(switch (action) {
-                    .scroll_page_up => state.rows,
-                    .scroll_page_down => -@as(i64, state.rows),
-                    .scroll_top => std.math.maxInt(i64),
-                    .scroll_bottom => std.math.minInt(i64),
-                    else => unreachable,
-                }) orelse return;
-                try self.applyViewport(index, candidate);
-            },
-        }
-    }
-
-    // Keyboard and pointer admission into host or focused-terminal policy.
-
-    fn key(self: *Loop, code: u32, state_value: u32) void {
-        const action: @FieldType(@FieldType(howl_control.Input, "key"), "action") = switch (state_value) {
+    fn key(self: *Window, code: u32, state_value: u32) void {
+        if (!inputAdmissionOpen(self.closed, self.failure)) return;
+        const action: KeyAction = switch (state_value) {
             c.WL_KEYBOARD_KEY_STATE_PRESSED => .press,
             c.WL_KEYBOARD_KEY_STATE_RELEASED => .release,
             else => return,
         };
         if (action == .release) {
-            if (self.host_keys.release(code)) return;
+            if (!self.physical_keys.canRelease(code)) return;
             if (self.repeat.release(code)) self.armRepeat(null) catch |failure| {
-                self.failure = failure;
+                retainFailure(self, failure);
             };
         } else {
+            if (!self.physical_keys.canPress(code)) return;
             self.repeat.cancel();
             self.armRepeat(null) catch |failure| {
-                self.failure = failure;
+                retainFailure(self, failure);
                 return;
             };
         }
-        const routed = self.routeKey(code, action);
-        if (action != .press or !routed or self.failure != null) return;
-        const keymap = self.xkb_keymap orelse return;
-        const delay = self.repeat.press(code, c.xkb_keymap_key_repeats(keymap, code + 8) == 1);
-        self.armRepeat(delay) catch |failure| {
-            self.failure = failure;
-        };
+        if (!self.routeKey(code, action)) return;
+        if (action == .release) {
+            self.physical_keys.admitRelease(code);
+            return;
+        }
+        self.physical_keys.admitPress(code);
+        if (self.failure != null) return;
+        const keymap = self.keymap orelse return;
+        const delay = self.repeat.press(code, c.xkb_keymap_key_repeats(keymap.keymap, code + 8) == 1);
+        self.armRepeat(delay) catch |failure| retainFailure(self, failure);
     }
 
-    fn routeKey(
-        self: *Loop,
-        code: u32,
-        action: @FieldType(@FieldType(howl_control.Input, "key"), "action"),
-    ) bool {
-        const state = self.xkb_state orelse return false;
+    fn routeKey(self: *Window, code: u32, action: KeyAction) bool {
+        const state = if (self.keymap) |keymap| keymap.state else return false;
         const symbol = c.xkb_state_key_get_one_sym(state, code + 8);
         var bytes: [64]u8 = undefined;
         const count = c.xkb_state_key_get_utf8(state, code + 8, &bytes, bytes.len);
         if (count < 0 or count >= bytes.len) return false;
-        const text = if (action == .release) bytes[0..0] else bytes[0..@intCast(count)];
-        const mods: KeyModifiers = .{
-            .shift = modifierActive(state, c.XKB_MOD_NAME_SHIFT),
-            .alt = modifierActive(state, c.XKB_MOD_NAME_ALT),
-            .control = modifierActive(state, c.XKB_MOD_NAME_CTRL),
-            .super = modifierActive(state, c.XKB_MOD_NAME_LOGO),
-            .caps_lock = modifierActive(state, c.XKB_MOD_NAME_CAPS),
-            .num_lock = modifierActive(state, c.XKB_MOD_NAME_NUM),
-        };
-        if (action == .press) {
-            if (hostAction(symbol, mods)) |host| {
-                if (!self.host_keys.capture(code)) {
-                    self.failure = error.HostKeyLimit;
-                    return false;
-                }
-                self.performHostAction(host) catch |failure| {
-                    self.failure = failure;
-                };
-                return false;
-            }
-        }
-        const named: ?howl_vt.Terminal.NamedKey = switch (symbol) {
-            c.XKB_KEY_Return => .enter,
-            c.XKB_KEY_Tab => .tab,
-            c.XKB_KEY_BackSpace => .backspace,
-            c.XKB_KEY_Escape => .escape,
-            c.XKB_KEY_Up => .up,
-            c.XKB_KEY_Down => .down,
-            c.XKB_KEY_Left => .left,
-            c.XKB_KEY_Right => .right,
-            c.XKB_KEY_Insert => .insert,
-            c.XKB_KEY_Delete => .delete,
-            c.XKB_KEY_Home => .home,
-            c.XKB_KEY_End => .end,
-            c.XKB_KEY_Page_Up => .page_up,
-            c.XKB_KEY_Page_Down => .page_down,
-            c.XKB_KEY_F1 => .f1,
-            c.XKB_KEY_F2 => .f2,
-            c.XKB_KEY_F3 => .f3,
-            c.XKB_KEY_F4 => .f4,
-            c.XKB_KEY_F5 => .f5,
-            c.XKB_KEY_F6 => .f6,
-            c.XKB_KEY_F7 => .f7,
-            c.XKB_KEY_F8 => .f8,
-            c.XKB_KEY_F9 => .f9,
-            c.XKB_KEY_F10 => .f10,
-            c.XKB_KEY_F11 => .f11,
-            c.XKB_KEY_F12 => .f12,
-            else => null,
-        };
-        const input: howl_control.Input = if (named) |value|
-            .{ .key = .{ .key = .{ .named = value }, .mods = mods, .action = action, .text = text } }
-        else unicode: {
-            const scalar = c.xkb_keysym_to_utf32(symbol);
-            if (scalar == 0 or scalar > std.math.maxInt(u21)) return false;
-            const codepoint: u21 = @intCast(scalar);
-            if (!std.unicode.utf8ValidCodepoint(codepoint)) return false;
-            break :unicode .{ .key = .{
-                .key = howl_vt.Terminal.Key.initUnicode(codepoint) catch return false,
-                .mods = mods,
-                .action = action,
-                .text = text,
-            } };
-        };
-        const focused = self.slotIndex(self.workspace.?.focusedPane()) orelse return false;
-        if (self.panes[focused].unavailable) return false;
-        const result = self.panes[focused].terminal.?.send(&.{.{ .input = input }}) catch |failure| {
-            self.failure = failure;
+        const text_bytes = if (action == .release) bytes[0..0] else bytes[0..@intCast(count)];
+        const input = keyInput(symbol, text_bytes, keyModifiers(state), action) orelse return false;
+        const result = self.terminal.?.send(&.{.{ .input = input }}) catch |failure| {
+            retainFailure(self, failure);
             return false;
         };
         switch (result.outcome) {
-            .complete => {},
-            .incomplete, .rejected => self.failure = error.InputIncomplete,
+            .complete => return true,
+            .incomplete, .rejected => {
+                retainFailure(self, error.InputIncomplete);
+                return false;
+            },
         }
-        return self.failure == null;
     }
 
-    fn repeatKey(self: *Loop) Error!void {
+    fn repeatKey(self: *Window) Error!void {
         var expirations: u64 = 0;
         while (true) {
-            const count = c.read(self.repeat_fd, &expirations, @sizeOf(u64));
+            const count = c.read(self.repeat_signal, &expirations, @sizeOf(u64));
             if (count == @sizeOf(u64)) break;
             if (count < 0 and std.posix.errno(count) == .INTR) continue;
             return error.KeyboardRepeat;
         }
         if (expirations == 0) return error.KeyboardRepeat;
-        const firing = self.repeat.fire() orelse return;
-        // Delayed dispatch coalesces timer expirations into one repeat so a
-        // stalled window loop cannot flood the bounded terminal admission.
+        const firing = self.repeat.firing() orelse return;
+        if (!self.physical_keys.canRelease(firing.key)) {
+            self.repeat.cancel();
+            try self.armRepeat(null);
+            return;
+        }
         if (self.routeKey(firing.key, .repeat)) try self.armRepeat(firing.next_ns);
     }
 
-    fn armRepeat(self: *Loop, duration_ns: ?u64) error{KeyboardRepeat}!void {
-        try setRepeatTimer(self.repeat_fd, duration_ns);
+    fn armRepeat(self: *Window, duration_ns: ?u64) error{KeyboardRepeat}!void {
+        try setRepeatTimer(self.repeat_signal, duration_ns);
     }
 
-    fn pointerMotion(self: *Loop, surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) void {
-        if (surface_x < 0 or surface_y < 0) {
+    fn pointerMotion(self: *Window, x: i64, y: i64) void {
+        if (!inputAdmissionOpen(self.closed, self.failure)) return;
+        const target = self.pointerTarget(x, y) orelse {
             self.pointer_state.position = null;
             return;
-        }
-        self.pointer_state.position = .{
-            .x = @intCast(c.wl_fixed_to_int(surface_x)),
-            .y = @intCast(c.wl_fixed_to_int(surface_y)),
         };
-        if (self.pointer_state.scrollbar_drag) |pane_id| {
-            const position = self.pointer_state.position.?;
-            const bar = self.scrollbarForPane(pane_id) orelse return;
-            const index = self.slotIndex(pane_id) orelse return;
-            if (self.panes[index].soughtViewport(bar, position.y)) |candidate|
-                self.applyViewport(index, candidate) catch |failure| {
-                    retainFirstFailure(&self.failure, failure);
-                };
-            return;
-        }
-        if (self.pointerMoveTarget()) |target| if (self.sendMouse(
-            target,
-            .move,
-            .none,
-            self.pointer_state.buttons_down,
-        )) std.debug.assert(self.pointer_state.move(target));
+        self.pointer_state.position = .{ .x = target.pixel_x, .y = target.pixel_y };
+        if (!self.sendMouse(target, .move, .none, self.pointer_state.buttons_down)) return;
+        self.pointer_state.commitMove(target);
     }
 
-    fn pointerButton(self: *Loop, button_code: u32, state_value: u32) void {
+    fn pointerButton(self: *Window, button_code: u32, state_value: u32) void {
+        if (!inputAdmissionOpen(self.closed, self.failure)) return;
         const button: MouseButton = switch (button_code) {
             c.BTN_LEFT => .left,
             c.BTN_MIDDLE => .middle,
             c.BTN_RIGHT => .right,
             else => return,
         };
-        const index = mouseButtonIndex(button).?;
-        if (button == .left and state_value == c.WL_POINTER_BUTTON_STATE_RELEASED and
-            self.pointer_state.scrollbar_drag != null)
-        {
-            self.pointer_state.scrollbar_drag = null;
-            return;
-        }
-        if (button == .left and state_value == c.WL_POINTER_BUTTON_STATE_PRESSED) {
-            const position = self.pointer_state.position orelse return;
-            if (self.labelTab(position.x, position.y)) |tab| {
-                self.cancelPointer();
-                if (self.failure != null) return;
-                const changed = self.workspace.?.switchTab(tab) catch return;
-                if (changed) {
-                    self.updateTitle();
-                    self.submitVisible(self.visibleBits()) catch |failure| {
-                        retainFirstFailure(&self.failure, failure);
-                    };
-                }
-                return;
-            }
-            if (self.scrollbarTarget(position.x, position.y)) |target| {
-                const focused = self.workspace.?.focusPane(target.pane) catch return;
-                const index_value = self.slotIndex(target.pane) orelse return;
-                if (self.panes[index_value].soughtViewport(target.bar, position.y)) |candidate|
-                    self.applyViewport(index_value, candidate) catch |failure| {
-                        retainFirstFailure(&self.failure, failure);
-                        return;
-                    };
-                self.pointer_state.scrollbar_drag = target.pane;
-                if (focused) self.submitVisible(self.visibleBits()) catch |failure| {
-                    retainFirstFailure(&self.failure, failure);
-                };
-                return;
-            }
-        }
+        const index: usize = switch (button) {
+            .left => 0,
+            .middle => 1,
+            .right => 2,
+            else => unreachable,
+        };
         switch (state_value) {
             c.WL_POINTER_BUTTON_STATE_PRESSED => {
                 const position = self.pointer_state.position orelse return;
-                const target = self.resolvePointer(position.x, position.y, false) orelse return;
-                const focused = self.workspace.?.focusPane(target.pane) catch return;
-                if (focused) self.submitVisible(self.visibleBits()) catch |failure| {
-                    retainFirstFailure(&self.failure, failure);
-                    return;
-                };
+                const target = self.pointerTarget(position.x, position.y) orelse return;
                 const transition = self.pointer_state.preparePress(index, target) orelse return;
                 if (!self.sendMouse(target, .press, button, transition.buttons_down)) return;
                 self.pointer_state.commitPress(transition);
             },
             c.WL_POINTER_BUTTON_STATE_RELEASED => {
                 const transition = self.pointer_state.prepareRelease(index) orelse return;
-                if (!self.sendMouse(
-                    transition.target,
-                    .release,
-                    button,
-                    transition.buttons_down,
-                )) return;
+                if (!self.sendMouse(transition.target, .release, button, transition.buttons_down)) return;
                 self.pointer_state.commitRelease(transition);
             },
             else => {},
         }
     }
 
-    fn labelTab(self: *const Loop, x: u32, y: u32) ?TabId {
-        const render = self.render orelse return null;
-        if (y >= labelHeight(self.size, render.metrics())) return null;
-        const col = labels.pixelColumn(
-            self.size.width,
-            self.label_row.cell_count,
-            x,
-        ) orelse return null;
-        return self.label_row.hit(col);
-    }
-
-    fn pointerWheel(self: *Loop, discrete: i32) void {
-        if (discrete == 0) return;
-        const magnitude: u32 = if (discrete < 0)
-            @intCast(-@as(i64, discrete))
-        else
-            @intCast(discrete);
-        if (magnitude > max_wheel_steps) {
-            self.failure = error.Pointer;
-            return;
-        }
-        const target = self.pointerTarget() orelse return;
-        const pane_index = self.slotIndex(target.pane) orelse return;
-        if (!self.panes[pane_index].viewport.mouse_reporting) {
-            const rows: i64 = @as(i64, magnitude) * 3;
-            if (self.panes[pane_index].movedViewport(if (discrete < 0) rows else -rows)) |candidate|
-                self.applyViewport(pane_index, candidate) catch |failure| {
-                    retainFirstFailure(&self.failure, failure);
-                };
-            return;
-        }
-        var events: [max_wheel_steps]howl_control.BatchEvent = undefined;
+    fn pointerWheel(self: *Window, discrete: i32) void {
+        if (discrete == 0 or !inputAdmissionOpen(self.closed, self.failure)) return;
+        const position = self.pointer_state.position orelse return;
+        const target = self.pointerTarget(position.x, position.y) orelse return;
+        const magnitude: usize = @intCast(@abs(@as(i64, discrete)));
+        std.debug.assert(magnitude <= max_wheel_steps);
+        var events: [max_wheel_steps]control.BatchEvent = undefined;
         for (events[0..magnitude]) |*event| event.* = .{ .input = .{ .mouse = .{
             .kind = .wheel,
             .button = if (discrete < 0) .wheel_up else .wheel_down,
@@ -1075,105 +853,36 @@ const Loop = struct {
             .mod = self.mouseModifiers(),
             .buttons_down = self.pointer_state.buttons_down,
         } } };
-        if (!self.sendBatch(target.pane, events[0..magnitude])) return;
+        if (!self.sendBatch(events[0..magnitude])) return;
     }
 
-    fn pointerTarget(self: *Loop) ?PointerTarget {
-        const position = self.pointer_state.position orelse return null;
-        return self.resolvePointer(position.x, position.y, true);
-    }
-
-    fn resolvePointer(self: *Loop, x: u32, y: u32, focused_only: bool) ?PointerTarget {
-        var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
-        const visible = self.visiblePanes(&panes);
-        const focused = self.workspace.?.focusedPane();
-        for (panes[0..visible]) |pane| {
-            if ((focused_only and pane.id != focused) or !pane.terminal_available or
-                x < pane.x or x >= pane.x + pane.width or y < pane.y or y >= pane.y + pane.height) continue;
-            const index = self.slotIndex(pane.id) orelse return null;
-            const local_x = x - pane.x;
-            const local_y = y - pane.y;
-            const metrics = self.render.?.metrics();
-            const geometry = self.panes[index].geometry;
-            if (local_x >= @as(u32, geometry.cols) * metrics.cell_width or
-                local_y >= @as(u32, geometry.rows) * metrics.cell_height) return null;
-            return .{
-                .pane = pane.id,
-                .row = @intCast(local_y / metrics.cell_height),
-                .col = @intCast(local_x / metrics.cell_width),
-                .pixel_x = local_x,
-                .pixel_y = local_y,
-            };
-        }
-        return null;
-    }
-
-    fn pointerMoveTarget(self: *Loop) ?PointerTarget {
-        const target = self.pointerTarget() orelse return null;
-        for (self.pointer_state.pressed) |pressed| if (pressed) |value|
-            if (value.pane != target.pane) return null;
-        return target;
-    }
-
-    fn cancelPointer(self: *Loop) void {
-        // Teardown commits each release only after admission and stops at the
-        // first failure, preserving retained state and the prior loop failure.
-        for (0..self.pointer_state.pressed.len) |index| {
-            const transition = self.pointer_state.prepareRelease(index) orelse continue;
-            const button: MouseButton = switch (index) {
-                0 => .left,
-                1 => .middle,
-                2 => .right,
-                else => unreachable,
-            };
-            if (!self.sendMouse(
-                transition.target,
-                .release,
-                button,
-                transition.buttons_down,
-            )) break;
-            self.pointer_state.commitRelease(transition);
-        }
-        self.pointer_state.position = null;
-        self.pointer_state.scrollbar_drag = null;
-    }
-
-    fn scrollbarTarget(self: *Loop, x: u32, y: u32) ?struct { pane: PaneId, bar: viewport.Scrollbar } {
-        var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
-        for (panes[0..self.visiblePanes(&panes)]) |pane| if (pane.scrollbar) |bar|
-            if (bar.contains(x, y)) return .{ .pane = pane.id, .bar = bar };
-        return null;
-    }
-
-    fn scrollbarForPane(self: *Loop, pane_id: PaneId) ?viewport.Scrollbar {
-        var panes: [renderer.max_visible_panes]renderer.Pane = undefined;
-        for (panes[0..self.visiblePanes(&panes)]) |pane|
-            if (pane.id == pane_id) return pane.scrollbar;
-        return null;
-    }
-
-    fn applyViewport(self: *Loop, index: usize, candidate_value: viewport.State) Error!void {
-        const owned = &self.panes[index];
-        if (owned.unavailable) return;
-        var candidate = candidate_value;
-        const facts = owned.terminal.?.setViewport(candidate.offset) catch |failure| {
-            candidate.observe(viewportFacts(owned.terminal.?.viewportFacts()));
-            owned.viewport = candidate;
-            return failure;
-        };
-        candidate.observe(viewportFacts(facts));
-        owned.viewport = candidate;
-        try self.submitVisible(@as(u64, 1) << @intCast(index));
+    fn pointerTarget(self: *Window, x: i64, y: i64) ?PointerTarget {
+        const visual = if (self.visual) |*value| value else return null;
+        const render = self.render orelse return null;
+        return resolvePointerTarget(x, y, visual.rows, visual.cols, render.metrics());
     }
 
     fn sendMouse(
-        self: *Loop,
+        self: *Window,
         target: PointerTarget,
         kind: MouseKind,
         button: MouseButton,
         buttons_down: u8,
     ) bool {
-        return self.sendBatch(target.pane, &.{.{ .input = .{ .mouse = .{
+        return self.admitMouse(target, kind, button, buttons_down) catch |failure| {
+            retainFailure(self, failure);
+            return false;
+        };
+    }
+
+    fn admitMouse(
+        self: *Window,
+        target: PointerTarget,
+        kind: MouseKind,
+        button: MouseButton,
+        buttons_down: u8,
+    ) Error!bool {
+        return self.admitBatch(&.{.{ .input = .{ .mouse = .{
             .kind = kind,
             .button = button,
             .row = target.row,
@@ -1185,138 +894,124 @@ const Loop = struct {
         } } }});
     }
 
-    fn mouseModifiers(self: *Loop) @FieldType(MouseInput, "mod") {
-        const state = self.xkb_state orelse return .{};
-        return .{
-            .shift = modifierActive(state, c.XKB_MOD_NAME_SHIFT),
-            .alt = modifierActive(state, c.XKB_MOD_NAME_ALT),
-            .control = modifierActive(state, c.XKB_MOD_NAME_CTRL),
-            .super = modifierActive(state, c.XKB_MOD_NAME_LOGO),
-            .caps_lock = modifierActive(state, c.XKB_MOD_NAME_CAPS),
-            .num_lock = modifierActive(state, c.XKB_MOD_NAME_NUM),
+    fn sendBatch(self: *Window, events: []const control.BatchEvent) bool {
+        return self.admitBatch(events) catch |failure| {
+            retainFailure(self, failure);
+            return false;
         };
     }
 
-    fn sendBatch(self: *Loop, pane_id: PaneId, events: []const howl_control.BatchEvent) bool {
-        const index = self.slotIndex(pane_id) orelse return false;
-        if (self.panes[index].unavailable) return false;
-        const result = self.panes[index].terminal.?.send(events) catch |failure| {
-            retainFirstFailure(&self.failure, failure);
-            return false;
-        };
+    fn admitBatch(self: *Window, events: []const control.BatchEvent) Error!bool {
+        const terminal = self.terminal orelse return false;
+        if (terminal.state() != .running) return false;
+        const result = try terminal.send(events);
         switch (result.outcome) {
             .complete => return true,
-            .incomplete, .rejected => {
-                retainFirstFailure(&self.failure, error.InputIncomplete);
-                return false;
-            },
+            .incomplete, .rejected => return error.InputIncomplete,
         }
     }
 
-    // Reverse-order renderer, terminal, input, and Wayland cleanup.
+    fn mouseModifiers(self: *Window) @FieldType(MouseInput, "mod") {
+        const state = if (self.keymap) |keymap| keymap.state else return .{};
+        return keyModifiers(state);
+    }
 
-    fn deinit(self: *Loop) Error!void {
+    fn cancelPointer(self: *Window) Error!void {
+        for (0..self.pointer_state.pressed.len) |index| {
+            const transition = self.pointer_state.prepareRelease(index) orelse continue;
+            const button: MouseButton = switch (index) {
+                0 => .left,
+                1 => .middle,
+                2 => .right,
+                else => unreachable,
+            };
+            if (!try self.admitMouse(transition.target, .release, button, transition.buttons_down)) break;
+            self.pointer_state.commitRelease(transition);
+        }
+        self.pointer_state.position = null;
+        self.axis_frame.clear();
+    }
+
+    fn rollback(self: *Window) void {
+        self.deinit() catch |failure| @panic(@errorName(failure));
+    }
+
+    fn deinit(self: *Window) Error!void {
+        var cleanup_failure = self.failure;
         self.repeat.cancel();
-        self.armRepeat(null) catch |failure| if (self.failure == null) {
-            self.failure = failure;
+        self.armRepeat(null) catch |failure| {
+            retainCleanupFailure(&cleanup_failure, failure);
         };
-        self.cancelPointer();
-        const interaction_failure = self.failure;
-        if (self.render) |render| render.deinit() catch |failure| {
-            self.deinitTerminals();
-            self.destroyWayland();
-            const allocator = self.allocator;
-            allocator.destroy(self);
-            if (interaction_failure) |prior| if (prior != failure)
-                @panic("window interaction and render cleanup failed distinctly");
-            return failure;
-        };
-        self.deinitTerminals();
-        self.destroyWayland();
+        self.cancelPointer() catch |failure| retainCleanupFailure(&cleanup_failure, failure);
+        if (self.visual) |*visual| visual.deinit();
+        self.visual = null;
+        if (self.terminal) |terminal| terminal.deinit();
+        self.terminal = null;
+        if (self.render) |render_owner| render_owner.deinit() catch |failure|
+            retainCleanupFailure(&cleanup_failure, failure);
+        self.render = null;
+        closeOwned(self.repeat_signal);
+        closeOwned(self.terminal_signal);
+        self.destroyProtocol();
+        c.wl_registry_destroy(self.registry);
+        c.wl_display_disconnect(self.display);
         const allocator = self.allocator;
+        self.* = undefined;
         allocator.destroy(self);
-        if (interaction_failure) |failure| return failure;
+        if (cleanup_failure) |failure| return failure;
     }
 
-    fn deinitTerminals(self: *Loop) void {
-        for (&self.panes) |*pane| if (pane.terminal) |terminal| {
-            terminal.deinit();
-            pane.* = .{};
-        };
-        if (self.workspace) |*workspace| workspace.deinit();
-        self.workspace = null;
-    }
-
-    fn destroyWayland(self: *Loop) void {
+    fn destroyProtocol(self: *Window) void {
         self.destroyKeyboard();
         if (self.pointer) |value| c.wl_pointer_destroy(value);
         self.pointer = null;
+        self.pointer_state.clear();
+        self.axis_frame.clear();
         if (self.seat) |value| c.wl_seat_destroy(value);
+        self.seat = null;
+        if (self.system_bell) |value| c.xdg_system_bell_v1_destroy(value);
+        self.system_bell = null;
         if (self.toplevel) |value| c.xdg_toplevel_destroy(value);
+        self.toplevel = null;
         if (self.xdg_surface) |value| c.xdg_surface_destroy(value);
+        self.xdg_surface = null;
         if (self.surface) |value| c.wl_surface_destroy(value);
+        self.surface = null;
         if (self.wm_base) |value| c.xdg_wm_base_destroy(value);
+        self.wm_base = null;
         if (self.compositor) |value| c.wl_compositor_destroy(value);
-        c.wl_registry_destroy(self.registry);
-        c.wl_display_disconnect(self.display);
-        closeOwned(self.repeat_fd);
-        closeOwned(self.terminal_signal);
+        self.compositor = null;
     }
 
-    fn destroyKeyboard(self: *Loop) void {
-        self.host_keys.clear();
+    fn destroyKeyboard(self: *Window) void {
+        self.repeat.cancel();
+        self.physical_keys.clear();
         if (self.keyboard) |value| c.wl_keyboard_destroy(value);
         self.keyboard = null;
         self.clearKeymap();
     }
 
-    fn clearKeymap(self: *Loop) void {
-        if (self.xkb_state) |value| c.xkb_state_unref(value);
-        if (self.xkb_keymap) |value| c.xkb_keymap_unref(value);
-        if (self.xkb_context) |value| c.xkb_context_unref(value);
-        self.xkb_state = null;
-        self.xkb_keymap = null;
-        self.xkb_context = null;
+    fn clearKeymap(self: *Window) void {
+        if (self.keymap) |*keymap| keymap.deinit();
+        self.keymap = null;
     }
 };
 
-// Pure wake, viewport, and cell/pixel geometry projection.
-
-fn visibleBitsFor(
-    model: *const workspace_model.Workspace,
-    panes: *const [workspace_model.max_panes]PaneOwner,
-) u64 {
-    var layouts: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
-    const visible = model.layout(model.activeTab(), &layouts) catch unreachable;
-    var bits: u64 = 0;
-    for (visible) |layout| for (panes, 0..) |pane, index| {
-        if (pane.pane == layout.pane) {
-            bits |= @as(u64, 1) << @intCast(index);
-            break;
-        }
-    };
-    return bits;
-}
-
-fn viewportFacts(facts: howl_control.ViewportFacts) viewport.Facts {
-    return .{
-        .history_row_base = facts.history_row_base,
-        .history_count = facts.history_count,
-        .offset = facts.offset,
-        .rows = facts.rows,
-        .alternate_screen = facts.alternate_screen,
-        .mouse_reporting = facts.mouse_reporting,
-    };
-}
-
-/// Runs the native Wayland window until compositor close or exact failure.
-pub fn run(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const u8) Error!void {
-    const owner = try Loop.init(allocator, io, font_paths);
+/// Runs one terminal window until compositor close, terminal completion, or exact failure.
+pub fn run(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    runtime_dir: []const u8,
+    font_path: []const u8,
+    shell: []const u8,
+    command: ?[]const u8,
+) Error!void {
+    const window_owner = try Window.init(allocator, io, runtime_dir, font_path, shell, command);
     var primary_failure: ?Error = null;
-    owner.run() catch |failure| {
+    window_owner.runLoop() catch |failure| {
         primary_failure = failure;
     };
-    owner.deinit() catch |cleanup_failure| {
+    window_owner.deinit() catch |cleanup_failure| {
         if (primary_failure) |failure| if (failure != cleanup_failure)
             @panic("window cleanup failed after a distinct runtime failure");
         return cleanup_failure;
@@ -1324,73 +1019,121 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, font_paths: []const []const
     if (primary_failure) |failure| return failure;
 }
 
+fn projectVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?control.DirtyToken {
+    const context: *ProjectionContext = @ptrCast(@alignCast(context_pointer.?));
+    if (source.view.rows != context.storage.rows or source.view.cols != context.storage.cols) {
+        context.required_rows = source.view.rows;
+        context.required_cols = source.view.cols;
+        return null;
+    }
+    const mode: terminal_render.ProjectMode = if (context.storage.baseline) |baseline|
+        .{ .incremental = baseline }
+    else
+        .full;
+    const buffers = terminal_render.Buffers{
+        .cells = context.storage.scratch,
+        .rows = context.storage.patches,
+    };
+    const update = terminal_render.project(source, mode, buffers, selection_style) catch |failure| retry: {
+        if (failure != error.FullRequired) {
+            context.failure = failure;
+            return null;
+        }
+        break :retry terminal_render.project(source, .full, buffers, selection_style) catch |full_failure| {
+            context.failure = full_failure;
+            return null;
+        };
+    };
+    context.changed = update.full or update.row_patches.len != 0 or
+        context.storage.baseline == null or
+        !std.meta.eql(context.storage.baseline.?, update.next_baseline);
+    context.storage.apply(update);
+    context.projected = true;
+    return source.dirty_token;
+}
+
+fn fontConfigs(path: []const u8) [4]text.FontConfig {
+    return .{
+        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = path, .pixel_height = font_pixel_height } },
+        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = path, .pixel_height = font_pixel_height } },
+        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = path, .pixel_height = font_pixel_height } },
+        .{
+            .key = .{ .slot = 0, .style = .bold_italic },
+            .native = .{ .primary = path, .pixel_height = font_pixel_height },
+        },
+    };
+}
+
+fn gridSize(size: Size, metrics: text.CellMetrics) GridSize {
+    std.debug.assert(metrics.width_px != 0 and metrics.height_px != 0);
+    return .{
+        .rows = @intCast(@min(
+            @as(u32, control.max_rows),
+            @max(@as(u32, 1), size.height / metrics.height_px),
+        )),
+        .cols = @intCast(@min(
+            @as(u32, control.max_cols),
+            @max(@as(u32, 1), size.width / metrics.width_px),
+        )),
+    };
+}
+
+fn pixelSize(size: Size) renderer.PixelSize {
+    return .{ .width = size.width, .height = size.height };
+}
+
+fn validateSize(size: Size) error{InvalidSize}!void {
+    if (size.width == 0 or size.height == 0 or
+        size.width > max_dimension or size.height > max_dimension)
+        return error.InvalidSize;
+}
+
+fn configuredSize(current: Size, width: i32, height: i32) error{InvalidSize}!Size {
+    if (width < 0 or height < 0) return error.InvalidSize;
+    const result = Size{
+        .width = if (width == 0) current.width else @intCast(width),
+        .height = if (height == 0) current.height else @intCast(height),
+    };
+    try validateSize(result);
+    return result;
+}
+
 fn terminalWake(context: ?*anyopaque) void {
-    const wake: *WakeContext = @ptrCast(@alignCast(context.?));
-    const self: *Loop = @ptrCast(@alignCast(wake.owner.?));
-    const bit = @as(u64, 1) << wake.index;
-    if (!markTerminalWake(&self.wake_bits, bit)) return;
+    const wake: *TerminalWake = @ptrCast(@alignCast(context.?));
+    if (wake.pending.swap(true, .acq_rel)) return;
+    signalEvent(wake.fd);
+}
+
+fn signalEvent(fd: c_int) void {
     const value: u64 = 1;
-    const count = c.write(self.terminal_signal, &value, @sizeOf(u64));
-    if (count != @sizeOf(u64) and !(count < 0 and std.posix.errno(count) == .AGAIN))
-        @panic("terminal wake eventfd write failed");
-}
-
-fn markTerminalWake(bits: *std.atomic.Value(u64), bit: u64) bool {
-    std.debug.assert(bit != 0 and bit & (bit - 1) == 0);
-    return bits.fetchOr(bit, .release) & bit == 0;
-}
-
-fn clearWakeBit(bits: *std.atomic.Value(u64), index: TerminalIndex) void {
-    const bit = @as(u64, 1) << index;
-    var current = bits.load(.acquire);
-    while (current & bit != 0) {
-        current = bits.cmpxchgWeak(current, current & ~bit, .acq_rel, .acquire) orelse return;
+    while (true) {
+        const count = c.write(fd, &value, @sizeOf(u64));
+        if (count == @sizeOf(u64) or (count < 0 and std.posix.errno(count) == .AGAIN)) return;
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        @panic("terminal wake signal failed");
     }
 }
 
-const Geometry = struct { cols: u16, rows: u16 };
-const PixelRect = struct { x: u32, y: u32, width: u32, height: u32 };
-
-fn panePixels(
-    rect: workspace_model.Rect,
-    grid: workspace_model.Size,
-    size: renderer.Size,
-    metrics: @import("howl_text").Metrics,
-) PixelRect {
-    const label_height = labelHeight(size, metrics);
-    const x = @as(u32, rect.col) * metrics.cell_width;
-    const y = label_height + @as(u32, rect.row) * metrics.cell_height;
-    const right = if (rect.col + rect.cols == grid.cols)
-        size.width
-    else
-        @as(u32, rect.col + rect.cols) * metrics.cell_width;
-    const bottom = if (rect.row + rect.rows == grid.rows)
-        size.height
-    else
-        label_height + @as(u32, rect.row + rect.rows) * metrics.cell_height;
-    return .{ .x = x, .y = y, .width = right - x, .height = bottom - y };
+fn drainEvent(fd: c_int) error{TerminalSignal}!void {
+    while (true) {
+        var value: u64 = 0;
+        const count = c.read(fd, &value, @sizeOf(u64));
+        if (count == @sizeOf(u64)) continue;
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        if (count < 0 and std.posix.errno(count) == .AGAIN) return;
+        return error.TerminalSignal;
+    }
 }
 
-fn gridSize(size: renderer.Size, metrics: @import("howl_text").Metrics) workspace_model.Size {
-    const content_height = size.height - labelHeight(size, metrics);
-    return .{
-        .cols = @intCast(@min(workspace_model.max_cols, @max(2, size.width / metrics.cell_width))),
-        .rows = @intCast(@min(workspace_model.max_rows, @max(1, content_height / metrics.cell_height))),
-    };
+fn closeOwned(fd: c_int) void {
+    const result = c.close(fd);
+    if (result != 0 and std.posix.errno(result) != .INTR)
+        @panic("owned host descriptor close failed");
 }
 
-fn labelHeight(size: renderer.Size, metrics: @import("howl_text").Metrics) u16 {
-    std.debug.assert(size.height >= 2);
-    return @intCast(@min(metrics.cell_height, size.height - 1));
-}
-
-fn mouseButtonIndex(button: MouseButton) ?usize {
-    return switch (button) {
-        .left => 0,
-        .middle => 1,
-        .right => 2,
-        else => null,
-    };
+fn closeCallback(self: *Window, fd: c_int) void {
+    const result = c.close(fd);
+    if (result != 0 and std.posix.errno(result) != .INTR) retainFailure(self, error.KeyboardMap);
 }
 
 fn setRepeatTimer(fd: c_int, duration_ns: ?u64) error{KeyboardRepeat}!void {
@@ -1411,21 +1154,157 @@ fn setRepeatTimer(fd: c_int, duration_ns: ?u64) error{KeyboardRepeat}!void {
     }
 }
 
-fn drainEvent(fd: c_int) Error!void {
-    while (true) {
-        var value: u64 = 0;
-        const count = c.read(fd, &value, @sizeOf(u64));
-        if (count == @sizeOf(u64)) continue;
-        if (count < 0 and std.posix.errno(count) == .INTR) continue;
-        if (count < 0 and std.posix.errno(count) == .AGAIN) return;
-        return error.TerminalSignal;
+fn keyModifiers(state: *c.struct_xkb_state) KeyModifiers {
+    return .{
+        .shift = modifierActive(state, c.XKB_MOD_NAME_SHIFT),
+        .alt = modifierActive(state, c.XKB_MOD_NAME_ALT),
+        .control = modifierActive(state, c.XKB_MOD_NAME_CTRL),
+        .super = modifierActive(state, c.XKB_MOD_NAME_LOGO),
+        .caps_lock = modifierActive(state, c.XKB_MOD_NAME_CAPS),
+        .num_lock = modifierActive(state, c.XKB_MOD_NAME_NUM),
+    };
+}
+
+fn modifierActive(state: *c.struct_xkb_state, name: [*c]const u8) bool {
+    return c.xkb_state_mod_name_is_active(state, name, c.XKB_STATE_MODS_EFFECTIVE) == 1;
+}
+
+fn fixedCoordinate(value: c.wl_fixed_t) ?i64 {
+    if (value < 0) return null;
+    return c.wl_fixed_to_int(value);
+}
+
+fn resolvePointerTarget(
+    x: i64,
+    y: i64,
+    rows: u16,
+    cols: u16,
+    metrics: text.CellMetrics,
+) ?PointerTarget {
+    if (x < 0 or y < 0 or metrics.width_px == 0 or metrics.height_px == 0) return null;
+    const pixel_x: u64 = @intCast(x);
+    const pixel_y: u64 = @intCast(y);
+    const width = @as(u64, cols) * metrics.width_px;
+    const height = @as(u64, rows) * metrics.height_px;
+    if (pixel_x >= width or pixel_y >= height) return null;
+    return .{
+        .row = @intCast(pixel_y / metrics.height_px),
+        .col = @intCast(pixel_x / metrics.width_px),
+        .pixel_x = @intCast(pixel_x),
+        .pixel_y = @intCast(pixel_y),
+    };
+}
+
+fn keyInput(symbol: u32, text_bytes: []const u8, mods: KeyModifiers, action: KeyAction) ?control.Input {
+    const named: ?@FieldType(@FieldType(KeyInput, "key"), "named") = switch (symbol) {
+        c.XKB_KEY_Return => .enter,
+        c.XKB_KEY_Tab, c.XKB_KEY_ISO_Left_Tab => .tab,
+        c.XKB_KEY_BackSpace => .backspace,
+        c.XKB_KEY_Escape => .escape,
+        c.XKB_KEY_Up => .up,
+        c.XKB_KEY_Down => .down,
+        c.XKB_KEY_Left => .left,
+        c.XKB_KEY_Right => .right,
+        c.XKB_KEY_Insert => .insert,
+        c.XKB_KEY_Delete => .delete,
+        c.XKB_KEY_Home => .home,
+        c.XKB_KEY_End => .end,
+        c.XKB_KEY_Page_Up => .page_up,
+        c.XKB_KEY_Page_Down => .page_down,
+        c.XKB_KEY_Shift_L => .left_shift,
+        c.XKB_KEY_Shift_R => .right_shift,
+        c.XKB_KEY_Control_L => .left_control,
+        c.XKB_KEY_Control_R => .right_control,
+        c.XKB_KEY_Alt_L => .left_alt,
+        c.XKB_KEY_Alt_R => .right_alt,
+        c.XKB_KEY_Super_L => .left_super,
+        c.XKB_KEY_Super_R => .right_super,
+        c.XKB_KEY_Hyper_L => .left_hyper,
+        c.XKB_KEY_Hyper_R => .right_hyper,
+        c.XKB_KEY_Meta_L => .left_meta,
+        c.XKB_KEY_Meta_R => .right_meta,
+        c.XKB_KEY_Caps_Lock => .caps_lock,
+        c.XKB_KEY_Num_Lock => .num_lock,
+        c.XKB_KEY_F1 => .f1,
+        c.XKB_KEY_F2 => .f2,
+        c.XKB_KEY_F3 => .f3,
+        c.XKB_KEY_F4 => .f4,
+        c.XKB_KEY_F5 => .f5,
+        c.XKB_KEY_F6 => .f6,
+        c.XKB_KEY_F7 => .f7,
+        c.XKB_KEY_F8 => .f8,
+        c.XKB_KEY_F9 => .f9,
+        c.XKB_KEY_F10 => .f10,
+        c.XKB_KEY_F11 => .f11,
+        c.XKB_KEY_F12 => .f12,
+        c.XKB_KEY_KP_0 => .keypad_0,
+        c.XKB_KEY_KP_1 => .keypad_1,
+        c.XKB_KEY_KP_2 => .keypad_2,
+        c.XKB_KEY_KP_3 => .keypad_3,
+        c.XKB_KEY_KP_4 => .keypad_4,
+        c.XKB_KEY_KP_5 => .keypad_5,
+        c.XKB_KEY_KP_6 => .keypad_6,
+        c.XKB_KEY_KP_7 => .keypad_7,
+        c.XKB_KEY_KP_8 => .keypad_8,
+        c.XKB_KEY_KP_9 => .keypad_9,
+        c.XKB_KEY_KP_Decimal => .keypad_decimal,
+        c.XKB_KEY_KP_Add => .keypad_add,
+        c.XKB_KEY_KP_Subtract => .keypad_subtract,
+        c.XKB_KEY_KP_Multiply => .keypad_multiply,
+        c.XKB_KEY_KP_Divide => .keypad_divide,
+        c.XKB_KEY_KP_Separator => .keypad_separator,
+        c.XKB_KEY_KP_Equal => .keypad_equal,
+        c.XKB_KEY_KP_Enter => .keypad_enter,
+        else => null,
+    };
+    const key = if (named) |value|
+        @FieldType(KeyInput, "key"){ .named = value }
+    else unicode: {
+        const scalar = c.xkb_keysym_to_utf32(symbol);
+        if (scalar == 0 or scalar > std.math.maxInt(u21)) return null;
+        break :unicode @FieldType(KeyInput, "key").initUnicode(@intCast(scalar)) catch return null;
+    };
+    return .{ .key = .{
+        .key = key,
+        .mods = mods,
+        .action = action,
+        .legacy_text = text_bytes,
+        .text = text_bytes,
+    } };
+}
+
+fn sendFocus(self: *Window, focus: @FieldType(control.Input, "focus")) void {
+    if (!inputAdmissionOpen(self.closed, self.failure)) return;
+    const terminal = self.terminal orelse return;
+    if (terminal.state() != .running) return;
+    const result = terminal.send(&.{.{ .input = .{ .focus = focus } }}) catch |failure| {
+        retainFailure(self, failure);
+        return;
+    };
+    switch (result.outcome) {
+        .complete => {},
+        .incomplete, .rejected => retainFailure(self, error.InputIncomplete),
     }
 }
 
-// Wayland and xkb callbacks retain facts for the owning window loop.
-
-fn loop(data: ?*anyopaque) *Loop {
+fn owner(data: ?*anyopaque) *Window {
     return @ptrCast(@alignCast(data.?));
+}
+
+fn retainFailure(self: *Window, failure: Error) void {
+    if (self.failure == null) self.failure = failure;
+}
+
+fn retainCleanupFailure(retained: *?Error, failure: Error) void {
+    if (retained.*) |prior| {
+        if (prior != failure) @panic("host cleanup failed distinctly after an earlier failure");
+    } else {
+        retained.* = failure;
+    }
+}
+
+fn inputAdmissionOpen(closed: bool, failure: ?Error) bool {
+    return !closed and failure == null;
 }
 
 fn registryGlobal(
@@ -1435,158 +1314,195 @@ fn registryGlobal(
     interface: [*c]const u8,
     version: u32,
 ) callconv(.c) void {
-    const self = loop(data);
+    const self = owner(data);
+    if (self.failure != null) return;
     const value = std.mem.span(interface);
-    if (std.mem.eql(u8, value, "wl_compositor") and self.compositor == null)
-        self.compositor = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_compositor_interface, @min(version, 4)))
-    else if (std.mem.eql(u8, value, "xdg_wm_base") and self.wm_base == null) {
-        self.wm_base = @ptrCast(c.wl_registry_bind(registry, name, &c.xdg_wm_base_interface, 1));
-        if (c.xdg_wm_base_add_listener(self.wm_base, &wm_base_listener, self) != 0)
-            self.failure = error.WaylandProtocol;
+    if (std.mem.eql(u8, value, "wl_compositor") and self.compositor == null) {
+        self.compositor = @ptrCast(c.wl_registry_bind(
+            registry,
+            name,
+            &c.wl_compositor_interface,
+            @min(version, 4),
+        ));
+    } else if (std.mem.eql(u8, value, "xdg_wm_base") and self.wm_base == null) {
+        self.wm_base = @ptrCast(c.wl_registry_bind(
+            registry,
+            name,
+            &c.xdg_wm_base_interface,
+            1,
+        ));
+        const base = self.wm_base orelse {
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        };
+        if (c.xdg_wm_base_add_listener(base, &wm_base_listener, self) != 0)
+            retainFailure(self, error.WaylandProtocol);
+    } else if (std.mem.eql(u8, value, "xdg_system_bell_v1") and self.system_bell == null) {
+        self.system_bell = @ptrCast(c.wl_registry_bind(
+            registry,
+            name,
+            &c.xdg_system_bell_v1_interface,
+            @min(version, 1),
+        ));
+        if (self.system_bell == null) retainFailure(self, error.WaylandProtocol);
     } else if (std.mem.eql(u8, value, "wl_seat") and self.seat == null) {
-        self.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 7)));
-        if (c.wl_seat_add_listener(self.seat, &seat_listener, self) != 0)
-            self.failure = error.WaylandProtocol;
+        self.seat = @ptrCast(c.wl_registry_bind(
+            registry,
+            name,
+            &c.wl_seat_interface,
+            @min(version, 7),
+        ));
+        const seat = self.seat orelse {
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        };
+        if (c.wl_seat_add_listener(seat, &seat_listener, self) != 0)
+            retainFailure(self, error.WaylandProtocol);
     }
 }
 
 fn registryRemove(_: ?*anyopaque, _: ?*c.struct_wl_registry, _: u32) callconv(.c) void {}
-const registry_listener = c.struct_wl_registry_listener{ .global = registryGlobal, .global_remove = registryRemove };
+
+const registry_listener = c.struct_wl_registry_listener{
+    .global = registryGlobal,
+    .global_remove = registryRemove,
+};
 
 fn shellPing(_: ?*anyopaque, base: ?*c.struct_xdg_wm_base, serial: u32) callconv(.c) void {
     c.xdg_wm_base_pong(base, serial);
 }
+
 const wm_base_listener = c.struct_xdg_wm_base_listener{ .ping = shellPing };
 
-fn surfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_xdg_surface, serial: u32) callconv(.c) void {
-    const self = loop(data);
-    c.xdg_surface_ack_configure(surface, serial);
-    self.configured = true;
-}
-const xdg_surface_listener = c.struct_xdg_surface_listener{ .configure = surfaceConfigure };
-
-fn toplevelConfigure(
+fn seatCapabilities(
     data: ?*anyopaque,
-    _: ?*c.struct_xdg_toplevel,
-    width: i32,
-    height: i32,
-    _: ?*c.struct_wl_array,
+    seat: ?*c.struct_wl_seat,
+    capabilities: u32,
 ) callconv(.c) void {
-    if (width <= 0 or height <= 0) return;
-    const self = loop(data);
-    self.pending_size = .{ .width = @intCast(width), .height = @intCast(height) };
-}
-fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
-    requestClose(&loop(data).closed);
-}
-fn requestClose(closed: *bool) void {
-    closed.* = true;
-}
-fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
-fn wmCapabilities(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: ?*c.struct_wl_array) callconv(.c) void {}
-const toplevel_listener = c.struct_xdg_toplevel_listener{
-    .configure = toplevelConfigure,
-    .close = toplevelClose,
-    .configure_bounds = configureBounds,
-    .wm_capabilities = wmCapabilities,
-};
-
-fn seatCapabilities(data: ?*anyopaque, seat: ?*c.struct_wl_seat, capabilities: u32) callconv(.c) void {
-    const self = loop(data);
+    const self = owner(data);
     if (capabilities & c.WL_SEAT_CAPABILITY_KEYBOARD != 0 and self.keyboard == null) {
-        self.keyboard = c.wl_seat_get_keyboard(seat);
-        if (c.wl_keyboard_add_listener(self.keyboard, &keyboard_listener, self) != 0)
-            self.failure = error.KeyboardContext;
-    } else if (capabilities & c.WL_SEAT_CAPABILITY_KEYBOARD == 0) {
-        self.repeat.cancel();
-        self.armRepeat(null) catch |failure| {
-            self.failure = failure;
+        const keyboard = c.wl_seat_get_keyboard(seat) orelse {
+            retainFailure(self, error.WaylandProtocol);
+            return;
         };
+        if (c.wl_keyboard_add_listener(keyboard, &keyboard_listener, self) != 0) {
+            c.wl_keyboard_destroy(keyboard);
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        }
+        self.keyboard = keyboard;
+    } else if (capabilities & c.WL_SEAT_CAPABILITY_KEYBOARD == 0) {
+        if (self.keyboard_focused) sendFocus(self, .out);
+        self.keyboard_focused = false;
+        self.armRepeat(null) catch |failure| retainFailure(self, failure);
         self.destroyKeyboard();
     }
     if (capabilities & c.WL_SEAT_CAPABILITY_POINTER != 0 and self.pointer == null) {
-        self.pointer = c.wl_seat_get_pointer(seat);
-        if (self.pointer == null or
-            c.wl_pointer_add_listener(self.pointer, &pointer_listener, self) != 0)
-            self.failure = error.Pointer;
-    } else if (capabilities & c.WL_SEAT_CAPABILITY_POINTER == 0) {
-        self.cancelPointer();
+        const pointer = c.wl_seat_get_pointer(seat) orelse {
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        };
+        if (c.wl_pointer_add_listener(pointer, &pointer_listener, self) != 0) {
+            c.wl_pointer_destroy(pointer);
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        }
+        self.pointer = pointer;
+    } else if (capabilities & c.WL_SEAT_CAPABILITY_POINTER == 0 and self.pointer != null) {
+        if (!self.closed) self.cancelPointer() catch |failure| retainFailure(self, failure);
         if (self.pointer) |pointer| c.wl_pointer_destroy(pointer);
         self.pointer = null;
+        self.pointer_state.clear();
+        self.axis_frame.clear();
     }
 }
-fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}
-const seat_listener = c.struct_wl_seat_listener{ .capabilities = seatCapabilities, .name = seatName };
 
-fn keyboardKeymap(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
-    const self = loop(data);
-    defer if (!closeCallback(fd)) {
-        self.failure = error.KeyboardMap;
-    };
+fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}
+
+const seat_listener = c.struct_wl_seat_listener{
+    .capabilities = seatCapabilities,
+    .name = seatName,
+};
+
+fn keyboardKeymap(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_keyboard,
+    format: u32,
+    fd: i32,
+    size: u32,
+) callconv(.c) void {
+    const self = owner(data);
+    defer closeCallback(self, fd);
     if (format != c.WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 or size == 0) {
-        self.failure = error.KeyboardMap;
+        retainFailure(self, error.KeyboardMap);
         return;
     }
     const bytes = c.mmap(null, size, c.PROT_READ, c.MAP_PRIVATE, fd, 0);
     if (bytes == c.MAP_FAILED) {
-        self.failure = error.KeyboardMap;
+        retainFailure(self, error.KeyboardMap);
         return;
     }
-    defer if (c.munmap(bytes, size) != 0) {
-        self.failure = error.KeyboardMap;
-    };
-    const context = c.xkb_context_new(c.XKB_CONTEXT_NO_FLAGS) orelse {
-        self.failure = error.KeyboardContext;
+    defer if (c.munmap(bytes, size) != 0) retainFailure(self, error.KeyboardMap);
+    const mapped: [*]const u8 = @ptrCast(bytes);
+    if (mapped[size - 1] != 0) {
+        retainFailure(self, error.KeyboardMap);
+        return;
+    }
+    var replacement = KeyboardMap.init(@ptrCast(mapped)) catch |failure| {
+        retainFailure(self, failure);
         return;
     };
-    const keymap = c.xkb_keymap_new_from_string(
-        context,
-        @ptrCast(bytes),
-        c.XKB_KEYMAP_FORMAT_TEXT_V1,
-        c.XKB_KEYMAP_COMPILE_NO_FLAGS,
-    ) orelse {
-        c.xkb_context_unref(context);
-        self.failure = error.KeyboardMap;
-        return;
-    };
-    const state = c.xkb_state_new(keymap) orelse {
-        c.xkb_keymap_unref(keymap);
-        c.xkb_context_unref(context);
-        self.failure = error.KeyboardState;
+    self.armRepeat(null) catch |failure| {
+        replacement.deinit();
+        retainFailure(self, failure);
         return;
     };
     self.repeat.cancel();
-    self.host_keys.clear();
-    self.armRepeat(null) catch |failure| {
-        c.xkb_state_unref(state);
-        c.xkb_keymap_unref(keymap);
-        c.xkb_context_unref(context);
-        self.failure = failure;
-        return;
-    };
+    self.physical_keys.clear();
     self.clearKeymap();
-    self.xkb_context = context;
-    self.xkb_keymap = keymap;
-    self.xkb_state = state;
+    self.keymap = replacement;
 }
+
 fn keyboardEnter(
-    _: ?*anyopaque,
+    data: ?*anyopaque,
     _: ?*c.struct_wl_keyboard,
     _: u32,
     _: ?*c.struct_wl_surface,
     _: ?*c.struct_wl_array,
-) callconv(.c) void {}
-fn keyboardLeave(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {
-    const self = loop(data);
+) callconv(.c) void {
+    const self = owner(data);
     self.repeat.cancel();
-    self.host_keys.clear();
-    self.armRepeat(null) catch |failure| {
-        self.failure = failure;
-    };
+    self.physical_keys.clear();
+    self.armRepeat(null) catch |failure| retainFailure(self, failure);
+    self.keyboard_focused = true;
+    sendFocus(self, .in);
 }
-fn keyboardKey(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, _: u32, _: u32, code: u32, state: u32) callconv(.c) void {
-    loop(data).key(code, state);
+
+fn keyboardLeave(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_keyboard,
+    _: u32,
+    _: ?*c.struct_wl_surface,
+) callconv(.c) void {
+    const self = owner(data);
+    self.keyboard_focused = false;
+    self.repeat.cancel();
+    self.physical_keys.clear();
+    self.armRepeat(null) catch |failure| retainFailure(self, failure);
+    sendFocus(self, .out);
 }
+
+fn keyboardKey(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_keyboard,
+    _: u32,
+    _: u32,
+    code: u32,
+    state: u32,
+) callconv(.c) void {
+    owner(data).key(code, state);
+}
+
 fn keyboardModifiers(
     data: ?*anyopaque,
     _: ?*c.struct_wl_keyboard,
@@ -1596,26 +1512,31 @@ fn keyboardModifiers(
     locked: u32,
     group: u32,
 ) callconv(.c) void {
-    if (loop(data).xkb_state) |state| {
-        const changed = c.xkb_state_update_mask(state, depressed, latched, locked, 0, 0, group);
-        const known: @TypeOf(changed) = c.XKB_STATE_MODS_DEPRESSED | c.XKB_STATE_MODS_LATCHED |
-            c.XKB_STATE_MODS_LOCKED | c.XKB_STATE_MODS_EFFECTIVE |
-            c.XKB_STATE_LAYOUT_DEPRESSED | c.XKB_STATE_LAYOUT_LATCHED |
-            c.XKB_STATE_LAYOUT_LOCKED | c.XKB_STATE_LAYOUT_EFFECTIVE | c.XKB_STATE_LEDS;
-        if (changed & ~known != 0) loop(data).failure = error.KeyboardState;
-    }
+    const self = owner(data);
+    const state = if (self.keymap) |keymap| keymap.state else return;
+    const changed = c.xkb_state_update_mask(state, depressed, latched, locked, 0, 0, group);
+    const known: @TypeOf(changed) = c.XKB_STATE_MODS_DEPRESSED | c.XKB_STATE_MODS_LATCHED |
+        c.XKB_STATE_MODS_LOCKED | c.XKB_STATE_MODS_EFFECTIVE |
+        c.XKB_STATE_LAYOUT_DEPRESSED | c.XKB_STATE_LAYOUT_LATCHED |
+        c.XKB_STATE_LAYOUT_LOCKED | c.XKB_STATE_LAYOUT_EFFECTIVE | c.XKB_STATE_LEDS;
+    if (changed & ~known != 0) retainFailure(self, error.KeyboardState);
 }
-fn keyboardRepeat(data: ?*anyopaque, _: ?*c.struct_wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
-    const self = loop(data);
+
+fn keyboardRepeat(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_keyboard,
+    rate: i32,
+    delay: i32,
+) callconv(.c) void {
+    const self = owner(data);
     self.repeat.configure(rate, delay) catch {
         self.repeat.cancel();
-        self.failure = error.KeyboardRepeat;
+        retainFailure(self, error.KeyboardRepeat);
         return;
     };
-    self.armRepeat(null) catch |failure| {
-        self.failure = failure;
-    };
+    self.armRepeat(null) catch |failure| retainFailure(self, failure);
 }
+
 const keyboard_listener = c.struct_wl_keyboard_listener{
     .keymap = keyboardKeymap,
     .enter = keyboardEnter,
@@ -1633,16 +1554,26 @@ fn pointerEnter(
     x: c.wl_fixed_t,
     y: c.wl_fixed_t,
 ) callconv(.c) void {
-    const self = loop(data);
+    const self = owner(data);
+    if (self.failure != null) return;
     if (surface != self.surface) {
-        self.pointer_state.position = null;
+        retainFailure(self, error.WaylandProtocol);
         return;
     }
-    self.pointerMotion(x, y);
+    self.pointer_state.clear();
+    self.axis_frame.clear();
+    self.pointerMotion(fixedCoordinate(x) orelse -1, fixedCoordinate(y) orelse -1);
 }
 
-fn pointerLeave(data: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: ?*c.struct_wl_surface) callconv(.c) void {
-    loop(data).cancelPointer();
+fn pointerLeave(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_pointer,
+    _: u32,
+    _: ?*c.struct_wl_surface,
+) callconv(.c) void {
+    const self = owner(data);
+    if (!self.closed and self.failure == null)
+        self.cancelPointer() catch |failure| retainFailure(self, failure);
 }
 
 fn pointerMotion(
@@ -1652,7 +1583,7 @@ fn pointerMotion(
     x: c.wl_fixed_t,
     y: c.wl_fixed_t,
 ) callconv(.c) void {
-    loop(data).pointerMotion(x, y);
+    owner(data).pointerMotion(fixedCoordinate(x) orelse -1, fixedCoordinate(y) orelse -1);
 }
 
 fn pointerButton(
@@ -1663,20 +1594,80 @@ fn pointerButton(
     button: u32,
     state: u32,
 ) callconv(.c) void {
-    loop(data).pointerButton(button, state);
+    owner(data).pointerButton(button, state);
 }
 
-fn pointerAxis(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: u32, _: c.wl_fixed_t) callconv(.c) void {}
-fn pointerFrame(_: ?*anyopaque, _: ?*c.struct_wl_pointer) callconv(.c) void {}
-fn pointerAxisSource(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32) callconv(.c) void {}
-fn pointerAxisStop(_: ?*anyopaque, _: ?*c.struct_wl_pointer, _: u32, _: u32) callconv(.c) void {}
+fn pointerAxis(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_pointer,
+    _: u32,
+    axis: u32,
+    value: c.wl_fixed_t,
+) callconv(.c) void {
+    const self = owner(data);
+    if (self.failure != null) return;
+    switch (axis) {
+        c.WL_POINTER_AXIS_VERTICAL_SCROLL => if (value != 0) {
+            self.axis_frame.saw_continuous = true;
+        },
+        c.WL_POINTER_AXIS_HORIZONTAL_SCROLL => {},
+        else => retainFailure(self, error.Pointer),
+    }
+}
+
+fn pointerFrame(data: ?*anyopaque, _: ?*c.struct_wl_pointer) callconv(.c) void {
+    const self = owner(data);
+    if (self.failure != null) return;
+    const discrete = self.axis_frame.vertical_discrete;
+    self.axis_frame.clear();
+    // Continuous-only touchpad distance has no protocol-defined wheel-step
+    // conversion. It intentionally produces neither VT bytes nor host scroll.
+    if (discrete != 0) self.pointerWheel(discrete);
+}
+
+fn pointerAxisSource(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_pointer,
+    source: u32,
+) callconv(.c) void {
+    const self = owner(data);
+    if (self.failure != null) return;
+    switch (source) {
+        c.WL_POINTER_AXIS_SOURCE_WHEEL,
+        c.WL_POINTER_AXIS_SOURCE_FINGER,
+        c.WL_POINTER_AXIS_SOURCE_CONTINUOUS,
+        c.WL_POINTER_AXIS_SOURCE_WHEEL_TILT,
+        => self.axis_frame.source = source,
+        else => retainFailure(self, error.Pointer),
+    }
+}
+
+fn pointerAxisStop(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_pointer,
+    _: u32,
+    axis: u32,
+) callconv(.c) void {
+    const self = owner(data);
+    if (self.failure != null) return;
+    if (axis != c.WL_POINTER_AXIS_VERTICAL_SCROLL and axis != c.WL_POINTER_AXIS_HORIZONTAL_SCROLL)
+        retainFailure(self, error.Pointer);
+}
+
 fn pointerAxisDiscrete(
     data: ?*anyopaque,
     _: ?*c.struct_wl_pointer,
     axis: u32,
     discrete: i32,
 ) callconv(.c) void {
-    if (axis == c.WL_POINTER_AXIS_VERTICAL_SCROLL) loop(data).pointerWheel(discrete);
+    const self = owner(data);
+    if (self.failure != null) return;
+    switch (axis) {
+        c.WL_POINTER_AXIS_VERTICAL_SCROLL => self.axis_frame.discrete(discrete) catch
+            retainFailure(self, error.Pointer),
+        c.WL_POINTER_AXIS_HORIZONTAL_SCROLL => {},
+        else => retainFailure(self, error.Pointer),
+    }
 }
 
 const pointer_listener = c.struct_wl_pointer_listener{
@@ -1693,515 +1684,618 @@ const pointer_listener = c.struct_wl_pointer_listener{
     .axis_relative_direction = null,
 };
 
-fn closeOwned(fd: c_int) void {
-    const result = c.close(fd);
-    if (result != 0 and std.posix.errno(result) != .INTR)
-        @panic("owned host descriptor close failed");
-}
-
-fn closeCallback(fd: c_int) bool {
-    const result = c.close(fd);
-    return result == 0 or std.posix.errno(result) == .INTR;
-}
-
-fn modifierActive(state: *c.struct_xkb_state, name: [*c]const u8) bool {
-    return c.xkb_state_mod_name_is_active(state, name, c.XKB_STATE_MODS_EFFECTIVE) == 1;
-}
-
-fn retainFirstFailure(current: *?Error, failure: Error) void {
-    if (current.* == null) current.* = failure;
-}
-
-test "grid geometry reserves one label row without losing a terminal row" {
-    const metrics: @import("howl_text").Metrics = .{
-        .cell_width = 10,
-        .cell_height = 20,
-        .baseline = 15,
-        .underline_y = 17,
-        .underline_height = 1,
-        .strike_y = 10,
-        .strike_height = 1,
+fn surfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_xdg_surface, serial: u32) callconv(.c) void {
+    const self = owner(data);
+    c.xdg_surface_ack_configure(surface, serial);
+    validateSize(self.pending_size) catch {
+        retainFailure(self, error.InvalidSize);
+        return;
     };
-    try std.testing.expectEqual(@as(u16, 20), labelHeight(.{ .width = 100, .height = 100 }, metrics));
+    if (!self.configured) self.size = self.pending_size;
+    self.configured = true;
+}
+
+const xdg_surface_listener = c.struct_xdg_surface_listener{ .configure = surfaceConfigure };
+
+fn toplevelConfigure(
+    data: ?*anyopaque,
+    _: ?*c.struct_xdg_toplevel,
+    width: i32,
+    height: i32,
+    _: ?*c.struct_wl_array,
+) callconv(.c) void {
+    const self = owner(data);
+    self.pending_size = configuredSize(self.pending_size, width, height) catch {
+        retainFailure(self, error.InvalidSize);
+        return;
+    };
+}
+
+fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
+    owner(data).closed = true;
+}
+
+fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
+fn wmCapabilities(
+    _: ?*anyopaque,
+    _: ?*c.struct_xdg_toplevel,
+    _: ?*c.struct_wl_array,
+) callconv(.c) void {}
+
+const toplevel_listener = c.struct_xdg_toplevel_listener{
+    .configure = toplevelConfigure,
+    .close = toplevelClose,
+    .configure_bounds = configureBounds,
+    .wm_capabilities = wmCapabilities,
+};
+
+test "terminal presentation retains exact title and bounded bell progress" {
+    var state = PresentationState{};
+    var facts = control.HostPresentation{
+        .title_set = false,
+        .title = @splat(0),
+        .title_len = 0,
+        .bell_generation = 0,
+    };
     try std.testing.expectEqual(
-        workspace_model.Size{ .cols = 10, .rows = 4 },
-        gridSize(.{ .width = 100, .height = 100 }, metrics),
+        PresentationChange{ .title = false, .bells = 0, .bells_pending = false },
+        state.apply(facts, true),
     );
-    try std.testing.expectEqual(@as(u16, 1), labelHeight(.{ .width = 2, .height = 2 }, metrics));
+    try std.testing.expectEqualStrings(default_title, std.mem.span(state.titlePointer()));
+
+    @memcpy(facts.title[0..5], "build");
+    facts.title_set = true;
+    facts.title_len = 5;
+    facts.bell_generation = 3;
     try std.testing.expectEqual(
-        workspace_model.Size{ .cols = 2, .rows = 1 },
-        gridSize(.{ .width = 2, .height = 2 }, metrics),
+        PresentationChange{ .title = true, .bells = 3, .bells_pending = false },
+        state.apply(facts, true),
+    );
+    try std.testing.expectEqualStrings("build", std.mem.span(state.titlePointer()));
+    try std.testing.expectEqual(
+        PresentationChange{ .title = false, .bells = 0, .bells_pending = false },
+        state.apply(facts, true),
+    );
+
+    facts.title_len = 0;
+    try std.testing.expectEqual(
+        PresentationChange{ .title = true, .bells = 0, .bells_pending = false },
+        state.apply(facts, true),
+    );
+    try std.testing.expectEqualStrings("", std.mem.span(state.titlePointer()));
+    facts.title_set = false;
+    facts.bell_generation = 4;
+    try std.testing.expectEqual(
+        PresentationChange{ .title = true, .bells = 1, .bells_pending = false },
+        state.apply(facts, true),
+    );
+    try std.testing.expectEqualStrings(default_title, std.mem.span(state.titlePointer()));
+
+    facts.title_set = true;
+    facts.title_len = 1;
+    facts.title[0] = 0xff;
+    facts.bell_generation = 5;
+    try std.testing.expectEqual(
+        PresentationChange{ .title = false, .bells = 1, .bells_pending = false },
+        state.apply(facts, true),
+    );
+    try std.testing.expectEqualStrings(default_title, std.mem.span(state.titlePointer()));
+
+    facts.title_set = false;
+    facts.bell_generation += max_bells_per_turn + 2;
+    try std.testing.expectEqual(
+        PresentationChange{ .title = false, .bells = max_bells_per_turn, .bells_pending = true },
+        state.apply(facts, true),
+    );
+    try std.testing.expectEqual(
+        PresentationChange{ .title = false, .bells = 2, .bells_pending = false },
+        state.apply(facts, true),
+    );
+    facts.bell_generation += 9;
+    try std.testing.expectEqual(
+        PresentationChange{ .title = false, .bells = 0, .bells_pending = false },
+        state.apply(facts, false),
     );
 }
 
-test "pane pixels preserve label origin and exact horizontal mixed edges" {
-    const metrics: @import("howl_text").Metrics = .{
-        .cell_width = 10,
-        .cell_height = 20,
-        .baseline = 15,
-        .underline_y = 17,
-        .underline_height = 1,
-        .strike_y = 10,
-        .strike_height = 1,
-    };
-    const grid = workspace_model.Size{ .cols = 10, .rows = 4 };
-    const size = renderer.Size{ .width = 103, .height = 101 };
-    var model = try workspace_model.Workspace.init(std.testing.allocator, @enumFromInt(1), "one", grid);
-    defer model.deinit();
-    const left = model.focusedPane();
-    const right = try model.splitPane(model.activeTab(), left, .horizontal);
-    var storage: [workspace_model.max_panes_per_tab]workspace_model.PaneLayout = undefined;
-    var placed = try model.layout(model.activeTab(), &storage);
-    const left_pixels = panePixels(placed[0].rect, grid, size, metrics);
-    const right_pixels = panePixels(placed[1].rect, grid, size, metrics);
-    try std.testing.expectEqual(@as(u32, 20), left_pixels.y);
-    try std.testing.expectEqual(left_pixels.x + left_pixels.width, right_pixels.x);
-    try std.testing.expectEqual(size.width, right_pixels.x + right_pixels.width);
-    try std.testing.expectEqual(size.height, left_pixels.y + left_pixels.height);
-    try std.testing.expectEqual(size.height, right_pixels.y + right_pixels.height);
+test "window dimensions and grid conversion preserve exact bounds" {
+    try std.testing.expectError(error.InvalidSize, validateSize(.{ .width = 0, .height = 1 }));
+    try std.testing.expectError(error.InvalidSize, validateSize(.{ .width = 1, .height = 0 }));
+    try std.testing.expectError(
+        error.InvalidSize,
+        validateSize(.{ .width = max_dimension + 1, .height = 1 }),
+    );
+    try std.testing.expectEqual(
+        Size{ .width = 90, .height = 24 },
+        try configuredSize(.{ .width = 80, .height = 24 }, 90, 0),
+    );
+    try std.testing.expectEqual(
+        GridSize{ .rows = 2, .cols = 4 },
+        gridSize(.{ .width = 43, .height = 41 }, .{
+            .width_px = 10,
+            .height_px = 20,
+            .baseline_px = 15,
+        }),
+    );
+    try std.testing.expectEqual(
+        GridSize{ .rows = 1, .cols = 1 },
+        gridSize(.{ .width = 1, .height = 1 }, .{
+            .width_px = 10,
+            .height_px = 20,
+            .baseline_px = 15,
+        }),
+    );
+}
 
-    const lower = try model.splitPane(model.activeTab(), right, .vertical);
-    placed = try model.layout(model.activeTab(), &storage);
-    var left_rect: PixelRect = undefined;
-    var upper_rect: PixelRect = undefined;
-    var lower_rect: PixelRect = undefined;
-    for (placed) |pane| {
-        const pixels = panePixels(pane.rect, grid, size, metrics);
-        try std.testing.expect(pixels.y >= 20);
-        if (pane.pane == left) left_rect = pixels else if (pane.pane == right) upper_rect = pixels else if (pane.pane == lower)
-            lower_rect = pixels
-        else
-            unreachable;
+test "terminal completion waits for the newest admitted draw only" {
+    var progress = DrawProgress{};
+    const first = try progress.next();
+    try std.testing.expectEqual(@as(u64, 1), first);
+    // A failed renderer admission does not advance executable ownership.
+    try std.testing.expectEqual(@as(u64, 0), progress.submitted);
+    progress.admit(first);
+    progress.finish();
+    try std.testing.expect(!progress.done());
+
+    // Coalesced final state admitted after terminal completion replaces the
+    // draw that normal shutdown must observe.
+    const final = try progress.next();
+    progress.admit(final);
+    progress.complete(first);
+    try std.testing.expect(!progress.done());
+    progress.complete(final);
+    try std.testing.expect(progress.done());
+
+    progress.submitted = std.math.maxInt(u64);
+    try std.testing.expectError(error.GenerationExhausted, progress.next());
+}
+
+test "terminal wake coalescing rearms after an exact drain" {
+    const fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (fd < 0) return error.SkipZigTest;
+    defer closeOwned(fd);
+    var wake = TerminalWake{ .pending = .init(false), .fd = fd };
+
+    terminalWake(&wake);
+    terminalWake(&wake);
+    try std.testing.expect(wake.pending.load(.acquire));
+    try drainEvent(fd);
+    try std.testing.expect(wake.pending.swap(false, .acq_rel));
+
+    terminalWake(&wake);
+    try std.testing.expect(wake.pending.load(.acquire));
+    try drainEvent(fd);
+    try std.testing.expect(wake.pending.swap(false, .acq_rel));
+    try drainEvent(fd);
+}
+
+test "compositor close and first runtime failure revoke input admission" {
+    try std.testing.expect(inputAdmissionOpen(false, null));
+    try std.testing.expect(!inputAdmissionOpen(true, null));
+    try std.testing.expect(!inputAdmissionOpen(false, error.WaylandDispatch));
+    try std.testing.expect(!inputAdmissionOpen(true, error.WaylandDispatch));
+
+    var retained: ?Error = error.WaylandDispatch;
+    retainCleanupFailure(&retained, error.WaylandDispatch);
+    try std.testing.expectEqual(error.WaylandDispatch, retained.?);
+}
+
+test "visual storage admits complete and resized control observations" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{},
+    );
+    defer terminal.deinit();
+    var visual = try VisualStorage.init(std.testing.allocator, 2, 4);
+    defer visual.deinit();
+
+    try std.testing.expect(try visual.capture(terminal));
+    try std.testing.expectEqual(@as(u16, 2), visual.baseline.?.rows);
+    try std.testing.expectEqual(@as(u16, 4), visual.baseline.?.cols);
+    for (visual.cells) |cell| try std.testing.expectEqual(@as(u21, 0), cell.codepoint);
+    for (visual.row_geometry) |geometry|
+        try std.testing.expectEqual(terminal_render.LineGeometry.single_width, geometry);
+    try std.testing.expect(!try visual.capture(terminal));
+
+    try std.testing.expect((try terminal.resize(5, 3)).changed);
+    try std.testing.expect(try visual.capture(terminal));
+    try std.testing.expectEqual(@as(u16, 3), visual.rows);
+    try std.testing.expectEqual(@as(u16, 5), visual.cols);
+}
+
+test "terminal exit retains final visual until its admitted draw completes" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "printf final-state", .rows = 2, .cols = 16 },
+        .{},
+    );
+    defer terminal.deinit();
+    var visual = try VisualStorage.init(std.testing.allocator, 2, 16);
+    defer visual.deinit();
+    var progress = DrawProgress{};
+
+    var attempts: u8 = 0;
+    while (attempts < 100) : (attempts += 1) {
+        terminal.consumeWake();
+        if (try visual.capture(terminal)) {
+            const generation = try progress.next();
+            progress.admit(generation);
+        }
+        if (terminal.state() != .running) {
+            progress.finish();
+            break;
+        }
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
     }
-    try std.testing.expectEqual(left_rect.x + left_rect.width, upper_rect.x);
-    try std.testing.expectEqual(upper_rect.x, lower_rect.x);
-    try std.testing.expectEqual(upper_rect.width, lower_rect.width);
-    try std.testing.expectEqual(upper_rect.y + upper_rect.height, lower_rect.y);
-    try std.testing.expectEqual(size.width, lower_rect.x + lower_rect.width);
-    try std.testing.expectEqual(size.height, lower_rect.y + lower_rect.height);
+    try std.testing.expectEqual(control.State.stopped, terminal.state());
+    try std.testing.expect(visualContains(&visual, "final-state"));
+    try std.testing.expect(progress.final != null);
+    try std.testing.expect(!progress.done());
+    progress.complete(progress.submitted);
+    try std.testing.expect(progress.done());
 }
 
-test "keyboard repeat replaces and cancels one bounded physical key" {
+test "visual storage allocation failure preserves admitted state" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var visual = try VisualStorage.init(failing.allocator(), 2, 4);
+    defer visual.deinit();
+    visual.cells[0].codepoint = 'A';
+    failing.fail_index = failing.alloc_index;
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 3, .cols = 5 },
+        .{},
+    );
+    defer terminal.deinit();
+
+    try std.testing.expectError(error.OutOfMemory, visual.capture(terminal));
+    try std.testing.expectEqual(@as(u16, 2), visual.rows);
+    try std.testing.expectEqual(@as(u16, 4), visual.cols);
+    try std.testing.expectEqual(@as(u21, 'A'), visual.cells[0].codepoint);
+}
+
+test "font configuration retains every terminal style identity" {
+    const configs = fontConfigs("font.ttf");
+    try std.testing.expectEqual(text.FontStyle.normal, configs[0].key.style);
+    try std.testing.expectEqual(text.FontStyle.bold, configs[1].key.style);
+    try std.testing.expectEqual(text.FontStyle.italic, configs[2].key.style);
+    try std.testing.expectEqual(text.FontStyle.bold_italic, configs[3].key.style);
+    for (configs) |config| {
+        try std.testing.expectEqual(@as(u4, 0), config.key.slot);
+        try std.testing.expectEqualStrings("font.ttf", config.native.primary);
+        try std.testing.expectEqual(font_pixel_height, config.native.pixel_height);
+    }
+}
+
+test "key translation retains named unicode modifier and transition facts" {
+    const mods = KeyModifiers{ .shift = true, .alt = true, .caps_lock = true };
+    const up = keyInput(c.XKB_KEY_Up, "", mods, .release).?;
+    switch (up) {
+        .key => |event| {
+            try std.testing.expectEqual(.release, event.action);
+            try std.testing.expectEqual(.up, event.key.named);
+            try std.testing.expect(event.mods.shift);
+            try std.testing.expect(event.mods.alt);
+            try std.testing.expect(event.mods.caps_lock);
+            try std.testing.expectEqualStrings("", event.text);
+        },
+        else => unreachable,
+    }
+
+    const unicode = keyInput(c.XKB_KEY_eacute, "é", .{}, .press).?;
+    switch (unicode) {
+        .key => |event| {
+            try std.testing.expectEqual(.press, event.action);
+            try std.testing.expectEqual(@as(u21, 'é'), event.key.unicode.value);
+            try std.testing.expectEqualStrings("é", event.legacy_text);
+            try std.testing.expectEqualStrings("é", event.text);
+        },
+        else => unreachable,
+    }
+    const modifier = keyInput(c.XKB_KEY_Control_R, "", .{ .control = true }, .release).?;
+    try std.testing.expectEqual(.right_control, modifier.key.key.named);
+    try std.testing.expectEqual(.release, modifier.key.action);
+    const keypad = keyInput(c.XKB_KEY_KP_Enter, "", .{ .num_lock = true }, .press).?;
+    try std.testing.expectEqual(.keypad_enter, keypad.key.key.named);
+    try std.testing.expect(keyInput(c.XKB_KEY_VoidSymbol, "", .{}, .press) == null);
+}
+
+test "keyboard repeat has one bounded replacement and release owner" {
     var repeat = Repeat{};
     try repeat.configure(25, 400);
     try std.testing.expectEqual(@as(?u64, 400 * std.time.ns_per_ms), repeat.press(30, true));
-    try std.testing.expectEqual(@as(u32, 30), repeat.fire().?.key);
-    try std.testing.expectEqual(@as(u64, 40 * std.time.ns_per_ms), repeat.fire().?.next_ns);
+    try std.testing.expectEqual(@as(u32, 30), repeat.firing().?.key);
+    try std.testing.expectEqual(@as(u64, 40 * std.time.ns_per_ms), repeat.firing().?.next_ns);
     try std.testing.expectEqual(@as(?u64, 400 * std.time.ns_per_ms), repeat.press(31, true));
     try std.testing.expect(!repeat.release(30));
-    try std.testing.expectEqual(@as(u32, 31), repeat.fire().?.key);
     try std.testing.expect(repeat.release(31));
-    try std.testing.expectEqual(null, repeat.fire());
-
+    try std.testing.expect(repeat.firing() == null);
     try repeat.configure(0, 0);
-    try std.testing.expectEqual(null, repeat.press(32, true));
+    try std.testing.expect(repeat.press(32, true) == null);
     try std.testing.expectError(error.InvalidRepeat, repeat.configure(-1, 0));
 }
 
-test "unavailable pane rejects every viewport candidate without mutation or hit geometry" {
-    var pane = PaneOwner{
-        .unavailable = true,
-        .viewport = .{
-            .offset = 4,
-            .anchor = 12,
-            .history_row_base = 2,
-            .history_count = 10,
-            .rows = 4,
-        },
-    };
-    const before = pane.viewport;
-    const bar = before.scrollbar(0, 10, 40, 80).?;
-    try std.testing.expect(pane.movedViewport(3) == null);
-    try std.testing.expect(pane.soughtViewport(bar, bar.y) == null);
-    try std.testing.expect(pane.scrollbar(.{ .x = 0, .y = 10, .width = 40, .height = 80 }) == null);
-    try std.testing.expect(std.meta.eql(before, pane.viewport));
+test "physical key admission is transactional bounded and teardown-safe" {
+    var keys = PhysicalKeys{};
+    try std.testing.expect(!keys.canRelease(c.KEY_A));
 
-    pane.unavailable = false;
-    try std.testing.expect(pane.movedViewport(3) != null);
-    try std.testing.expect(pane.soughtViewport(bar, bar.y) != null);
-    try std.testing.expect(pane.scrollbar(.{ .x = 0, .y = 10, .width = 40, .height = 80 }) != null);
+    // A failed press performs no commit, so its release remains unseen.
+    try std.testing.expect(keys.canPress(c.KEY_A));
+    try std.testing.expect(!keys.canRelease(c.KEY_A));
+
+    keys.admitPress(c.KEY_A);
+    try std.testing.expect(!keys.canPress(c.KEY_A));
+    try std.testing.expect(keys.canRelease(c.KEY_A));
+    // A failed release performs no commit and remains available for cleanup.
+    try std.testing.expect(keys.canRelease(c.KEY_A));
+    keys.admitRelease(c.KEY_A);
+    try std.testing.expect(!keys.canRelease(c.KEY_A));
+
+    try std.testing.expect(keys.canPress(0));
+    keys.admitPress(0);
+    try std.testing.expect(keys.canPress(c.KEY_MAX));
+    keys.admitPress(c.KEY_MAX);
+    try std.testing.expect(!keys.canPress(@as(u32, c.KEY_MAX) + 1));
+    try std.testing.expect(!keys.canRelease(@as(u32, c.KEY_MAX) + 1));
+    keys.clear();
+    try std.testing.expect(!keys.canRelease(0));
+    try std.testing.expect(!keys.canRelease(c.KEY_MAX));
 }
 
-test "host chords capture sixteen concurrent physical releases exactly" {
-    var captures = HostKeys{};
-    for (10..26) |code| try std.testing.expect(captures.capture(@intCast(code)));
-    try std.testing.expect(captures.capture(10));
-    try std.testing.expectEqual(@as(u8, 16), captures.count);
-    try std.testing.expect(!captures.capture(26));
-    try std.testing.expect(captures.release(11));
-    try std.testing.expect(!captures.release(11));
-    for (10..26) |code| if (code != 11) try std.testing.expect(captures.release(@intCast(code)));
-    try std.testing.expectEqual(@as(u8, 0), captures.count);
+test "focus-enter held keys and teardown suppress later orphan releases" {
+    var keys = PhysicalKeys{};
+    var repeat = Repeat{};
+    try repeat.configure(30, 200);
+    keys.admitPress(c.KEY_B);
+    try std.testing.expect(repeat.press(c.KEY_B, true) != null);
 
-    try std.testing.expect(captures.capture(20));
-    captures.clear();
-    try std.testing.expect(!captures.release(20));
+    // Focus enter intentionally ignores wl_keyboard.enter's held-key array.
+    // Resetting admission means the corresponding later release is suppressed.
+    keys.clear();
+    repeat.cancel();
+    try std.testing.expect(!keys.canRelease(c.KEY_B));
+    try std.testing.expect(repeat.firing() == null);
+
+    keys.admitPress(c.KEY_C);
+    try std.testing.expect(repeat.press(c.KEY_C, true) != null);
+    keys.clear();
+    repeat.cancel();
+    try std.testing.expect(!keys.canRelease(c.KEY_C));
+    try std.testing.expect(repeat.firing() == null);
 }
 
-test "host actions require exact non-lock modifiers" {
-    const Case = struct { symbol: u32, mods: KeyModifiers, action: HostAction };
-    const control_shift: KeyModifiers = .{ .control = true, .shift = true };
-    const control: KeyModifiers = .{ .control = true };
-    const alt: KeyModifiers = .{ .alt = true };
-    const cases = [_]Case{
-        .{ .symbol = c.XKB_KEY_t, .mods = control_shift, .action = .new_tab },
-        .{ .symbol = c.XKB_KEY_T, .mods = control_shift, .action = .new_tab },
-        .{ .symbol = c.XKB_KEY_Return, .mods = control_shift, .action = .split_horizontal },
-        .{ .symbol = c.XKB_KEY_backslash, .mods = control_shift, .action = .split_vertical },
-        .{ .symbol = c.XKB_KEY_bar, .mods = control_shift, .action = .split_vertical },
-        .{ .symbol = c.XKB_KEY_w, .mods = control_shift, .action = .close_pane },
-        .{ .symbol = c.XKB_KEY_W, .mods = control_shift, .action = .close_pane },
-        .{ .symbol = c.XKB_KEY_q, .mods = control_shift, .action = .close_tab },
-        .{ .symbol = c.XKB_KEY_Q, .mods = control_shift, .action = .close_tab },
-        .{ .symbol = c.XKB_KEY_Left, .mods = control_shift, .action = .resize_left },
-        .{ .symbol = c.XKB_KEY_Right, .mods = control_shift, .action = .resize_right },
-        .{ .symbol = c.XKB_KEY_Up, .mods = control_shift, .action = .resize_up },
-        .{ .symbol = c.XKB_KEY_Down, .mods = control_shift, .action = .resize_down },
-        .{ .symbol = c.XKB_KEY_comma, .mods = control_shift, .action = .reorder_left },
-        .{ .symbol = c.XKB_KEY_less, .mods = control_shift, .action = .reorder_left },
-        .{ .symbol = c.XKB_KEY_period, .mods = control_shift, .action = .reorder_right },
-        .{ .symbol = c.XKB_KEY_greater, .mods = control_shift, .action = .reorder_right },
-        .{ .symbol = c.XKB_KEY_Tab, .mods = control_shift, .action = .previous_tab },
-        .{ .symbol = c.XKB_KEY_ISO_Left_Tab, .mods = control_shift, .action = .previous_tab },
-        .{ .symbol = c.XKB_KEY_Page_Up, .mods = control_shift, .action = .scroll_page_up },
-        .{ .symbol = c.XKB_KEY_Page_Down, .mods = control_shift, .action = .scroll_page_down },
-        .{ .symbol = c.XKB_KEY_Home, .mods = control_shift, .action = .scroll_top },
-        .{ .symbol = c.XKB_KEY_End, .mods = control_shift, .action = .scroll_bottom },
-        .{ .symbol = c.XKB_KEY_Tab, .mods = control, .action = .next_tab },
-        .{ .symbol = c.XKB_KEY_Left, .mods = alt, .action = .focus_left },
-        .{ .symbol = c.XKB_KEY_Right, .mods = alt, .action = .focus_right },
-        .{ .symbol = c.XKB_KEY_Up, .mods = alt, .action = .focus_up },
-        .{ .symbol = c.XKB_KEY_Down, .mods = alt, .action = .focus_down },
-    };
-
-    for (cases) |case| {
-        try std.testing.expectEqual(@as(?HostAction, case.action), hostAction(case.symbol, case.mods));
-
-        var lock_state = case.mods;
-        lock_state.caps_lock = true;
-        lock_state.num_lock = true;
-        try std.testing.expectEqual(@as(?HostAction, case.action), hostAction(case.symbol, lock_state));
-
-        if (!case.mods.shift and !(case.symbol == c.XKB_KEY_Tab and case.mods.control)) {
-            var augmented = case.mods;
-            augmented.shift = true;
-            try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
-        }
-        if (!case.mods.alt) {
-            var augmented = case.mods;
-            augmented.alt = true;
-            try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
-        }
-        if (!case.mods.control) {
-            var augmented = case.mods;
-            augmented.control = true;
-            try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
-        }
-        var augmented = case.mods;
-        augmented.super = true;
-        try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
-        augmented = case.mods;
-        augmented.hyper = true;
-        try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
-        augmented = case.mods;
-        augmented.meta = true;
-        try std.testing.expectEqual(@as(?HostAction, null), hostAction(case.symbol, augmented));
-    }
-    try std.testing.expectEqual(@as(?HostAction, null), hostAction(c.XKB_KEY_Escape, control_shift));
-}
-
-test "one poll result preserves every simultaneous ready source" {
-    const input = [_]std.posix.pollfd{
-        .{ .fd = 1, .events = 0, .revents = std.posix.POLL.IN | std.posix.POLL.OUT },
-        .{ .fd = 2, .events = 0, .revents = std.posix.POLL.IN },
-        .{ .fd = 3, .events = 0, .revents = std.posix.POLL.IN },
-        .{ .fd = 4, .events = 0, .revents = std.posix.POLL.IN },
-    };
-    const ready = Ready.from(input);
-    try std.testing.expect(ready.display_read);
-    try std.testing.expect(ready.display_write);
-    try std.testing.expect(ready.terminal);
-    try std.testing.expect(ready.render);
-    try std.testing.expect(ready.repeat);
-}
-
-test "terminal output wake coalesces until the window drains its exact bit" {
-    var bits: std.atomic.Value(u64) = .init(0);
-    try std.testing.expect(markTerminalWake(&bits, 0b001));
-    try std.testing.expect(!markTerminalWake(&bits, 0b001));
-    try std.testing.expect(markTerminalWake(&bits, 0b100));
-    try std.testing.expectEqual(@as(u64, 0b101), bits.swap(0, .acq_rel));
-    try std.testing.expect(markTerminalWake(&bits, 0b001));
-}
-
-test "visible wake routing follows stable pane identity through tab churn" {
-    var model = try workspace_model.Workspace.init(
-        std.testing.allocator,
-        @enumFromInt(1),
-        "one",
-        .{ .cols = 80, .rows = 24 },
+test "pointer pixels resolve exact label-free terminal bounds" {
+    const metrics = text.CellMetrics{ .width_px = 10, .height_px = 20, .baseline_px = 15 };
+    try std.testing.expectEqual(
+        PointerTarget{ .row = 0, .col = 0, .pixel_x = 0, .pixel_y = 0 },
+        resolvePointerTarget(0, 0, 2, 4, metrics).?,
     );
-    defer model.deinit();
-    const first_tab = model.activeTab();
-    const first = model.focusedPane();
-    const second = try model.splitPane(first_tab, first, .horizontal);
-    const other = try model.createTab("two");
-    var panes: [workspace_model.max_panes]PaneOwner = @splat(.{});
-    panes[5].pane = first;
-    panes[17].pane = second;
-    panes[63].pane = other.pane;
-    try std.testing.expectEqual((@as(u64, 1) << 5) | (@as(u64, 1) << 17), visibleBitsFor(&model, &panes));
-    try std.testing.expect(try model.reorderTab(first_tab, 1));
-    try std.testing.expectEqual((@as(u64, 1) << 5) | (@as(u64, 1) << 17), visibleBitsFor(&model, &panes));
-    try std.testing.expect(try model.switchTab(other.tab));
-    try std.testing.expectEqual(@as(u64, 1) << 63, visibleBitsFor(&model, &panes));
-
-    var retired: [workspace_model.max_panes_per_tab]PaneId = undefined;
-    const removed = try model.closeTab(other.tab, &retired);
-    try std.testing.expectEqualSlices(PaneId, &.{other.pane}, removed);
-    panes[63] = .{};
-    try std.testing.expectEqual((@as(u64, 1) << 5) | (@as(u64, 1) << 17), visibleBitsFor(&model, &panes));
-}
-
-test "host label facts aggregate every tab and hit the submitted geometry" {
-    var model = try workspace_model.Workspace.init(
-        std.testing.allocator,
-        @enumFromInt(1),
-        "one",
-        .{ .cols = 8, .rows = 2 },
+    try std.testing.expectEqual(
+        PointerTarget{ .row = 1, .col = 3, .pixel_x = 39, .pixel_y = 39 },
+        resolvePointerTarget(39, 39, 2, 4, metrics).?,
     );
-    defer model.deinit();
-    const first = model.focusedPane();
-    const split = try model.splitPane(model.activeTab(), first, .horizontal);
-    const second = try model.createTab("two");
-    var render: renderer.Render = undefined;
-    render.metrics_value = .{
-        .cell_width = 10,
-        .cell_height = 20,
-        .baseline = 15,
-        .underline_y = 17,
-        .underline_height = 1,
-        .strike_y = 10,
-        .strike_height = 1,
-    };
-    var owner: Loop = undefined;
-    owner.workspace = model;
-    owner.panes = @splat(.{});
-    owner.panes[0] = .{ .pane = first, .terminal = @ptrFromInt(16), .geometry = .{ .cols = 4, .rows = 2 } };
-    owner.panes[1] = .{
-        .pane = split,
-        .terminal = @ptrFromInt(32),
-        .geometry = .{ .cols = 4, .rows = 2 },
-        .unavailable = true,
-    };
-    owner.panes[2] = .{
-        .pane = second.pane,
-        .terminal = @ptrFromInt(48),
-        .geometry = .{ .cols = 8, .rows = 2 },
-        .unavailable = true,
-    };
-    owner.render = &render;
-    owner.size = .{ .width = 80, .height = 60 };
-    owner.label_row = try owner.formatLabels();
-    try std.testing.expectEqual(labels.Availability.degraded, owner.label_row.cells[0].availability);
-    try std.testing.expectEqual(labels.Availability.unavailable, owner.label_row.cells[4].availability);
-    try std.testing.expectEqual(model.activeTab(), owner.labelTab(0, 0).?);
-    try std.testing.expectEqual(second.tab, owner.labelTab(79, 19).?);
-    try std.testing.expectEqual(@as(?TabId, null), owner.labelTab(79, 20));
-    try std.testing.expect(try owner.workspace.?.switchTab(owner.labelTab(79, 19).?));
-    try std.testing.expectEqual(second.tab, owner.workspace.?.activeTab());
-    owner.workspace = null;
+    try std.testing.expect(resolvePointerTarget(-1, 0, 2, 4, metrics) == null);
+    try std.testing.expect(resolvePointerTarget(0, -1, 2, 4, metrics) == null);
+    try std.testing.expect(resolvePointerTarget(40, 0, 2, 4, metrics) == null);
+    try std.testing.expect(resolvePointerTarget(0, 40, 2, 4, metrics) == null);
+    try std.testing.expect(resolvePointerTarget(std.math.maxInt(i64), 0, 2, 4, metrics) == null);
+    try std.testing.expect(resolvePointerTarget(0, 0, 2, 4, .{
+        .width_px = 0,
+        .height_px = 20,
+        .baseline_px = 15,
+    }) == null);
 }
 
-test "pane retirement clears stale wake ownership before slot reuse" {
-    const terminal = try howl_control.Terminal.init(
-        std.testing.allocator,
-        std.testing.io,
-        .{ .command = "sleep 30", .cols = 2, .rows = 1 },
-        .{},
-    );
-    var owner: Loop = undefined;
-    owner.panes = @splat(.{});
-    owner.wake_bits = .init(0);
-    const pane: PaneId = @enumFromInt(9);
-    owner.panes[63] = .{ .pane = pane, .terminal = terminal, .geometry = .{ .cols = 2, .rows = 1 } };
-    try std.testing.expect(markTerminalWake(&owner.wake_bits, @as(u64, 1) << 63));
-    owner.retirePane(pane);
-    try std.testing.expectEqual(@as(u64, 0), owner.wake_bits.load(.acquire));
-    try std.testing.expectEqual(null, owner.panes[63].pane);
-    owner.panes[63].pane = @enumFromInt(10);
-    try std.testing.expectEqual(@as(u64, 0), owner.wake_bits.load(.acquire));
-}
-
-test "terminal construction allocation failure leaves its pane slot reusable" {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    var render: renderer.Render = undefined;
-    render.metrics_value = .{
-        .cell_width = 10,
-        .cell_height = 20,
-        .baseline = 15,
-        .underline_y = 17,
-        .underline_height = 1,
-        .strike_y = 10,
-        .strike_height = 1,
-    };
-    var owner: Loop = undefined;
-    owner.allocator = failing.allocator();
-    owner.io = std.testing.io;
-    owner.panes = @splat(.{});
-    owner.wake_bits = .init(0);
-    owner.render = &render;
-    const pane: PaneId = @enumFromInt(7);
-    try std.testing.expectError(error.OutOfMemory, owner.initPane(pane, .{ .cols = 2, .rows = 1 }));
-    try std.testing.expectEqual(null, owner.panes[0].pane);
-    try std.testing.expectEqual(@as(u64, 0), owner.wake_bits.load(.acquire));
-}
-
-test "failed live PTY resize rolls back earlier pane before workspace commit" {
-    var model = try workspace_model.Workspace.init(
-        std.testing.allocator,
-        @enumFromInt(1),
-        "one",
-        .{ .cols = 8, .rows = 2 },
-    );
-    defer model.deinit();
-    const first = model.focusedPane();
-    const second = try model.splitPane(model.activeTab(), first, .horizontal);
-    try std.testing.expect(try model.focusPane(first));
-    const first_terminal = try howl_control.Terminal.init(
-        std.testing.allocator,
-        std.testing.io,
-        .{ .command = "sleep 30", .cols = 4, .rows = 2 },
-        .{},
-    );
-    defer first_terminal.deinit();
-    const second_terminal = try howl_control.Terminal.init(
-        std.testing.allocator,
-        std.testing.io,
-        .{ .command = "sleep 30", .cols = 4, .rows = 2 },
-        .{},
-    );
-    defer second_terminal.deinit();
-    second_terminal.cancel();
-    var owner: Loop = undefined;
-    owner.panes = @splat(.{});
-    owner.panes[0] = .{ .pane = first, .terminal = first_terminal, .geometry = .{ .cols = 4, .rows = 2 } };
-    owner.panes[1] = .{ .pane = second, .terminal = second_terminal, .geometry = .{ .cols = 4, .rows = 2 } };
-    var candidate = model;
-    try std.testing.expect(try candidate.resizePane(candidate.activeTab(), second, .left, 1));
-    try std.testing.expectError(error.NotStarted, owner.applyWorkspaceGeometry(&candidate));
-    try std.testing.expectEqual(Geometry{ .cols = 4, .rows = 2 }, owner.panes[0].geometry);
-    try std.testing.expectEqual(Geometry{ .cols = 4, .rows = 2 }, owner.panes[1].geometry);
-    const status = first_terminal.status();
-    try std.testing.expectEqual(@as(u16, 4), status.cols);
-    try std.testing.expectEqual(@as(u16, 2), status.rows);
-}
-
-test "compositor close is an idempotent loop termination fact" {
-    var closed = false;
-    requestClose(&closed);
-    try std.testing.expect(closed);
-    requestClose(&closed);
-    try std.testing.expect(closed);
-}
-
-test "pointer button transitions commit only after successful admission" {
-    const target = PointerTarget{
-        .pane = @enumFromInt(1),
-        .row = 2,
-        .col = 3,
-        .pixel_x = 30,
-        .pixel_y = 40,
-    };
+test "pointer buttons and drag coordinates commit only after admission" {
+    const initial = PointerTarget{ .row = 1, .col = 2, .pixel_x = 20, .pixel_y = 25 };
+    const moved = PointerTarget{ .row = 2, .col = 4, .pixel_x = 40, .pixel_y = 45 };
     var state = PointerState{};
-    const pending_press = state.preparePress(0, target).?;
-    // A failed send performs no commit, so the prospective press changes no local button fact.
-    try std.testing.expectEqual(@as(u8, 0b001), pending_press.buttons_down);
+
+    const failed_press = state.preparePress(0, initial).?;
+    try std.testing.expectEqual(@as(u8, 0b001), failed_press.buttons_down);
     try std.testing.expectEqual(@as(u8, 0), state.buttons_down);
     try std.testing.expectEqual(null, state.pressed[0]);
-    state.commitPress(pending_press);
+    state.commitPress(failed_press);
     try std.testing.expectEqual(@as(u8, 0b001), state.buttons_down);
-    try std.testing.expectEqual(null, state.preparePress(0, target));
+    try std.testing.expectEqual(initial, state.pressed[0].?);
+    try std.testing.expect(state.preparePress(0, initial) == null);
 
-    const middle = state.preparePress(1, target).?;
-    try std.testing.expectEqual(@as(u8, 0b011), middle.buttons_down);
-    state.commitPress(middle);
-    const moved = PointerTarget{
-        .pane = @enumFromInt(1),
-        .row = 4,
-        .col = 5,
-        .pixel_x = 50,
-        .pixel_y = 60,
-    };
-    try std.testing.expect(state.move(moved));
-    const pending_release = state.prepareRelease(0).?;
-    try std.testing.expectEqual(moved, pending_release.target);
-    try std.testing.expectEqual(@as(u8, 0b010), pending_release.buttons_down);
-    try std.testing.expectEqual(@as(u8, 0b011), state.buttons_down);
+    // Failed motion preserves the last admitted drag target.
+    try std.testing.expectEqual(initial, state.pressed[0].?);
+    state.commitMove(moved);
     try std.testing.expectEqual(moved, state.pressed[0].?);
-    // The same uncommitted state is the retryable release fact after failure.
-    state.commitRelease(pending_release);
-    try std.testing.expectEqual(@as(u8, 0b010), state.buttons_down);
+    const failed_release = state.prepareRelease(0).?;
+    try std.testing.expectEqual(@as(u8, 0), failed_release.buttons_down);
+    try std.testing.expectEqual(moved, failed_release.target);
+    try std.testing.expectEqual(moved, state.pressed[0].?);
+    state.commitRelease(failed_release);
     try std.testing.expectEqual(null, state.pressed[0]);
-    state.commitRelease(state.prepareRelease(1).?);
     try std.testing.expectEqual(@as(u8, 0), state.buttons_down);
-    try std.testing.expectEqual(null, state.prepareRelease(0));
 
-    state.commitPress(state.preparePress(0, target).?);
-    var other = moved;
-    other.pane = @enumFromInt(2);
-    try std.testing.expect(!state.move(other));
-    try std.testing.expectEqual(target, state.prepareRelease(0).?.target);
+    const middle = state.preparePress(1, initial).?;
+    state.commitPress(middle);
+    const right = state.preparePress(2, initial).?;
+    try std.testing.expectEqual(@as(u8, 0b110), right.buttons_down);
+    state.commitPress(right);
+    state.clear();
+    try std.testing.expectEqual(@as(u8, 0), state.buttons_down);
+    for (state.pressed) |pressed| try std.testing.expectEqual(null, pressed);
 }
 
-test "pointer hit identifies a visible pane before active focus admission" {
-    var model = try workspace_model.Workspace.init(
+test "pointer axis accumulates one bounded frame in callback order" {
+    var frame = AxisFrame{};
+    frame.source = c.WL_POINTER_AXIS_SOURCE_WHEEL;
+    frame.saw_continuous = true;
+    try frame.discrete(-2);
+    try frame.discrete(1);
+    try std.testing.expectEqual(@as(i32, -1), frame.vertical_discrete);
+    try std.testing.expectError(error.Pointer, frame.discrete(max_wheel_steps + 2));
+    try std.testing.expectEqual(@as(i32, -1), frame.vertical_discrete);
+    frame.clear();
+    try std.testing.expectEqual(@as(i32, 0), frame.vertical_discrete);
+    try std.testing.expectEqual(@as(?u32, null), frame.source);
+    try std.testing.expect(!frame.saw_continuous);
+}
+
+test "keymap replacement is constructed before prior ownership is released" {
+    const context = c.xkb_context_new(c.XKB_CONTEXT_NO_FLAGS) orelse return error.SkipZigTest;
+    defer c.xkb_context_unref(context);
+    const source = c.xkb_keymap_new_from_names(
+        context,
+        null,
+        c.XKB_KEYMAP_COMPILE_NO_FLAGS,
+    ) orelse return error.SkipZigTest;
+    defer c.xkb_keymap_unref(source);
+    const serialized = c.xkb_keymap_get_as_string(source, c.XKB_KEYMAP_FORMAT_TEXT_V1) orelse
+        return error.SkipZigTest;
+    defer c.free(serialized);
+
+    var current = try KeyboardMap.init(serialized);
+    defer current.deinit();
+    try std.testing.expectError(error.KeyboardMap, KeyboardMap.init("not an xkb keymap"));
+    try std.testing.expect(c.xkb_state_key_get_one_sym(current.state, 38) != c.XKB_KEY_NoSymbol);
+
+    var replacement = try KeyboardMap.init(serialized);
+    current.deinit();
+    current = replacement;
+    replacement = undefined;
+    try std.testing.expect(c.xkb_state_key_get_one_sym(current.state, 38) != c.XKB_KEY_NoSymbol);
+    const shift_index = c.xkb_keymap_mod_get_index(current.keymap, c.XKB_MOD_NAME_SHIFT);
+    try std.testing.expect(shift_index != c.XKB_MOD_INVALID);
+    const shift_mask: c.xkb_mod_mask_t = @as(c.xkb_mod_mask_t, 1) << @intCast(shift_index);
+    try std.testing.expect(c.xkb_state_update_mask(current.state, shift_mask, 0, 0, 0, 0, 0) != 0);
+    const modifiers = keyModifiers(current.state);
+    try std.testing.expect(modifiers.shift);
+    try std.testing.expect(!modifiers.alt);
+}
+
+test "typed host key uses VT mode encoding before exact PTY transfer" {
+    const terminal = try control.Terminal.init(
         std.testing.allocator,
-        @enumFromInt(1),
-        "one",
-        .{ .cols = 10, .rows = 1 },
+        std.testing.io,
+        .{ .command = "stty raw -echo; od -An -tx1 -N3", .rows = 4, .cols = 20 },
+        .{},
     );
-    defer model.deinit();
-    const first = model.focusedPane();
-    const second = try model.splitPane(model.activeTab(), first, .horizontal);
-    try std.testing.expect(try model.focusPane(first));
-    var render: renderer.Render = undefined;
-    render.metrics_value = .{
-        .cell_width = 10,
-        .cell_height = 20,
-        .baseline = 15,
-        .underline_y = 17,
-        .underline_height = 1,
-        .strike_y = 10,
-        .strike_height = 1,
-    };
-    var owner: Loop = undefined;
-    owner.workspace = model;
-    owner.panes = @splat(.{});
-    owner.panes[0] = .{
-        .pane = first,
-        .terminal = @ptrFromInt(16),
-        .geometry = .{ .cols = 5, .rows = 1 },
-    };
-    owner.panes[1] = .{
-        .pane = second,
-        .terminal = @ptrFromInt(32),
-        .geometry = .{ .cols = 5, .rows = 1 },
-    };
-    owner.render = &render;
-    owner.size = .{ .width = 100, .height = 40 };
-    try std.testing.expectEqual(second, owner.resolvePointer(75, 25, false).?.pane);
-    try std.testing.expectEqual(null, owner.resolvePointer(75, 25, true));
-    try std.testing.expect(try owner.workspace.?.focusPane(second));
-    try std.testing.expectEqual(second, owner.resolvePointer(75, 25, true).?.pane);
-    owner.workspace = null;
+    defer terminal.deinit();
+    const input = keyInput(c.XKB_KEY_Up, "", .{}, .press).?;
+    const sent = try terminal.send(&.{.{ .input = input }});
+    switch (sent.outcome) {
+        .complete => |count| try std.testing.expectEqual(@as(usize, 3), count),
+        else => return error.TestUnexpectedResult,
+    }
+
+    var visual = try VisualStorage.init(std.testing.allocator, 4, 20);
+    defer visual.deinit();
+    var found = false;
+    var attempts: u8 = 0;
+    while (attempts < 100 and !found) : (attempts += 1) {
+        terminal.consumeWake();
+        const changed = try visual.capture(terminal);
+        found = visualContains(&visual, "1b 5b 41");
+        if (!changed and terminal.state() != .running and !found) break;
+        if (!found) try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expect(found);
 }
 
-test "pointer cleanup retains the first exact loop failure" {
-    var failure: ?Error = error.WaylandDispatch;
-    retainFirstFailure(&failure, error.InputIncomplete);
-    try std.testing.expectEqual(@as(?Error, error.WaylandDispatch), failure);
-    failure = null;
-    retainFirstFailure(&failure, error.InputIncomplete);
-    try std.testing.expectEqual(@as(?Error, error.InputIncomplete), failure);
+test "typed mouse uses VT tracking and SGR encoding before PTY transfer" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{
+            .command = "printf '\\033[?1000h\\033[?1006h'; stty raw -echo; od -An -tx1 -N9",
+            .rows = 4,
+            .cols = 20,
+            .cell_pixels = .{ .width = 10, .height = 20 },
+        },
+        .{},
+    );
+    defer terminal.deinit();
+    var attempts: u8 = 0;
+    while (attempts < 100 and !terminal.viewportFacts().mouse_reporting) : (attempts += 1) {
+        terminal.consumeWake();
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expect(terminal.viewportFacts().mouse_reporting);
+    const sent = try terminal.send(&.{.{ .input = .{ .mouse = .{
+        .kind = .press,
+        .button = .left,
+        .row = 1,
+        .col = 2,
+        .pixel_x = 20,
+        .pixel_y = 25,
+        .mod = .{},
+        .buttons_down = 1,
+    } } }});
+    switch (sent.outcome) {
+        .complete => |count| try std.testing.expectEqual(@as(usize, 9), count),
+        else => return error.TestUnexpectedResult,
+    }
+
+    var visual = try VisualStorage.init(std.testing.allocator, 4, 20);
+    defer visual.deinit();
+    var found = false;
+    attempts = 0;
+    while (attempts < 100 and !found) : (attempts += 1) {
+        terminal.consumeWake();
+        const changed = try visual.capture(terminal);
+        found = visualContains(&visual, "1b 5b 3c 30 3b 33 3b 32 4d");
+        if (!changed and terminal.state() != .running and !found) break;
+        if (!found) try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expect(found);
+}
+
+test "mouse tracking disabled admits no bytes and owns no host scroll" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{},
+    );
+    defer terminal.deinit();
+    const before = terminal.viewportFacts();
+    const sent = try terminal.send(&.{.{ .input = .{ .mouse = .{
+        .kind = .wheel,
+        .button = .wheel_down,
+        .row = 0,
+        .col = 0,
+        .mod = .{ .shift = true },
+        .buttons_down = 0,
+    } } }});
+    switch (sent.outcome) {
+        .complete => |count| try std.testing.expectEqual(@as(usize, 0), count),
+        else => return error.TestUnexpectedResult,
+    }
+    try std.testing.expect(std.meta.eql(before, terminal.viewportFacts()));
+}
+
+fn visualContains(visual: *const VisualStorage, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    var matched: usize = 0;
+    for (visual.cells) |cell| {
+        if (cell.codepoint == needle[matched]) {
+            matched += 1;
+            if (matched == needle.len) return true;
+        } else {
+            matched = if (cell.codepoint == needle[0]) 1 else 0;
+        }
+    }
+    return false;
 }

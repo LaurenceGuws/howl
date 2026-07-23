@@ -51,6 +51,21 @@ pub const Screen = client.Screen;
 pub const Status = client.Status;
 /// Copies one nonzero host-provided terminal cell extent in logical pixels.
 pub const CellPixelSize = howl_vt.Terminal.CellPixelSize;
+/// Borrows coherent VT visual semantics only during mutation-excluded inspection.
+pub const VisualView = howl_vt.Terminal.VisualView;
+/// Identifies one exact cumulative VT visual observation.
+pub const DirtyToken = howl_vt.Terminal.DirtyToken;
+/// Reports the exact disposition of one mutation-excluded visual inspection.
+pub const VisualInspection = enum {
+    /// The callback deliberately declined the lent observation.
+    declined,
+    /// The callback returned a token other than the one it was lent.
+    stale,
+    /// The exact token had already been acknowledged.
+    already_acknowledged,
+    /// This inspection acknowledged the exact token.
+    acknowledged,
+};
 
 // Construction bounds, copied observations, and exact failures.
 
@@ -80,6 +95,8 @@ pub const max_history_rows = client.max_history_rows;
 pub const max_transfer_bytes = client.max_transfer_bytes;
 const transport_buffer_bytes: usize = 4096;
 const default_transfer_timeout_ms: u32 = 2000;
+const default_term = "xterm-256color";
+const default_colorterm = "truecolor";
 
 /// Supplies copied child launch values and bounded terminal dimensions.
 pub const Config = struct {
@@ -91,6 +108,10 @@ pub const Config = struct {
     command: ?[]const u8 = null,
     /// Selects an optional child working directory.
     cwd: ?[]const u8 = null,
+    /// Selects the installed terminal identity copied into the child environment.
+    term: []const u8 = default_term,
+    /// Selects the optional truecolor capability identity copied into the child environment.
+    colorterm: ?[]const u8 = default_colorterm,
     /// Sets the initial nonzero bounded PTY and model width.
     cols: u16 = 80,
     /// Sets the initial nonzero bounded PTY and model height.
@@ -103,7 +124,7 @@ pub const Config = struct {
     transfer_timeout_ms: u32 = default_transfer_timeout_ms,
 };
 
-/// Delivers coalesced terminal mutation, stop, or failure notifications.
+/// Delivers coalesced terminal mutation, resize, stop, or failure notifications.
 pub const Wake = struct {
     /// Borrows embedder state for the lifetime of the terminal.
     context: ?*anyopaque = null,
@@ -126,7 +147,10 @@ pub const InitError = howl_vt.Terminal.InitError || std.mem.Allocator.Error ||
     ChildExecFailed,
     ChildSessionFailed,
     ChildStdioFailed,
+    EnvironmentByteLimit,
+    EnvironmentCountLimit,
     ForkFailed,
+    InvalidEnvironment,
     MasterConfigureFailed,
     LaunchStatusFailed,
     LaunchStatusPipeFailed,
@@ -162,14 +186,34 @@ pub const State = client.State;
 pub const shell_mark_metadata_max_bytes = howl_vt.Terminal.shell_mark_metadata_max_bytes;
 /// Matches the VT owner's maximum retained shell-integration identity.
 pub const shell_name_max_bytes = howl_vt.Terminal.shell_name_max_bytes;
+/// Matches the VT owner's maximum retained window-title bytes.
+pub const title_max_bytes = howl_vt.Terminal.title_max_bytes;
 
 comptime {
     std.debug.assert(shell_mark_metadata_max_bytes <= std.math.maxInt(u16));
     std.debug.assert(shell_name_max_bytes <= std.math.maxInt(u8));
+    std.debug.assert(title_max_bytes <= std.math.maxInt(u16));
 }
 
 /// Copies the latest real OSC 133 mark and retained shell identity.
 pub const ShellMark = client.ShellMark;
+
+/// Copies current host-neutral title and bell facts without retaining VT borrows.
+pub const HostPresentation = struct {
+    /// Distinguishes no accepted title from an accepted empty title.
+    title_set: bool,
+    /// Stores the bounded title prefix selected by `title_len`.
+    title: [title_max_bytes]u8,
+    /// Bounds meaningful bytes in `title`.
+    title_len: u16,
+    /// Counts accepted BEL controls monotonically for executable presentation policy.
+    bell_generation: u64,
+
+    /// Borrows the copied title when one has been accepted.
+    pub fn titleBytes(self: *const HostPresentation) ?[]const u8 {
+        return if (self.title_set) self.title[0..self.title_len] else null;
+    }
+};
 
 const ReaderFailure = enum(u8) {
     none,
@@ -250,6 +294,7 @@ pub const Terminal = struct {
             config.shell,
             config.command,
             config.cwd,
+            .{ .term = config.term, .colorterm = config.colorterm },
         );
         errdefer transport.deinit();
         var model = try howl_vt.Terminal.initWithHistory(
@@ -497,16 +542,21 @@ pub const Terminal = struct {
     /// Admits one resize and advances geometry only after an actual change.
     pub fn resize(self: *Terminal, cols: u16, rows: u16) ResizeError!ResizeResult {
         self.admission_lock.lockUncancelable(self.io);
-        defer self.admission_lock.unlock(self.io);
         const admission = self.nextAdmission();
-        const changed = try self.resizeModel(cols, rows);
-        return .{
+        const changed = self.resizeModel(cols, rows) catch |failure| {
+            self.admission_lock.unlock(self.io);
+            return failure;
+        };
+        const result = ResizeResult{
             .admission_sequence = admission,
             .geometry_sequence = self.geometry_sequence,
             .changed = changed,
             .cols = cols,
             .rows = rows,
         };
+        self.admission_lock.unlock(self.io);
+        if (changed) self.notify();
+        return result;
     }
 
     /// Applies one bounded size and reports whether terminal geometry changed.
@@ -564,6 +614,7 @@ pub const Terminal = struct {
         self.lifecycle_lock.lockUncancelable(self.io);
         defer self.lifecycle_lock.unlock(self.io);
         const snapshot = self.model.stateSnapshot();
+        const semantic_sequence = self.model.semanticSequence();
         const output_range = self.model.logicalOutputRange();
         var shell_mark: ?ShellMark = null;
         if (snapshot.shell_mark.generation != 0) {
@@ -596,6 +647,7 @@ pub const Terminal = struct {
             .child_cwd = self.child_cwd,
             .cols = self.cols,
             .rows = self.rows,
+            .semantic_sequence = semantic_sequence,
             .history_loss_generation = snapshot.history_loss_generation,
             .alternate_screen = snapshot.is_alternate_screen,
             .admission_sequence = self.admission_sequence,
@@ -605,6 +657,25 @@ pub const Terminal = struct {
             .output_newest = output_range.newest,
             .shell_mark = shell_mark,
         };
+    }
+
+    /// Copies current title and bell facts while holding the VT model lock briefly.
+    pub fn hostPresentation(self: *Terminal) HostPresentation {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        const snapshot = self.model.stateSnapshot();
+        var result = HostPresentation{
+            .title_set = snapshot.title != null,
+            .title = @splat(0),
+            .title_len = 0,
+            .bell_generation = snapshot.bell_generation,
+        };
+        if (snapshot.title) |title| {
+            std.debug.assert(title.len <= result.title.len);
+            result.title_len = @intCast(title.len);
+            @memcpy(result.title[0..title.len], title);
+        }
+        return result;
     }
 
     /// Copies the current bounded viewport without retaining model borrows.
@@ -618,6 +689,7 @@ pub const Terminal = struct {
         defer self.lock.unlock(self.io);
         const visual = self.model.visualView();
         const view = visual.view;
+        const semantic_sequence = self.model.semanticSequence();
         var writer = std.Io.Writer.fixed(bytes);
         for (0..view.rows) |row_value| {
             const row: u16 = @intCast(row_value);
@@ -641,11 +713,31 @@ pub const Terminal = struct {
             .text = bytes,
             .cols = view.cols,
             .rows = view.rows,
+            .semantic_sequence = semantic_sequence,
             .alternate_screen = view.is_alternate_screen,
             .cursor_visible = view.cursor_visible,
             .cursor_col = view.cursor_col,
             .cursor_row = view.cursor_row,
         };
+    }
+
+    /// Lends one coherent visual view while terminal mutation is excluded.
+    ///
+    /// The inspector runs under the model mutex and must not block, allocate,
+    /// re-enter this terminal, or retain borrowed source data. Returning the
+    /// view's exact token acknowledges cumulative visual dirtiness; null
+    /// declines it. The result distinguishes stale, prior, and new acknowledgement.
+    pub fn inspectVisual(
+        self: *Terminal,
+        context: ?*anyopaque,
+        inspect: *const fn (?*anyopaque, VisualView) ?DirtyToken,
+    ) VisualInspection {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        const view = self.model.visualView();
+        const token = inspect(context, view) orelse return .declined;
+        if (token != view.dirty_token) return .stale;
+        return if (self.model.ackVisual(token)) .acknowledged else .already_acknowledged;
     }
 
     /// Admits one process-group signal and returns its exact native outcome.
@@ -1311,6 +1403,122 @@ test "wake mutation between observation and acknowledgement is announced" {
     try std.testing.expectEqual(terminal.wake_generation.load(.acquire), terminal.wake_announced.load(.acquire));
 }
 
+const VisualInspectionProof = struct {
+    accept: bool,
+    stale: bool = false,
+    token: DirtyToken = undefined,
+    full: bool = false,
+    dirty_rows: usize = 0,
+};
+
+fn inspectVisualProof(context: ?*anyopaque, view: VisualView) ?DirtyToken {
+    const proof: *VisualInspectionProof = @ptrCast(@alignCast(context.?));
+    proof.token = view.dirty_token;
+    switch (view.dirty) {
+        .none => {},
+        .full => proof.full = true,
+        .rows => |rows| {
+            var iterator = rows.iterator();
+            while (iterator.next() != null) proof.dirty_rows += 1;
+        },
+    }
+    if (!proof.accept) return null;
+    if (proof.stale) return @enumFromInt(@intFromEnum(view.dirty_token) + 1);
+    return view.dirty_token;
+}
+
+test "visual inspection lends cumulative truth and acknowledges only admitted work" {
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .cols = 4, .rows = 2 },
+        .{},
+    );
+    defer terminal.deinit();
+
+    var initial = VisualInspectionProof{ .accept = false };
+    try std.testing.expectEqual(VisualInspection.declined, terminal.inspectVisual(&initial, inspectVisualProof));
+    try std.testing.expect(initial.full);
+
+    var stale = VisualInspectionProof{ .accept = true, .stale = true };
+    try std.testing.expectEqual(VisualInspection.stale, terminal.inspectVisual(&stale, inspectVisualProof));
+
+    var admitted = VisualInspectionProof{ .accept = true };
+    try std.testing.expectEqual(VisualInspection.acknowledged, terminal.inspectVisual(&admitted, inspectVisualProof));
+    try std.testing.expect(admitted.full);
+
+    try terminal.consume("A");
+    var declined = VisualInspectionProof{ .accept = false };
+    try std.testing.expectEqual(VisualInspection.declined, terminal.inspectVisual(&declined, inspectVisualProof));
+    try std.testing.expectEqual(@as(usize, 1), declined.dirty_rows);
+    try terminal.consume("B");
+
+    var cumulative = VisualInspectionProof{ .accept = true };
+    try std.testing.expectEqual(VisualInspection.acknowledged, terminal.inspectVisual(&cumulative, inspectVisualProof));
+    try std.testing.expectEqual(@as(usize, 1), cumulative.dirty_rows);
+    try std.testing.expect(cumulative.token != declined.token);
+
+    try terminal.consume("\x1b[2C");
+    var cursor_only = VisualInspectionProof{ .accept = true };
+    try std.testing.expectEqual(
+        VisualInspection.acknowledged,
+        terminal.inspectVisual(&cursor_only, inspectVisualProof),
+    );
+    try std.testing.expectEqual(@as(usize, 0), cursor_only.dirty_rows);
+    try std.testing.expect(cursor_only.token != cumulative.token);
+
+    var clean = VisualInspectionProof{ .accept = true };
+    try std.testing.expectEqual(
+        VisualInspection.already_acknowledged,
+        terminal.inspectVisual(&clean, inspectVisualProof),
+    );
+    try std.testing.expect(!clean.full);
+    try std.testing.expectEqual(@as(usize, 0), clean.dirty_rows);
+}
+
+test "changed resize wakes visual observers exactly once" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+    const before = wake_count.load(.acquire);
+    try std.testing.expect((try terminal.resize(81, 25)).changed);
+    try std.testing.expectEqual(before + 1, wake_count.load(.acquire));
+    try std.testing.expect(!(try terminal.resize(81, 25)).changed);
+    try std.testing.expectEqual(before + 1, wake_count.load(.acquire));
+}
+
+const ReentrantWakeProof = struct {
+    terminal: ?*Terminal = null,
+    calls: u8 = 0,
+};
+
+fn inspectStatusOnWake(context: ?*anyopaque) void {
+    const proof: *ReentrantWakeProof = @ptrCast(@alignCast(context.?));
+    const terminal = proof.terminal orelse return;
+    const status_value = terminal.status();
+    std.debug.assert(status_value.cols != 0 and status_value.rows != 0);
+    proof.calls += 1;
+}
+
+test "resize notification runs after admission ownership is released" {
+    var proof = ReentrantWakeProof{};
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{ .context = &proof, .notify = inspectStatusOnWake },
+    );
+    defer terminal.deinit();
+    proof.terminal = terminal;
+    try std.testing.expect((try terminal.resize(81, 25)).changed);
+    try std.testing.expectEqual(@as(u8, 1), proof.calls);
+}
+
 test "host viewport operation retains history and mouse ownership facts" {
     var wake_count: std.atomic.Value(u32) = .init(0);
     const terminal = try Terminal.init(
@@ -1346,7 +1554,8 @@ test "alternate-screen sparse mutation preserves terminal progress" {
     );
     defer terminal.deinit();
 
-    try terminal.consume("\x1b[?1049h");
+    try terminal.consume("\x1b[?104");
+    try terminal.consume("9h");
     {
         var alternate = try terminal.screen(std.testing.allocator);
         defer alternate.deinit();

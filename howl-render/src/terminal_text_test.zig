@@ -171,6 +171,11 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     };
     var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
     defer map.deinit();
+    const configured_metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+    try std.testing.expect(configured_metrics.width_px > 0);
+    try std.testing.expect(configured_metrics.height_px > 0);
+    try std.testing.expect(configured_metrics.baseline_px < configured_metrics.height_px);
+    try std.testing.expect(map.cellMetrics(.{ .slot = 1, .style = .normal }) == null);
     var cells = [_]terminal.Cell{cell(0)} ** 12;
     cells[8] = cell('f');
     cells[9] = cell('i');

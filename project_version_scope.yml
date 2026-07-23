@@ -1,10 +1,10 @@
 version:
   current: 0.1.3-dev
-  status: supervised capability reset
+  status: reconstructed single-terminal foundation
 
 objective: >-
-  Retain only independently useful terminal capabilities with settled ownership; delete rejected package and runtime
-  boundaries before rebuilding an executable path.
+  Preserve independently useful terminal capabilities and one direct first-party single-terminal executable while
+  keeping deferred presentation and multiplexing work outside the accepted foundation.
 
 settled_capabilities:
   - name: vt
@@ -16,7 +16,7 @@ settled_capabilities:
   - name: render
     acceptance: backend-neutral terminal visual knowledge and plain values without runtime policy
   - name: executable
-    acceptance: owns runtime and presentation resources without a settled noun, topology, or API
+    acceptance: howl-host owns one concrete Wayland, EGL/GLES, input, retained-visual, and lifecycle composition
 
 accepted_implementation:
   - VT protocol behavior and deterministic evidence remain the terminal-semantics baseline.
@@ -24,28 +24,28 @@ accepted_implementation:
   - >-
     Render independently selects native text and generated terminal glyphs; either or both may be absent, and only
     native text selection links libc, FreeType, and HarfBuzz.
+  - Render terminal projection writes backend-neutral visual patches into caller buffers and owns no runtime policy.
+  - >-
+    Render terminal text preparation discovers one homogeneous run at a time, preserves unresolved visual facts, and
+    returns exact native, generated, or no-glyph output ownership.
+  - >-
+    Howl-host directly composes one Control terminal, one Wayland window, and one EGL/GLES render thread with bounded
+    keyboard and pointer admission, title and bell presentation, exact terminal completion, and cleanup.
 
 invariants:
   - every module allocation uses an explicit caller-provided allocator
   - bounds, errors, rollback, cleanup, and ownership are exact at each capability boundary
   - control contains no rendering relation
   - render contains no thread, publication lifecycle, GPU device, window, layout, or presentation policy
-  - executable ownership does not settle its package noun, thread topology, backend, or public API
+  - howl-host is one first-party executable and does not constrain independent embedders
   - private development carries no downstream source or ABI compatibility obligation
 
-reconstruction:
-  status: active
-  work:
-    - classify and retain only earned terminal visual values and behavior
-    - classify control identity, endpoint, codec, request, composition, and lifecycle evidence
-    - remove rendering publication and dependencies from control
-    - inventory executable evidence before approving its noun, topology, API, or source
-    - remove stale workspace wiring after surviving child dependencies are settled
-  excluded_until_approved:
-    - compatibility aliases or adapters for deleted boundaries
-    - render-owned runtime publication or synchronization
-    - control-owned rendering values or publication
-    - a concrete executable topology, GPU backend, or render API
+deferred:
+  - primary-screen viewport and scrollback presentation
+  - selection and clipboard policy
+  - tabs, panes, sessions, and multiplexing
+  - unsupported DEC line-geometry and baseline drawing
+  - dynamic-color and broader ordered host-consequence presentation
 
 gates:
   - permanent authorities and active planning YAML parse
@@ -53,4 +53,4 @@ gates:
   - selected render capability graphs prove native and generated dependency exclusion
   - retained VT, PTY, control, and render behavior has exact focused proof
   - source audit and protocol catalogue validation pass for accepted source
-  - rejected source is deleted or remains explicitly quarantined rather than certified
+  - rejected source and compatibility boundaries remain deleted

@@ -215,6 +215,16 @@ pub const FontMap = if (features.native_text) struct {
         self.* = undefined;
     }
 
+    /// Returns ordinary cell metrics for one exact configured font key.
+    pub fn cellMetrics(self: *@This(), key: FontKey) ?CellMetrics {
+        const set = self.get(key) orelse return null;
+        return .{
+            .width_px = set.metrics.cell_width,
+            .height_px = set.metrics.cell_height,
+            .baseline_px = set.metrics.baseline,
+        };
+    }
+
     fn get(self: *@This(), key: FontKey) ?*native.FontSet {
         return if (self.sets[key.index()]) |*set| set else null;
     }

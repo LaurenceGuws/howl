@@ -1,9 +1,9 @@
 marathon:
   name: capability_reset
-  status: active
+  status: implemented_pending_review
   mode: supervised deletion intervention
-  active_sprint: sprint_render_capability_reset.yml
-  active_scratch: scratch_render_capability_reset.md
+  active_sprint: null
+  active_scratch: null
 
 objective: >-
   Delete unearned packages, runtime abstractions, vocabulary, and build ceremony until the surviving Howl capabilities
@@ -25,7 +25,9 @@ settled_ownership:
   pty: owns Linux PTY transport and child-process lifecycle
   control: optionally composes PTY and VT into ID-addressable terminal instances with bounded interfaces
   render: owns backend-neutral terminal visual knowledge and plain rendering values without runtime policy
-  executable: owns threads, publication storage, GPU resources, windowing, layout, sessions, tabs, panes, and presentation
+  executable: >-
+    howl-host owns one Wayland window, one Control terminal, retained visuals, one render thread, EGL/GLES, input,
+    and presentation
 
 workflow:
   marathon: owns this complete intervention and its final gate
@@ -55,9 +57,9 @@ survivors:
 
   - capability: first_party_executable
     contract: >-
-      concrete embedder that owns runtime, threads, publication storage, windowing, GPU resources, sessions, tabs,
-      panes, and presentation; its final selection of control and render surfaces remains under reconstruction
-    noun: unsettled
+      concrete single-terminal embedder that owns one Wayland window, retained visuals, one render thread, EGL/GLES,
+      input, terminal consequences, endpoint entry, and ordered cleanup
+    noun: howl-host
 
 confirmed_deletions:
   - offender: consumer-vt
@@ -95,11 +97,11 @@ confirmed_deletions:
       - renamed copies of rejected abstractions
 
   - offender: stale workspace claims
-    reason: root build aliases and permanent documents currently describe packages and instrumentation being deleted
+    reason: root build aliases and permanent documents described packages and instrumentation that were deleted
 
 investigations:
   - id: vt_host_vocabulary
-    status: required
+    status: completed
     question: >-
       After deleting HostState, Terminal.host, applyHostEvent, and related invented embedder vocabulary, which concrete
       VT concepts are required by the referenced protocol behavior?
@@ -112,9 +114,12 @@ investigations:
     gate: >-
       Present source paths, symbols, protocol cases, lifetime, bounds, producer, and consumption semantics before each
       replacement decision; do not propose a speculative aggregate noun.
+    result: >-
+      VT retains concrete bounded terminal consequences and semantic state; Control exposes copied or borrowed facts
+      without rendering policy, and howl-host consumes only title and bell presentation in the current cut.
 
   - id: render_inventory
-    status: in_progress
+    status: completed
     question: >-
       Which existing text, frame, grid, style, effect, damage, cache, and generated-glyph code expresses accepted
       rendering behavior, and which code encodes rejected runtime or package architecture?
@@ -125,23 +130,23 @@ investigations:
       - old unselected renderer cache and draw-preparation code still requires independent classification
 
   - id: control_inventory
-    status: required
+    status: completed
     question: >-
       Which existing PTY/VT composition, terminal-ID, embedded, client, remote-control, and CLI behaviors implement the
       accepted control capability, and which symbols leak rendering or executable policy?
     gate: Control retains no rendering, text, GPU, window, pane, tab, session, or thread architecture.
 
   - id: executable_inventory
-    status: required
+    status: completed
     question: >-
       Which current runtime, thread, window, GPU, session, tab, pane, and presentation code belongs to the first-party
       executable after rejected module boundaries and instrumentation are removed?
-    gate: The executable noun remains unsettled and is decided separately from source survival.
+    gate: Accepted as howl-host after the surviving single-terminal responsibilities and direct source were proven.
 
 discussion_gates:
   - id: durable_authority_alignment
     trigger: before the first render source implementation slice
-    status: active
+    status: accepted
     decision: >-
       Remove or quarantine permanent design, rules, source-map, and version-scope claims that certify standalone text
       or frame packages, control-owned rendering publication, render-owned runtime policy, deleted probe vocabulary,
@@ -149,14 +154,16 @@ discussion_gates:
 
   - id: vt_render_boundary
     trigger: terminal visual values are classified and the transformation owner can be decided from concrete types
-    status: pending
+    status: accepted
     decision: >-
       Approve the transformation owner, input and output types, dependency direction, allocation and lifetime contract,
       and whether a public transformation API is earned.
 
   - id: vt_outputs
     trigger: reference evidence for one current host-prefixed VT responsibility is ready
+    status: accepted
     decision: approve the exact concept and API before implementation
+    result: Concrete consequences remain separately typed, bounded, and catalogue-owned without one aggregate actor.
 
   - id: render_selection
     trigger: concrete surviving render capabilities and dependency costs are indexed
@@ -171,22 +178,18 @@ discussion_gates:
 
   - id: executable_noun
     trigger: surviving executable responsibilities are concrete
+    status: accepted
     decision: approve its public noun and package identity
+    result: howl-host is the concrete first-party executable; it does not constrain independent embedders
 
   - id: build_graph
     trigger: surviving packages and their direct dependencies are settled
+    status: accepted
     decision: approve child and workspace build surfaces; do not optimize for compiling deleted or unsettled code
-
-quarantined_evidence:
-  - path: marathon_dogfood_performance.yml
-    treatment: >-
-      Mine measured performance facts that remain reproducible, then delete the marathon; its probe vocabulary,
-      package ownership, commands, and accepted architecture are not authority for this intervention.
 
 sprints:
   - id: render_capability_reset
-    file: sprint_render_capability_reset.yml
-    status: active
+    status: accepted
     accepted_slices:
       - id: selectable_text_and_generated
         commit: a5adeee
@@ -206,22 +209,30 @@ sprints:
         commit: 37f59ff
       - id: delete_rejected_renderer_source
         commit: 93cb1c6
-    next_slice: settle_run_text_boundary
+      - id: settle_run_text_boundary
+        commit: 53de279
+      - id: rebuild_run_text_preparation
+        commit: 48592c6
+      - id: remove_render_runtime_and_control_coupling
+        commit: 2d169c8
+    result: >-
+      Accepted render projection and text preparation remain runtime-free; rejected frame and renderer sources are
+      deleted.
 
   - id: control_capability_reset
-    status: pending
+    status: accepted
     entry_gate: render owns no runtime publication and the durable authorities describe the settled ownership model
 
   - id: executable_runtime_rebuild
-    status: pending
+    status: implemented_pending_review
     entry_gate: render and control expose only accepted capabilities and the executable noun has been settled
 
   - id: basic_byte_to_pixels
-    status: pending
+    status: implemented_pending_review
     entry_gate: executable runtime ownership and the backend-neutral render boundary are accepted
 
   - id: final_compile_and_ownership_audit
-    status: pending
+    status: implemented_pending_review
     entry_gate: one basic PTY-to-pixels path exists without compatibility scaffolding
 
 completion:
@@ -232,4 +243,4 @@ completion:
   - control contains only accepted PTY/VT composition, identity, and interface behavior
   - render contains only selectable rendering knowledge and POJO vocabulary, with no runtime-thread or concrete GPU owner
   - the executable contains runtime ownership without defining the only valid route through Howl capabilities
-  - remaining rebuild work is explicitly indexed; compilation is required only after the relevant contracts are settled
+  - deferred presentation and multiplexing capabilities remain outside this accepted single-terminal foundation

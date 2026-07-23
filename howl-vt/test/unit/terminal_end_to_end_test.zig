@@ -774,7 +774,7 @@ test "terminal: Kitty CP437 and VAX42 share existing charset lifetime" {
     try std.testing.expectEqualSlices(u8, &.{ 'B', 'B', 'B', 'B' }, &terminal.designations);
 }
 
-test "terminal: DEC line geometry owns width movement scroll resize reset and publication" {
+test "terminal: DEC line geometry owns width movement scroll resize reset and visual observation" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 4, 10, 8);
     defer terminal.deinit();
 

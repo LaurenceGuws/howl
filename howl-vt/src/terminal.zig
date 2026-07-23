@@ -1,4 +1,4 @@
-//! Owns the complete terminal state machine, host consequences, and publication lifecycle.
+//! Owns the complete terminal state machine, host consequences, and visual observation lifecycle.
 
 const std = @import("std");
 const parser_mod = @import("parser.zig");
@@ -40,7 +40,7 @@ pub const Screen = struct {
     /// Provides the canonical default cell attributes.
     pub const default_cell_attrs = initial_cell_attrs;
     const default_cell = blank_cell;
-    /// Uses the canonical borrowed dirty-row publication view.
+    /// Uses the canonical borrowed dirty-row visual view.
     pub const DirtyRows = ScreenDirtyRows;
     /// Describes one row's DEC presentation geometry without prescribing host rendering.
     pub const LineGeometry = enum(u2) {
@@ -1076,7 +1076,7 @@ pub const Screen = struct {
         return self.dirty_state.rows;
     }
 
-    /// Acknowledges and clears all current dirty publication bounds.
+    /// Acknowledges and clears all current dirty visual bounds.
     pub fn clearDirtyRows(self: *Screen) void {
         self.dirty_state.rows = null;
         if (self.dirty_state.cols_start) |buf| @memset(buf, self.cols);
@@ -3497,7 +3497,7 @@ const ScreenDirtyRows = struct {
     dirty_cols_end: []const u16 = &.{},
 };
 
-// Owns dirty publication bounds for one screen allocation.
+// Owns dirty visual bounds for one screen allocation.
 const DirtyState = struct {
     rows: ?ScreenDirtyRows = null,
     cols_start: ?[]u16 = null,
@@ -6273,7 +6273,7 @@ pub const HostState = struct {
     /// Replace typed shell integration transactionally and report exact identity mutation.
     ///
     /// An identical value is allocation-free. An oversized shell or allocation failure
-    /// preserves the prior borrowed publication.
+    /// preserves the prior borrowed visual observation.
     pub fn replaceShellIntegration(
         self: *HostState,
         integration: ItermShellIntegration,
@@ -9236,7 +9236,7 @@ test "OSC Kitty host-policy payloads expose only retained terminal facts" {
     } }) == null);
 }
 
-// Screen banks, viewport projection, selection, and publication.
+// Screen banks, viewport projection, selection, and visual observation.
 
 // Identifies whether a visible row comes from history or the active screen.
 const RowSource = union(enum) {
@@ -12015,20 +12015,20 @@ const TerminalStream = struct {
         const selection_before = self.terminal.screen_state.activeSelectionConst().state();
         const history_before = self.terminal.visibleHistoryCount();
         const was_scrolled = self.terminal.scrollback_offset > 0;
-        var completed = false;
-        defer if (!completed) self.terminal.completeStreamMutation(
-            visual_before,
-            selection_before,
-            history_before,
-            was_scrolled,
-            null,
-        );
         var summary: FeedSummary = .{
             .state_changed = false,
             .title_changed = false,
             .icon_changed = false,
             .history_lost = false,
         };
+        var completed = false;
+        defer if (!completed) self.terminal.completeStreamMutation(
+            visual_before,
+            selection_before,
+            history_before,
+            was_scrolled,
+            summary.state_changed,
+        );
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
         for (bytes) |byte| {
             const byte_summary = try self.nextSummary(byte);
@@ -12575,6 +12575,8 @@ pub const Terminal = struct {
     pub const WorkingDirectory = WorkingDirectoryReport;
     /// Bounds one latest child-reported iTerm remote-host identity.
     pub const remote_host_max_bytes = max_metadata_bytes;
+    /// Bounds one retained OSC window-title value exposed to embedding hosts.
+    pub const title_max_bytes = max_metadata_bytes;
     /// Bounds the optional copied shell name in shell-integration metadata.
     pub const shell_name_max_bytes = max_shell_name_bytes;
     /// Bounds copied OSC 133 metadata retained by one shell mark.
@@ -12762,7 +12764,7 @@ pub const Terminal = struct {
         allocator: std.mem.Allocator,
         /// Contains newline-separated finalized lines after the requested cursor.
         text: []u8,
-        /// Contains the current primary logical line for this publication.
+        /// Contains the current primary logical line for this semantic observation.
         open_line: []u8,
         /// Reports that the open line did not fit after copied finalized evidence.
         open_line_omitted: bool,
@@ -12772,14 +12774,14 @@ pub const Terminal = struct {
         oldest: u64,
         /// Identifies the last finalized line copied, or the requested cursor.
         cursor: u64,
-        /// Identifies the newest finalized line retained at publication time.
+        /// Identifies the newest finalized line retained at observation time.
         newest: u64,
         /// Counts finalized lines copied into `text`.
         line_count: u16,
         /// Reports that another finalized line remains after `cursor`.
         more: bool,
-        /// Binds `open_line` to one terminal-state observation.
-        publication: u64,
+        /// Binds `open_line` to one terminal semantic-state observation.
+        semantic_sequence: u64,
 
         /// Releases both copied byte slices exactly once.
         pub fn deinit(self: *LogicalOutput) void {
@@ -12792,7 +12794,7 @@ pub const Terminal = struct {
 
     /// Distinguishes copied output from exact cursor and retention failures.
     pub const LogicalOutputResult = union(enum) {
-        /// Owns copied finalized and publication-scoped open output.
+        /// Owns copied finalized and semantic-observation-scoped open output.
         output: LogicalOutput,
         /// Reports the oldest cursor after whole-line retention eviction.
         cursor_stale: u64,
@@ -12832,7 +12834,7 @@ pub const Terminal = struct {
     designations: [4]u8 = .{ 'B', 'B', 'B', 'B' },
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
-    dirty_generation: u64 = 1,
+    semantic_sequence: u64 = 1,
     visual_generation: u64 = 1,
     visual_acknowledged_generation: u64 = 0,
     visual_full: bool = true,
@@ -12997,15 +12999,9 @@ pub const Terminal = struct {
         selection_before: ?TerminalSelection,
         history_before: u32,
         was_scrolled: bool,
-        state_changed: ?bool,
+        state_changed: bool,
     ) void {
-        if (state_changed) |changed| {
-            self.postApply(changed);
-        } else {
-            self.screen_state.activeSelection().clearIfInvalidatedByGrid(
-                self.screen_state.activeConst(),
-            );
-        }
+        self.postApply(state_changed);
         self.repairScrollbackAfterHistoryChange(history_before, was_scrolled);
         if (!std.meta.eql(selection_before, self.screen_state.activeSelectionConst().state())) {
             self.visual_full = true;
@@ -13013,12 +13009,12 @@ pub const Terminal = struct {
         self.finishVisualMutation(visual_before);
     }
 
-    /// Publishes mutation identity and enforces cursor and selection invariants after routing.
+    /// Advances semantic mutation identity and enforces selection invariants after routing.
     pub fn postApply(self: *Terminal, state_changed: bool) void {
         self.screen_state.activeSelection().clearIfInvalidatedByGrid(
             self.screen_state.activeConst(),
         );
-        if (state_changed) self.dirty_generation +%= 1;
+        if (state_changed) advanceIdentity(&self.semantic_sequence);
     }
 
     /// Resize both terminal screens.
@@ -13036,7 +13032,7 @@ pub const Terminal = struct {
             self.screen_state.activeConst(),
         );
         self.clampScrollbackOffset();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
         self.noteSourceWideVisualChange();
         self.finishVisualMutation(visual_before);
     }
@@ -13091,7 +13087,7 @@ pub const Terminal = struct {
             .kitty,
             if (preference == .dark) "?997;1n" else "?997;2n",
         );
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
         return true;
     }
 
@@ -13110,7 +13106,7 @@ pub const Terminal = struct {
             if (preference == .dark) "?997;1n" else "?997;2n",
         );
         self.host.consumeColorPreferenceQuery();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Applies RIS while preserving dimensions and owned allocations.
@@ -13806,6 +13802,15 @@ pub const Terminal = struct {
         return if (projected.hasRows()) projected else null;
     }
 
+    /// Copies the process-lifetime semantic mutation identity.
+    ///
+    /// The nonzero sequence advances for accepted terminal state or consequence
+    /// mutation and remains stable for rejected, ignored, or repeated no-ops.
+    /// It does not identify visual acknowledgement or external scheduling.
+    pub fn semanticSequence(self: *const Terminal) u64 {
+        return self.semantic_sequence;
+    }
+
     /// Borrows coherent visual-only terminal state until the next terminal mutation.
     ///
     /// The caller supplies no allocator because this operation allocates and owns
@@ -13899,7 +13904,7 @@ pub const Terminal = struct {
         };
     }
 
-    /// Copies finalized primary logical lines after `cursor` and one publication-scoped open line.
+    /// Copies finalized primary logical lines after `cursor` and one observation-scoped open line.
     pub fn copyLogicalOutput(
         self: *Terminal,
         allocator: std.mem.Allocator,
@@ -13982,7 +13987,7 @@ pub const Terminal = struct {
         errdefer allocator.free(owned_text);
         const owned_losses = try losses.toOwnedSlice(allocator);
         errdefer allocator.free(owned_losses);
-        const publication = self.dirty_generation;
+        const semantic_sequence = self.semantic_sequence;
         return .{ .output = .{
             .allocator = allocator,
             .text = owned_text,
@@ -13994,7 +13999,7 @@ pub const Terminal = struct {
             .newest = newest,
             .line_count = line_count,
             .more = more,
-            .publication = publication,
+            .semantic_sequence = semantic_sequence,
         } };
     }
 
@@ -14066,7 +14071,7 @@ pub const Terminal = struct {
         self.screen_state.activeSelection().finish();
         const after = self.selectionState() orelse return;
         if (before.selecting == after.selecting) return;
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Clears active-screen selection state.
@@ -14191,7 +14196,7 @@ pub const Terminal = struct {
         allocator: std.mem.Allocator,
     ) error{ OutOfMemory, StaleClipboardRequest }!?[]u8 {
         const drained = try self.host.drainPendingClipboardSet(generation, allocator);
-        if (drained != null) self.dirty_generation +%= 1;
+        if (drained != null) advanceIdentity(&self.semantic_sequence);
         return drained;
     }
 
@@ -14203,7 +14208,7 @@ pub const Terminal = struct {
     /// Queue one host-approved OSC 52 reply and consume its query only after complete bounded serialization.
     pub fn replyPendingClipboard(self: *Terminal, generation: u64, bytes: []const u8) ClipboardReplyError!bool {
         const replied = try self.host.replyPendingClipboardQuery(generation, bytes);
-        if (replied) self.dirty_generation +%= 1;
+        if (replied) advanceIdentity(&self.semantic_sequence);
         return replied;
     }
 
@@ -14216,7 +14221,7 @@ pub const Terminal = struct {
         if (request.generation != generation) return error.StaleClipboardRequest;
         if (request.kind == .query) return error.ClipboardReplyRequired;
         self.host.consumeClipboardRequest();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Consume the matching FIFO-head notification consequence after host policy runs.
@@ -14224,7 +14229,7 @@ pub const Terminal = struct {
         const notification = self.host.notificationView() orelse return error.StaleNotification;
         if (notification.generation != generation) return error.StaleNotification;
         self.host.consumeNotification();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Consume the matching FIFO-head pointer request after host policy runs.
@@ -14232,7 +14237,7 @@ pub const Terminal = struct {
         const request = self.host.pointerShapeView() orelse return error.StalePointerShape;
         if (request.generation != generation) return error.StalePointerShape;
         self.host.consumePointerShape();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Consume the matching FIFO-head file-transfer packet after host policy runs.
@@ -14240,7 +14245,7 @@ pub const Terminal = struct {
         const packet = self.host.fileTransferHead() orelse return error.StaleFileTransfer;
         if (packet.generation != generation) return error.StaleFileTransfer;
         self.host.consumeFileTransfer();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Queue one exact reply for the matching FIFO-head query, consuming it only after serialization.
@@ -14285,7 +14290,7 @@ pub const Terminal = struct {
             },
         }
         self.host.consumeWindowRequestHead();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Consume the matching FIFO-head operation after host handling; queries require an exact reply instead.
@@ -14297,7 +14302,7 @@ pub const Terminal = struct {
         if (occurrence.generation != generation) return error.StaleWindowRequest;
         if (isWindowQuery(occurrence.request)) return error.WindowReplyRequired;
         self.host.consumeWindowRequestHead();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Consume the matching FIFO-head media-copy command after host policy runs.
@@ -14305,7 +14310,7 @@ pub const Terminal = struct {
         const occurrence = self.host.mediaCopyHead() orelse return error.StaleMediaCopy;
         if (occurrence.generation != generation) return error.StaleMediaCopy;
         self.host.consumeMediaCopy();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Consume the matching FIFO-head configuration, delegated transport, or host-directed DCS consequence.
@@ -14313,7 +14318,7 @@ pub const Terminal = struct {
         const occurrence = self.host.dcsPayloadHead() orelse return error.StaleDcsPayload;
         if (occurrence.generation != generation) return error.StaleDcsPayload;
         self.host.consumeDcsPayload();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Consume the matching FIFO-head APC, PM, or SOS payload after host handling.
@@ -14321,7 +14326,7 @@ pub const Terminal = struct {
         const occurrence = self.host.stringPayloadHead() orelse return error.StaleStringPayload;
         if (occurrence.generation != generation) return error.StaleStringPayload;
         self.host.consumeStringPayload();
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     fn noteSelectionChanged(self: *Terminal, previous_view: View, previous: ?TerminalSelection) void {
@@ -14330,7 +14335,7 @@ pub const Terminal = struct {
             visibleView(&self.screen_state, self.scrollback_offset),
             self.selectionState(),
         );
-        self.dirty_generation +%= 1;
+        advanceIdentity(&self.semantic_sequence);
     }
 
     fn markSelectionAppearance(self: *Terminal, view: View, selection: ?TerminalSelection) void {
@@ -14635,8 +14640,8 @@ test "terminal publishes every bounded bell and remains reusable" {
 
     const second = try vt.feed("\x07x");
     try std.testing.expect(second.state_changed);
-    const publication = vt.stateSnapshot();
-    try std.testing.expectEqual(@as(u64, 2), publication.bell_generation);
+    const snapshot = vt.stateSnapshot();
+    try std.testing.expectEqual(@as(u64, 2), snapshot.bell_generation);
     try std.testing.expectEqual(@as(u21, 'x'), vt.visualView().view.cellAt(0, 0));
 
     vt.host.bell_generation = std.math.maxInt(u64);

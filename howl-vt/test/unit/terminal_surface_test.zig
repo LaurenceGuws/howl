@@ -250,6 +250,56 @@ test "visual view accumulates sparse cells and derives cursor overlay independen
     try std.testing.expect(metadata_only.dirty == .none);
 }
 
+test "semantic sequence spans visual and host consequence mutation truth" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    const initial = terminal.semanticSequence();
+    const initial_visual = terminal.visualView().dirty_token;
+
+    const ignored = try terminal.feed("\x1b[?9999h");
+    try std.testing.expect(!ignored.state_changed);
+    try std.testing.expectEqual(initial, terminal.semanticSequence());
+    try std.testing.expect((try terminal.feed("A")).state_changed);
+    const partial_line = terminal.semanticSequence();
+    try std.testing.expect(partial_line > initial);
+    try std.testing.expect((try terminal.feed("\r")).state_changed);
+    const cursor = terminal.semanticSequence();
+    try std.testing.expect(cursor > partial_line);
+
+    const before_title_visual = terminal.visualView().dirty_token;
+    try std.testing.expect((try terminal.feed("\x1b]2;owner truth\x07")).title_changed);
+    const title = terminal.semanticSequence();
+    try std.testing.expect(title > cursor);
+    try std.testing.expectEqual(before_title_visual, terminal.visualView().dirty_token);
+    const repeated_title = try terminal.feed("\x1b]2;owner truth\x07");
+    try std.testing.expect(!repeated_title.state_changed);
+    try std.testing.expectEqual(title, terminal.semanticSequence());
+    try std.testing.expect((try terminal.feed("\x07")).state_changed);
+    try std.testing.expect(terminal.semanticSequence() > title);
+    try std.testing.expect(initial_visual != terminal.visualView().dirty_token);
+
+    const before_resize = terminal.semanticSequence();
+    try terminal.resize(3, 9);
+    try std.testing.expect(terminal.semanticSequence() > before_resize);
+
+    try std.testing.expect((try terminal.feed("Z")).state_changed);
+    const before_reset = terminal.semanticSequence();
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    const reset = terminal.semanticSequence();
+    try std.testing.expect(reset > before_reset);
+    const repeated_reset = try terminal.feed("\x1bc");
+    try std.testing.expect(repeated_reset.state_changed);
+    try std.testing.expect(terminal.semanticSequence() > reset);
+
+    terminal.host.bell_generation = std.math.maxInt(u64);
+    const before_partial_failure = terminal.semanticSequence();
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("Q\x07"));
+    try std.testing.expect(terminal.semanticSequence() > before_partial_failure);
+    const before_rejected = terminal.semanticSequence();
+    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x07"));
+    try std.testing.expectEqual(before_rejected, terminal.semanticSequence());
+}
+
 test "visual view marks selection geometry and source-wide discontinuities exactly" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
