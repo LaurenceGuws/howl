@@ -490,9 +490,29 @@ test "terminal tracks synchronized output private mode" {
 
     try stream.nextSlice("\x1b[?2026h");
     try std.testing.expect(vt.modes.synchronized_output);
+    try std.testing.expect(vt.visualView().synchronized_output);
 
     try stream.nextSlice("\x1b[?2026l");
     try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect(!vt.visualView().synchronized_output);
+}
+
+test "stationary cursor movement advances visual identity outside synchronized output" {
+    var vt = try Terminal.init(std.testing.allocator, 4, 8);
+    defer vt.deinit();
+
+    try std.testing.expect(!(try vt.feed("\x1b[?25h")).state_changed);
+    const before = vt.visualView();
+    try std.testing.expect(before.view.cursor_visible);
+    const before_token = before.dirty_token;
+    try std.testing.expect(vt.ackVisual(before_token));
+
+    try std.testing.expect((try vt.feed("\x1b[3;4H")).state_changed);
+    const after = vt.visualView();
+    try std.testing.expect(after.dirty_token != before_token);
+    try std.testing.expectEqual(@as(u16, 2), after.view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), after.view.cursor_col);
+    try std.testing.expect(!after.synchronized_output);
 }
 
 test "synchronized update DCS shares exact bounded mode state" {

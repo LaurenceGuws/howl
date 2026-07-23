@@ -13945,6 +13945,8 @@ pub const Terminal = struct {
         presentation: Presentation,
         /// Borrows the selected terminal image frames and visible placements.
         images: VisualImages,
+        /// Copies the application-controlled synchronized-output mode state.
+        synchronized_output: bool,
         /// Identifies the exact visual observation accepted by `ackVisual`.
         dirty_token: DirtyToken,
 
@@ -15157,6 +15159,7 @@ pub const Terminal = struct {
                 .generation = self.graphics.generation(),
                 .content_generation = self.graphics.imageGeneration(),
             },
+            .synchronized_output = self.modes.synchronized_output,
             .dirty_token = @fromBackingInt(@intCast(self.visual_generation)),
         };
     }

@@ -36,6 +36,7 @@ howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
 howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
+howl-host/src/window.zig|anyopaque|fn captureAndCompareVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?control.DirtyToken {
 howl-host/src/window.zig|anyopaque|fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
 howl-host/src/window.zig|anyopaque|fn dataDeviceDrop(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn dataDeviceLeave(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {

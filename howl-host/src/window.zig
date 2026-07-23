@@ -391,6 +391,15 @@ const DrawProgress = struct {
     }
 };
 
+const VisualCapture = struct {
+    changed: bool,
+    withheld: bool = false,
+
+    fn presentable(self: VisualCapture) bool {
+        return self.changed and !self.withheld;
+    }
+};
+
 const VisualStorage = struct {
     allocator: std.mem.Allocator,
     cells: []terminal_render.Cell,
@@ -400,6 +409,8 @@ const VisualStorage = struct {
     rows: u16,
     cols: u16,
     baseline: ?terminal_render.ProjectionBaseline = null,
+    observed_token: ?control.DirtyToken = null,
+    withheld_change_pending: bool = false,
     image_pixels: []u8,
     image_scratch: []u8,
     image_pixel_count: usize = 0,
@@ -445,19 +456,36 @@ const VisualStorage = struct {
         self.* = undefined;
     }
 
-    fn capture(self: *VisualStorage, terminal: *control.Terminal) Error!bool {
+    fn capture(
+        self: *VisualStorage,
+        terminal: *control.Terminal,
+    ) Error!VisualCapture {
         var attempts: u8 = 0;
         while (attempts < 4) : (attempts += 1) {
-            var context = ProjectionContext{ .storage = self };
+            var context = ProjectionContext{
+                .storage = self,
+                .allow_withhold = terminal.state() == .running,
+            };
             const inspection = terminal.inspectVisual(&context, projectVisual);
             if (context.failure) |failure| return failure;
             if (context.projected) {
+                if (context.withheld) {
+                    std.debug.assert(inspection == .declined);
+                    self.withheld_change_pending =
+                        self.withheld_change_pending or context.changed;
+                    // A stopped producer cannot end the transaction later;
+                    // retry once without withholding its final complete state.
+                    if (terminal.state() != .running) continue;
+                    return .{ .changed = context.changed, .withheld = true };
+                }
                 switch (inspection) {
                     .acknowledged, .already_acknowledged => {},
                     .stale => return error.StaleVisualInspection,
                     .declined => return error.VisualInspectionDeclined,
                 }
-                return context.changed;
+                const changed = context.changed or self.withheld_change_pending;
+                self.withheld_change_pending = false;
+                return .{ .changed = changed };
             }
             if (inspection == .stale) return error.StaleVisualInspection;
             std.debug.assert(inspection == .declined);
@@ -477,7 +505,10 @@ const VisualStorage = struct {
             const required_rows = context.required_rows orelse return error.GeometryUnstable;
             const required_cols = context.required_cols orelse return error.GeometryUnstable;
             var replacement = try VisualStorage.init(self.allocator, required_rows, required_cols);
-            var replacement_context = ProjectionContext{ .storage = &replacement };
+            var replacement_context = ProjectionContext{
+                .storage = &replacement,
+                .allow_withhold = context.allow_withhold,
+            };
             const replacement_inspection = terminal.inspectVisual(&replacement_context, projectVisual);
             if (replacement_context.failure) |failure| {
                 replacement.deinit();
@@ -492,22 +523,31 @@ const VisualStorage = struct {
                 replacement.deinit();
                 continue;
             }
-            switch (replacement_inspection) {
-                .acknowledged, .already_acknowledged => {},
-                .stale => {
+            if (replacement_context.withheld) {
+                std.debug.assert(replacement_inspection == .declined);
+                if (terminal.state() != .running) {
                     replacement.deinit();
-                    return error.StaleVisualInspection;
-                },
-                .declined => {
-                    replacement.deinit();
-                    return error.VisualInspectionDeclined;
-                },
+                    continue;
+                }
+            } else {
+                switch (replacement_inspection) {
+                    .acknowledged, .already_acknowledged => {},
+                    .stale => {
+                        replacement.deinit();
+                        return error.StaleVisualInspection;
+                    },
+                    .declined => {
+                        replacement.deinit();
+                        return error.VisualInspectionDeclined;
+                    },
+                }
             }
             const previous = self.*;
             self.* = replacement;
+            self.withheld_change_pending = replacement_context.withheld;
             replacement = previous;
             replacement.deinit();
-            return true;
+            return .{ .changed = true, .withheld = replacement_context.withheld };
         }
         return error.GeometryUnstable;
     }
@@ -599,9 +639,11 @@ const VisualStorage = struct {
 
 const ProjectionContext = struct {
     storage: *VisualStorage,
+    allow_withhold: bool,
     failure: ?terminal_render.Error = null,
     projected: bool = false,
     changed: bool = false,
+    withheld: bool = false,
     required_rows: ?u16 = null,
     required_cols: ?u16 = null,
     required_image_bytes: ?usize = null,
@@ -660,6 +702,7 @@ const Window = struct {
     repeat: Repeat = .{},
     cursor_visible: bool = true,
     cursor_blink_armed: bool = false,
+    visual_withheld: bool = false,
     physical_keys: PhysicalKeys = .{},
     pointer_state: PointerState = .{},
     axis_frame: AxisFrame = .{},
@@ -791,13 +834,17 @@ const Window = struct {
         var captured = false;
         while (true) {
             self.terminal.?.consumeWake();
-            if (try self.visual.?.capture(self.terminal.?)) captured = true;
+            const capture = try self.visual.?.capture(self.terminal.?);
+            if (capture.changed) captured = true;
+            self.visual_withheld = capture.withheld;
             if (!self.wake.pending.swap(false, .acq_rel)) break;
         }
         self.applyTerminalPresentation();
         if (!captured) return error.GeometryUnstable;
-        try self.resetCursorBlink();
-        try self.submitVisual(self.size);
+        if (!self.visual_withheld) {
+            try self.resetCursorBlink();
+            try self.submitVisual(self.size);
+        }
         if (self.terminal.?.state() != .running) self.finishTerminal();
         return self;
     }
@@ -939,10 +986,16 @@ const Window = struct {
 
     fn captureAndSubmit(self: *Window) Error!void {
         const terminal = self.terminal.?;
-        if (try self.visual.?.capture(terminal)) {
-            try self.resetCursorBlink();
-            try self.submitVisual(self.size);
+        const capture = try self.visual.?.capture(terminal);
+        self.visual_withheld = capture.withheld;
+        if (self.visual_withheld) {
+            self.cursor_blink_armed = false;
+            try setCursorTimer(self.cursor_signal, false);
+            return;
         }
+        if (!capture.presentable()) return;
+        try self.resetCursorBlink();
+        try self.submitVisual(self.size);
     }
 
     fn submitVisual(self: *Window, size: Size) Error!void {
@@ -990,11 +1043,12 @@ const Window = struct {
                 geometry_changed = true;
             }
         }
-        const visual_changed = try self.visual.?.capture(terminal);
-        if (geometry_changed and !visual_changed) return error.GeometryUnstable;
-        if (visual_changed) try self.resetCursorBlink();
+        const capture = try self.visual.?.capture(terminal);
+        if (geometry_changed and !capture.changed) return error.GeometryUnstable;
+        self.visual_withheld = capture.withheld;
+        if (capture.presentable()) try self.resetCursorBlink();
         self.viewport_state.reconcile(viewportFacts(terminal.viewportFacts()));
-        try self.submitVisual(target);
+        if (!self.visual_withheld) try self.submitVisual(target);
         self.size = target;
         if (terminal.state() != .running) self.finishTerminal();
     }
@@ -1101,7 +1155,7 @@ const Window = struct {
 
     fn blinkCursor(self: *Window) Error!void {
         const expirations = try readCursorTimer(self.cursor_signal);
-        if (!self.cursor_blink_armed) return;
+        if (!self.cursor_blink_armed or self.visual_withheld) return;
         if (expirations & 1 != 0) self.cursor_visible = !self.cursor_visible;
         try self.submitVisual(self.size);
     }
@@ -1993,7 +2047,14 @@ pub fn run(
     shell: []const u8,
     command: ?[]const u8,
 ) Error!void {
-    const window_owner = try Window.init(allocator, io, runtime_dir, font_path, shell, command);
+    const window_owner = try Window.init(
+        allocator,
+        io,
+        runtime_dir,
+        font_path,
+        shell,
+        command,
+    );
     var primary_failure: ?Error = null;
     window_owner.runLoop() catch |failure| {
         primary_failure = failure;
@@ -2076,12 +2137,13 @@ fn projectVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?cont
         };
         context.storage.applyImages(image_update);
     }
-    context.changed = update.full or update.row_patches.len != 0 or
-        context.storage.baseline == null or
-        !std.meta.eql(context.storage.baseline.?, update.next_baseline) or images_changed;
+    context.changed = context.storage.observed_token == null or
+        context.storage.observed_token.? != source.dirty_token;
     context.storage.apply(update);
+    context.storage.observed_token = source.dirty_token;
     context.projected = true;
-    return source.dirty_token;
+    context.withheld = context.allow_withhold and source.synchronized_output;
+    return if (context.withheld) null else source.dirty_token;
 }
 
 fn fontConfigs(path: []const u8) [4]text.FontConfig {
@@ -3519,18 +3581,86 @@ test "visual storage admits complete and resized control observations" {
     var visual = try VisualStorage.init(std.testing.allocator, 2, 4);
     defer visual.deinit();
 
-    try std.testing.expect(try visual.capture(terminal));
+    try std.testing.expectEqual(VisualCapture{ .changed = true }, try visual.capture(terminal));
     try std.testing.expectEqual(@as(u16, 2), visual.baseline.?.rows);
     try std.testing.expectEqual(@as(u16, 4), visual.baseline.?.cols);
     for (visual.cells) |cell| try std.testing.expectEqual(@as(u21, 0), cell.codepoint);
     for (visual.row_geometry) |geometry|
         try std.testing.expectEqual(terminal_render.LineGeometry.single_width, geometry);
-    try std.testing.expect(!try visual.capture(terminal));
+    try std.testing.expectEqual(VisualCapture{ .changed = false }, try visual.capture(terminal));
 
     try std.testing.expect((try terminal.resize(5, 3)).changed);
-    try std.testing.expect(try visual.capture(terminal));
+    try std.testing.expectEqual(VisualCapture{ .changed = true }, try visual.capture(terminal));
     try std.testing.expectEqual(@as(u16, 3), visual.rows);
     try std.testing.expectEqual(@as(u16, 5), visual.cols);
+}
+
+test "synchronized output retains cumulative visuals without presentation admission" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{
+            .command = "stty -echo; printf '\\033[?2026hA'; read -r _; printf B; read -r _; " ++
+                "printf '\\033[?2026l'; sleep 30",
+            .rows = 2,
+            .cols = 8,
+        },
+        .{},
+    );
+    defer terminal.deinit();
+    var visual = try VisualStorage.init(std.testing.allocator, 2, 8);
+    defer visual.deinit();
+
+    var attempts: u8 = 0;
+    var capture = VisualCapture{ .changed = false };
+    while (attempts < 100) : (attempts += 1) {
+        terminal.consumeWake();
+        capture = try visual.capture(terminal);
+        if (capture.withheld and capture.changed and visualContains(&visual, "A")) break;
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expectEqual(VisualCapture{ .changed = true, .withheld = true }, capture);
+    try std.testing.expect(!capture.presentable());
+    try std.testing.expectEqual(
+        VisualCapture{ .changed = false, .withheld = true },
+        try visual.capture(terminal),
+    );
+
+    const middle = try terminal.send(&.{.{ .input = .{ .paste = "\n" } }});
+    try std.testing.expect(middle.outcome == .complete);
+    attempts = 0;
+    while (attempts < 100) : (attempts += 1) {
+        terminal.consumeWake();
+        capture = try visual.capture(terminal);
+        if (capture.withheld and capture.changed and
+            visualContains(&visual, "A") and visualContains(&visual, "B")) break;
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expectEqual(VisualCapture{ .changed = true, .withheld = true }, capture);
+    try std.testing.expect(!capture.presentable());
+
+    const finish = try terminal.send(&.{.{ .input = .{ .paste = "\n" } }});
+    try std.testing.expect(finish.outcome == .complete);
+    attempts = 0;
+    while (attempts < 100) : (attempts += 1) {
+        terminal.consumeWake();
+        capture = try visual.capture(terminal);
+        if (capture.presentable()) break;
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expectEqual(VisualCapture{ .changed = true }, capture);
+    try std.testing.expect(visualContains(&visual, "A"));
+    try std.testing.expect(visualContains(&visual, "B"));
+    try std.testing.expectEqual(VisualCapture{ .changed = false }, try visual.capture(terminal));
 }
 
 test "visual storage retains DEC row geometry and cell baseline from child output" {
@@ -3552,7 +3682,7 @@ test "visual storage retains DEC row geometry and cell baseline from child outpu
     var observed_change = false;
     while (attempts < 100 and !visualHasGeometryProof(&visual)) : (attempts += 1) {
         terminal.consumeWake();
-        observed_change = try visual.capture(terminal) or observed_change;
+        observed_change = (try visual.capture(terminal)).changed or observed_change;
         try (std.Io.Clock.Duration{
             .raw = .fromMilliseconds(5),
             .clock = .awake,
@@ -3568,27 +3698,175 @@ test "visual storage retains DEC row geometry and cell baseline from child outpu
     try std.testing.expectEqual(terminal_render.CellBaseline.lowered, visual.cells[25].baseline);
 
     try std.testing.expect((try terminal.resize(10, 5)).changed);
-    try std.testing.expect(try visual.capture(terminal));
+    try std.testing.expectEqual(VisualCapture{ .changed = true }, try visual.capture(terminal));
     for (visual.row_geometry) |geometry|
         try std.testing.expectEqual(terminal_render.LineGeometry.single_width, geometry);
+}
+
+const VisualComparison = struct {
+    visual: *VisualStorage,
+    cells: []terminal_render.Cell,
+    geometry: []terminal_render.LineGeometry,
+    patches: []terminal_render.RowPatch,
+    mismatch: ?usize = null,
+    changed: bool = false,
+    withheld: bool = false,
+    failure: ?terminal_render.Error = null,
+};
+
+fn captureAndCompareVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?control.DirtyToken {
+    const context: *VisualComparison = @ptrCast(@alignCast(context_pointer.?));
+    const mode: terminal_render.ProjectMode = if (context.visual.baseline) |baseline|
+        .{ .incremental = baseline }
+    else
+        .full;
+    const update = terminal_render.project(source, mode, .{
+        .cells = context.visual.scratch,
+        .rows = context.visual.patches,
+    }, selection_style) catch |failure| retry: {
+        if (failure != error.FullRequired) {
+            context.failure = failure;
+            return null;
+        }
+        break :retry terminal_render.project(source, .full, .{
+            .cells = context.visual.scratch,
+            .rows = context.visual.patches,
+        }, selection_style) catch |full_failure| {
+            context.failure = full_failure;
+            return null;
+        };
+    };
+    context.changed = update.full or update.row_patches.len != 0 or
+        context.visual.baseline == null or
+        !std.meta.eql(context.visual.baseline.?, update.next_baseline);
+    context.visual.apply(update);
+
+    const complete = terminal_render.project(source, .full, .{
+        .cells = context.cells,
+        .rows = context.patches,
+    }, selection_style) catch |failure| {
+        context.failure = failure;
+        return null;
+    };
+    std.debug.assert(complete.cells.len == context.cells.len);
+    for (complete.row_patches) |patch| context.geometry[patch.row] = patch.geometry;
+    for (context.cells, context.visual.cells, 0..) |expected, actual, index| {
+        if (!std.meta.eql(expected, actual)) {
+            context.mismatch = index;
+            break;
+        }
+    }
+    if (context.mismatch == null)
+        for (context.geometry, context.visual.row_geometry, 0..) |expected, actual, index| {
+            if (expected != actual) {
+                context.mismatch = @as(usize, context.visual.cells.len) + index;
+                break;
+            }
+        };
+    if (context.mismatch == null and !std.meta.eql(complete.cursor, context.visual.baseline.?.cursor))
+        context.mismatch = context.visual.cells.len + context.geometry.len;
+    context.withheld = source.synchronized_output;
+    return if (context.withheld) null else source.dirty_token;
+}
+
+fn captureAndExpectComplete(
+    terminal: *control.Terminal,
+    visual: *VisualStorage,
+) !VisualCapture {
+    const cells = try std.testing.allocator.alloc(terminal_render.Cell, visual.cells.len);
+    defer std.testing.allocator.free(cells);
+    const geometry = try std.testing.allocator.alloc(terminal_render.LineGeometry, visual.rows);
+    defer std.testing.allocator.free(geometry);
+    const patches = try std.testing.allocator.alloc(terminal_render.RowPatch, visual.rows);
+    defer std.testing.allocator.free(patches);
+    var comparison = VisualComparison{
+        .visual = visual,
+        .cells = cells,
+        .geometry = geometry,
+        .patches = patches,
+    };
+    const inspection = terminal.inspectVisual(&comparison, captureAndCompareVisual);
+    if (comparison.failure) |failure| return failure;
+    if (comparison.withheld) {
+        try std.testing.expectEqual(control.VisualInspection.declined, inspection);
+    } else {
+        try std.testing.expect(inspection == .acknowledged or inspection == .already_acknowledged);
+    }
+    if (comparison.mismatch) |index| {
+        std.debug.print("visual divergence index={d}\n", .{index});
+        return error.TestExpectedEqual;
+    }
+    return .{
+        .changed = comparison.changed,
+        .withheld = comparison.withheld,
+    };
+}
+
+test "synchronized scroll retains exact incremental visual" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{
+            .command = "stty -echo; printf '\\033[?1049h\\033[?25hrow0\\r\\nrow1\\r\\nrow2\\r\\nrow3\\r\\n" ++
+                "row4\\r\\nrow5\\r\\nrow6\\r\\nrow7\\033[2;2H'; sleep 0.5; " ++
+                "printf '\\033[3;2H'; sleep 0.5; " ++
+                "printf '\\033[?2026h\\033[8;1Hscroll-a\\r\\n'; sleep 0.1; " ++
+                "printf 'scroll-b\\r\\nscroll-c'; sleep 0.1; " ++
+                "printf '\\033[?2026l'; sleep 30",
+            .rows = 8,
+            .cols = 16,
+        },
+        .{},
+    );
+    defer terminal.deinit();
+    var visual = try VisualStorage.init(std.testing.allocator, 8, 16);
+    defer visual.deinit();
+
+    var withheld_changes: u8 = 0;
+    var released = false;
+    var attempts: u16 = 0;
+    while (attempts < 400) : (attempts += 1) {
+        terminal.consumeWake();
+        const capture = try captureAndExpectComplete(terminal, &visual);
+        if (capture.changed and capture.withheld)
+            withheld_changes += 1;
+        if (withheld_changes != 0 and capture.presentable() and
+            visualContains(&visual, "scroll-c"))
+        {
+            released = true;
+            break;
+        }
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expect(terminal.status().alternate_screen);
+    try std.testing.expectEqual(@as(u16, 8), terminal.status().rows);
+    try std.testing.expectEqual(@as(u16, 16), terminal.status().cols);
+    try std.testing.expect(withheld_changes >= 2);
+    try std.testing.expect(released);
+    try std.testing.expect(visualContains(&visual, "scroll-c"));
 }
 
 test "terminal exit retains final visual until its admitted draw completes" {
     const terminal = try control.Terminal.init(
         std.testing.allocator,
         std.testing.io,
-        .{ .command = "printf final-state", .rows = 2, .cols = 16 },
+        .{ .command = "printf '\\033[?2026hfinal-state'", .rows = 2, .cols = 16 },
         .{},
     );
     defer terminal.deinit();
     var visual = try VisualStorage.init(std.testing.allocator, 2, 16);
     defer visual.deinit();
     var progress = DrawProgress{};
+    var last_capture = VisualCapture{ .changed = false };
 
     var attempts: u8 = 0;
     while (attempts < 100) : (attempts += 1) {
         terminal.consumeWake();
-        if (try visual.capture(terminal)) {
+        last_capture = try visual.capture(terminal);
+        if (last_capture.changed) {
             const generation = try progress.next();
             progress.admit(generation);
         }
@@ -3603,6 +3881,7 @@ test "terminal exit retains final visual until its admitted draw completes" {
     }
     try std.testing.expectEqual(control.State.stopped, terminal.state());
     try std.testing.expect(visualContains(&visual, "final-state"));
+    try std.testing.expectEqual(VisualCapture{ .changed = true }, last_capture);
     try std.testing.expect(progress.final != null);
     try std.testing.expect(!progress.done());
     progress.complete(progress.submitted);
@@ -3977,7 +4256,7 @@ test "typed host key uses VT mode encoding before exact PTY transfer" {
     var attempts: u8 = 0;
     while (attempts < 100 and !found) : (attempts += 1) {
         terminal.consumeWake();
-        const changed = try visual.capture(terminal);
+        const changed = (try visual.capture(terminal)).changed;
         found = visualContains(&visual, "1b 5b 41");
         if (!changed and terminal.state() != .running and !found) break;
         if (!found) try (std.Io.Clock.Duration{
@@ -4031,7 +4310,7 @@ test "typed mouse uses VT tracking and SGR encoding before PTY transfer" {
     attempts = 0;
     while (attempts < 100 and !found) : (attempts += 1) {
         terminal.consumeWake();
-        const changed = try visual.capture(terminal);
+        const changed = (try visual.capture(terminal)).changed;
         found = visualContains(&visual, "1b 5b 3c 30 3b 33 3b 32 4d");
         if (!changed and terminal.state() != .running and !found) break;
         if (!found) try (std.Io.Clock.Duration{
@@ -4074,7 +4353,7 @@ test "clipboard paste remains framed by VT bracketed-paste mode" {
     attempts = 0;
     while (attempts < 100 and !found) : (attempts += 1) {
         terminal.consumeWake();
-        const changed = try visual.capture(terminal);
+        const changed = (try visual.capture(terminal)).changed;
         found = visualContains(&visual, "1b 5b 32 30 30 7e 63 6c 69 70 1b 5b 32 30 31 7e");
         if (!changed and terminal.state() != .running and !found) break;
         if (!found) try (std.Io.Clock.Duration{
