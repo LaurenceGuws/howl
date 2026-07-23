@@ -41,7 +41,7 @@ accepted:
   howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, ordered consequence policy, and lifecycle
   howl-host/src/renderer.zig: one render thread and concrete EGL/GLES cell, DEC geometry, baseline, and decoration owner
   howl-host/src/viewport.zig: host scroll intent and exact scrollbar paint/hit geometry
-  howl-host/src/clipboard.zig: bounded UTF-8 clipboard bytes and nonblocking transfer progress
+  howl-host/src/clipboard.zig: bounded UTF-8 clipboard transfers plus Kitty paste-event parsing and framing
   howl-host/src/pointer_shape.zig: bounded primary and alternate OSC 22 stack and query policy
   howl-host/vendor/cursor-shape: generated optional Wayland cursor-shape protocol bindings
   howl-host/vendor/xdg-system-bell: generated optional Wayland system-bell protocol bindings

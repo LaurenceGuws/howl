@@ -2768,14 +2768,15 @@ references:
             effect: toggle extended paste events
             conditions: >-
               Howl retains, reports through mode queries and state snapshots, saves, restores, and resets the mode; the embedder still owns Kitty's
-              permission-sensitive multipart OSC 5522 clipboard exchange; Howl also cancels pending wrap at the mode
-              boundary.
+              permission-sensitive OSC 5522 clipboard exchange; howl-host sends a one-time-password UTF-8 MIME event
+              for an operator paste and admits exactly one matching read; Howl also cancels pending wrap at the mode boundary.
             relevance: input
-            howl: {support: partial, disposition: delegated, owner: howl-host,
-              residual: The Wayland host does not yet perform Kitty's permission-sensitive multipart paste exchange.,
-              source: howl-vt/src/terminal.zig, symbol: Terminal.stateSnapshot, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
+            howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately grants only one operator-triggered UTF-8 clipboard read and excludes
+                general permission prompts, primary selection, and arbitrary MIME policy.,
+              source: howl-host/src/window.zig, symbol: Window.requestClipboardPaste, proof: {
+              path: howl-host/src/clipboard.zig,
+              symbol: "Kitty paste event and granted read use exact bounded framing"}}
           - id: kitty.mode.application_escape
             raw: "CSI ? 7727 h|l"
             effect: reject application escape mode
@@ -3338,13 +3339,16 @@ references:
             raw: "OSC 5522 ; metadata ; payload ST"
             effect: Kitty clipboard extension
             conditions: >-
-              Howl retains exact encoded packets up to 8 KiB in the shared eight-entry clipboard FIFO and additionally
-              accepts BEL termination; MIME/base64 parsing, multi-packet transactions, permissions, and replies remain
-              host-owned.
+              Howl retains exact encoded packets up to 8 KiB in the shared eight-entry clipboard FIFO, accepts BEL
+              termination, and howl-host parses bounded metadata and MIME payloads, grants one operator-triggered UTF-8
+              read, replies transactionally, and rejects unsupported requests.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainKittyClipboard, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "Kitty OSC 5522 shares ordered clipboard admission without host policy"}}
+            howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately excludes arbitrary MIME, write transactions, primary selection, persistent
+                grants, and interactive permission prompts.,
+              source: howl-host/src/window.zig, symbol: Window.applyKittyClipboard, proof: {
+              path: howl-control/src/howl_control.zig,
+              symbol: "Kitty clipboard packet copy and reply preserve exact FIFO identity"}}
           - {id: kitty.osc.text_size, raw: "OSC TEXT_SIZE_CODE ; Pt (BEL|ST)", effect: control text sizing,
             relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-host, milestone: text_presentation}}
           - {id: kitty.osc.drag_drop, raw: "OSC DND_CODE ; Pt (BEL|ST)", effect: drag and drop control,

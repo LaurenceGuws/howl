@@ -222,6 +222,8 @@ pub const title_max_bytes = howl_vt.Terminal.title_max_bytes;
 pub const clipboard_selection_max_bytes = howl_vt.Terminal.clipboard_selection_max_bytes;
 /// Matches the largest host bytes accepted by one exact OSC 52 reply.
 pub const clipboard_reply_max_bytes = howl_vt.Terminal.clipboard_reply_max_bytes;
+/// Bounds one copied Kitty OSC 5522 packet retained by VT.
+pub const kitty_clipboard_packet_max_bytes = howl_vt.Terminal.kitty_clipboard_packet_max_bytes;
 /// Matches the VT owner's bounded ordered clipboard occurrence capacity.
 pub const clipboard_max_count = howl_vt.Terminal.clipboard_max_count;
 /// Matches the VT owner's bounded ordered window-request capacity.
@@ -317,6 +319,17 @@ pub const ClipboardSetError = std.mem.Allocator.Error || error{
 /// Reports reply preparation or post-transfer identity failure.
 pub const ClipboardReplyError = std.mem.Allocator.Error || error{
     ClipboardReplyMismatch,
+    ConsequenceLimit,
+    StaleClipboardRequest,
+};
+/// Reports copied Kitty-packet admission failure without consuming the FIFO head.
+pub const KittyClipboardPacketError = std.mem.Allocator.Error || error{
+    ClipboardLimit,
+    ClipboardPacketMismatch,
+    StaleClipboardRequest,
+};
+/// Reports exact Kitty reply validation, transfer, or post-transfer identity failure.
+pub const KittyClipboardReplyError = error{
     ConsequenceLimit,
     StaleClipboardRequest,
 };
@@ -907,6 +920,57 @@ pub const Terminal = struct {
             allocator,
             max_bytes,
         )) orelse error.ClipboardSetMismatch;
+    }
+
+    /// Copies one exact FIFO-head Kitty OSC 5522 packet without retaining a VT borrow.
+    pub fn copyKittyClipboardPacket(
+        self: *Terminal,
+        generation: u64,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) KittyClipboardPacketError![]u8 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return (try self.model.copyPendingKittyClipboard(
+            generation,
+            allocator,
+            max_bytes,
+        )) orelse error.ClipboardPacketMismatch;
+    }
+
+    /// Transfers complete host-serialized Kitty OSC 5522 replies, then consumes only their exact packet.
+    pub fn replyKittyClipboard(
+        self: *Terminal,
+        generation: u64,
+        reply: []const u8,
+    ) KittyClipboardReplyError!ClipboardReplyTransfer {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const validated = self.model.validatePendingKittyClipboardReply(generation, reply.len);
+        self.lock.unlock(self.io);
+        try validated;
+        if (reply.len > max_transfer_bytes) return error.ConsequenceLimit;
+        self.write_lock.lockUncancelable(self.io);
+        const transfer = self.transport.transfer(self.io, reply, self.transfer_timeout_ms);
+        self.write_lock.unlock(self.io);
+        switch (transfer) {
+            .incomplete => return transfer,
+            .complete => {},
+        }
+        self.lock.lockUncancelable(self.io);
+        const completed = self.model.completePendingKittyClipboardReply(generation);
+        self.lock.unlock(self.io);
+        try completed;
+        self.notify();
+        return transfer;
+    }
+
+    /// Reports whether the active VT mode asks the executable to negotiate paste MIME data.
+    pub fn pasteEvents(self: *Terminal) bool {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.pasteEvents();
     }
 
     /// Consumes one exact FIFO-head OSC 52 set after host policy completes.
@@ -2174,6 +2238,61 @@ test "clipboard operations preserve mixed FIFO identity until host completion" {
         terminal.acknowledgeClipboardSet(head.generation),
     );
     try std.testing.expectEqual(head.generation, terminal.clipboardHead().?.generation);
+}
+
+test "Kitty clipboard packet copy and reply preserve exact FIFO identity" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+    try std.testing.expect(!terminal.pasteEvents());
+    try terminal.consume("\x1b[?5522h");
+    try std.testing.expect(terminal.pasteEvents());
+    try terminal.consume(
+        "\x1b]5522;type=read:id=x;dGV4dC9wbGFpbg==\x1b\\" ++
+            "\x1b]52;c;T25l\x07",
+    );
+    terminal.consumeWake();
+
+    const head = terminal.clipboardHead().?;
+    try std.testing.expectEqual(ClipboardKind.other, head.kind);
+    try std.testing.expectError(
+        error.StaleClipboardRequest,
+        terminal.copyKittyClipboardPacket(
+            head.generation + 1,
+            std.testing.allocator,
+            kitty_clipboard_packet_max_bytes,
+        ),
+    );
+    try std.testing.expectError(
+        error.ClipboardLimit,
+        terminal.copyKittyClipboardPacket(head.generation, std.testing.allocator, 3),
+    );
+    const packet = try terminal.copyKittyClipboardPacket(
+        head.generation,
+        std.testing.allocator,
+        kitty_clipboard_packet_max_bytes,
+    );
+    defer std.testing.allocator.free(packet);
+    try std.testing.expectEqualStrings("type=read:id=x;dGV4dC9wbGFpbg==", packet);
+    try std.testing.expectEqual(head.generation, terminal.clipboardHead().?.generation);
+
+    const sequence = terminal.status().semantic_sequence;
+    const wakes = wake_count.load(.acquire);
+    try std.testing.expectEqual(
+        client.InputTransfer{ .complete = 31 },
+        try terminal.replyKittyClipboard(
+            head.generation,
+            "\x1b]5522;type=read:status=EPERM\x1b\\",
+        ),
+    );
+    try std.testing.expectEqual(sequence + 1, terminal.status().semantic_sequence);
+    try std.testing.expectEqual(wakes + 1, wake_count.load(.acquire));
+    try std.testing.expectEqual(ClipboardKind.set, terminal.clipboardHead().?.kind);
 }
 
 test "incomplete clipboard reply transfer preserves the exact query" {

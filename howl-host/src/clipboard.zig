@@ -7,6 +7,7 @@ const c = @cImport({
     @cDefine("_FORTIFY_SOURCE", "0");
     @cInclude("errno.h");
     @cInclude("fcntl.h");
+    @cInclude("sys/random.h");
     @cInclude("unistd.h");
 });
 
@@ -14,6 +15,15 @@ const c = @cImport({
 pub const max_bytes: usize = @min(control.max_input_bytes - 12, control.clipboard_reply_max_bytes);
 /// Bounds simultaneous compositor requests for the current clipboard source.
 pub const max_sends: usize = 2;
+/// Bounds one Kitty paste-event grant string before metadata base64 encoding.
+pub const grant_bytes: usize = 32;
+/// Bounds one Kitty OSC 5522 read response below Control's complete-transfer ceiling.
+pub const kitty_read_max_bytes: usize = 32 * 1024;
+const paste_name_encoded = "UGFzdGUgZXZlbnQ=";
+const targets_mime_encoded = "Lg==";
+const mime_list = "text/plain;charset=utf-8 text/plain\n";
+/// Names the read/write operation echoed in one Kitty policy response.
+pub const KittyOperation = enum { read, write };
 /// Names the preferred UTF-8 text formats admitted from a Wayland offer.
 pub const Mime = enum {
     /// Names plain UTF-8-compatible text.
@@ -29,6 +39,235 @@ pub const Mime = enum {
         };
     }
 };
+
+/// Retains one operator-created OSC 5522 read grant without owning clipboard bytes.
+pub const PasteGrant = struct {
+    /// Stores lowercase hexadecimal random bytes compared after metadata decoding.
+    password: [grant_bytes]u8,
+
+    /// Encodes one random 128-bit value into the retained fixed password.
+    pub fn fromRandom(random: [grant_bytes / 2]u8) PasteGrant {
+        var result: PasteGrant = undefined;
+        const encoded = std.fmt.bufPrint(&result.password, "{x}", .{random}) catch
+            @panic("fixed hexadecimal grant buffer was mis-sized");
+        std.debug.assert(encoded.len == result.password.len);
+        return result;
+    }
+};
+
+/// Classifies the bounded Kitty OSC 5522 request subset owned by the Wayland host.
+pub const KittyRequest = union(enum) {
+    /// Requests one advertised clipboard representation using an operator grant.
+    read: struct {
+        password: []const u8,
+        name: []const u8,
+        id: []const u8,
+        mime: Mime,
+    },
+    /// Names a syntactically valid request outside current clipboard policy.
+    denied: struct { id: []const u8, operation: KittyOperation },
+    /// Reports malformed metadata or base64 without retaining packet borrows.
+    malformed,
+};
+
+/// Reports whether one parsed read exactly consumes this operator-created grant.
+pub fn grantAllows(grant: PasteGrant, offer: Offer, request: KittyRequest) bool {
+    const read = switch (request) {
+        .read => |value| value,
+        .denied, .malformed => return false,
+    };
+    return std.mem.eql(u8, read.password, &grant.password) and
+        std.mem.eql(u8, read.name, "Paste event") and
+        switch (read.mime) {
+            .plain => offer.plain,
+            .utf8 => offer.utf8,
+        };
+}
+
+/// Parses one retained Kitty packet while borrowing its bytes.
+pub fn parseKittyRequest(packet: []const u8, scratch: []u8) KittyRequest {
+    const separator = std.mem.indexOfScalar(u8, packet, ';');
+    const metadata = if (separator) |index| packet[0..index] else packet;
+    const payload = if (separator) |index| packet[index + 1 ..] else "";
+    var operation: ?KittyOperation = null;
+    var location_primary = false;
+    var password_encoded: []const u8 = "";
+    var name_encoded: []const u8 = "";
+    var id: []const u8 = "";
+    var fields = std.mem.splitScalar(u8, metadata, ':');
+    while (fields.next()) |field| {
+        const equals = std.mem.indexOfScalar(u8, field, '=') orelse return .malformed;
+        const key = field[0..equals];
+        const value = field[equals + 1 ..];
+        if (std.mem.eql(u8, key, "type")) {
+            operation = if (std.mem.eql(u8, value, "read"))
+                .read
+            else if (std.mem.eql(u8, value, "write"))
+                .write
+            else
+                return .malformed;
+        } else if (std.mem.eql(u8, key, "loc")) {
+            location_primary = std.mem.eql(u8, value, "primary");
+        } else if (std.mem.eql(u8, key, "pw")) {
+            password_encoded = value;
+        } else if (std.mem.eql(u8, key, "name")) {
+            name_encoded = value;
+        } else if (std.mem.eql(u8, key, "id")) {
+            id = sanitizeId(value, scratch);
+        }
+    }
+    const selected = operation orelse return .malformed;
+    if (selected == .write or location_primary) return .{ .denied = .{
+        .id = id,
+        .operation = selected,
+    } };
+    const password = decodeMetadata(password_encoded, scratch[id.len..]) orelse return .malformed;
+    const name_offset = id.len + password.len;
+    const name = decodeMetadata(name_encoded, scratch[name_offset..]) orelse return .malformed;
+    const mime_offset = name_offset + name.len;
+    const mime_bytes = decodeMetadata(payload, scratch[mime_offset..]) orelse return .malformed;
+    var requested = std.mem.tokenizeScalar(u8, mime_bytes, ' ');
+    const first = requested.next() orelse return .malformed;
+    if (requested.next() != null) return .{ .denied = .{ .id = id, .operation = .read } };
+    const mime: Mime = if (std.mem.eql(u8, first, Mime.utf8.bytes()))
+        .utf8
+    else if (std.mem.eql(u8, first, Mime.plain.bytes()))
+        .plain
+    else
+        return .{ .denied = .{ .id = id, .operation = .read } };
+    return .{ .read = .{
+        .password = password,
+        .name = name,
+        .id = id,
+        .mime = mime,
+    } };
+}
+
+/// Allocates the exact three-packet paste event advertising Howl's UTF-8 MIME set.
+pub fn pasteEvent(
+    allocator: std.mem.Allocator,
+    grant: PasteGrant,
+    offer: Offer,
+) std.mem.Allocator.Error![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    var password_encoded: [std.base64.standard.Encoder.calcSize(grant.password.len)]u8 = undefined;
+    const password = std.base64.standard.Encoder.encode(&password_encoded, &grant.password);
+    try appendKittyResponse(allocator, &output, "", "OK", "", password, "");
+    const available: []const u8 = if (offer.utf8 and offer.plain)
+        mime_list
+    else if (offer.utf8)
+        "text/plain;charset=utf-8\n"
+    else if (offer.plain)
+        "text/plain\n"
+    else
+        "";
+    if (available.len != 0) {
+        var payload_encoded: [std.base64.standard.Encoder.calcSize(mime_list.len)]u8 = undefined;
+        const payload = std.base64.standard.Encoder.encode(
+            payload_encoded[0..std.base64.standard.Encoder.calcSize(available.len)],
+            available,
+        );
+        try appendKittyResponse(allocator, &output, "", "DATA", targets_mime_encoded, password, payload);
+    }
+    try appendKittyResponse(allocator, &output, "", "DONE", "", password, "");
+    return output.toOwnedSlice(allocator);
+}
+
+/// Allocates one complete Kitty read transaction for copied UTF-8 clipboard bytes.
+pub fn kittyReadReply(
+    allocator: std.mem.Allocator,
+    id: []const u8,
+    mime: Mime,
+    bytes: []const u8,
+) (std.mem.Allocator.Error || error{ClipboardLimit})![]u8 {
+    if (bytes.len > kitty_read_max_bytes) return error.ClipboardLimit;
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    try appendKittyResponse(allocator, &output, id, "OK", "", "", "");
+    const encoded_len = std.base64.standard.Encoder.calcSize(bytes.len);
+    const encoded = try allocator.alloc(u8, encoded_len);
+    defer allocator.free(encoded);
+    const encoded_bytes = std.base64.standard.Encoder.encode(encoded, bytes);
+    std.debug.assert(encoded_bytes.len == encoded.len);
+    var mime_encoded: [std.base64.standard.Encoder.calcSize(Mime.utf8.bytes().len)]u8 = undefined;
+    const encoded_mime = std.base64.standard.Encoder.encode(
+        mime_encoded[0..std.base64.standard.Encoder.calcSize(mime.bytes().len)],
+        mime.bytes(),
+    );
+    try appendKittyResponse(allocator, &output, id, "DATA", encoded_mime, "", encoded);
+    try appendKittyResponse(allocator, &output, id, "DONE", "", "", "");
+    if (output.items.len > control.max_transfer_bytes) return error.ClipboardLimit;
+    return output.toOwnedSlice(allocator);
+}
+
+/// Allocates one exact Kitty policy rejection for a read or write packet.
+pub fn kittyDeniedReply(
+    allocator: std.mem.Allocator,
+    id: []const u8,
+    operation: KittyOperation,
+) std.mem.Allocator.Error![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    try output.appendSlice(allocator, "\x1b]5522;type=");
+    try output.appendSlice(allocator, @tagName(operation));
+    try output.appendSlice(allocator, ":status=EPERM");
+    if (id.len != 0) {
+        try output.appendSlice(allocator, ":id=");
+        try output.appendSlice(allocator, id);
+    }
+    try output.appendSlice(allocator, "\x1b\\");
+    return output.toOwnedSlice(allocator);
+}
+
+fn appendKittyResponse(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    id: []const u8,
+    status: []const u8,
+    mime: []const u8,
+    password: []const u8,
+    payload: []const u8,
+) std.mem.Allocator.Error!void {
+    try output.appendSlice(allocator, "\x1b]5522;type=read:status=");
+    try output.appendSlice(allocator, status);
+    if (id.len != 0) {
+        try output.appendSlice(allocator, ":id=");
+        try output.appendSlice(allocator, id);
+    }
+    if (mime.len != 0) {
+        try output.appendSlice(allocator, ":mime=");
+        try output.appendSlice(allocator, mime);
+    }
+    if (password.len != 0) {
+        try output.appendSlice(allocator, ":pw=");
+        try output.appendSlice(allocator, password);
+    }
+    if (payload.len != 0) {
+        try output.append(allocator, ';');
+        try output.appendSlice(allocator, payload);
+    }
+    try output.appendSlice(allocator, "\x1b\\");
+}
+
+fn sanitizeId(value: []const u8, output: []u8) []const u8 {
+    var len: usize = 0;
+    for (value) |byte| if (std.ascii.isAlphanumeric(byte) or
+        byte == '-' or byte == '_' or byte == '+' or byte == '.')
+    {
+        if (len == output.len) break;
+        output[len] = byte;
+        len += 1;
+    };
+    return output[0..len];
+}
+
+fn decodeMetadata(encoded: []const u8, output: []u8) ?[]const u8 {
+    const len = std.base64.standard.Decoder.calcSizeForSlice(encoded) catch return null;
+    if (len > output.len) return null;
+    std.base64.standard.Decoder.decode(output[0..len], encoded) catch return null;
+    return output[0..len];
+}
 
 /// Retains ranked MIME facts for one compositor offer.
 pub const Offer = struct {
@@ -60,8 +299,25 @@ pub const Error = std.mem.Allocator.Error || error{
     ClipboardDescriptor,
     ClipboardLimit,
     ClipboardRead,
+    ClipboardRandom,
     ClipboardWrite,
 };
+
+/// Obtains one Linux-kernel random paste grant without process-global state.
+pub fn randomGrant() error{ClipboardRandom}!PasteGrant {
+    var random: [grant_bytes / 2]u8 = undefined;
+    var offset: usize = 0;
+    while (offset < random.len) {
+        const count = c.getrandom(random[offset..].ptr, random.len - offset, 0);
+        if (count > 0) {
+            offset += @intCast(count);
+            continue;
+        }
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        return error.ClipboardRandom;
+    }
+    return PasteGrant.fromRandom(random);
+}
 
 /// Creates one close-on-exec nonblocking transfer pipe.
 pub fn pipe() error{ClipboardDescriptor}![2]c_int {
@@ -289,6 +545,116 @@ test "MIME ranking is deterministic and ignores unrelated offers" {
     try std.testing.expectEqual(Mime.plain, offer.preferred().?);
     offer.admit("text/plain;charset=utf-8");
     try std.testing.expectEqual(Mime.utf8, offer.preferred().?);
+}
+
+test "Kitty paste event and granted read use exact bounded framing" {
+    const grant = PasteGrant.fromRandom(@splat(0xab));
+    try std.testing.expectEqualStrings(
+        "abababababababababababababababab",
+        &grant.password,
+    );
+    const event = try pasteEvent(std.testing.allocator, grant, .{ .plain = true, .utf8 = true });
+    defer std.testing.allocator.free(event);
+    try std.testing.expectEqualStrings(
+        "\x1b]5522;type=read:status=OK:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYg==\x1b\\" ++
+            "\x1b]5522;type=read:status=DATA:mime=Lg==:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYg==;" ++
+            "dGV4dC9wbGFpbjtjaGFyc2V0PXV0Zi04IHRleHQvcGxhaW4K\x1b\\" ++
+            "\x1b]5522;type=read:status=DONE:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYg==\x1b\\",
+        event,
+    );
+
+    var scratch: [256]u8 = undefined;
+    const request = parseKittyRequest(
+        "type=read:id=a!b:pw=YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYg==:" ++
+            "name=" ++ paste_name_encoded ++ ";dGV4dC9wbGFpbjtjaGFyc2V0PXV0Zi04",
+        &scratch,
+    );
+    switch (request) {
+        .read => |read| {
+            try std.testing.expectEqualStrings("ab", read.id);
+            try std.testing.expectEqualStrings(&grant.password, read.password);
+            try std.testing.expectEqualStrings("Paste event", read.name);
+            try std.testing.expectEqual(Mime.utf8, read.mime);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+    try std.testing.expect(grantAllows(
+        grant,
+        .{ .utf8 = true },
+        request,
+    ));
+    try std.testing.expect(!grantAllows(
+        grant,
+        .{ .plain = true },
+        request,
+    ));
+    var wrong = grant;
+    wrong.password[0] = '0';
+    try std.testing.expect(!grantAllows(
+        wrong,
+        .{ .utf8 = true },
+        request,
+    ));
+    const reply = try kittyReadReply(std.testing.allocator, "ab", .utf8, "hello");
+    defer std.testing.allocator.free(reply);
+    try std.testing.expectEqualStrings(
+        "\x1b]5522;type=read:status=OK:id=ab\x1b\\" ++
+            "\x1b]5522;type=read:status=DATA:id=ab:mime=dGV4dC9wbGFpbjtjaGFyc2V0PXV0Zi04;aGVsbG8=\x1b\\" ++
+            "\x1b]5522;type=read:status=DONE:id=ab\x1b\\",
+        reply,
+    );
+}
+
+test "Kitty packet parser denies policy and rejects malformed base64" {
+    var scratch: [256]u8 = undefined;
+    const primary = parseKittyRequest(
+        "type=read:loc=primary:id=x;dGV4dC9wbGFpbg==",
+        &scratch,
+    );
+    try std.testing.expectEqual(KittyOperation.read, primary.denied.operation);
+    const write = parseKittyRequest("type=write:id=y", &scratch);
+    try std.testing.expectEqual(KittyOperation.write, write.denied.operation);
+    try std.testing.expect(parseKittyRequest(
+        "type=read:pw=!:name=QQ==;dGV4dC9wbGFpbg==",
+        &scratch,
+    ) == .malformed);
+    const denied = try kittyDeniedReply(std.testing.allocator, "x", .write);
+    defer std.testing.allocator.free(denied);
+    try std.testing.expectEqualStrings(
+        "\x1b]5522;type=write:status=EPERM:id=x\x1b\\",
+        denied,
+    );
+    const empty_event = try pasteEvent(
+        std.testing.allocator,
+        PasteGrant.fromRandom(@splat(2)),
+        .{},
+    );
+    defer std.testing.allocator.free(empty_event);
+    try std.testing.expect(std.mem.indexOf(u8, empty_event, "status=DATA") == null);
+}
+
+test "Kitty reply construction is allocation-transactional and bounded" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        kittyReplyAllocation,
+        .{},
+    );
+    const oversized = [_]u8{'x'} ** (kitty_read_max_bytes + 1);
+    try std.testing.expectError(
+        error.ClipboardLimit,
+        kittyReadReply(std.testing.allocator, "", .plain, &oversized),
+    );
+}
+
+fn kittyReplyAllocation(allocator: std.mem.Allocator) !void {
+    const event = try pasteEvent(
+        allocator,
+        PasteGrant.fromRandom(@splat(1)),
+        .{ .utf8 = true },
+    );
+    defer allocator.free(event);
+    const reply = try kittyReadReply(allocator, "id", .plain, "clipboard");
+    defer allocator.free(reply);
 }
 
 test "nonblocking receive is bounded and preserves partial progress" {

@@ -12680,6 +12680,8 @@ pub const Terminal = struct {
         error{ InvalidUtf8, InvalidText, KeyTextLimit };
     /// Reports stale identity, allocation, or bounded reply saturation without consuming a clipboard query.
     pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit, StaleClipboardRequest };
+    /// Reports stale identity, allocation, or bounded transfer saturation for one Kitty clipboard packet.
+    pub const KittyClipboardReplyError = error{ ConsequenceLimit, StaleClipboardRequest };
     /// Reports stale identity or an attempt to acknowledge a query without its required reply.
     pub const ClipboardAcknowledgeError = error{ StaleClipboardRequest, ClipboardReplyRequired };
     /// Reports stale or mismatched host facts, allocation failure, or bounded reply saturation.
@@ -13915,6 +13917,11 @@ pub const Terminal = struct {
         return self.modes.termios_signals;
     }
 
+    /// Reports whether mode 5522 requests the operator-triggered MIME paste exchange.
+    pub fn pasteEvents(self: *const Terminal) bool {
+        return self.modes.paste_events;
+    }
+
     /// Copies the process-lifetime semantic mutation identity.
     ///
     /// The nonzero sequence advances for accepted terminal state or consequence
@@ -14410,6 +14417,49 @@ pub const Terminal = struct {
     /// Borrow the FIFO-head OSC 52 operation or Kitty OSC 5522 packet until terminal mutation.
     pub fn pendingClipboardRequest(self: *const Terminal) ?ClipboardRequest {
         return self.host.pendingClipboardRequest();
+    }
+
+    /// Copies one exact FIFO-head Kitty OSC 5522 packet into caller ownership.
+    ///
+    /// Stale identity, allocation failure, and the caller bound preserve the
+    /// packet. A non-Kitty head returns `null`.
+    pub fn copyPendingKittyClipboard(
+        self: *Terminal,
+        generation: u64,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) error{ OutOfMemory, StaleClipboardRequest, ClipboardLimit }!?[]u8 {
+        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation) return error.StaleClipboardRequest;
+        if (request.protocol != .kitty_5522 or request.kind != .packet) return null;
+        if (request.payload.len > max_bytes) return error.ClipboardLimit;
+        return try allocator.dupe(u8, request.payload);
+    }
+
+    /// Validates one Kitty packet identity before a host-owned complete reply transfer.
+    pub fn validatePendingKittyClipboardReply(
+        self: *const Terminal,
+        generation: u64,
+        reply_bytes: usize,
+    ) KittyClipboardReplyError!void {
+        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation or
+            request.protocol != .kitty_5522 or request.kind != .packet)
+            return error.StaleClipboardRequest;
+        if (reply_bytes > pending_output_max_bytes) return error.ConsequenceLimit;
+    }
+
+    /// Consumes one exact FIFO-head Kitty packet after its host reply completely transfers.
+    pub fn completePendingKittyClipboardReply(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleClipboardRequest}!void {
+        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation or
+            request.protocol != .kitty_5522 or request.kind != .packet)
+            return error.StaleClipboardRequest;
+        self.host.consumeClipboardRequest();
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Queue one host-approved OSC 52 reply and consume its query only after complete bounded serialization.

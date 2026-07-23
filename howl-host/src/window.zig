@@ -49,6 +49,17 @@ const MouseButton = @FieldType(MouseInput, "button");
 const MouseKind = @FieldType(MouseInput, "kind");
 const ClipboardAction = enum { copy, paste };
 const ClipboardConsequence = enum { blocked, claim, deny, reply_owned, reply_empty };
+// Three response packets repeat the sanitized id; reserve exact room for the
+// largest admitted data payload and fixed framing within one Control transfer.
+const kitty_id_max_bytes: usize = @min(
+    control.kitty_clipboard_packet_max_bytes,
+    (control.max_transfer_bytes -
+        std.base64.standard.Encoder.calcSize(clipboard.kitty_read_max_bytes) -
+        256) / 3,
+);
+comptime {
+    std.debug.assert(kitty_id_max_bytes <= std.math.maxInt(u16));
+}
 const physical_key_count: usize = @as(usize, c.KEY_MAX) + 1;
 const max_wheel_steps: usize = 32;
 const max_bells_per_turn: u8 = 32;
@@ -61,6 +72,29 @@ const PresentationChange = struct {
     bells: u8,
     bells_pending: bool,
 };
+
+const KittyRead = struct {
+    generation: u64,
+    id: [kitty_id_max_bytes]u8 = @splat(0),
+    id_len: u16,
+    mime: clipboard.Mime,
+
+    fn idBytes(self: *const KittyRead) []const u8 {
+        return self.id[0..self.id_len];
+    }
+};
+
+const ClipboardReceive = union(enum) {
+    paste,
+    kitty: KittyRead,
+};
+
+fn copyKittyId(id: []const u8) [kitty_id_max_bytes]u8 {
+    std.debug.assert(id.len <= kitty_id_max_bytes);
+    var result: [kitty_id_max_bytes]u8 = @splat(0);
+    @memcpy(result[0..id.len], id);
+    return result;
+}
 
 const PresentationState = struct {
     title: [control.title_max_bytes + 1]u8 = @splat(0),
@@ -295,6 +329,7 @@ const AxisFrame = struct {
 /// Reports exact executable construction, dispatch, projection, or rendering failure.
 pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitError || control.InputError ||
     control.SelectionError || control.ClipboardSetError || control.ClipboardReplyError ||
+    control.KittyClipboardPacketError || control.KittyClipboardReplyError ||
     control.WindowReplyError || control.ColorPreferenceReplyError ||
     control.PointerShapeReplyError ||
     control.ResizeError || control.ReaderError ||
@@ -516,6 +551,11 @@ const Window = struct {
     viewport_drag: ?viewport.Drag = null,
     selection_drag: bool = false,
     clipboard_transfers: clipboard.Transfers,
+    clipboard_receive: ?ClipboardReceive = null,
+    paste_grant: ?clipboard.PasteGrant = null,
+    paste_grant_mimes: clipboard.Offer = .{},
+    paste_grant_offer: ?*c.struct_wl_data_offer = null,
+    paste_grant_owned: bool = false,
     selection_serial: u32 = 0,
     wake: TerminalWake,
     render: ?*renderer.Renderer = null,
@@ -701,8 +741,15 @@ const Window = struct {
                     try self.clipboard_transfers.service(descriptor.fd, descriptor.revents);
             if (self.clipboard_transfers.received()) |text_bytes| {
                 defer self.clipboard_transfers.finishReceive();
-                if (!try self.admitBatch(&.{.{ .input = .{ .paste = text_bytes } }}))
-                    return error.InputIncomplete;
+                const receive = self.clipboard_receive orelse return error.ClipboardRead;
+                switch (receive) {
+                    .paste => {
+                        if (!try self.admitBatch(&.{.{ .input = .{ .paste = text_bytes } }}))
+                            return error.InputIncomplete;
+                    },
+                    .kitty => |request| try self.replyKittyRead(request, text_bytes),
+                }
+                self.clipboard_receive = null;
             }
             if (self.failure) |failure| return failure;
         }
@@ -1098,6 +1145,14 @@ const Window = struct {
         if (self.data_source) |prior| c.wl_data_source_destroy(prior);
         self.data_source = source;
         c.wl_data_device_set_selection(device, source, self.selection_serial);
+        self.clearPasteGrant();
+    }
+
+    fn clearPasteGrant(self: *Window) void {
+        self.paste_grant = null;
+        self.paste_grant_mimes = .{};
+        self.paste_grant_offer = null;
+        self.paste_grant_owned = false;
     }
 
     fn applyClipboardConsequences(self: *Window) Error!void {
@@ -1105,6 +1160,11 @@ const Window = struct {
         var handled: u8 = 0;
         while (handled < control.clipboard_max_count) : (handled += 1) {
             const head = terminal.clipboardHead() orelse return;
+            if (head.kind == .other) {
+                try self.applyKittyClipboard(head.generation);
+                if (self.clipboard_receive != null) return;
+                continue;
+            }
             const policy = clipboardConsequence(
                 head.kind,
                 head.selectionBytes(),
@@ -1140,6 +1200,75 @@ const Window = struct {
                     }
                 },
             }
+        }
+    }
+
+    fn applyKittyClipboard(self: *Window, generation: u64) Error!void {
+        if (self.clipboard_receive != null) return;
+        const packet = try self.terminal.?.copyKittyClipboardPacket(
+            generation,
+            self.allocator,
+            control.kitty_clipboard_packet_max_bytes,
+        );
+        defer self.allocator.free(packet);
+        const scratch = try self.allocator.alloc(u8, packet.len);
+        defer self.allocator.free(scratch);
+        const request = clipboard.parseKittyRequest(packet, scratch);
+        switch (request) {
+            .malformed => try self.denyKittyClipboard(generation, "", .read),
+            .denied => |denied| try self.denyKittyClipboard(
+                generation,
+                denied.id,
+                denied.operation,
+            ),
+            .read => |read| {
+                const grant = self.paste_grant orelse
+                    return self.denyKittyClipboard(generation, read.id, .read);
+                if (!clipboard.grantAllows(grant, self.paste_grant_mimes, request))
+                    return self.denyKittyClipboard(generation, read.id, .read);
+                if (read.id.len > kitty_id_max_bytes)
+                    return self.denyKittyClipboard(generation, "", .read);
+                if (self.paste_grant_owned) {
+                    return self.replyKittyRead(.{
+                        .generation = generation,
+                        .id = copyKittyId(read.id),
+                        .id_len = @intCast(read.id.len),
+                        .mime = read.mime,
+                    }, self.clipboard_transfers.sourceBytes());
+                }
+                const offer = self.selection_offer orelse
+                    return self.denyKittyClipboard(generation, read.id, .read);
+                if (offer != self.paste_grant_offer)
+                    return self.denyKittyClipboard(generation, read.id, .read);
+                if (self.clipboard_transfers.receiving()) return error.ClipboardBusy;
+                const fds = try clipboard.pipe();
+                var read_owned = true;
+                errdefer if (read_owned) closeOwned(fds[0]);
+                defer closeOwned(fds[1]);
+                try self.clipboard_transfers.beginReceive(fds[0]);
+                read_owned = false;
+                self.clipboard_receive = .{ .kitty = .{
+                    .generation = generation,
+                    .id = copyKittyId(read.id),
+                    .id_len = @intCast(read.id.len),
+                    .mime = read.mime,
+                } };
+                c.wl_data_offer_receive(offer, read.mime.bytes(), fds[1]);
+            },
+        }
+    }
+
+    fn denyKittyClipboard(
+        self: *Window,
+        generation: u64,
+        id: []const u8,
+        operation: clipboard.KittyOperation,
+    ) Error!void {
+        const reply = try clipboard.kittyDeniedReply(self.allocator, id, operation);
+        defer self.allocator.free(reply);
+        switch (try self.terminal.?.replyKittyClipboard(generation, reply)) {
+            .complete => {},
+            .incomplete => return error.InputIncomplete,
         }
     }
 
@@ -1223,6 +1352,24 @@ const Window = struct {
     }
 
     fn requestClipboardPaste(self: *Window) Error!void {
+        const terminal = self.terminal orelse return error.InputIncomplete;
+        if (terminal.pasteEvents()) {
+            const own = self.data_source != null;
+            const offer = if (own)
+                clipboard.Offer{ .plain = true, .utf8 = true }
+            else
+                self.selection_offer_mimes;
+            const grant = try clipboard.randomGrant();
+            const event = try clipboard.pasteEvent(self.allocator, grant, offer);
+            defer self.allocator.free(event);
+            if (!try self.admitBatch(&.{.{ .input = .{ .bytes = event } }}))
+                return error.InputIncomplete;
+            self.paste_grant = grant;
+            self.paste_grant_mimes = offer;
+            self.paste_grant_owned = own;
+            self.paste_grant_offer = if (own) null else self.selection_offer;
+            return;
+        }
         const offer = self.selection_offer orelse return;
         const mime = self.selection_offer_mimes.preferred() orelse return;
         if (self.clipboard_transfers.receiving()) return error.ClipboardBusy;
@@ -1232,7 +1379,26 @@ const Window = struct {
         defer closeOwned(fds[1]);
         try self.clipboard_transfers.beginReceive(fds[0]);
         read_owned = false;
+        self.clipboard_receive = .paste;
         c.wl_data_offer_receive(offer, mime.bytes(), fds[1]);
+    }
+
+    fn replyKittyRead(self: *Window, request: KittyRead, bytes: []const u8) Error!void {
+        const reply = try clipboard.kittyReadReply(
+            self.allocator,
+            request.idBytes(),
+            request.mime,
+            bytes,
+        );
+        defer self.allocator.free(reply);
+        switch (try self.terminal.?.replyKittyClipboard(request.generation, reply)) {
+            .complete => {},
+            .incomplete => return error.InputIncomplete,
+        }
+        self.paste_grant = null;
+        self.paste_grant_mimes = .{};
+        self.paste_grant_offer = null;
+        self.paste_grant_owned = false;
     }
 
     fn sendMouse(
@@ -2018,6 +2184,7 @@ fn dataDeviceSelection(
     offer: ?*c.struct_wl_data_offer,
 ) callconv(.c) void {
     const self = owner(data);
+    self.clearPasteGrant();
     if (self.selection_offer) |prior| c.wl_data_offer_destroy(prior);
     self.selection_offer = null;
     self.selection_offer_mimes = .{};
@@ -2081,6 +2248,7 @@ fn dataSourceCancelled(
     c.wl_data_source_destroy(source);
     self.data_source = null;
     self.clipboard_transfers.clearSource();
+    self.clearPasteGrant();
 }
 
 fn dataSourceDrop(_: ?*anyopaque, _: ?*c.struct_wl_data_source) callconv(.c) void {}
