@@ -119,8 +119,16 @@ const Command = struct {
     more: bool = false,
     quiet: u2 = 0,
     delete: u8 = 0,
+    x: u32 = 0,
+    y: u32 = 0,
     payload: []const u8 = "",
 };
+
+/// Returns whether one command can emit a Kitty protocol response.
+pub fn mayRespond(bytes: []const u8) bool {
+    const command_value = parseCommand(bytes) orelse return true;
+    return command_value.action != 'd';
+}
 
 /// Owns decoded image bytes, static placements, and one chunked transfer.
 pub const Plane = struct {
@@ -159,6 +167,7 @@ pub const Plane = struct {
         self: *Plane,
         bytes: []const u8,
         bank: Bank,
+        screen_origin: u64,
         row: u64,
         col: u16,
         cell_width: u32,
@@ -180,7 +189,7 @@ pub const Plane = struct {
         return switch (command_value.action) {
             't', 'T', 'q' => try self.transmit(command_value, bank, row, col, cell_width, cell_height),
             'p' => self.put(command_value, bank, row, col, cell_width, cell_height),
-            'd' => self.delete(command_value),
+            'd' => self.delete(command_value, bank, screen_origin, row, col),
             else => .{
                 .response_id = nonzero(command_value.id),
                 .failure = .unsupported,
@@ -377,20 +386,69 @@ pub const Plane = struct {
         return .{ .changed = true, .response_id = command_value.id, .quiet = command_value.quiet };
     }
 
-    fn delete(self: *Plane, command_value: Command) Result {
-        if (command_value.delete != 'i' or command_value.id == 0)
-            return .{ .response_id = nonzero(command_value.id), .failure = .unsupported, .quiet = command_value.quiet };
-        const image_index = self.imageIndex(command_value.id) orelse
-            return .{ .response_id = command_value.id, .failure = .missing, .quiet = command_value.quiet };
-        self.advance();
-        self.content_generation = self.next_generation;
-        self.removePlacements(command_value.id);
-        const removed = self.images[image_index];
-        self.storage_bytes -= removed.pixels.len;
-        self.allocator.free(removed.pixels);
-        self.image_count -= 1;
-        if (image_index != self.image_count) self.images[image_index] = self.images[self.image_count];
-        return .{ .changed = true, .response_id = command_value.id, .quiet = command_value.quiet };
+    fn delete(
+        self: *Plane,
+        command_value: Command,
+        bank: Bank,
+        screen_origin: u64,
+        cursor_row: u64,
+        cursor_col: u16,
+    ) Result {
+        self.cancel();
+        const selector = if (command_value.delete == 0) 'a' else command_value.delete;
+        const remove_data = std.ascii.isUpper(selector);
+        const normalized = std.ascii.toLower(selector);
+        if (std.mem.indexOfScalar(u8, "airpxyc", normalized) == null)
+            return .{ .quiet = 2 };
+        if (normalized == 'i' and command_value.id == 0) return .{ .quiet = 2 };
+        if (normalized == 'r' and command_value.x > command_value.y) return .{ .quiet = 2 };
+
+        var changed = false;
+        var placement_index: usize = 0;
+        while (placement_index < self.placement_count) {
+            const placement_value = self.placements[placement_index];
+            if (placement_value.bank != bank or !deleteMatches(
+                placement_value,
+                normalized,
+                command_value,
+                screen_origin,
+                cursor_row,
+                cursor_col,
+            )) {
+                placement_index += 1;
+                continue;
+            }
+            self.removePlacement(placement_index);
+            changed = true;
+        }
+
+        var content_changed = false;
+        if (remove_data) {
+            var image_index: usize = 0;
+            while (image_index < self.image_count) {
+                const image_id = self.images[image_index].id;
+                const selected = switch (normalized) {
+                    'a' => !self.hasPlacement(image_id),
+                    'i' => image_id == command_value.id,
+                    'r' => command_value.x <= image_id and image_id <= command_value.y,
+                    else => !self.hasPlacement(image_id),
+                };
+                if (!selected) {
+                    image_index += 1;
+                    continue;
+                }
+                if (normalized == 'i' or normalized == 'r') self.removePlacements(image_id);
+                self.removeImage(image_index);
+                content_changed = true;
+                changed = true;
+            }
+        }
+        if (changed) {
+            self.advance();
+            if (content_changed) self.content_generation = self.next_generation;
+        }
+        // Kitty deletion commands deliberately produce no protocol response.
+        return .{ .changed = changed, .quiet = 2 };
     }
 
     /// Removes every image and placement, preserving no protocol transfer.
@@ -617,6 +675,20 @@ pub const Plane = struct {
         if (index != self.placement_count) self.placements[index] = self.placements[self.placement_count];
     }
 
+    fn removeImage(self: *Plane, index: usize) void {
+        const removed = self.images[index];
+        self.storage_bytes -= removed.pixels.len;
+        self.allocator.free(removed.pixels);
+        self.image_count -= 1;
+        if (index != self.image_count) self.images[index] = self.images[self.image_count];
+    }
+
+    fn hasPlacement(self: *const Plane, image_id: u32) bool {
+        for (self.placements[0..self.placement_count]) |value|
+            if (value.image_id == image_id) return true;
+        return false;
+    }
+
     fn imageIndex(self: *const Plane, id: u32) ?usize {
         for (self.images[0..self.image_count], 0..) |retained, index|
             if (retained.id == id) return index;
@@ -649,6 +721,8 @@ fn parseCommand(bytes: []const u8) ?Command {
             'm' => 1 << 6,
             'q' => 1 << 7,
             'd' => 1 << 8,
+            'x' => 1 << 9,
+            'y' => 1 << 10,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -678,10 +752,43 @@ fn parseCommand(bytes: []const u8) ?Command {
             'd' => if (value.len == 1) {
                 result.delete = value[0];
             } else return null,
+            'x' => result.x = std.fmt.parseInt(u32, value, 10) catch return null,
+            'y' => result.y = std.fmt.parseInt(u32, value, 10) catch return null,
             else => return null,
         }
     }
     return result;
+}
+
+fn deleteMatches(
+    placement_value: Placement,
+    selector: u8,
+    command_value: Command,
+    screen_origin: u64,
+    cursor_row: u64,
+    cursor_col: u16,
+) bool {
+    const bottom = placement_value.row + placement_value.rows - 1;
+    const right = @as(u32, placement_value.col) + placement_value.cols - 1;
+    const explicit_row = if (command_value.y == 0)
+        null
+    else
+        std.math.add(u64, screen_origin, command_value.y - 1) catch null;
+    return switch (selector) {
+        'a' => true,
+        'i' => placement_value.image_id == command_value.id,
+        'r' => command_value.x <= placement_value.image_id and placement_value.image_id <= command_value.y,
+        'p' => command_value.x != 0 and explicit_row != null and
+            placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right and
+            placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
+        'x' => command_value.x != 0 and
+            placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right,
+        'y' => explicit_row != null and
+            placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
+        'c' => placement_value.col <= cursor_col and cursor_col <= right and
+            placement_value.row <= cursor_row and cursor_row <= bottom,
+        else => false,
+    };
 }
 
 fn nonzero(value: u32) ?u32 {
@@ -691,19 +798,19 @@ fn nonzero(value: u32) ?u32 {
 test "static plane admission is transactional across chunks replacement put and delete" {
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
-    const first = try plane.command("a=T,f=32,s=1,v=1,i=7,m=1;/wA=", .primary, 4, 2, 1, 1);
+    const first = try plane.command("a=T,f=32,s=1,v=1,i=7,m=1;/wA=", .primary, 0, 4, 2, 1, 1);
     try std.testing.expect(!first.changed);
-    const completed = try plane.command("m=0;AP8=", .primary, 4, 2, 1, 1);
+    const completed = try plane.command("m=0;AP8=", .primary, 0, 4, 2, 1, 1);
     try std.testing.expect(completed.changed);
     try std.testing.expectEqual(@as(u16, 1), plane.image_count);
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, plane.image(0).?.pixels);
     try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
     const generation = plane.generation();
-    const malformed = try plane.command("a=t,f=32,s=1,v=1,i=8;%%", .primary, 0, 0, 1, 1);
+    const malformed = try plane.command("a=t,f=32,s=1,v=1,i=8;%%", .primary, 0, 0, 0, 1, 1);
     try std.testing.expectEqual(Failure.invalid, malformed.failure.?);
     try std.testing.expectEqual(generation, plane.generation());
-    try std.testing.expect((try plane.command("a=p,i=7", .alternate, 1, 3, 1, 1)).changed);
-    try std.testing.expect((try plane.command("a=d,d=i,i=7", .primary, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=p,i=7", .alternate, 0, 1, 3, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=d,d=I,i=7", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 0), plane.image_count);
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
 }
@@ -714,6 +821,7 @@ test "RGB conversion quota cancellation and bank cleanup preserve exact ownershi
     try std.testing.expect((try plane.command(
         "a=T,f=24,s=1,v=1,i=1;AQID",
         .alternate,
+        0,
         2,
         4,
         1,
@@ -723,7 +831,7 @@ test "RGB conversion quota cancellation and bank cleanup preserve exact ownershi
     try std.testing.expect(plane.clearBank(.alternate));
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
     const before = plane.generation();
-    const rejected = try plane.command("a=t,f=32,s=4096,v=4096,i=2;", .primary, 0, 0, 1, 1);
+    const rejected = try plane.command("a=t,f=32,s=4096,v=4096,i=2;", .primary, 0, 0, 0, 1, 1);
     try std.testing.expectEqual(Failure.quota, rejected.failure.?);
     try std.testing.expectEqual(before, plane.generation());
 }
@@ -736,6 +844,7 @@ test "new transmission cancels an incomplete stream without retained mutation" {
         .primary,
         0,
         0,
+        0,
         1,
         1,
     );
@@ -746,11 +855,99 @@ test "new transmission cancels an incomplete stream without retained mutation" {
         .primary,
         0,
         0,
+        0,
         1,
         1,
     );
     try std.testing.expect(replacement.changed);
     try std.testing.expectEqual(@as(u32, 3), plane.image(0).?.id);
+}
+
+test "static delete selectors preserve placement and image ownership distinctions" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=1;AQIDBA==",
+        .primary,
+        10,
+        11,
+        2,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command("a=p,i=1", .primary, 10, 13, 4, 1, 1)).changed);
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=2;BQYHCA==",
+        .primary,
+        10,
+        12,
+        5,
+        1,
+        1,
+    )).changed);
+
+    try std.testing.expect((try plane.command("a=d,d=p,x=3,y=2", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expect((try plane.command("a=d,d=C", .primary, 10, 13, 4, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(u32, 2), plane.image(0).?.id);
+
+    try std.testing.expect((try plane.command("a=d,d=i,i=2", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expect((try plane.command("a=p,i=2", .primary, 10, 12, 5, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=d,d=I,i=2", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=3;AQIDBA==",
+        .primary,
+        10,
+        12,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=4;AQIDBA==",
+        .primary,
+        10,
+        13,
+        1,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command("a=d,d=x,x=1", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expect((try plane.command("a=d,d=y,y=4", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expect((try plane.command("a=d,d=R,x=3,y=4", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=5;AQIDBA==",
+        .primary,
+        10,
+        10,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=6;AQIDBA==",
+        .primary,
+        10,
+        11,
+        1,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command("a=d", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expect((try plane.command("a=d,d=A", .primary, 10, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
 }
 
 test "static image allocation failure leaves the plane reusable" {
@@ -763,6 +960,7 @@ fn allocationFailure(allocator: std.mem.Allocator) !void {
     try std.testing.expect((try plane.command(
         "a=T,f=32,s=1,v=1,i=1;AQIDBA==",
         .primary,
+        0,
         0,
         0,
         1,

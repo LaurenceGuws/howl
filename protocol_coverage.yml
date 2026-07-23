@@ -3788,10 +3788,11 @@ references:
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "static plane admission is transactional across chunks replacement put and delete"}}}
           - {id: kitty.graphics.delete, raw: "APC G a=d,d=selector,Pm ST", effect: delete image placements or data,
-            relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
-              milestone: advanced_graphics, residual: Howl implements explicit image-id data deletion only.,
+            relevance: graphics, howl: &howl_static_graphics_delete {support: partial, disposition: deferred,
+              owner: howl-vt, milestone: advanced_graphics,
+              residual: "Howl implements silent lower/uppercase placement/data deletion for all, image-id, id-range, point, row, column and cursor selectors; placement ids, image numbers, z selectors and animation frames remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
-                symbol: "static plane admission is transactional across chunks replacement put and delete"}}}
+                symbol: "static delete selectors preserve placement and image ownership distinctions"}}}
           - {id: kitty.graphics.compose, raw: "APC G a=c,Pm ST", effect: compose animation frames, relevance: graphics,
             howl: *howl_missing_deferred_graphics}
       - source: graphics.c
@@ -3802,34 +3803,36 @@ references:
         records:
           - {id: kitty.graphics.delete_all, raw: "APC G a=d,d=a|A ST",
             effect: delete all non-cell placements optionally including data, relevance: graphics,
-            howl: *howl_missing_deferred_graphics}
+            howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_id, raw: "APC G a=d,d=i|I,i=Ps ST",
             effect: delete by image id optionally including data, relevance: graphics,
-            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: Howl supports lowercase i as image data plus placement deletion; placement-only uppercase I remains.,
-              source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
-                symbol: "static plane admission is transactional across chunks replacement put and delete"}}}
+            howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_range, raw: "APC G a=d,d=r|R,Pm ST",
-            effect: delete image id range optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
+            effect: delete image id range optionally including data, relevance: graphics,
+            howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_point, raw: "APC G a=d,d=p|P,x=Ps,y=Ps ST",
-            effect: delete at cell point optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
+            effect: delete at cell point optionally including data, relevance: graphics,
+            howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_point3d, raw: "APC G a=d,d=q|Q,x=Ps,y=Ps,z=Ps ST",
             effect: delete at cell point and z-index optionally including data, relevance: graphics,
             howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.delete_x, raw: "APC G a=d,d=x|X,x=Ps ST",
-            effect: delete at column optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
+            effect: delete at column optionally including data, relevance: graphics,
+            howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_y, raw: "APC G a=d,d=y|Y,y=Ps ST",
-            effect: delete at row optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
+            effect: delete at row optionally including data, relevance: graphics,
+            howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_z, raw: "APC G a=d,d=z|Z,z=Ps ST",
             effect: delete at z-index optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.delete_cursor, raw: "APC G a=d,d=c|C ST",
-            effect: delete at cursor optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
+            effect: delete at cursor optionally including data, relevance: graphics,
+            howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_number, raw: "APC G a=d,d=n|N,I=Ps ST",
             effect: delete by image number optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.delete_frame, raw: "APC G a=d,d=f|F,Pm ST", effect: delete animation frame or image,
             relevance: graphics, howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.delete_default, raw: "APC G a=d,Pm ST", effect: delete all non-cell placements,
-            relevance: graphics, howl: *howl_missing_deferred_graphics}
+            relevance: graphics, howl: *howl_static_graphics_delete}
 
 selective_overlaps:
   - id: overlap.csi_s

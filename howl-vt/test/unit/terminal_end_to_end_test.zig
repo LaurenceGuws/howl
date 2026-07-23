@@ -1793,6 +1793,30 @@ test "terminal: canceled Kitty continuation releases transfer without retained m
     try std.testing.expectEqual(@as(u32, 8), terminal.visualView().images.image(0).?.id);
 }
 
+test "terminal: Kitty deletion is silent and preserves lowercase image data" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try std.testing.expect(
+        (try terminal.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).state_changed,
+    );
+    const response = try terminal.drainPendingOutput(std.testing.allocator);
+    defer std.testing.allocator.free(response);
+    try std.testing.expectEqualStrings("\x1b_Gi=7;OK\x1b\\", response);
+
+    const fill = try std.testing.allocator.alloc(u8, terminal_mod.pending_output_max_bytes);
+    defer std.testing.allocator.free(fill);
+    @memset(fill, 'x');
+    try terminal.host.appendPendingOutput(fill);
+    try std.testing.expect((try terminal.feed("\x1b_Ga=d,d=i,i=7\x1b\\")).state_changed);
+    try std.testing.expectEqualSlices(u8, fill, terminal.host.pendingOutput());
+    const drained = try terminal.drainPendingOutput(std.testing.allocator);
+    defer std.testing.allocator.free(drained);
+    try std.testing.expectEqual(@as(usize, 1), terminal.visualView().images.imageCount());
+    try std.testing.expectEqual(@as(usize, 0), terminal.visualView().images.placementCount());
+    try std.testing.expect(!(try terminal.feed("\x1b_Ga=d,d=i,i=7\x1b\\")).state_changed);
+    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+}
+
 test "terminal: static graphics follow scroll erase resize bank and reset lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 4);
     defer terminal.deinit();

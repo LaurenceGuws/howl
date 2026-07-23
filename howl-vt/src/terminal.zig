@@ -13230,10 +13230,12 @@ fn discardedStringControl() EventEffect {
 
 fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!bool {
     const response_reserve: usize = 96;
-    if (terminal.host.pending_output.bytes.items.len >
-        pending_output_max_bytes - response_reserve)
-        return error.ConsequenceLimit;
-    try terminal.host.pending_output.bytes.ensureUnusedCapacity(terminal.allocator, response_reserve);
+    if (graphics_mod.mayRespond(packet)) {
+        if (terminal.host.pending_output.bytes.items.len >
+            pending_output_max_bytes - response_reserve)
+            return error.ConsequenceLimit;
+        try terminal.host.pending_output.bytes.ensureUnusedCapacity(terminal.allocator, response_reserve);
+    }
     const active = terminal.screen_state.activeConst();
     const bank: graphics_mod.Bank = if (terminal.screen_state.alt_active) .alternate else .primary;
     const row: u64 = if (bank == .alternate)
@@ -13244,6 +13246,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
     const result = try terminal.graphics.command(
         packet,
         bank,
+        if (bank == .alternate) 0 else @as(u64, active.history_row_base) + active.history_count,
         row,
         active.cursor.col,
         if (cell) |value| value.width else 1,
