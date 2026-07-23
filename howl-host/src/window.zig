@@ -984,7 +984,15 @@ const Window = struct {
 
     fn pointerWheel(self: *Window, discrete: i32) void {
         if (discrete == 0 or !inputAdmissionOpen(self.closed, self.failure)) return;
-        if (!self.viewport_state.facts.mouse_reporting) {
+        const facts = self.terminal.?.viewportFacts();
+        if (!facts.mouse_reporting and facts.alternate_screen) {
+            if (!facts.alternate_scroll) return;
+            var events: [max_wheel_steps + 1]control.BatchEvent = undefined;
+            const encoded = alternateScrollEvents(events[0..], discrete, self.mouseModifiers());
+            if (!self.sendBatch(encoded)) return;
+            return;
+        }
+        if (!facts.mouse_reporting) {
             self.applyViewport(.{ .lines = -discrete });
             return;
         }
@@ -1583,6 +1591,30 @@ fn viewportFacts(facts: control.ViewportFacts) viewport.Facts {
         .alternate_screen = facts.alternate_screen,
         .mouse_reporting = facts.mouse_reporting,
     };
+}
+
+fn alternateScrollEvents(
+    events: []control.BatchEvent,
+    discrete: i32,
+    modifiers: KeyModifiers,
+) []const control.BatchEvent {
+    const magnitude: usize = @intCast(@abs(@as(i64, discrete)));
+    std.debug.assert(magnitude > 0 and magnitude <= max_wheel_steps);
+    std.debug.assert(events.len >= magnitude + 1);
+    const key = @FieldType(KeyInput, "key"){
+        .named = if (discrete < 0) .up else .down,
+    };
+    for (events[0..magnitude]) |*event| event.* = .{ .input = .{ .key = .{
+        .key = key,
+        .mods = modifiers,
+        .action = .press,
+    } } };
+    events[magnitude] = .{ .input = .{ .key = .{
+        .key = key,
+        .mods = modifiers,
+        .action = .release,
+    } } };
+    return events[0 .. magnitude + 1];
 }
 
 fn modifierActive(state: *c.struct_xkb_state, name: [*c]const u8) bool {
@@ -2946,6 +2978,31 @@ test "pointer axis accumulates one bounded frame in callback order" {
     try std.testing.expectEqual(@as(i32, 0), frame.vertical_discrete);
     try std.testing.expectEqual(@as(?u32, null), frame.source);
     try std.testing.expect(!frame.saw_continuous);
+}
+
+test "alternate scroll translates one wheel frame to typed cursor transitions" {
+    var storage: [max_wheel_steps + 1]control.BatchEvent = undefined;
+    const mods = KeyModifiers{ .shift = true, .alt = true };
+    const up = alternateScrollEvents(storage[0..], -2, mods);
+    try std.testing.expectEqual(@as(usize, 3), up.len);
+    for (up[0..2]) |event| {
+        try std.testing.expectEqual(.key, event.input);
+        try std.testing.expectEqual(.up, event.input.key.key.named);
+        try std.testing.expectEqual(.press, event.input.key.action);
+        try std.testing.expect(event.input.key.mods.shift);
+        try std.testing.expect(event.input.key.mods.alt);
+    }
+    try std.testing.expectEqual(.up, up[2].input.key.key.named);
+    try std.testing.expectEqual(.release, up[2].input.key.action);
+
+    const down = alternateScrollEvents(storage[0..], max_wheel_steps, .{});
+    try std.testing.expectEqual(max_wheel_steps + 1, down.len);
+    for (down[0..max_wheel_steps]) |event| {
+        try std.testing.expectEqual(.down, event.input.key.key.named);
+        try std.testing.expectEqual(.press, event.input.key.action);
+    }
+    try std.testing.expectEqual(.down, down[max_wheel_steps].input.key.key.named);
+    try std.testing.expectEqual(.release, down[max_wheel_steps].input.key.action);
 }
 
 test "keymap replacement is constructed before prior ownership is released" {

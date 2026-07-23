@@ -14212,7 +14212,15 @@ pub const Terminal = struct {
             // bound asserted above; callers cannot reach this encoder error.
             error.EncodingLimit => unreachable,
         };
-        std.debug.assert(encoded.len <= scratch.buf.len);
+        if (self.modes.meta_sends_escape and event.mods.alt and
+            event.legacy_text.len != 0 and
+            encoded.ptr == event.legacy_text.ptr and encoded.len == event.legacy_text.len)
+        {
+            if (encoded.len >= scratch.buf.len) return error.KeyTextLimit;
+            std.mem.copyBackwards(u8, scratch.buf[1 .. encoded.len + 1], encoded);
+            scratch.buf[0] = 0x1b;
+            return scratch.buf[0 .. encoded.len + 1];
+        }
         if (self.modes.newline_mode and
             event.key == .named and
             event.key.named == .enter and

@@ -933,6 +933,31 @@ test "iTerm2 host-coordinated input modes retain reports and terminal lifetime" 
     try std.testing.expect(publication.meta_sends_escape);
     try std.testing.expect(publication.report_key_up);
 
+    var scratch: Terminal.InputScratch = .{};
+    var meta = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
+        .key = try Terminal.Key.initUnicode('é'),
+        .mods = .{ .alt = true },
+        .legacy_text = "é",
+    } });
+    defer meta.deinit();
+    try std.testing.expectEqualStrings("\x1bé", meta.bytes);
+    var plain = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
+        .key = try Terminal.Key.initUnicode('é'),
+        .legacy_text = "é",
+    } });
+    defer plain.deinit();
+    try std.testing.expectEqualStrings("é", plain.bytes);
+    const oversized = [_]u8{'x'} ** @sizeOf(Terminal.InputScratch);
+    try std.testing.expectError(error.KeyTextLimit, terminal.encodeInput(
+        allocator,
+        &scratch,
+        .{ .key = .{
+            .key = try Terminal.Key.initUnicode('x'),
+            .mods = .{ .alt = true },
+            .legacy_text = &oversized,
+        } },
+    ));
+
     try std.testing.expect((try terminal.feed("\x1b[?1007$p\x1b[?1036$p\x1b[?1337$p")).state_changed);
     try std.testing.expectEqualStrings(
         "\x1b[?1007;1$y\x1b[?1036;1$y\x1b[?1337;1$y",
@@ -950,6 +975,13 @@ test "iTerm2 host-coordinated input modes retain reports and terminal lifetime" 
     try std.testing.expect((try terminal.feed("\x1b[?1036l\x1b[?1036$p")).state_changed);
     try std.testing.expectEqualStrings("\x1b[?1036;2$y", pendingOutput(&terminal));
     clearPendingOutput(&terminal);
+    var disabled = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
+        .key = try Terminal.Key.initUnicode('a'),
+        .mods = .{ .alt = true },
+        .legacy_text = "a",
+    } });
+    defer disabled.deinit();
+    try std.testing.expectEqualStrings("a", disabled.bytes);
 
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
     publication = terminal.stateSnapshot();

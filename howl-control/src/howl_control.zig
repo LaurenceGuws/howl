@@ -81,6 +81,8 @@ pub const ViewportFacts = struct {
     rows: u16 = 1,
     /// Reports whether the alternate screen is active.
     alternate_screen: bool = false,
+    /// Reports whether alternate-screen wheel input becomes cursor keys.
+    alternate_scroll: bool = false,
     /// Reports whether terminal mouse tracking owns pointer input.
     mouse_reporting: bool = false,
 };
@@ -1567,6 +1569,7 @@ fn viewportFactsFrom(model: *const howl_vt.Terminal) ViewportFacts {
         .offset = snapshot.scrollback_offset,
         .rows = model.visibleMeta().rows,
         .alternate_screen = snapshot.is_alternate_screen,
+        .alternate_scroll = snapshot.alternate_scroll,
         .mouse_reporting = snapshot.mouse_reporting,
     };
 }
@@ -1846,12 +1849,20 @@ test "host viewport operation retains history and mouse ownership facts" {
     try std.testing.expectEqual(@as(u32, 1), facts.offset);
     try std.testing.expect(facts.history_count >= 1);
     try std.testing.expect(!facts.alternate_screen);
+    try std.testing.expect(!facts.alternate_scroll);
     try std.testing.expect(!facts.mouse_reporting);
     try std.testing.expectEqual(wakes_before + 1, wake_count.load(.acquire));
     try std.testing.expectEqual(facts.offset, terminal.viewportFacts().offset);
 
     try terminal.consume("\x1b[?1000h");
     try std.testing.expect(terminal.viewportFacts().mouse_reporting);
+
+    try terminal.consume("\x1b[?1007h\x1b[?1047h");
+    const alternate = terminal.viewportFacts();
+    try std.testing.expect(alternate.alternate_screen);
+    try std.testing.expect(alternate.alternate_scroll);
+    try terminal.consume("\x1b[?1007l");
+    try std.testing.expect(!terminal.viewportFacts().alternate_scroll);
 }
 
 test "host presentation copies and acknowledges ordered notifications exactly" {
