@@ -1278,12 +1278,17 @@ references:
             effect: dispatch window operation by first parameter
             conditions: >-
               Howl retains operations 1-6, 8, 11, 13, 19, and 20; serializes matching host facts for retained queries;
-              answers 14/16/18/21 from owned facts; and owns its bounded title stack. Host execution remains policy.
+              answers 14/16/18/21 from owned facts; owns its bounded title stack; issues the Wayland minimize request;
+              and settles compositor-controlled operations with explicit no-op/zero-fact policy.
             recognition: delegated
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: decodeCsi, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "window controls retain ordered bounded host requests and lifetime"}}
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2 executes compositor-controlled operations and reports facts unavailable to Wayland.,
+              rationale: Howl issues the one-way Wayland minimize request without claiming compositor action and
+                otherwise follows explicit no-op and unavailable-fact policy.,
+              source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
+              path: howl-host/src/window.zig,
+              symbol: "window request policy issues minimize and reports settled fallback facts"}}
           - id: iterm2.csi.decsnls
             raw: "CSI rows * |"
             effect: request terminal row count
@@ -1291,9 +1296,12 @@ references:
               iTerm2 accepts rows 1..255 only at VT400 level and delegates one-dimensional resize; Howl has no
               emulation-level policy and retains the exact row request in its bounded ordered host-intent FIFO.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: processStar, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "DEC cell dimension requests retain exact ordered host intent"}}
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2 applies VT-level row resizing while Howl consumes the request without resizing.,
+              rationale: Wayland retains compositor authority over top-level dimensions and Howl has no emulation-level
+                compatibility policy.,
+              source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {path: howl-host/src/window.zig,
+                symbol: "window request policy issues minimize and reports settled fallback facts"}}
           - id: iterm2.csi.decscpp
             raw: "CSI [cols=0] $ |"
             effect: request 80 or 132 terminal columns
@@ -1301,9 +1309,12 @@ references:
               iTerm2 accepts 0/80 as 80 and 132 only at VT300 level, updates column mode, and preserves screen
               contents; Howl has no emulation-level policy and retains the exact column request for host execution.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: processDollar, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "DEC cell dimension requests retain exact ordered host intent"}}
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2 applies VT-level 80/132-column policy while Howl consumes the request without resizing.,
+              rationale: Wayland retains compositor authority over top-level dimensions and Howl has no emulation-level
+                compatibility policy.,
+              source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {path: howl-host/src/window.zig,
+                symbol: "window request policy issues minimize and reports settled fallback facts"}}
           - {id: iterm2.csi.su, raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: line-buffer history and selection consequences, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -2307,17 +2318,24 @@ references:
               Howl retains every accepted request in a 32-entry FIFO; execution remains host policy. Operations are
               acknowledged at the live head; queries require a matching head identity and exact host-supplied fact.
             relevance: host consequence
-            howl: &iterm2_window_operation_howl {support: partial, disposition: delegated, owner: howl-host,
-              residual: Howl retains ordered intent while howl-host owns execution and host policy,
-              source: howl-vt/src/terminal.zig,
-              symbol: decodeWindowRequest, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "iTerm2 window operations retain exact bounded host intent"}}
+            howl: &iterm2_window_operation_howl {support: partial, disposition: excluded,
+              residual: Reference executes a compositor-owned window operation that Howl consumes as an ordered no-op.,
+              rationale: Wayland does not permit a client to move, raise, lower, deiconify, or directly resize its
+                compositor-owned top-level; Howl consumes those requests as ordered no-ops.,
+              source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
+              path: howl-host/src/window.zig,
+              symbol: "window request policy issues minimize and reports settled fallback facts"}}
           - <<: *iterm2_window_request
             id: iterm2.window.iconify
             raw: "CSI 2 t"
             effect: iconify window
-            howl: *iterm2_window_operation_howl
+            conditions: Howl issues xdg_toplevel.set_minimized while the compositor may ignore the one-way request
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2 observes iconification while Wayland leaves the request outcome to compositor policy.,
+              rationale: Howl issues the exact Wayland minimize request and does not claim that the compositor acted.,
+              source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
+              path: howl-host/src/window.zig,
+              symbol: "window request policy issues minimize and reports settled fallback facts"}}
           - <<: *iterm2_window_request
             id: iterm2.window.move
             raw: "CSI 3 ; x ; y t"
@@ -2351,11 +2369,13 @@ references:
             raw: "CSI 11 t"
             effect: report iconified state
             relevance: query
-            howl: &iterm2_window_query_howl {support: partial, disposition: delegated, owner: howl-host,
-              residual: Howl retains ordered queries while howl-host owns live host facts and policy,
-              source: howl-vt/src/terminal.zig,
-              symbol: Terminal.replyWindowRequest, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "window query replies require matching live intent and serialize transactionally"}}
+            howl: &iterm2_window_query_howl {support: partial, disposition: excluded,
+              residual: Reference reports a live window or screen fact that Wayland does not expose to Howl.,
+              rationale: Wayland does not expose iconified state, global position, or containing-output cell
+                dimensions; Howl follows Foot by reporting normal and zero for unavailable facts.,
+              source: howl-host/src/window.zig,
+              symbol: applyWindowRequests, proof: {path: howl-host/src/window.zig,
+                symbol: "window request policy issues minimize and reports settled fallback facts"}}
           - <<: *iterm2_window_request
             id: iterm2.window.report_position
             raw: "CSI 13 t"
@@ -2364,7 +2384,10 @@ references:
             howl: *iterm2_window_query_howl
           - {id: iterm2.window.report_pixels, raw: "CSI 14 t", effect: report window pixel size, relevance: query,
             conditions: iTerm2 reports host window pixels while Howl reports host-supplied cell pixels times the grid,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2 reports compositor chrome pixels while Howl reports its terminal text area.,
+              rationale: Howl deliberately reports terminal text-area pixels rather than compositor chrome.,
+              source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "terminal size reports use exact current cell and pixel facts"}}}
           - {id: iterm2.window.report_cells, raw: "CSI 18 t", effect: report terminal cell dimensions, relevance: query,
@@ -2385,17 +2408,26 @@ references:
             howl: *iterm2_window_query_howl
           - {id: iterm2.window.report_window_title, raw: "CSI 21 t", effect: report window title, relevance: query,
             conditions: iTerm2 gates and sanitizes the host window title while Howl reports its bounded child title,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: appendWindowTitleReport, proof: {
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2 applies trust sanitization that Howl's bounded terminal-title report omits.,
+              rationale: Howl deliberately reports its bounded retained terminal title without iTerm2 trust policy.,
+              source: howl-vt/src/terminal.zig, symbol: appendWindowTitleReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "title stack retains exact bounded title lifecycle and report bytes"}}}
           - {id: iterm2.window.push_title, raw: "CSI 22 ; [Ps] t", effect: push title stack, relevance: host metadata,
             conditions: iTerm2 owns separate unbounded title and icon stacks and also retains absent titles,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2 retains separate unbounded title and icon stacks while Howl retains one bounded stack.,
+              rationale: Howl deliberately keeps one bounded terminal-owned title stack and no separate icon stack.,
+              source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "title stack retains exact bounded title lifecycle and report bytes"}}}
           - {id: iterm2.window.pop_title, raw: "CSI 23 ; [Ps] t", effect: pop title stack, relevance: host metadata,
             conditions: iTerm2 owns separate unbounded title and icon stacks,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2 retains separate unbounded title and icon stacks while Howl retains one bounded stack.,
+              rationale: Howl deliberately keeps one bounded terminal-owned title stack and no separate icon stack.,
+              source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "title stack retains exact bounded title lifecycle and report bytes"}}}
 
@@ -2999,9 +3031,9 @@ references:
             conditions: >-
               Kitty rejects this request; Howl instead retains each complete nonnegative request in its bounded ordered
               host-intent FIFO, including zero and repeated values, without executing resize policy.
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "application resize requests retain exact ordered host intent"}}
+            howl: {support: full, source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
+              path: howl-host/src/window.zig,
+              symbol: "window request policy issues minimize and reports settled fallback facts"}}
           - id: kitty.csi.resize_cells_unsupported
             raw: "CSI 8 ; rows ; cols t"
             effect: reject application cell resize
@@ -3010,9 +3042,9 @@ references:
             conditions: >-
               Kitty rejects this request; Howl instead retains each complete nonnegative request in its bounded ordered
               host-intent FIFO, including zero and repeated values, without executing resize policy.
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: decodeWindowRequest, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "application resize requests retain exact ordered host intent"}}
+            howl: {support: full, source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
+              path: howl-host/src/window.zig,
+              symbol: "window request policy issues minimize and reports settled fallback facts"}}
           - {id: kitty.csi.restore_cursor, raw: "CSI u", effect: restore cursor,
             conditions: "Howl additionally restores cursor visibility plus cell-domain protection, hyperlink, font,
               and baseline rendition",

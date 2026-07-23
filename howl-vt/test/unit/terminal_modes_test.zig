@@ -1555,6 +1555,17 @@ test "window query replies require matching live intent and serialize transactio
     );
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
     try std.testing.expectEqual(@as(u64, 6), terminal.stateSnapshot().window_request.?.generation);
+
+    try terminal.replyWindowRequest(6, .{ .icon_title = "ok" });
+    clearPendingOutput(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[11t")).state_changed);
+    const prepared = try terminal.prepareWindowReply(7, .{ .state = .normal }, allocator);
+    defer allocator.free(prepared);
+    try std.testing.expectEqualStrings("\x1b[1t", prepared);
+    try std.testing.expectEqualStrings("", pendingOutput(&terminal));
+    try std.testing.expectEqual(@as(u64, 7), terminal.pendingWindowRequest().?.generation);
+    try terminal.completeWindowReply(7);
+    try std.testing.expect(terminal.pendingWindowRequest() == null);
 }
 
 test "in-band resize mode emits transactional iTerm2 and Kitty reports" {

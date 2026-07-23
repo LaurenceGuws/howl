@@ -20,7 +20,7 @@ accepted:
   howl-control/build.zig: control package build and direct VT/PTY dependency graph
   howl-control/build.zig.zon: control package identity and source boundary
   howl-control/src/client.zig: identity, endpoint, codec, and bounded request ownership
-  howl-control/src/howl_control.zig: optional ID-addressable PTY and VT composition, including transactional OSC 52 transfer
+  howl-control/src/howl_control.zig: optional ID-addressable PTY and VT composition with transactional consequence replies
   howl-control/src/test.zig: control transport, lifecycle, and terminal-operation proofs
   howl-render/build.zig: independently selected text and generated-glyph capability graphs
   howl-render/build.zig.zon: render package identity, owned assets, and licenses
@@ -37,7 +37,7 @@ accepted:
   howl-host/build.zig: first-party executable build, install, run, and proof ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
   howl-host/src/main.zig: operator shell selection, window entry, serve, and primitive control inspection
-  howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, ordered notification and OSC 52 policy, and lifecycle
+  howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, ordered consequence policy, and lifecycle
   howl-host/src/renderer.zig: one render thread and concrete EGL/GLES cell, DEC geometry, baseline, and decoration owner
   howl-host/src/viewport.zig: host scroll intent and exact scrollbar paint/hit geometry
   howl-host/src/clipboard.zig: bounded UTF-8 clipboard bytes and nonblocking transfer progress

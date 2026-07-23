@@ -42,6 +42,9 @@ accepted_implementation:
   - >-
     Howl-host draws retained DEC single/double-width and double-height row geometry plus normal, raised, and lowered
     cell baselines from backend-neutral render facts without changing shaping or texture identity.
+  - >-
+    Howl-host consumes ordered window operations, requests Wayland minimization, and transactionally reports only
+    normal state, unavailable zero position/screen facts, and its retained title.
 
 invariants:
   - every module allocation uses an explicit caller-provided allocator
@@ -53,7 +56,8 @@ invariants:
 
 deferred:
   - tabs, panes, sessions, and multiplexing
-  - remaining ordered host-consequence presentation beyond notification, attention bell, and OSC 52 clipboard policy
+  - remaining ordered host-consequence presentation beyond notification, attention bell, OSC 52 clipboard, and
+    window-control policy
 
 gates:
   - permanent authorities and active planning YAML parse

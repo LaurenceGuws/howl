@@ -222,6 +222,8 @@ pub const clipboard_selection_max_bytes = howl_vt.Terminal.clipboard_selection_m
 pub const clipboard_reply_max_bytes = howl_vt.Terminal.clipboard_reply_max_bytes;
 /// Matches the VT owner's bounded ordered clipboard occurrence capacity.
 pub const clipboard_max_count = howl_vt.Terminal.clipboard_max_count;
+/// Matches the VT owner's bounded ordered window-request capacity.
+pub const window_request_max_count = howl_vt.Terminal.window_request_max_count;
 /// Identifies the host-neutral policy kind of one retained ordered notification.
 pub const NotificationKind = enum {
     message,
@@ -307,6 +309,20 @@ pub const ClipboardReplyError = std.mem.Allocator.Error || error{
     ClipboardReplyMismatch,
     ConsequenceLimit,
     StaleClipboardRequest,
+};
+/// Copies one exact terminal-owned window operation or query.
+pub const WindowRequest = howl_vt.Terminal.WindowOperation;
+/// Supplies one exact host fact for a matching window query.
+pub const WindowReply = howl_vt.Terminal.WindowQueryReply;
+/// Copies one ordered window-request identity and value without retaining VT borrows.
+pub const WindowHead = howl_vt.Terminal.WindowOccurrence;
+/// Retains exact complete or partial window-query reply transfer truth.
+pub const WindowReplyTransfer = client.InputTransfer;
+/// Reports window-query preparation, transfer, or exact identity failure.
+pub const WindowReplyError = std.mem.Allocator.Error || error{
+    ConsequenceLimit,
+    StaleWindowRequest,
+    WindowReplyMismatch,
 };
 
 const ReaderFailure = enum(u8) {
@@ -881,6 +897,62 @@ pub const Terminal = struct {
         }
         self.lock.lockUncancelable(self.io);
         const completed = self.model.completePendingClipboardReply(generation);
+        self.lock.unlock(self.io);
+        try completed;
+        self.notify();
+        return transfer;
+    }
+
+    /// Copies the current ordered window-request head without retaining VT borrows.
+    pub fn windowRequestHead(self: *Terminal) ?WindowHead {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.pendingWindowRequest();
+    }
+
+    /// Consumes one exact FIFO-head window operation after executable policy runs.
+    pub fn acknowledgeWindowRequest(
+        self: *Terminal,
+        generation: u64,
+    ) error{ StaleWindowRequest, WindowReplyRequired }!void {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgeWindowRequest(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
+    }
+
+    /// Serializes, flushes, then consumes one exact FIFO-head window query.
+    pub fn replyWindowRequest(
+        self: *Terminal,
+        generation: u64,
+        reply_value: WindowReply,
+    ) WindowReplyError!WindowReplyTransfer {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const prepared = self.model.prepareWindowReply(
+            generation,
+            reply_value,
+            self.allocator,
+        ) catch |failure| {
+            self.lock.unlock(self.io);
+            return failure;
+        };
+        self.lock.unlock(self.io);
+        defer self.allocator.free(prepared);
+        std.debug.assert(prepared.len <= max_transfer_bytes);
+        self.write_lock.lockUncancelable(self.io);
+        const transfer = self.transport.transfer(self.io, prepared, self.transfer_timeout_ms);
+        self.write_lock.unlock(self.io);
+        switch (transfer) {
+            .incomplete => return transfer,
+            .complete => {},
+        }
+        self.lock.lockUncancelable(self.io);
+        const completed = self.model.completeWindowReply(generation);
         self.lock.unlock(self.io);
         try completed;
         self.notify();
@@ -1938,6 +2010,76 @@ test "clipboard set allocation failure preserves the exact head" {
     );
     try std.testing.expect(failing.has_induced_failure);
     try std.testing.expectEqual(head.generation, terminal.clipboardHead().?.generation);
+}
+
+test "window operations and queries preserve exact ordered transfer ownership" {
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{},
+    );
+    defer terminal.deinit();
+    try terminal.consume("\x1b[2t\x1b[11t\x1b[13t");
+
+    var head = terminal.windowRequestHead().?;
+    try std.testing.expect(head.request == .iconify);
+    try std.testing.expectError(
+        error.StaleWindowRequest,
+        terminal.acknowledgeWindowRequest(head.generation + 1),
+    );
+    try terminal.acknowledgeWindowRequest(head.generation);
+
+    head = terminal.windowRequestHead().?;
+    try std.testing.expect(head.request == .report_state);
+    try std.testing.expectError(
+        error.WindowReplyRequired,
+        terminal.acknowledgeWindowRequest(head.generation),
+    );
+    try std.testing.expectError(
+        error.WindowReplyMismatch,
+        terminal.replyWindowRequest(head.generation, .{ .position = .{ .x = 0, .y = 0 } }),
+    );
+    try std.testing.expectEqual(head.generation, terminal.windowRequestHead().?.generation);
+    switch (try terminal.replyWindowRequest(head.generation, .{ .state = .normal })) {
+        .complete => |count| try std.testing.expectEqual(@as(usize, 4), count),
+        .incomplete => return error.TestUnexpectedResult,
+    }
+
+    head = terminal.windowRequestHead().?;
+    try std.testing.expect(head.request == .report_position);
+    terminal.cancel();
+    switch (try terminal.replyWindowRequest(
+        head.generation,
+        .{ .position = .{ .x = 0, .y = 0 } },
+    )) {
+        .complete => return error.TestUnexpectedResult,
+        .incomplete => |failure| {
+            try std.testing.expectEqual(@as(usize, 0), failure.transferred);
+            try std.testing.expectEqual(howl_pty.TransferFailure.canceled, failure.reason);
+        },
+    }
+    try std.testing.expectEqual(head.generation, terminal.windowRequestHead().?.generation);
+}
+
+test "window reply allocation failure preserves the exact query" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const terminal = try Terminal.init(
+        failing.allocator(),
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{},
+    );
+    defer terminal.deinit();
+    try terminal.consume("\x1b[11t");
+    const head = terminal.windowRequestHead().?;
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(
+        error.OutOfMemory,
+        terminal.replyWindowRequest(head.generation, .{ .state = .normal }),
+    );
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(head.generation, terminal.windowRequestHead().?.generation);
 }
 
 test "local selection operations copy projected history with exact mutation" {

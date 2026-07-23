@@ -12586,6 +12586,12 @@ fn consumePresentationDesignation(payload: []const u8, offset: *usize) ?u8 {
 pub const Terminal = struct {
     /// Exposes the terminal-borrowing byte stream type used by native hosts.
     pub const Stream = TerminalStream;
+    /// Names one host-neutral request from the child to manipulate its containing window.
+    pub const WindowOperation = WindowRequest;
+    /// Copies one accepted ordered window request and its monotonic identity.
+    pub const WindowOccurrence = WindowRequestOccurrence;
+    /// Supplies one host-owned fact requested by a retained window query.
+    pub const WindowQueryReply = WindowReply;
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
@@ -14387,34 +14393,41 @@ pub const Terminal = struct {
         const output = &self.host.pending_output;
         const start = byteCount(output.bytes.items);
         errdefer restorePendingOutput(output, start);
-        var scratch: Scratch = .{};
-        switch (reply) {
-            .state => |state| try appendCsiReply(
-                output,
-                self.allocator,
-                .iterm,
-                if (state == .normal) "1t" else "2t",
-            ),
-            .position => |position| try appendCsiReply(
-                output,
-                self.allocator,
-                .iterm,
-                std.fmt.bufPrint(scratch.buf[0..], "3;{d};{d}t", .{ position.x, position.y }) catch unreachable,
-            ),
-            .screen_cells => |size| try appendCsiReply(
-                output,
-                self.allocator,
-                .iterm,
-                std.fmt.bufPrint(scratch.buf[0..], "9;{d};{d}t", .{ size.rows, size.cols }) catch unreachable,
-            ),
-            .icon_title => |title| {
-                try ensureRetainedBound(byteCount(title), max_metadata_bytes);
-                try appendReplyControl(output, self.allocator, .iterm, .osc);
-                try appendOutput(output, self.allocator, "L");
-                try appendOutput(output, self.allocator, title);
-                try appendReplyControl(output, self.allocator, .iterm, .st);
-            },
-        }
+        try appendWindowReply(output, self.allocator, reply);
+        self.host.consumeWindowRequestHead();
+        advanceIdentity(&self.semantic_sequence);
+    }
+
+    /// Borrows the exact FIFO-head window request until terminal mutation.
+    pub fn pendingWindowRequest(self: *const Terminal) ?WindowRequestOccurrence {
+        return self.host.windowRequestHead();
+    }
+
+    /// Serializes one matching window query reply without mutating its FIFO or pending output.
+    pub fn prepareWindowReply(
+        self: *Terminal,
+        generation: u64,
+        reply: WindowReply,
+        allocator: std.mem.Allocator,
+    ) WindowReplyError![]u8 {
+        const occurrence = self.host.windowRequestHead() orelse return error.StaleWindowRequest;
+        if (occurrence.generation != generation) return error.StaleWindowRequest;
+        if (!windowReplyMatches(occurrence.request, reply)) return error.WindowReplyMismatch;
+        var output = PendingOutput.init();
+        output.eight_bit_controls = self.host.pending_output.eight_bit_controls;
+        errdefer output.bytes.deinit(allocator);
+        try appendWindowReply(&output, allocator, reply);
+        return output.bytes.toOwnedSlice(allocator);
+    }
+
+    /// Consumes only the exact FIFO-head window query after its prepared reply flush.
+    pub fn completeWindowReply(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleWindowRequest}!void {
+        const occurrence = self.host.windowRequestHead() orelse return error.StaleWindowRequest;
+        if (occurrence.generation != generation or !isWindowQuery(occurrence.request))
+            return error.StaleWindowRequest;
         self.host.consumeWindowRequestHead();
         advanceIdentity(&self.semantic_sequence);
     }
@@ -14639,6 +14652,43 @@ fn windowReplyMatches(request: WindowRequest, reply: WindowReply) bool {
         .report_icon_title => reply == .icon_title,
         else => false,
     };
+}
+
+fn appendWindowReply(
+    output: *PendingOutput,
+    allocator: std.mem.Allocator,
+    reply: WindowReply,
+) ApplyError!void {
+    var scratch: Scratch = .{};
+    switch (reply) {
+        .state => |state| try appendCsiReply(
+            output,
+            allocator,
+            .iterm,
+            if (state == .normal) "1t" else "2t",
+        ),
+        .position => |position| try appendCsiReply(
+            output,
+            allocator,
+            .iterm,
+            std.fmt.bufPrint(scratch.buf[0..], "3;{d};{d}t", .{ position.x, position.y }) catch
+                @panic("bounded window-position reply exceeded scratch"),
+        ),
+        .screen_cells => |size| try appendCsiReply(
+            output,
+            allocator,
+            .iterm,
+            std.fmt.bufPrint(scratch.buf[0..], "9;{d};{d}t", .{ size.rows, size.cols }) catch
+                @panic("bounded screen-cell reply exceeded scratch"),
+        ),
+        .icon_title => |title| {
+            try ensureRetainedBound(byteCount(title), max_metadata_bytes);
+            try appendReplyControl(output, allocator, .iterm, .osc);
+            try appendOutput(output, allocator, "L");
+            try appendOutput(output, allocator, title);
+            try appendReplyControl(output, allocator, .iterm, .st);
+        },
+    }
 }
 
 fn isWindowQuery(request: WindowRequest) bool {

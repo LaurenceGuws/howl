@@ -106,6 +106,10 @@ const PresentationState = struct {
     fn titlePointer(self: *const PresentationState) [*:0]const u8 {
         return if (self.title_set) @ptrCast(&self.title) else default_title;
     }
+
+    fn titleBytes(self: *const PresentationState) []const u8 {
+        return if (self.title_set) self.title[0..self.title_len] else default_title;
+    }
 };
 
 // Wayland key events use Linux input-event codes, whose inclusive bound is
@@ -288,8 +292,9 @@ const AxisFrame = struct {
 /// Reports exact executable construction, dispatch, projection, or rendering failure.
 pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitError || control.InputError ||
     control.SelectionError || control.ClipboardSetError || control.ClipboardReplyError ||
-    control.ResizeError || control.ReaderError || terminal_render.Error || renderer.Error ||
-    error{StaleNotification} || error{
+    control.WindowReplyError || control.ResizeError || control.ReaderError ||
+    terminal_render.Error || renderer.Error ||
+    error{ StaleNotification, StaleWindowRequest, WindowReplyRequired } || error{
     InvalidSize,
     GeometryUnstable,
     WaylandConnect,
@@ -692,6 +697,7 @@ const Window = struct {
         }
         self.applyTerminalPresentation();
         try self.applyClipboardConsequences();
+        try self.applyWindowRequests();
     }
 
     fn applyTerminalPresentation(self: *Window) void {
@@ -1082,6 +1088,24 @@ const Window = struct {
                     }
                 },
             }
+        }
+    }
+
+    fn applyWindowRequests(self: *Window) Error!void {
+        const terminal = self.terminal.?;
+        var handled: u8 = 0;
+        while (handled < control.window_request_max_count) : (handled += 1) {
+            const head = terminal.windowRequestHead() orelse return;
+            if (windowQueryReply(head.request, self.presentation.titleBytes())) |reply_value| {
+                switch (try terminal.replyWindowRequest(head.generation, reply_value)) {
+                    .complete => {},
+                    .incomplete => return error.InputIncomplete,
+                }
+                continue;
+            }
+            if (windowRequestRequestsMinimize(head.request))
+                c.xdg_toplevel_set_minimized(self.toplevel.?);
+            try terminal.acknowledgeWindowRequest(head.generation);
         }
     }
 
@@ -2366,6 +2390,27 @@ test "OSC 52 policy admits only focused Wayland clipboard targets" {
     );
 }
 
+test "window request policy issues minimize and reports settled fallback facts" {
+    try std.testing.expect(windowRequestRequestsMinimize(.iconify));
+    try std.testing.expect(!windowRequestRequestsMinimize(.deiconify));
+    try std.testing.expect(!windowRequestRequestsMinimize(.raise));
+    try std.testing.expect(windowQueryReply(.iconify, "title") == null);
+    try std.testing.expectEqual(
+        control.WindowReply{ .state = .normal },
+        windowQueryReply(.report_state, "title").?,
+    );
+    try std.testing.expectEqual(
+        control.WindowReply{ .position = .{ .x = 0, .y = 0 } },
+        windowQueryReply(.report_position, "title").?,
+    );
+    try std.testing.expectEqual(
+        control.WindowReply{ .screen_cells = .{ .rows = 0, .cols = 0 } },
+        windowQueryReply(.report_screen_cells, "title").?,
+    );
+    const title = windowQueryReply(.report_icon_title, "title").?.icon_title;
+    try std.testing.expectEqualStrings("title", title);
+}
+
 test "window dimensions and grid conversion preserve exact bounds" {
     try std.testing.expectError(error.InvalidSize, validateSize(.{ .width = 0, .height = 1 }));
     try std.testing.expectError(error.InvalidSize, validateSize(.{ .width = 1, .height = 0 }));
@@ -3092,4 +3137,21 @@ fn clipboardConsequence(
 fn clipboardReplyBytes(policy: ClipboardConsequence, owned: []const u8) []const u8 {
     std.debug.assert(policy == .reply_owned or policy == .reply_empty);
     return if (policy == .reply_owned) owned else &.{};
+}
+
+fn windowQueryReply(request: control.WindowRequest, title: []const u8) ?control.WindowReply {
+    return switch (request) {
+        .report_state => .{ .state = .normal },
+        .report_position => .{ .position = .{ .x = 0, .y = 0 } },
+        .report_screen_cells => .{ .screen_cells = .{ .rows = 0, .cols = 0 } },
+        .report_icon_title => .{ .icon_title = title },
+        else => null,
+    };
+}
+
+fn windowRequestRequestsMinimize(request: control.WindowRequest) bool {
+    return switch (request) {
+        .iconify => true,
+        else => false,
+    };
 }
