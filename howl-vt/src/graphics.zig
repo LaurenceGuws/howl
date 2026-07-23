@@ -73,6 +73,7 @@ pub const Placement = struct {
 const Image = struct {
     id: u32,
     kitty_id: ?u32,
+    kitty_number: ?u32,
     width: u32,
     height: u32,
     generation: u64,
@@ -93,6 +94,7 @@ const Loading = struct {
     action: u8,
     format: u8,
     id: u32,
+    image_number: u32,
     placement_id: u32,
     source_x: u32,
     source_y: u32,
@@ -116,6 +118,8 @@ pub const Result = struct {
     changed: bool = false,
     /// Image identity echoed by a protocol response.
     response_id: ?u32 = null,
+    /// Image number echoed alongside generated or selected identity.
+    response_number: ?u32 = null,
     /// Null identifies success; otherwise supplies Kitty's stable short error.
     failure: ?Failure = null,
     /// Suppresses success or all responses according to `q`.
@@ -145,6 +149,7 @@ const Command = struct {
     medium: u8 = 'd',
     format: u8 = 32,
     id: u32 = 0,
+    image_number: u32 = 0,
     width: u32 = 0,
     height: u32 = 0,
     more: bool = false,
@@ -222,6 +227,7 @@ pub const Plane = struct {
             self.cancel();
             return .{
                 .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
                 .failure = .unsupported,
                 .quiet = command_value.quiet,
             };
@@ -232,6 +238,7 @@ pub const Plane = struct {
             'd' => self.delete(command_value, bank, screen_origin, row, col),
             else => .{
                 .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
                 .failure = .unsupported,
                 .quiet = command_value.quiet,
             },
@@ -248,27 +255,56 @@ pub const Plane = struct {
         cell_height: u32,
     ) std.mem.Allocator.Error!Result {
         if (self.loading == null) {
-            if (command_value.id == 0 or command_value.width == 0 or command_value.height == 0 or
+            if ((command_value.id == 0 and command_value.image_number == 0) or
+                (command_value.id != 0 and command_value.image_number != 0) or
+                command_value.width == 0 or command_value.height == 0 or
                 command_value.width > max_dimension or command_value.height > max_dimension or
                 (command_value.format != 24 and command_value.format != 32))
                 return .{
                     .response_id = nonzero(command_value.id),
+                    .response_number = nonzero(command_value.image_number),
                     .failure = .invalid,
                     .quiet = command_value.quiet,
                 };
             const channels: usize = if (command_value.format == 24) 3 else 4;
             const pixels = std.math.mul(usize, command_value.width, command_value.height) catch
-                return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
+                return .{
+                    .response_id = nonzero(command_value.id),
+                    .response_number = nonzero(command_value.image_number),
+                    .failure = .quota,
+                    .quiet = command_value.quiet,
+                };
             const rgba_bytes = std.math.mul(usize, pixels, 4) catch
-                return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
+                return .{
+                    .response_id = nonzero(command_value.id),
+                    .response_number = nonzero(command_value.image_number),
+                    .failure = .quota,
+                    .quiet = command_value.quiet,
+                };
             const input_bytes = std.math.mul(usize, pixels, channels) catch
-                return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
+                return .{
+                    .response_id = nonzero(command_value.id),
+                    .response_number = nonzero(command_value.image_number),
+                    .failure = .quota,
+                    .quiet = command_value.quiet,
+                };
             if (rgba_bytes > max_image_bytes)
-                return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
+                return .{
+                    .response_id = nonzero(command_value.id),
+                    .response_number = nonzero(command_value.image_number),
+                    .failure = .quota,
+                    .quiet = command_value.quiet,
+                };
+            const kitty_id = if (command_value.id != 0)
+                command_value.id
+            else
+                self.allocateKittyId() orelse
+                    return .{ .response_number = command_value.image_number, .failure = .quota, .quiet = command_value.quiet };
             self.loading = .{
                 .action = command_value.action,
                 .format = command_value.format,
-                .id = command_value.id,
+                .id = kitty_id,
+                .image_number = command_value.image_number,
                 .placement_id = command_value.placement_id,
                 .source_x = command_value.x,
                 .source_y = command_value.y,
@@ -286,7 +322,7 @@ pub const Plane = struct {
             };
         } else {
             if (command_value.width != 0 or command_value.height != 0 or
-                command_value.id != 0 or command_value.placement_id != 0)
+                command_value.id != 0 or command_value.image_number != 0 or command_value.placement_id != 0)
             {
                 self.cancel();
                 return self.transmit(command_value, bank, row, col, cell_width, cell_height);
@@ -342,7 +378,10 @@ pub const Plane = struct {
         const rgba_len = @as(usize, loading.width) * loading.height * 4;
         if (loading.action == 'q')
             return .{ .response_id = loading.id, .quiet = loading.quiet };
-        const prior_index = self.kittyImageIndex(loading.id);
+        const prior_index = if (loading.image_number != 0)
+            null
+        else
+            self.kittyImageIndex(loading.id);
         const prior_bytes = if (prior_index) |index| self.images[index].pixels.len else 0;
         if (rgba_len > max_storage_bytes - (self.storage_bytes - prior_bytes))
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
@@ -404,6 +443,7 @@ pub const Plane = struct {
             self.images[index] = .{
                 .id = image_id,
                 .kitty_id = loading.id,
+                .kitty_number = nonzero(loading.image_number),
                 .width = loading.width,
                 .height = loading.height,
                 .generation = content_generation,
@@ -414,6 +454,7 @@ pub const Plane = struct {
             self.images[self.image_count] = .{
                 .id = image_id,
                 .kitty_id = loading.id,
+                .kitty_number = nonzero(loading.image_number),
                 .width = loading.width,
                 .height = loading.height,
                 .generation = content_generation,
@@ -436,6 +477,7 @@ pub const Plane = struct {
         return .{
             .changed = true,
             .response_id = loading.id,
+            .response_number = nonzero(loading.image_number),
             .quiet = loading.quiet,
         };
     }
@@ -449,8 +491,23 @@ pub const Plane = struct {
         cell_width: u32,
         cell_height: u32,
     ) Result {
-        const image_index = self.kittyImageIndex(command_value.id) orelse
-            return .{ .response_id = nonzero(command_value.id), .failure = .missing, .quiet = command_value.quiet };
+        if ((command_value.id == 0) == (command_value.image_number == 0))
+            return .{
+                .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
+                .failure = .invalid,
+                .quiet = command_value.quiet,
+            };
+        const image_index = (if (command_value.id != 0)
+            self.kittyImageIndex(command_value.id)
+        else
+            self.kittyImageNumberIndex(command_value.image_number)) orelse
+            return .{
+                .response_id = nonzero(command_value.id),
+                .response_number = nonzero(command_value.image_number),
+                .failure = .missing,
+                .quiet = command_value.quiet,
+            };
         const retained = self.images[image_index];
         var planned = makePlacement(
             retained.id,
@@ -485,7 +542,12 @@ pub const Plane = struct {
             self.placements[self.placement_count] = planned;
             self.placement_count += 1;
         }
-        return .{ .changed = true, .response_id = command_value.id, .quiet = command_value.quiet };
+        return .{
+            .changed = true,
+            .response_id = retained.kitty_id,
+            .response_number = retained.kitty_number,
+            .quiet = command_value.quiet,
+        };
     }
 
     fn delete(
@@ -500,19 +562,30 @@ pub const Plane = struct {
         const selector = if (command_value.delete == 0) 'a' else command_value.delete;
         const remove_data = std.ascii.isUpper(selector);
         const normalized = std.ascii.toLower(selector);
-        if (std.mem.indexOfScalar(u8, "airpqxyzc", normalized) == null)
+        if (std.mem.indexOfScalar(u8, "ainrpqxyzc", normalized) == null)
             return .{ .quiet = 2 };
         if (normalized == 'i' and command_value.id == 0) return .{ .quiet = 2 };
+        if (normalized == 'n' and command_value.image_number == 0) return .{ .quiet = 2 };
         if (normalized == 'r' and command_value.x > command_value.y) return .{ .quiet = 2 };
+        const numbered_image_id = if (normalized == 'n')
+            if (self.kittyImageNumberIndex(command_value.image_number)) |index| self.images[index].id else null
+        else
+            null;
 
         var changed = false;
         var placement_index: usize = 0;
         while (placement_index < self.placement_count) {
             const placement_value = self.placements[placement_index];
+            if (normalized == 'n' and placement_value.image_id != numbered_image_id) {
+                placement_index += 1;
+                continue;
+            }
             const kitty_id = self.kittyIdForImage(placement_value.image_id);
+            const kitty_number = self.kittyNumberForImage(placement_value.image_id);
             if (kitty_id == null or placement_value.bank != bank or !deleteMatches(
                 placement_value,
                 kitty_id,
+                kitty_number,
                 normalized,
                 command_value,
                 screen_origin,
@@ -535,6 +608,7 @@ pub const Plane = struct {
                 const selected = switch (normalized) {
                     'a' => kitty_id != null and !self.hasPlacement(image_id),
                     'i' => kitty_id == command_value.id,
+                    'n' => image_id == numbered_image_id,
                     'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
                     else => !self.hasPlacement(image_id),
                 };
@@ -601,6 +675,7 @@ pub const Plane = struct {
         self.images[self.image_count] = .{
             .id = image_id,
             .kitty_id = null,
+            .kitty_number = null,
             .width = width,
             .height = height,
             .generation = self.next_generation,
@@ -962,9 +1037,31 @@ pub const Plane = struct {
         return null;
     }
 
+    fn kittyImageNumberIndex(self: *const Plane, number: u32) ?usize {
+        var index: usize = self.image_count;
+        while (index != 0) {
+            index -= 1;
+            if (self.images[index].kitty_number == number) return index;
+        }
+        return null;
+    }
+
     fn kittyIdForImage(self: *const Plane, id: u32) ?u32 {
         for (self.images[0..self.image_count]) |retained|
             if (retained.id == id) return retained.kitty_id;
+        return null;
+    }
+
+    fn kittyNumberForImage(self: *const Plane, id: u32) ?u32 {
+        for (self.images[0..self.image_count]) |retained|
+            if (retained.id == id) return retained.kitty_number;
+        return null;
+    }
+
+    fn allocateKittyId(self: *const Plane) ?u32 {
+        var candidate: u32 = 1;
+        while (candidate != std.math.maxInt(u32)) : (candidate += 1)
+            if (self.kittyImageIndex(candidate) == null) return candidate;
         return null;
     }
 
@@ -1011,6 +1108,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'X' => 1 << 16,
             'Y' => 1 << 17,
             'z' => 1 << 18,
+            'I' => 1 << 19,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -1050,6 +1148,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'X' => result.cell_x = std.fmt.parseInt(u32, value, 10) catch return null,
             'Y' => result.cell_y = std.fmt.parseInt(u32, value, 10) catch return null,
             'z' => result.z = std.fmt.parseInt(i32, value, 10) catch return null,
+            'I' => result.image_number = std.fmt.parseInt(u32, value, 10) catch return null,
             else => return null,
         }
     }
@@ -1065,6 +1164,7 @@ fn ceilRatio(a: u32, b: u32, divisor: u32) ?u32 {
 fn deleteMatches(
     placement_value: Placement,
     kitty_id: ?u32,
+    kitty_number: ?u32,
     selector: u8,
     command_value: Command,
     screen_origin: u64,
@@ -1080,6 +1180,8 @@ fn deleteMatches(
     return switch (selector) {
         'a' => true,
         'i' => kitty_id == command_value.id and
+            (command_value.placement_id == 0 or placement_value.kitty_id == command_value.placement_id),
+        'n' => kitty_number == command_value.image_number and
             (command_value.placement_id == 0 or placement_value.kitty_id == command_value.placement_id),
         'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
         'p' => command_value.x != 0 and explicit_row != null and

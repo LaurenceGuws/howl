@@ -13333,15 +13333,22 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
         if (cell) |value| value.width else 1,
         if (cell) |value| value.height else 1,
     );
-    const respond = result.failure != null or result.response_id != null;
+    const respond = result.failure != null or result.response_id != null or result.response_number != null;
     const suppressed = result.quiet == 2 or (result.quiet == 1 and result.failure == null);
     if (respond and !suppressed) {
         try appendOutput(&terminal.host.pending_output, terminal.allocator, "\x1b_G");
         var metadata: [48]u8 = undefined;
         if (result.response_id) |id| {
-            const id_bytes = std.fmt.bufPrint(&metadata, "i={d};", .{id}) catch
+            const id_bytes = if (result.response_number) |number|
+                std.fmt.bufPrint(&metadata, "i={d},I={d};", .{ id, number })
+            else
+                std.fmt.bufPrint(&metadata, "i={d};", .{id});
+            const written = id_bytes catch return error.ConsequenceLimit;
+            try appendOutput(&terminal.host.pending_output, terminal.allocator, written);
+        } else if (result.response_number) |number| {
+            const number_bytes = std.fmt.bufPrint(&metadata, "I={d};", .{number}) catch
                 return error.ConsequenceLimit;
-            try appendOutput(&terminal.host.pending_output, terminal.allocator, id_bytes);
+            try appendOutput(&terminal.host.pending_output, terminal.allocator, number_bytes);
         } else {
             try appendOutput(&terminal.host.pending_output, terminal.allocator, ";");
         }
