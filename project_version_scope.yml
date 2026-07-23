@@ -37,6 +37,9 @@ accepted_implementation:
   - >-
     VT owns projected selection and copied-text semantics; Control exposes bounded local operations; Howl-host owns
     pointer gestures, exact clipboard chords, and nonblocking Wayland UTF-8 clipboard transfer.
+  - >-
+    Howl-host draws retained DEC single/double-width and double-height row geometry plus normal, raised, and lowered
+    cell baselines from backend-neutral render facts without changing shaping or texture identity.
 
 invariants:
   - every module allocation uses an explicit caller-provided allocator
@@ -48,7 +51,6 @@ invariants:
 
 deferred:
   - tabs, panes, sessions, and multiplexing
-  - unsupported DEC line-geometry and baseline drawing
   - broader ordered host-consequence presentation
 
 gates:

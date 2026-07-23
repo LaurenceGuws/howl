@@ -29,7 +29,7 @@ accepted:
   howl-render/src/generated*.zig: generated terminal-glyph classification, geometry, and rasterization
   howl-render/src/terminal.zig: stateless VT semantic-to-visual projection into caller buffers
   howl-render/src/terminal_test.zig: terminal projection bounds, sparse damage, cursor, and rollback proofs
-  howl-render/src/terminal_text*.zig: one-run terminal text preparation and exact raster identity
+  howl-render/src/terminal_text*.zig: one-run text preparation, raster identity, and native decoration metrics
   howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs
   howl-render/src/*_test.zig: selected render capability proofs
   howl-render/testdata: deterministic render test fonts
@@ -38,7 +38,7 @@ accepted:
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
   howl-host/src/main.zig: operator shell selection, window entry, serve, and primitive control inspection
   howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, and lifecycle
-  howl-host/src/renderer.zig: one render thread and concrete EGL/GLES drawing owner
+  howl-host/src/renderer.zig: one render thread and concrete EGL/GLES cell, DEC geometry, baseline, and decoration owner
   howl-host/src/viewport.zig: host scroll intent and exact scrollbar paint/hit geometry
   howl-host/src/clipboard.zig: bounded UTF-8 clipboard bytes and nonblocking transfer progress
   howl-host/vendor/xdg-system-bell: generated optional Wayland system-bell protocol bindings

@@ -31,6 +31,18 @@ pub const CellMetrics = struct {
     baseline_px: u16,
 };
 
+/// Copies native decoration placement for later backend draw preparation.
+pub const DecorationMetrics = struct {
+    /// Locates the underline from the cell's top edge.
+    underline_y: u16,
+    /// Reports the nonzero underline thickness.
+    underline_height: u16,
+    /// Locates the strike line from the cell's top edge.
+    strike_y: u16,
+    /// Reports the nonzero strike-line thickness.
+    strike_height: u16,
+};
+
 /// Borrows one complete retained visual row and selects an inclusive dirty span.
 pub const RowInput = struct {
     /// Borrows the complete immutable row for the call.
@@ -222,6 +234,17 @@ pub const FontMap = if (features.native_text) struct {
             .width_px = set.metrics.cell_width,
             .height_px = set.metrics.cell_height,
             .baseline_px = set.metrics.baseline,
+        };
+    }
+
+    /// Returns native decoration placement for one exact configured font key.
+    pub fn decorationMetrics(self: *@This(), key: FontKey) ?DecorationMetrics {
+        const set = self.get(key) orelse return null;
+        return .{
+            .underline_y = set.metrics.underline_y,
+            .underline_height = set.metrics.underline_height,
+            .strike_y = set.metrics.strike_y,
+            .strike_height = set.metrics.strike_height,
         };
     }
 

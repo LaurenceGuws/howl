@@ -89,7 +89,6 @@ pub const Error = std.mem.Allocator.Error || std.Thread.SpawnError ||
     Shader,
     Texture,
     CacheFull,
-    UnsupportedPresentation,
     Draw,
     Swap,
     Signal,
@@ -241,6 +240,19 @@ const Texture = struct {
     top: i16,
     bytes: usize,
     used: u64,
+};
+
+const PixelRect = struct {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+};
+
+const Scale = struct {
+    x: u2,
+    y: u2,
+    y_offset_cells: i2,
 };
 
 const Vertex = extern struct {
@@ -395,26 +407,42 @@ const Device = struct {
     fn drawRow(self: *Device, work: Submission, row: u16) Error!void {
         const start = @as(usize, row) * work.cols;
         const cells = work.cells[start..][0..work.cols];
-        try validateRowPresentation(work.row_geometry[row], cells);
-        for (cells, 0..) |cell, col| {
+        const geometry = work.row_geometry[row];
+        const logical_cols = rowColumns(geometry, work.cols);
+        for (cells[0..logical_cols], 0..) |cell, col| {
             const cursor_block = work.cursor.visible and work.cursor.shape == .block and
                 work.cursor.row == row and work.cursor.col == col;
+            const rect = planCell(row, @intCast(col), geometry, self.metrics) orelse
+                return error.InvalidSubmission;
             try self.quad(
-                @as(i32, @intCast(col)) * self.metrics.width_px,
-                @as(i32, row) * self.metrics.height_px,
-                self.metrics.width_px,
-                self.metrics.height_px,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
                 cellFill(cell, work.cursor, cursor_block),
                 self.white,
             );
         }
+        const row_width = @as(u32, work.cols) * self.metrics.width_px;
+        const covered = @as(u32, logical_cols) * self.metrics.width_px * lineScale(geometry).x;
+        if (covered < row_width) {
+            const tail = cells[logical_cols];
+            try self.quad(
+                @intCast(covered),
+                @as(i32, row) * self.metrics.height_px,
+                row_width - covered,
+                self.metrics.height_px,
+                tail.background,
+                self.white,
+            );
+        }
         var at: u16 = 0;
-        while (at < work.cols) {
+        while (at < logical_cols) {
             var prepared = try text.prepareNextRun(self.allocator, &self.fonts, .{
-                .cells = cells,
+                .cells = cells[0..logical_cols],
                 .affected_start = at,
-                .affected_end = work.cols - 1,
-                .geometry = work.row_geometry[row],
+                .affected_end = logical_cols - 1,
+                .geometry = geometry,
                 .metrics = self.metrics,
             }, at);
             defer prepared.deinit();
@@ -422,6 +450,7 @@ const Device = struct {
             std.debug.assert(prepared.end_cell > at);
             at = prepared.end_cell;
         }
+        try self.drawDecorations(row, cells[0..logical_cols], geometry);
     }
 
     fn drawPrepared(
@@ -452,36 +481,145 @@ const Device = struct {
         std.debug.assert(glyph.source_start < glyph.source_end and glyph.source_end <= cells.len);
         const cached = try self.texture(generation, glyph.key);
         if (cached.width == 0 or cached.height == 0) return;
-        std.debug.assert(prepared.baseline == .normal);
-        const x = glyphPixelX(
+        const base_x = glyphPixelX(
             prepared.first_cell,
             self.metrics.width_px,
             cached.left,
             glyph.x_26_6,
         );
-        const y = @as(i32, row) * self.metrics.height_px + self.metrics.baseline_px -
+        const base_y = @as(i32, self.metrics.baseline_px) -
             cached.top - @divTrunc(glyph.y_26_6, 64);
+        const rect = planContent(
+            row,
+            glyph.source_start,
+            prepared.geometry,
+            prepared.baseline,
+            self.metrics,
+            .{
+                .x = base_x,
+                .y = base_y,
+                .width = cached.width,
+                .height = cached.height,
+            },
+        ) orelse return error.InvalidSubmission;
         c.glEnable(c.GL_SCISSOR_TEST);
         defer c.glDisable(c.GL_SCISSOR_TEST);
         var col = glyph.source_start;
         while (col < glyph.source_end) : (col += 1) {
-            c.glScissor(
-                @as(c_int, col) * self.metrics.width_px,
-                0,
-                self.metrics.width_px,
-                @intCast(self.size.height),
-            );
+            const clip = clipToSurface(
+                planCell(row, col, prepared.geometry, self.metrics) orelse
+                    return error.InvalidSubmission,
+                self.size,
+            ) orelse continue;
+            setScissor(clip, self.size);
             const cursor_block = cursor.visible and cursor.shape == .block and
                 cursor.row == row and cursor.col == col;
             try self.quad(
-                x,
-                y,
-                cached.width,
-                cached.height,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
                 glyphColor(cells[col], cursor, cursor_block),
                 cached.name,
             );
         }
+    }
+
+    fn drawDecorations(
+        self: *Device,
+        row: u16,
+        cells: []const terminal.Cell,
+        geometry: terminal.LineGeometry,
+    ) Error!void {
+        for (cells, 0..) |cell, col_usize| {
+            if (!cell.strikethrough and !cell.underline) continue;
+            const col: u16 = @intCast(col_usize);
+            const decorations = self.fonts.decorationMetrics(cellFontKey(cell)) orelse
+                return error.MissingFontConfiguration;
+            if (cell.strikethrough) try self.drawDecoration(
+                row,
+                col,
+                geometry,
+                cell.baseline,
+                decorations.strike_y,
+                decorations.strike_height,
+                .single,
+                cell.foreground,
+            );
+            if (cell.underline) try self.drawDecoration(
+                row,
+                col,
+                geometry,
+                cell.baseline,
+                decorations.underline_y,
+                decorations.underline_height,
+                cell.underline_style,
+                cell.underline_color,
+            );
+        }
+    }
+
+    fn drawDecoration(
+        self: *Device,
+        row: u16,
+        col: u16,
+        geometry: terminal.LineGeometry,
+        baseline: terminal.CellBaseline,
+        y: u16,
+        height: u16,
+        style: terminal.UnderlineStyle,
+        color: terminal.Rgb,
+    ) Error!void {
+        const clip = clipToSurface(
+            planCell(row, col, geometry, self.metrics) orelse return error.InvalidSubmission,
+            self.size,
+        ) orelse return;
+        c.glEnable(c.GL_SCISSOR_TEST);
+        defer c.glDisable(c.GL_SCISSOR_TEST);
+        setScissor(clip, self.size);
+        const base = PixelRect{
+            .x = @as(i32, col) * self.metrics.width_px,
+            .y = y,
+            .width = self.metrics.width_px,
+            .height = height,
+        };
+        switch (style) {
+            .none => {},
+            .single => try self.drawDecorationRect(row, col, geometry, baseline, base, color),
+            .double => {
+                const upper_y = y -| (height + 1);
+                var upper = base;
+                upper.y = upper_y;
+                try self.drawDecorationRect(row, col, geometry, baseline, upper, color);
+                try self.drawDecorationRect(row, col, geometry, baseline, base, color);
+            },
+            .curly, .dotted, .dashed => {
+                const unit = @max(@as(u16, 1), height);
+                var x: u16 = 0;
+                while (x < self.metrics.width_px) : (x += 1) {
+                    const rise = decorationRise(style, x, unit) orelse continue;
+                    var segment = base;
+                    segment.x += x;
+                    segment.width = 1;
+                    segment.y -|= @min(segment.y, rise);
+                    try self.drawDecorationRect(row, col, geometry, baseline, segment, color);
+                }
+            },
+        }
+    }
+
+    fn drawDecorationRect(
+        self: *Device,
+        row: u16,
+        col: u16,
+        geometry: terminal.LineGeometry,
+        baseline: terminal.CellBaseline,
+        base: PixelRect,
+        color: terminal.Rgb,
+    ) Error!void {
+        const rect = planContent(row, col, geometry, baseline, self.metrics, base) orelse
+            return error.InvalidSubmission;
+        try self.quad(rect.x, rect.y, rect.width, rect.height, color, self.white);
     }
 
     fn drawCursor(self: *Device, work: Submission) Error!void {
@@ -496,12 +634,34 @@ const Device = struct {
             .none => return,
             else => self.metrics.height_px,
         };
-        const y_offset = if (work.cursor.shape == .underline) self.metrics.height_px - height else 0;
+        const y_offset: u16 = if (work.cursor.shape == .underline) self.metrics.height_px - height else 0;
+        const geometry = work.row_geometry[work.cursor.row];
+        const rect = planContent(
+            work.cursor.row,
+            work.cursor.col,
+            geometry,
+            .normal,
+            self.metrics,
+            .{
+                .x = @as(i32, work.cursor.col) * self.metrics.width_px,
+                .y = y_offset,
+                .width = width,
+                .height = height,
+            },
+        ) orelse return error.InvalidSubmission;
+        const clip = clipToSurface(
+            planCell(work.cursor.row, work.cursor.col, geometry, self.metrics) orelse
+                return error.InvalidSubmission,
+            self.size,
+        ) orelse return;
+        c.glEnable(c.GL_SCISSOR_TEST);
+        defer c.glDisable(c.GL_SCISSOR_TEST);
+        setScissor(clip, self.size);
         try self.quad(
-            @as(i32, work.cursor.col) * self.metrics.width_px,
-            @as(i32, work.cursor.row) * self.metrics.height_px + y_offset,
-            width,
-            height,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
             work.cursor.color,
             self.white,
         );
@@ -578,27 +738,13 @@ const Device = struct {
         self: *Device,
         x: i32,
         y: i32,
-        width: u16,
-        height: u16,
+        width: u32,
+        height: u32,
         color: terminal.Rgb,
         texture_name: c.GLuint,
     ) Error!void {
         if (width == 0 or height == 0) return;
-        const left = pixelToNdc(x, self.size.width);
-        const right = pixelToNdc(x + width, self.size.width);
-        const top = -pixelToNdc(y, self.size.height);
-        const bottom = -pixelToNdc(y + height, self.size.height);
-        const red = @as(f32, @floatFromInt(color.r)) / 255.0;
-        const green = @as(f32, @floatFromInt(color.g)) / 255.0;
-        const blue = @as(f32, @floatFromInt(color.b)) / 255.0;
-        const vertices = [_]Vertex{
-            .{ .x = left, .y = top, .u = 0, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = right, .y = bottom, .u = 1, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = left, .y = bottom, .u = 0, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = left, .y = top, .u = 0, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = right, .y = top, .u = 1, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
-            .{ .x = right, .y = bottom, .u = 1, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
-        };
+        const vertices = quadVertices(x, y, width, height, self.size, color);
         c.glBindTexture(c.GL_TEXTURE_2D, texture_name);
         c.glBufferData(c.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(vertices)), &vertices, c.GL_STREAM_DRAW);
         c.glVertexAttribPointer(0, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(0));
@@ -858,15 +1004,6 @@ fn validRect(rect: viewport.Rect, size: PixelSize) bool {
         @as(u64, rect.y) + rect.height <= size.height;
 }
 
-fn validateRowPresentation(
-    geometry: terminal.LineGeometry,
-    cells: []const terminal.Cell,
-) error{UnsupportedPresentation}!void {
-    if (geometry != .single_width) return error.UnsupportedPresentation;
-    for (cells) |cell| if (cell.baseline != .normal)
-        return error.UnsupportedPresentation;
-}
-
 fn signal(fd: c_int) void {
     const value: u64 = 1;
     while (true) {
@@ -963,8 +1100,146 @@ fn configureTexture(name: c.GLuint) void {
     c.glPixelStorei(c.GL_UNPACK_ALIGNMENT, 1);
 }
 
-fn pixelToNdc(value: i32, extent: u32) f32 {
+fn pixelToNdc(value: i64, extent: u32) f32 {
     return @as(f32, @floatFromInt(value)) * 2.0 / @as(f32, @floatFromInt(extent)) - 1.0;
+}
+
+fn quadVertices(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    size: PixelSize,
+    color: terminal.Rgb,
+) [6]Vertex {
+    std.debug.assert(width != 0 and height != 0);
+    const left = pixelToNdc(x, size.width);
+    const right = pixelToNdc(@as(i64, x) + width, size.width);
+    const top = -pixelToNdc(y, size.height);
+    const bottom = -pixelToNdc(@as(i64, y) + height, size.height);
+    const red = @as(f32, @floatFromInt(color.r)) / 255.0;
+    const green = @as(f32, @floatFromInt(color.g)) / 255.0;
+    const blue = @as(f32, @floatFromInt(color.b)) / 255.0;
+    return .{
+        .{ .x = left, .y = top, .u = 0, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = right, .y = bottom, .u = 1, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = left, .y = bottom, .u = 0, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = left, .y = top, .u = 0, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = right, .y = top, .u = 1, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = right, .y = bottom, .u = 1, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
+    };
+}
+
+fn lineScale(geometry: terminal.LineGeometry) Scale {
+    // DEC double-height rows share one 2x canvas; the bottom row shifts that
+    // canvas up before both halves are clipped to their physical row.
+    return switch (geometry) {
+        .single_width => .{ .x = 1, .y = 1, .y_offset_cells = 0 },
+        .double_width => .{ .x = 2, .y = 1, .y_offset_cells = 0 },
+        .double_height_top => .{ .x = 2, .y = 2, .y_offset_cells = 0 },
+        .double_height_bottom => .{ .x = 2, .y = 2, .y_offset_cells = -1 },
+    };
+}
+
+fn rowColumns(geometry: terminal.LineGeometry, cols: u16) u16 {
+    return switch (geometry) {
+        .single_width => cols,
+        else => @max(1, cols / 2),
+    };
+}
+
+fn planCell(
+    row: u16,
+    col: u16,
+    geometry: terminal.LineGeometry,
+    metrics: text.CellMetrics,
+) ?PixelRect {
+    const scale = lineScale(geometry);
+    const x = @as(u64, col) * metrics.width_px * scale.x;
+    const y = @as(u64, row) * metrics.height_px;
+    const width = @as(u32, metrics.width_px) * scale.x;
+    if (x > std.math.maxInt(i32) or y > std.math.maxInt(i32)) return null;
+    return .{
+        .x = @intCast(x),
+        .y = @intCast(y),
+        .width = width,
+        .height = metrics.height_px,
+    };
+}
+
+fn planContent(
+    row: u16,
+    anchor_col: u16,
+    geometry: terminal.LineGeometry,
+    baseline: terminal.CellBaseline,
+    metrics: text.CellMetrics,
+    base: PixelRect,
+) ?PixelRect {
+    const anchor_x = @as(i64, anchor_col) * metrics.width_px;
+    var x = @as(i64, base.x);
+    var y = @as(i64, base.y);
+    var width = @as(u64, base.width);
+    var height = @as(u64, base.height);
+    if (baseline != .normal) {
+        // SGR 73/74 use Kitty's explicit half-size top/bottom alignment while
+        // retaining the normal shaped mask and its cache identity.
+        x = anchor_x + @divFloor(x - anchor_x, 2);
+        width = (width + 1) / 2;
+        height = (height + 1) / 2;
+        y = @divFloor(y, 2);
+        if (baseline == .lowered) y += metrics.height_px - (metrics.height_px + 1) / 2;
+    }
+    const scale = lineScale(geometry);
+    x *= scale.x;
+    y = @as(i64, row) * metrics.height_px +
+        @as(i64, scale.y_offset_cells) * metrics.height_px + y * scale.y;
+    width *= scale.x;
+    height *= scale.y;
+    if (x < std.math.minInt(i32) or x > std.math.maxInt(i32) or
+        y < std.math.minInt(i32) or y > std.math.maxInt(i32) or
+        width > std.math.maxInt(u32) or height > std.math.maxInt(u32))
+        return null;
+    return .{ .x = @intCast(x), .y = @intCast(y), .width = @intCast(width), .height = @intCast(height) };
+}
+
+fn clipToSurface(rect: PixelRect, size: PixelSize) ?PixelRect {
+    const left = @max(@as(i64, 0), rect.x);
+    const top = @max(@as(i64, 0), rect.y);
+    const right = @min(@as(i64, size.width), @as(i64, rect.x) + rect.width);
+    const bottom = @min(@as(i64, size.height), @as(i64, rect.y) + rect.height);
+    if (left >= right or top >= bottom) return null;
+    return .{
+        .x = @intCast(left),
+        .y = @intCast(top),
+        .width = @intCast(right - left),
+        .height = @intCast(bottom - top),
+    };
+}
+
+fn intersectRect(a: PixelRect, b: PixelRect) ?PixelRect {
+    const left = @max(@as(i64, a.x), b.x);
+    const top = @max(@as(i64, a.y), b.y);
+    const right = @min(@as(i64, a.x) + a.width, @as(i64, b.x) + b.width);
+    const bottom = @min(@as(i64, a.y) + a.height, @as(i64, b.y) + b.height);
+    if (left >= right or top >= bottom) return null;
+    return .{
+        .x = @intCast(left),
+        .y = @intCast(top),
+        .width = @intCast(right - left),
+        .height = @intCast(bottom - top),
+    };
+}
+
+fn setScissor(rect: PixelRect, size: PixelSize) void {
+    std.debug.assert(rect.x >= 0 and rect.y >= 0);
+    std.debug.assert(@as(u64, @intCast(rect.x)) + rect.width <= size.width);
+    std.debug.assert(@as(u64, @intCast(rect.y)) + rect.height <= size.height);
+    c.glScissor(
+        @intCast(rect.x),
+        @intCast(size.height - @as(u32, @intCast(rect.y)) - rect.height),
+        @intCast(rect.width),
+        @intCast(rect.height),
+    );
 }
 
 fn glyphPixelX(run_start: u16, cell_width: u16, raster_left: i16, shaped_x_26_6: i32) i32 {
@@ -977,6 +1252,30 @@ fn cellFill(cell: terminal.Cell, cursor: terminal.Cursor, cursor_block: bool) te
 
 fn glyphColor(cell: terminal.Cell, cursor: terminal.Cursor, cursor_block: bool) terminal.Rgb {
     return if (cursor_block) cursor.text_color else cell.foreground;
+}
+
+fn cellFontKey(cell: terminal.Cell) text.FontKey {
+    return .{
+        .slot = cell.font,
+        .style = if (cell.bold and cell.italic)
+            .bold_italic
+        else if (cell.bold)
+            .bold
+        else if (cell.italic)
+            .italic
+        else
+            .normal,
+    };
+}
+
+fn decorationRise(style: terminal.UnderlineStyle, x: u16, unit: u16) ?u16 {
+    std.debug.assert(unit != 0);
+    return switch (style) {
+        .curly => if (x % (unit *| 2) >= unit) unit else 0,
+        .dotted => if (x % (unit *| 2) < unit) 0 else null,
+        .dashed => if (x % (unit *| 4) < unit *| 3) 0 else null,
+        else => null,
+    };
 }
 
 test "mailbox replaces only pending work while active ownership remains exact" {
@@ -1101,7 +1400,8 @@ test "snapshot copy has no caller lifetime and preserves newest identity" {
     var snapshot = try Snapshot.init(std.testing.allocator, 1, 2);
     defer snapshot.deinit();
     var cells = [_]terminal.Cell{ testCell('a'), testCell('b') };
-    const geometry = [_]terminal.LineGeometry{.single_width};
+    cells[0].baseline = .raised;
+    var geometry = [_]terminal.LineGeometry{.double_width};
     const bar = viewport.scrollbar(
         .{ .history_count = 20, .offset = 4, .rows = 1 },
         20,
@@ -1120,8 +1420,12 @@ test "snapshot copy has no caller lifetime and preserves newest identity" {
         .scrollbar = bar,
     });
     cells[0].codepoint = 'z';
+    cells[0].baseline = .normal;
+    geometry[0] = .single_width;
     const copy = snapshot.view();
     try std.testing.expectEqual(@as(u21, 'a'), copy.cells[0].codepoint);
+    try std.testing.expectEqual(terminal.CellBaseline.raised, copy.cells[0].baseline);
+    try std.testing.expectEqual(terminal.LineGeometry.double_width, copy.row_geometry[0]);
     try std.testing.expectEqual(@as(u64, 7), copy.generation);
     try std.testing.expectEqual(bar, copy.scrollbar.?);
 }
@@ -1245,17 +1549,133 @@ test "draw colors consume projected cell and cursor facts exactly" {
     try std.testing.expectEqual(cursor.text_color, glyphColor(cell, cursor, true));
 }
 
-test "unresolved line scaling and baseline facts fail before drawing" {
-    var cells = [_]terminal.Cell{testCell('x')};
-    try validateRowPresentation(.single_width, &cells);
-    try std.testing.expectError(
-        error.UnsupportedPresentation,
-        validateRowPresentation(.double_width, &cells),
+test "decoration metrics use the exact projected font identity" {
+    var cell = testCell('x');
+    cell.font = 15;
+    cell.bold = true;
+    cell.italic = true;
+    try std.testing.expectEqual(
+        text.FontKey{ .slot = 15, .style = .bold_italic },
+        cellFontKey(cell),
     );
-    cells[0].baseline = .raised;
-    try std.testing.expectError(
-        error.UnsupportedPresentation,
-        validateRowPresentation(.single_width, &cells),
+}
+
+test "row plans preserve logical columns and odd physical edges" {
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    try std.testing.expectEqual(@as(u16, 5), rowColumns(.single_width, 5));
+    try std.testing.expectEqual(@as(u16, 2), rowColumns(.double_width, 5));
+    try std.testing.expectEqual(@as(u16, 1), rowColumns(.double_height_top, 1));
+    try std.testing.expectEqual(
+        PixelRect{ .x = 18, .y = 30, .width = 18, .height = 15 },
+        planCell(2, 1, .double_width, metrics).?,
+    );
+}
+
+test "double-height halves share one scaled canvas with exact row clipping" {
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    const base = PixelRect{ .x = 9, .y = 2, .width = 7, .height = 9 };
+    const top = planContent(1, 1, .double_height_top, .normal, metrics, base).?;
+    const bottom = planContent(2, 1, .double_height_bottom, .normal, metrics, base).?;
+    try std.testing.expectEqual(PixelRect{ .x = 18, .y = 19, .width = 14, .height = 18 }, top);
+    try std.testing.expectEqual(top, bottom);
+    try std.testing.expectEqual(
+        PixelRect{ .x = 18, .y = 19, .width = 14, .height = 11 },
+        intersectRect(top, planCell(1, 1, .double_height_top, metrics).?).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 18, .y = 30, .width = 14, .height = 7 },
+        intersectRect(bottom, planCell(2, 1, .double_height_bottom, metrics).?).?,
+    );
+}
+
+test "raised and lowered placement use half scale and top bottom alignment" {
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    const base = PixelRect{ .x = 11, .y = 2, .width = 7, .height = 9 };
+    try std.testing.expectEqual(
+        PixelRect{ .x = 10, .y = 1, .width = 4, .height = 5 },
+        planContent(0, 1, .single_width, .raised, metrics, base).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 10, .y = 8, .width = 4, .height = 5 },
+        planContent(0, 1, .single_width, .lowered, metrics, base).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 20, .y = 2, .width = 8, .height = 10 },
+        planContent(0, 1, .double_height_top, .raised, metrics, base).?,
+    );
+}
+
+test "baseline scaling anchors every shaped glyph to its source cell" {
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    const second = planContent(
+        0,
+        3,
+        .single_width,
+        .raised,
+        metrics,
+        .{ .x = 28, .y = 2, .width = 7, .height = 9 },
+    ).?;
+    try std.testing.expectEqual(@as(i32, 27), second.x);
+    try std.testing.expect(second.x >= planCell(0, 3, .single_width, metrics).?.x);
+    try std.testing.expect(second.x < planCell(0, 4, .single_width, metrics).?.x);
+}
+
+test "cursor and decoration rectangles share geometry and baseline transforms" {
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    const cursor = PixelRect{ .x = 9, .y = 13, .width = 9, .height = 2 };
+    try std.testing.expectEqual(
+        PixelRect{ .x = 18, .y = 26, .width = 18, .height = 4 },
+        planContent(0, 1, .double_height_top, .normal, metrics, cursor).?,
+    );
+    const underline = PixelRect{ .x = 9, .y = 12, .width = 9, .height = 1 };
+    try std.testing.expectEqual(
+        PixelRect{ .x = 18, .y = 12, .width = 10, .height = 2 },
+        planContent(0, 1, .double_height_top, .raised, metrics, underline).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 18, .y = 26, .width = 10, .height = 2 },
+        planContent(0, 1, .double_height_top, .lowered, metrics, underline).?,
+    );
+}
+
+test "decoration patterns are bounded and deterministic" {
+    try std.testing.expectEqual(@as(?u16, 0), decorationRise(.curly, 0, 2));
+    try std.testing.expectEqual(@as(?u16, 2), decorationRise(.curly, 2, 2));
+    try std.testing.expectEqual(@as(?u16, 0), decorationRise(.dotted, 1, 2));
+    try std.testing.expectEqual(@as(?u16, null), decorationRise(.dotted, 2, 2));
+    try std.testing.expectEqual(@as(?u16, 0), decorationRise(.dashed, 5, 2));
+    try std.testing.expectEqual(@as(?u16, null), decorationRise(.dashed, 6, 2));
+    try std.testing.expectEqual(@as(?u16, null), decorationRise(.single, 0, 2));
+}
+
+test "scaled quads retain complete texture coordinates for scissor cropping" {
+    const vertices = quadVertices(
+        -4,
+        3,
+        18,
+        30,
+        .{ .width = 45, .height = 30 },
+        .{ .r = 1, .g = 2, .b = 3 },
+    );
+    try std.testing.expectEqual(@as(f32, 0), vertices[0].u);
+    try std.testing.expectEqual(@as(f32, 0), vertices[0].v);
+    try std.testing.expectEqual(@as(f32, 1), vertices[1].u);
+    try std.testing.expectEqual(@as(f32, 1), vertices[1].v);
+    try std.testing.expect(vertices[0].x < vertices[1].x);
+    try std.testing.expect(vertices[0].y > vertices[1].y);
+}
+
+test "surface clipping rejects empty and bounds hostile rectangles" {
+    try std.testing.expect(clipToSurface(
+        .{ .x = -10, .y = -20, .width = 5, .height = 5 },
+        .{ .width = 40, .height = 30 },
+    ) == null);
+    try std.testing.expectEqual(
+        PixelRect{ .x = 0, .y = 0, .width = 7, .height = 9 },
+        clipToSurface(
+            .{ .x = -3, .y = -2, .width = 10, .height = 11 },
+            .{ .width = 40, .height = 30 },
+        ).?,
     );
 }
 

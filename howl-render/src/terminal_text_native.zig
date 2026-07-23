@@ -8,6 +8,8 @@ pub const FontStyle = impl.FontStyle;
 pub const FontKey = impl.FontKey;
 /// Supplies ordinary cell metrics without resolving presentation effects.
 pub const CellMetrics = impl.CellMetrics;
+/// Copies native underline and strike placement for backend draw preparation.
+pub const DecorationMetrics = impl.DecorationMetrics;
 /// Borrows one complete retained row and affected cell span.
 pub const RowInput = impl.RowInput;
 /// Identifies one native raster within an exact font map.

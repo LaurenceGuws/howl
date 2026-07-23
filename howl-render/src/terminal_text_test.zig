@@ -22,6 +22,10 @@ test "terminal text public surface follows selected sources" {
     try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "FontConfig"));
     try std.testing.expectEqual(
         selected.native_text,
+        @hasDecl(terminal_text, "DecorationMetrics"),
+    );
+    try std.testing.expectEqual(
+        selected.native_text,
         @hasDecl(terminal_text, "FontMapInitError"),
     );
     try std.testing.expectEqual(
@@ -175,7 +179,13 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     try std.testing.expect(configured_metrics.width_px > 0);
     try std.testing.expect(configured_metrics.height_px > 0);
     try std.testing.expect(configured_metrics.baseline_px < configured_metrics.height_px);
+    const decorations = map.decorationMetrics(.{ .slot = 0, .style = .normal }).?;
+    try std.testing.expect(decorations.underline_y < configured_metrics.height_px);
+    try std.testing.expect(decorations.underline_height > 0);
+    try std.testing.expect(decorations.strike_y < configured_metrics.height_px);
+    try std.testing.expect(decorations.strike_height > 0);
     try std.testing.expect(map.cellMetrics(.{ .slot = 1, .style = .normal }) == null);
+    try std.testing.expect(map.decorationMetrics(.{ .slot = 1, .style = .normal }) == null);
     var cells = [_]terminal.Cell{cell(0)} ** 12;
     cells[8] = cell('f');
     cells[9] = cell('i');

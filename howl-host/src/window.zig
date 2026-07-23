@@ -2349,6 +2349,46 @@ test "visual storage admits complete and resized control observations" {
     try std.testing.expectEqual(@as(u16, 5), visual.cols);
 }
 
+test "visual storage retains DEC row geometry and cell baseline from child output" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{
+            .command = "printf '\\033#6W\\r\\n\\033#3T\\r\\n\\033#4B\\r\\n\\033[73mR\\033[74mL'; sleep 30",
+            .rows = 4,
+            .cols = 8,
+        },
+        .{},
+    );
+    defer terminal.deinit();
+    var visual = try VisualStorage.init(std.testing.allocator, 4, 8);
+    defer visual.deinit();
+
+    var attempts: u8 = 0;
+    var observed_change = false;
+    while (attempts < 100 and !visualContains(&visual, "WTBRL")) : (attempts += 1) {
+        terminal.consumeWake();
+        observed_change = try visual.capture(terminal) or observed_change;
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+
+    try std.testing.expect(observed_change);
+    try std.testing.expect(visualContains(&visual, "WTBRL"));
+    try std.testing.expectEqual(terminal_render.LineGeometry.double_width, visual.row_geometry[0]);
+    try std.testing.expectEqual(terminal_render.LineGeometry.double_height_top, visual.row_geometry[1]);
+    try std.testing.expectEqual(terminal_render.LineGeometry.double_height_bottom, visual.row_geometry[2]);
+    try std.testing.expectEqual(terminal_render.CellBaseline.raised, visual.cells[24].baseline);
+    try std.testing.expectEqual(terminal_render.CellBaseline.lowered, visual.cells[25].baseline);
+
+    try std.testing.expect((try terminal.resize(10, 5)).changed);
+    try std.testing.expect(try visual.capture(terminal));
+    for (visual.row_geometry) |geometry|
+        try std.testing.expectEqual(terminal_render.LineGeometry.single_width, geometry);
+}
+
 test "terminal exit retains final visual until its admitted draw completes" {
     const terminal = try control.Terminal.init(
         std.testing.allocator,
