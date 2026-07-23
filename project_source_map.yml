@@ -37,7 +37,7 @@ accepted:
   howl-host/build.zig: first-party executable build, install, run, and proof ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
   howl-host/src/main.zig: operator shell selection, window entry, serve, and primitive control inspection
-  howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, and lifecycle
+  howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, ordered notification policy, and lifecycle
   howl-host/src/renderer.zig: one render thread and concrete EGL/GLES cell, DEC geometry, baseline, and decoration owner
   howl-host/src/viewport.zig: host scroll intent and exact scrollbar paint/hit geometry
   howl-host/src/clipboard.zig: bounded UTF-8 clipboard bytes and nonblocking transfer progress

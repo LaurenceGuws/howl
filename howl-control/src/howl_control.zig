@@ -216,6 +216,12 @@ pub const shell_mark_metadata_max_bytes = howl_vt.Terminal.shell_mark_metadata_m
 pub const shell_name_max_bytes = howl_vt.Terminal.shell_name_max_bytes;
 /// Matches the VT owner's maximum retained window-title bytes.
 pub const title_max_bytes = howl_vt.Terminal.title_max_bytes;
+/// Identifies the host-neutral policy kind of one retained ordered notification.
+pub const NotificationKind = enum {
+    message,
+    steal_focus,
+    request_attention,
+};
 
 comptime {
     std.debug.assert(shell_mark_metadata_max_bytes <= std.math.maxInt(u16));
@@ -236,11 +242,25 @@ pub const HostPresentation = struct {
     title_len: u16,
     /// Counts accepted BEL controls monotonically for executable presentation policy.
     bell_generation: u64,
+    /// Copies the FIFO-head notification identity and policy kind when pending.
+    notification: ?HostNotification,
+    /// Counts bounded ordered notifications including the copied head.
+    notification_count: u8,
 
     /// Borrows the copied title when one has been accepted.
     pub fn titleBytes(self: *const HostPresentation) ?[]const u8 {
         return if (self.title_set) self.title[0..self.title_len] else null;
     }
+};
+
+/// Copies the exact identity and policy kind of one pending ordered notification.
+pub const HostNotification = struct {
+    /// Identifies the FIFO head and is never reused during one terminal lifetime.
+    generation: u64,
+    /// Selects message, focus, or attention policy at the executable boundary.
+    kind: NotificationKind,
+    /// Retains the originating OSC family for exact host policy.
+    command: u16,
 };
 
 const ReaderFailure = enum(u8) {
@@ -697,6 +717,16 @@ pub const Terminal = struct {
             .title = @splat(0),
             .title_len = 0,
             .bell_generation = snapshot.bell_generation,
+            .notification = if (snapshot.notification) |notification| .{
+                .generation = notification.generation,
+                .kind = switch (notification.kind) {
+                    .message => .message,
+                    .steal_focus => .steal_focus,
+                    .request_attention => .request_attention,
+                },
+                .command = notification.command,
+            } else null,
+            .notification_count = snapshot.notification_count,
         };
         if (snapshot.title) |title| {
             std.debug.assert(title.len <= result.title.len);
@@ -704,6 +734,18 @@ pub const Terminal = struct {
             @memcpy(result.title[0..title.len], title);
         }
         return result;
+    }
+
+    /// Consumes only the matching FIFO-head notification and announces semantic mutation.
+    pub fn acknowledgeNotification(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleNotification}!void {
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgeNotification(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
     }
 
     /// Copies the current bounded viewport without retaining model borrows.
@@ -1599,6 +1641,44 @@ test "host viewport operation retains history and mouse ownership facts" {
 
     try terminal.consume("\x1b[?1000h");
     try std.testing.expect(terminal.viewportFacts().mouse_reporting);
+}
+
+test "host presentation copies and acknowledges ordered notifications exactly" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+    try terminal.consume("\x1b]9;first\x07\x1b]1337;RequestAttention=once\x07");
+    terminal.consumeWake();
+
+    const first = terminal.hostPresentation();
+    try std.testing.expectEqual(@as(u8, 2), first.notification_count);
+    try std.testing.expectEqual(NotificationKind.message, first.notification.?.kind);
+    const first_generation = first.notification.?.generation;
+    const sequence = terminal.status().semantic_sequence;
+    const wakes = wake_count.load(.acquire);
+    try std.testing.expectError(
+        error.StaleNotification,
+        terminal.acknowledgeNotification(first_generation + 1),
+    );
+    try std.testing.expectEqual(first_generation, terminal.hostPresentation().notification.?.generation);
+    try std.testing.expectEqual(sequence, terminal.status().semantic_sequence);
+    try std.testing.expectEqual(wakes, wake_count.load(.acquire));
+
+    try terminal.acknowledgeNotification(first_generation);
+    try std.testing.expectEqual(sequence + 1, terminal.status().semantic_sequence);
+    try std.testing.expectEqual(wakes + 1, wake_count.load(.acquire));
+    const second = terminal.hostPresentation();
+    try std.testing.expectEqual(@as(u8, 1), second.notification_count);
+    try std.testing.expectEqual(NotificationKind.request_attention, second.notification.?.kind);
+    try std.testing.expect(second.notification.?.generation > first_generation);
+    try terminal.acknowledgeNotification(second.notification.?.generation);
+    try std.testing.expectEqual(@as(u8, 0), terminal.hostPresentation().notification_count);
+    try std.testing.expect(terminal.hostPresentation().notification == null);
 }
 
 test "local selection operations copy projected history with exact mutation" {

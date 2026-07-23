@@ -14,7 +14,7 @@ capabilities:
     role: backend-neutral terminal visual knowledge and plain rendering values without runtime policy
   executable:
     role: first-party single-terminal Wayland, EGL/GLES, input, retained visuals, rendering, and presentation
-    status: accepted foundation with primary-history viewport, selection, clipboard, and DEC text presentation; multiplexing remains outside
+    status: accepted foundation with primary-history viewport, selection, clipboard, DEC text presentation, and bounded notification policy; multiplexing remains outside
 
 ownership:
   allocation: every module allocation uses an explicit caller-provided allocator

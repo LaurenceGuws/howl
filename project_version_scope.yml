@@ -30,7 +30,8 @@ accepted_implementation:
     returns exact native, generated, or no-glyph output ownership.
   - >-
     Howl-host directly composes one Control terminal, one Wayland window, and one EGL/GLES render thread with bounded
-    keyboard and pointer admission, title and bell presentation, exact terminal completion, and cleanup.
+    keyboard and pointer admission, title, bell, and ordered notification presentation, exact terminal completion,
+    and cleanup.
   - >-
     Howl-host owns primary-history viewport intent and exact scrollbar presentation while VT retains history,
     projection, eviction, reflow, and alternate-screen truth.
@@ -51,7 +52,7 @@ invariants:
 
 deferred:
   - tabs, panes, sessions, and multiplexing
-  - broader ordered host-consequence presentation
+  - remaining ordered host-consequence presentation beyond notification and attention bell policy
 
 gates:
   - permanent authorities and active planning YAML parse

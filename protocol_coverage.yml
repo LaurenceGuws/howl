@@ -1715,12 +1715,12 @@ references:
             raw: "OSC 1337 ; StealFocus[=Pt] (BEL|ST)"
             effect: request application focus
             conditions: >-
-              iTerm2 executes only for a trusted terminal; Howl retains one bounded ordered intent and delegates
-              authorization and focus policy to the host.
+              iTerm2 executes only for a trusted terminal; Howl retains one bounded ordered intent and its Wayland
+              host consumes it in order under a deliberate no-focus-steal policy.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}
+            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig, symbol: applyTerminalPresentation, proof: {
+              path: howl-host/src/window.zig,
+              symbol: "notification policy rings messages and attention without stealing focus"}}
           - id: iterm2.osc1337.clear_scrollback
             raw: "OSC 1337 ; ClearScrollback (BEL|ST)"
             effect: clear active buffer and scrollback
@@ -1823,12 +1823,12 @@ references:
             raw: "OSC 1337 ; RequestAttention[=Ps] (BEL|ST)"
             effect: request user attention
             conditions: >-
-              Howl retains the raw bounded argument in FIFO order; the host owns iTerm2's start stop once fireworks
-              interpretation and presentation policy.
+              Howl retains the raw bounded argument in FIFO order; its Wayland host maps each occurrence to one
+              system-bell request while iTerm2 additionally owns start stop once and fireworks policy.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainNotification, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}
+            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig, symbol: applyTerminalPresentation, proof: {
+              path: howl-host/src/window.zig,
+              symbol: "notification policy rings messages and attention without stealing focus"}}
           - {id: iterm2.osc1337.background_image, raw: "OSC 1337 ; SetBackgroundImageFile=Pt (BEL|ST)",
             effect: set background image, relevance: host consequence, howl: {support: missing, disposition: deferred, owner: howl-host, milestone: background_presentation}}
           - {id: iterm2.osc1337.profile_property, raw: "OSC 1337 ; SetProfileProperty=key=base64-json (BEL|ST)",
@@ -1855,10 +1855,11 @@ references:
             effect: dispatch custom host message, relevance: extension, howl: *howl_missing_excluded_iterm}
           - {id: iterm2.osc1337.notification, raw: "OSC 1337 ; Notification=Pt (BEL|ST)",
             effect: post rich notification,
-            conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
+            conditions: Howl retains an 8-entry ordered raw-byte FIFO and maps each host-consumed message to the
+              Wayland system bell while omitting iTerm2 rich notification presentation.,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
+              symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
+                symbol: "notification policy rings messages and attention without stealing focus"}}}
           - {id: iterm2.osc1337.capabilities, raw: "OSC 1337 ; Capabilities=Pt (BEL|ST)",
             effect: report host capabilities, relevance: query, howl: *howl_missing_excluded_iterm}
           - {id: iterm2.osc1337.env, raw: "OSC 1337 ; Env=Pt (BEL|ST)", effect: update environment metadata,
@@ -3170,26 +3171,29 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "OSC 8 retains explicit identity separately from URI and exact active mutation"}}}
           - {id: kitty.osc.notify_9, raw: "OSC 9 ; Pt (BEL|ST)", effect: display notification,
-            conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates parsing and presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
+            conditions: Howl retains an 8-entry ordered raw-byte FIFO and maps each host-consumed message to the
+              Wayland system bell while omitting Kitty notification parsing and desktop presentation.,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
+              symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
+                symbol: "notification policy rings messages and attention without stealing focus"}}}
           - {id: kitty.osc.notify_99, raw: "OSC 99 ; Pt (BEL|ST)", effect: display notification,
-            conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates parsing and presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
+            conditions: Howl retains an 8-entry ordered raw-byte FIFO and maps each host-consumed message to the
+              Wayland system bell while omitting Kitty notification parsing and desktop presentation.,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
+              symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
+                symbol: "notification policy rings messages and attention without stealing focus"}}}
           - {id: kitty.osc.notify_777, raw: "OSC 777 ; Pt (BEL|ST)", effect: display notification,
-            conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates parsing and presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
+            conditions: Howl retains an 8-entry ordered raw-byte FIFO and maps each host-consumed message to the
+              Wayland system bell while omitting Kitty notification parsing and desktop presentation.,
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
+              symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
+                symbol: "notification policy rings messages and attention without stealing focus"}}}
           - {id: kitty.osc.notify_1337, raw: "OSC 1337 ; Pt (BEL|ST)", effect: display notification,
-            conditions: "Howl retains only Notification= payloads in an 8-entry ordered raw-byte FIFO and delegates
-              parsing and presentation",
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: HostState.retainNotification, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC notifications retain ordered bounded host-neutral occurrences"}}}
+            conditions: "Howl retains only Notification= payloads in an 8-entry ordered raw-byte FIFO and maps each
+              host-consumed message to the Wayland system bell while omitting Kitty parsing and desktop presentation",
+            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
+              symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
+                symbol: "notification policy rings messages and attention without stealing focus"}}}
           - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB fact and exact reply but
               omits Kitty host dirtiness policy and accepts a narrower deterministic color grammar.",

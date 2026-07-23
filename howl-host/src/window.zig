@@ -287,7 +287,8 @@ const AxisFrame = struct {
 /// Reports exact executable construction, dispatch, projection, or rendering failure.
 pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitError || control.InputError ||
     control.SelectionError ||
-    control.ResizeError || control.ReaderError || terminal_render.Error || renderer.Error || error{
+    control.ResizeError || control.ReaderError || terminal_render.Error || renderer.Error ||
+    error{StaleNotification} || error{
     InvalidSize,
     GeometryUnstable,
     WaylandConnect,
@@ -693,10 +694,22 @@ const Window = struct {
 
     fn applyTerminalPresentation(self: *Window) void {
         const bell = self.system_bell;
-        const change = self.presentation.apply(self.terminal.?.hostPresentation(), bell != null);
+        const terminal = self.terminal.?;
+        const facts = terminal.hostPresentation();
+        const change = self.presentation.apply(facts, bell != null);
         if (change.title) c.xdg_toplevel_set_title(self.toplevel.?, self.presentation.titlePointer());
         for (0..change.bells) |_| c.xdg_system_bell_v1_ring(bell.?, self.surface.?);
         if (change.bells_pending) terminalWake(&self.wake);
+        var handled: u8 = 0;
+        while (handled < facts.notification_count) : (handled += 1) {
+            const notification = terminal.hostPresentation().notification orelse break;
+            if (notificationRings(notification.kind) and bell != null)
+                c.xdg_system_bell_v1_ring(bell.?, self.surface.?);
+            terminal.acknowledgeNotification(notification.generation) catch |failure| {
+                retainFailure(self, failure);
+                break;
+            };
+        }
     }
 
     fn captureAndSubmit(self: *Window) Error!void {
@@ -2180,6 +2193,8 @@ test "terminal presentation retains exact title and bounded bell progress" {
         .title = @splat(0),
         .title_len = 0,
         .bell_generation = 0,
+        .notification = null,
+        .notification_count = 0,
     };
     try std.testing.expectEqual(
         PresentationChange{ .title = false, .bells = 0, .bells_pending = false },
@@ -2240,6 +2255,12 @@ test "terminal presentation retains exact title and bounded bell progress" {
         PresentationChange{ .title = false, .bells = 0, .bells_pending = false },
         state.apply(facts, false),
     );
+}
+
+test "notification policy rings messages and attention without stealing focus" {
+    try std.testing.expect(notificationRings(.message));
+    try std.testing.expect(notificationRings(.request_attention));
+    try std.testing.expect(!notificationRings(.steal_focus));
 }
 
 test "window dimensions and grid conversion preserve exact bounds" {
@@ -2933,4 +2954,11 @@ fn visualContains(visual: *const VisualStorage, needle: []const u8) bool {
         }
     }
     return false;
+}
+
+fn notificationRings(kind: control.NotificationKind) bool {
+    return switch (kind) {
+        .message, .request_attention => true,
+        .steal_focus => false,
+    };
 }
