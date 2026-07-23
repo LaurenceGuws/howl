@@ -404,7 +404,7 @@ const Device = struct {
                 @as(i32, row) * self.metrics.height_px,
                 self.metrics.width_px,
                 self.metrics.height_px,
-                if (cursor_block) work.cursor.color else cell.background,
+                cellFill(cell, work.cursor, cursor_block),
                 self.white,
             );
         }
@@ -478,7 +478,7 @@ const Device = struct {
                 y,
                 cached.width,
                 cached.height,
-                if (cursor_block) cursor.text_color else cells[col].foreground,
+                glyphColor(cells[col], cursor, cursor_block),
                 cached.name,
             );
         }
@@ -971,6 +971,14 @@ fn glyphPixelX(run_start: u16, cell_width: u16, raster_left: i16, shaped_x_26_6:
     return @as(i32, run_start) * cell_width + raster_left + @divTrunc(shaped_x_26_6, 64);
 }
 
+fn cellFill(cell: terminal.Cell, cursor: terminal.Cursor, cursor_block: bool) terminal.Rgb {
+    return if (cursor_block) cursor.color else cell.background;
+}
+
+fn glyphColor(cell: terminal.Cell, cursor: terminal.Cursor, cursor_block: bool) terminal.Rgb {
+    return if (cursor_block) cursor.text_color else cell.foreground;
+}
+
 test "mailbox replaces only pending work while active ownership remains exact" {
     var slots = [_]Snapshot{
         try Snapshot.init(std.testing.allocator, 1, 1),
@@ -1222,6 +1230,19 @@ test "glyph cache identity includes exact font and generated raster facts" {
 
 test "shaped glyph placement anchors the pen once at the run start" {
     try std.testing.expectEqual(@as(i32, 89), glyphPixelX(8, 10, -1, 10 * 64));
+}
+
+test "draw colors consume projected cell and cursor facts exactly" {
+    var cell = testCell('x');
+    cell.foreground = .{ .r = 1, .g = 2, .b = 3 };
+    cell.background = .{ .r = 4, .g = 5, .b = 6 };
+    var cursor = testCursor();
+    cursor.color = .{ .r = 7, .g = 8, .b = 9 };
+    cursor.text_color = .{ .r = 10, .g = 11, .b = 12 };
+    try std.testing.expectEqual(cell.background, cellFill(cell, cursor, false));
+    try std.testing.expectEqual(cell.foreground, glyphColor(cell, cursor, false));
+    try std.testing.expectEqual(cursor.color, cellFill(cell, cursor, true));
+    try std.testing.expectEqual(cursor.text_color, glyphColor(cell, cursor, true));
 }
 
 test "unresolved line scaling and baseline facts fail before drawing" {

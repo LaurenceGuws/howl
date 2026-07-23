@@ -282,9 +282,19 @@ pub fn project(
     source: VtTerminal.VisualView,
     mode: ProjectMode,
     buffers: Buffers,
-    selection_style: SelectionStyle,
+    fallback_selection_style: SelectionStyle,
 ) Error!Update {
     const source_ref = &source;
+    const selection_style = SelectionStyle{
+        .foreground = if (source.presentation.selection_foreground) |color|
+            rgb(color)
+        else
+            fallback_selection_style.foreground,
+        .background = if (source.presentation.selection_background) |color|
+            rgb(color)
+        else
+            fallback_selection_style.background,
+    };
     std.debug.assert(!slicesOverlap(
         std.mem.sliceAsBytes(buffers.cells),
         std.mem.sliceAsBytes(buffers.rows),

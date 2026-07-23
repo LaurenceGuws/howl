@@ -13863,6 +13863,8 @@ pub const Terminal = struct {
                 .background = colors.background,
                 .cursor = active.cursor.cursor_color orelse colors.cursor,
                 .cursor_text = active.cursor.cursor_text_color orelse colors.cursor_text,
+                .selection_background = colors.selection_background,
+                .selection_foreground = colors.selection_foreground,
                 .reverse_screen = self.modes.reverse_screen_mode,
             },
             .dirty_token = @enumFromInt(self.visual_generation),
@@ -14505,6 +14507,8 @@ pub const Terminal = struct {
         background: Terminal.Rgb,
         cursor: ?Terminal.Rgb,
         cursor_text: ?Terminal.Rgb,
+        selection_background: ?Terminal.Rgb,
+        selection_foreground: ?Terminal.Rgb,
         reverse_screen: bool,
     };
 
@@ -14516,6 +14520,8 @@ pub const Terminal = struct {
             .background = colors.background,
             .cursor = null,
             .cursor_text = null,
+            .selection_background = null,
+            .selection_foreground = null,
             .reverse_screen = false,
         };
     }

@@ -1597,11 +1597,11 @@ references:
           - {id: iterm2.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &iterm2_dynamic_color_condition "Howl retains host-neutral RGB state and emits fixed 16-bit
               replies but omits iTerm2 selectable 8-bit replies and its broader platform color parser.",
-            howl: &iterm2_dynamic_color_howl {support: partial, disposition: delegated, owner: howl-host,
-              residual: Only host presentation and damage for the retained terminal-color fact remain.,
-              rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig,
-              symbol: handleXtermDynamicColor, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
+            howl: &iterm2_dynamic_color_howl {support: partial, disposition: excluded,
+              residual: Howl omits iTerm2 selectable 8-bit replies and its broader platform color parser.,
+              rationale: *howl_color_policy_difference, source: howl-render/src/terminal.zig,
+              symbol: project, proof: {path: howl-render/src/terminal_test.zig,
+                symbol: "dynamic colors resolve complete cell cursor and selection presentation"}}}
           - {id: iterm2.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
             conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           - {id: iterm2.osc.cursor, raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,
@@ -1806,12 +1806,12 @@ references:
               path: howl-vt/test/unit/terminal_osc_test.zig,
               symbol: "iTerm safe controls mutate presentation metadata and exact replies"}}
           - {id: iterm2.osc1337.set_colors, raw: "OSC 1337 ; SetColors=Pt (BEL|ST)", effect: set terminal colors,
-            howl: {support: partial, disposition: delegated, owner: howl-host,
-              residual: Only host presentation and damage for the retained terminal-color fact remain.,
+            howl: {support: partial, disposition: excluded,
+              residual: Howl implements only represented deterministic color pairs and omits iTerm2 host policy.,
               rationale: *howl_color_policy_difference,
-              source: howl-vt/src/terminal.zig, symbol: handleItermSetColors, proof: {
-                path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "iTerm SetColors resets represented domains and ignores malformed pairs independently"}}}
+              source: howl-render/src/terminal.zig, symbol: project, proof: {
+                path: howl-render/src/terminal_test.zig,
+                symbol: "dynamic colors resolve complete cell cursor and selection presentation"}}}
           - {id: iterm2.osc1337.shell_integration, raw: "OSC 1337 ; ShellIntegrationVersion=Pt (BEL|ST)",
             effect: report shell integration identity, relevance: host metadata,
             conditions: Howl retains bounded typed identity without iTerm2 session policy.,
@@ -3193,11 +3193,11 @@ references:
           - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB fact and exact reply but
               omits Kitty host dirtiness policy and accepts a narrower deterministic color grammar.",
-            howl: &kitty_dynamic_color_howl {support: partial, disposition: delegated, owner: howl-host,
-              residual: Only host presentation and damage for the retained terminal-color fact remain.,
-              rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig,
-              symbol: handleXtermDynamicColor, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
+            howl: &kitty_dynamic_color_howl {support: partial, disposition: excluded,
+              residual: Howl accepts a narrower deterministic color grammar and omits Kitty host refresh policy.,
+              rationale: *howl_color_policy_difference, source: howl-render/src/terminal.zig,
+              symbol: project, proof: {path: howl-render/src/terminal_test.zig,
+                symbol: "dynamic colors resolve complete cell cursor and selection presentation"}}}
           - {id: kitty.osc.bg, raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
             conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
           - {id: kitty.osc.cursor, raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,

@@ -49,7 +49,7 @@ invariants:
 deferred:
   - tabs, panes, sessions, and multiplexing
   - unsupported DEC line-geometry and baseline drawing
-  - dynamic-color and broader ordered host-consequence presentation
+  - broader ordered host-consequence presentation
 
 gates:
   - permanent authorities and active planning YAML parse

@@ -46,6 +46,66 @@ test "full projection resolves terminal colors selection geometry and cursor" {
     try std.testing.expect(update.cursor.visible);
 }
 
+test "dynamic colors resolve complete cell cursor and selection presentation" {
+    var source = try vt.Terminal.init(std.testing.allocator, 1, 2);
+    defer source.deinit();
+    try std.testing.expect((try source.feed("AB")).state_changed);
+
+    var storage: Storage = .{};
+    const initial_view = source.visualView();
+    const initial = try full(initial_view, &storage);
+    try std.testing.expect(source.ackVisual(initial_view.dirty_token));
+
+    try std.testing.expect((try source.feed(
+        "\x1b]10;#010203\x1b\\\x1b]11;#040506\x1b\\\x1b]12;#070809\x1b\\" ++
+            "\x1b]17;#0a0b0c\x1b\\\x1b]19;#0d0e0f\x1b\\",
+    )).state_changed);
+    source.startSelection(0, 0);
+    source.updateSelection(0, 0);
+    const changed_view = source.visualView();
+    try std.testing.expectEqual(vt.Terminal.VisualDirty.full, changed_view.dirty);
+    try std.testing.expectError(error.FullRequired, terminal.project(
+        changed_view,
+        .{ .incremental = initial.next_baseline },
+        storage.buffers(),
+        selection,
+    ));
+    const changed = try full(changed_view, &storage);
+    try std.testing.expectEqual(terminal.Rgb{ .r = 13, .g = 14, .b = 15 }, changed.cells[0].foreground);
+    try std.testing.expectEqual(terminal.Rgb{ .r = 10, .g = 11, .b = 12 }, changed.cells[0].background);
+    try std.testing.expectEqual(terminal.Rgb{ .r = 1, .g = 2, .b = 3 }, changed.cells[1].foreground);
+    try std.testing.expectEqual(terminal.Rgb{ .r = 4, .g = 5, .b = 6 }, changed.cells[1].background);
+    try std.testing.expectEqual(terminal.Rgb{ .r = 7, .g = 8, .b = 9 }, changed.cursor.color);
+
+    try std.testing.expect((try source.feed(
+        "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b]17;?\x1b\\\x1b]19;?\x1b\\",
+    )).state_changed);
+    const replies = try source.drainPendingOutput(std.testing.allocator);
+    defer std.testing.allocator.free(replies);
+    try std.testing.expectEqualStrings(
+        "\x1b]10;rgb:0101/0202/0303\x1b\\\x1b]11;rgb:0404/0505/0606\x1b\\" ++
+            "\x1b]12;rgb:0707/0808/0909\x1b\\\x1b]17;rgb:0a0a/0b0b/0c0c\x1b\\" ++
+            "\x1b]19;rgb:0d0d/0e0e/0f0f\x1b\\",
+        replies,
+    );
+
+    try std.testing.expect(source.ackVisual(changed_view.dirty_token));
+    try std.testing.expect((try source.feed(
+        "\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\\x1b]117\x1b\\\x1b]119\x1b\\",
+    )).state_changed);
+    const reset = try full(source.visualView(), &storage);
+    try std.testing.expectEqual(selection.foreground, reset.cells[0].foreground);
+    try std.testing.expectEqual(selection.background, reset.cells[0].background);
+    try std.testing.expectEqual(
+        terminal.Rgb{ .r = 220, .g = 220, .b = 220 },
+        reset.cells[1].foreground,
+    );
+    try std.testing.expectEqual(
+        terminal.Rgb{ .r = 24, .g = 25, .b = 33 },
+        reset.cells[1].background,
+    );
+}
+
 test "one cell and mixed scrollback remain sparse" {
     var source = try vt.Terminal.initWithHistory(std.testing.allocator, 4, 6, 8);
     defer source.deinit();
