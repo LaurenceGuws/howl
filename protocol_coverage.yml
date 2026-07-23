@@ -3787,7 +3787,7 @@ references:
           - {id: kitty.graphics.transmit_default, raw: "APC G [a=]Pm ; Pb ST", effect: transmit image data,
             relevance: graphics, howl: &howl_static_graphics_transmit {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl accepts only bounded direct uncompressed RGB/RGBA payloads with dimensions and either an explicit image id or image number with generated stable id.",
+              residual: "Howl accepts only bounded direct uncompressed RGB/RGBA payloads with dimensions and either an explicit image id or image number with generated stable id; C=1 no-move display is accepted while Kitty's default post-display cursor advance and resulting scroll remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
           - {id: kitty.graphics.transmit, raw: "APC G a=t,Pm ; Pb ST", effect: transmit image data, relevance: graphics,
@@ -3798,12 +3798,19 @@ references:
             effect: probe image transmission support then discard probe, relevance: graphics,
             howl: *howl_static_graphics_transmit}
           - {id: kitty.graphics.animate, raw: "APC G a=a,Pm ST", effect: control image animation, relevance: graphics,
-            howl: *howl_missing_deferred_graphics}
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Howl owns bounded stopped/loading/running frame selection, gaps, loop counts, zero-gap skipping and monotonic advancement; transient-frame cache hints remain.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.advanceAnimations, proof: {path: howl-vt/src/graphics.zig,
+                symbol: "Kitty frames compose transactionally and advance on monotonic gaps"}}}
           - {id: kitty.graphics.frame, raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
-            relevance: graphics, howl: *howl_missing_deferred_graphics}
+            relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
+              milestone: advanced_graphics,
+              residual: "Howl retains at most 256 full coalesced raw RGB/RGBA animation frames across one terminal inside the existing byte quotas, including root-frame replacement and replace/source-over patches; compressed/media frame transport, relative frame chains and transient hints remain.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.finishFrame, proof: {path: howl-vt/src/graphics.zig,
+                symbol: "Kitty frames compose transactionally and advance on monotonic gaps"}}}
           - {id: kitty.graphics.put, raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl supports cursor-relative placement by image id or latest image number with exact nonzero placement-id replacement, source crop, destination cell sizing, cell-pixel offsets and signed text layering; parent and virtual placement remain.",
+              residual: "Howl supports cursor-relative placement by image id or latest image number with exact nonzero placement-id replacement, source crop, destination cell sizing, cell-pixel offsets and signed text layering; default post-placement cursor advance, parent and virtual placement remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "Kitty crop destination offsets and layer preflight before placement mutation"}}}
           - {id: kitty.graphics.delete, raw: "APC G a=d,d=selector,Pm ST", effect: delete image placements or data,
@@ -3813,7 +3820,10 @@ references:
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "static delete selectors preserve placement and image ownership distinctions"}}}
           - {id: kitty.graphics.compose, raw: "APC G a=c,Pm ST", effect: compose animation frames, relevance: graphics,
-            howl: *howl_missing_deferred_graphics}
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Howl transactionally composes distinct bounded coalesced source frames over or replacing destination frames at checked source and destination rectangles; Kitty's non-overlapping same-frame edit and transient cache policy remain.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.composeFrames, proof: {path: howl-vt/src/graphics.zig,
+                symbol: "Kitty frames compose transactionally and advance on monotonic gaps"}}}
       - source: graphics.c
         symbol: handle_delete_command
         line: 2047
@@ -3849,7 +3859,11 @@ references:
           - {id: kitty.graphics.delete_number, raw: "APC G a=d,d=n|N,I=Ps ST",
             effect: delete by image number optionally including data, relevance: graphics, howl: *howl_static_graphics_delete}
           - {id: kitty.graphics.delete_frame, raw: "APC G a=d,d=f|F,Pm ST", effect: delete animation frame or image,
-            relevance: graphics, howl: *howl_missing_deferred_graphics}
+            relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
+              milestone: advanced_graphics,
+              residual: "Howl silently deletes or promotes bounded coalesced frames and uppercase-deletes a frame-less image; transient cache/frame-chain policy remains.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.deleteFrame, proof: {path: howl-vt/src/graphics.zig,
+                symbol: "Kitty frames compose transactionally and advance on monotonic gaps"}}}
           - {id: kitty.graphics.delete_default, raw: "APC G a=d,Pm ST", effect: delete all non-cell placements,
             relevance: graphics, howl: *howl_static_graphics_delete}
 

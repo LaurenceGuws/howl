@@ -360,6 +360,7 @@ pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitErro
     KeyboardMap,
     KeyboardRepeat,
     CursorBlink,
+    GraphicsTimer,
     KeyboardState,
     Pointer,
     TerminalSignal,
@@ -671,6 +672,7 @@ const Window = struct {
     terminal_signal: c_int,
     repeat_signal: c_int,
     cursor_signal: c_int,
+    graphics_signal: c_int,
     repeat: Repeat = .{},
     cursor_visible: bool = true,
     cursor_blink_armed: bool = false,
@@ -727,6 +729,10 @@ const Window = struct {
         if (cursor_signal < 0) return error.CursorBlink;
         var cursor_owned = true;
         errdefer if (cursor_owned) closeOwned(cursor_signal);
+        const graphics_signal = c.timerfd_create(c.CLOCK_MONOTONIC, c.TFD_CLOEXEC | c.TFD_NONBLOCK);
+        if (graphics_signal < 0) return error.GraphicsTimer;
+        var graphics_owned = true;
+        errdefer if (graphics_owned) closeOwned(graphics_signal);
         const self = try allocator.create(Window);
         self.* = .{
             .allocator = allocator,
@@ -736,6 +742,7 @@ const Window = struct {
             .terminal_signal = terminal_signal,
             .repeat_signal = repeat_signal,
             .cursor_signal = cursor_signal,
+            .graphics_signal = graphics_signal,
             .wake = .{ .fd = terminal_signal },
             .clipboard_transfers = clipboard.Transfers.init(allocator),
             .drop_transfers = clipboard.Transfers.init(allocator),
@@ -745,6 +752,7 @@ const Window = struct {
         signal_owned = false;
         repeat_owned = false;
         cursor_owned = false;
+        graphics_owned = false;
         errdefer self.rollback();
 
         if (c.wl_registry_add_listener(registry, &registry_listener, self) != 0)
@@ -827,7 +835,7 @@ const Window = struct {
             const flush = c.wl_display_flush(self.display);
             const flush_blocked = flush < 0 and std.posix.errno(flush) == .AGAIN;
             if (flush < 0 and !flush_blocked) return error.WaylandFlush;
-            var fds: [5 + clipboard_poll_count + drop_poll_count]std.posix.pollfd = undefined;
+            var fds: [6 + clipboard_poll_count + drop_poll_count]std.posix.pollfd = undefined;
             fds[0] = .{
                 .fd = c.wl_display_get_fd(self.display),
                 .events = std.posix.POLL.IN |
@@ -838,8 +846,9 @@ const Window = struct {
             fds[2] = .{ .fd = self.render.?.signalFd(), .events = std.posix.POLL.IN, .revents = 0 };
             fds[3] = .{ .fd = self.repeat_signal, .events = std.posix.POLL.IN, .revents = 0 };
             fds[4] = .{ .fd = self.cursor_signal, .events = std.posix.POLL.IN, .revents = 0 };
-            const clipboard_count = self.clipboard_transfers.pollDescriptors(fds[5..]);
-            const drop_start = 5 + clipboard_count;
+            fds[5] = .{ .fd = self.graphics_signal, .events = std.posix.POLL.IN, .revents = 0 };
+            const clipboard_count = self.clipboard_transfers.pollDescriptors(fds[6..]);
+            const drop_start = 6 + clipboard_count;
             const drop_count = self.drop_transfers.pollDescriptors(fds[drop_start..]);
             const active_fds = fds[0 .. drop_start + drop_count];
             const ready_count = std.posix.poll(active_fds, -1) catch return error.Poll;
@@ -850,6 +859,7 @@ const Window = struct {
             if (fds[2].revents & faults != 0) return error.Signal;
             if (fds[3].revents & faults != 0) return error.KeyboardRepeat;
             if (fds[4].revents & faults != 0) return error.CursorBlink;
+            if (fds[5].revents & faults != 0) return error.GraphicsTimer;
 
             if (fds[0].revents & std.posix.POLL.IN != 0) {
                 if (c.wl_display_read_events(self.display) < 0) return error.WaylandDispatch;
@@ -869,7 +879,8 @@ const Window = struct {
             if (fds[1].revents & std.posix.POLL.IN != 0) try self.handleTerminalWake();
             if (!self.closed and fds[3].revents & std.posix.POLL.IN != 0) try self.repeatKey();
             if (!self.closed and fds[4].revents & std.posix.POLL.IN != 0) try self.blinkCursor();
-            for (fds[5 .. 5 + clipboard_count]) |descriptor|
+            if (!self.closed and fds[5].revents & std.posix.POLL.IN != 0) try self.animateGraphics();
+            for (fds[6 .. 6 + clipboard_count]) |descriptor|
                 if (descriptor.revents != 0)
                     try self.clipboard_transfers.service(descriptor.fd, descriptor.revents);
             for (fds[drop_start .. drop_start + drop_count]) |descriptor|
@@ -917,6 +928,7 @@ const Window = struct {
         try self.applyDragDropConsequences();
         try self.discardUnsupportedConsequences();
         self.applyCurrentPointerShape();
+        try self.scheduleGraphics();
     }
 
     fn applyTerminalPresentation(self: *Window) void {
@@ -1108,6 +1120,21 @@ const Window = struct {
         if (!self.cursor_blink_armed) return;
         if (expirations & 1 != 0) self.cursor_visible = !self.cursor_visible;
         try self.submitVisual(self.size);
+    }
+
+    fn animateGraphics(self: *Window) Error!void {
+        const expirations = try readGraphicsTimer(self.graphics_signal);
+        std.debug.assert(expirations != 0);
+        try self.scheduleGraphics();
+    }
+
+    fn scheduleGraphics(self: *Window) Error!void {
+        const terminal = self.terminal orelse {
+            try setGraphicsTimer(self.graphics_signal, null);
+            return;
+        };
+        const tick = terminal.advanceGraphics(try monotonicMilliseconds());
+        try setGraphicsTimer(self.graphics_signal, tick.next_ms);
     }
 
     fn pointerMotion(self: *Window, x: i64, y: i64) void {
@@ -1871,6 +1898,8 @@ const Window = struct {
         self.cancelPointer() catch |failure| retainCleanupFailure(&cleanup_failure, failure);
         setCursorTimer(self.cursor_signal, false) catch |failure|
             retainCleanupFailure(&cleanup_failure, failure);
+        setGraphicsTimer(self.graphics_signal, null) catch |failure|
+            retainCleanupFailure(&cleanup_failure, failure);
         self.clipboard_transfers.deinit();
         self.drop_transfers.deinit();
         self.drop_state.reset();
@@ -1883,6 +1912,7 @@ const Window = struct {
         self.render = null;
         closeOwned(self.repeat_signal);
         closeOwned(self.cursor_signal);
+        closeOwned(self.graphics_signal);
         closeOwned(self.terminal_signal);
         self.destroyProtocol();
         c.wl_registry_destroy(self.registry);
@@ -2183,6 +2213,36 @@ fn setCursorTimer(fd: c_int, enabled: bool) error{CursorBlink}!void {
         if (count < 0 and std.posix.errno(count) == .AGAIN) return;
         return error.CursorBlink;
     }
+}
+
+fn setGraphicsTimer(fd: c_int, delay_ms: ?u32) error{GraphicsTimer}!void {
+    const timer = graphicsTimer(delay_ms);
+    if (c.timerfd_settime(fd, 0, &timer, null) != 0) return error.GraphicsTimer;
+}
+
+fn graphicsTimer(delay_ms: ?u32) c.struct_itimerspec {
+    var timer: c.struct_itimerspec = std.mem.zeroes(c.struct_itimerspec);
+    if (delay_ms) |delay| {
+        timer.it_value.tv_sec = delay / 1000;
+        timer.it_value.tv_nsec = @as(c_long, delay % 1000) * std.time.ns_per_ms;
+    }
+    return timer;
+}
+
+fn readGraphicsTimer(fd: c_int) error{GraphicsTimer}!u64 {
+    while (true) {
+        var expirations: u64 = 0;
+        const count = c.read(fd, &expirations, @sizeOf(u64));
+        if (count == @sizeOf(u64) and expirations != 0) return expirations;
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        return error.GraphicsTimer;
+    }
+}
+
+fn monotonicMilliseconds() error{GraphicsTimer}!u64 {
+    var now: c.struct_timespec = undefined;
+    if (c.clock_gettime(c.CLOCK_MONOTONIC, &now) != 0) return error.GraphicsTimer;
+    return @as(u64, @intCast(now.tv_sec)) * 1000 + @as(u64, @intCast(now.tv_nsec)) / std.time.ns_per_ms;
 }
 
 fn cursorTimer(enabled: bool) c.struct_itimerspec {
@@ -3321,6 +3381,19 @@ test "cursor blink phase hides only blinking visible overlays" {
     const disarmed = cursorTimer(false);
     try std.testing.expectEqual(@as(c_long, 0), disarmed.it_value.tv_nsec);
     try std.testing.expectEqual(@as(c_long, 0), disarmed.it_interval.tv_nsec);
+}
+
+test "graphics timer is bounded one-shot monotonic scheduling" {
+    const short = graphicsTimer(37);
+    try std.testing.expectEqual(@as(c_long, 0), short.it_value.tv_sec);
+    try std.testing.expectEqual(@as(c_long, 37 * std.time.ns_per_ms), short.it_value.tv_nsec);
+    try std.testing.expectEqual(@as(c_long, 0), short.it_interval.tv_nsec);
+    const long = graphicsTimer(2345);
+    try std.testing.expectEqual(@as(c_long, 2), long.it_value.tv_sec);
+    try std.testing.expectEqual(@as(c_long, 345 * std.time.ns_per_ms), long.it_value.tv_nsec);
+    const disarmed = graphicsTimer(null);
+    try std.testing.expectEqual(@as(c_long, 0), disarmed.it_value.tv_sec);
+    try std.testing.expectEqual(@as(c_long, 0), disarmed.it_value.tv_nsec);
 }
 
 test "window dimensions and grid conversion preserve exact bounds" {

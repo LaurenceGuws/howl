@@ -1530,6 +1530,19 @@ pub const Terminal = struct {
         return facts;
     }
 
+    /// Advances VT-owned image animation and announces visible frame changes.
+    pub fn advanceGraphics(self: *Terminal, now_ms: u64) howl_vt.Terminal.GraphicsTick {
+        self.lock.lockUncancelable(self.io);
+        if (self.state_value.load(.acquire) != .running) {
+            self.lock.unlock(self.io);
+            return .{ .changed = false, .semantic_changed = false, .next_ms = null };
+        }
+        const tick = self.model.advanceGraphics(now_ms);
+        self.lock.unlock(self.io);
+        if (tick.changed) self.notify();
+        return tick;
+    }
+
     /// Applies one local visible selection operation and announces exact mutation.
     pub fn select(self: *Terminal, operation: SelectionOperation) void {
         self.lock.lockUncancelable(self.io);

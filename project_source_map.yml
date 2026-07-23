@@ -8,6 +8,7 @@ accepted:
   howl-vt/build.zig: VT package build and proof commands
   howl-vt/build.zig.zon: VT package identity and source boundary
   howl-vt/src: terminal parser, semantics, state, input, replies, consequences, and dirty facts
+  howl-vt/src/graphics.zig: bounded terminal image plane, animation frames, placements, deletion, and lifetime
   howl-vt/src/sixel.zig: bounded Sixel measurement and RGBA decoding into the common terminal image plane
   howl-vt/test: external VT behavior proofs
   howl-vt/test_unit.zig: package-owned VT unit proofs
@@ -28,7 +29,7 @@ accepted:
   howl-render/src/root*.zig: curated roots for selected render capabilities
   howl-render/src/native_text.zig: native font loading, shaping, metrics, and alpha rasterization
   howl-render/src/generated*.zig: generated terminal-glyph classification, geometry, and rasterization
-  howl-render/src/terminal.zig: stateless VT cell and static-image semantic projection into caller buffers
+  howl-render/src/terminal.zig: stateless VT cell and selected-image-frame semantic projection into caller buffers
   howl-render/src/terminal_test.zig: terminal projection bounds, sparse damage, cursor, and rollback proofs
   howl-render/src/terminal_text*.zig: one-run text preparation, raster identity, and native decoration metrics
   howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs

@@ -1,4 +1,4 @@
-//! Owns bounded static terminal image data and ordinary cell-relative placements.
+//! Owns bounded terminal images, animation frames, and cell-relative placements.
 
 const std = @import("std");
 
@@ -10,6 +10,8 @@ pub const max_image_bytes: usize = 16 * 1024 * 1024;
 pub const max_images: usize = 256;
 /// Bounds retained image placements.
 pub const max_placements: usize = 1024;
+/// Bounds retained animation frames across one terminal.
+pub const max_frames: usize = 256;
 /// Bounds either image dimension before byte-count validation.
 pub const max_dimension: u32 = 4096;
 /// Bounds one encoded Kitty APC command chunk.
@@ -78,16 +80,21 @@ const Image = struct {
     height: u32,
     generation: u64,
     pixels: []u8,
+    current_frame: u16 = 0,
+    root_gap_ms: u32 = 40,
+    animation: AnimationState = .stopped,
+    max_loops: u32 = 0,
+    loops_remaining: u32 = 0,
+    frame_started_ms: ?u64 = null,
+};
 
-    fn view(self: *const Image) ImageView {
-        return .{
-            .id = self.id,
-            .width = self.width,
-            .height = self.height,
-            .generation = self.generation,
-            .pixels = self.pixels,
-        };
-    }
+const AnimationState = enum { stopped, loading, running };
+
+const Frame = struct {
+    image_id: u32,
+    number: u16,
+    gap_ms: u32,
+    pixels: []u8,
 };
 
 const Loading = struct {
@@ -105,6 +112,7 @@ const Loading = struct {
     cell_x: u32,
     cell_y: u32,
     z: i32,
+    compose_mode: u2,
     width: u32,
     height: u32,
     quiet: u2,
@@ -112,21 +120,25 @@ const Loading = struct {
     used: usize = 0,
 };
 
-/// Reports exact static Kitty command admission.
+/// Reports exact bounded Kitty graphics admission.
 pub const Result = struct {
     /// True when retained images or placements changed.
     changed: bool = false,
+    /// True when a semantic change alters the currently visible image plane.
+    visual_changed: bool = true,
     /// Image identity echoed by a protocol response.
     response_id: ?u32 = null,
     /// Image number echoed alongside generated or selected identity.
     response_number: ?u32 = null,
+    /// Animation frame number echoed for frame admission.
+    response_frame: ?u16 = null,
     /// Null identifies success; otherwise supplies Kitty's stable short error.
     failure: ?Failure = null,
     /// Suppresses success or all responses according to `q`.
     quiet: u2 = 0,
 };
 
-/// Names one bounded static graphics rejection.
+/// Names one bounded terminal-graphics rejection.
 pub const Failure = enum {
     invalid,
     unsupported,
@@ -142,6 +154,16 @@ pub const Failure = enum {
             .missing => "ENOENT",
         };
     }
+};
+
+/// Reports one monotonic animation service result.
+pub const AnimationTick = struct {
+    /// True when a currently displayed frame changed.
+    changed: bool,
+    /// True when frame or run-state mutation was accepted.
+    semantic_changed: bool,
+    /// Milliseconds until the next frame boundary, or null when idle.
+    next_ms: ?u32,
 };
 
 const Command = struct {
@@ -163,6 +185,7 @@ const Command = struct {
     cell_x: u32 = 0,
     cell_y: u32 = 0,
     z: i32 = 0,
+    compose_mode: u2 = 0,
     x: u32 = 0,
     y: u32 = 0,
     payload: []const u8 = "",
@@ -174,13 +197,15 @@ pub fn mayRespond(bytes: []const u8) bool {
     return command_value.action != 'd';
 }
 
-/// Owns decoded image bytes, static placements, and one chunked transfer.
+/// Owns decoded image/frame bytes, placements, animation state, and one transfer.
 pub const Plane = struct {
     allocator: std.mem.Allocator,
     images: [max_images]Image = undefined,
     image_count: u16 = 0,
     placements: [max_placements]Placement = undefined,
     placement_count: u16 = 0,
+    frames: [max_frames]Frame = undefined,
+    frame_count: u16 = 0,
     storage_bytes: usize = 0,
     next_generation: u64 = 0,
     next_image_id: u32 = 0,
@@ -196,6 +221,7 @@ pub const Plane = struct {
     pub fn deinit(self: *Plane) void {
         self.cancel();
         for (self.images[0..self.image_count]) |retained| self.allocator.free(retained.pixels);
+        for (self.frames[0..self.frame_count]) |retained| self.allocator.free(retained.pixels);
         self.* = undefined;
     }
 
@@ -234,6 +260,9 @@ pub const Plane = struct {
         }
         return switch (command_value.action) {
             't', 'T', 'q' => try self.transmit(command_value, bank, row, col, cell_width, cell_height),
+            'f' => try self.frame(command_value),
+            'a' => self.animate(command_value),
+            'c' => try self.composeFrames(command_value),
             'p' => self.put(command_value, bank, row, col, cell_width, cell_height),
             'd' => self.delete(command_value, bank, screen_origin, row, col),
             else => .{
@@ -315,6 +344,7 @@ pub const Plane = struct {
                 .cell_x = command_value.cell_x,
                 .cell_y = command_value.cell_y,
                 .z = command_value.z,
+                .compose_mode = command_value.compose_mode,
                 .width = command_value.width,
                 .height = command_value.height,
                 .quiet = command_value.quiet,
@@ -364,6 +394,209 @@ pub const Plane = struct {
         return try self.finish(bank, row, col, cell_width, cell_height);
     }
 
+    fn frame(self: *Plane, command_value: Command) std.mem.Allocator.Error!Result {
+        if (self.loading != null) {
+            self.cancel();
+            return .{ .failure = .invalid, .quiet = command_value.quiet };
+        }
+        if ((command_value.id == 0) == (command_value.image_number == 0))
+            return .{ .failure = .invalid, .quiet = command_value.quiet };
+        const image_index = (if (command_value.id != 0)
+            self.kittyImageIndex(command_value.id)
+        else
+            self.kittyImageNumberIndex(command_value.image_number)) orelse
+            return .{ .failure = .missing, .quiet = command_value.quiet };
+        const image_value = self.images[image_index];
+        const width = if (command_value.width == 0) image_value.width else command_value.width;
+        const height = if (command_value.height == 0) image_value.height else command_value.height;
+        if (width > image_value.width or height > image_value.height or
+            command_value.x > image_value.width - width or command_value.y > image_value.height - height or
+            (command_value.format != 24 and command_value.format != 32))
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        const channels: usize = if (command_value.format == 24) 3 else 4;
+        const input_bytes = std.math.mul(usize, width, height) catch
+            return .{ .response_id = image_value.kitty_id, .failure = .quota, .quiet = command_value.quiet };
+        const byte_count = std.math.mul(usize, input_bytes, channels) catch
+            return .{ .response_id = image_value.kitty_id, .failure = .quota, .quiet = command_value.quiet };
+        self.loading = .{
+            .action = 'f',
+            .format = command_value.format,
+            .id = image_value.kitty_id.?,
+            .image_number = image_value.kitty_number orelse 0,
+            .placement_id = 0,
+            .source_x = command_value.x,
+            .source_y = command_value.y,
+            .source_width = 0,
+            .source_height = 0,
+            .columns = command_value.columns,
+            .rows = command_value.rows,
+            .cell_x = 0,
+            .cell_y = 0,
+            .z = command_value.z,
+            .compose_mode = command_value.compose_mode,
+            .width = width,
+            .height = height,
+            .quiet = command_value.quiet,
+            .bytes = try self.allocator.alloc(u8, byte_count),
+        };
+        var continuation = command_value;
+        continuation.action = 't';
+        continuation.format = 32;
+        continuation.id = 0;
+        continuation.image_number = 0;
+        continuation.width = 0;
+        continuation.height = 0;
+        return self.transmit(continuation, .primary, 0, 0, 1, 1);
+    }
+
+    fn finishFrame(self: *Plane, loading: Loading) std.mem.Allocator.Error!Result {
+        const image_index = self.kittyImageIndex(loading.id) orelse
+            return .{ .response_id = loading.id, .failure = .missing, .quiet = loading.quiet };
+        const image_value = self.images[image_index];
+        const next_number = self.nextFrameNumber(image_value.id) orelse
+            return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
+        const requested = if (loading.rows == 0)
+            next_number
+        else
+            std.math.cast(u16, loading.rows) orelse
+                return .{ .response_id = loading.id, .failure = .invalid, .quiet = loading.quiet };
+        if (requested == 0)
+            return .{ .response_id = loading.id, .failure = .invalid, .quiet = loading.quiet };
+        const frame_number = @min(requested, next_number);
+        const root = frame_number == 1;
+        const existing = self.frameIndex(image_value.id, frame_number);
+        if (!root and existing == null and self.frame_count == max_frames)
+            return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
+        const canvas_bytes = image_value.pixels.len;
+        const prior_bytes = if (root)
+            image_value.pixels.len
+        else if (existing) |index|
+            self.frames[index].pixels.len
+        else
+            0;
+        if (canvas_bytes > max_image_bytes or self.storage_bytes - prior_bytes > max_storage_bytes - canvas_bytes)
+            return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
+        const canvas = try self.allocator.alloc(u8, canvas_bytes);
+        errdefer self.allocator.free(canvas);
+        const base = if (loading.columns == 0)
+            null
+        else if (loading.columns == 1)
+            image_value.pixels
+        else
+            (self.frameByNumber(image_value.id, std.math.cast(u16, loading.columns) orelse
+                return .{ .response_id = loading.id, .failure = .invalid, .quiet = loading.quiet }) orelse
+                return .{ .response_id = loading.id, .failure = .missing, .quiet = loading.quiet }).pixels;
+        if (base) |pixels| @memcpy(canvas, pixels) else @memset(canvas, 0);
+        composeRgba(
+            canvas,
+            image_value.width,
+            loading.bytes,
+            loading.width,
+            0,
+            0,
+            loading.format,
+            loading.width,
+            loading.height,
+            loading.source_x,
+            loading.source_y,
+            loading.compose_mode != 1,
+        );
+        const gap: u32 = if (loading.z > 0) @intCast(loading.z) else if (loading.z < 0) 0 else 40;
+        if (root) {
+            self.storage_bytes -= self.images[image_index].pixels.len;
+            self.allocator.free(self.images[image_index].pixels);
+            self.images[image_index].pixels = canvas;
+            self.images[image_index].root_gap_ms = gap;
+        } else if (existing) |index| {
+            self.storage_bytes -= self.frames[index].pixels.len;
+            self.allocator.free(self.frames[index].pixels);
+            self.frames[index] = .{ .image_id = image_value.id, .number = frame_number, .gap_ms = gap, .pixels = canvas };
+        } else {
+            self.frames[self.frame_count] = .{
+                .image_id = image_value.id,
+                .number = frame_number,
+                .gap_ms = gap,
+                .pixels = canvas,
+            };
+            self.frame_count += 1;
+        }
+        self.storage_bytes += canvas.len;
+        const visible = self.images[image_index].current_frame + 1 == frame_number;
+        if (visible) {
+            self.advance();
+            self.content_generation = self.next_generation;
+            self.images[image_index].generation = self.next_generation;
+        }
+        return .{
+            .changed = true,
+            .visual_changed = visible,
+            .response_id = image_value.kitty_id,
+            .response_number = image_value.kitty_number,
+            .response_frame = frame_number,
+            .quiet = loading.quiet,
+        };
+    }
+
+    fn composeFrames(self: *Plane, command_value: Command) std.mem.Allocator.Error!Result {
+        if ((command_value.id == 0) == (command_value.image_number == 0) or
+            command_value.rows == 0 or command_value.columns == 0 or command_value.rows == command_value.columns)
+            return .{ .failure = .invalid, .quiet = command_value.quiet };
+        const image_index = (if (command_value.id != 0)
+            self.kittyImageIndex(command_value.id)
+        else
+            self.kittyImageNumberIndex(command_value.image_number)) orelse
+            return .{ .failure = .missing, .quiet = command_value.quiet };
+        const image_value = self.images[image_index];
+        const source = self.framePixels(image_value, command_value.rows) orelse
+            return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet };
+        const destination_number = std.math.cast(u16, command_value.columns) orelse
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        if (destination_number == 1)
+            return .{ .response_id = image_value.kitty_id, .failure = .unsupported, .quiet = command_value.quiet };
+        const destination_index = self.frameIndex(image_value.id, destination_number) orelse
+            return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet };
+        const copy_width = if (command_value.width == 0) image_value.width else command_value.width;
+        const copy_height = if (command_value.height == 0) image_value.height else command_value.height;
+        if (copy_width == 0 or copy_height == 0 or
+            copy_width > image_value.width or copy_height > image_value.height or
+            command_value.x > image_value.width -| copy_width or
+            command_value.y > image_value.height -| copy_height or
+            command_value.cell_x > image_value.width -| copy_width or
+            command_value.cell_y > image_value.height -| copy_height)
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        const replacement = try self.allocator.dupe(u8, self.frames[destination_index].pixels);
+        errdefer self.allocator.free(replacement);
+        composeRgba(
+            replacement,
+            image_value.width,
+            source,
+            image_value.width,
+            command_value.cell_x,
+            command_value.cell_y,
+            32,
+            copy_width,
+            copy_height,
+            command_value.x,
+            command_value.y,
+            command_value.compose_mode != 1,
+        );
+        self.allocator.free(self.frames[destination_index].pixels);
+        self.frames[destination_index].pixels = replacement;
+        const visible = image_value.current_frame + 1 == destination_number;
+        if (visible) {
+            self.advance();
+            self.content_generation = self.next_generation;
+            self.images[image_index].generation = self.next_generation;
+        }
+        return .{
+            .changed = true,
+            .visual_changed = visible,
+            .response_id = image_value.kitty_id,
+            .response_number = image_value.kitty_number,
+            .quiet = command_value.quiet,
+        };
+    }
+
     fn finish(
         self: *Plane,
         bank: Bank,
@@ -375,6 +608,7 @@ pub const Plane = struct {
         const loading = self.loading.?;
         self.loading = null;
         defer self.allocator.free(loading.bytes);
+        if (loading.action == 'f') return try self.finishFrame(loading);
         const rgba_len = @as(usize, loading.width) * loading.height * 4;
         if (loading.action == 'q')
             return .{ .response_id = loading.id, .quiet = loading.quiet };
@@ -382,7 +616,10 @@ pub const Plane = struct {
             null
         else
             self.kittyImageIndex(loading.id);
-        const prior_bytes = if (prior_index) |index| self.images[index].pixels.len else 0;
+        const prior_bytes = if (prior_index) |index|
+            self.images[index].pixels.len + self.frameBytes(self.images[index].id)
+        else
+            0;
         if (rgba_len > max_storage_bytes - (self.storage_bytes - prior_bytes))
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
         if (prior_index == null and self.image_count == max_images)
@@ -438,6 +675,7 @@ pub const Plane = struct {
         self.content_generation = content_generation;
         if (prior_index) |index| {
             const image_id = self.images[index].id;
+            self.removeFrames(image_id);
             self.storage_bytes -= self.images[index].pixels.len;
             self.allocator.free(self.images[index].pixels);
             self.images[index] = .{
@@ -562,8 +800,9 @@ pub const Plane = struct {
         const selector = if (command_value.delete == 0) 'a' else command_value.delete;
         const remove_data = std.ascii.isUpper(selector);
         const normalized = std.ascii.toLower(selector);
-        if (std.mem.indexOfScalar(u8, "ainrpqxyzc", normalized) == null)
+        if (std.mem.indexOfScalar(u8, "afinrpqxyzc", normalized) == null)
             return .{ .quiet = 2 };
+        if (normalized == 'f') return self.deleteFrame(command_value, remove_data);
         if (normalized == 'i' and command_value.id == 0) return .{ .quiet = 2 };
         if (normalized == 'n' and command_value.image_number == 0) return .{ .quiet = 2 };
         if (normalized == 'r' and command_value.x > command_value.y) return .{ .quiet = 2 };
@@ -630,13 +869,68 @@ pub const Plane = struct {
         return .{ .changed = changed, .quiet = 2 };
     }
 
+    fn deleteFrame(self: *Plane, command_value: Command, remove_image: bool) Result {
+        if ((command_value.id == 0) == (command_value.image_number == 0)) return .{ .quiet = 2 };
+        const image_index = (if (command_value.id != 0)
+            self.kittyImageIndex(command_value.id)
+        else
+            self.kittyImageNumberIndex(command_value.image_number)) orelse return .{ .quiet = 2 };
+        const image_id = self.images[image_index].id;
+        const frame_count = self.frameCount(image_id);
+        if (frame_count == 0) {
+            if (!remove_image) return .{ .quiet = 2 };
+            self.removePlacements(image_id);
+            self.removeImage(image_index);
+            self.advance();
+            self.content_generation = self.next_generation;
+            return .{ .changed = true, .quiet = 2 };
+        }
+        const requested = if (command_value.rows == 0)
+            frame_count + 1
+        else
+            @min(std.math.cast(u16, command_value.rows) orelse return .{ .quiet = 2 }, frame_count + 1);
+        const prior_current = self.images[image_index].current_frame;
+        const visible_changed = prior_current + 1 == requested;
+        if (requested == 1) {
+            const promoted_index = self.frameIndex(image_id, 2).?;
+            const promoted_gap = self.frames[promoted_index].gap_ms;
+            self.storage_bytes -= self.images[image_index].pixels.len;
+            self.allocator.free(self.images[image_index].pixels);
+            self.images[image_index].pixels = self.frames[promoted_index].pixels;
+            self.images[image_index].root_gap_ms = promoted_gap;
+            self.removeFrameSlot(promoted_index, false);
+        } else {
+            const removed_index = self.frameIndex(image_id, requested).?;
+            self.removeFrameSlot(removed_index, true);
+        }
+        for (self.frames[0..self.frame_count]) |*retained_frame| {
+            if (retained_frame.image_id == image_id and retained_frame.number > requested) {
+                retained_frame.number -= 1;
+            }
+        }
+        const remaining = self.frameCount(image_id);
+        if (prior_current + 1 == requested or prior_current > remaining) {
+            self.images[image_index].current_frame = @min(prior_current, remaining);
+        } else if (prior_current + 1 > requested) {
+            self.images[image_index].current_frame -= 1;
+        }
+        if (visible_changed) {
+            self.advance();
+            self.content_generation = self.next_generation;
+            self.images[image_index].generation = self.next_generation;
+        }
+        return .{ .changed = true, .visual_changed = visible_changed, .quiet = 2 };
+    }
+
     /// Removes every image and placement, preserving no protocol transfer.
     pub fn reset(self: *Plane) bool {
         self.cancel();
-        const changed = self.image_count != 0 or self.placement_count != 0;
+        const changed = self.image_count != 0 or self.placement_count != 0 or self.frame_count != 0;
         for (self.images[0..self.image_count]) |retained| self.allocator.free(retained.pixels);
+        for (self.frames[0..self.frame_count]) |retained| self.allocator.free(retained.pixels);
         self.image_count = 0;
         self.placement_count = 0;
+        self.frame_count = 0;
         self.storage_bytes = 0;
         if (changed) {
             self.advance();
@@ -854,7 +1148,18 @@ pub const Plane = struct {
     /// Borrows one retained image by dense index.
     pub fn image(self: *const Plane, index: usize) ?ImageView {
         if (index >= self.image_count) return null;
-        return self.images[index].view();
+        const retained = self.images[index];
+        const pixels = if (retained.current_frame == 0)
+            retained.pixels
+        else
+            self.frameByNumber(retained.id, retained.current_frame + 1).?.pixels;
+        return .{
+            .id = retained.id,
+            .width = retained.width,
+            .height = retained.height,
+            .generation = retained.generation,
+            .pixels = pixels,
+        };
     }
 
     /// Copies one retained placement by dense index.
@@ -871,6 +1176,173 @@ pub const Plane = struct {
     /// Returns the monotonic identity of retained decoded image content.
     pub fn imageGeneration(self: *const Plane) u64 {
         return self.content_generation;
+    }
+
+    /// Advances running Kitty animations against caller monotonic milliseconds.
+    pub fn advanceAnimations(self: *Plane, now_ms: u64) AnimationTick {
+        var changed = false;
+        var semantic_changed = false;
+        var next_ms: ?u32 = null;
+        for (self.images[0..self.image_count]) |*image_value| {
+            if (image_value.animation == .stopped or self.frameCount(image_value.id) == 0) continue;
+            if (image_value.frame_started_ms == null) image_value.frame_started_ms = now_ms;
+            const gap = self.currentGap(image_value.*);
+            const elapsed = now_ms -| image_value.frame_started_ms.?;
+            if (elapsed >= gap) {
+                const initial_last = self.lastFrameNumber(image_value.id);
+                const initial_number = image_value.current_frame + 1;
+                if (initial_number == initial_last and image_value.animation == .loading) continue;
+                if (initial_number == initial_last and image_value.loops_remaining == 1) {
+                    image_value.animation = .stopped;
+                    image_value.loops_remaining = 0;
+                    semantic_changed = true;
+                    continue;
+                }
+                var advanced = false;
+                var steps: u16 = 0;
+                while (steps <= self.frameCount(image_value.id)) : (steps += 1) {
+                    const last = self.lastFrameNumber(image_value.id);
+                    const current_number = image_value.current_frame + 1;
+                    if (current_number < last) {
+                        image_value.current_frame += 1;
+                    } else if (image_value.animation == .loading) {
+                        break;
+                    } else if (image_value.loops_remaining == 1) {
+                        image_value.animation = .stopped;
+                        image_value.loops_remaining = 0;
+                        break;
+                    } else {
+                        image_value.current_frame = 0;
+                        if (image_value.loops_remaining > 1) image_value.loops_remaining -= 1;
+                    }
+                    advanced = true;
+                    if (self.currentGap(image_value.*) != 0) break;
+                }
+                if (advanced) {
+                    image_value.frame_started_ms = now_ms;
+                    self.advance();
+                    self.content_generation = self.next_generation;
+                    image_value.generation = self.next_generation;
+                    changed = true;
+                    semantic_changed = true;
+                }
+            }
+            if (image_value.animation != .stopped) {
+                const remaining: u32 = @intCast(@min(
+                    @as(u64, self.currentGap(image_value.*)) -|
+                        (now_ms -| image_value.frame_started_ms.?),
+                    std.math.maxInt(u32),
+                ));
+                next_ms = if (next_ms) |prior| @min(prior, @max(1, remaining)) else @max(1, remaining);
+            }
+        }
+        return .{ .changed = changed, .semantic_changed = semantic_changed, .next_ms = next_ms };
+    }
+
+    fn animate(self: *Plane, command_value: Command) Result {
+        if ((command_value.id == 0) == (command_value.image_number == 0))
+            return .{ .failure = .invalid, .quiet = command_value.quiet };
+        const index = (if (command_value.id != 0)
+            self.kittyImageIndex(command_value.id)
+        else
+            self.kittyImageNumberIndex(command_value.image_number)) orelse
+            return .{ .failure = .missing, .quiet = command_value.quiet };
+        const image_value = &self.images[index];
+        const selected_frame: ?u16 = if (command_value.columns == 0)
+            null
+        else
+            std.math.cast(u16, command_value.columns) orelse
+                return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        if (selected_frame) |number| {
+            if (number == 0)
+                return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+            if (number != 1 and self.frameByNumber(image_value.id, number) == null)
+                return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet };
+        }
+        const gap_frame: ?u16 = if (command_value.rows == 0 or command_value.z == 0)
+            null
+        else
+            std.math.cast(u16, command_value.rows) orelse
+                return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        const gap_index: ?usize = if (gap_frame) |number|
+            if (number == 0)
+                return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet }
+            else if (number == 1)
+                null
+            else
+                self.frameIndex(image_value.id, number) orelse
+                    return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet }
+        else
+            null;
+        const requested_animation: ?AnimationState = if (command_value.width == 0)
+            null
+        else switch (command_value.width) {
+            1 => .stopped,
+            2 => .loading,
+            3 => .running,
+            else => return .{
+                .response_id = image_value.kitty_id,
+                .failure = .invalid,
+                .quiet = command_value.quiet,
+            },
+        };
+        var semantic_changed = false;
+        var visible_changed = false;
+        if (selected_frame) |number| {
+            if (image_value.current_frame + 1 != number) {
+                image_value.current_frame = number - 1;
+                semantic_changed = true;
+                visible_changed = true;
+            }
+        }
+        if (gap_frame) |number| {
+            const gap: u32 = if (command_value.z > 0) @intCast(command_value.z) else 0;
+            if (number == 1) {
+                if (image_value.root_gap_ms != gap) {
+                    image_value.root_gap_ms = gap;
+                    semantic_changed = true;
+                }
+            } else {
+                if (self.frames[gap_index.?].gap_ms != gap) {
+                    self.frames[gap_index.?].gap_ms = gap;
+                    semantic_changed = true;
+                }
+            }
+        }
+        if (requested_animation) |animation| {
+            if (image_value.animation != animation) {
+                const was_stopped = image_value.animation == .stopped;
+                image_value.animation = animation;
+                if (animation == .stopped or was_stopped) image_value.loops_remaining = image_value.max_loops;
+                semantic_changed = true;
+            }
+        }
+        if (command_value.height != 0) {
+            const loops = command_value.height - 1;
+            if (image_value.max_loops != loops) {
+                image_value.max_loops = loops;
+                image_value.loops_remaining = loops;
+                semantic_changed = true;
+            }
+        }
+        if (semantic_changed) image_value.frame_started_ms = null;
+        if (!semantic_changed) return .{
+            .response_id = image_value.kitty_id,
+            .response_number = image_value.kitty_number,
+            .quiet = command_value.quiet,
+        };
+        if (visible_changed) {
+            self.advance();
+            self.content_generation = self.next_generation;
+            image_value.generation = self.next_generation;
+        }
+        return .{
+            .changed = semantic_changed,
+            .visual_changed = visible_changed,
+            .response_id = image_value.kitty_id,
+            .response_number = image_value.kitty_number,
+            .quiet = command_value.quiet,
+        };
     }
 
     fn addPlacement(
@@ -1019,10 +1491,84 @@ pub const Plane = struct {
 
     fn removeImage(self: *Plane, index: usize) void {
         const removed = self.images[index];
+        self.removeFrames(removed.id);
         self.storage_bytes -= removed.pixels.len;
         self.allocator.free(removed.pixels);
         self.image_count -= 1;
         if (index != self.image_count) self.images[index] = self.images[self.image_count];
+    }
+
+    fn removeFrames(self: *Plane, image_id: u32) void {
+        var index: usize = 0;
+        while (index < self.frame_count) {
+            if (self.frames[index].image_id != image_id) {
+                index += 1;
+                continue;
+            }
+            self.storage_bytes -= self.frames[index].pixels.len;
+            self.allocator.free(self.frames[index].pixels);
+            self.frame_count -= 1;
+            if (index != self.frame_count) self.frames[index] = self.frames[self.frame_count];
+        }
+    }
+
+    fn removeFrameSlot(self: *Plane, index: usize, free_pixels: bool) void {
+        if (free_pixels) {
+            self.storage_bytes -= self.frames[index].pixels.len;
+            self.allocator.free(self.frames[index].pixels);
+        }
+        self.frame_count -= 1;
+        if (index != self.frame_count) self.frames[index] = self.frames[self.frame_count];
+    }
+
+    fn frameByNumber(self: *const Plane, image_id: u32, number: u16) ?*const Frame {
+        for (self.frames[0..self.frame_count]) |*retained_frame|
+            if (retained_frame.image_id == image_id and retained_frame.number == number) return retained_frame;
+        return null;
+    }
+
+    fn framePixels(self: *const Plane, image_value: Image, number_value: u32) ?[]const u8 {
+        const number = std.math.cast(u16, number_value) orelse return null;
+        if (number == 1) return image_value.pixels;
+        const retained = self.frameByNumber(image_value.id, number) orelse return null;
+        return retained.pixels;
+    }
+
+    fn frameIndex(self: *const Plane, image_id: u32, number: u16) ?usize {
+        for (self.frames[0..self.frame_count], 0..) |retained_frame, index|
+            if (retained_frame.image_id == image_id and retained_frame.number == number) return index;
+        return null;
+    }
+
+    fn frameCount(self: *const Plane, image_id: u32) u16 {
+        var count: u16 = 0;
+        for (self.frames[0..self.frame_count]) |retained_frame| {
+            if (retained_frame.image_id == image_id) count += 1;
+        }
+        return count;
+    }
+
+    fn frameBytes(self: *const Plane, image_id: u32) usize {
+        var bytes: usize = 0;
+        for (self.frames[0..self.frame_count]) |retained_frame| {
+            if (retained_frame.image_id == image_id) bytes += retained_frame.pixels.len;
+        }
+        return bytes;
+    }
+
+    fn nextFrameNumber(self: *const Plane, image_id: u32) ?u16 {
+        const count = self.frameCount(image_id);
+        if (count == std.math.maxInt(u16) - 1) return null;
+        return count + 2;
+    }
+
+    fn lastFrameNumber(self: *const Plane, image_id: u32) u16 {
+        return self.frameCount(image_id) + 1;
+    }
+
+    fn currentGap(self: *const Plane, image_value: Image) u32 {
+        if (image_value.current_frame == 0) return image_value.root_gap_ms;
+        return self.frameByNumber(image_value.id, image_value.current_frame + 1).?.gap_ms;
     }
 
     fn hasPlacement(self: *const Plane, image_id: u32) bool {
@@ -1109,6 +1655,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'Y' => 1 << 17,
             'z' => 1 << 18,
             'I' => 1 << 19,
+            'C' => 1 << 20,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -1149,6 +1696,10 @@ fn parseCommand(bytes: []const u8) ?Command {
             'Y' => result.cell_y = std.fmt.parseInt(u32, value, 10) catch return null,
             'z' => result.z = std.fmt.parseInt(i32, value, 10) catch return null,
             'I' => result.image_number = std.fmt.parseInt(u32, value, 10) catch return null,
+            'C' => {
+                result.compose_mode = std.fmt.parseInt(u2, value, 10) catch return null;
+                if (result.compose_mode > 1) return null;
+            },
             else => return null,
         }
     }
@@ -1159,6 +1710,48 @@ fn ceilRatio(a: u32, b: u32, divisor: u32) ?u32 {
     if (divisor == 0) return null;
     const product = std.math.mul(u64, a, b) catch return null;
     return @intCast((product + divisor - 1) / divisor);
+}
+
+fn composeRgba(
+    canvas: []u8,
+    canvas_width: u32,
+    source: []const u8,
+    source_stride: u32,
+    source_x: u32,
+    source_y: u32,
+    format: u8,
+    width: u32,
+    height: u32,
+    offset_x: u32,
+    offset_y: u32,
+    blend: bool,
+) void {
+    const channels: usize = if (format == 24) 3 else 4;
+    for (0..height) |y| {
+        for (0..width) |x| {
+            const source_offset = ((@as(usize, source_y) + y) * source_stride + source_x + x) * channels;
+            const destination_offset = ((@as(usize, offset_y) + y) * canvas_width +
+                offset_x + x) * 4;
+            const alpha: u16 = if (format == 24) 255 else source[source_offset + 3];
+            if (!blend or alpha == 255) {
+                @memcpy(canvas[destination_offset..][0..3], source[source_offset..][0..3]);
+                canvas[destination_offset + 3] = @intCast(alpha);
+                continue;
+            }
+            if (alpha == 0) continue;
+            const inverse: u32 = 255 - alpha;
+            const destination_alpha: u32 = canvas[destination_offset + 3];
+            const alpha_numerator: u32 = @as(u32, alpha) * 255 + destination_alpha * inverse;
+            for (0..3) |channel| {
+                const mixed = @as(u32, source[source_offset + channel]) * alpha * 255 +
+                    @as(u32, canvas[destination_offset + channel]) * destination_alpha * inverse;
+                canvas[destination_offset + channel] = @intCast(
+                    (mixed + alpha_numerator / 2) / alpha_numerator,
+                );
+            }
+            canvas[destination_offset + 3] = @intCast((alpha_numerator + 127) / 255);
+        }
+    }
 }
 
 fn deleteMatches(
@@ -1500,8 +2093,219 @@ test "Kitty z and point3d deletion preserve unmatched layers and image data" {
     try std.testing.expectEqual(@as(usize, 0), plane.image_count);
 }
 
+test "Kitty frames compose transactionally and advance on monotonic gaps" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=20;/wAA/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const frame = try plane.command(
+        "a=f,f=32,i=20,s=1,v=1,r=99,c=1,z=50;AAD/gA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(frame.changed);
+    try std.testing.expect(!frame.visual_changed);
+    try std.testing.expectEqual(@as(?u16, 2), frame.response_frame);
+    try std.testing.expectEqual(@as(usize, 1), plane.frame_count);
+    try std.testing.expectEqualSlices(u8, &.{ 127, 0, 128, 255 }, plane.frames[0].pixels);
+    const generation_before_bad_composition = plane.generation();
+    const bad_composition = try plane.command(
+        "a=c,i=20,r=1,c=2,C=2",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.invalid, bad_composition.failure.?);
+    try std.testing.expectEqual(generation_before_bad_composition, plane.generation());
+    const generation_before_invalid_control = plane.generation();
+    const invalid_control = try plane.command(
+        "a=a,i=20,c=2,r=99,z=10",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.missing, invalid_control.failure.?);
+    try std.testing.expectEqual(@as(u16, 0), plane.images[0].current_frame);
+    try std.testing.expectEqual(generation_before_invalid_control, plane.generation());
+
+    const started = plane.advanceAnimations(100);
+    try std.testing.expect(!started.changed);
+    try std.testing.expectEqual(@as(?u32, null), started.next_ms);
+    try std.testing.expect((try plane.command(
+        "a=a,i=20,s=3",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(100).next_ms);
+    const second = plane.advanceAnimations(140);
+    try std.testing.expect(second.changed);
+    try std.testing.expectEqualSlices(u8, &.{ 127, 0, 128, 255 }, plane.image(0).?.pixels);
+    const root = plane.advanceAnimations(190);
+    try std.testing.expect(root.changed);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, plane.image(0).?.pixels);
+
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,i=20,s=1,v=1,r=3,C=1;AP8A/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=c,i=20,r=2,c=3",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const internal_id = plane.image(0).?.id;
+    try std.testing.expectEqualSlices(u8, plane.frames[0].pixels, plane.frameByNumber(internal_id, 3).?.pixels);
+    try std.testing.expect((try plane.command("a=d,d=f,i=20,r=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.frame_count);
+    try std.testing.expect(plane.frameByNumber(internal_id, 2) != null);
+    const bytes_before_root_edit = plane.storage_bytes;
+    const root_prefix = try plane.command(
+        "a=f,f=32,i=20,s=1,v=1,r=1,C=1,z=70,m=1;AAH+",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(!root_prefix.changed);
+    const root_edit = try plane.command(
+        "m=0;/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(root_edit.changed);
+    try std.testing.expect(root_edit.visual_changed);
+    try std.testing.expectEqual(@as(?u16, 1), root_edit.response_frame);
+    try std.testing.expectEqual(bytes_before_root_edit, plane.storage_bytes);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 1, 254, 255 }, plane.images[0].pixels);
+    try std.testing.expectEqual(@as(u32, 70), plane.images[0].root_gap_ms);
+    try std.testing.expect(plane.reset());
+    try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
+    try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
+}
+
 test "static image allocation failure leaves the plane reusable" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationFailure, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, frameAllocationFailure, .{});
+}
+
+test "Kitty frame capacity rejects the next frame without retained mutation" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=70,q=2;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    var number: usize = 2;
+    while (number < max_frames + 2) : (number += 1) {
+        var command_bytes: [80]u8 = undefined;
+        const command_value = try std.fmt.bufPrint(
+            &command_bytes,
+            "a=f,f=32,s=1,v=1,i=70,r={d},q=2;BQYHCA==",
+            .{number},
+        );
+        try std.testing.expect((try plane.command(
+            command_value,
+            .primary,
+            0,
+            0,
+            0,
+            1,
+            1,
+        )).changed);
+    }
+    const generation = plane.generation();
+    const bytes = plane.storage_bytes;
+    const rejected = try plane.command(
+        "a=f,f=32,s=1,v=1,i=70,r=258,q=2;CQoLDA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.quota, rejected.failure.?);
+    try std.testing.expectEqual(@as(u16, max_frames), plane.frame_count);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(bytes, plane.storage_bytes);
+}
+
+fn frameAllocationFailure(allocator: std.mem.Allocator) !void {
+    var plane = Plane.init(allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=1;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const before = plane.storage_bytes;
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,i=1,s=1,v=1;BQYHCA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(before + 4, plane.storage_bytes);
+    const with_frame = plane.storage_bytes;
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,i=1,s=1,v=1,r=1,C=1;CQoLDA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(with_frame, plane.storage_bytes);
+    try std.testing.expectEqualSlices(u8, &.{ 9, 10, 11, 12 }, plane.images[0].pixels);
 }
 
 fn allocationFailure(allocator: std.mem.Allocator) !void {

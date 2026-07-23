@@ -512,6 +512,26 @@ test "visual hyperlink borrow requires the exact current visual identity" {
     try std.testing.expectError(error.InvalidArgument, terminal.visibleCellHyperlinkUri(current.dirty_token, 0, 0));
 }
 
+test "retained animation frames stay visually clean until monotonic selection" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=31,q=2;/wAA/w==\x1b\\",
+    )).state_changed);
+    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+    const clean = terminal.visualView().dirty_token;
+    const semantic = terminal.semanticSequence();
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=f,f=32,s=1,v=1,i=31,r=2,q=2;AAD//w==\x1b\\",
+    )).state_changed);
+    try std.testing.expect(terminal.semanticSequence() > semantic);
+    try std.testing.expectEqual(clean, terminal.visualView().dirty_token);
+    try std.testing.expect((try terminal.feed("\x1b_Ga=a,i=31,s=3,q=2\x1b\\")).state_changed);
+    try std.testing.expect(!terminal.advanceGraphics(100).changed);
+    try std.testing.expect(terminal.advanceGraphics(140).changed);
+    try std.testing.expect(clean != terminal.visualView().dirty_token);
+}
+
 test "cursor hides when viewport is scrolled off live bottom" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);

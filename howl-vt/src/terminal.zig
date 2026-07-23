@@ -13333,14 +13333,20 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
         if (cell) |value| value.width else 1,
         if (cell) |value| value.height else 1,
     );
-    const respond = result.failure != null or result.response_id != null or result.response_number != null;
+    const respond = result.failure != null or result.response_id != null or
+        result.response_number != null or result.response_frame != null;
     const suppressed = result.quiet == 2 or (result.quiet == 1 and result.failure == null);
     if (respond and !suppressed) {
         try appendOutput(&terminal.host.pending_output, terminal.allocator, "\x1b_G");
         var metadata: [48]u8 = undefined;
         if (result.response_id) |id| {
             const id_bytes = if (result.response_number) |number|
-                std.fmt.bufPrint(&metadata, "i={d},I={d};", .{ id, number })
+                if (result.response_frame) |frame_number|
+                    std.fmt.bufPrint(&metadata, "i={d},I={d},r={d};", .{ id, number, frame_number })
+                else
+                    std.fmt.bufPrint(&metadata, "i={d},I={d};", .{ id, number })
+            else if (result.response_frame) |frame_number|
+                std.fmt.bufPrint(&metadata, "i={d},r={d};", .{ id, frame_number })
             else
                 std.fmt.bufPrint(&metadata, "i={d};", .{id});
             const written = id_bytes catch return error.ConsequenceLimit;
@@ -13359,7 +13365,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
         );
         try appendOutput(&terminal.host.pending_output, terminal.allocator, "\x1b\\");
     }
-    if (result.changed) terminal.noteSourceWideVisualChange();
+    if (result.changed and result.visual_changed) terminal.noteSourceWideVisualChange();
     return result.changed or (respond and !suppressed);
 }
 
@@ -13783,6 +13789,8 @@ pub const Terminal = struct {
     pub const DirtyToken = enum(u64) { _ };
     /// Borrows one immutable decoded terminal image.
     pub const VisualImage = graphics_mod.ImageView;
+    /// Reports one VT-owned image-animation service result.
+    pub const GraphicsTick = graphics_mod.AnimationTick;
     /// Copies one image placement resolved into the visible viewport.
     pub const VisualImagePlacement = struct {
         /// Resolves retained image content.
@@ -13935,7 +13943,7 @@ pub const Terminal = struct {
         selected_rows: VisibleSelection,
         /// Copies palette, dynamic defaults, cursor colors, and screen reverse state.
         presentation: Presentation,
-        /// Borrows static terminal image data and visible placements.
+        /// Borrows the selected terminal image frames and visible placements.
         images: VisualImages,
         /// Identifies the exact visual observation accepted by `ackVisual`.
         dirty_token: DirtyToken,
@@ -15091,6 +15099,20 @@ pub const Terminal = struct {
     /// It does not identify visual acknowledgement or external scheduling.
     pub fn semanticSequence(self: *const Terminal) u64 {
         return self.semantic_sequence;
+    }
+
+    /// Advances retained image animation against caller monotonic milliseconds.
+    pub fn advanceGraphics(self: *Terminal, now_ms: u64) graphics_mod.AnimationTick {
+        const visual_before = self.visualMutationState();
+        const tick = self.graphics.advanceAnimations(now_ms);
+        if (tick.semantic_changed) {
+            if (tick.changed) self.noteSourceWideVisualChange();
+            self.postApply(true);
+        }
+        if (tick.changed) {
+            self.finishVisualMutation(visual_before);
+        }
+        return tick;
     }
 
     /// Borrows coherent visual-only terminal state until the next terminal mutation.

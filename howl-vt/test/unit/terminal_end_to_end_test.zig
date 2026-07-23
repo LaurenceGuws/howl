@@ -1824,6 +1824,34 @@ test "terminal: Kitty image number gets stable identity for put reply and deleti
     try std.testing.expectEqual(@as(usize, 1), terminal.visualView().images.imageCount());
 }
 
+test "terminal: Kitty frame reply includes exact admitted frame number" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try std.testing.expect(
+        (try terminal.feed("\x1b_Ga=t,f=32,s=1,v=1,i=50,q=2;AQIDBA==\x1b\\")).state_changed,
+    );
+    try std.testing.expect(
+        (try terminal.feed("\x1b_Ga=f,f=32,s=1,v=1,i=50,r=2;BQYHCA==\x1b\\")).state_changed,
+    );
+    try std.testing.expectEqualStrings("\x1b_Gi=50,r=2;OK\x1b\\", terminal.host.pendingOutput());
+}
+
+test "terminal: Kitty C=1 display retains cursor for explicit placement" {
+    var terminal = try Terminal.init(std.testing.allocator, 6, 10);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b[2;3H")).state_changed);
+    const before_view = terminal.visualView().view;
+    const before = .{ before_view.cursor_row, before_view.cursor_col };
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=51,c=4,r=3,C=1,q=2;AQIDBA==\x1b\\",
+    )).state_changed);
+    const after = terminal.visualView().view;
+    try std.testing.expectEqualDeep(before, .{ after.cursor_row, after.cursor_col });
+    const placement = terminal.visualView().images.placement(0).?;
+    try std.testing.expectEqual(@as(u16, 1), placement.row);
+    try std.testing.expectEqual(@as(u16, 2), placement.col);
+}
+
 test "terminal: Kitty deletion is silent and preserves lowercase image data" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
