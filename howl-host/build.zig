@@ -57,6 +57,11 @@ fn configureNative(b: *std.Build, module: *std.Build.Module) void {
         .file = b.path("vendor/xdg-system-bell/xdg-system-bell-v1-protocol.c"),
         .flags = &.{"-std=c11"},
     });
+    module.addIncludePath(b.path("vendor/cursor-shape"));
+    module.addCSourceFile(.{
+        .file = b.path("vendor/cursor-shape/cursor-shape-v1-protocol.c"),
+        .flags = &.{"-std=c11"},
+    });
     module.linkSystemLibrary("wayland-client", .{});
 }
 

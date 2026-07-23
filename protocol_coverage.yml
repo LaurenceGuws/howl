@@ -1627,10 +1627,15 @@ references:
           - {id: iterm2.osc.highlight_fg, raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
             conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           - {id: iterm2.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
-            conditions: Howl retains an 8-entry ordered raw-byte FIFO but delegates validation and presentation,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: HostState.retainPointerShape, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC 22 retains ordered bounded host-neutral requests"}}}
+            conditions: "Howl validates the portable CSS shape set, retains independent 16-entry primary and alternate
+              stacks, and issues optional Wayland cursor-shape requests; it deliberately omits iTerm2's X11
+              compatibility names and bounds pending operations to eight.",
+            relevance: host consequence, howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately supports the portable Kitty CSS vocabulary and a fixed eight-occurrence
+                admission bound rather than iTerm2's additional X11 aliases.,
+              residual: iTerm2 additionally accepts platform-specific X11 cursor names and does not share Howl's FIFO bound.,
+              source: howl-host/src/pointer_shape.zig, symbol: State.apply, proof: {path: howl-host/src/pointer_shape.zig,
+                symbol: "pointer stacks retain banks eviction queries and rollback"}}}
           - {id: iterm2.osc.kvp_50, raw: "OSC 50 ; key=value (BEL|ST)", effect: legacy iTerm key-value command,
             howl: {support: missing, disposition: excluded,
               rationale: This iTerm product integration is outside the complete Howl family.}}
@@ -3261,11 +3266,16 @@ references:
           - {id: kitty.osc.highlight_fg, raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
             conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
           - {id: kitty.osc.pointer, raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
-            conditions: "Howl retains stack and query syntax in an 8-entry ordered raw-byte FIFO but delegates
-              validation presentation and replies",
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: HostState.retainPointerShape, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC 22 retains ordered bounded host-neutral requests"}}}
+            conditions: "Howl implements the complete portable shape vocabulary, independent primary and alternate
+              16-entry stacks, reset ordering, support/current/default/grabbed queries, transactional replies, and
+              optional Wayland cursor-shape presentation; its pending occurrence FIFO is fixed at eight.",
+            relevance: host consequence, howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately bounds every ordered host consequence rather than accepting an unbounded
+                same-feed burst.,
+              residual: A burst exceeding eight unconsumed OSC 22 occurrences is rejected transactionally.,
+              source: howl-host/src/window.zig, symbol: Window.applyPointerShapeRequests,
+              proof: {path: howl-host/src/pointer_shape.zig,
+                symbol: "pointer stacks retain banks eviction queries and rollback"}}}
           - id: kitty.osc.reset_fg
             raw: "OSC 110 (BEL|ST)"
             effect: reset foreground

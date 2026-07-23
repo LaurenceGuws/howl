@@ -45,6 +45,9 @@ accepted_implementation:
   - Howl-host presents retained cursor blink intent with one bounded monotonic timer and no VT/render timing policy.
   - Howl-host transactionally answers ordered color-preference queries from its fixed dark presentation policy.
   - >-
+    Howl-host validates ordered OSC 22 operations, retains independent bounded primary and alternate pointer stacks,
+    answers exact queries, and applies supported shapes through optional Wayland cursor-shape-v1.
+  - >-
     Howl-host consumes ordered window operations, requests Wayland minimization, and transactionally reports only
     normal state, unavailable zero position/screen facts, and its retained title.
 

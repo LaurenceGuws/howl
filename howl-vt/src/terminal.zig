@@ -5906,6 +5906,10 @@ const NotificationOwned = struct {
 pub const PointerShapeRequest = struct {
     /// Monotonic identity advancing for every accepted request, including repeated bytes.
     generation: u64,
+    /// Orders this request against terminal resets that clear both stacks.
+    reset_generation: u64,
+    /// Retains the screen bank active when this ordered request was accepted.
+    alternate_screen: bool,
     /// Raw bounded shape, stack operation, or query; interpretation and replies belong to the host.
     payload: []const u8,
 };
@@ -5913,12 +5917,16 @@ pub const PointerShapeRequest = struct {
 // Owns one bounded pointer-request queue slot without allocation.
 const PointerShapeOwned = struct {
     generation: u64,
+    reset_generation: u64,
+    alternate_screen: bool,
     payload_len: u16,
     payload: [max_metadata_bytes]u8,
 
     fn view(self: *const PointerShapeOwned) PointerShapeRequest {
         return .{
             .generation = self.generation,
+            .reset_generation = self.reset_generation,
+            .alternate_screen = self.alternate_screen,
             .payload = self.payload[0..self.payload_len],
         };
     }
@@ -6030,7 +6038,7 @@ comptime {
     std.debug.assert(file_transfer_capacity > 0);
     std.debug.assert(clipboard_capacity > 0);
     std.debug.assert(@sizeOf(NotificationOwned) <= max_metadata_bytes + 16);
-    std.debug.assert(@sizeOf(PointerShapeOwned) <= max_metadata_bytes + 16);
+    std.debug.assert(@sizeOf(PointerShapeOwned) <= max_metadata_bytes + 24);
     std.debug.assert(dcs_payload_max_bytes <= pending_output_max_bytes);
     std.debug.assert(clipboard_reply_bytes_max < pending_output_max_bytes);
     std.debug.assert(hyperlink_target_max_count > 0);
@@ -6124,6 +6132,7 @@ pub const HostState = struct {
     notifications_start: u8 = 0,
     notifications_count: u8 = 0,
     pointer_shape_generation: u64 = 0,
+    pointer_shape_reset_generation: u64 = 1,
     pointer_shapes: [pointer_shape_capacity]PointerShapeOwned = undefined,
     pointer_shapes_start: u8 = 0,
     pointer_shapes_count: u8 = 0,
@@ -6199,6 +6208,7 @@ pub const HostState = struct {
     /// Reset host-observed state governed by terminal reset.
     pub fn resetTerminalState(self: *HostState) void {
         self.locator = .{};
+        advanceIdentity(&self.pointer_shape_reset_generation);
         if (self.working_directory_report) |directory| self.allocator.free(directory.value);
         self.working_directory_report = null;
     }
@@ -6340,7 +6350,11 @@ pub const HostState = struct {
     }
 
     /// Retain one OSC 22 request without selecting a host pointer or answering queries.
-    pub fn retainPointerShape(self: *HostState, payload: []const u8) ApplyError!void {
+    pub fn retainPointerShape(
+        self: *HostState,
+        payload: []const u8,
+        alternate_screen: bool,
+    ) ApplyError!void {
         try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
         if (self.pointer_shapes_count == pointer_shape_capacity) return error.ConsequenceLimit;
         if (self.pointer_shape_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
@@ -6349,6 +6363,8 @@ pub const HostState = struct {
         @memcpy(slot.payload[0..payload.len], payload);
         self.pointer_shape_generation += 1;
         slot.generation = self.pointer_shape_generation;
+        slot.reset_generation = self.pointer_shape_reset_generation;
+        slot.alternate_screen = alternate_screen;
         slot.payload_len = @intCast(payload.len);
         self.pointer_shapes_count += 1;
     }
@@ -9811,7 +9827,10 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             notification.command,
             notification.payload,
         ),
-        .pointer_shape => |payload| try vt.host.retainPointerShape(payload),
+        .pointer_shape => |payload| try vt.host.retainPointerShape(
+            payload,
+            vt.screen_state.alt_active,
+        ),
         .window_request => |request| try vt.host.retainWindowRequest(request),
         .color_preference_query => try vt.host.retainColorPreferenceQuery(),
         .color_control => |cmd| {
@@ -12630,8 +12649,12 @@ pub const Terminal = struct {
     pub const notification_max_count = notification_capacity;
     /// Bounds raw bytes retained for one OSC 22 pointer-shape request.
     pub const pointer_shape_max_bytes = max_metadata_bytes;
+    /// Bounds expansion of repeated `__current__` pointer-shape queries.
+    pub const pointer_shape_reply_max_bytes = (max_metadata_bytes / 12) * 14 - 1;
     /// Exposes the fixed pending-pointer-request capacity to embedding hosts.
     pub const pointer_shape_max_count = pointer_shape_capacity;
+    /// Reports stale or non-query identity, allocation failure, or bounded OSC 22 reply saturation.
+    pub const PointerShapeReplyError = ApplyError || error{ StalePointerShape, PointerShapeReplyMismatch };
     /// Bounds one retained encoded file-transfer packet.
     pub const file_transfer_max_bytes = file_transfer_packet_max_bytes;
     /// Bounds one retained iTerm OSC 1337 file-transfer payload at parser admission.
@@ -13950,6 +13973,7 @@ pub const Terminal = struct {
             .notification_count = self.host.notifications_count,
             .pointer_shape = self.host.pointerShapeView(),
             .pointer_shape_count = self.host.pointer_shapes_count,
+            .pointer_shape_reset_generation = self.host.pointer_shape_reset_generation,
             .file_transfer = self.host.fileTransferHead(),
             .file_transfer_count = self.host.file_transfer_count,
             .window_request = self.host.windowRequestHead(),
@@ -14418,6 +14442,29 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
+    /// Serialize one exact OSC 22 query reply without consuming its FIFO head.
+    ///
+    /// The returned bytes are owned by `allocator`. Stale identity, allocation
+    /// failure, and output saturation preserve the exact request.
+    pub fn preparePointerShapeReply(
+        self: *Terminal,
+        generation: u64,
+        payload: []const u8,
+        allocator: std.mem.Allocator,
+    ) PointerShapeReplyError![]u8 {
+        const request = self.host.pointerShapeView() orelse return error.StalePointerShape;
+        if (request.generation != generation) return error.StalePointerShape;
+        if (request.payload.len == 0 or request.payload[0] != '?')
+            return error.PointerShapeReplyMismatch;
+        try ensureRetainedBound(byteCount(payload), pointer_shape_reply_max_bytes);
+        var output = PendingOutput.init();
+        errdefer output.bytes.deinit(allocator);
+        try appendOutput(&output, allocator, "\x1b]22;");
+        try appendOutput(&output, allocator, payload);
+        try appendOutput(&output, allocator, "\x1b\\");
+        return output.bytes.toOwnedSlice(allocator);
+    }
+
     /// Consume the matching FIFO-head file-transfer packet after host policy runs.
     pub fn acknowledgeFileTransfer(self: *Terminal, generation: u64) error{StaleFileTransfer}!void {
         const packet = self.host.fileTransferHead() orelse return error.StaleFileTransfer;
@@ -14593,6 +14640,8 @@ pub const Terminal = struct {
         pointer_shape: ?PointerShapeRequest,
         /// Reports the bounded number of pending pointer requests, including the exposed head.
         pointer_shape_count: u8,
+        /// Orders pointer stack state against RIS without collapsing queued requests.
+        pointer_shape_reset_generation: u64,
         /// Borrows the next opaque file-transfer packet until terminal mutation.
         file_transfer: ?FileTransferPacket,
         /// Reports the bounded number of pending file-transfer packets, including the head.

@@ -1,0 +1,20 @@
+# Manual host receipts
+
+These bounded scripts preserve distinct first-party host receipts that owner
+tests cannot observe completely. They run as the existing host child command,
+are not installed, and contain no product policy or reusable fixture framework.
+
+- `basic-live.sh`: PTY bytes through VT, text preparation, GLES, and presentation.
+- `geometry.sh`: DEC line geometry, baseline, decoration, color, and cursor drawing.
+- `cursor-blink.sh`: compositor-visible cursor blink timing.
+- `osc52.sh`: exact OSC 52 reply plus Wayland clipboard ownership.
+- `window-control.sh`: exact ordered replies and one-way minimize request dispatch.
+- `pointer-shape.sh`: cursor-shape set, stack, screen-bank, and reset presentation.
+
+From `howl-host`, run a receipt with:
+
+```text
+zig build run -- window FONT ./manual-fixtures/RECEIPT.sh
+```
+
+Each receipt exits on its own. Closing the window early remains valid.

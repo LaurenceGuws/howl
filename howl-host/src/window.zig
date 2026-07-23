@@ -5,6 +5,7 @@ const clipboard = @import("clipboard.zig");
 const control = @import("howl_control");
 const howl_render = @import("howl_render");
 const renderer = @import("renderer.zig");
+const pointer_shape = @import("pointer_shape.zig");
 const viewport = @import("viewport.zig");
 const terminal_render = howl_render.terminal;
 const text = howl_render.terminal_text;
@@ -20,6 +21,7 @@ const c = @cImport({
     @cInclude("sys/timerfd.h");
     @cInclude("unistd.h");
     @cInclude("wayland-client.h");
+    @cInclude("cursor-shape-v1-client-protocol.h");
     @cInclude("xkbcommon/xkbcommon.h");
     @cInclude("xkbcommon/xkbcommon-keysyms.h");
     @cInclude("xdg-system-bell-v1-client-protocol.h");
@@ -294,9 +296,9 @@ const AxisFrame = struct {
 pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitError || control.InputError ||
     control.SelectionError || control.ClipboardSetError || control.ClipboardReplyError ||
     control.WindowReplyError || control.ColorPreferenceReplyError ||
+    control.PointerShapeReplyError ||
     control.ResizeError || control.ReaderError ||
-    terminal_render.Error || renderer.Error ||
-    error{ StaleNotification, StaleWindowRequest, WindowReplyRequired } || error{
+    terminal_render.Error || renderer.Error || error{ StaleNotification, StalePointerShape, StaleWindowRequest, WindowReplyRequired } || error{
     InvalidSize,
     GeometryUnstable,
     WaylandConnect,
@@ -481,6 +483,8 @@ const Window = struct {
     compositor: ?*c.struct_wl_compositor = null,
     wm_base: ?*c.struct_xdg_wm_base = null,
     system_bell: ?*c.struct_xdg_system_bell_v1 = null,
+    cursor_shape_manager: ?*c.struct_wp_cursor_shape_manager_v1 = null,
+    cursor_shape_device: ?*c.struct_wp_cursor_shape_device_v1 = null,
     seat: ?*c.struct_wl_seat = null,
     data_device_manager: ?*c.struct_wl_data_device_manager = null,
     data_device: ?*c.struct_wl_data_device = null,
@@ -491,6 +495,9 @@ const Window = struct {
     data_source: ?*c.struct_wl_data_source = null,
     keyboard: ?*c.struct_wl_keyboard = null,
     pointer: ?*c.struct_wl_pointer = null,
+    pointer_serial: u32 = 0,
+    pointer_shapes: pointer_shape.State = .{},
+    pointer_shape_reset_generation: u64 = 1,
     keymap: ?KeyboardMap = null,
     keyboard_focused: bool = false,
     surface: ?*c.struct_wl_surface = null,
@@ -715,6 +722,8 @@ const Window = struct {
         try self.applyClipboardConsequences();
         try self.applyWindowRequests();
         try self.applyColorPreferenceQueries();
+        try self.applyPointerShapeRequests();
+        self.applyCurrentPointerShape();
     }
 
     fn applyTerminalPresentation(self: *Window) void {
@@ -1165,6 +1174,54 @@ const Window = struct {
         }
     }
 
+    fn applyPointerShapeRequests(self: *Window) Error!void {
+        const terminal = self.terminal.?;
+        var handled: u8 = 0;
+        var reply: [control.pointer_shape_reply_max_bytes]u8 = undefined;
+        while (handled < control.pointer_shape_max_count) : (handled += 1) {
+            const head = terminal.pointerShapeHead() orelse return;
+            var next = self.pointer_shapes;
+            if (head.reset_generation != self.pointer_shape_reset_generation) next.reset();
+            const outcome = next.apply(
+                head.payloadBytes(),
+                head.alternate_screen,
+                reply[0..],
+            ) catch {
+                try terminal.acknowledgePointerShape(head.generation);
+                continue;
+            };
+            if (outcome.reply_len != 0) {
+                switch (try terminal.replyPointerShape(
+                    head.generation,
+                    reply[0..outcome.reply_len],
+                )) {
+                    .complete => {},
+                    .incomplete => return error.InputIncomplete,
+                }
+            } else {
+                try terminal.acknowledgePointerShape(head.generation);
+            }
+            self.pointer_shapes = next;
+            self.pointer_shape_reset_generation = head.reset_generation;
+        }
+    }
+
+    fn applyCurrentPointerShape(self: *Window) void {
+        const reset_generation = self.terminal.?.pointerShapeResetGeneration();
+        if (reset_generation != self.pointer_shape_reset_generation) {
+            self.pointer_shapes.reset();
+            self.pointer_shape_reset_generation = reset_generation;
+        }
+        const device = self.cursor_shape_device orelse return;
+        if (self.pointer_serial == 0) return;
+        const alternate = self.terminal.?.viewportFacts().alternate_screen;
+        c.wp_cursor_shape_device_v1_set_shape(
+            device,
+            self.pointer_serial,
+            self.pointer_shapes.current(alternate),
+        );
+    }
+
     fn requestClipboardPaste(self: *Window) Error!void {
         const offer = self.selection_offer orelse return;
         const mime = self.selection_offer_mimes.preferred() orelse return;
@@ -1288,6 +1345,8 @@ const Window = struct {
 
     fn destroyProtocol(self: *Window) void {
         self.destroyKeyboard();
+        if (self.cursor_shape_device) |value| c.wp_cursor_shape_device_v1_destroy(value);
+        self.cursor_shape_device = null;
         if (self.pointer) |value| c.wl_pointer_destroy(value);
         self.pointer = null;
         self.pointer_state.clear();
@@ -1306,6 +1365,8 @@ const Window = struct {
         self.data_device_manager = null;
         if (self.system_bell) |value| c.xdg_system_bell_v1_destroy(value);
         self.system_bell = null;
+        if (self.cursor_shape_manager) |value| c.wp_cursor_shape_manager_v1_destroy(value);
+        self.cursor_shape_manager = null;
         if (self.toplevel) |value| c.xdg_toplevel_destroy(value);
         self.toplevel = null;
         if (self.xdg_surface) |value| c.xdg_surface_destroy(value);
@@ -1345,6 +1406,14 @@ const Window = struct {
             return;
         }
         self.data_device = device;
+    }
+
+    fn ensureCursorShapeDevice(self: *Window) void {
+        if (self.cursor_shape_device != null) return;
+        const manager = self.cursor_shape_manager orelse return;
+        const pointer = self.pointer orelse return;
+        self.cursor_shape_device = c.wp_cursor_shape_manager_v1_get_pointer(manager, pointer);
+        if (self.cursor_shape_device == null) retainFailure(self, error.WaylandProtocol);
     }
 };
 
@@ -1824,6 +1893,18 @@ fn registryGlobal(
             @min(version, 1),
         ));
         if (self.system_bell == null) retainFailure(self, error.WaylandProtocol);
+    } else if (std.mem.eql(u8, value, "wp_cursor_shape_manager_v1") and self.cursor_shape_manager == null) {
+        self.cursor_shape_manager = @ptrCast(c.wl_registry_bind(
+            registry,
+            name,
+            &c.wp_cursor_shape_manager_v1_interface,
+            @min(version, 1),
+        ));
+        if (self.cursor_shape_manager == null) {
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        }
+        self.ensureCursorShapeDevice();
     } else if (std.mem.eql(u8, value, "wl_seat") and self.seat == null) {
         self.seat = @ptrCast(c.wl_registry_bind(
             registry,
@@ -2049,10 +2130,14 @@ fn seatCapabilities(
             return;
         }
         self.pointer = pointer;
+        self.ensureCursorShapeDevice();
     } else if (capabilities & c.WL_SEAT_CAPABILITY_POINTER == 0 and self.pointer != null) {
         if (!self.closed) self.cancelPointer() catch |failure| retainFailure(self, failure);
+        if (self.cursor_shape_device) |device| c.wp_cursor_shape_device_v1_destroy(device);
+        self.cursor_shape_device = null;
         if (self.pointer) |pointer| c.wl_pointer_destroy(pointer);
         self.pointer = null;
+        self.pointer_serial = 0;
         self.pointer_state.clear();
         self.axis_frame.clear();
     }
@@ -2195,7 +2280,7 @@ const keyboard_listener = c.struct_wl_keyboard_listener{
 fn pointerEnter(
     data: ?*anyopaque,
     _: ?*c.struct_wl_pointer,
-    _: u32,
+    serial: u32,
     surface: ?*c.struct_wl_surface,
     x: c.wl_fixed_t,
     y: c.wl_fixed_t,
@@ -2208,7 +2293,9 @@ fn pointerEnter(
     }
     self.pointer_state.clear();
     self.axis_frame.clear();
+    self.pointer_serial = serial;
     self.pointerMotion(fixedCoordinate(x) orelse -1, fixedCoordinate(y) orelse -1);
+    self.applyCurrentPointerShape();
 }
 
 fn pointerLeave(
@@ -2220,6 +2307,7 @@ fn pointerLeave(
     const self = owner(data);
     if (!self.closed and self.failure == null)
         self.cancelPointer() catch |failure| retainFailure(self, failure);
+    self.pointer_serial = 0;
 }
 
 fn pointerMotion(

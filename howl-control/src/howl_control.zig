@@ -228,6 +228,12 @@ pub const clipboard_max_count = howl_vt.Terminal.clipboard_max_count;
 pub const window_request_max_count = howl_vt.Terminal.window_request_max_count;
 /// Matches the VT owner's bounded color-preference query capacity.
 pub const color_preference_query_max_count = howl_vt.Terminal.color_preference_query_max_count;
+/// Matches the VT owner's bounded ordered pointer-request capacity.
+pub const pointer_shape_max_count = howl_vt.Terminal.pointer_shape_max_count;
+/// Matches the VT owner's per-request pointer payload bound.
+pub const pointer_shape_max_bytes = howl_vt.Terminal.pointer_shape_max_bytes;
+/// Matches the VT owner's exact maximum OSC 22 query reply payload.
+pub const pointer_shape_reply_max_bytes = howl_vt.Terminal.pointer_shape_reply_max_bytes;
 /// Identifies the host-neutral policy kind of one retained ordered notification.
 pub const NotificationKind = enum {
     message,
@@ -336,6 +342,32 @@ pub const ColorPreferenceReplyTransfer = client.InputTransfer;
 pub const ColorPreferenceReplyError = std.mem.Allocator.Error || error{
     ConsequenceLimit,
     StaleColorPreferenceQuery,
+};
+/// Copies one ordered OSC 22 identity without retaining VT borrows.
+pub const PointerShapeHead = struct {
+    /// Identifies one accepted occurrence and is never reused.
+    generation: u64,
+    /// Orders the request against resets that clear both pointer stacks.
+    reset_generation: u64,
+    /// Retains the screen bank active at request admission.
+    alternate_screen: bool,
+    /// Stores exact payload bytes selected by `payload_len`.
+    payload: [pointer_shape_max_bytes]u8,
+    /// Bounds meaningful bytes in `payload`.
+    payload_len: u16,
+
+    /// Borrow the copied request payload.
+    pub fn payloadBytes(self: *const PointerShapeHead) []const u8 {
+        return self.payload[0..self.payload_len];
+    }
+};
+/// Retains exact complete or partial OSC 22 query-reply transfer truth.
+pub const PointerShapeReplyTransfer = client.InputTransfer;
+/// Reports pointer-reply preparation or exact identity failure.
+pub const PointerShapeReplyError = std.mem.Allocator.Error || error{
+    ConsequenceLimit,
+    PointerShapeReplyMismatch,
+    StalePointerShape,
 };
 
 const ReaderFailure = enum(u8) {
@@ -846,6 +878,13 @@ pub const Terminal = struct {
         return result;
     }
 
+    /// Copy the current pointer-stack reset identity.
+    pub fn pointerShapeResetGeneration(self: *Terminal) u64 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.stateSnapshot().pointer_shape_reset_generation;
+    }
+
     /// Copies one matching decoded OSC 52 set without consuming it.
     pub fn copyClipboardSet(
         self: *Terminal,
@@ -1008,6 +1047,69 @@ pub const Terminal = struct {
         }
         self.lock.lockUncancelable(self.io);
         const completed = self.model.completeColorSchemePreferenceReply(generation);
+        self.lock.unlock(self.io);
+        try completed;
+        self.notify();
+        return transfer;
+    }
+
+    /// Copy the FIFO-head OSC 22 request without retaining VT borrows.
+    pub fn pointerShapeHead(self: *Terminal) ?PointerShapeHead {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        const request = self.model.stateSnapshot().pointer_shape orelse return null;
+        var result = PointerShapeHead{
+            .generation = request.generation,
+            .reset_generation = request.reset_generation,
+            .alternate_screen = request.alternate_screen,
+            .payload = undefined,
+            .payload_len = @intCast(request.payload.len),
+        };
+        @memcpy(result.payload[0..request.payload.len], request.payload);
+        return result;
+    }
+
+    /// Consume one exact OSC 22 operation after executable policy completes.
+    pub fn acknowledgePointerShape(
+        self: *Terminal,
+        generation: u64,
+    ) error{StalePointerShape}!void {
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgePointerShape(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
+    }
+
+    /// Serialize, flush, then consume one exact OSC 22 query.
+    pub fn replyPointerShape(
+        self: *Terminal,
+        generation: u64,
+        payload: []const u8,
+    ) PointerShapeReplyError!PointerShapeReplyTransfer {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const prepared = self.model.preparePointerShapeReply(
+            generation,
+            payload,
+            self.allocator,
+        ) catch |failure| {
+            self.lock.unlock(self.io);
+            return failure;
+        };
+        self.lock.unlock(self.io);
+        defer self.allocator.free(prepared);
+        std.debug.assert(prepared.len <= max_transfer_bytes);
+        self.write_lock.lockUncancelable(self.io);
+        const transfer = self.transport.transfer(self.io, prepared, self.transfer_timeout_ms);
+        self.write_lock.unlock(self.io);
+        switch (transfer) {
+            .incomplete => return transfer,
+            .complete => {},
+        }
+        self.lock.lockUncancelable(self.io);
+        const completed = self.model.acknowledgePointerShape(generation);
         self.lock.unlock(self.io);
         try completed;
         self.notify();
@@ -1941,6 +2043,33 @@ test "host color-preference query transfer consumes only after complete delivery
         try terminal.replyColorPreferenceQuery(generation, .dark),
     );
     try std.testing.expectEqual(@as(?u64, null), terminal.colorPreferenceQueryHead());
+}
+
+test "host pointer consequence copies bank and consumes only after policy or reply" {
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{},
+    );
+    defer terminal.deinit();
+
+    try terminal.consume("\x1b]22;>wait\x07\x1b[?1049h\x1b]22;?__current__\x1b\\");
+    var head = terminal.pointerShapeHead().?;
+    try std.testing.expectEqual(@as(u64, 1), head.reset_generation);
+    try std.testing.expect(!head.alternate_screen);
+    try std.testing.expectEqualStrings(">wait", head.payloadBytes());
+    try std.testing.expectError(error.StalePointerShape, terminal.acknowledgePointerShape(2));
+    try terminal.acknowledgePointerShape(head.generation);
+    head = terminal.pointerShapeHead().?;
+    try std.testing.expectEqual(@as(u64, 1), head.reset_generation);
+    try std.testing.expect(head.alternate_screen);
+    try std.testing.expectEqualStrings("?__current__", head.payloadBytes());
+    try std.testing.expectEqual(
+        client.InputTransfer{ .complete = "\x1b]22;0\x1b\\".len },
+        try terminal.replyPointerShape(head.generation, "0"),
+    );
+    try std.testing.expect(terminal.pointerShapeHead() == null);
 }
 
 test "host presentation copies and acknowledges ordered notifications exactly" {

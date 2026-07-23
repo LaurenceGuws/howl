@@ -10,9 +10,11 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "manual-fixtures",
         "src",
         "vendor/xdg-shell",
         "vendor/xdg-system-bell",
+        "vendor/cursor-shape",
         "LICENSES",
     },
 }

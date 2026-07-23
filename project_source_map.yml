@@ -36,10 +36,13 @@ accepted:
   howl-render/LICENSES: render-owned asset and native-library provenance
   howl-host/build.zig: first-party executable build, install, run, and proof ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
+  howl-host/manual-fixtures: bounded compositor-visible development receipts, not installed runtime assets
   howl-host/src/main.zig: operator shell selection, window entry, serve, and primitive control inspection
   howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, ordered consequence policy, and lifecycle
   howl-host/src/renderer.zig: one render thread and concrete EGL/GLES cell, DEC geometry, baseline, and decoration owner
   howl-host/src/viewport.zig: host scroll intent and exact scrollbar paint/hit geometry
   howl-host/src/clipboard.zig: bounded UTF-8 clipboard bytes and nonblocking transfer progress
+  howl-host/src/pointer_shape.zig: bounded primary and alternate OSC 22 stack and query policy
+  howl-host/vendor/cursor-shape: generated optional Wayland cursor-shape protocol bindings
   howl-host/vendor/xdg-system-bell: generated optional Wayland system-bell protocol bindings
   howl-host/LICENSES: host native-library and generated-protocol provenance

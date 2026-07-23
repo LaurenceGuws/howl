@@ -47,14 +47,14 @@ fn run(init: std.process.Init) !void {
     const shell = selectShell(init.io, environment.get("SHELL"));
     const command = arguments[1];
     if (std.mem.eql(u8, command, "window")) {
-        if (arguments.len < 3 or arguments.len > 4) return error.InvalidArguments;
+        const window_arguments = try parseWindowArguments(arguments);
         return window.run(
             init.gpa,
             init.io,
             runtime_dir,
-            arguments[2],
+            window_arguments[0],
             shell,
-            if (arguments.len == 4) arguments[3] else null,
+            if (window_arguments.len == 2) window_arguments[1] else null,
         );
     }
     if (std.mem.eql(u8, command, "serve")) {
@@ -86,6 +86,12 @@ fn run(init: std.process.Init) !void {
     if (std.mem.eql(u8, command, "signal") and arguments.len == 4)
         return signal(init, &client, arguments[3]);
     return error.InvalidArguments;
+}
+
+fn parseWindowArguments(arguments: []const []const u8) error{InvalidArguments}![]const []const u8 {
+    if (arguments.len < 3 or arguments.len > 4 or
+        !std.mem.eql(u8, arguments[1], "window")) return error.InvalidArguments;
+    return arguments[2..];
 }
 
 fn serve(
@@ -379,6 +385,34 @@ test "operator shell selection admits only absolute executable files" {
     try std.testing.expectEqualStrings(fallback_shell, selectShell(std.testing.io, "/missing/howl-shell"));
     try std.testing.expectEqualStrings(fallback_shell, selectShell(std.testing.io, "/bin/bash\x00tail"));
     try std.testing.expectEqualStrings("/bin/bash", selectShell(std.testing.io, "/bin/bash"));
+}
+
+test "manual fixture invocation follows the exact window command shape" {
+    const font = "/usr/share/fonts/TTF/IosevkaTermNerdFont-Regular.ttf";
+    const fixture = "./manual-fixtures/pointer-shape.sh";
+    try std.testing.expectEqualSlices(
+        []const u8,
+        &.{ font, fixture },
+        try parseWindowArguments(&.{ "howl-host", "window", font, fixture }),
+    );
+    try std.testing.expectError(
+        error.InvalidArguments,
+        parseWindowArguments(&.{ "howl-host", font, fixture }),
+    );
+    try std.testing.expectError(
+        error.InvalidArguments,
+        parseWindowArguments(&.{ "howl-host", "window" }),
+    );
+    const fixtures = [_][]const u8{
+        "manual-fixtures/basic-live.sh",
+        "manual-fixtures/cursor-blink.sh",
+        "manual-fixtures/geometry.sh",
+        "manual-fixtures/osc52.sh",
+        "manual-fixtures/pointer-shape.sh",
+        "manual-fixtures/window-control.sh",
+    };
+    for (fixtures) |path|
+        try std.Io.Dir.cwd().access(std.testing.io, path, .{ .execute = true });
 }
 
 test "selected operator shell executes the exact command override" {

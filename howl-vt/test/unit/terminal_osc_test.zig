@@ -1117,11 +1117,14 @@ test "OSC 22 retains ordered bounded host-neutral requests" {
     try std.testing.expect((try terminal.feed("pointer\x1b\\")).state_changed);
     var request = terminal.stateSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 1), request.generation);
+    try std.testing.expect(!request.alternate_screen);
     try std.testing.expectEqualStrings(">wait,pointer", request.payload);
 
     try std.testing.expect((try terminal.feed(
         "\x9d22;?default,current\x9c" ++
+            "\x1b[?1049h" ++
             "\x1b]22;>crosshair\x07" ++
+            "\x1b[?1049l" ++
             "\x1b]22;<1\x07",
     )).state_changed);
     try std.testing.expectEqual(@as(u8, 4), terminal.stateSnapshot().pointer_shape_count);
@@ -1136,6 +1139,7 @@ test "OSC 22 retains ordered bounded host-neutral requests" {
     for (expected, 1..) |payload, generation| {
         request = terminal.stateSnapshot().pointer_shape.?;
         try std.testing.expectEqual(@as(u64, @intCast(generation)), request.generation);
+        try std.testing.expectEqual(generation == 3, request.alternate_screen);
         try std.testing.expectEqualStrings(payload, request.payload);
         try terminal.acknowledgePointerShape(request.generation);
     }
@@ -1146,6 +1150,11 @@ test "OSC 22 retains ordered bounded host-neutral requests" {
     try terminal.resize(4, 9);
     request = terminal.stateSnapshot().pointer_shape.?;
     try std.testing.expectEqual(@as(u64, 5), request.generation);
+    try std.testing.expectEqual(@as(u64, 1), request.reset_generation);
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        terminal.stateSnapshot().pointer_shape_reset_generation,
+    );
     try std.testing.expectEqualStrings("survives", request.payload);
 }
 
@@ -1210,6 +1219,38 @@ test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
     try std.testing.expectError(error.StalePointerShape, terminal.acknowledgePointerShape(10));
     terminal.host.pointer_shape_generation = std.math.maxInt(u64);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]22;exhausted\x07"));
+    try std.testing.expect(terminal.stateSnapshot().pointer_shape == null);
+}
+
+test "OSC 22 query preparation preserves identity until exact acknowledgement" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b]22;pointer\x1b\\")).state_changed);
+    try std.testing.expectError(
+        error.PointerShapeReplyMismatch,
+        terminal.preparePointerShapeReply(1, "pointer", allocator),
+    );
+    try std.testing.expectEqual(@as(u64, 1), terminal.stateSnapshot().pointer_shape.?.generation);
+    try terminal.acknowledgePointerShape(1);
+    try std.testing.expect((try terminal.feed("\x1b]22;?__current__\x1b\\")).state_changed);
+    const token = terminal.semanticSequence();
+    try std.testing.expectError(
+        error.StalePointerShape,
+        terminal.preparePointerShapeReply(3, "default", allocator),
+    );
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    try std.testing.expectError(
+        error.OutOfMemory,
+        terminal.preparePointerShapeReply(2, "default", failing.allocator()),
+    );
+    try std.testing.expectEqual(token, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u64, 2), terminal.stateSnapshot().pointer_shape.?.generation);
+    const reply = try terminal.preparePointerShapeReply(2, "default", allocator);
+    defer allocator.free(reply);
+    try std.testing.expectEqualStrings("\x1b]22;default\x1b\\", reply);
+    try std.testing.expectEqual(token, terminal.semanticSequence());
+    try terminal.acknowledgePointerShape(2);
     try std.testing.expect(terminal.stateSnapshot().pointer_shape == null);
 }
 
