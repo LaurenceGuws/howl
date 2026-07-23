@@ -237,7 +237,7 @@ fn mutateSelection(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void
     terminal.startSelection(smith.value(i32), smith.value(u16));
     terminal.updateSelection(smith.value(i32), smith.value(u16));
     terminal.finishSelection();
-    const generated = try terminal.copySelection(std.testing.allocator);
+    const generated = try terminal.copySelection(std.testing.allocator, std.math.maxInt(usize));
     std.testing.allocator.free(generated);
     if (smith.value(bool)) terminal.clearSelection();
 
@@ -250,8 +250,8 @@ fn mutateSelection(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void
     proof.updateSelection(0, 0);
     proof.finishSelection();
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    try std.testing.expectError(error.OutOfMemory, proof.copySelection(failing.allocator()));
-    const copied = try proof.copySelection(std.testing.allocator);
+    try std.testing.expectError(error.OutOfMemory, proof.copySelection(failing.allocator(), std.math.maxInt(usize)));
+    const copied = try proof.copySelection(std.testing.allocator, std.math.maxInt(usize));
     try std.testing.expectEqualStrings("S", copied);
     std.testing.allocator.free(copied);
 }

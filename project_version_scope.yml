@@ -34,6 +34,9 @@ accepted_implementation:
   - >-
     Howl-host owns primary-history viewport intent and exact scrollbar presentation while VT retains history,
     projection, eviction, reflow, and alternate-screen truth.
+  - >-
+    VT owns projected selection and copied-text semantics; Control exposes bounded local operations; Howl-host owns
+    pointer gestures, exact clipboard chords, and nonblocking Wayland UTF-8 clipboard transfer.
 
 invariants:
   - every module allocation uses an explicit caller-provided allocator
@@ -44,7 +47,6 @@ invariants:
   - private development carries no downstream source or ABI compatibility obligation
 
 deferred:
-  - selection and clipboard policy
   - tabs, panes, sessions, and multiplexing
   - unsupported DEC line-geometry and baseline drawing
   - dynamic-color and broader ordered host-consequence presentation

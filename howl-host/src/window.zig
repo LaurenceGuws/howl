@@ -1,6 +1,7 @@
 //! Owns one Wayland window, one Control terminal, retained visuals, and render admission.
 
 const std = @import("std");
+const clipboard = @import("clipboard.zig");
 const control = @import("howl_control");
 const howl_render = @import("howl_render");
 const renderer = @import("renderer.zig");
@@ -44,10 +45,12 @@ const KeyModifiers = @FieldType(KeyInput, "mods");
 const MouseInput = @FieldType(control.Input, "mouse");
 const MouseButton = @FieldType(MouseInput, "button");
 const MouseKind = @FieldType(MouseInput, "kind");
+const ClipboardAction = enum { copy, paste };
 const physical_key_count: usize = @as(usize, c.KEY_MAX) + 1;
 const max_wheel_steps: usize = 32;
 const max_bells_per_turn: u8 = 32;
 const default_title = "Howl";
+const clipboard_poll_count = 1 + clipboard.max_sends;
 
 const PresentationChange = struct {
     title: bool,
@@ -282,7 +285,8 @@ const AxisFrame = struct {
 };
 
 /// Reports exact executable construction, dispatch, projection, or rendering failure.
-pub const Error = std.mem.Allocator.Error || control.InitError || control.InputError ||
+pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitError || control.InputError ||
+    control.SelectionError ||
     control.ResizeError || control.ReaderError || terminal_render.Error || renderer.Error || error{
     InvalidSize,
     GeometryUnstable,
@@ -468,6 +472,13 @@ const Window = struct {
     wm_base: ?*c.struct_xdg_wm_base = null,
     system_bell: ?*c.struct_xdg_system_bell_v1 = null,
     seat: ?*c.struct_wl_seat = null,
+    data_device_manager: ?*c.struct_wl_data_device_manager = null,
+    data_device: ?*c.struct_wl_data_device = null,
+    pending_offer: ?*c.struct_wl_data_offer = null,
+    pending_offer_mimes: clipboard.Offer = .{},
+    selection_offer: ?*c.struct_wl_data_offer = null,
+    selection_offer_mimes: clipboard.Offer = .{},
+    data_source: ?*c.struct_wl_data_source = null,
     keyboard: ?*c.struct_wl_keyboard = null,
     pointer: ?*c.struct_wl_pointer = null,
     keymap: ?KeyboardMap = null,
@@ -483,6 +494,9 @@ const Window = struct {
     axis_frame: AxisFrame = .{},
     viewport_state: viewport.State = .{},
     viewport_drag: ?viewport.Drag = null,
+    selection_drag: bool = false,
+    clipboard_transfers: clipboard.Transfers,
+    selection_serial: u32 = 0,
     wake: TerminalWake,
     render: ?*renderer.Renderer = null,
     terminal: ?*control.Terminal = null,
@@ -528,6 +542,7 @@ const Window = struct {
             .terminal_signal = terminal_signal,
             .repeat_signal = repeat_signal,
             .wake = .{ .fd = terminal_signal },
+            .clipboard_transfers = clipboard.Transfers.init(allocator),
         };
         display_owned = false;
         registry_owned = false;
@@ -614,18 +629,19 @@ const Window = struct {
             const flush = c.wl_display_flush(self.display);
             const flush_blocked = flush < 0 and std.posix.errno(flush) == .AGAIN;
             if (flush < 0 and !flush_blocked) return error.WaylandFlush;
-            var fds = [_]std.posix.pollfd{
-                .{
-                    .fd = c.wl_display_get_fd(self.display),
-                    .events = std.posix.POLL.IN |
-                        if (flush_blocked) @as(i16, std.posix.POLL.OUT) else 0,
-                    .revents = 0,
-                },
-                .{ .fd = self.terminal_signal, .events = std.posix.POLL.IN, .revents = 0 },
-                .{ .fd = self.render.?.signalFd(), .events = std.posix.POLL.IN, .revents = 0 },
-                .{ .fd = self.repeat_signal, .events = std.posix.POLL.IN, .revents = 0 },
+            var fds: [4 + clipboard_poll_count]std.posix.pollfd = undefined;
+            fds[0] = .{
+                .fd = c.wl_display_get_fd(self.display),
+                .events = std.posix.POLL.IN |
+                    if (flush_blocked) @as(i16, std.posix.POLL.OUT) else 0,
+                .revents = 0,
             };
-            const ready_count = std.posix.poll(&fds, -1) catch return error.Poll;
+            fds[1] = .{ .fd = self.terminal_signal, .events = std.posix.POLL.IN, .revents = 0 };
+            fds[2] = .{ .fd = self.render.?.signalFd(), .events = std.posix.POLL.IN, .revents = 0 };
+            fds[3] = .{ .fd = self.repeat_signal, .events = std.posix.POLL.IN, .revents = 0 };
+            const clipboard_count = self.clipboard_transfers.pollDescriptors(fds[4..]);
+            const active_fds = fds[0 .. 4 + clipboard_count];
+            const ready_count = std.posix.poll(active_fds, -1) catch return error.Poll;
             std.debug.assert(ready_count != 0);
             const faults = std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL;
             if (fds[0].revents & faults != 0) return error.WaylandDispatch;
@@ -650,6 +666,14 @@ const Window = struct {
                 self.draw.complete(try self.render.?.completedGeneration());
             if (fds[1].revents & std.posix.POLL.IN != 0) try self.handleTerminalWake();
             if (!self.closed and fds[3].revents & std.posix.POLL.IN != 0) try self.repeatKey();
+            for (fds[4 .. 4 + clipboard_count]) |descriptor|
+                if (descriptor.revents != 0)
+                    try self.clipboard_transfers.service(descriptor.fd, descriptor.revents);
+            if (self.clipboard_transfers.received()) |text_bytes| {
+                defer self.clipboard_transfers.finishReceive();
+                if (!try self.admitBatch(&.{.{ .input = .{ .paste = text_bytes } }}))
+                    return error.InputIncomplete;
+            }
             if (self.failure) |failure| return failure;
         }
         if (self.terminal_failure) |failure| return failure;
@@ -770,6 +794,13 @@ const Window = struct {
         const state = if (self.keymap) |keymap| keymap.state else return false;
         const symbol = c.xkb_state_key_get_one_sym(state, code + 8);
         const modifiers = keyModifiers(state);
+        if (clipboardAction(symbol, modifiers)) |clipboard_action| {
+            if (action == .press) switch (clipboard_action) {
+                .copy => self.copySelectionToClipboard() catch |failure| retainFailure(self, failure),
+                .paste => self.requestClipboardPaste() catch |failure| retainFailure(self, failure),
+            };
+            return true;
+        }
         if (viewportMove(symbol, modifiers)) |move| {
             if (action != .release) self.applyViewport(move);
             return true;
@@ -816,6 +847,11 @@ const Window = struct {
 
     fn pointerMotion(self: *Window, x: i64, y: i64) void {
         if (!inputAdmissionOpen(self.closed, self.failure)) return;
+        if (self.selection_drag) {
+            const point = self.selectionPoint(x, y) orelse return;
+            self.terminal.?.select(.{ .update = point });
+            return;
+        }
         const position = self.surfacePosition(x, y) orelse {
             self.pointer_state.position = null;
             return;
@@ -856,12 +892,23 @@ const Window = struct {
                         return;
                     };
                 }
+                if (button == .left and self.selectionOwnsPointer()) {
+                    const point = self.selectionPoint(position.x, position.y) orelse return;
+                    self.terminal.?.select(.{ .start = point });
+                    self.selection_drag = true;
+                    return;
+                }
                 const target = self.pointerTarget(position.x, position.y) orelse return;
                 const transition = self.pointer_state.preparePress(index, target) orelse return;
                 if (!self.sendMouse(target, .press, button, transition.buttons_down)) return;
                 self.pointer_state.commitPress(transition);
             },
             c.WL_POINTER_BUTTON_STATE_RELEASED => {
+                if (button == .left and self.selection_drag) {
+                    self.terminal.?.select(.finish);
+                    self.selection_drag = false;
+                    return;
+                }
                 if (button == .left and self.viewport_drag != null) {
                     if (self.pointer_state.position) |position|
                         self.applyViewportAbsolute(self.viewport_drag.?.offset(
@@ -937,6 +984,55 @@ const Window = struct {
         self.viewport_state.reconcile(viewportFacts(terminal.setViewport(offset)));
     }
 
+    fn selectionOwnsPointer(self: *Window) bool {
+        return selectionOverridesMouse(
+            self.viewport_state.facts.mouse_reporting,
+            self.mouseModifiers(),
+        );
+    }
+
+    fn selectionPoint(self: *Window, x: i64, y: i64) ?control.SelectionPoint {
+        const visual = if (self.visual) |*value| value else return null;
+        const metrics = if (self.render) |render| render.metrics() else return null;
+        return resolveSelectionPoint(x, y, visual.rows, visual.cols, metrics);
+    }
+
+    fn copySelectionToClipboard(self: *Window) Error!void {
+        const manager = self.data_device_manager orelse return error.WaylandProtocol;
+        const device = self.data_device orelse return error.WaylandProtocol;
+        if (self.selection_serial == 0) return error.WaylandProtocol;
+        const terminal = self.terminal orelse return error.InputIncomplete;
+        const bytes = terminal.copySelection(self.allocator, clipboard.max_bytes) catch |failure| switch (failure) {
+            error.SelectionUnavailable => return,
+            else => return failure,
+        };
+        errdefer self.allocator.free(bytes);
+        const source = c.wl_data_device_manager_create_data_source(manager) orelse
+            return error.WaylandProtocol;
+        errdefer c.wl_data_source_destroy(source);
+        if (c.wl_data_source_add_listener(source, &data_source_listener, self) != 0)
+            return error.WaylandProtocol;
+        c.wl_data_source_offer(source, clipboard.Mime.utf8.bytes());
+        c.wl_data_source_offer(source, clipboard.Mime.plain.bytes());
+        try self.clipboard_transfers.replaceSource(bytes);
+        if (self.data_source) |prior| c.wl_data_source_destroy(prior);
+        self.data_source = source;
+        c.wl_data_device_set_selection(device, source, self.selection_serial);
+    }
+
+    fn requestClipboardPaste(self: *Window) Error!void {
+        const offer = self.selection_offer orelse return;
+        const mime = self.selection_offer_mimes.preferred() orelse return;
+        if (self.clipboard_transfers.receiving()) return error.ClipboardBusy;
+        const fds = try clipboard.pipe();
+        var read_owned = true;
+        errdefer if (read_owned) closeOwned(fds[0]);
+        defer closeOwned(fds[1]);
+        try self.clipboard_transfers.beginReceive(fds[0]);
+        read_owned = false;
+        c.wl_data_offer_receive(offer, mime.bytes(), fds[1]);
+    }
+
     fn sendMouse(
         self: *Window,
         target: PointerTarget,
@@ -993,6 +1089,10 @@ const Window = struct {
 
     fn cancelPointer(self: *Window) Error!void {
         self.viewport_drag = null;
+        if (self.selection_drag) {
+            self.terminal.?.select(.finish);
+            self.selection_drag = false;
+        }
         for (0..self.pointer_state.pressed.len) |index| {
             const transition = self.pointer_state.prepareRelease(index) orelse continue;
             const button: MouseButton = switch (index) {
@@ -1019,6 +1119,7 @@ const Window = struct {
             retainCleanupFailure(&cleanup_failure, failure);
         };
         self.cancelPointer() catch |failure| retainCleanupFailure(&cleanup_failure, failure);
+        self.clipboard_transfers.deinit();
         if (self.visual) |*visual| visual.deinit();
         self.visual = null;
         if (self.terminal) |terminal| terminal.deinit();
@@ -1043,8 +1144,18 @@ const Window = struct {
         self.pointer = null;
         self.pointer_state.clear();
         self.axis_frame.clear();
+        if (self.data_source) |value| c.wl_data_source_destroy(value);
+        self.data_source = null;
+        if (self.pending_offer) |value| c.wl_data_offer_destroy(value);
+        self.pending_offer = null;
+        if (self.selection_offer) |value| c.wl_data_offer_destroy(value);
+        self.selection_offer = null;
+        if (self.data_device) |value| c.wl_data_device_release(value);
+        self.data_device = null;
         if (self.seat) |value| c.wl_seat_destroy(value);
         self.seat = null;
+        if (self.data_device_manager) |value| c.wl_data_device_manager_destroy(value);
+        self.data_device_manager = null;
         if (self.system_bell) |value| c.xdg_system_bell_v1_destroy(value);
         self.system_bell = null;
         if (self.toplevel) |value| c.xdg_toplevel_destroy(value);
@@ -1070,6 +1181,22 @@ const Window = struct {
     fn clearKeymap(self: *Window) void {
         if (self.keymap) |*keymap| keymap.deinit();
         self.keymap = null;
+    }
+
+    fn ensureDataDevice(self: *Window) void {
+        if (self.data_device != null) return;
+        const manager = self.data_device_manager orelse return;
+        const seat = self.seat orelse return;
+        const device = c.wl_data_device_manager_get_data_device(manager, seat) orelse {
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        };
+        if (c.wl_data_device_add_listener(device, &data_device_listener, self) != 0) {
+            c.wl_data_device_release(device);
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        }
+        self.data_device = device;
     }
 };
 
@@ -1254,6 +1381,43 @@ fn viewportMove(symbol: u32, modifiers: KeyModifiers) ?viewport.Move {
     };
 }
 
+fn clipboardAction(symbol: u32, modifiers: KeyModifiers) ?ClipboardAction {
+    if (!modifiers.control or !modifiers.shift or modifiers.alt or modifiers.super or
+        modifiers.hyper or modifiers.meta)
+        return null;
+    return switch (symbol) {
+        'c', 'C' => .copy,
+        'v', 'V' => .paste,
+        else => null,
+    };
+}
+
+fn selectionOverridesMouse(mouse_reporting: bool, modifiers: KeyModifiers) bool {
+    if (!mouse_reporting) return true;
+    return modifiers.shift and !modifiers.alt and !modifiers.control and !modifiers.super and
+        !modifiers.hyper and !modifiers.meta;
+}
+
+fn resolveSelectionPoint(
+    x: i64,
+    y: i64,
+    rows: u16,
+    cols: u16,
+    metrics: text.CellMetrics,
+) ?control.SelectionPoint {
+    if (rows == 0 or cols == 0 or metrics.width_px == 0 or metrics.height_px == 0)
+        return null;
+    const col: u16 = if (x <= 0)
+        0
+    else
+        @intCast(@min(@as(u64, @intCast(x)) / metrics.width_px, cols - 1));
+    const row: u16 = if (y <= 0)
+        0
+    else
+        @intCast(@min(@as(u64, @intCast(y)) / metrics.height_px, rows - 1));
+    return .{ .row = row, .col = col };
+}
+
 fn viewportFacts(facts: control.ViewportFacts) viewport.Facts {
     return .{
         .history_count = facts.history_count,
@@ -1423,6 +1587,18 @@ fn registryGlobal(
             &c.wl_compositor_interface,
             @min(version, 4),
         ));
+    } else if (std.mem.eql(u8, value, "wl_data_device_manager") and self.data_device_manager == null) {
+        self.data_device_manager = @ptrCast(c.wl_registry_bind(
+            registry,
+            name,
+            &c.wl_data_device_manager_interface,
+            @min(version, 3),
+        ));
+        if (self.data_device_manager == null) {
+            retainFailure(self, error.WaylandProtocol);
+            return;
+        }
+        self.ensureDataDevice();
     } else if (std.mem.eql(u8, value, "xdg_wm_base") and self.wm_base == null) {
         self.wm_base = @ptrCast(c.wl_registry_bind(
             registry,
@@ -1457,6 +1633,7 @@ fn registryGlobal(
         };
         if (c.wl_seat_add_listener(seat, &seat_listener, self) != 0)
             retainFailure(self, error.WaylandProtocol);
+        self.ensureDataDevice();
     }
 }
 
@@ -1472,6 +1649,167 @@ fn shellPing(_: ?*anyopaque, base: ?*c.struct_xdg_wm_base, serial: u32) callconv
 }
 
 const wm_base_listener = c.struct_xdg_wm_base_listener{ .ping = shellPing };
+
+fn dataOfferMime(
+    data: ?*anyopaque,
+    offer: ?*c.struct_wl_data_offer,
+    mime: [*c]const u8,
+) callconv(.c) void {
+    const self = owner(data);
+    if (offer != self.pending_offer or mime == null) {
+        retainFailure(self, error.WaylandProtocol);
+        return;
+    }
+    self.pending_offer_mimes.admit(std.mem.span(mime));
+}
+
+fn dataOfferSourceActions(
+    _: ?*anyopaque,
+    _: ?*c.struct_wl_data_offer,
+    _: u32,
+) callconv(.c) void {}
+
+fn dataOfferAction(_: ?*anyopaque, _: ?*c.struct_wl_data_offer, _: u32) callconv(.c) void {}
+
+const data_offer_listener = c.struct_wl_data_offer_listener{
+    .offer = dataOfferMime,
+    .source_actions = dataOfferSourceActions,
+    .action = dataOfferAction,
+};
+
+fn dataDeviceOffer(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_data_device,
+    offer: ?*c.struct_wl_data_offer,
+) callconv(.c) void {
+    const self = owner(data);
+    const value = offer orelse {
+        retainFailure(self, error.WaylandProtocol);
+        return;
+    };
+    if (self.pending_offer) |prior| c.wl_data_offer_destroy(prior);
+    self.pending_offer = value;
+    self.pending_offer_mimes = .{};
+    if (c.wl_data_offer_add_listener(value, &data_offer_listener, self) != 0)
+        retainFailure(self, error.WaylandProtocol);
+}
+
+fn dataDeviceEnter(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_data_device,
+    serial: u32,
+    _: ?*c.struct_wl_surface,
+    _: c.wl_fixed_t,
+    _: c.wl_fixed_t,
+    offer: ?*c.struct_wl_data_offer,
+) callconv(.c) void {
+    const self = owner(data);
+    if (offer) |value| c.wl_data_offer_accept(value, serial, null);
+    if (offer != self.pending_offer) retainFailure(self, error.WaylandProtocol);
+}
+
+fn dataDeviceLeave(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {
+    const self = owner(data);
+    if (self.pending_offer) |offer| c.wl_data_offer_destroy(offer);
+    self.pending_offer = null;
+    self.pending_offer_mimes = .{};
+}
+
+fn dataDeviceMotion(
+    _: ?*anyopaque,
+    _: ?*c.struct_wl_data_device,
+    _: u32,
+    _: c.wl_fixed_t,
+    _: c.wl_fixed_t,
+) callconv(.c) void {}
+
+fn dataDeviceDrop(data: ?*anyopaque, device: ?*c.struct_wl_data_device) callconv(.c) void {
+    dataDeviceLeave(data, device);
+}
+
+fn dataDeviceSelection(
+    data: ?*anyopaque,
+    _: ?*c.struct_wl_data_device,
+    offer: ?*c.struct_wl_data_offer,
+) callconv(.c) void {
+    const self = owner(data);
+    if (self.selection_offer) |prior| c.wl_data_offer_destroy(prior);
+    self.selection_offer = null;
+    self.selection_offer_mimes = .{};
+    const value = offer orelse return;
+    if (value != self.pending_offer) {
+        retainFailure(self, error.WaylandProtocol);
+        return;
+    }
+    self.selection_offer = value;
+    self.selection_offer_mimes = self.pending_offer_mimes;
+    self.pending_offer = null;
+    self.pending_offer_mimes = .{};
+}
+
+const data_device_listener = c.struct_wl_data_device_listener{
+    .data_offer = dataDeviceOffer,
+    .enter = dataDeviceEnter,
+    .leave = dataDeviceLeave,
+    .motion = dataDeviceMotion,
+    .drop = dataDeviceDrop,
+    .selection = dataDeviceSelection,
+};
+
+fn dataSourceTarget(
+    _: ?*anyopaque,
+    _: ?*c.struct_wl_data_source,
+    _: [*c]const u8,
+) callconv(.c) void {}
+
+fn dataSourceSend(
+    data: ?*anyopaque,
+    source: ?*c.struct_wl_data_source,
+    mime: [*c]const u8,
+    fd: i32,
+) callconv(.c) void {
+    const self = owner(data);
+    if (source != self.data_source or mime == null) {
+        closeOwned(fd);
+        retainFailure(self, error.WaylandProtocol);
+        return;
+    }
+    const bytes = std.mem.span(mime);
+    if (!std.mem.eql(u8, bytes, clipboard.Mime.utf8.bytes()) and
+        !std.mem.eql(u8, bytes, clipboard.Mime.plain.bytes()))
+    {
+        closeOwned(fd);
+        return;
+    }
+    self.clipboard_transfers.beginSend(fd) catch |failure| retainFailure(self, failure);
+}
+
+fn dataSourceCancelled(
+    data: ?*anyopaque,
+    source: ?*c.struct_wl_data_source,
+) callconv(.c) void {
+    const self = owner(data);
+    if (source != self.data_source) {
+        retainFailure(self, error.WaylandProtocol);
+        return;
+    }
+    c.wl_data_source_destroy(source);
+    self.data_source = null;
+    self.clipboard_transfers.clearSource();
+}
+
+fn dataSourceDrop(_: ?*anyopaque, _: ?*c.struct_wl_data_source) callconv(.c) void {}
+fn dataSourceFinished(_: ?*anyopaque, _: ?*c.struct_wl_data_source) callconv(.c) void {}
+fn dataSourceAction(_: ?*anyopaque, _: ?*c.struct_wl_data_source, _: u32) callconv(.c) void {}
+
+const data_source_listener = c.struct_wl_data_source_listener{
+    .target = dataSourceTarget,
+    .send = dataSourceSend,
+    .cancelled = dataSourceCancelled,
+    .dnd_drop_performed = dataSourceDrop,
+    .dnd_finished = dataSourceFinished,
+    .action = dataSourceAction,
+};
 
 fn seatCapabilities(
     data: ?*anyopaque,
@@ -1588,18 +1926,23 @@ fn keyboardLeave(
     self.repeat.cancel();
     self.physical_keys.clear();
     self.armRepeat(null) catch |failure| retainFailure(self, failure);
+    if (self.selection_offer) |offer| c.wl_data_offer_destroy(offer);
+    self.selection_offer = null;
+    self.selection_offer_mimes = .{};
     sendFocus(self, .out);
 }
 
 fn keyboardKey(
     data: ?*anyopaque,
     _: ?*c.struct_wl_keyboard,
-    _: u32,
+    serial: u32,
     _: u32,
     code: u32,
     state: u32,
 ) callconv(.c) void {
-    owner(data).key(code, state);
+    const self = owner(data);
+    self.selection_serial = serial;
+    self.key(code, state);
 }
 
 fn keyboardModifiers(
@@ -1688,12 +2031,14 @@ fn pointerMotion(
 fn pointerButton(
     data: ?*anyopaque,
     _: ?*c.struct_wl_pointer,
-    _: u32,
+    serial: u32,
     _: u32,
     button: u32,
     state: u32,
 ) callconv(.c) void {
-    owner(data).pointerButton(button, state);
+    const self = owner(data);
+    self.selection_serial = serial;
+    self.pointerButton(button, state);
 }
 
 fn pointerAxis(
@@ -2126,6 +2471,21 @@ test "viewport key chords require exact host modifiers" {
     try std.testing.expect(viewportMove(c.XKB_KEY_Up, required) == null);
 }
 
+test "clipboard chords require exact host modifiers and preserve public keys" {
+    const required = KeyModifiers{ .control = true, .shift = true };
+    try std.testing.expectEqual(ClipboardAction.copy, clipboardAction('c', required).?);
+    try std.testing.expectEqual(ClipboardAction.copy, clipboardAction('C', required).?);
+    try std.testing.expectEqual(ClipboardAction.paste, clipboardAction('v', required).?);
+    try std.testing.expectEqual(ClipboardAction.paste, clipboardAction('V', required).?);
+    try std.testing.expect(clipboardAction('x', required) == null);
+    try std.testing.expect(clipboardAction('c', .{ .control = true }) == null);
+    try std.testing.expect(clipboardAction('c', .{
+        .control = true,
+        .shift = true,
+        .alt = true,
+    }) == null);
+}
+
 test "keyboard repeat has one bounded replacement and release owner" {
     var repeat = Repeat{};
     try repeat.configure(25, 400);
@@ -2210,6 +2570,29 @@ test "pointer pixels resolve exact label-free terminal bounds" {
         .height_px = 20,
         .baseline_px = 15,
     }) == null);
+}
+
+test "selection pointer clamps hostile pixels and Shift exactly overrides mouse reporting" {
+    const metrics = text.CellMetrics{ .width_px = 10, .height_px = 20, .baseline_px = 15 };
+    try std.testing.expectEqual(
+        control.SelectionPoint{ .row = 0, .col = 0 },
+        resolveSelectionPoint(std.math.minInt(i64), std.math.minInt(i64), 3, 4, metrics).?,
+    );
+    try std.testing.expectEqual(
+        control.SelectionPoint{ .row = 2, .col = 3 },
+        resolveSelectionPoint(std.math.maxInt(i64), std.math.maxInt(i64), 3, 4, metrics).?,
+    );
+    try std.testing.expectEqual(
+        control.SelectionPoint{ .row = 1, .col = 2 },
+        resolveSelectionPoint(29, 39, 3, 4, metrics).?,
+    );
+    try std.testing.expect(resolveSelectionPoint(0, 0, 0, 4, metrics) == null);
+
+    try std.testing.expect(selectionOverridesMouse(false, .{}));
+    try std.testing.expect(!selectionOverridesMouse(true, .{}));
+    try std.testing.expect(selectionOverridesMouse(true, .{ .shift = true }));
+    try std.testing.expect(!selectionOverridesMouse(true, .{ .shift = true, .control = true }));
+    try std.testing.expect(!selectionOverridesMouse(true, .{ .shift = true, .alt = true }));
 }
 
 test "pointer buttons and drag coordinates commit only after admission" {
@@ -2372,6 +2755,49 @@ test "typed mouse uses VT tracking and SGR encoding before PTY transfer" {
         terminal.consumeWake();
         const changed = try visual.capture(terminal);
         found = visualContains(&visual, "1b 5b 3c 30 3b 33 3b 32 4d");
+        if (!changed and terminal.state() != .running and !found) break;
+        if (!found) try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expect(found);
+}
+
+test "clipboard paste remains framed by VT bracketed-paste mode" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{
+            .command = "printf '\\033[?2004h'; stty raw -echo; od -An -tx1 -N16",
+            .rows = 4,
+            .cols = 40,
+        },
+        .{},
+    );
+    defer terminal.deinit();
+    var attempts: u8 = 0;
+    while (attempts < 100 and terminal.status().semantic_sequence == 1) : (attempts += 1) {
+        terminal.consumeWake();
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    const sent = try terminal.send(&.{.{ .input = .{ .paste = "clip" } }});
+    switch (sent.outcome) {
+        .complete => |count| try std.testing.expectEqual(@as(usize, 16), count),
+        else => return error.TestUnexpectedResult,
+    }
+
+    var visual = try VisualStorage.init(std.testing.allocator, 4, 40);
+    defer visual.deinit();
+    var found = false;
+    attempts = 0;
+    while (attempts < 100 and !found) : (attempts += 1) {
+        terminal.consumeWake();
+        const changed = try visual.capture(terminal);
+        found = visualContains(&visual, "1b 5b 32 30 30 7e 63 6c 69 70 1b 5b 32 30 31 7e");
         if (!changed and terminal.state() != .running and !found) break;
         if (!found) try (std.Io.Clock.Duration{
             .raw = .fromMilliseconds(5),

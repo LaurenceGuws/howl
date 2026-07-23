@@ -359,9 +359,92 @@ test "selection copy owns exact allocation and codepoint failures" {
     terminal.finishSelection();
 
     terminal.screen_state.primary.cells.?[0].codepoint = 0x110000;
-    try std.testing.expectError(error.CodepointTooLarge, terminal.copySelection(std.testing.allocator));
+    try std.testing.expectError(error.CodepointTooLarge, terminal.copySelection(std.testing.allocator, std.math.maxInt(usize)));
     terminal.screen_state.primary.cells.?[0].codepoint = 0xD800;
-    try std.testing.expectError(error.Utf8CannotEncodeSurrogateHalf, terminal.copySelection(std.testing.allocator));
+    try std.testing.expectError(error.Utf8CannotEncodeSurrogateHalf, terminal.copySelection(std.testing.allocator, std.math.maxInt(usize)));
+}
+
+test "selection resolves scrolled history reverse drag and bounded copy" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD")).state_changed);
+    try std.testing.expect(terminal.scrollViewport(.{ .absolute = 1 }));
+    terminal.startSelection(1, 1);
+    terminal.updateSelection(0, 0);
+    terminal.finishSelection();
+    const finished_sequence = terminal.semanticSequence();
+    terminal.finishSelection();
+    try std.testing.expectEqual(finished_sequence, terminal.semanticSequence());
+
+    const copied = try terminal.copySelection(std.testing.allocator, 16);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("1AAAA\n2B", copied);
+    try std.testing.expectError(
+        error.SelectionLimit,
+        terminal.copySelection(std.testing.allocator, copied.len - 1),
+    );
+}
+
+test "selection copy joins soft-wrapped rows without inventing a newline" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 3);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("ABCDEF")).state_changed);
+    terminal.startSelection(0, 0);
+    terminal.updateSelection(1, 2);
+    terminal.finishSelection();
+    const copied = try terminal.copySelection(std.testing.allocator, 6);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("ABCDEF", copied);
+}
+
+test "selection appearance dirties exact active rows and resets at lifecycle boundaries" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 2);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("ABCDE\r\nFGHIJ")).state_changed);
+    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+
+    terminal.startSelection(0, 1);
+    terminal.updateSelection(1, 2);
+    const dirty = terminal.visualView();
+    try std.testing.expect(dirty.dirty == .rows);
+    try std.testing.expectEqual(@as(u16, 0), dirty.dirty.rows.start_row);
+    try std.testing.expectEqual(@as(u16, 1), dirty.dirty.rows.end_row);
+    var rows = dirty.dirty.rows.iterator();
+    try std.testing.expectEqual(
+        Terminal.VisualDirtyRow{ .row = 0, .start_col = 1, .end_col = 4 },
+        rows.next().?,
+    );
+    try std.testing.expectEqual(
+        Terminal.VisualDirtyRow{ .row = 1, .start_col = 0, .end_col = 2 },
+        rows.next().?,
+    );
+    try std.testing.expect(rows.next() == null);
+
+    terminal.hardReset();
+    try std.testing.expect(terminal.selectionState() == null);
+    terminal.startSelection(0, 0);
+    try std.testing.expect(terminal.switchScreenMode(true, true, true));
+    try std.testing.expect(terminal.selectionState() == null);
+    terminal.startSelection(0, 0);
+    try std.testing.expect(terminal.switchScreenMode(false, false, true));
+    try std.testing.expect(terminal.selectionState() == null);
+}
+
+test "selection invalidates when retained endpoint is evicted or resized away" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 3, 2);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("AAA\r\nBBB\r\nCCC")).state_changed);
+    try std.testing.expect(terminal.scrollViewport(.top));
+    terminal.startSelection(0, 0);
+    terminal.finishSelection();
+    try std.testing.expect((try terminal.feed("\r\nDDD\r\nEEE\r\nFFF")).state_changed);
+    try std.testing.expect(terminal.selectionState() == null);
+
+    var resized = try Terminal.init(std.testing.allocator, 2, 3);
+    defer resized.deinit();
+    resized.startSelection(1, 0);
+    try resized.resize(1, 3);
+    try std.testing.expect(resized.selectionState() == null);
 }
 
 fn copySelectionAllocation(allocator: std.mem.Allocator) !void {
@@ -372,7 +455,7 @@ fn copySelectionAllocation(allocator: std.mem.Allocator) !void {
     terminal.updateSelection(0, 3);
     terminal.finishSelection();
 
-    const copied = terminal.copySelection(allocator) catch |err| {
+    const copied = terminal.copySelection(allocator, std.math.maxInt(usize)) catch |err| {
         try std.testing.expect(terminal.selectionState() != null);
         try std.testing.expectEqual(@as(u21, 'C'), terminal.screen_state.primary.cellAt(0, 0));
         return err;

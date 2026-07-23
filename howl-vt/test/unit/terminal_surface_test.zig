@@ -448,8 +448,8 @@ test "selection follows viewport movement through scrollback rows" {
 
     try stream.nextSlice("aa\r\nbb\r\ncc");
 
-    terminal.startSelection(1, 0);
-    terminal.updateSelection(2, 1);
+    terminal.startSelection(0, 0);
+    terminal.updateSelection(1, 1);
     terminal.finishSelection();
 
     const live = terminal.visualView();

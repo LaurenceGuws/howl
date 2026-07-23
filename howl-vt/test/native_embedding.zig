@@ -29,7 +29,7 @@ test "native root owns the complete embedding contract" {
     terminal.startSelection(0, 1);
     terminal.updateSelection(0, 2);
     terminal.finishSelection();
-    const selected = try terminal.copySelection(std.testing.allocator);
+    const selected = try terminal.copySelection(std.testing.allocator, std.math.maxInt(usize));
     defer std.testing.allocator.free(selected);
     try std.testing.expectEqualStrings("BC", selected);
 

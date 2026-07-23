@@ -40,5 +40,6 @@ accepted:
   howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, and lifecycle
   howl-host/src/renderer.zig: one render thread and concrete EGL/GLES drawing owner
   howl-host/src/viewport.zig: host scroll intent and exact scrollbar paint/hit geometry
+  howl-host/src/clipboard.zig: bounded UTF-8 clipboard bytes and nonblocking transfer progress
   howl-host/vendor/xdg-system-bell: generated optional Wayland system-bell protocol bindings
   howl-host/LICENSES: host native-library and generated-protocol provenance

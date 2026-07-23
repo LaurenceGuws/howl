@@ -2703,6 +2703,12 @@ pub const Screen = struct {
         return @enumFromInt((flags[@intCast(slot)] & row_geometry_mask) >> row_geometry_shift);
     }
 
+    fn historyRowWrapped(self: *const Screen, history_idx: u32) bool {
+        const flags = self.history_flags orelse return false;
+        const slot = self.historySlotForRecency(history_idx) orelse return false;
+        return flags[@intCast(slot)] & row_wrapped_bit != 0;
+    }
+
     /// Return the physical ring slot for the next projected history row.
     fn projectedAppendSlot(self: *const Screen) u32 {
         const capacity = self.projectedCapacity();
@@ -9366,7 +9372,7 @@ const Set = struct {
         return if (self.alt_active) &self.alternate_selection else &self.primary_selection;
     }
 
-    /// Resets the active screen while preserving selection and alternate-screen state.
+    /// Resets the active screen while preserving alternate-screen identity.
     pub fn reset(self: *Set) void {
         self.active().reset();
     }
@@ -9658,6 +9664,7 @@ pub const Range = struct {
 const CopyError = error{
     CodepointTooLarge,
     OutOfMemory,
+    SelectionLimit,
     Utf8CannotEncodeSurrogateHalf,
 };
 
@@ -9691,6 +9698,13 @@ fn contentEndExclusive(screen_state: *const Set, row: i32) u16 {
     return if (active.cols > 0) 1 else 0;
 }
 
+fn sourceRowWrapped(screen: *const Screen, source: RowSource) bool {
+    return switch (source) {
+        .history => |recency| screen.historyRowWrapped(recency),
+        .screen => |row| screen.rowWrapped(row),
+    };
+}
+
 fn visibleRow(view: *const View, row: u16) i32 {
     std.debug.assert(row < view.rows or view.rows == 0);
     const absolute = @as(u64, view.history_row_base) + @as(u64, view.start) + @as(u64, row);
@@ -9722,7 +9736,12 @@ pub fn visibleRange(view: *const View, selected: TerminalSelection, row: u16) ?R
 //
 // The caller owns a successful non-empty result. Invalid stored codepoints
 // are reported exactly instead of trapping during integer narrowing.
-fn copyText(allocator: std.mem.Allocator, screen_state: *const Set, selected: ?TerminalSelection) CopyError![]const u8 {
+fn copyText(
+    allocator: std.mem.Allocator,
+    screen_state: *const Set,
+    selected: ?TerminalSelection,
+    max_bytes: usize,
+) CopyError![]const u8 {
     const active_selection = selected orelse return &.{};
     const ordered_selection = orderedSelection(active_selection);
     var out = std.ArrayList(u8).empty;
@@ -9746,10 +9765,14 @@ fn copyText(allocator: std.mem.Allocator, screen_state: *const Set, selected: ?T
                 var utf8: [4]u8 = undefined;
                 const codepoint = std.math.cast(u21, cell.codepoint) orelse return error.CodepointTooLarge;
                 const len = try std.unicode.utf8Encode(codepoint, &utf8);
+                if (out.items.len > max_bytes -| len) return error.SelectionLimit;
                 try out.appendSlice(allocator, utf8[0..len]);
             }
         }
-        if (row != ordered_selection.end.row) try out.append(allocator, '\n');
+        if (row != ordered_selection.end.row and !sourceRowWrapped(screen_state.activeConst(), source)) {
+            if (out.items.len == max_bytes) return error.SelectionLimit;
+            try out.append(allocator, '\n');
+        }
     }
     return out.toOwnedSlice(allocator);
 }
@@ -13113,6 +13136,8 @@ pub const Terminal = struct {
     pub fn hardReset(self: *Terminal) void {
         const visual_before = self.visualMutationState();
         self.screen_state.reset();
+        self.screen_state.primary_selection.clear();
+        self.screen_state.alternate_selection.clear();
         self.screen_state.primary.insert_mode = false;
         self.screen_state.alternate.insert_mode = false;
         self.modes = .{};
@@ -14048,7 +14073,12 @@ pub const Terminal = struct {
         const visual_before = self.visualMutationState();
         const view_before = visibleView(&self.screen_state, self.scrollback_offset);
         const selection_before = self.selectionState();
-        self.screen_state.activeSelection().start(self.selectionAbsoluteRow(row), col);
+        self.screen_state.activeSelection().start(
+            selectionAbsoluteRow(view_before, row),
+            @min(col, view_before.cols -| 1),
+        );
+        const changed = !std.meta.eql(selection_before, self.selectionState());
+        if (!changed) return;
         self.noteSelectionChanged(view_before, selection_before);
         self.finishVisualMutation(visual_before);
     }
@@ -14058,7 +14088,10 @@ pub const Terminal = struct {
         const visual_before = self.visualMutationState();
         const view_before = visibleView(&self.screen_state, self.scrollback_offset);
         const before = self.selectionState() orelse return;
-        self.screen_state.activeSelection().update(self.selectionAbsoluteRow(row), col);
+        self.screen_state.activeSelection().update(
+            selectionAbsoluteRow(view_before, row),
+            @min(col, view_before.cols -| 1),
+        );
         const after = self.selectionState() orelse return;
         if (before.end.row == after.end.row and before.end.col == after.end.col) return;
         self.noteSelectionChanged(view_before, before);
@@ -14087,10 +14120,15 @@ pub const Terminal = struct {
     /// Copy selected terminal text into caller-owned memory.
     ///
     /// The returned slice is always owned by `allocator`, including when no
-    /// selection exists, and the caller must free it.
-    pub fn copySelection(self: *const Terminal, allocator: std.mem.Allocator) CopyError![]const u8 {
+    /// selection exists, and the caller must free it. `max_bytes` bounds the
+    /// complete UTF-8 result before each allocation growth.
+    pub fn copySelection(
+        self: *const Terminal,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) CopyError![]const u8 {
         if (self.selectionState() == null) return allocator.dupe(u8, "");
-        return copyText(allocator, &self.screen_state, self.selectionState());
+        return copyText(allocator, &self.screen_state, self.selectionState(), max_bytes);
     }
 
     /// Encode one host input event according to current terminal modes.
@@ -14356,9 +14394,12 @@ pub const Terminal = struct {
         }
     }
 
-    fn selectionAbsoluteRow(self: *const Terminal, row: i32) i32 {
-        if (row < 0) return row;
-        const absolute = @as(u64, self.screen_state.activeConst().historyRowBase()) + @as(u64, @intCast(row));
+    fn selectionAbsoluteRow(view: View, row: i32) i32 {
+        const visible_row: u16 = if (row <= 0)
+            0
+        else
+            @intCast(@min(@as(u64, @intCast(row)), view.rows -| 1));
+        const absolute = @as(u64, view.history_row_base) + view.start + visible_row;
         return std.math.cast(i32, absolute) orelse std.math.maxInt(i32);
     }
 

@@ -85,6 +85,34 @@ pub const ViewportFacts = struct {
     mouse_reporting: bool = false,
 };
 
+/// Names one visible terminal cell for local selection operations.
+pub const SelectionPoint = struct {
+    /// Selects one visible terminal row.
+    row: u16,
+    /// Selects one visible terminal column.
+    col: u16,
+};
+
+/// Applies one local selection lifecycle operation without clipboard policy.
+pub const SelectionOperation = union(enum) {
+    /// Starts a new active selection.
+    start: SelectionPoint,
+    /// Moves the active endpoint.
+    update: SelectionPoint,
+    /// Completes the current selection.
+    finish,
+    /// Clears the current selection.
+    clear,
+};
+
+/// Reports exact selected-text allocation or terminal-cell encoding failure.
+pub const SelectionError = std.mem.Allocator.Error || error{
+    CodepointTooLarge,
+    SelectionLimit,
+    SelectionUnavailable,
+    Utf8CannotEncodeSurrogateHalf,
+};
+
 /// Bounds one terminal surface width before model or PTY construction.
 pub const max_cols = client.max_cols;
 /// Bounds one terminal surface height before model or PTY construction.
@@ -838,6 +866,34 @@ pub const Terminal = struct {
         return facts;
     }
 
+    /// Applies one local visible selection operation and announces exact mutation.
+    pub fn select(self: *Terminal, operation: SelectionOperation) void {
+        self.lock.lockUncancelable(self.io);
+        const before = self.model.semanticSequence();
+        switch (operation) {
+            .start => |point| self.model.startSelection(point.row, point.col),
+            .update => |point| self.model.updateSelection(point.row, point.col),
+            .finish => self.model.finishSelection(),
+            .clear => self.model.clearSelection(),
+        }
+        const changed = self.model.semanticSequence() != before;
+        self.lock.unlock(self.io);
+        if (changed) self.notify();
+    }
+
+    /// Copies selected text into caller-owned bounded memory without clipboard policy.
+    pub fn copySelection(
+        self: *Terminal,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) SelectionError![]const u8 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        const selection = self.model.selectionState() orelse return error.SelectionUnavailable;
+        if (selection.selecting) return error.SelectionUnavailable;
+        return self.model.copySelection(allocator, max_bytes);
+    }
+
     fn storeViewportFacts(self: *Terminal, facts: ViewportFacts) void {
         self.viewport_lock.lockUncancelable(self.io);
         self.viewport_facts = facts;
@@ -1543,6 +1599,40 @@ test "host viewport operation retains history and mouse ownership facts" {
 
     try terminal.consume("\x1b[?1000h");
     try std.testing.expect(terminal.viewportFacts().mouse_reporting);
+}
+
+test "local selection operations copy projected history with exact mutation" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 3, .cols = 5, .history_rows = 8 },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+    try terminal.consume("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
+    try std.testing.expectEqual(@as(u32, 1), terminal.setViewport(1).offset);
+    terminal.consumeWake();
+    const wakes_before = wake_count.load(.acquire);
+
+    terminal.select(.{ .start = .{ .row = 0, .col = 0 } });
+    try std.testing.expectError(
+        error.SelectionUnavailable,
+        terminal.copySelection(std.testing.allocator, 16),
+    );
+    terminal.select(.{ .update = .{ .row = 1, .col = 1 } });
+    terminal.select(.finish);
+    terminal.select(.finish);
+    const copied = try terminal.copySelection(std.testing.allocator, 16);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("1AAAA\n2B", copied);
+    try std.testing.expectEqual(wakes_before + 1, wake_count.load(.acquire));
+    try std.testing.expectError(
+        error.SelectionLimit,
+        terminal.copySelection(std.testing.allocator, copied.len - 1),
+    );
+    terminal.select(.clear);
+    terminal.select(.clear);
 }
 
 test "alternate-screen sparse mutation preserves terminal progress" {
