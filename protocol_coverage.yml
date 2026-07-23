@@ -2792,13 +2792,17 @@ references:
             raw: "CSI ? 19997 h|l"
             effect: toggle terminal-generated termios signals
             conditions: >-
-              Howl retains and reports the host-neutral mode through state snapshots for its RIS lifetime; PTY signal generation remains
-              host policy, and Kitty neither reports nor saves this mode. Howl additionally cancels pending wrap at
-              the mode boundary.
+              Howl routes a one-byte encoded key matching the foreground PTY's enabled VINTR, VQUIT, or VSUSP
+              assignment directly to that process group. Other events and native failures retain the PTY byte path.
+              Howl reports and saves the mode and cancels pending wrap at its boundary; Kitty does none of those three.
             relevance: input
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: Terminal.stateSnapshot, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
+            howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately preserves query, save/restore, and pending-wrap mutation truth for every
+                accepted DEC mode rather than reproducing Kitty's hidden mode exception.,
+              residual: Kitty neither reports nor saves mode 19997 and does not cancel pending wrap at its boundary.,
+              source: howl-control/src/howl_control.zig, symbol: Terminal.transferInput, proof: {
+              path: howl-control/src/howl_control.zig,
+              symbol: "mode 19997 routes one-byte encoded keys through foreground termios signals"}}
       - source: vt-parser.c
         symbol: dispatch_csi
         line: 1114

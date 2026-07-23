@@ -686,11 +686,19 @@ pub const Terminal = struct {
             self.lock.unlock(self.io);
             return failure;
         };
+        const handle_termios_signal = switch (event) {
+            .key => self.model.termiosSignals() and encoded.bytes.len == 1,
+            .bytes, .mouse, .focus, .paste => false,
+        };
         self.lock.unlock(self.io);
         defer encoded.deinit();
         if (encoded.bytes.len > max_transfer_bytes) return error.InputLimit;
         self.write_lock.lockUncancelable(self.io);
         defer self.write_lock.unlock(self.io);
+        // Native query or delivery failure preserves Kitty's ordinary PTY byte path.
+        if (handle_termios_signal)
+            if (self.transport.handleTermiosSignal(encoded.bytes[0]) catch false)
+                return .{ .complete = 0 };
         return self.transport.transfer(self.io, encoded.bytes, self.transfer_timeout_ms);
     }
 
@@ -2395,6 +2403,61 @@ test "cell pixels bound mouse coordinates with exact button state" {
     released.mouse.kind = .release;
     released.mouse.buttons_down = 0;
     try std.testing.expect(Terminal.inputGeometryValid(released, 4, 2, pixels));
+}
+
+test "mode 19997 routes one-byte encoded keys through foreground termios signals" {
+    const command =
+        "stty intr '^X'; trap 'printf interrupted' INT; " ++
+        "printf ready; while :; do sleep 1; done";
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = command, .cols = 24, .rows = 2 },
+        .{},
+    );
+    defer terminal.deinit();
+
+    var ready = false;
+    for (0..500) |_| {
+        var screen_value = try terminal.screen(std.testing.allocator);
+        const found = std.mem.indexOf(u8, screen_value.text, "ready") != null;
+        screen_value.deinit();
+        if (found) {
+            ready = true;
+            break;
+        }
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(10),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expect(ready);
+    try terminal.consume("\x1b[?19997h");
+    const result = try terminal.send(&.{.{ .input = .{ .key = .{
+        .key = try howl_vt.Terminal.Key.initUnicode('x'),
+        .mods = .{ .control = true },
+        .action = .press,
+        .legacy_text = "\x18",
+        .text = "\x18",
+    } } }});
+    try std.testing.expectEqual(@as(u8, 1), result.completed_events);
+    try std.testing.expectEqual(client.SendOutcome{ .complete = 0 }, result.outcome);
+
+    var interrupted = false;
+    for (0..500) |_| {
+        var screen_value = try terminal.screen(std.testing.allocator);
+        const found = std.mem.indexOf(u8, screen_value.text, "interrupted") != null;
+        screen_value.deinit();
+        if (found) {
+            interrupted = true;
+            break;
+        }
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(10),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expect(interrupted);
 }
 
 test "zero cell pixels reject terminal construction before child launch" {

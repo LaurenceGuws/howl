@@ -14,6 +14,7 @@ const c = @cImport({
     @cInclude("stdlib.h");
     @cInclude("pty.h");
     @cInclude("signal.h");
+    @cInclude("termios.h");
     @cInclude("sys/wait.h");
 });
 
@@ -75,6 +76,14 @@ pub const WaitReadableError = error{ NotStarted, WaitFailed };
 
 /// Reports resize before start or a failed Linux ioctl.
 pub const ResizeError = error{ NotStarted, ResizeFailed };
+
+/// Reports unavailable PTY state or failed foreground termios signal delivery.
+pub const TermiosSignalError = error{
+    ForegroundGroupFailed,
+    NotStarted,
+    SignalFailed,
+    TermiosQueryFailed,
+};
 
 /// Names why a bounded PTY input transfer stopped before completion.
 pub const TransferFailure = enum(u8) {
@@ -768,6 +777,35 @@ pub const Owned = struct {
         }
         self.last_cols = cols;
         self.last_rows = rows;
+    }
+
+    /// Deliver the signal assigned to one byte by the foreground PTY termios state.
+    ///
+    /// Returns false when ISIG is disabled, the byte has no enabled signal
+    /// assignment, or the byte is not VINTR, VQUIT, or VSUSP.
+    pub fn handleTermiosSignal(self: *Self, byte: u8) TermiosSignalError!bool {
+        const master = self.master_fd orelse return error.NotStarted;
+        var attributes: c.struct_termios = undefined;
+        if (c.tcgetattr(@intCast(master), &attributes) != 0)
+            return error.TermiosQueryFailed;
+        if (attributes.c_lflag & c.ISIG == 0) return false;
+        const signal_value: c_int = signal: {
+            const controls = [_]struct { index: usize, signal: c_int }{
+                .{ .index = c.VINTR, .signal = c.SIGINT },
+                .{ .index = c.VQUIT, .signal = c.SIGQUIT },
+                .{ .index = c.VSUSP, .signal = c.SIGTSTP },
+            };
+            for (controls) |entry| {
+                const assigned: u8 = attributes.c_cc[entry.index];
+                if (assigned != c._POSIX_VDISABLE and assigned == byte)
+                    break :signal entry.signal;
+            }
+            return false;
+        };
+        const foreground = c.tcgetpgrp(@intCast(master));
+        if (foreground <= 0) return error.ForegroundGroupFailed;
+        if (c.kill(-foreground, signal_value) != 0) return error.SignalFailed;
+        return true;
     }
 
     /// Delivers one typed signal to the active child process group.
@@ -1509,4 +1547,36 @@ test "wake resize read and process-group signal share one owner" {
     try expectOutput(&owned, "40 100");
     try std.testing.expectEqual(ControlResult.delivered, owned.control(.interrupt));
     try expectOutput(&owned, "interrupted");
+}
+
+test "foreground termios assignments route exact bytes to process-group signals" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    const command =
+        "stty intr '^X' quit '^Y' susp '^Z'; " ++
+        "trap 'printf interrupt' INT; trap 'printf quit' QUIT; trap 'printf suspend' TSTP; " ++
+        "printf ready; while :; do sleep 1; done";
+    var owned = try Owned.init(std.testing.allocator, "/bin/sh", command, null, test_environment);
+    defer owned.deinit();
+    try std.testing.expectError(error.NotStarted, owned.handleTermiosSignal(0x18));
+    try owned.start(test_cols, test_rows);
+    try expectOutput(&owned, "ready");
+    try std.testing.expect(!(try owned.handleTermiosSignal('a')));
+    try std.testing.expect(try owned.handleTermiosSignal(0x18));
+    try expectOutput(&owned, "interrupt");
+    try std.testing.expect(try owned.handleTermiosSignal(0x19));
+    try expectOutput(&owned, "quit");
+    try std.testing.expect(try owned.handleTermiosSignal(0x1a));
+    try expectOutput(&owned, "suspend");
+
+    var disabled = try Owned.init(
+        std.testing.allocator,
+        "/bin/sh",
+        "stty -isig; printf ready; sleep 30",
+        null,
+        test_environment,
+    );
+    defer disabled.deinit();
+    try disabled.start(test_cols, test_rows);
+    try expectOutput(&disabled, "ready");
+    try std.testing.expect(!(try disabled.handleTermiosSignal(0x18)));
 }

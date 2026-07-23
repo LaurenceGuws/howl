@@ -13910,6 +13910,11 @@ pub const Terminal = struct {
         return if (projected.hasRows()) projected else null;
     }
 
+    /// Reports whether mode 19997 requests foreground termios handling for typed one-byte keys.
+    pub fn termiosSignals(self: *const Terminal) bool {
+        return self.modes.termios_signals;
+    }
+
     /// Copies the process-lifetime semantic mutation identity.
     ///
     /// The nonzero sequence advances for accepted terminal state or consequence

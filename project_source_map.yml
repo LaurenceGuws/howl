@@ -16,11 +16,11 @@ accepted:
   howl-vt/benchmark_m7_baseline.zig: benchmark comparison entry point
   howl-pty/build.zig: PTY package build and proofs
   howl-pty/build.zig.zon: PTY package identity and source boundary
-  howl-pty/src/howl_pty.zig: Linux PTY transport and child-process lifecycle
+  howl-pty/src/howl_pty.zig: Linux PTY transport, foreground termios signals, and child-process lifecycle
   howl-control/build.zig: control package build and direct VT/PTY dependency graph
   howl-control/build.zig.zon: control package identity and source boundary
   howl-control/src/client.zig: identity, endpoint, codec, and bounded request ownership
-  howl-control/src/howl_control.zig: optional ID-addressable PTY and VT composition with transactional consequence replies
+  howl-control/src/howl_control.zig: optional ID-addressable PTY and VT composition with transactional input, signal, and consequence replies
   howl-control/src/test.zig: control transport, lifecycle, and terminal-operation proofs
   howl-render/build.zig: independently selected text and generated-glyph capability graphs
   howl-render/build.zig.zon: render package identity, owned assets, and licenses
