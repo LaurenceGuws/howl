@@ -500,7 +500,7 @@ pub const Plane = struct {
         const selector = if (command_value.delete == 0) 'a' else command_value.delete;
         const remove_data = std.ascii.isUpper(selector);
         const normalized = std.ascii.toLower(selector);
-        if (std.mem.indexOfScalar(u8, "airpxyc", normalized) == null)
+        if (std.mem.indexOfScalar(u8, "airpqxyzc", normalized) == null)
             return .{ .quiet = 2 };
         if (normalized == 'i' and command_value.id == 0) return .{ .quiet = 2 };
         if (normalized == 'r' and command_value.x > command_value.y) return .{ .quiet = 2 };
@@ -1085,10 +1085,14 @@ fn deleteMatches(
         'p' => command_value.x != 0 and explicit_row != null and
             placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right and
             placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
+        'q' => placement_value.z == command_value.z and command_value.x != 0 and explicit_row != null and
+            placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right and
+            placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
         'x' => command_value.x != 0 and
             placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right,
         'y' => explicit_row != null and
             placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
+        'z' => placement_value.z == command_value.z,
         'c' => placement_value.col <= cursor_col and cursor_col <= right and
             placement_value.row <= cursor_row and cursor_row <= bottom,
         else => false,
@@ -1368,6 +1372,30 @@ test "Kitty crop destination offsets and layer preflight before placement mutati
     try std.testing.expectEqual(Failure.invalid, invalid.failure.?);
     try std.testing.expectEqual(generation, plane.next_generation);
     try std.testing.expectEqualDeep(unchanged, plane.placement(0).?);
+}
+
+test "Kitty z and point3d deletion preserve unmatched layers and image data" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=12;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command("a=p,i=12,p=1,z=-2", .primary, 10, 10, 3, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=p,i=12,p=2,z=4", .primary, 10, 10, 3, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=d,d=q,x=4,y=1,z=-2", .primary, 10, 10, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(usize, 1), plane.placement_count);
+    try std.testing.expectEqual(@as(i32, 4), plane.placement(0).?.z);
+    try std.testing.expectEqual(@as(usize, 1), plane.image_count);
+    try std.testing.expect(!(try plane.command("a=d,d=z,z=-2", .primary, 10, 10, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=d,d=Z,z=4", .primary, 10, 10, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(usize, 0), plane.placement_count);
+    try std.testing.expectEqual(@as(usize, 0), plane.image_count);
 }
 
 test "static image allocation failure leaves the plane reusable" {
