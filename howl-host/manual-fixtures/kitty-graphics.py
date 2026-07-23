@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode the tracked RGB PNG and transmit one bounded Kitty raw-RGBA image."""
+"""Decode the tracked PNG and prove bounded Kitty placement geometry."""
 
 import base64
 import pathlib
@@ -92,7 +92,7 @@ def transmit(pixels):
         more = offset + chunk < len(encoded)
         if first:
             control = (
-                f"a=T,t=d,f=32,s={TARGET},v={TARGET},i={IMAGE_ID},q=2,m={int(more)}"
+                f"a=t,t=d,f=32,s={TARGET},v={TARGET},i={IMAGE_ID},q=2,m={int(more)}"
             )
             first = False
         else:
@@ -103,9 +103,21 @@ def transmit(pixels):
     sys.stdout.buffer.flush()
 
 
+def put(row, column, placement, parameters):
+    sys.stdout.write(f"\x1b[{row};{column}H")
+    sys.stdout.write(f"\x1b_Ga=p,i={IMAGE_ID},p={placement},{parameters}\x1b\\")
+    sys.stdout.flush()
+
+
 asset = pathlib.Path(__file__).resolve().parent.parent / "assets/howl_window_icon.png"
 source_width, source_height, source_rows = decode_rgb_png(asset)
-print("Kitty static graphics: tracked Howl logo, 256x256 raw RGBA")
+print("Kitty placement geometry: full, cropped/scaled, offsets, and layers")
 transmit(scaled_rgba(source_width, source_height, source_rows))
-print("\nPASS when the complete colored logo is visible below the heading.")
+put(3, 2, 1, "c=12,r=8,z=-1")
+sys.stdout.write("\x1b[5;4HBEHIND TEXT")
+put(3, 18, 2, "x=0,y=0,w=128,h=128,c=8,r=5,X=3,Y=4,z=1")
+put(10, 18, 3, "x=128,y=128,w=128,h=128,c=8,r=5,z=-2")
+sys.stdout.write("\x1b[17;1H")
+print("PASS when one full logo and two distinct cropped quadrants are visible;")
+print("BEHIND TEXT overlays the full logo while the upper crop covers text.")
 time.sleep(30)

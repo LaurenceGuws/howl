@@ -13786,6 +13786,24 @@ pub const Terminal = struct {
         row: u16,
         /// Identifies the physical terminal column.
         col: u16,
+        /// Selects the first decoded source column.
+        source_x: u32,
+        /// Selects the first decoded source row.
+        source_y: u32,
+        /// Counts selected decoded source columns.
+        source_width: u32,
+        /// Counts selected decoded source rows.
+        source_height: u32,
+        /// Offsets the destination within its anchor cell horizontally.
+        cell_x: u32,
+        /// Offsets the destination within its anchor cell vertically.
+        cell_y: u32,
+        /// Counts destination pixels horizontally.
+        pixel_width: u32,
+        /// Counts destination pixels vertically.
+        pixel_height: u32,
+        /// Orders the image relative to terminal text.
+        z: i32,
     };
     /// Borrows coherent image-plane facts until terminal mutation.
     pub const VisualImages = struct {
@@ -13822,6 +13840,15 @@ pub const Terminal = struct {
                 .generation = value.generation,
                 .row = @intCast(value.row - self.visible_row_start),
                 .col = value.col,
+                .source_x = value.source_x,
+                .source_y = value.source_y,
+                .source_width = value.source_width,
+                .source_height = value.source_height,
+                .cell_x = value.cell_x,
+                .cell_y = value.cell_y,
+                .pixel_width = value.pixel_width,
+                .pixel_height = value.pixel_height,
+                .z = value.z,
             };
         }
     };

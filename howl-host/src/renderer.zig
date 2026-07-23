@@ -483,8 +483,9 @@ const Device = struct {
         c.glEnableVertexAttribArray(1);
         c.glEnableVertexAttribArray(2);
         for (0..work.rows) |row| try self.drawRowBackground(work, @intCast(row));
-        try self.drawImages(work);
+        try self.drawImages(work, .behind_text);
         for (0..work.rows) |row| try self.drawRowContent(work, @intCast(row));
+        try self.drawImages(work, .above_text);
         try self.drawCursor(work);
         try self.drawScrollbar(work.scrollbar);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
@@ -588,32 +589,42 @@ const Device = struct {
         self.image_generation = work.image_content_generation;
     }
 
-    fn drawImages(self: *Device, work: Submission) Error!void {
+    const ImageLayer = enum { behind_text, above_text };
+
+    fn drawImages(self: *Device, work: Submission, layer: ImageLayer) Error!void {
         for (work.image_placements) |placement| {
+            if ((placement.z < 0) != (layer == .behind_text)) continue;
             const image = for (self.image_textures[0..self.image_texture_count]) |*candidate| {
                 if (candidate.identity.id == placement.image_id) break candidate;
             } else continue;
-            const x64 = @as(u64, placement.col) * self.metrics.width_px;
-            const y64 = @as(u64, placement.row) * self.metrics.height_px;
+            if (placement.source_width == 0 or placement.source_height == 0 or
+                placement.pixel_width == 0 or placement.pixel_height == 0 or
+                placement.source_x > image.width -| placement.source_width or
+                placement.source_y > image.height -| placement.source_height)
+                return error.InvalidSubmission;
+            const x64 = @as(u64, placement.col) * self.metrics.width_px + placement.cell_x;
+            const y64 = @as(u64, placement.row) * self.metrics.height_px + placement.cell_y;
             if (x64 > std.math.maxInt(i32) or y64 > std.math.maxInt(i32))
                 return error.InvalidSubmission;
             const clip = clipToSurface(.{
                 .x = @intCast(x64),
                 .y = @intCast(y64),
-                .width = image.width,
-                .height = image.height,
+                .width = placement.pixel_width,
+                .height = placement.pixel_height,
             }, self.size) orelse continue;
             c.glEnable(c.GL_SCISSOR_TEST);
             setScissor(clip, self.size);
             defer c.glDisable(c.GL_SCISSOR_TEST);
             c.glUniform1i(self.texture_color_uniform, 1);
-            const vertices = quadVertices(
+            const vertices = imageVertices(
                 @intCast(x64),
                 @intCast(y64),
+                placement.pixel_width,
+                placement.pixel_height,
+                self.size,
+                placement,
                 image.width,
                 image.height,
-                self.size,
-                .{ .r = 255, .g = 255, .b = 255 },
             );
             c.glBindTexture(c.GL_TEXTURE_2D, image.name);
             c.glBufferData(c.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(vertices)), &vertices, c.GL_STREAM_DRAW);
@@ -1439,6 +1450,36 @@ fn quadVertices(
     };
 }
 
+fn imageVertices(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    size: PixelSize,
+    placement: terminal.ImagePlacement,
+    image_width: u32,
+    image_height: u32,
+) [6]Vertex {
+    const left = pixelToNdc(x, size.width);
+    const right = pixelToNdc(@as(i64, x) + width, size.width);
+    const top = -pixelToNdc(y, size.height);
+    const bottom = -pixelToNdc(@as(i64, y) + height, size.height);
+    const texture_left = @as(f32, @floatFromInt(placement.source_x)) / @as(f32, @floatFromInt(image_width));
+    const texture_top = @as(f32, @floatFromInt(placement.source_y)) / @as(f32, @floatFromInt(image_height));
+    const texture_right = @as(f32, @floatFromInt(placement.source_x + placement.source_width)) /
+        @as(f32, @floatFromInt(image_width));
+    const texture_bottom = @as(f32, @floatFromInt(placement.source_y + placement.source_height)) /
+        @as(f32, @floatFromInt(image_height));
+    return .{
+        .{ .x = left, .y = top, .u = texture_left, .v = texture_top, .r = 1, .g = 1, .b = 1, .a = 1 },
+        .{ .x = right, .y = bottom, .u = texture_right, .v = texture_bottom, .r = 1, .g = 1, .b = 1, .a = 1 },
+        .{ .x = left, .y = bottom, .u = texture_left, .v = texture_bottom, .r = 1, .g = 1, .b = 1, .a = 1 },
+        .{ .x = left, .y = top, .u = texture_left, .v = texture_top, .r = 1, .g = 1, .b = 1, .a = 1 },
+        .{ .x = right, .y = top, .u = texture_right, .v = texture_top, .r = 1, .g = 1, .b = 1, .a = 1 },
+        .{ .x = right, .y = bottom, .u = texture_right, .v = texture_bottom, .r = 1, .g = 1, .b = 1, .a = 1 },
+    };
+}
+
 fn lineScale(geometry: terminal.LineGeometry) Scale {
     // DEC double-height rows share one 2x canvas; the bottom row shifts that
     // canvas up before both halves are clipped to their physical row.
@@ -1973,6 +2014,36 @@ test "snapshot retains complete image state and skips identical generation bytes
     }
     try std.testing.expectEqual(@as(u64, 2), snapshot.view().image_generation);
     try std.testing.expectEqual(@as(usize, 1), snapshot.view().image_placements.len);
+}
+
+test "image vertices preserve exact cropped texture and scaled destination bounds" {
+    const vertices = imageVertices(
+        10,
+        20,
+        30,
+        40,
+        .{ .width = 100, .height = 100 },
+        .{
+            .image_id = 1,
+            .generation = 1,
+            .row = 0,
+            .col = 0,
+            .source_x = 20,
+            .source_y = 10,
+            .source_width = 40,
+            .source_height = 20,
+        },
+        100,
+        50,
+    );
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), vertices[0].u, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), vertices[0].v, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), vertices[1].u, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), vertices[1].v, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, -0.8), vertices[0].x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), vertices[0].y, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, -0.2), vertices[1].x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, -0.2), vertices[1].y, 0.0001);
 }
 
 test "draw colors consume projected cell and cursor facts exactly" {

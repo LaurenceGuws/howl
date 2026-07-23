@@ -227,6 +227,24 @@ pub const ImagePlacement = struct {
     row: u16,
     /// Identifies the physical terminal column.
     col: u16,
+    /// Selects the first decoded source column.
+    source_x: u32 = 0,
+    /// Selects the first decoded source row.
+    source_y: u32 = 0,
+    /// Counts selected decoded source columns.
+    source_width: u32 = 0,
+    /// Counts selected decoded source rows.
+    source_height: u32 = 0,
+    /// Offsets the destination within its anchor cell horizontally.
+    cell_x: u32 = 0,
+    /// Offsets the destination within its anchor cell vertically.
+    cell_y: u32 = 0,
+    /// Counts destination pixels horizontally.
+    pixel_width: u32 = 0,
+    /// Counts destination pixels vertically.
+    pixel_height: u32 = 0,
+    /// Orders the image relative to terminal text.
+    z: i32 = 0,
 };
 
 /// Supplies caller-owned storage for one image-plane projection.
@@ -334,6 +352,15 @@ pub fn projectImages(
             .generation = value.generation,
             .row = value.row,
             .col = value.col,
+            .source_x = value.source_x,
+            .source_y = value.source_y,
+            .source_width = value.source_width,
+            .source_height = value.source_height,
+            .cell_x = value.cell_x,
+            .cell_y = value.cell_y,
+            .pixel_width = value.pixel_width,
+            .pixel_height = value.pixel_height,
+            .z = value.z,
         };
         placement_used += 1;
     }
