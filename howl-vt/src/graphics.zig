@@ -539,7 +539,7 @@ pub const Plane = struct {
 
     fn composeFrames(self: *Plane, command_value: Command) std.mem.Allocator.Error!Result {
         if ((command_value.id == 0) == (command_value.image_number == 0) or
-            command_value.rows == 0 or command_value.columns == 0 or command_value.rows == command_value.columns)
+            command_value.rows == 0 or command_value.columns == 0)
             return .{ .failure = .invalid, .quiet = command_value.quiet };
         const image_index = (if (command_value.id != 0)
             self.kittyImageIndex(command_value.id)
@@ -551,10 +551,11 @@ pub const Plane = struct {
             return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet };
         const destination_number = std.math.cast(u16, command_value.columns) orelse
             return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
-        if (destination_number == 1)
-            return .{ .response_id = image_value.kitty_id, .failure = .unsupported, .quiet = command_value.quiet };
-        const destination_index = self.frameIndex(image_value.id, destination_number) orelse
-            return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet };
+        const destination_index = if (destination_number == 1)
+            null
+        else
+            self.frameIndex(image_value.id, destination_number) orelse
+                return .{ .response_id = image_value.kitty_id, .failure = .missing, .quiet = command_value.quiet };
         const copy_width = if (command_value.width == 0) image_value.width else command_value.width;
         const copy_height = if (command_value.height == 0) image_value.height else command_value.height;
         if (copy_width == 0 or copy_height == 0 or
@@ -564,7 +565,21 @@ pub const Plane = struct {
             command_value.cell_x > image_value.width -| copy_width or
             command_value.cell_y > image_value.height -| copy_height)
             return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
-        const replacement = try self.allocator.dupe(u8, self.frames[destination_index].pixels);
+        if (command_value.rows == command_value.columns and
+            rectanglesOverlap(
+                command_value.cell_x,
+                command_value.cell_y,
+                command_value.x,
+                command_value.y,
+                copy_width,
+                copy_height,
+            ))
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        const destination = if (destination_index) |index|
+            self.frames[index].pixels
+        else
+            image_value.pixels;
+        const replacement = try self.allocator.dupe(u8, destination);
         errdefer self.allocator.free(replacement);
         composeRgba(
             replacement,
@@ -580,8 +595,13 @@ pub const Plane = struct {
             command_value.y,
             command_value.compose_mode != 1,
         );
-        self.allocator.free(self.frames[destination_index].pixels);
-        self.frames[destination_index].pixels = replacement;
+        if (destination_index) |index| {
+            self.allocator.free(self.frames[index].pixels);
+            self.frames[index].pixels = replacement;
+        } else {
+            self.allocator.free(self.images[image_index].pixels);
+            self.images[image_index].pixels = replacement;
+        }
         const visible = image_value.current_frame + 1 == destination_number;
         if (visible) {
             self.advance();
@@ -1712,6 +1732,18 @@ fn ceilRatio(a: u32, b: u32, divisor: u32) ?u32 {
     return @intCast((product + divisor - 1) / divisor);
 }
 
+fn rectanglesOverlap(
+    source_x: u32,
+    source_y: u32,
+    destination_x: u32,
+    destination_y: u32,
+    width: u32,
+    height: u32,
+) bool {
+    return @max(source_x, destination_x) < @min(source_x, destination_x) + width and
+        @max(source_y, destination_y) < @min(source_y, destination_y) + height;
+}
+
 fn composeRgba(
     canvas: []u8,
     canvas_width: u32,
@@ -2219,6 +2251,77 @@ test "Kitty frames compose transactionally and advance on monotonic gaps" {
     try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
 }
 
+test "Kitty composition owns root and nonoverlapping same-frame edits" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=2,v=1,i=30,q=2;AQAA/wIAAP8=",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=2,v=1,i=30,r=2,C=1,q=2;CgAA/xQAAP8=",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const image_id = plane.image(0).?.id;
+    const storage = plane.storage_bytes;
+    const same = try plane.command(
+        "a=c,i=30,r=2,c=2,s=1,v=1,x=1,X=0,C=1,q=2",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(same.changed);
+    try std.testing.expect(!same.visual_changed);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 10, 0, 0, 255, 10, 0, 0, 255 },
+        plane.frameByNumber(image_id, 2).?.pixels,
+    );
+    const generation = plane.generation();
+    const overlap = try plane.command(
+        "a=c,i=30,r=2,c=2,s=1,v=1,x=0,X=0,C=1,q=2",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.invalid, overlap.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(storage, plane.storage_bytes);
+    const root = try plane.command(
+        "a=c,i=30,r=2,c=1,s=1,v=1,x=0,X=1,C=1,q=2",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(root.changed);
+    try std.testing.expect(root.visual_changed);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 10, 0, 0, 255, 2, 0, 0, 255 },
+        plane.images[0].pixels,
+    );
+    try std.testing.expectEqual(storage, plane.storage_bytes);
+}
+
 test "static image allocation failure leaves the plane reusable" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationFailure, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, frameAllocationFailure, .{});
@@ -2306,6 +2409,17 @@ fn frameAllocationFailure(allocator: std.mem.Allocator) !void {
     )).changed);
     try std.testing.expectEqual(with_frame, plane.storage_bytes);
     try std.testing.expectEqualSlices(u8, &.{ 9, 10, 11, 12 }, plane.images[0].pixels);
+    try std.testing.expect((try plane.command(
+        "a=c,i=1,r=2,c=1,C=1,q=2",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(with_frame, plane.storage_bytes);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, plane.images[0].pixels);
 }
 
 fn allocationFailure(allocator: std.mem.Allocator) !void {

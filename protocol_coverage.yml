@@ -3630,9 +3630,9 @@ references:
         records:
           - {id: kitty.apc.graphics, raw: "APC G Pb ST", effect: Kitty graphics command, relevance: graphics,
             bounds: parser command and payload bounds,
-            conditions: Howl routes dedicated bounded Kitty graphics streaming into its static image plane,
+            conditions: Howl routes dedicated bounded Kitty graphics streaming into its common image plane,
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "PNG/zlib/file/shared-memory media, animation, composition, cropping and z-order remain.",
+              residual: "PNG/zlib/file/shared-memory media, default display cursor advance, parent/virtual placement and transient hints remain.",
               source: howl-vt/src/terminal.zig, symbol: applyKittyGraphicsPacket,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
@@ -3816,14 +3816,13 @@ references:
           - {id: kitty.graphics.delete, raw: "APC G a=d,d=selector,Pm ST", effect: delete image placements or data,
             relevance: graphics, howl: &howl_static_graphics_delete {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl implements silent lower/uppercase placement/data deletion for all, image-id or latest image-number with optional placement id, id-range, point, point-plus-z, row, column, z-layer and cursor selectors; animation frames remain.",
+              residual: "Howl implements silent lower/uppercase placement/data deletion for all, image-id or latest image-number with optional placement id, id-range, point, point-plus-z, row, column, z-layer, cursor and animation-frame selectors; cell/virtual-parent deletion policy remains.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "static delete selectors preserve placement and image ownership distinctions"}}}
           - {id: kitty.graphics.compose, raw: "APC G a=c,Pm ST", effect: compose animation frames, relevance: graphics,
-            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl transactionally composes distinct bounded coalesced source frames over or replacing destination frames at checked source and destination rectangles; Kitty's non-overlapping same-frame edit and transient cache policy remain.",
+            howl: {support: full,
               source: howl-vt/src/graphics.zig, symbol: Plane.composeFrames, proof: {path: howl-vt/src/graphics.zig,
-                symbol: "Kitty frames compose transactionally and advance on monotonic gaps"}}}
+                symbol: "Kitty composition owns root and nonoverlapping same-frame edits"}}}
       - source: graphics.c
         symbol: handle_delete_command
         line: 2047
