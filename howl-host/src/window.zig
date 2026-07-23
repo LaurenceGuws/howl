@@ -46,6 +46,7 @@ const MouseInput = @FieldType(control.Input, "mouse");
 const MouseButton = @FieldType(MouseInput, "button");
 const MouseKind = @FieldType(MouseInput, "kind");
 const ClipboardAction = enum { copy, paste };
+const ClipboardConsequence = enum { blocked, claim, deny, reply_owned, reply_empty };
 const physical_key_count: usize = @as(usize, c.KEY_MAX) + 1;
 const max_wheel_steps: usize = 32;
 const max_bells_per_turn: u8 = 32;
@@ -286,7 +287,7 @@ const AxisFrame = struct {
 
 /// Reports exact executable construction, dispatch, projection, or rendering failure.
 pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitError || control.InputError ||
-    control.SelectionError ||
+    control.SelectionError || control.ClipboardSetError || control.ClipboardReplyError ||
     control.ResizeError || control.ReaderError || terminal_render.Error || renderer.Error ||
     error{StaleNotification} || error{
     InvalidSize,
@@ -690,6 +691,7 @@ const Window = struct {
             if (terminal.state() != .running) self.finishTerminal();
         }
         self.applyTerminalPresentation();
+        try self.applyClipboardConsequences();
     }
 
     fn applyTerminalPresentation(self: *Window) void {
@@ -703,6 +705,8 @@ const Window = struct {
         var handled: u8 = 0;
         while (handled < facts.notification_count) : (handled += 1) {
             const notification = terminal.hostPresentation().notification orelse break;
+            // A missing optional bell and focus-steal requests are settled
+            // no-op policies; either way the ordered occurrence is complete.
             if (notificationRings(notification.kind) and bell != null)
                 c.xdg_system_bell_v1_ring(bell.?, self.surface.?);
             terminal.acknowledgeNotification(notification.generation) catch |failure| {
@@ -1011,15 +1015,20 @@ const Window = struct {
     }
 
     fn copySelectionToClipboard(self: *Window) Error!void {
-        const manager = self.data_device_manager orelse return error.WaylandProtocol;
-        const device = self.data_device orelse return error.WaylandProtocol;
-        if (self.selection_serial == 0) return error.WaylandProtocol;
         const terminal = self.terminal orelse return error.InputIncomplete;
         const bytes = terminal.copySelection(self.allocator, clipboard.max_bytes) catch |failure| switch (failure) {
             error.SelectionUnavailable => return,
             else => return failure,
         };
         errdefer self.allocator.free(bytes);
+        try self.claimClipboard(bytes);
+    }
+
+    // Takes caller clipboard bytes exactly after every Wayland admission succeeds.
+    fn claimClipboard(self: *Window, bytes: []const u8) Error!void {
+        const manager = self.data_device_manager orelse return error.WaylandProtocol;
+        const device = self.data_device orelse return error.WaylandProtocol;
+        if (self.selection_serial == 0) return error.WaylandProtocol;
         const source = c.wl_data_device_manager_create_data_source(manager) orelse
             return error.WaylandProtocol;
         errdefer c.wl_data_source_destroy(source);
@@ -1031,6 +1040,49 @@ const Window = struct {
         if (self.data_source) |prior| c.wl_data_source_destroy(prior);
         self.data_source = source;
         c.wl_data_device_set_selection(device, source, self.selection_serial);
+    }
+
+    fn applyClipboardConsequences(self: *Window) Error!void {
+        const terminal = self.terminal.?;
+        var handled: u8 = 0;
+        while (handled < control.clipboard_max_count) : (handled += 1) {
+            const head = terminal.clipboardHead() orelse return;
+            const policy = clipboardConsequence(
+                head.kind,
+                head.selectionBytes(),
+                self.keyboard_focused,
+                self.selection_serial != 0 and
+                    self.data_device_manager != null and self.data_device != null,
+            );
+            switch (policy) {
+                .blocked => return,
+                .deny => try terminal.acknowledgeClipboardSet(head.generation),
+                .claim => {
+                    std.debug.assert(head.kind == .set);
+                    const bytes = try terminal.copyClipboardSet(
+                        head.generation,
+                        self.allocator,
+                        clipboard.max_bytes,
+                    );
+                    var bytes_owned = true;
+                    errdefer if (bytes_owned) self.allocator.free(bytes);
+                    try self.claimClipboard(bytes);
+                    bytes_owned = false;
+                    try terminal.acknowledgeClipboardSet(head.generation);
+                },
+                .reply_owned, .reply_empty => {
+                    std.debug.assert(head.kind == .query);
+                    const bytes = clipboardReplyBytes(
+                        policy,
+                        self.clipboard_transfers.sourceBytes(),
+                    );
+                    switch (try terminal.replyClipboard(head.generation, bytes)) {
+                        .complete => {},
+                        .incomplete => return error.InputIncomplete,
+                    }
+                },
+            }
+        }
     }
 
     fn requestClipboardPaste(self: *Window) Error!void {
@@ -2263,6 +2315,57 @@ test "notification policy rings messages and attention without stealing focus" {
     try std.testing.expect(!notificationRings(.steal_focus));
 }
 
+test "OSC 52 policy admits only focused Wayland clipboard targets" {
+    try std.testing.expectEqual(
+        ClipboardConsequence.claim,
+        clipboardConsequence(.set, "c", true, true),
+    );
+    try std.testing.expectEqual(
+        ClipboardConsequence.claim,
+        clipboardConsequence(.set, "", true, true),
+    );
+    try std.testing.expectEqual(
+        ClipboardConsequence.deny,
+        clipboardConsequence(.set, "p", true, true),
+    );
+    try std.testing.expectEqual(
+        ClipboardConsequence.deny,
+        clipboardConsequence(.set, "c", false, true),
+    );
+    try std.testing.expectEqual(
+        ClipboardConsequence.deny,
+        clipboardConsequence(.set, "c", true, false),
+    );
+    try std.testing.expectEqual(
+        ClipboardConsequence.reply_owned,
+        clipboardConsequence(.query, "c", true, false),
+    );
+    try std.testing.expectEqual(
+        ClipboardConsequence.reply_empty,
+        clipboardConsequence(.query, "p", true, true),
+    );
+    try std.testing.expectEqual(
+        ClipboardConsequence.reply_empty,
+        clipboardConsequence(.query, "c", false, true),
+    );
+    try std.testing.expectEqual(
+        ClipboardConsequence.blocked,
+        clipboardConsequence(.other, "", true, true),
+    );
+
+    var transfers = clipboard.Transfers.init(std.testing.allocator);
+    defer transfers.deinit();
+    try transfers.replaceSource(try std.testing.allocator.dupe(u8, "Howl-OSC52"));
+    try std.testing.expectEqualStrings(
+        "Howl-OSC52",
+        clipboardReplyBytes(.reply_owned, transfers.sourceBytes()),
+    );
+    try std.testing.expectEqualStrings(
+        "",
+        clipboardReplyBytes(.reply_empty, transfers.sourceBytes()),
+    );
+}
+
 test "window dimensions and grid conversion preserve exact bounds" {
     try std.testing.expectError(error.InvalidSize, validateSize(.{ .width = 0, .height = 1 }));
     try std.testing.expectError(error.InvalidSize, validateSize(.{ .width = 1, .height = 0 }));
@@ -2961,4 +3064,32 @@ fn notificationRings(kind: control.NotificationKind) bool {
         .message, .request_attention => true,
         .steal_focus => false,
     };
+}
+
+fn supportedClipboardTarget(selection: []const u8) bool {
+    return selection.len == 0 or std.mem.eql(u8, selection, "c");
+}
+
+fn clipboardConsequence(
+    kind: control.ClipboardKind,
+    selection: []const u8,
+    focused: bool,
+    claim_available: bool,
+) ClipboardConsequence {
+    return switch (kind) {
+        .other => .blocked,
+        .set => if (supportedClipboardTarget(selection) and focused and claim_available)
+            .claim
+        else
+            .deny,
+        .query => if (supportedClipboardTarget(selection) and focused)
+            .reply_owned
+        else
+            .reply_empty,
+    };
+}
+
+fn clipboardReplyBytes(policy: ClipboardConsequence, owned: []const u8) []const u8 {
+    std.debug.assert(policy == .reply_owned or policy == .reply_empty);
+    return if (policy == .reply_owned) owned else &.{};
 }

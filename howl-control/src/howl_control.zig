@@ -216,6 +216,12 @@ pub const shell_mark_metadata_max_bytes = howl_vt.Terminal.shell_mark_metadata_m
 pub const shell_name_max_bytes = howl_vt.Terminal.shell_name_max_bytes;
 /// Matches the VT owner's maximum retained window-title bytes.
 pub const title_max_bytes = howl_vt.Terminal.title_max_bytes;
+/// Matches the VT owner's exact OSC 52 selection-target byte bound.
+pub const clipboard_selection_max_bytes = howl_vt.Terminal.clipboard_selection_max_bytes;
+/// Matches the largest host bytes accepted by one exact OSC 52 reply.
+pub const clipboard_reply_max_bytes = howl_vt.Terminal.clipboard_reply_max_bytes;
+/// Matches the VT owner's bounded ordered clipboard occurrence capacity.
+pub const clipboard_max_count = howl_vt.Terminal.clipboard_max_count;
 /// Identifies the host-neutral policy kind of one retained ordered notification.
 pub const NotificationKind = enum {
     message,
@@ -227,6 +233,7 @@ comptime {
     std.debug.assert(shell_mark_metadata_max_bytes <= std.math.maxInt(u16));
     std.debug.assert(shell_name_max_bytes <= std.math.maxInt(u8));
     std.debug.assert(title_max_bytes <= std.math.maxInt(u16));
+    std.debug.assert(clipboard_reply_max_bytes <= max_transfer_bytes);
 }
 
 /// Copies the latest real OSC 133 mark and retained shell identity.
@@ -261,6 +268,45 @@ pub const HostNotification = struct {
     kind: NotificationKind,
     /// Retains the originating OSC family for exact host policy.
     command: u16,
+};
+
+/// Distinguishes host-consumable OSC 52 work from another ordered clipboard protocol.
+pub const ClipboardKind = enum {
+    set,
+    query,
+    other,
+};
+
+/// Copies the identity and bounded selection target of the shared clipboard FIFO head.
+pub const ClipboardHead = struct {
+    /// Identifies one occurrence and is never reused during a terminal lifetime.
+    generation: u64,
+    /// Selects an OSC 52 set/query or an ordered protocol outside this operation family.
+    kind: ClipboardKind,
+    /// Stores exact OSC 52 target bytes selected by `selection_len`.
+    selection: [clipboard_selection_max_bytes]u8,
+    /// Bounds meaningful target bytes in `selection`.
+    selection_len: u8,
+
+    /// Borrows the exact copied selection target.
+    pub fn selectionBytes(self: *const ClipboardHead) []const u8 {
+        return self.selection[0..self.selection_len];
+    }
+};
+
+/// Retains exact complete or partial OSC 52 reply transfer truth.
+pub const ClipboardReplyTransfer = client.InputTransfer;
+/// Reports copied-set admission failure without consuming the FIFO head.
+pub const ClipboardSetError = std.mem.Allocator.Error || error{
+    ClipboardLimit,
+    ClipboardSetMismatch,
+    StaleClipboardRequest,
+};
+/// Reports reply preparation or post-transfer identity failure.
+pub const ClipboardReplyError = std.mem.Allocator.Error || error{
+    ClipboardReplyMismatch,
+    ConsequenceLimit,
+    StaleClipboardRequest,
 };
 
 const ReaderFailure = enum(u8) {
@@ -746,6 +792,99 @@ pub const Terminal = struct {
         self.lock.unlock(self.io);
         try result;
         self.notify();
+    }
+
+    /// Copies the shared clipboard FIFO head without retaining VT borrows.
+    pub fn clipboardHead(self: *Terminal) ?ClipboardHead {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        const request = self.model.pendingClipboardRequest() orelse return null;
+        var result = ClipboardHead{
+            .generation = request.generation,
+            .kind = switch (request.protocol) {
+                .osc52 => switch (request.kind) {
+                    .set => .set,
+                    .query => .query,
+                    .packet => .other,
+                },
+                .kitty_5522 => .other,
+            },
+            .selection = @splat(0),
+            .selection_len = @intCast(request.selection.len),
+        };
+        std.debug.assert(request.selection.len <= result.selection.len);
+        @memcpy(result.selection[0..request.selection.len], request.selection);
+        return result;
+    }
+
+    /// Copies one matching decoded OSC 52 set without consuming it.
+    pub fn copyClipboardSet(
+        self: *Terminal,
+        generation: u64,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) ClipboardSetError![]u8 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return (try self.model.copyPendingClipboardSet(
+            generation,
+            allocator,
+            max_bytes,
+        )) orelse error.ClipboardSetMismatch;
+    }
+
+    /// Consumes one exact FIFO-head OSC 52 set after host policy completes.
+    pub fn acknowledgeClipboardSet(
+        self: *Terminal,
+        generation: u64,
+    ) error{ StaleClipboardRequest, ClipboardSetMismatch }!void {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgePendingClipboardSet(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
+    }
+
+    /// Serializes, flushes, then consumes one exact FIFO-head OSC 52 query.
+    ///
+    /// Preparation, allocation, and incomplete PTY transfer preserve the
+    /// query. A complete transfer consumes only that identity and announces
+    /// the semantic change.
+    pub fn replyClipboard(
+        self: *Terminal,
+        generation: u64,
+        bytes: []const u8,
+    ) ClipboardReplyError!ClipboardReplyTransfer {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const prepared = self.model.preparePendingClipboardReply(
+            generation,
+            bytes,
+            self.allocator,
+        ) catch |failure| {
+            self.lock.unlock(self.io);
+            return failure;
+        };
+        self.lock.unlock(self.io);
+        const reply = prepared orelse return error.ClipboardReplyMismatch;
+        defer self.allocator.free(reply);
+        std.debug.assert(reply.len <= max_transfer_bytes);
+        self.write_lock.lockUncancelable(self.io);
+        const transfer = self.transport.transfer(self.io, reply, self.transfer_timeout_ms);
+        self.write_lock.unlock(self.io);
+        switch (transfer) {
+            .incomplete => return transfer,
+            .complete => {},
+        }
+        self.lock.lockUncancelable(self.io);
+        const completed = self.model.completePendingClipboardReply(generation);
+        self.lock.unlock(self.io);
+        try completed;
+        self.notify();
+        return transfer;
     }
 
     /// Copies the current bounded viewport without retaining model borrows.
@@ -1679,6 +1818,126 @@ test "host presentation copies and acknowledges ordered notifications exactly" {
     try terminal.acknowledgeNotification(second.notification.?.generation);
     try std.testing.expectEqual(@as(u8, 0), terminal.hostPresentation().notification_count);
     try std.testing.expect(terminal.hostPresentation().notification == null);
+}
+
+test "clipboard operations preserve mixed FIFO identity until host completion" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+    try terminal.consume("\x1b]52;c;T25l\x07\x1b]52;c;?\x1b\\");
+    terminal.consumeWake();
+
+    var head = terminal.clipboardHead().?;
+    try std.testing.expectEqual(ClipboardKind.set, head.kind);
+    try std.testing.expectEqualStrings("c", head.selectionBytes());
+    const first_generation = head.generation;
+    try std.testing.expectError(
+        error.StaleClipboardRequest,
+        terminal.copyClipboardSet(first_generation + 1, std.testing.allocator, 3),
+    );
+    try std.testing.expectError(
+        error.ClipboardLimit,
+        terminal.copyClipboardSet(first_generation, std.testing.allocator, 2),
+    );
+    try std.testing.expectEqual(first_generation, terminal.clipboardHead().?.generation);
+    const copied = try terminal.copyClipboardSet(first_generation, std.testing.allocator, 3);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("One", copied);
+
+    const sequence = terminal.status().semantic_sequence;
+    const wakes = wake_count.load(.acquire);
+    try terminal.acknowledgeClipboardSet(first_generation);
+    try std.testing.expectEqual(sequence + 1, terminal.status().semantic_sequence);
+    try std.testing.expectEqual(wakes + 1, wake_count.load(.acquire));
+    head = terminal.clipboardHead().?;
+    try std.testing.expectEqual(ClipboardKind.query, head.kind);
+    try std.testing.expect(head.generation > first_generation);
+    try std.testing.expectError(
+        error.ClipboardSetMismatch,
+        terminal.acknowledgeClipboardSet(head.generation),
+    );
+    const transfer = try terminal.replyClipboard(head.generation, "reply");
+    switch (transfer) {
+        .complete => |count| try std.testing.expect(count != 0),
+        .incomplete => return error.TestUnexpectedResult,
+    }
+    try std.testing.expect(terminal.clipboardHead() == null);
+
+    try terminal.consume("\x1b]5522;type=write\x07");
+    head = terminal.clipboardHead().?;
+    try std.testing.expectEqual(ClipboardKind.other, head.kind);
+    try std.testing.expectError(
+        error.ClipboardSetMismatch,
+        terminal.acknowledgeClipboardSet(head.generation),
+    );
+    try std.testing.expectEqual(head.generation, terminal.clipboardHead().?.generation);
+}
+
+test "incomplete clipboard reply transfer preserves the exact query" {
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{},
+    );
+    defer terminal.deinit();
+    try terminal.consume("\x1b]52;c;?\x07");
+    const head = terminal.clipboardHead().?;
+    terminal.cancel();
+    const transfer = try terminal.replyClipboard(head.generation, "reply");
+    switch (transfer) {
+        .complete => return error.TestUnexpectedResult,
+        .incomplete => |failure| {
+            try std.testing.expectEqual(@as(usize, 0), failure.transferred);
+            try std.testing.expectEqual(howl_pty.TransferFailure.canceled, failure.reason);
+        },
+    }
+    try std.testing.expectEqual(head.generation, terminal.clipboardHead().?.generation);
+}
+
+test "clipboard reply allocation failure preserves the exact query" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const terminal = try Terminal.init(
+        failing.allocator(),
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{},
+    );
+    defer terminal.deinit();
+    try terminal.consume("\x1b]52;c;?\x07");
+    const head = terminal.clipboardHead().?;
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(
+        error.OutOfMemory,
+        terminal.replyClipboard(head.generation, "reply"),
+    );
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(head.generation, terminal.clipboardHead().?.generation);
+}
+
+test "clipboard set allocation failure preserves the exact head" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const terminal = try Terminal.init(
+        failing.allocator(),
+        std.testing.io,
+        .{ .command = "sleep 30", .rows = 2, .cols = 4 },
+        .{},
+    );
+    defer terminal.deinit();
+    try terminal.consume("\x1b]52;c;T25l\x07");
+    const head = terminal.clipboardHead().?;
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(
+        error.OutOfMemory,
+        terminal.copyClipboardSet(head.generation, failing.allocator(), 3),
+    );
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(head.generation, terminal.clipboardHead().?.generation);
 }
 
 test "local selection operations copy projected history with exact mutation" {

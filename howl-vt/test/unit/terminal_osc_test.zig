@@ -520,6 +520,56 @@ test "OSC 52 query is retained for exact transactional host reply" {
     try std.testing.expectEqual(@as(?[]const u8, null), terminal.host.pendingClipboardSet());
 }
 
+test "OSC 52 host copy and prepared reply preserve FIFO until exact completion" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 16);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed(
+        "\x1b]52;c;T25l\x07" ++
+            "\x1b]52;c;?\x1b\\",
+    )).state_changed);
+
+    var request = terminal.pendingClipboardRequest().?;
+    const copied = (try terminal.copyPendingClipboardSet(
+        request.generation,
+        allocator,
+        3,
+    )).?;
+    defer allocator.free(copied);
+    try std.testing.expectEqualStrings("One", copied);
+    try std.testing.expectEqual(request.generation, terminal.pendingClipboardRequest().?.generation);
+    try std.testing.expectError(
+        error.ClipboardLimit,
+        terminal.copyPendingClipboardSet(request.generation, allocator, 2),
+    );
+    try std.testing.expectEqual(request.generation, terminal.pendingClipboardRequest().?.generation);
+    try terminal.acknowledgeClipboard(request.generation);
+
+    request = terminal.pendingClipboardRequest().?;
+    const prepared = (try terminal.preparePendingClipboardReply(
+        request.generation,
+        "reply",
+        allocator,
+    )).?;
+    defer allocator.free(prepared);
+    try std.testing.expectEqualStrings("\x1b]52;c;cmVwbHk=\x1b\\", prepared);
+    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+    try std.testing.expectEqual(request.generation, terminal.pendingClipboardRequest().?.generation);
+    try std.testing.expectError(
+        error.StaleClipboardRequest,
+        terminal.completePendingClipboardReply(request.generation + 1),
+    );
+    try std.testing.expectEqual(request.generation, terminal.pendingClipboardRequest().?.generation);
+    try terminal.completePendingClipboardReply(request.generation);
+    try std.testing.expect(terminal.pendingClipboardRequest() == null);
+
+    try std.testing.expect((try terminal.feed("\x1b G\x9d52;;?\x9c")).state_changed);
+    request = terminal.pendingClipboardRequest().?;
+    const prepared_8bit = (try terminal.preparePendingClipboardReply(request.generation, "", allocator)).?;
+    defer allocator.free(prepared_8bit);
+    try std.testing.expectEqualStrings("\x9d52;;\x9c", prepared_8bit);
+}
+
 test "OSC 52 rejects malformed selections and base64 without replacing a request" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);

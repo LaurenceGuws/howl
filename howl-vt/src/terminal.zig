@@ -5831,10 +5831,10 @@ const kitty_clipboard_packet_max_bytes: u32 = parser_mod.max_chunk_control_bytes
 /// Bounds one ordered clipboard burst while the host applies access policy.
 const clipboard_capacity: u8 = 8;
 /// OSC 52 names four standard selections and eight numbered cut buffers.
-const clipboard_selection_max_bytes: u8 = 12;
+const clipboard_selection_bytes_max: u8 = 12;
 /// One query reply fits regardless of selection length and 7-bit framing.
 const clipboard_reply_bytes_max: u32 =
-    ((pending_output_max_bytes - clipboard_selection_max_bytes - 8) / 4) * 3;
+    ((pending_output_max_bytes - clipboard_selection_bytes_max - 8) / 4) * 3;
 /// Bounds aggregate bytes retained across configuration, delegated transport, and host-directed DCS consequences.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
 // Holds the nine-command Kitty family, three iTerm2 transports, and a bounded mixed-family burst.
@@ -6706,22 +6706,12 @@ pub const HostState = struct {
         const request = self.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
         if (request.generation != generation) return error.StaleClipboardRequest;
         if (request.protocol != .osc52 or request.kind != .query) return false;
-        const selection = request.selection;
-        if (bytes.len > clipboard_reply_bytes_max) return error.ConsequenceLimit;
-        const encoded_len = std.base64.standard.Encoder.calcSize(bytes.len);
-        const prefix_len = std.math.add(usize, 4, selection.len) catch
-            return error.ConsequenceLimit;
-        const payload_len = std.math.add(usize, prefix_len, encoded_len) catch
-            return error.ConsequenceLimit;
-        if (payload_len > pending_output_max_bytes) return error.ConsequenceLimit;
-        const payload = try self.allocator.alloc(u8, payload_len);
-        defer self.allocator.free(payload);
-        @memcpy(payload[0..3], "52;");
-        @memcpy(payload[3 .. 3 + selection.len], selection);
-        payload[prefix_len - 1] = ';';
-        const encoded = std.base64.standard.Encoder.encode(payload[prefix_len..], bytes);
-        std.debug.assert(encoded.len == encoded_len);
-        try appendStringReply(&self.pending_output, self.allocator, .terminal, .osc, payload);
+        try appendClipboardQueryReply(
+            &self.pending_output,
+            self.allocator,
+            request.selection,
+            bytes,
+        );
         self.consumeClipboardRequest();
         return true;
     }
@@ -6901,6 +6891,30 @@ fn appendStringReply(
     });
     try appendOutput(output, allocator, payload);
     try appendReplyControl(output, allocator, protocol, .st);
+}
+
+// Serializes one exact OSC 52 query result through the shared reply framing owner.
+fn appendClipboardQueryReply(
+    output: *PendingOutput,
+    allocator: std.mem.Allocator,
+    selection: []const u8,
+    bytes: []const u8,
+) ApplyError!void {
+    if (bytes.len > clipboard_reply_bytes_max) return error.ConsequenceLimit;
+    const encoded_len = std.base64.standard.Encoder.calcSize(bytes.len);
+    const prefix_len = std.math.add(usize, 4, selection.len) catch
+        return error.ConsequenceLimit;
+    const payload_len = std.math.add(usize, prefix_len, encoded_len) catch
+        return error.ConsequenceLimit;
+    if (payload_len > pending_output_max_bytes) return error.ConsequenceLimit;
+    const payload = try allocator.alloc(u8, payload_len);
+    defer allocator.free(payload);
+    @memcpy(payload[0..3], "52;");
+    @memcpy(payload[3 .. 3 + selection.len], selection);
+    payload[prefix_len - 1] = ';';
+    const encoded = std.base64.standard.Encoder.encode(payload[prefix_len..], bytes);
+    std.debug.assert(encoded.len == encoded_len);
+    try appendStringReply(output, allocator, .terminal, .osc, payload);
 }
 
 // Restores drained reply bytes ahead of current output without partial mutation.
@@ -9085,7 +9099,7 @@ fn parseClipboardRequest(raw: []const u8) ?ParsedClipboardRequest {
 fn parseClipboardEnvelope(raw: []const u8) ?ParsedClipboardRequest {
     const separator = std.mem.indexOfScalar(u8, raw, ';') orelse return null;
     const selection = raw[0..separator];
-    if (selection.len > clipboard_selection_max_bytes) return null;
+    if (selection.len > clipboard_selection_bytes_max) return null;
     for (selection) |byte| switch (byte) {
         'c', 'p', 'q', 's', '0'...'7' => {},
         else => return null,
@@ -12647,6 +12661,8 @@ pub const Terminal = struct {
     pub const window_request_max_count = window_request_capacity;
     /// Bounds host clipboard bytes accepted by one query reply in every framing mode.
     pub const clipboard_reply_max_bytes = clipboard_reply_bytes_max;
+    /// Bounds exact OSC 52 selection-target bytes retained for host policy.
+    pub const clipboard_selection_max_bytes = clipboard_selection_bytes_max;
     /// Bounds aggregate raw OSC 52 and Kitty OSC 5522 bytes retained across pending operations.
     pub const clipboard_request_max_bytes = clipboard_max_bytes;
     /// Bounds one encoded Kitty OSC 5522 packet before host policy.
@@ -14238,6 +14254,76 @@ pub const Terminal = struct {
         const drained = try self.host.drainPendingClipboardSet(generation, allocator);
         if (drained != null) advanceIdentity(&self.semantic_sequence);
         return drained;
+    }
+
+    /// Copies one decoded FIFO-head OSC 52 set without consuming it.
+    ///
+    /// The caller owns a successful slice with `allocator`. Stale identity,
+    /// allocation failure, and the caller byte bound preserve the exact head.
+    pub fn copyPendingClipboardSet(
+        self: *Terminal,
+        generation: u64,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) error{ OutOfMemory, StaleClipboardRequest, ClipboardLimit }!?[]u8 {
+        const request = self.host.clipboardRequestHead() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation) return error.StaleClipboardRequest;
+        if (request.protocol != .osc52 or request.kind != .set) return null;
+        const decoded_len: usize = @intCast(
+            decodedClipboardSetSize(request.raw) catch
+                @panic("retained OSC 52 set failed prior grammar validation"),
+        );
+        if (decoded_len > max_bytes) return error.ClipboardLimit;
+        return decodeClipboardSet(allocator, request.raw) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => @panic("retained OSC 52 set failed prior grammar validation"),
+        };
+    }
+
+    /// Serializes one matching OSC 52 query reply into caller-owned bytes without mutation.
+    ///
+    /// The returned framing follows current S7C1T/S8C1T state. Every failure
+    /// preserves both the FIFO head and accumulated terminal reply output.
+    pub fn preparePendingClipboardReply(
+        self: *Terminal,
+        generation: u64,
+        bytes: []const u8,
+        allocator: std.mem.Allocator,
+    ) ClipboardReplyError!?[]u8 {
+        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation) return error.StaleClipboardRequest;
+        if (request.protocol != .osc52 or request.kind != .query) return null;
+        var output = PendingOutput.init();
+        output.eight_bit_controls = self.host.pending_output.eight_bit_controls;
+        errdefer output.bytes.deinit(allocator);
+        try appendClipboardQueryReply(&output, allocator, request.selection, bytes);
+        return @as(?[]u8, try output.bytes.toOwnedSlice(allocator));
+    }
+
+    /// Consumes only the exact FIFO-head OSC 52 query after its prepared bytes flush.
+    pub fn completePendingClipboardReply(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleClipboardRequest}!void {
+        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation or
+            request.protocol != .osc52 or request.kind != .query)
+            return error.StaleClipboardRequest;
+        self.host.consumeClipboardRequest();
+        advanceIdentity(&self.semantic_sequence);
+    }
+
+    /// Consumes only the exact FIFO-head OSC 52 set after host policy completes.
+    pub fn acknowledgePendingClipboardSet(
+        self: *Terminal,
+        generation: u64,
+    ) error{ StaleClipboardRequest, ClipboardSetMismatch }!void {
+        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
+        if (request.generation != generation) return error.StaleClipboardRequest;
+        if (request.protocol != .osc52 or request.kind != .set)
+            return error.ClipboardSetMismatch;
+        self.host.consumeClipboardRequest();
+        advanceIdentity(&self.semantic_sequence);
     }
 
     /// Borrow the FIFO-head OSC 52 operation or Kitty OSC 5522 packet until terminal mutation.

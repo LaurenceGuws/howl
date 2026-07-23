@@ -37,7 +37,8 @@ accepted_implementation:
     projection, eviction, reflow, and alternate-screen truth.
   - >-
     VT owns projected selection and copied-text semantics; Control exposes bounded local operations; Howl-host owns
-    pointer gestures, exact clipboard chords, and nonblocking Wayland UTF-8 clipboard transfer.
+    pointer gestures, exact clipboard chords, nonblocking Wayland UTF-8 clipboard transfer, and ordered OSC 52
+    system-clipboard set/query policy.
   - >-
     Howl-host draws retained DEC single/double-width and double-height row geometry plus normal, raised, and lowered
     cell baselines from backend-neutral render facts without changing shaping or texture identity.
@@ -52,7 +53,7 @@ invariants:
 
 deferred:
   - tabs, panes, sessions, and multiplexing
-  - remaining ordered host-consequence presentation beyond notification and attention bell policy
+  - remaining ordered host-consequence presentation beyond notification, attention bell, and OSC 52 clipboard policy
 
 gates:
   - permanent authorities and active planning YAML parse

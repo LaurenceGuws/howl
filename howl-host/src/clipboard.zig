@@ -10,8 +10,8 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 
-/// Bounds clipboard text so bracketed-paste framing still fits one Control admission.
-pub const max_bytes: usize = control.max_input_bytes - 12;
+/// Bounds clipboard text for both bracketed-paste admission and exact OSC 52 replies.
+pub const max_bytes: usize = @min(control.max_input_bytes - 12, control.clipboard_reply_max_bytes);
 /// Bounds simultaneous compositor requests for the current clipboard source.
 pub const max_sends: usize = 2;
 /// Names the preferred UTF-8 text formats admitted from a Wayland offer.
@@ -117,6 +117,11 @@ pub const Transfers = struct {
         if (bytes.len > max_bytes) return error.ClipboardLimit;
         self.allocator.free(self.source);
         self.source = bytes;
+    }
+
+    /// Borrows current clipboard source bytes until replacement, cancellation, or cleanup.
+    pub fn sourceBytes(self: *const Transfers) []const u8 {
+        return self.source;
     }
 
     /// Clears clipboard ownership while allowing already copied sends to finish.
@@ -308,6 +313,7 @@ test "source replacement and outgoing transfer own independent bytes" {
     try transfers.replaceSource(try std.testing.allocator.dupe(u8, "old"));
     try transfers.beginSend(fds[1]);
     try transfers.replaceSource(try std.testing.allocator.dupe(u8, "new"));
+    try std.testing.expectEqualStrings("new", transfers.sourceBytes());
     var descriptors: [max_sends + 1]std.posix.pollfd = undefined;
     const count = transfers.pollDescriptors(&descriptors);
     try std.testing.expectEqual(@as(usize, 1), count);
@@ -315,6 +321,8 @@ test "source replacement and outgoing transfer own independent bytes" {
     var bytes: [3]u8 = undefined;
     try std.posix.readAtLeast(fds[0], &bytes, bytes.len);
     try std.testing.expectEqualStrings("old", &bytes);
+    transfers.clearSource();
+    try std.testing.expectEqualStrings("", transfers.sourceBytes());
 }
 
 test "nonblocking send preserves partial progress until peer capacity returns" {
