@@ -20,7 +20,7 @@ pub const Bank = enum { primary, alternate };
 
 /// Borrows immutable decoded RGBA pixels until plane mutation.
 pub const ImageView = struct {
-    /// Application-selected nonzero Kitty image identity.
+    /// Plane-owned nonzero image identity.
     id: u32,
     /// Pixel width.
     width: u32,
@@ -52,6 +52,7 @@ pub const Placement = struct {
 
 const Image = struct {
     id: u32,
+    kitty_id: ?u32,
     width: u32,
     height: u32,
     generation: u64,
@@ -139,6 +140,7 @@ pub const Plane = struct {
     placement_count: u16 = 0,
     storage_bytes: usize = 0,
     next_generation: u64 = 0,
+    next_image_id: u32 = 0,
     content_generation: u64 = 0,
     loading: ?Loading = null,
 
@@ -290,7 +292,7 @@ pub const Plane = struct {
         const rgba_len = @as(usize, loading.width) * loading.height * 4;
         if (loading.action == 'q')
             return .{ .response_id = loading.id, .quiet = loading.quiet };
-        const prior_index = self.imageIndex(loading.id);
+        const prior_index = self.kittyImageIndex(loading.id);
         const prior_bytes = if (prior_index) |index| self.images[index].pixels.len else 0;
         if (rgba_len > max_storage_bytes - (self.storage_bytes - prior_bytes))
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
@@ -318,18 +320,22 @@ pub const Plane = struct {
         const content_generation = self.next_generation;
         self.content_generation = content_generation;
         if (prior_index) |index| {
+            const image_id = self.images[index].id;
             self.storage_bytes -= self.images[index].pixels.len;
             self.allocator.free(self.images[index].pixels);
             self.images[index] = .{
-                .id = loading.id,
+                .id = image_id,
+                .kitty_id = loading.id,
                 .width = loading.width,
                 .height = loading.height,
                 .generation = content_generation,
                 .pixels = rgba,
             };
         } else {
+            const image_id = self.allocateImageId();
             self.images[self.image_count] = .{
-                .id = loading.id,
+                .id = image_id,
+                .kitty_id = loading.id,
                 .width = loading.width,
                 .height = loading.height,
                 .generation = content_generation,
@@ -339,7 +345,7 @@ pub const Plane = struct {
         }
         self.storage_bytes += rgba.len;
         if (display) self.addPlacement(
-            loading.id,
+            self.images[prior_index orelse self.image_count - 1].id,
             bank,
             row,
             col,
@@ -365,7 +371,7 @@ pub const Plane = struct {
         cell_width: u32,
         cell_height: u32,
     ) Result {
-        const image_index = self.imageIndex(command_value.id) orelse
+        const image_index = self.kittyImageIndex(command_value.id) orelse
             return .{ .response_id = nonzero(command_value.id), .failure = .missing, .quiet = command_value.quiet };
         if (self.placement_count == max_placements)
             return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
@@ -373,7 +379,7 @@ pub const Plane = struct {
         const placement_generation = self.next_generation;
         const retained = self.images[image_index];
         self.addPlacement(
-            command_value.id,
+            retained.id,
             bank,
             row,
             col,
@@ -407,8 +413,10 @@ pub const Plane = struct {
         var placement_index: usize = 0;
         while (placement_index < self.placement_count) {
             const placement_value = self.placements[placement_index];
-            if (placement_value.bank != bank or !deleteMatches(
+            const kitty_id = self.kittyIdForImage(placement_value.image_id);
+            if (kitty_id == null or placement_value.bank != bank or !deleteMatches(
                 placement_value,
+                kitty_id,
                 normalized,
                 command_value,
                 screen_origin,
@@ -427,10 +435,11 @@ pub const Plane = struct {
             var image_index: usize = 0;
             while (image_index < self.image_count) {
                 const image_id = self.images[image_index].id;
+                const kitty_id = self.images[image_index].kitty_id;
                 const selected = switch (normalized) {
-                    'a' => !self.hasPlacement(image_id),
-                    'i' => image_id == command_value.id,
-                    'r' => command_value.x <= image_id and image_id <= command_value.y,
+                    'a' => kitty_id != null and !self.hasPlacement(image_id),
+                    'i' => kitty_id == command_value.id,
+                    'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
                     else => !self.hasPlacement(image_id),
                 };
                 if (!selected) {
@@ -464,6 +473,56 @@ pub const Plane = struct {
             self.content_generation = self.next_generation;
         }
         return changed;
+    }
+
+    /// Transactionally retains one decoded RGBA image and ordinary placement.
+    ///
+    /// Ownership of `pixels` transfers only on success. Sixel and other
+    /// terminal-owned decoders use a plane identity that cannot collide with a
+    /// Kitty application-selected identity.
+    pub fn admitDecoded(
+        self: *Plane,
+        pixels: []u8,
+        width: u32,
+        height: u32,
+        bank: Bank,
+        row: u64,
+        col: u16,
+        cell_width: u32,
+        cell_height: u32,
+    ) error{Quota}!void {
+        if (width == 0 or height == 0 or width > max_dimension or height > max_dimension or
+            pixels.len > max_image_bytes or pixels.len > max_storage_bytes - self.storage_bytes or
+            self.image_count == max_images or self.placement_count == max_placements)
+            return error.Quota;
+        const expected = std.math.mul(usize, width, height) catch return error.Quota;
+        const expected_bytes = std.math.mul(usize, expected, 4) catch return error.Quota;
+        if (expected_bytes != pixels.len)
+            return error.Quota;
+        const image_id = self.allocateImageId();
+        self.advance();
+        self.content_generation = self.next_generation;
+        self.images[self.image_count] = .{
+            .id = image_id,
+            .kitty_id = null,
+            .width = width,
+            .height = height,
+            .generation = self.next_generation,
+            .pixels = pixels,
+        };
+        self.image_count += 1;
+        self.storage_bytes += pixels.len;
+        self.addPlacement(
+            image_id,
+            bank,
+            row,
+            col,
+            cell_width,
+            cell_height,
+            width,
+            height,
+            self.next_generation,
+        );
     }
 
     /// Removes all placements owned by one bank while retaining image data.
@@ -689,10 +748,23 @@ pub const Plane = struct {
         return false;
     }
 
-    fn imageIndex(self: *const Plane, id: u32) ?usize {
+    fn kittyImageIndex(self: *const Plane, id: u32) ?usize {
         for (self.images[0..self.image_count], 0..) |retained, index|
-            if (retained.id == id) return index;
+            if (retained.kitty_id == id) return index;
         return null;
+    }
+
+    fn kittyIdForImage(self: *const Plane, id: u32) ?u32 {
+        for (self.images[0..self.image_count]) |retained|
+            if (retained.id == id) return retained.kitty_id;
+        return null;
+    }
+
+    fn allocateImageId(self: *Plane) u32 {
+        if (self.next_image_id == std.math.maxInt(u32))
+            @panic("terminal image identity exhausted");
+        self.next_image_id += 1;
+        return self.next_image_id;
     }
 
     fn advance(self: *Plane) void {
@@ -762,6 +834,7 @@ fn parseCommand(bytes: []const u8) ?Command {
 
 fn deleteMatches(
     placement_value: Placement,
+    kitty_id: ?u32,
     selector: u8,
     command_value: Command,
     screen_origin: u64,
@@ -776,8 +849,8 @@ fn deleteMatches(
         std.math.add(u64, screen_origin, command_value.y - 1) catch null;
     return switch (selector) {
         'a' => true,
-        'i' => placement_value.image_id == command_value.id,
-        'r' => command_value.x <= placement_value.image_id and placement_value.image_id <= command_value.y,
+        'i' => kitty_id == command_value.id,
+        'r' => if (kitty_id) |id| command_value.x <= id and id <= command_value.y else false,
         'p' => command_value.x != 0 and explicit_row != null and
             placement_value.col <= command_value.x - 1 and command_value.x - 1 <= right and
             placement_value.row <= explicit_row.? and explicit_row.? <= bottom,
@@ -860,7 +933,7 @@ test "new transmission cancels an incomplete stream without retained mutation" {
         1,
     );
     try std.testing.expect(replacement.changed);
-    try std.testing.expectEqual(@as(u32, 3), plane.image(0).?.id);
+    try std.testing.expectEqual(@as(u32, 1), plane.image(0).?.id);
 }
 
 test "static delete selectors preserve placement and image ownership distinctions" {
@@ -948,6 +1021,61 @@ test "static delete selectors preserve placement and image ownership distinction
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
     try std.testing.expect((try plane.command("a=d,d=A", .primary, 10, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 0), plane.image_count);
+}
+
+test "plane identities survive Kitty replacement and isolate decoded images from Kitty deletion" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=99;AQIDBA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const kitty_identity = plane.image(0).?.id;
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=99;BAIDAg==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(kitty_identity, plane.image(0).?.id);
+
+    const decoded = try std.testing.allocator.dupe(u8, &.{ 1, 2, 3, 4 });
+    try plane.admitDecoded(decoded, 1, 1, .primary, 1, 1, 1, 1);
+    const decoded_identity = plane.image(1).?.id;
+    try std.testing.expect(decoded_identity != kitty_identity);
+    try std.testing.expect((try plane.command("a=d,d=A", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expectEqual(@as(usize, 1), plane.image_count);
+    try std.testing.expectEqual(decoded_identity, plane.image(0).?.id);
+    try std.testing.expectEqual(@as(usize, 1), plane.placement_count);
+
+    const rejected = try std.testing.allocator.dupe(u8, &.{ 5, 6, 7, 8 });
+    defer std.testing.allocator.free(rejected);
+    const before = .{
+        plane.image_count,
+        plane.placement_count,
+        plane.storage_bytes,
+        plane.generation(),
+        plane.imageGeneration(),
+    };
+    try std.testing.expectError(
+        error.Quota,
+        plane.admitDecoded(rejected, max_dimension + 1, 1, .primary, 0, 0, 1, 1),
+    );
+    try std.testing.expectEqualDeep(before, .{
+        plane.image_count,
+        plane.placement_count,
+        plane.storage_bytes,
+        plane.generation(),
+        plane.imageGeneration(),
+    });
 }
 
 test "static image allocation failure leaves the plane reusable" {

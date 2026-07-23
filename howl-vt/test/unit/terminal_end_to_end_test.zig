@@ -1790,7 +1790,7 @@ test "terminal: canceled Kitty continuation releases transfer without retained m
     try std.testing.expect(
         (try terminal.feed("\x1b_Ga=t,f=32,s=1,v=1,i=8;AQIDBA==\x1b\\")).state_changed,
     );
-    try std.testing.expectEqual(@as(u32, 8), terminal.visualView().images.image(0).?.id);
+    try std.testing.expectEqual(@as(u32, 1), terminal.visualView().images.image(0).?.id);
 }
 
 test "terminal: Kitty deletion is silent and preserves lowercase image data" {
@@ -1841,6 +1841,60 @@ test "terminal: static graphics follow scroll erase resize bank and reset lifeti
     try std.testing.expectEqual(@as(usize, 1), terminal.visualView().images.imageCount());
     terminal.hardReset();
     try std.testing.expectEqual(@as(usize, 0), terminal.visualView().images.imageCount());
+}
+
+test "terminal: fragmented Sixel retains exact image placement and cursor lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 8, 12);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(2, 3);
+    try std.testing.expect((try terminal.feed("\x1b[3;4H\x1bPq\"1;1;3;6#1;2;100;")).state_changed);
+    try std.testing.expectEqual(@as(usize, 0), terminal.visualView().images.imageCount());
+    try std.testing.expect(!(try terminal.feed("0;0!3~\x1b")).state_changed);
+    try std.testing.expect((try terminal.feed("\\")).state_changed);
+
+    const visual = terminal.visualView();
+    try std.testing.expectEqual(@as(usize, 1), visual.images.imageCount());
+    const image = visual.images.image(0).?;
+    try std.testing.expectEqual(@as(u32, 3), image.width);
+    try std.testing.expectEqual(@as(u32, 6), image.height);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, image.pixels[0..4]);
+    const placement = visual.images.placement(0).?;
+    try std.testing.expectEqual(@as(u16, 2), placement.row);
+    try std.testing.expectEqual(@as(u16, 3), placement.col);
+    try std.testing.expectEqual(@as(u16, 4), visual.view.cursor_row);
+
+    const generation = visual.images.generation;
+    try std.testing.expect(!(try terminal.feed("\x1bPq\"1;1#2;2;0;0;100~\x18")).state_changed);
+    try std.testing.expectEqual(generation, terminal.visualView().images.generation);
+    try std.testing.expect((try terminal.feed("\x1bPq\"1;1#2;2;0;0;100~\x1b\\")).state_changed);
+    try std.testing.expectEqual(@as(usize, 2), terminal.visualView().images.imageCount());
+
+    const after_restart = terminal.visualView().images.generation;
+    try std.testing.expect(!(try terminal.feed("\x1bPq!0~\x1b\\")).state_changed);
+    try std.testing.expectEqual(after_restart, terminal.visualView().images.generation);
+    try std.testing.expectEqual(@as(usize, 2), terminal.visualView().images.imageCount());
+}
+
+test "terminal: DECSIXEL mode owns query save reset and fixed-origin cursor preservation" {
+    var terminal = try Terminal.init(std.testing.allocator, 8, 12);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try std.testing.expect(
+        (try terminal.feed("\x1b[5;6H\x1b[?80h\x1b[?80$p\x1b[?80s\x1bPq\"1;1#1;2;0;100;0~\x1b\\")).state_changed,
+    );
+    try std.testing.expectEqualStrings("\x1b[?80;1$y", terminal.host.pendingOutput());
+    const visual = terminal.visualView();
+    try std.testing.expectEqual(@as(u16, 0), visual.images.placement(0).?.row);
+    try std.testing.expectEqual(@as(u16, 0), visual.images.placement(0).?.col);
+    try std.testing.expectEqual(@as(u16, 4), visual.view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 5), visual.view.cursor_col);
+
+    const first_reply = try terminal.drainPendingOutput(std.testing.allocator);
+    std.testing.allocator.free(first_reply);
+    try std.testing.expect((try terminal.feed("\x1b[?80l\x1b[?80r\x1b[?80$p\x1b[!p\x1b[?80$p")).state_changed);
+    const replies = try terminal.drainPendingOutput(std.testing.allocator);
+    defer std.testing.allocator.free(replies);
+    try std.testing.expectEqualStrings("\x1b[?80;1$y\x1b[?80;2$y", replies);
 }
 
 test "terminal: every byte split preserves mixed control framing" {

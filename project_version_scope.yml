@@ -26,6 +26,7 @@ accepted_implementation:
     Render independently selects native text and generated terminal glyphs; either or both may be absent, and only
     native text selection links libc, FreeType, and HarfBuzz.
   - Render terminal projection writes backend-neutral visual patches into caller buffers and owns no runtime policy.
+  - VT retains bounded Kitty raw images and bounded explicit-RGB Sixel images in one common terminal image plane.
   - >-
     Render terminal text preparation discovers one homogeneous run at a time, preserves unresolved visual facts, and
     returns exact native, generated, or no-glyph output ownership.

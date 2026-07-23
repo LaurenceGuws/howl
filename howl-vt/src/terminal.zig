@@ -3,6 +3,7 @@
 const std = @import("std");
 const parser_mod = @import("parser.zig");
 const graphics_mod = @import("graphics.zig");
+const sixel = @import("sixel.zig");
 
 const logical_output_line_bytes_max: usize = 1024 * 1024;
 const logical_output_bytes_max: usize = 1024 * 1024;
@@ -5692,9 +5693,9 @@ const KeyFormatChange = struct {
 // Enumerates DEC modes whose state participates in parameterized XTSAVE and XTRESTORE.
 const savable_dec_modes = [_]u16{
     1,    3,    5,    6,    7,    8,    9,    12,   25,   40,
-    41,   45,   47,   66,   69,   95,   1045, 1047, 1049, 1000,
-    1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026, 2031,
-    2048, 5522,
+    41,   45,   47,   66,   69,   80,   95,   1045, 1047, 1049,
+    1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026,
+    2031, 2048, 5522,
 };
 
 // Stores terminal modes that affect screen mutation, input encoding, and reports.
@@ -5723,6 +5724,7 @@ const ModeState = struct {
     color_preference_notifications: bool = false,
     paste_events: bool = false,
     termios_signals: bool = false,
+    sixel_display_mode: bool = false,
     reverse_wraparound_mode: bool = false,
     extended_reverse_wraparound_mode: bool = false,
     mouse_tracking: MouseTrackingMode = .off,
@@ -5779,6 +5781,7 @@ const DecView = struct {
     paste_events: bool,
     reverse_wraparound: bool,
     extended_reverse_wraparound: bool,
+    sixel_display_mode: bool,
 };
 
 // Borrows the ANSI mode facts required to answer one mode query.
@@ -5804,6 +5807,7 @@ fn decModeStateForView(view: DecView, mode: u16) u8 {
         12 => boolToDecModeState(view.cursor_blink),
         45 => boolToDecModeState(view.reverse_wraparound),
         69 => boolToDecModeState(view.left_right_margin_mode),
+        80 => boolToDecModeState(view.sixel_display_mode),
         66 => boolToDecModeState(view.application_keypad),
         25 => boolToDecModeState(view.cursor_visible),
         47, 1047, 1049 => boolToDecModeState(view.alt_active),
@@ -10665,6 +10669,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .paste_events = vt.modes.paste_events,
         .reverse_wraparound = vt.modes.reverse_wraparound_mode,
         .extended_reverse_wraparound = vt.modes.extended_reverse_wraparound_mode,
+        .sixel_display_mode = vt.modes.sixel_display_mode,
     };
     switch (event) {
         .ansi_mode_query => |mode| try appendAnsiModeReport(
@@ -12819,7 +12824,11 @@ const DcsCapture = struct {
 
     fn put(self: *DcsCapture, byte: u8) PutError!void {
         std.debug.assert(self.active);
-        if (self.bytes.items.len - self.payload_start >= @as(usize, parser_mod.max_metadata_control_bytes)) {
+        const limit: usize = if (self.final == 'q' and self.intermediates_len == 0)
+            sixel.max_encoded_bytes
+        else
+            parser_mod.max_metadata_control_bytes;
+        if (self.bytes.items.len - self.payload_start >= limit) {
             return error.StringControlLimit;
         }
         try self.bytes.append(self.allocator, byte);
@@ -13153,9 +13162,55 @@ const TerminalStream = struct {
 
     fn endDcs(self: *TerminalStream) FeedError!EventEffect {
         const state = &self.terminal.stream_state;
+        if (state.dcs.final == 'q' and state.dcs.intermediates_len == 0) {
+            defer state.dcs.reset();
+            return self.applySixel(
+                state.dcs.bytes.items[state.dcs.payload_start..],
+                state.dcs.params[0..state.dcs.param_count],
+            );
+        }
         const event = state.dcs.event();
         defer state.dcs.reset();
         return try apply(self.terminal, event);
+    }
+
+    fn applySixel(self: *TerminalStream, payload: []const u8, params: []const i32) FeedError!EventEffect {
+        if (params.len > 3) return discardedStringControl();
+        for (params) |param| if (param < 0) return discardedStringControl();
+        const transparent = params.len > 1 and params[1] == 1;
+        var image = sixel.decode(self.terminal.allocator, payload, transparent) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Invalid, error.Unsupported, error.Quota => return discardedStringControl(),
+        };
+        errdefer image.deinit(self.terminal.allocator);
+        const screen = self.terminal.screen_state.active();
+        const cell_size = screen.cellPixelSize() orelse return discardedStringControl();
+        const bank = graphicsBank(self.terminal);
+        const row = if (self.terminal.modes.sixel_display_mode)
+            graphicsScreenOrigin(self.terminal)
+        else
+            graphicsScreenOrigin(self.terminal) + screen.cursor.row;
+        const col: u16 = if (self.terminal.modes.sixel_display_mode) 0 else screen.cursor.col;
+        self.terminal.graphics.admitDecoded(
+            image.pixels,
+            image.width,
+            image.height,
+            bank,
+            row,
+            col,
+            cell_size.width,
+            cell_size.height,
+        ) catch return discardedStringControl();
+        image.pixels = &.{};
+        if (!self.terminal.modes.sixel_display_mode) {
+            const occupied_rows = (image.height + cell_size.height - 1) / cell_size.height;
+            screen.cursor.row = @min(
+                screen.rows - 1,
+                screen.cursor.row +| @as(u16, @intCast(@min(occupied_rows, std.math.maxInt(u16)))),
+            );
+            screen.wrap_pending = false;
+        }
+        return .{ .changed = true, .title_changed = false, .icon_changed = false };
     }
 
     fn cancelDcs(self: *TerminalStream) EventEffect {
@@ -14303,6 +14358,7 @@ pub const Terminal = struct {
         changed = replaceBool(&self.modes.inband_resize_notifications, false) or changed;
         changed = replaceBool(&self.modes.reverse_wraparound_mode, false) or changed;
         changed = replaceBool(&self.modes.extended_reverse_wraparound_mode, false) or changed;
+        changed = replaceBool(&self.modes.sixel_display_mode, false) or changed;
         if (self.modes.mouse_tracking != .off) changed = true;
         self.modes.mouse_tracking = .off;
         if (self.modes.mouse_protocol != .none) changed = true;
@@ -14649,6 +14705,7 @@ pub const Terminal = struct {
             .paste_events = self.modes.paste_events,
             .reverse_wraparound = self.modes.reverse_wraparound_mode,
             .extended_reverse_wraparound = self.modes.extended_reverse_wraparound_mode,
+            .sixel_display_mode = self.modes.sixel_display_mode,
         }, mode_number);
     }
 
@@ -14779,6 +14836,7 @@ pub const Terminal = struct {
                 }
                 break :result changed;
             },
+            80 => replaceBool(&self.modes.sixel_display_mode, enabled),
             25 => result: {
                 var changed = replaceBool(&self.screen_state.primary.cursor.visible, enabled);
                 changed = replaceBool(&self.screen_state.alternate.cursor.visible, enabled) or changed;

@@ -8,6 +8,7 @@ accepted:
   howl-vt/build.zig: VT package build and proof commands
   howl-vt/build.zig.zon: VT package identity and source boundary
   howl-vt/src: terminal parser, semantics, state, input, replies, consequences, and dirty facts
+  howl-vt/src/sixel.zig: bounded Sixel measurement and RGBA decoding into the common terminal image plane
   howl-vt/test: external VT behavior proofs
   howl-vt/test_unit.zig: package-owned VT unit proofs
   howl-vt/simulation: deterministic VT simulations

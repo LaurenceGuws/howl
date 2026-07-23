@@ -1927,8 +1927,21 @@ references:
               source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "iTerm2 DCS transports retain bounded unescaped occurrences in order"}}}
-          - {id: iterm2.dcs.sixel, raw: "DCS Pm q Pb ST", effect: decode Sixel image, recognition: delegated,
-            relevance: graphics, howl: *howl_missing_deferred_graphics}
+          - id: iterm2.dcs.sixel
+            raw: "DCS Pm q Pb ST"
+            effect: decode Sixel image
+            recognition: delegated
+            relevance: graphics
+            conditions: >-
+              Howl transactionally decodes bounded fragmented 1:1-raster Sixel with repeat, raster extent, carriage
+              return, newline, explicit RGB percentage colors, and opaque or transparent background into its common
+              image plane; HLS colors, implicit DEC palettes, other aspect ratios, and iTerm2's image-cell cursor
+              scrolling policy remain unsupported.
+            howl: {support: partial, disposition: active, owner: howl-vt,
+              residual: Complete remaining Sixel color, aspect, and cursor-scroll semantics.,
+              source: howl-vt/src/sixel.zig, symbol: decode, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: fragmented Sixel retains exact image placement and cursor lifetime"}}
           - {id: iterm2.dcs.tmux_wrap, raw: "DCS t tmux;Pb ST", effect: unwrap tmux terminal bytes,
             relevance: transport,
             conditions: Howl unescapes doubled ESC and retains bounded bytes after tmux; without recursive parsing,
@@ -2219,7 +2232,12 @@ references:
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
                 path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: cursor origin margins own exact aliases geometry wrap and resize"}}}
-          - {id: iterm2.mode.decsdm, raw: "CSI ? 80 h|l", effect: toggle Sixel display mode, howl: *howl_missing_deferred_graphics}
+          - id: iterm2.mode.decsdm
+            raw: "CSI ? 80 h|l"
+            effect: toggle Sixel display mode
+            howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+              symbol: "terminal: DECSIXEL mode owns query save reset and fixed-origin cursor preservation"}}
           - id: iterm2.mode.decncsm
             raw: "CSI ? 95 h|l"
             effect: preserve screen on column-mode change
