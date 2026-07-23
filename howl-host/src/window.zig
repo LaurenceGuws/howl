@@ -50,6 +50,7 @@ const ClipboardConsequence = enum { blocked, claim, deny, reply_owned, reply_emp
 const physical_key_count: usize = @as(usize, c.KEY_MAX) + 1;
 const max_wheel_steps: usize = 32;
 const max_bells_per_turn: u8 = 32;
+const cursor_blink_ns: u64 = 500 * std.time.ns_per_ms;
 const default_title = "Howl";
 const clipboard_poll_count = 1 + clipboard.max_sends;
 
@@ -307,6 +308,7 @@ pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitErro
     KeyboardContext,
     KeyboardMap,
     KeyboardRepeat,
+    CursorBlink,
     KeyboardState,
     Pointer,
     TerminalSignal,
@@ -495,7 +497,10 @@ const Window = struct {
     toplevel: ?*c.struct_xdg_toplevel = null,
     terminal_signal: c_int,
     repeat_signal: c_int,
+    cursor_signal: c_int,
     repeat: Repeat = .{},
+    cursor_visible: bool = true,
+    cursor_blink_armed: bool = false,
     physical_keys: PhysicalKeys = .{},
     pointer_state: PointerState = .{},
     axis_frame: AxisFrame = .{},
@@ -540,6 +545,10 @@ const Window = struct {
         if (repeat_signal < 0) return error.KeyboardRepeat;
         var repeat_owned = true;
         errdefer if (repeat_owned) closeOwned(repeat_signal);
+        const cursor_signal = c.timerfd_create(c.CLOCK_MONOTONIC, c.TFD_CLOEXEC | c.TFD_NONBLOCK);
+        if (cursor_signal < 0) return error.CursorBlink;
+        var cursor_owned = true;
+        errdefer if (cursor_owned) closeOwned(cursor_signal);
         const self = try allocator.create(Window);
         self.* = .{
             .allocator = allocator,
@@ -548,6 +557,7 @@ const Window = struct {
             .registry = registry,
             .terminal_signal = terminal_signal,
             .repeat_signal = repeat_signal,
+            .cursor_signal = cursor_signal,
             .wake = .{ .fd = terminal_signal },
             .clipboard_transfers = clipboard.Transfers.init(allocator),
         };
@@ -555,6 +565,7 @@ const Window = struct {
         registry_owned = false;
         signal_owned = false;
         repeat_owned = false;
+        cursor_owned = false;
         errdefer self.rollback();
 
         if (c.wl_registry_add_listener(registry, &registry_listener, self) != 0)
@@ -614,6 +625,7 @@ const Window = struct {
         }
         self.applyTerminalPresentation();
         if (!captured) return error.GeometryUnstable;
+        try self.resetCursorBlink();
         try self.submitVisual(self.size);
         if (self.terminal.?.state() != .running) self.finishTerminal();
         return self;
@@ -636,7 +648,7 @@ const Window = struct {
             const flush = c.wl_display_flush(self.display);
             const flush_blocked = flush < 0 and std.posix.errno(flush) == .AGAIN;
             if (flush < 0 and !flush_blocked) return error.WaylandFlush;
-            var fds: [4 + clipboard_poll_count]std.posix.pollfd = undefined;
+            var fds: [5 + clipboard_poll_count]std.posix.pollfd = undefined;
             fds[0] = .{
                 .fd = c.wl_display_get_fd(self.display),
                 .events = std.posix.POLL.IN |
@@ -646,8 +658,9 @@ const Window = struct {
             fds[1] = .{ .fd = self.terminal_signal, .events = std.posix.POLL.IN, .revents = 0 };
             fds[2] = .{ .fd = self.render.?.signalFd(), .events = std.posix.POLL.IN, .revents = 0 };
             fds[3] = .{ .fd = self.repeat_signal, .events = std.posix.POLL.IN, .revents = 0 };
-            const clipboard_count = self.clipboard_transfers.pollDescriptors(fds[4..]);
-            const active_fds = fds[0 .. 4 + clipboard_count];
+            fds[4] = .{ .fd = self.cursor_signal, .events = std.posix.POLL.IN, .revents = 0 };
+            const clipboard_count = self.clipboard_transfers.pollDescriptors(fds[5..]);
+            const active_fds = fds[0 .. 5 + clipboard_count];
             const ready_count = std.posix.poll(active_fds, -1) catch return error.Poll;
             std.debug.assert(ready_count != 0);
             const faults = std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL;
@@ -655,6 +668,7 @@ const Window = struct {
             if (fds[1].revents & faults != 0) return error.TerminalSignal;
             if (fds[2].revents & faults != 0) return error.Signal;
             if (fds[3].revents & faults != 0) return error.KeyboardRepeat;
+            if (fds[4].revents & faults != 0) return error.CursorBlink;
 
             if (fds[0].revents & std.posix.POLL.IN != 0) {
                 if (c.wl_display_read_events(self.display) < 0) return error.WaylandDispatch;
@@ -673,7 +687,8 @@ const Window = struct {
                 self.draw.complete(try self.render.?.completedGeneration());
             if (fds[1].revents & std.posix.POLL.IN != 0) try self.handleTerminalWake();
             if (!self.closed and fds[3].revents & std.posix.POLL.IN != 0) try self.repeatKey();
-            for (fds[4 .. 4 + clipboard_count]) |descriptor|
+            if (!self.closed and fds[4].revents & std.posix.POLL.IN != 0) try self.blinkCursor();
+            for (fds[5 .. 5 + clipboard_count]) |descriptor|
                 if (descriptor.revents != 0)
                     try self.clipboard_transfers.service(descriptor.fd, descriptor.revents);
             if (self.clipboard_transfers.received()) |text_bytes| {
@@ -724,7 +739,10 @@ const Window = struct {
 
     fn captureAndSubmit(self: *Window) Error!void {
         const terminal = self.terminal.?;
-        if (try self.visual.?.capture(terminal)) try self.submitVisual(self.size);
+        if (try self.visual.?.capture(terminal)) {
+            try self.resetCursorBlink();
+            try self.submitVisual(self.size);
+        }
     }
 
     fn submitVisual(self: *Window, size: Size) Error!void {
@@ -736,7 +754,7 @@ const Window = struct {
             .cols = visual.cols,
             .cells = visual.cells,
             .row_geometry = visual.row_geometry,
-            .cursor = visual.baseline.?.cursor,
+            .cursor = cursorForPresentation(visual.baseline.?.cursor, self.cursor_visible),
             .size = pixelSize(size),
             .scrollbar = viewport.scrollbar(
                 self.viewport_state.facts,
@@ -769,6 +787,7 @@ const Window = struct {
         }
         const visual_changed = try self.visual.?.capture(terminal);
         if (geometry_changed and !visual_changed) return error.GeometryUnstable;
+        if (visual_changed) try self.resetCursorBlink();
         self.viewport_state.reconcile(viewportFacts(terminal.viewportFacts()));
         try self.submitVisual(target);
         self.size = target;
@@ -866,6 +885,20 @@ const Window = struct {
 
     fn armRepeat(self: *Window, duration_ns: ?u64) error{KeyboardRepeat}!void {
         try setRepeatTimer(self.repeat_signal, duration_ns);
+    }
+
+    fn resetCursorBlink(self: *Window) error{CursorBlink}!void {
+        const cursor = self.visual.?.baseline.?.cursor;
+        self.cursor_visible = true;
+        self.cursor_blink_armed = cursor.visible and cursor.blink and cursor.shape != .none;
+        try setCursorTimer(self.cursor_signal, self.cursor_blink_armed);
+    }
+
+    fn blinkCursor(self: *Window) Error!void {
+        const expirations = try readCursorTimer(self.cursor_signal);
+        if (!self.cursor_blink_armed) return;
+        if (expirations & 1 != 0) self.cursor_visible = !self.cursor_visible;
+        try self.submitVisual(self.size);
     }
 
     fn pointerMotion(self: *Window, x: i64, y: i64) void {
@@ -1208,6 +1241,8 @@ const Window = struct {
             retainCleanupFailure(&cleanup_failure, failure);
         };
         self.cancelPointer() catch |failure| retainCleanupFailure(&cleanup_failure, failure);
+        setCursorTimer(self.cursor_signal, false) catch |failure|
+            retainCleanupFailure(&cleanup_failure, failure);
         self.clipboard_transfers.deinit();
         if (self.visual) |*visual| visual.deinit();
         self.visual = null;
@@ -1217,6 +1252,7 @@ const Window = struct {
             retainCleanupFailure(&cleanup_failure, failure);
         self.render = null;
         closeOwned(self.repeat_signal);
+        closeOwned(self.cursor_signal);
         closeOwned(self.terminal_signal);
         self.destroyProtocol();
         c.wl_registry_destroy(self.registry);
@@ -1443,6 +1479,38 @@ fn setRepeatTimer(fd: c_int, duration_ns: ?u64) error{KeyboardRepeat}!void {
         timer.it_value.tv_sec = @intCast(duration / std.time.ns_per_s);
         timer.it_value.tv_nsec = @intCast(duration % std.time.ns_per_s);
         if (c.timerfd_settime(fd, 0, &timer, null) != 0) return error.KeyboardRepeat;
+    }
+}
+
+fn setCursorTimer(fd: c_int, enabled: bool) error{CursorBlink}!void {
+    const timer = cursorTimer(enabled);
+    if (c.timerfd_settime(fd, 0, &timer, null) != 0) return error.CursorBlink;
+    while (true) {
+        var expirations: u64 = 0;
+        const count = c.read(fd, &expirations, @sizeOf(u64));
+        if (count == @sizeOf(u64)) continue;
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        if (count < 0 and std.posix.errno(count) == .AGAIN) return;
+        return error.CursorBlink;
+    }
+}
+
+fn cursorTimer(enabled: bool) c.struct_itimerspec {
+    var timer: c.struct_itimerspec = std.mem.zeroes(c.struct_itimerspec);
+    if (enabled) {
+        timer.it_value.tv_nsec = @intCast(cursor_blink_ns);
+        timer.it_interval.tv_nsec = @intCast(cursor_blink_ns);
+    }
+    return timer;
+}
+
+fn readCursorTimer(fd: c_int) error{CursorBlink}!u64 {
+    while (true) {
+        var expirations: u64 = 0;
+        const count = c.read(fd, &expirations, @sizeOf(u64));
+        if (count == @sizeOf(u64)) return expirations;
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        return error.CursorBlink;
     }
 }
 
@@ -2411,6 +2479,31 @@ test "window request policy issues minimize and reports settled fallback facts" 
     try std.testing.expectEqualStrings("title", title);
 }
 
+test "cursor blink phase hides only blinking visible overlays" {
+    const color = terminal_render.Rgb{ .r = 1, .g = 2, .b = 3 };
+    var cursor = terminal_render.Cursor{
+        .row = 1,
+        .col = 2,
+        .visible = true,
+        .shape = .block,
+        .blink = true,
+        .color = color,
+        .text_color = color,
+    };
+    try std.testing.expect(cursorForPresentation(cursor, true).visible);
+    try std.testing.expect(!cursorForPresentation(cursor, false).visible);
+    cursor.blink = false;
+    try std.testing.expect(cursorForPresentation(cursor, false).visible);
+    cursor.visible = false;
+    try std.testing.expect(!cursorForPresentation(cursor, true).visible);
+    const armed = cursorTimer(true);
+    try std.testing.expectEqual(@as(c_long, @intCast(cursor_blink_ns)), armed.it_value.tv_nsec);
+    try std.testing.expectEqual(armed.it_value.tv_nsec, armed.it_interval.tv_nsec);
+    const disarmed = cursorTimer(false);
+    try std.testing.expectEqual(@as(c_long, 0), disarmed.it_value.tv_nsec);
+    try std.testing.expectEqual(@as(c_long, 0), disarmed.it_interval.tv_nsec);
+}
+
 test "window dimensions and grid conversion preserve exact bounds" {
     try std.testing.expectError(error.InvalidSize, validateSize(.{ .width = 0, .height = 1 }));
     try std.testing.expectError(error.InvalidSize, validateSize(.{ .width = 1, .height = 0 }));
@@ -3154,4 +3247,10 @@ fn windowRequestRequestsMinimize(request: control.WindowRequest) bool {
         .iconify => true,
         else => false,
     };
+}
+
+fn cursorForPresentation(cursor: terminal_render.Cursor, phase_visible: bool) terminal_render.Cursor {
+    var result = cursor;
+    if (result.blink and !phase_visible) result.visible = false;
+    return result;
 }

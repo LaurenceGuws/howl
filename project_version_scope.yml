@@ -42,6 +42,7 @@ accepted_implementation:
   - >-
     Howl-host draws retained DEC single/double-width and double-height row geometry plus normal, raised, and lowered
     cell baselines from backend-neutral render facts without changing shaping or texture identity.
+  - Howl-host presents retained cursor blink intent with one bounded monotonic timer and no VT/render timing policy.
   - >-
     Howl-host consumes ordered window operations, requests Wayland minimization, and transactionally reports only
     normal state, unavailable zero position/screen facts, and its retained title.
