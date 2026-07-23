@@ -13177,8 +13177,19 @@ const TerminalStream = struct {
     fn applySixel(self: *TerminalStream, payload: []const u8, params: []const i32) FeedError!EventEffect {
         if (params.len > 3) return discardedStringControl();
         for (params) |param| if (param < 0) return discardedStringControl();
+        const p1: u16 = if (params.len > 0) @intCast(params[0]) else 0;
+        const pan: u3 = switch (p1) {
+            2 => 5,
+            3, 4 => 3,
+            7, 8, 9 => 1,
+            else => 2,
+        };
         const transparent = params.len > 1 and params[1] == 1;
-        var image = sixel.decode(self.terminal.allocator, payload, transparent) catch |failure| switch (failure) {
+        var image = sixel.decode(self.terminal.allocator, payload, .{
+            .pan = pan,
+            .pad = 1,
+            .transparent = transparent,
+        }) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
             error.Invalid, error.Unsupported, error.Quota => return discardedStringControl(),
         };
@@ -13204,10 +13215,25 @@ const TerminalStream = struct {
         image.pixels = &.{};
         if (!self.terminal.modes.sixel_display_mode) {
             const occupied_rows = (image.height + cell_size.height - 1) / cell_size.height;
-            screen.cursor.row = @min(
-                screen.rows - 1,
-                screen.cursor.row +| @as(u16, @intCast(@min(occupied_rows, std.math.maxInt(u16)))),
-            );
+            const saved_col = screen.cursor.col;
+            var remaining = occupied_rows -| 1;
+            while (remaining != 0) : (remaining -= 1) {
+                const scrolls = screen.cursor.row == screen.scrollBottom();
+                const history_scroll = !self.terminal.screen_state.alt_active and screen.scroll_top == 0 and
+                    screen.scrollBottom() == screen.rows - 1;
+                screen.lineFeed();
+                if (scrolls and !history_scroll) {
+                    const graphics_changed = self.terminal.graphics.scroll(
+                        bank,
+                        graphicsScreenOrigin(self.terminal) + screen.scroll_top,
+                        graphicsScreenOrigin(self.terminal) + screen.scrollBottom(),
+                        1,
+                        true,
+                    );
+                    std.debug.assert(!graphics_changed or self.terminal.graphics.generation() != 0);
+                }
+            }
+            screen.cursor.col = @min(saved_col, screen.lineRightBoundary(screen.cursor.row));
             screen.wrap_pending = false;
         }
         return .{ .changed = true, .title_changed = false, .icon_changed = false };

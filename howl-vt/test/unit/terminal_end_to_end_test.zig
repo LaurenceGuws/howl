@@ -1861,7 +1861,7 @@ test "terminal: fragmented Sixel retains exact image placement and cursor lifeti
     const placement = visual.images.placement(0).?;
     try std.testing.expectEqual(@as(u16, 2), placement.row);
     try std.testing.expectEqual(@as(u16, 3), placement.col);
-    try std.testing.expectEqual(@as(u16, 4), visual.view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), visual.view.cursor_row);
 
     const generation = visual.images.generation;
     try std.testing.expect(!(try terminal.feed("\x1bPq\"1;1#2;2;0;0;100~\x18")).state_changed);
@@ -1895,6 +1895,21 @@ test "terminal: DECSIXEL mode owns query save reset and fixed-origin cursor pres
     const replies = try terminal.drainPendingOutput(std.testing.allocator);
     defer std.testing.allocator.free(replies);
     try std.testing.expectEqualStrings("\x1b[?80;1$y\x1b[?80;2$y", replies);
+}
+
+test "terminal: Sixel image rows scroll primary history while preserving cursor column" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 6);
+    try std.testing.expect(
+        (try terminal.feed("\x1b[3;5H\x1bP7;1q#2~-~\x1b\\")).state_changed,
+    );
+
+    const visual = terminal.visualView();
+    try std.testing.expectEqual(@as(u32, 1), visual.view.history_count);
+    try std.testing.expectEqual(@as(u16, 2), visual.view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 4), visual.view.cursor_col);
+    try std.testing.expectEqual(@as(u16, 1), visual.images.placement(0).?.row);
 }
 
 test "terminal: every byte split preserves mixed control framing" {

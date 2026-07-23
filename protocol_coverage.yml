@@ -1933,12 +1933,13 @@ references:
             recognition: delegated
             relevance: graphics
             conditions: >-
-              Howl transactionally decodes bounded fragmented 1:1-raster Sixel with repeat, raster extent, carriage
-              return, newline, explicit RGB percentage colors, and opaque or transparent background into its common
-              image plane; HLS colors, implicit DEC palettes, other aspect ratios, and iTerm2's image-cell cursor
-              scrolling policy remain unsupported.
-            howl: {support: partial, disposition: active, owner: howl-vt,
-              residual: Complete remaining Sixel color, aspect, and cursor-scroll semantics.,
+              Howl transactionally decodes bounded fragmented Sixel with repeat, raster extent, carriage return,
+              newline, VT340 defaults, RGB/HLS colors, bounded aspect scaling, opaque/transparent background, and
+              image-row cursor scrolling into its common image plane; unlike iTerm2 it resets the palette for each
+              image and rejects an aspect change after painted data.
+            howl: {support: partial, disposition: excluded,
+              residual: iTerm2-compatible shared palette lifetime and mid-image aspect changes are excluded.,
+              rationale: Howl keeps each bounded decoded image self-contained and rejects geometry reinterpretation after pixels exist.,
               source: howl-vt/src/sixel.zig, symbol: decode, proof: {
               path: howl-vt/test/unit/terminal_end_to_end_test.zig,
               symbol: "terminal: fragmented Sixel retains exact image placement and cursor lifetime"}}
