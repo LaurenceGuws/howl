@@ -27,11 +27,11 @@ test "generated families classify exact retained ranges and reject neighbors" {
     try std.testing.expect(generated.classify(0x1fb3c) == null);
     try std.testing.expect(generated.classify(0xf5d0) == null);
 
-    var family_counts = [_]u16{0} ** 6;
+    var family_counts = @as([6]u16, @splat(0));
     var codepoint: u32 = 0;
     while (codepoint <= 0x10ffff) : (codepoint += 1) {
         const family = generated.classify(codepoint) orelse continue;
-        family_counts[@intFromEnum(family)] += 1;
+        family_counts[@backingInt(family)] += 1;
     }
     try std.testing.expectEqualSlices(
         u16,

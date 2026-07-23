@@ -18,8 +18,8 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Compile every surviving child and validate root evidence");
     const test_step = b.step("test", "Run every surviving child's proofs");
     inline for (children) |child| {
-        addChildBuild(b, check, child, "check", optimize, target, cpu, null);
-        addChildBuild(b, test_step, child, "test", optimize, target, cpu, b.args);
+        addChildBuild(b, check, child, "check", optimize, target, cpu, false);
+        addChildBuild(b, test_step, child, "test", optimize, target, cpu, true);
     }
 
     const audit = b.step("audit", "Audit maintained Zig source");
@@ -40,13 +40,13 @@ pub fn build(b: *std.Build) void {
     check.dependOn(protocol);
 
     const simulate = b.step("simulate", "Run VT simulations");
-    addChildBuild(b, simulate, "howl-vt", "simulate", optimize, target, cpu, b.args);
+    addChildBuild(b, simulate, "howl-vt", "simulate", optimize, target, cpu, true);
     const fuzz = b.step("fuzz:terminal", "Run VT fuzz proofs");
-    addChildBuild(b, fuzz, "howl-vt", "fuzz", optimize, target, cpu, b.args);
+    addChildBuild(b, fuzz, "howl-vt", "fuzz", optimize, target, cpu, true);
     const benchmark = b.step("benchmark:m7", "Run the VT m7 benchmark");
-    addChildBuild(b, benchmark, "howl-vt", "benchmark", optimize, target, cpu, b.args);
+    addChildBuild(b, benchmark, "howl-vt", "benchmark", optimize, target, cpu, true);
     const host = b.step("run:host", "Run the first-party Wayland host");
-    addChildBuild(b, host, "howl-host", "run", optimize, target, cpu, b.args);
+    addChildBuild(b, host, "howl-host", "run", optimize, target, cpu, true);
 
     b.default_step = check;
 }
@@ -59,7 +59,7 @@ fn addChildBuild(
     optimize: std.builtin.OptimizeMode,
     target: ?[]const u8,
     cpu: ?[]const u8,
-    arguments: ?[]const []const u8,
+    passthru: bool,
 ) void {
     const command = b.addSystemCommand(&.{ b.graph.zig_exe, "build", step });
     command.setName(b.fmt("{s} {s}", .{ child, step }));
@@ -67,9 +67,9 @@ fn addChildBuild(
     command.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
     if (target) |value| command.addArg(b.fmt("-Dtarget={s}", .{value}));
     if (cpu) |value| command.addArg(b.fmt("-Dcpu={s}", .{value}));
-    if (arguments) |values| {
+    if (passthru) {
         command.addArg("--");
-        command.addArgs(values);
+        command.addPassthruArgs();
     }
     parent.dependOn(&command.step);
 }

@@ -36,9 +36,9 @@ fn feedCsiBytes(bytes: []const u8) !OwnedCsiAction {
 }
 
 fn ownCsiAction(action: CsiAction) OwnedCsiAction {
-    var params = [_]i32{0} ** parser_mod.max_params;
+    var params = @as([parser_mod.max_params]i32, @splat(0));
     std.mem.copyForwards(i32, params[0..action.count], action.params[0..action.count]);
-    var intermediates = [_]u8{0} ** parser_mod.max_intermediates;
+    var intermediates = @as([parser_mod.max_intermediates]u8, @splat(0));
     std.mem.copyForwards(u8, intermediates[0..action.intermediates_len], action.intermediates[0..action.intermediates_len]);
     return .{
         .final = action.final,

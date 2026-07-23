@@ -352,8 +352,8 @@ const ParsedEvents = struct {
             .final = hook.final,
             .param_count = hook.count,
             .intermediates_len = hook.intermediates_len,
-            .params = [_]i32{0} ** parser_mod.max_params,
-            .intermediates = [_]u8{0} ** parser_mod.max_intermediates,
+            .params = @as([parser_mod.max_params]i32, @splat(0)),
+            .intermediates = @as([parser_mod.max_intermediates]u8, @splat(0)),
         };
         std.mem.copyForwards(i32, state.params[0..hook.count], hook.params[0..hook.count]);
         std.mem.copyForwards(u8, state.intermediates[0..hook.intermediates_len], hook.intermediates[0..hook.intermediates_len]);

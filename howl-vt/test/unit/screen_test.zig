@@ -33,11 +33,11 @@ test "screen storage constructors reject zero dimensions exactly" {
 }
 
 fn emptySeparators() parser_mod.CsiSeparatorList {
-    return parser_mod.CsiSeparatorList.initEmpty();
+    return parser_mod.CsiSeparatorList.empty;
 }
 
 fn colonSeparator(after_param_idx: u8) parser_mod.CsiSeparatorList {
-    var separators = parser_mod.CsiSeparatorList.initEmpty();
+    var separators = parser_mod.CsiSeparatorList.empty;
     separators.set(@intCast(after_param_idx));
     return separators;
 }

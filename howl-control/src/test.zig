@@ -477,7 +477,7 @@ test "waiting input transfer leaves the model available to drain child output" {
     defer terminal.deinit();
     try waitForPrefix(std.testing.io, terminal, "ready");
 
-    var input: [control.max_transfer_bytes]u8 = .{'x'} ** control.max_transfer_bytes;
+    var input: [control.max_transfer_bytes]u8 = @splat('x');
     var send_context = SendContext{ .terminal = terminal, .bytes = &input };
     const sender = try std.Thread.spawn(.{}, sendBytes, .{&send_context});
 
@@ -567,7 +567,7 @@ test "cancellation ends a saturated input transfer before ordered deinit" {
     errdefer terminal.deinit();
     try waitForPrefix(std.testing.io, terminal, "ready");
 
-    var input: [control.max_transfer_bytes]u8 = .{'x'} ** control.max_transfer_bytes;
+    var input: [control.max_transfer_bytes]u8 = @splat('x');
     var send_context = SendContext{ .terminal = terminal, .bytes = &input };
     const sender = try std.Thread.spawn(.{}, sendBytes, .{&send_context});
     while (!send_context.started.load(.acquire)) std.atomic.spinLoopHint();

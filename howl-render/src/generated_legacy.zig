@@ -61,7 +61,7 @@ fn fourthRange(size: u16, which: u8) Range {
         return .{ .start = start, .end = start + thickness };
     }
 
-    var thicknesses = [_]u16{thickness} ** 4;
+    var thicknesses = @as([4]u16, @splat(thickness));
     var extra = size - block;
     const order = [_]u8{ 1, 2, 3, 0 };
     for (order) |idx| {

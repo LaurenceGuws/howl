@@ -264,10 +264,10 @@ pub const Parser = struct {
             .utf8 = .{},
             .latin1 = false,
             .state = .ground,
-            .csi_params = [_]i32{0} ** csi_max_params,
-            .csi_separators = CsiSeparatorList.initEmpty(),
+            .csi_params = @as([csi_max_params]i32, @splat(0)),
+            .csi_separators = CsiSeparatorList.empty,
             .csi_count = 0,
-            .intermediates = [_]u8{0} ** csi_max_intermediates,
+            .intermediates = @as([csi_max_intermediates]u8, @splat(0)),
             .intermediates_len = 0,
             .csi_in_param = false,
             .osc = osc,
@@ -332,7 +332,7 @@ pub const Parser = struct {
             return .{ null, null, null };
         }
 
-        const transition = table[byte][@intFromEnum(self.state)];
+        const transition = table[byte][@backingInt(self.state)];
         if (self.isActiveState()) {
             return self.nextActive(byte, transition);
         }
@@ -685,7 +685,7 @@ pub const Parser = struct {
     fn clear(self: *Parser) void {
         self.csi_params[0] = 0;
         self.csi_count = 0;
-        self.csi_separators = CsiSeparatorList.initEmpty();
+        self.csi_separators = CsiSeparatorList.empty;
         self.intermediates_len = 0;
         self.csi_in_param = false;
     }
@@ -991,7 +991,7 @@ const OptionalTable = genTableType(true);
 fn genTableType(comptime optional: bool) type {
     const max_u8 = std.math.maxInt(u8);
     const state_info = @typeInfo(ParseState);
-    const max_state = state_info.@"enum".fields.len;
+    const max_state = state_info.@"enum".field_names.len;
     const Elem = if (optional) ?Transition else Transition;
     return [max_u8 + 1][max_state]Elem;
 }
@@ -1029,8 +1029,8 @@ fn initEmpty(result: *OptionalTable) void {
 
 fn fillAnywhere(result: *OptionalTable) void {
     const state_info = @typeInfo(ParseState);
-    inline for (state_info.@"enum".fields) |field| {
-        const source: ParseState = @enumFromInt(field.value);
+    inline for (state_info.@"enum".field_values) |value| {
+        const source: ParseState = @fromBackingInt(@intCast(value));
         single(result, 0x18, source, .ground, .execute);
         single(result, 0x1A, source, .ground, .execute);
         range(result, 0x80, 0x8F, source, .ground, .execute);
@@ -1231,14 +1231,14 @@ fn finalizeTable(result: OptionalTable) Table {
     var final: Table = undefined;
     for (0..final.len) |i| {
         for (0..final[0].len) |j| {
-            final[i][j] = result[i][j] orelse parseTransition(@enumFromInt(j), .none);
+            final[i][j] = result[i][j] orelse parseTransition(@fromBackingInt(@intCast(j)), .none);
         }
     }
     return final;
 }
 
 fn single(t: *OptionalTable, c: u8, s0: ParseState, s1: ParseState, a: TransitionAction) void {
-    t[c][@intFromEnum(s0)] = parseTransition(s1, a);
+    t[c][@backingInt(s0)] = parseTransition(s1, a);
 }
 
 fn range(t: *OptionalTable, from: u8, to: u8, s0: ParseState, s1: ParseState, a: TransitionAction) void {

@@ -50,15 +50,28 @@ pub fn build(b: *std.Build) void {
     var production_native: ?*std.Build.Module = null;
     var tested_native: ?*std.Build.Module = null;
     if (native_enabled) {
+        const native_c = nativeCModule(b, target, optimize);
         const fonts = b.addOptions();
-        fonts.addOption([]const u8, "primary_font", b.pathFromRoot("testdata/primary.ttf"));
-        fonts.addOption([]const u8, "symbol_font", b.pathFromRoot("testdata/symbols.ttf"));
-        fonts.addOption([]const u8, "mono_font", b.pathFromRoot("testdata/mono.bdf"));
+        fonts.addOption(
+            []const u8,
+            "primary_font",
+            b.root.joinString(b.allocator, "testdata/primary.ttf") catch @panic("OOM"),
+        );
+        fonts.addOption(
+            []const u8,
+            "symbol_font",
+            b.root.joinString(b.allocator, "testdata/symbols.ttf") catch @panic("OOM"),
+        );
+        fonts.addOption(
+            []const u8,
+            "mono_font",
+            b.root.joinString(b.allocator, "testdata/mono.bdf") catch @panic("OOM"),
+        );
         test_fonts = fonts.createModule();
-        const native = nativeModule(b, target, optimize);
+        const native = nativeModule(b, target, optimize, native_c);
         production_native = native;
         module.addImport("native_text", native);
-        const tested = nativeModule(b, target, optimize);
+        const tested = nativeModule(b, target, optimize, native_c);
         tested.addImport("test_fonts", test_fonts.?);
         tested_native = tested;
         test_module.addImport("native_text", tested);
@@ -141,25 +154,25 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{
         .name = "howl-render-capabilities",
         .root_module = capability_tests,
-        .filters = b.args orelse &.{},
+        .use_llvm = false,
+        .use_lld = false,
     });
-    tests.use_llvm = true;
     const check = b.step("check", "Compile the selected rendering capability and proofs");
     check.dependOn(&tests.step);
     const run_tests = b.addRunArtifact(tests);
-    if (b.args != null) run_tests.has_side_effects = true;
+    run_tests.addPassthruArgs();
     const test_step = b.step("test", "Run the selected rendering capability proofs");
     test_step.dependOn(&run_tests.step);
     if (terminal_proofs) |proofs| {
         const proof_tests = b.addTest(.{
             .name = "howl-render-terminal-proofs",
             .root_module = proofs,
-            .filters = b.args orelse &.{},
+            .use_llvm = false,
+            .use_lld = false,
         });
-        proof_tests.use_llvm = true;
         check.dependOn(&proof_tests.step);
         const run_proofs = b.addRunArtifact(proof_tests);
-        if (b.args != null) run_proofs.has_side_effects = true;
+        run_proofs.addPassthruArgs();
         test_step.dependOn(&run_proofs.step);
     }
     b.default_step = check;
@@ -206,6 +219,7 @@ fn nativeModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    native_c: *std.Build.Module,
 ) *std.Build.Module {
     const module = b.createModule(.{
         .root_source_file = b.path("src/native_text.zig"),
@@ -213,7 +227,32 @@ fn nativeModule(
         .optimize = optimize,
         .link_libc = true,
     });
+    module.addImport("native_c", native_c);
     module.linkSystemLibrary("freetype", .{});
     module.linkSystemLibrary("harfbuzz", .{});
     return module;
+}
+
+fn nativeCModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    const headers = b.addWriteFiles();
+    const header = headers.add("howl-render-native.h",
+        \\#include <ft2build.h>
+        \\#include <freetype/freetype.h>
+        \\#include <freetype/tttables.h>
+        \\#include <harfbuzz/hb.h>
+        \\#include <harfbuzz/hb-ft.h>
+        \\
+    );
+    const translate = b.addTranslateC(.{
+        .root_source_file = header,
+        .target = target,
+        .optimize = optimize,
+    });
+    translate.linkSystemLibrary("freetype", .{});
+    translate.linkSystemLibrary("harfbuzz", .{});
+    return translate.createModule();
 }

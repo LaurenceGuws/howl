@@ -6,18 +6,18 @@ const parsed_events = @import("../../src/parser.zig");
 const Event = parsed_events.Event;
 const process = route.process;
 const csi_max_params = parser_mod.max_params;
-const empty_params = [_]i32{0} ** csi_max_params;
-const empty_separators = parser_mod.CsiSeparatorList.initEmpty();
-const empty_intermediates = [_]u8{0} ** parser_mod.max_intermediates;
+const empty_params = @as([csi_max_params]i32, @splat(0));
+const empty_separators = parser_mod.CsiSeparatorList.empty;
+const empty_intermediates = @as([parser_mod.max_intermediates]u8, @splat(0));
 
 fn makeStyleChange(comptime final: u8, comptime p0: i32, comptime p1: i32, comptime count: u8) Event {
-    const params = [_]i32{ p0, p1 } ++ [_]i32{0} ** (csi_max_params - 2);
+    const params = [_]i32{ p0, p1 } ++ @as([(csi_max_params - 2)]i32, @splat(0));
     return Event{ .style_change = .{ .final = final, .params = params[0..], .separators = empty_separators, .param_count = count, .leader = 0, .private = false, .intermediates = empty_intermediates[0..], .intermediates_len = 0 } };
 }
 
 fn makePrivateStyleChange(comptime final: u8, comptime params_in: []const i32) Event {
     const params = comptime blk: {
-        var out = [_]i32{0} ** csi_max_params;
+        var out = @as([csi_max_params]i32, @splat(0));
         for (params_in, 0..) |value, index| out[index] = value;
         break :blk out;
     };
@@ -37,11 +37,11 @@ test "report mapping: device attributes and title reports" {
     try std.testing.expect(process(makeStyleChange('c', 0, 0, 0)).? == .primary_device_attributes);
     const da2 = Event{ .style_change = .{ .final = 'c', .params = empty_params[0..], .separators = empty_separators, .param_count = 0, .leader = '>', .private = false, .intermediates = empty_intermediates[0..], .intermediates_len = 0 } };
     try std.testing.expect(process(da2).? == .secondary_device_attributes);
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 0;
     const xtversion = Event{ .style_change = .{ .final = 'q', .params = params[0..], .separators = empty_separators, .param_count = 1, .leader = '>', .private = false, .intermediates = empty_intermediates[0..], .intermediates_len = 0 } };
     try std.testing.expect(process(xtversion).? == .xtversion);
-    var intermediates = [_]u8{0} ** 4;
+    var intermediates = @as([4]u8, @splat(0));
     intermediates[0] = '#';
     const xttitlepos = Event{ .style_change = .{ .final = 'S', .params = empty_params[0..], .separators = empty_separators, .param_count = 0, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } };
     try std.testing.expect(process(xttitlepos).? == .xttitlepos);
@@ -50,15 +50,15 @@ test "report mapping: device attributes and title reports" {
 }
 
 test "report mapping: checksum and report request families" {
-    var intermediates = [_]u8{0} ** 4;
-    var params = [_]i32{0} ** csi_max_params;
+    var intermediates = @as([4]u8, @splat(0));
+    var params = @as([csi_max_params]i32, @splat(0));
     intermediates[0] = '"';
     try std.testing.expect(process(Event{ .style_change = .{ .final = 'v', .params = params[0..], .separators = empty_separators, .param_count = 0, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).? == .screen_extent_report);
     intermediates[0] = '#';
     params[0] = 3;
     try std.testing.expectEqual(@as(u16, 3), process(Event{ .style_change = .{ .final = 'y', .params = params[0..], .separators = empty_separators, .param_count = 1, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).?.xtchecksum);
     intermediates[0] = '*';
-    params = [_]i32{0} ** csi_max_params;
+    params = @as([csi_max_params]i32, @splat(0));
     params[0] = 7;
     params[1] = 1;
     params[2] = 2;
@@ -74,9 +74,9 @@ test "report mapping: checksum and report request families" {
 }
 
 test "report mapping: XTREPORTSGR maps selected graphic rendition report" {
-    var intermediates = [_]u8{0} ** 4;
+    var intermediates = @as([4]u8, @splat(0));
     intermediates[0] = '#';
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 1;
     params[1] = 2;
     params[2] = 3;

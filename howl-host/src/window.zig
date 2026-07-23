@@ -11,23 +11,7 @@ const viewport = @import("viewport.zig");
 const terminal_render = howl_render.terminal;
 const text = howl_render.terminal_text;
 
-const c = @cImport({
-    @cDefine("_FORTIFY_SOURCE", "0");
-    @cInclude("errno.h");
-    @cInclude("linux/input-event-codes.h");
-    @cInclude("poll.h");
-    @cInclude("stdlib.h");
-    @cInclude("sys/eventfd.h");
-    @cInclude("sys/mman.h");
-    @cInclude("sys/timerfd.h");
-    @cInclude("unistd.h");
-    @cInclude("wayland-client.h");
-    @cInclude("cursor-shape-v1-client-protocol.h");
-    @cInclude("xkbcommon/xkbcommon.h");
-    @cInclude("xkbcommon/xkbcommon-keysyms.h");
-    @cInclude("xdg-system-bell-v1-client-protocol.h");
-    @cInclude("xdg-shell-client-protocol.h");
-});
+const c = @import("window_c");
 
 const initial_size = Size{ .width = 960, .height = 600 };
 const initial_rows: u16 = 24;
@@ -154,7 +138,7 @@ const PresentationState = struct {
 // Wayland key events use Linux input-event codes, whose inclusive bound is
 // KEY_MAX from linux/input-event-codes.h.
 const PhysicalKeys = struct {
-    admitted: std.StaticBitSet(physical_key_count) = .initEmpty(),
+    admitted: std.StaticBitSet(physical_key_count) = .empty,
 
     fn canPress(self: *const PhysicalKeys, code: u32) bool {
         return code <= c.KEY_MAX and !self.admitted.isSet(@intCast(code));
@@ -175,7 +159,7 @@ const PhysicalKeys = struct {
     }
 
     fn clear(self: *PhysicalKeys) void {
-        self.admitted = .initEmpty();
+        self.admitted = .empty;
     }
 };
 

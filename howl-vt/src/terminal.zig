@@ -2802,7 +2802,7 @@ pub const Screen = struct {
     pub fn lineGeometry(self: *const Screen, logical_row: u16) LineGeometry {
         const flags = self.row_flags orelse return .single_width;
         const idx = self.rowWrapIndex(logical_row) orelse return .single_width;
-        return @enumFromInt((flags[@intCast(idx)] & row_geometry_mask) >> row_geometry_shift);
+        return @fromBackingInt(@intCast((flags[@intCast(idx)] & row_geometry_mask) >> row_geometry_shift));
     }
 
     fn setLineGeometry(self: *Screen, logical_row: u16, geometry: LineGeometry) bool {
@@ -2811,7 +2811,7 @@ pub const Screen = struct {
         const previous = self.lineGeometry(logical_row);
         if (previous == geometry) return false;
         flags[@intCast(idx)] = (flags[@intCast(idx)] & ~row_geometry_mask) |
-            (@as(u8, @intFromEnum(geometry)) << row_geometry_shift);
+            (@as(u8, @backingInt(geometry)) << row_geometry_shift);
         const width = self.lineColumnCount(logical_row);
         if (self.cells != null and width < self.cols) self.clearRowRange(logical_row, width, self.cols);
         if (self.cursor.row == logical_row) {
@@ -2886,7 +2886,7 @@ pub const Screen = struct {
 
     fn rowFlags(wrapped: bool, geometry: LineGeometry) u8 {
         return (if (wrapped) row_wrapped_bit else 0) |
-            (@as(u8, @intFromEnum(geometry)) << row_geometry_shift);
+            (@as(u8, @backingInt(geometry)) << row_geometry_shift);
     }
 
     /// Return a value view whose cells borrow the retained logical history line.
@@ -2912,7 +2912,7 @@ pub const Screen = struct {
     fn historyLineGeometry(self: *const Screen, history_idx: u32) LineGeometry {
         const flags = self.history_flags orelse return .single_width;
         const slot = self.historySlotForRecency(history_idx) orelse return .single_width;
-        return @enumFromInt((flags[@intCast(slot)] & row_geometry_mask) >> row_geometry_shift);
+        return @fromBackingInt(@intCast((flags[@intCast(slot)] & row_geometry_mask) >> row_geometry_shift));
     }
 
     fn historyRowWrapped(self: *const Screen, history_idx: u32) bool {
@@ -4817,7 +4817,7 @@ fn encodeKittyEvent(
         if (!mod.none() or add_action) try builder.decimal(mod.protocolParameter());
         if (add_action) {
             try builder.append(":");
-            try builder.decimal(@intFromEnum(action));
+            try builder.decimal(@backingInt(action));
         }
     }
     if (add_text) {
@@ -5713,7 +5713,7 @@ const ModeState = struct {
     send_receive_mode: bool = false,
     newline_mode: bool = false,
     modify_other_keys: i8 = 0,
-    key_format: [8]u16 = [_]u16{0} ** 8,
+    key_format: [8]u16 = @as([8]u16, @splat(0)),
     focus_reporting: bool = false,
     alternate_scroll: bool = false,
     meta_sends_escape: bool = false,
@@ -5730,7 +5730,7 @@ const ModeState = struct {
     mouse_tracking: MouseTrackingMode = .off,
     mouse_protocol: MouseProtocol = .none,
     pointer_mode: u2 = 1,
-    saved_dec_modes: [savable_dec_modes.len]u8 = [_]u8{2} ** savable_dec_modes.len,
+    saved_dec_modes: [savable_dec_modes.len]u8 = @as([savable_dec_modes.len]u8, @splat(2)),
     saved_all_modes: SavedAllModes = .{},
 };
 
@@ -6538,7 +6538,7 @@ pub const HostState = struct {
     current_icon: ?[]u8 = null,
     working_directory_report: ?WorkingDirectoryReport = null,
     remote_host_report: ?[]u8 = null,
-    title_stack: [title_stack_limit]?[]u8 = [_]?[]u8{null} ** title_stack_limit,
+    title_stack: [title_stack_limit]?[]u8 = @as([title_stack_limit]?[]u8, @splat(null)),
     title_stack_len: u8 = 0,
     shell_integration: ?ShellIntegration = null,
     shell_mark: ShellMark = .{},
@@ -7236,7 +7236,7 @@ test "working-directory replacement is bounded transactional and distinguishes r
 
     var state = HostState.init(std.testing.allocator);
     defer state.deinit();
-    const oversized = [_]u8{'x'} ** (max_metadata_bytes + 1);
+    const oversized = @as([(max_metadata_bytes + 1)]u8, @splat('x'));
     try std.testing.expectError(error.ConsequenceLimit, state.replaceWorkingDirectoryReport(.{
         .kind = .path,
         .value = &oversized,
@@ -7276,7 +7276,7 @@ test "shell mark replacement is bounded transactional and reusable" {
 
     var state = HostState.init(std.testing.allocator);
     defer state.deinit();
-    const oversized = [_]u8{'x'} ** (max_metadata_bytes + 1);
+    const oversized = @as([(max_metadata_bytes + 1)]u8, @splat('x'));
     try std.testing.expectError(error.ConsequenceLimit, state.replaceShellMark(.{
         .kind = 'C',
         .status = null,
@@ -8061,7 +8061,7 @@ const kitty_keyboard_stack_capacity = 8;
 const KittyKeyStack = struct {
     flags: u8 = 0,
     stack: [kitty_keyboard_stack_capacity - 1]u8 =
-        [_]u8{0} ** (kitty_keyboard_stack_capacity - 1),
+        @as([(kitty_keyboard_stack_capacity - 1)]u8, @splat(0)),
     len: u8 = 0,
 
     /// Replaces, sets, or clears the current seven-bit Kitty flag set.
@@ -8464,7 +8464,7 @@ const C0 = enum(u8) {
 
 // Classifies one byte as its exact C0 code without rejecting unknown values.
 fn fromByte(byte: u8) C0 {
-    return @enumFromInt(byte);
+    return @fromBackingInt(@intCast(byte));
 }
 
 fn c0Action(control: C0) ?C0Action {
@@ -8511,13 +8511,13 @@ fn controlProcess(control: u8) ?SemanticEvent {
 }
 
 test "c0 handled controls keep protocol values" {
-    try std.testing.expectEqual(@as(u8, 0x07), @intFromEnum(C0.bell));
-    try std.testing.expectEqual(@as(u8, 0x08), @intFromEnum(C0.backspace));
-    try std.testing.expectEqual(@as(u8, 0x09), @intFromEnum(C0.horizontal_tab));
-    try std.testing.expectEqual(@as(u8, 0x0A), @intFromEnum(C0.line_feed));
-    try std.testing.expectEqual(@as(u8, 0x0B), @intFromEnum(C0.vertical_tab));
-    try std.testing.expectEqual(@as(u8, 0x0C), @intFromEnum(C0.form_feed));
-    try std.testing.expectEqual(@as(u8, 0x0D), @intFromEnum(C0.carriage_return));
+    try std.testing.expectEqual(@as(u8, 0x07), @backingInt(C0.bell));
+    try std.testing.expectEqual(@as(u8, 0x08), @backingInt(C0.backspace));
+    try std.testing.expectEqual(@as(u8, 0x09), @backingInt(C0.horizontal_tab));
+    try std.testing.expectEqual(@as(u8, 0x0A), @backingInt(C0.line_feed));
+    try std.testing.expectEqual(@as(u8, 0x0B), @backingInt(C0.vertical_tab));
+    try std.testing.expectEqual(@as(u8, 0x0C), @backingInt(C0.form_feed));
+    try std.testing.expectEqual(@as(u8, 0x0D), @backingInt(C0.carriage_return));
 }
 
 test "c0 maps line and cursor stream controls" {
@@ -8875,7 +8875,7 @@ fn rectArea(params: []const i32, start_idx: u8) ?RectArea {
 
 // Copies a bounded parameter suffix into rectangular attribute storage.
 fn attrParams(params: []const i32, start_idx: u8) AttrParams {
-    var out = [_]u16{0} ** parser_mod.max_params;
+    var out = @as([parser_mod.max_params]u16, @splat(0));
     const param_len = paramCount32(params);
     var idx: u8 = start_idx;
     var dst: u8 = 0;
@@ -8940,7 +8940,7 @@ fn cursorStyle(param: u16) ?CursorStyleCommand {
 
 // Copies parser-bounded mode parameters into clamped u16 storage.
 fn collectParams(params: []const i32) ModeParams {
-    var out = [_]u16{0} ** parser_mod.max_params;
+    var out = @as([parser_mod.max_params]u16, @splat(0));
     const n = @min(paramCount32(params), parser_mod.max_params);
     var idx: u8 = 0;
     while (idx < n) : (idx += 1) out[@intCast(idx)] = paramOrDefault0(params[@intCast(idx)]);
@@ -9320,7 +9320,7 @@ fn dcsEvent(
 }
 
 test "dcs request payloads map to semantic events" {
-    const empty = [_]i32{0} ** 24;
+    const empty = @as([24]i32, @splat(0));
     const status = dcsProcess(dcsEvent("$q q", " q", 'q', empty[0..], 0, .dollar)).?;
     try std.testing.expectEqualStrings(" q", status.dcs_request_status);
 
@@ -9339,7 +9339,7 @@ test "dcs request payloads map to semantic events" {
 }
 
 test "dcs legacy payload protocols classify host-neutral payloads" {
-    const empty = [_]i32{0} ** 24;
+    const empty = @as([24]i32, @splat(0));
 
     const termcap = dcsProcess(dcsEvent(
         "+p436F=7661",
@@ -11455,7 +11455,7 @@ const TerminalColorState = struct {
     cursor_text: ?Rgb = null,
     selection_background: ?Rgb = null,
     selection_foreground: ?Rgb = null,
-    special_palette: [5]?Rgb = [_]?Rgb{null} ** 5,
+    special_palette: [5]?Rgb = @as([5]?Rgb, @splat(null)),
     palette: [256]Rgb = defaultPalette(),
 };
 
@@ -12769,8 +12769,8 @@ const DcsCapture = struct {
 
     allocator: std.mem.Allocator,
     bytes: std.ArrayList(u8),
-    params: [parser_mod.max_params]i32 = [_]i32{0} ** parser_mod.max_params,
-    intermediates: [parser_mod.max_intermediates]u8 = [_]u8{0} ** parser_mod.max_intermediates,
+    params: [parser_mod.max_params]i32 = @as([parser_mod.max_params]i32, @splat(0)),
+    intermediates: [parser_mod.max_intermediates]u8 = @as([parser_mod.max_intermediates]u8, @splat(0)),
     payload_start: usize = 0,
     final: u8 = 0,
     param_count: u8 = 0,
@@ -13560,13 +13560,13 @@ test "discarded string controls stream without retaining payload bytes" {
     var stream = TerminalStream.init(&terminal);
 
     try stream.nextSlice("\x1b_G");
-    try stream.nextSlice("x" ** 8192);
+    try stream.nextSlice(&@as([8192]u8, @splat('x')));
     try stream.nextSlice("\x1b\\");
     try stream.nextSlice("\x1b^");
-    try stream.nextSlice("y" ** 8192);
+    try stream.nextSlice(&@as([8192]u8, @splat('y')));
     try stream.nextSlice("\x1b\\");
     try stream.nextSlice("\x1bX");
-    try stream.nextSlice("z" ** 8192);
+    try stream.nextSlice(&@as([8192]u8, @splat('z')));
     try stream.nextSlice("\x1b\\");
     try stream.nextSlice("ok");
 
@@ -14044,7 +14044,7 @@ pub const Terminal = struct {
     graphics: graphics_mod.Plane,
     modes: ModeState = .{},
     kitty: KittyState = .{},
-    sgr_stack: [sgr_stack_capacity]SgrStackEntry = [_]SgrStackEntry{.{}} ** sgr_stack_capacity,
+    sgr_stack: [sgr_stack_capacity]SgrStackEntry = @splat(.{}),
     sgr_stack_len: u8 = 0,
     xtchecksum_flags: u16 = 0,
     host: HostState,
@@ -14711,9 +14711,9 @@ pub const Terminal = struct {
                     self.modes.key_format[resource] = value;
                     return true;
                 } else {
-                    const empty = [_]u16{0} ** 8;
+                    const empty = @as([8]u16, @splat(0));
                     if (std.mem.eql(u16, self.modes.key_format[0..], empty[0..])) return false;
-                    self.modes.key_format = [_]u16{0} ** 8;
+                    self.modes.key_format = @as([8]u16, @splat(0));
                     return true;
                 }
             },
@@ -14970,7 +14970,7 @@ pub const Terminal = struct {
 
     /// Retires cumulative visual dirtiness only for the current unacknowledged token.
     pub fn ackVisual(self: *Terminal, token: DirtyToken) bool {
-        const generation = @intFromEnum(token);
+        const generation = @backingInt(token);
         if (generation != self.visual_generation or
             generation == self.visual_acknowledged_generation)
         {
@@ -15157,7 +15157,7 @@ pub const Terminal = struct {
                 .generation = self.graphics.generation(),
                 .content_generation = self.graphics.imageGeneration(),
             },
-            .dirty_token = @enumFromInt(self.visual_generation),
+            .dirty_token = @fromBackingInt(@intCast(self.visual_generation)),
         };
     }
 
@@ -15345,7 +15345,7 @@ pub const Terminal = struct {
         row: u16,
         col: u16,
     ) error{InvalidArgument}!?[]const u8 {
-        if (@intFromEnum(token) != self.visual_generation) return error.InvalidArgument;
+        if (@backingInt(token) != self.visual_generation) return error.InvalidArgument;
         const view = self.visualView().view;
         if (row >= view.rows or col >= view.cols) return error.InvalidArgument;
         return self.host.hyperlinkUriForId(view.cellInfoAt(row, col).attrs.link_id);

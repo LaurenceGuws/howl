@@ -2,13 +2,7 @@
 
 const std = @import("std");
 
-const c = @cImport({
-    @cInclude("ft2build.h");
-    @cInclude("freetype/freetype.h");
-    @cInclude("freetype/tttables.h");
-    @cInclude("harfbuzz/hb.h");
-    @cInclude("harfbuzz/hb-ft.h");
-});
+const c = @import("native_c");
 
 // Public bounds, failures, and owned text values.
 
@@ -215,7 +209,7 @@ pub const FontSet = struct {
 
         while (loaded < count) : (loaded += 1) {
             const source = if (loaded == 0) config.primary else config.fallbacks[loaded - 1];
-            const path = allocator.dupeZ(u8, source) catch return error.OutOfMemory;
+            const path = allocator.dupeSentinel(u8, source, 0) catch return error.OutOfMemory;
             errdefer allocator.free(path);
             var ft: c.FT_Face = undefined;
             if (c.FT_New_Face(library, path.ptr, 0, &ft) != 0) return error.FontOpen;

@@ -118,7 +118,7 @@ test "logical output identity advances only after retained text allocation succe
 test "oversized finalized line records loss and terminal continues rendering" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, std.math.maxInt(u16), 32);
     defer terminal.deinit();
-    var chunk: [64 * 1024]u8 = .{'x'} ** (64 * 1024);
+    var chunk: [64 * 1024]u8 = @splat('x');
     const chunk_count = Terminal.logical_output_line_max_bytes / chunk.len + 1;
     for (0..chunk_count) |_| try feedChanged(&terminal, &chunk);
     switch (try terminal.copyLogicalOutput(

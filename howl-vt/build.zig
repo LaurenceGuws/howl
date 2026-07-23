@@ -17,11 +17,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    const unit = b.addTest(.{ .name = "howl-vt-unit", .root_module = unit_module, .filters = b.args orelse &.{} });
-    unit.use_llvm = true;
+    const unit = b.addTest(.{
+        .name = "howl-vt-unit",
+        .root_module = unit_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
     check.dependOn(&unit.step);
     const run_unit = b.addRunArtifact(unit);
-    if (b.args != null) run_unit.has_side_effects = true;
+    run_unit.addPassthruArgs();
     test_step.dependOn(&run_unit.step);
 
     const embedding_module = b.createModule(.{
@@ -34,12 +38,12 @@ pub fn build(b: *std.Build) void {
     const embedding = b.addTest(.{
         .name = "howl-vt-embedding",
         .root_module = embedding_module,
-        .filters = b.args orelse &.{},
+        .use_llvm = false,
+        .use_lld = false,
     });
-    embedding.use_llvm = true;
     check.dependOn(&embedding.step);
     const run_embedding = b.addRunArtifact(embedding);
-    if (b.args != null) run_embedding.has_side_effects = true;
+    run_embedding.addPassthruArgs();
     test_step.dependOn(&run_embedding.step);
 
     const fuzz_module = b.createModule(.{
@@ -52,13 +56,12 @@ pub fn build(b: *std.Build) void {
     const fuzz = b.addTest(.{
         .name = "howl-vt-fuzz",
         .root_module = fuzz_module,
-        .test_runner = .{ .path = b.path("vendor/zig-0.16-test-runner/test_runner.zig"), .mode = .server },
-        .filters = b.args orelse &.{},
+        .use_llvm = false,
+        .use_lld = false,
     });
-    fuzz.use_llvm = true;
     check.dependOn(&fuzz.step);
     const run_fuzz = b.addRunArtifact(fuzz);
-    if (b.args != null) run_fuzz.has_side_effects = true;
+    run_fuzz.addPassthruArgs();
     test_step.dependOn(&run_fuzz.step);
     b.step("fuzz", "Fuzz the native Terminal ownership boundary").dependOn(&run_fuzz.step);
 
@@ -67,11 +70,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const simulation = b.addExecutable(.{ .name = "howl-vt-simulate", .root_module = simulation_module });
-    simulation.use_llvm = true;
+    const simulation = b.addExecutable(.{
+        .name = "howl-vt-simulate",
+        .root_module = simulation_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
     check.dependOn(&simulation.step);
     const run_simulation = b.addRunArtifact(simulation);
-    if (b.args) |arguments| run_simulation.addArgs(arguments);
+    run_simulation.addPassthruArgs();
     b.step("simulate", "Run VT protocol and scrollback simulations").dependOn(&run_simulation.step);
 
     const benchmark_module = b.createModule(.{
@@ -80,9 +87,14 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast,
         .link_libc = true,
     });
-    const benchmark = b.addExecutable(.{ .name = "howl-vt-m7-baseline", .root_module = benchmark_module });
+    const benchmark = b.addExecutable(.{
+        .name = "howl-vt-m7-baseline",
+        .root_module = benchmark_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
     const run_benchmark = b.addRunArtifact(benchmark);
-    if (b.args) |arguments| run_benchmark.addArgs(arguments);
+    run_benchmark.addPassthruArgs();
     b.step("benchmark", "Run the m7 VT benchmark").dependOn(&run_benchmark.step);
 
     b.default_step = check;

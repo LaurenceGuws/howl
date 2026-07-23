@@ -4,19 +4,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const posix = std.posix;
 
-const c = @cImport({
-    @cDefine("_Nonnull", "");
-    @cDefine("_Nullable", "");
-    @cDefine("_Null_unspecified", "");
-    @cDefine("BIONIC_IOCTL_NO_SIGNEDNESS_OVERLOAD", "1");
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-    @cInclude("stdlib.h");
-    @cInclude("pty.h");
-    @cInclude("signal.h");
-    @cInclude("termios.h");
-    @cInclude("sys/wait.h");
-});
+const c = @import("pty_c");
 
 // Public lifecycle failures, signals, and bounded transfer outcomes.
 
@@ -61,7 +49,7 @@ pub const ControlSignal = enum(u8) {
     terminate = 15,
 
     fn native(self: ControlSignal) c_int {
-        return @intCast(@intFromEnum(self));
+        return @intCast(@backingInt(self));
     }
 };
 
@@ -283,10 +271,10 @@ fn incomplete(transferred: usize, reason: TransferFailure) Transfer {
 
 fn childLaunchError(value: u8) StartError {
     return switch (value) {
-        @intFromEnum(ChildLaunchFailure.session) => error.ChildSessionFailed,
-        @intFromEnum(ChildLaunchFailure.stdio) => error.ChildStdioFailed,
-        @intFromEnum(ChildLaunchFailure.cwd) => error.ChildCwdFailed,
-        @intFromEnum(ChildLaunchFailure.exec) => error.ChildExecFailed,
+        @backingInt(ChildLaunchFailure.session) => error.ChildSessionFailed,
+        @backingInt(ChildLaunchFailure.stdio) => error.ChildStdioFailed,
+        @backingInt(ChildLaunchFailure.cwd) => error.ChildCwdFailed,
+        @backingInt(ChildLaunchFailure.exec) => error.ChildExecFailed,
         else => error.LaunchStatusFailed,
     };
 }
@@ -379,13 +367,13 @@ pub const Owned = struct {
         child_environment: ChildEnvironment,
         inherited: []const []const u8,
     ) InitError!Self {
-        const shell_path_z = try allocator.dupeZ(u8, shell_path);
+        const shell_path_z = try allocator.dupeSentinel(u8, shell_path, 0);
         errdefer allocator.free(shell_path_z);
 
-        const command_z = if (command) |bytes| try allocator.dupeZ(u8, bytes) else null;
+        const command_z = if (command) |bytes| try allocator.dupeSentinel(u8, bytes, 0) else null;
         errdefer if (command_z) |bytes| allocator.free(bytes);
 
-        const start_path_z = if (start_path) |bytes| try allocator.dupeZ(u8, bytes) else null;
+        const start_path_z = if (start_path) |bytes| try allocator.dupeSentinel(u8, bytes, 0) else null;
         errdefer if (start_path_z) |bytes| allocator.free(bytes);
 
         var environment = try LaunchEnvironment.init(allocator, inherited, child_environment);
@@ -942,7 +930,7 @@ fn resetChildSignalDispositions() bool {
         posix.SIG.PIPE, posix.SIG.QUIT, posix.SIG.SEGV, posix.SIG.TERM,
         posix.SIG.TRAP,
     }) |signal| {
-        if (c.sigaction(@intFromEnum(signal), @ptrCast(&sa), null) != 0) return false;
+        if (c.sigaction(@backingInt(signal), @ptrCast(&sa), null) != 0) return false;
     }
     return true;
 }
@@ -969,7 +957,7 @@ fn setupChildProcessFds(fds: ChildProcessFds, status_fd: posix.fd_t) void {
 }
 
 fn childLaunchExit(status_fd: posix.fd_t, failure: ChildLaunchFailure) noreturn {
-    var byte: [1]u8 = .{@intFromEnum(failure)};
+    var byte: [1]u8 = .{@backingInt(failure)};
     while (true) {
         const n = c.write(status_fd, &byte, byte.len);
         if (n == 1) c._exit(127);
@@ -1427,7 +1415,7 @@ test "non-reading child saturates with a bounded partial timeout" {
     );
     try owned.start(test_cols, test_rows);
     try expectOutput(&owned, "ready");
-    var bytes: [64 * 1024]u8 = .{'x'} ** (64 * 1024);
+    var bytes: [64 * 1024]u8 = @splat('x');
     const started = std.Io.Clock.awake.now(std.testing.io);
     const transfer = owned.transfer(std.testing.io, &bytes, 25);
     const elapsed = started.durationTo(std.Io.Clock.awake.now(std.testing.io)).toMilliseconds();
@@ -1451,7 +1439,7 @@ test "child consuming a strict prefix retains the partial timeout count" {
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try expectOutput(&owned, "ready");
-    var bytes: [64 * 1024]u8 = .{'p'} ** (64 * 1024);
+    var bytes: [64 * 1024]u8 = @splat('p');
     const transfer = owned.transfer(std.testing.io, &bytes, 50);
     try std.testing.expect(transfer == .incomplete);
     try std.testing.expectEqual(TransferFailure.timeout, transfer.incomplete.reason);
@@ -1472,7 +1460,7 @@ test "concurrent cancellation wakes a saturated writable wait without descriptor
     errdefer owned.deinit();
     try owned.start(test_cols, test_rows);
     try expectOutput(&owned, "ready");
-    var bytes: [64 * 1024]u8 = .{'c'} ** (64 * 1024);
+    var bytes: [64 * 1024]u8 = @splat('c');
     var context = TransferContext{ .owned = &owned, .bytes = &bytes, .timeout_ms = 10_000 };
     const thread = try std.Thread.spawn(.{}, transferThread, .{&context});
     while (!context.started.load(.acquire)) std.atomic.spinLoopHint();

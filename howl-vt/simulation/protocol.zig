@@ -224,14 +224,14 @@ pub fn runSmoke(gpa: std.mem.Allocator) !void {
 
 fn copyFixedI32(data: []const i32) [parser_mod.max_params]i32 {
     std.debug.assert(data.len <= parser_mod.max_params);
-    var out = [_]i32{0} ** parser_mod.max_params;
+    var out = @as([parser_mod.max_params]i32, @splat(0));
     std.mem.copyForwards(i32, out[0..data.len], data);
     return out;
 }
 
 fn copyFixedU8(data: []const u8) [parser_mod.max_intermediates]u8 {
     std.debug.assert(data.len <= parser_mod.max_intermediates);
-    var out = [_]u8{0} ** parser_mod.max_intermediates;
+    var out = @as([parser_mod.max_intermediates]u8, @splat(0));
     std.mem.copyForwards(u8, out[0..data.len], data);
     return out;
 }
@@ -466,7 +466,7 @@ fn hashCell(hasher: *std.hash.Fnv1a_64, cell: anytype) void {
     hashValue(hasher, cell.attrs.blink_fast);
     hashValue(hasher, cell.attrs.reverse);
     hashValue(hasher, cell.attrs.underline);
-    hashValue(hasher, @intFromEnum(cell.attrs.underline_style));
+    hashValue(hasher, @backingInt(cell.attrs.underline_style));
     hashColor(hasher, cell.attrs.underline_color);
     hashValue(hasher, cell.attrs.link_id);
 }

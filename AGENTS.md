@@ -2,7 +2,8 @@
 
 Howl is a private native Zig terminal family with no downstream compatibility
 obligation. It aims to be an exceptionally small, correct, embeddable terminal:
-Foot-direct, TigerBeetle-defensive, and native to Zig 0.16.
+Foot-direct, TigerBeetle-defensive, and native to pinned Zig
+0.17.0-dev.1454+5faa79730.
 
 Every tracked character is maintenance debt. Howl accepts debt when it buys
 terminal capability, correctness, clarity, or deterministic evidence.
@@ -65,7 +66,7 @@ judgment; they do not choose Howl's architecture.
 1. Direct, small source code; use Foot as the reference.
 2. Explicit ownership, cleanup, bounds, invariants, exact errors, and
    executable boundary checks; use TigerBeetle as the reference.
-3. Zig 0.16 runtime and build interfaces are understood before replacement.
+3. Pinned Zig runtime and build interfaces are understood before replacement.
 4. Terminal references provide protocol evidence without donating structure.
 
 Comments describe current code and maintained decisions. Public symbols,
@@ -79,6 +80,9 @@ history. Every `howl-*` directory is an independent small Zig package that owns
 its build identity, dependencies, native facts, and proofs. The root
 `howl_workspace` exports no product module or artifact; it invokes child builds,
 validates root evidence, and provides development aliases.
+
+Workspace commands use `./.zig/zig`; child-local commands inherit that pin or
+use `../.zig/zig`. Never substitute ambient Zig for the tracked `.zigversion`.
 
 QAgent directly consumes the `howl-control` and `howl-vt` packages. It pressures
 Howl through use without owning Howl's domain or importing application policy.

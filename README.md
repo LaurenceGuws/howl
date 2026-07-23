@@ -17,14 +17,22 @@ dependencies, proofs, and executable steps. The repository root is only the
 `howl_workspace` development curator: it exports no product modules or
 artifacts.
 
+Resolve and verify the tracked compiler pin:
+
+```sh
+version=$(cat .zigversion); mkdir -p .zig; ln -sfn "$HOME/.local/share/zigup/$version/files/zig" .zig/zig; test "$(./.zig/zig version)" = "$version"
+```
+
 Compile every active component and validate the workspace:
 
 ```sh
-zig build
+./.zig/zig build
 ```
 
 Run every correctness proof:
 
 ```sh
-zig build test
+./.zig/zig build test
 ```
+
+Child-local commands use `../.zig/zig`.

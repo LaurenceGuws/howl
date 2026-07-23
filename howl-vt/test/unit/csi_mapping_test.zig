@@ -11,12 +11,12 @@ const SemanticEvent = semantic_event.SemanticEvent;
 const Screen = @import("../../src/terminal.zig").Screen;
 const process = route.process;
 const csi_max_params = parser_mod.max_params;
-const empty_params = [_]i32{0} ** csi_max_params;
-const empty_separators = parser_mod.CsiSeparatorList.initEmpty();
-const empty_intermediates = [_]u8{0} ** parser_mod.max_intermediates;
+const empty_params = @as([csi_max_params]i32, @splat(0));
+const empty_separators = parser_mod.CsiSeparatorList.empty;
+const empty_intermediates = @as([parser_mod.max_intermediates]u8, @splat(0));
 
 fn makeStyleChange(comptime final: u8, comptime p0: i32, comptime p1: i32, comptime count: u8) Event {
-    const params = [_]i32{ p0, p1 } ++ [_]i32{0} ** (csi_max_params - 2);
+    const params = [_]i32{ p0, p1 } ++ @as([(csi_max_params - 2)]i32, @splat(0));
     return Event{ .style_change = .{
         .final = final,
         .params = params[0..],
@@ -30,8 +30,8 @@ fn makeStyleChange(comptime final: u8, comptime p0: i32, comptime p1: i32, compt
 }
 
 fn makeStyleChangeWithIntermediate(comptime final: u8, comptime intermediate: u8) Event {
-    const params = [_]i32{0} ** csi_max_params;
-    const intermediates = [_]u8{intermediate} ++ [_]u8{0} ** (parser_mod.max_intermediates - 1);
+    const params = @as([csi_max_params]i32, @splat(0));
+    const intermediates = [_]u8{intermediate} ++ @as([(parser_mod.max_intermediates - 1)]u8, @splat(0));
     return Event{ .style_change = .{
         .final = final,
         .params = params[0..],
@@ -45,8 +45,8 @@ fn makeStyleChangeWithIntermediate(comptime final: u8, comptime intermediate: u8
 }
 
 fn makeStyleChangeWithParamAndIntermediate(comptime final: u8, comptime p0: i32, comptime intermediate: u8) Event {
-    const params = [_]i32{p0} ++ [_]i32{0} ** (csi_max_params - 1);
-    const intermediates = [_]u8{intermediate} ++ [_]u8{0} ** (parser_mod.max_intermediates - 1);
+    const params = [_]i32{p0} ++ @as([(csi_max_params - 1)]i32, @splat(0));
+    const intermediates = [_]u8{intermediate} ++ @as([(parser_mod.max_intermediates - 1)]u8, @splat(0));
     return Event{ .style_change = .{
         .final = final,
         .params = params[0..],
@@ -61,7 +61,7 @@ fn makeStyleChangeWithParamAndIntermediate(comptime final: u8, comptime p0: i32,
 
 fn makePrivateStyleChange(comptime final: u8, comptime params_in: []const i32) Event {
     const params = comptime blk: {
-        var out = [_]i32{0} ** csi_max_params;
+        var out = @as([csi_max_params]i32, @splat(0));
         for (params_in, 0..) |value, index| out[index] = value;
         break :blk out;
     };
@@ -117,9 +117,9 @@ test "csi mapping: editing and scrolling" {
     try std.testing.expectEqual(@as(u16, 2), process(makeStyleChange('S', 2, 0, 1)).?.scroll_up_lines);
     try std.testing.expectEqual(@as(u16, 1), process(makeStyleChange('T', 0, 0, 0)).?.scroll_down_lines);
 
-    var intermediates = [_]u8{0} ** 4;
+    var intermediates = @as([4]u8, @splat(0));
     intermediates[0] = '+';
-    const params = [_]i32{3} ++ [_]i32{0} ** (csi_max_params - 1);
+    const params = [_]i32{3} ++ @as([(csi_max_params - 1)]i32, @splat(0));
     try std.testing.expectEqual(@as(u16, 3), process(Event{ .style_change = .{
         .final = 'T',
         .params = params[0..],
@@ -171,13 +171,13 @@ test "csi mapping: protection, rectangular ops, and margins" {
     try std.testing.expect(process(makePrivateStyleChange('J', &.{5})) == null);
     try std.testing.expect(process(makePrivateStyleChange('K', &.{5})) == null);
 
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 88;
     params[1] = 1;
     params[2] = 2;
     params[3] = 3;
     params[4] = 4;
-    var intermediates = [_]u8{0} ** 4;
+    var intermediates = @as([4]u8, @splat(0));
     intermediates[0] = '$';
     const fill = process(Event{ .style_change = .{
         .final = 'x',
@@ -193,7 +193,7 @@ test "csi mapping: protection, rectangular ops, and margins" {
     try std.testing.expectEqual(@as(u16, 0), fill.rect_fill.area.top);
     try std.testing.expectEqual(@as(u16, 1), fill.rect_fill.area.left);
 
-    params = [_]i32{0} ** csi_max_params;
+    params = @as([csi_max_params]i32, @splat(0));
     params[0] = 1;
     params[1] = 1;
     params[2] = 2;
@@ -216,7 +216,7 @@ test "csi mapping: protection, rectangular ops, and margins" {
     try std.testing.expectEqual(@as(u16, 3), copy.rect_copy.dest_left);
 
     intermediates[0] = '\'';
-    const insert_params = [_]i32{2} ++ [_]i32{0} ** (csi_max_params - 1);
+    const insert_params = [_]i32{2} ++ @as([(csi_max_params - 1)]i32, @splat(0));
     try std.testing.expectEqual(@as(u16, 2), process(Event{ .style_change = .{
         .final = '}',
         .params = insert_params[0..],
@@ -228,7 +228,7 @@ test "csi mapping: protection, rectangular ops, and margins" {
         .intermediates_len = 1,
     } }).?.insert_columns);
 
-    const delete_params = [_]i32{3} ++ [_]i32{0} ** (csi_max_params - 1);
+    const delete_params = [_]i32{3} ++ @as([(csi_max_params - 1)]i32, @splat(0));
     try std.testing.expectEqual(@as(u16, 3), process(Event{ .style_change = .{
         .final = '~',
         .params = delete_params[0..],
@@ -240,7 +240,7 @@ test "csi mapping: protection, rectangular ops, and margins" {
         .intermediates_len = 1,
     } }).?.delete_columns);
 
-    params = [_]i32{0} ** csi_max_params;
+    params = @as([csi_max_params]i32, @splat(0));
     params[0] = 1;
     params[1] = 1;
     params[2] = 2;
@@ -273,7 +273,7 @@ test "csi mapping: protection, rectangular ops, and margins" {
     try std.testing.expect(reverse.rect_attrs_change.reverse);
 
     intermediates[0] = '*';
-    const extent_params = [_]i32{2} ++ [_]i32{0} ** (csi_max_params - 1);
+    const extent_params = [_]i32{2} ++ @as([(csi_max_params - 1)]i32, @splat(0));
     try std.testing.expect(process(Event{ .style_change = .{
         .final = 'x',
         .params = extent_params[0..],
@@ -312,9 +312,9 @@ test "csi mapping: cursor style, save restore aliases, and invalid sequence" {
 }
 
 test "csi mapping: mode query, save restore, and erase families" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 1004;
-    var intermediates = [_]u8{0} ** 4;
+    var intermediates = @as([4]u8, @splat(0));
     intermediates[0] = '$';
     const decrqm = process(Event{ .style_change = .{
         .final = 'p',

@@ -10,12 +10,12 @@ const EraseMode = erase.ScreenEraseMode;
 const SemanticEvent = semantic_event.SemanticEvent;
 const process = action_route.process;
 const csi_max_params = parser_mod.max_params;
-const empty_params = [_]i32{0} ** csi_max_params;
-const empty_separators = parser_mod.CsiSeparatorList.initEmpty();
-const empty_intermediates = [_]u8{0} ** parser_mod.max_intermediates;
+const empty_params = @as([csi_max_params]i32, @splat(0));
+const empty_separators = parser_mod.CsiSeparatorList.empty;
+const empty_intermediates = @as([parser_mod.max_intermediates]u8, @splat(0));
 
 fn makeStyleChange(comptime final: u8, comptime p0: i32, comptime p1: i32, comptime count: u8) Event {
-    const params = [_]i32{ p0, p1 } ++ [_]i32{0} ** (csi_max_params - 2);
+    const params = [_]i32{ p0, p1 } ++ @as([(csi_max_params - 2)]i32, @splat(0));
     return Event{ .style_change = .{
         .final = final,
         .params = params[0..],
@@ -29,8 +29,8 @@ fn makeStyleChange(comptime final: u8, comptime p0: i32, comptime p1: i32, compt
 }
 
 fn makeStyleChangeWithIntermediate(comptime final: u8, comptime intermediate: u8) Event {
-    const params = [_]i32{0} ** csi_max_params;
-    const intermediates = [_]u8{intermediate} ++ [_]u8{0} ** (parser_mod.max_intermediates - 1);
+    const params = @as([csi_max_params]i32, @splat(0));
+    const intermediates = [_]u8{intermediate} ++ @as([(parser_mod.max_intermediates - 1)]u8, @splat(0));
     return Event{ .style_change = .{
         .final = final,
         .params = params[0..],
@@ -44,8 +44,8 @@ fn makeStyleChangeWithIntermediate(comptime final: u8, comptime intermediate: u8
 }
 
 fn makeStyleChangeWithParamAndIntermediate(comptime final: u8, comptime p0: i32, comptime intermediate: u8) Event {
-    const params = [_]i32{p0} ++ [_]i32{0} ** (csi_max_params - 1);
-    const intermediates = [_]u8{intermediate} ++ [_]u8{0} ** (parser_mod.max_intermediates - 1);
+    const params = [_]i32{p0} ++ @as([(csi_max_params - 1)]i32, @splat(0));
+    const intermediates = [_]u8{intermediate} ++ @as([(parser_mod.max_intermediates - 1)]u8, @splat(0));
     return Event{ .style_change = .{
         .final = final,
         .params = params[0..],
@@ -60,7 +60,7 @@ fn makeStyleChangeWithParamAndIntermediate(comptime final: u8, comptime p0: i32,
 
 fn makePrivateStyleChange(comptime final: u8, comptime params_in: []const i32) Event {
     const params = comptime blk: {
-        var out = [_]i32{0} ** csi_max_params;
+        var out = @as([csi_max_params]i32, @splat(0));
         for (params_in, 0..) |value, idx| out[idx] = value;
         break :blk out;
     };
@@ -79,7 +79,7 @@ fn makePrivateStyleChange(comptime final: u8, comptime params_in: []const i32) E
 fn makeEscFinal(final: u8) Event {
     return Event{ .esc_dispatch = .{
         .final = final,
-        .intermediates = [_]u8{0} ** 4,
+        .intermediates = @as([4]u8, @splat(0)),
         .intermediates_len = 0,
     } };
 }
@@ -105,7 +105,7 @@ test "actions: codepoint event maps to write_codepoint" {
 }
 
 test "actions: DEC private application cursor enable maps true" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 1;
     const ev = Event{ .style_change = .{
         .final = 'h',
@@ -121,7 +121,7 @@ test "actions: DEC private application cursor enable maps true" {
 }
 
 test "actions: DEC private focus reporting enable maps true" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 1004;
     const ev = Event{ .style_change = .{
         .final = 'h',
@@ -137,7 +137,7 @@ test "actions: DEC private focus reporting enable maps true" {
 }
 
 test "actions: DEC private bracketed paste disable maps false" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 2004;
     const ev = Event{ .style_change = .{
         .final = 'l',
@@ -158,7 +158,7 @@ test "actions: DEC private synchronized output maps enable disable" {
 }
 
 test "actions: DEC private mouse tracking mode mappings" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 9;
     var ev = Event{ .style_change = .{
         .final = 'h',
@@ -192,7 +192,7 @@ test "actions: DEC private mouse tracking mode mappings" {
 }
 
 test "actions: low priority DEC private modes and media copy map" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     var ev = Event{ .style_change = .{
         .final = 'h',
         .params = params[0..],
@@ -225,7 +225,7 @@ test "actions: application keypad and modifyOtherKeys mappings" {
     try std.testing.expect(process(makeEscFinal('=')).?.application_keypad);
     try std.testing.expect(!process(makeEscFinal('>')).?.application_keypad);
 
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 66;
     var ev = Event{ .style_change = .{
         .final = 'h',
@@ -264,7 +264,7 @@ test "actions: application keypad and modifyOtherKeys mappings" {
 }
 
 test "actions: xterm key format set reset and query mappings" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 4;
     params[1] = 1;
     var ev = Event{ .style_change = .{
@@ -300,7 +300,7 @@ test "actions: xterm key format set reset and query mappings" {
 }
 
 test "actions: xterm key format resource saturates above 255" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 300;
     const ev = Event{ .style_change = .{
         .final = 'f',
@@ -317,7 +317,7 @@ test "actions: xterm key format resource saturates above 255" {
 }
 
 test "actions: xterm key format query saturates above 255" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 300;
     const ev = Event{ .style_change = .{
         .final = 'g',
@@ -334,7 +334,7 @@ test "actions: xterm key format query saturates above 255" {
 }
 
 test "actions: xterm key format non-positive params normalize to 0" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = -7;
     var ev = Event{ .style_change = .{
         .final = 'f',
@@ -357,7 +357,7 @@ test "actions: xterm key format non-positive params normalize to 0" {
 }
 
 test "actions: xterm pointer mode maps bounded value" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 2;
     var ev = Event{ .style_change = .{
         .final = 'p',
@@ -389,9 +389,9 @@ test "actions: ANSI mode set reset and query map" {
     try std.testing.expectEqual(@as(u8, 1), reset.ansi_mode_reset.param_count);
     try std.testing.expectEqual(@as(u16, 2), reset.ansi_mode_reset.params[0]);
 
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 4;
-    var intermediates = [_]u8{0} ** 4;
+    var intermediates = @as([4]u8, @splat(0));
     intermediates[0] = '$';
     const query = process(Event{ .style_change = .{
         .final = 'p',
@@ -407,10 +407,10 @@ test "actions: ANSI mode set reset and query map" {
 }
 
 test "actions: locator controls map" {
-    var params = [_]i32{0} ** csi_max_params;
+    var params = @as([csi_max_params]i32, @splat(0));
     params[0] = 2;
     params[1] = 1;
-    var intermediates = [_]u8{0} ** 4;
+    var intermediates = @as([4]u8, @splat(0));
     intermediates[0] = '\'';
     const elr = process(Event{ .style_change = .{
         .final = 'z',
@@ -425,7 +425,7 @@ test "actions: locator controls map" {
     try std.testing.expectEqual(@as(u16, 2), elr.locator_reporting.mode);
     try std.testing.expectEqual(@as(u16, 1), elr.locator_reporting.unit);
 
-    params = [_]i32{0} ** csi_max_params;
+    params = @as([csi_max_params]i32, @splat(0));
     params[0] = 3;
     const req = process(Event{ .style_change = .{
         .final = '|',
@@ -439,7 +439,7 @@ test "actions: locator controls map" {
     } }) orelse return error.NoEvent;
     try std.testing.expectEqual(@as(u16, 3), req.locator_request);
 
-    params = [_]i32{0} ** csi_max_params;
+    params = @as([csi_max_params]i32, @splat(0));
     params[0] = 2;
     params[1] = 3;
     params[2] = 4;
@@ -458,7 +458,7 @@ test "actions: locator controls map" {
     try std.testing.expectEqual(@as(?u16, 4), filter.locator_filter.right);
 
     intermediates[1] = '*';
-    params = [_]i32{0} ** csi_max_params;
+    params = @as([csi_max_params]i32, @splat(0));
     params[0] = 1;
     params[1] = 3;
     const sle = process(Event{ .style_change = .{

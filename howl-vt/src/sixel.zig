@@ -254,7 +254,7 @@ fn hueChannel(min_value: i32, max_value: i32, hue_value: i32) u8 {
 }
 
 fn defaultPalette() [256][4]u8 {
-    var palette = [_][4]u8{.{ 0, 0, 0, 255 }} ** 256;
+    var palette: [256][4]u8 = @splat(.{ 0, 0, 0, 255 });
     palette[0..16].* = .{
         .{ 0x00, 0x00, 0x00, 0xff }, .{ 0x33, 0x33, 0xcc, 0xff },
         .{ 0xcc, 0x21, 0x21, 0xff }, .{ 0x33, 0xcc, 0x33, 0xff },

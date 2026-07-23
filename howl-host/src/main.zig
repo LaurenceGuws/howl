@@ -346,8 +346,8 @@ test "endpoint discovery ignores unrelated files and sorts identities" {
     const endpoint_path = try std.fs.path.join(std.testing.allocator, &.{ runtime_dir, control.endpoint_directory });
     defer std.testing.allocator.free(endpoint_path);
     try std.Io.Dir.createDirPath(.cwd(), std.testing.io, endpoint_path);
-    const first = control.TerminalId{ .bytes = .{0x22} ** 16 };
-    const second = control.TerminalId{ .bytes = .{0x11} ** 16 };
+    const first = control.TerminalId{ .bytes = @splat(0x22) };
+    const second = control.TerminalId{ .bytes = @splat(0x11) };
     var filename: [37]u8 = undefined;
     const first_path = try std.fs.path.join(
         std.testing.allocator,

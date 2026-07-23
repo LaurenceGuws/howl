@@ -11,16 +11,7 @@ const terminal = render.terminal;
 const text = render.terminal_text;
 const viewport = @import("viewport.zig");
 
-const c = @cImport({
-    @cDefine("_FORTIFY_SOURCE", "0");
-    @cInclude("EGL/egl.h");
-    @cInclude("GLES2/gl2.h");
-    @cInclude("errno.h");
-    @cInclude("sys/eventfd.h");
-    @cInclude("unistd.h");
-    @cInclude("wayland-client.h");
-    @cInclude("wayland-egl.h");
-});
+const c = @import("renderer_c");
 
 // Bounds one admitted terminal dimension before C integer narrowing.
 const max_dimension: u16 = 512;

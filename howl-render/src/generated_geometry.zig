@@ -29,7 +29,7 @@ pub fn eighthPartitionRange(size: u16, which: u16) Range {
         return .{ .start = start, .end = start + thickness };
     }
 
-    var thicknesses = [_]u16{thickness} ** 8;
+    var thicknesses = @as([8]u16, @splat(thickness));
     var extra = size - block;
     const order = [_]u8{ 3, 4, 2, 5, 6, 1, 7, 0 };
     for (order) |index| {

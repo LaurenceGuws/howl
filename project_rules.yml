@@ -14,5 +14,6 @@ rules:
   - Howl-host owns its concrete Wayland, EGL/GLES, input, retained-visual, render-thread, and presentation lifecycle.
   - Each surviving library package exposes a curated Zig module and owns its direct build and native dependencies.
   - The root workspace reconstructs no child module, dependency, native fact, proof, executable, or artifact.
+  - Every concrete artifact explicitly selects self-hosted Zig code generation and linking under the tracked compiler pin.
   - Tests prove behavior, failure, cleanup, bounds, and deterministic semantics rather than rejected architecture.
   - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.

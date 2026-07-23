@@ -17,7 +17,7 @@ pub const FontKey = packed struct(u6) {
     slot: u4,
 
     fn index(self: FontKey) usize {
-        return @as(usize, self.slot) * 4 + @intFromEnum(self.style);
+        return @as(usize, self.slot) * 4 + @backingInt(self.style);
     }
 };
 
@@ -211,7 +211,7 @@ pub const FontMap = if (features.native_text) struct {
         if (seen & (@as(u64, 1) << @intCast(default_key.index())) == 0)
             return error.MissingDefaultConfiguration;
 
-        var result = @This(){ .sets = .{null} ** 64 };
+        var result = @This(){ .sets = @splat(null) };
         errdefer result.deinit();
         for (configs) |config| {
             result.sets[config.key.index()] = try native.FontSet.init(allocator, config.native);

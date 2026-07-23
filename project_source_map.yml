@@ -1,4 +1,5 @@
 accepted:
+  .zigversion: exact Zig compiler pin resolved locally through ignored .zig/zig
   protocol_coverage.yml: pinned protocol evidence and normalized ownership facts
   protocol_coverage.nu: catalogue normalization, validation, and query commands
   tools/audit_source.sh: maintained-source audit
@@ -16,7 +17,7 @@ accepted:
   howl-vt/simulation_main.zig: simulation entry point
   howl-vt/benchmark: VT benchmark evidence
   howl-vt/benchmark_m7_baseline.zig: benchmark comparison entry point
-  howl-pty/build.zig: PTY package build and proofs
+  howl-pty/build.zig: PTY package build, coherent translated Linux headers, and proofs
   howl-pty/build.zig.zon: PTY package identity and source boundary
   howl-pty/src/howl_pty.zig: Linux PTY transport, foreground termios signals, and child-process lifecycle
   howl-control/build.zig: control package build and direct VT/PTY dependency graph
@@ -24,7 +25,7 @@ accepted:
   howl-control/src/client.zig: identity, endpoint, codec, and bounded request ownership
   howl-control/src/howl_control.zig: optional ID-addressable PTY and VT composition with transactional input, signal, and consequence replies
   howl-control/src/test.zig: control transport, lifecycle, and terminal-operation proofs
-  howl-render/build.zig: independently selected text and generated-glyph capability graphs
+  howl-render/build.zig: independently selected capability graphs and native-text-only translated headers
   howl-render/build.zig.zon: render package identity, owned assets, and licenses
   howl-render/src/root*.zig: curated roots for selected render capabilities
   howl-render/src/native_text.zig: native font loading, shaping, metrics, and alpha rasterization
@@ -36,7 +37,7 @@ accepted:
   howl-render/src/*_test.zig: selected render capability proofs
   howl-render/testdata: deterministic render test fonts
   howl-render/LICENSES: render-owned asset and native-library provenance
-  howl-host/build.zig: first-party executable build, install, run, and proof ownership
+  howl-host/build.zig: first-party executable build, install, run, proof, and distinct translated native-header ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
   howl-host/manual-fixtures: bounded compositor-visible development receipts, not installed runtime assets
   howl-host/assets/howl_window_icon.png: exact provenance-tracked logo used by the static graphics manual receipt

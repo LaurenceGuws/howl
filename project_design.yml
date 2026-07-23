@@ -28,6 +28,7 @@ workspace:
   purpose: Git, agent, and development ergonomics plus atomic history
   children: each surviving capability owns its package identity, direct dependencies, native facts, and proofs
   root: exports no product module or artifact
+  toolchain: exact tracked Zig pin resolved through ignored .zig/zig; product and proof artifacts use self-hosted codegen and linker
   evidence: protocol evidence is family-owned at the root
   embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
 

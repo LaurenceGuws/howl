@@ -485,7 +485,7 @@ test "Kitty key events retain action alternates and bounded associated text" {
         &scratch,
         .{ .key = .{ .key = try Terminal.Key.initUnicode('a'), .text = "\xff" } },
     ));
-    const oversized = [_]u8{'a'} ** (input_keyboard.max_text_bytes + 1);
+    const oversized = @as([(input_keyboard.max_text_bytes + 1)]u8, @splat('a'));
     try std.testing.expectError(error.KeyTextLimit, terminal.encodeInput(
         std.testing.allocator,
         &scratch,
@@ -981,7 +981,7 @@ test "iTerm2 host-coordinated input modes retain reports and terminal lifetime" 
     } });
     defer plain.deinit();
     try std.testing.expectEqualStrings("é", plain.bytes);
-    const oversized = [_]u8{'x'} ** @sizeOf(Terminal.InputScratch);
+    const oversized = @as([@sizeOf(Terminal.InputScratch)]u8, @splat('x'));
     try std.testing.expectError(error.KeyTextLimit, terminal.encodeInput(
         allocator,
         &scratch,
@@ -2378,14 +2378,14 @@ test "DCS payload bound reports overflow and remains restartable" {
     const half = (parser_mod.max_metadata_control_bytes - 5) / 2;
     const remainder = parser_mod.max_metadata_control_bytes - 5 - half;
     try std.testing.expect(!(try terminal.feed(header)).history_lost);
-    try std.testing.expect(!(try terminal.feed("x" ** half)).history_lost);
-    try std.testing.expect(!(try terminal.feed("x" ** remainder)).history_lost);
+    try std.testing.expect(!(try terminal.feed(&@as([half]u8, @splat('x')))).history_lost);
+    try std.testing.expect(!(try terminal.feed(&@as([remainder]u8, @splat('x')))).history_lost);
     try std.testing.expect(!(try terminal.feed("\x1b\\")).history_lost);
     try std.testing.expectEqual(@as(usize, parser_mod.max_metadata_control_bytes), dcsPayload(&terminal).?.len);
 
     try std.testing.expect(!(try terminal.feed(header)).history_lost);
-    try std.testing.expect(!(try terminal.feed("y" ** half)).history_lost);
-    try std.testing.expect(!(try terminal.feed("y" ** remainder)).history_lost);
+    try std.testing.expect(!(try terminal.feed(&@as([half]u8, @splat('y')))).history_lost);
+    try std.testing.expect(!(try terminal.feed(&@as([remainder]u8, @splat('y')))).history_lost);
     try std.testing.expectError(error.StringControlLimit, terminal.feed("y"));
     try std.testing.expectEqual(@as(usize, parser_mod.max_metadata_control_bytes), dcsPayload(&terminal).?.len);
     try std.testing.expectEqual(@as(u8, 'x'), dcsPayload(&terminal).?[5]);
@@ -2430,7 +2430,9 @@ test "generic string fallback cancellation overflow and queue saturation preserv
 
     try std.testing.expect(!(try terminal.feed("\x1b_drop\x18")).state_changed);
     try std.testing.expect(terminal.stateSnapshot().string_payload == null);
-    try std.testing.expect(!(try terminal.feed("\x1b_" ++ "x" ** 2049 ++ "\x1b\\")).state_changed);
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b_" ++ @as([2049]u8, @splat('x')) ++ "\x1b\\",
+    )).state_changed);
     try std.testing.expect(terminal.stateSnapshot().string_payload == null);
 
     for (0..5) |_| {

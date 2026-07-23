@@ -1434,7 +1434,7 @@ pub const ResponseStatus = enum(u8) {
 const WireState = enum(u8) { running = 0, stopped = 1, failed = 2 };
 
 fn encodeWireState(state: State) u8 {
-    return @intFromEnum(switch (state) {
+    return @backingInt(switch (state) {
         .running => WireState.running,
         .stopped => WireState.stopped,
         .failed => WireState.failed,
@@ -1443,9 +1443,9 @@ fn encodeWireState(state: State) u8 {
 
 fn decodeWireState(byte: u8) ?State {
     return switch (byte) {
-        @intFromEnum(WireState.running) => .running,
-        @intFromEnum(WireState.stopped) => .stopped,
-        @intFromEnum(WireState.failed) => .failed,
+        @backingInt(WireState.running) => .running,
+        @backingInt(WireState.stopped) => .stopped,
+        @backingInt(WireState.failed) => .failed,
         else => null,
     };
 }
@@ -1487,7 +1487,7 @@ pub fn decodeRequestHeader(bytes: *const [request_header_bytes]u8) RequestError!
 fn encodeRequestHeader(buffer: *[request_header_bytes]u8, operation: Operation, id: TerminalId, len: usize) void {
     @memcpy(buffer[0..4], "QTRM");
     std.mem.writeInt(u16, buffer[4..6], protocol_version, .big);
-    buffer[6] = @intFromEnum(operation);
+    buffer[6] = @backingInt(operation);
     buffer[7] = 0;
     @memcpy(buffer[8..24], &id.bytes);
     std.mem.writeInt(u32, buffer[24..28], @intCast(len), .big);
@@ -1501,33 +1501,33 @@ fn decodeResponseHeader(
     if (!std.mem.eql(u8, bytes[0..4], "QTRS")) return error.BadMagic;
     if (std.mem.readInt(u16, bytes[4..6], .big) != protocol_version) return error.WrongVersion;
     if (!std.mem.eql(u8, bytes[8..24], &expected_id.bytes)) return error.WrongTerminal;
-    if (bytes[7] != @intFromEnum(expected_operation) and
-        !(bytes[6] != @intFromEnum(ResponseStatus.ok) and bytes[7] == 0))
+    if (bytes[7] != @backingInt(expected_operation) and
+        !(bytes[6] != @backingInt(ResponseStatus.ok) and bytes[7] == 0))
         return error.InvalidResponse;
     if (!std.mem.allEqual(u8, bytes[24..40], 0) or
         !std.mem.allEqual(u8, bytes[44..56], 0)) return error.InvalidResponse;
     const payload_len = std.mem.readInt(u32, bytes[40..44], .big);
     if (payload_len > max_output_response_bytes) return error.ResponseLimit;
-    if (bytes[6] != @intFromEnum(ResponseStatus.ok)) {
+    if (bytes[6] != @backingInt(ResponseStatus.ok)) {
         if (payload_len != 0) return error.InvalidResponse;
         return switch (bytes[6]) {
-            @intFromEnum(ResponseStatus.wrong_terminal) => error.WrongTerminal,
-            @intFromEnum(ResponseStatus.unauthorized) => error.Unauthorized,
-            @intFromEnum(ResponseStatus.invalid_payload),
-            @intFromEnum(ResponseStatus.truncated),
-            @intFromEnum(ResponseStatus.oversized),
-            @intFromEnum(ResponseStatus.bad_magic),
-            @intFromEnum(ResponseStatus.unknown_operation),
+            @backingInt(ResponseStatus.wrong_terminal) => error.WrongTerminal,
+            @backingInt(ResponseStatus.unauthorized) => error.Unauthorized,
+            @backingInt(ResponseStatus.invalid_payload),
+            @backingInt(ResponseStatus.truncated),
+            @backingInt(ResponseStatus.oversized),
+            @backingInt(ResponseStatus.bad_magic),
+            @backingInt(ResponseStatus.unknown_operation),
             => error.InvalidPayload,
-            @intFromEnum(ResponseStatus.wrong_version) => error.WrongVersion,
-            @intFromEnum(ResponseStatus.input_limit) => error.InputLimit,
-            @intFromEnum(ResponseStatus.invalid_utf8) => error.InvalidUtf8,
-            @intFromEnum(ResponseStatus.invalid_text) => error.InvalidText,
-            @intFromEnum(ResponseStatus.key_text_limit) => error.KeyTextLimit,
-            @intFromEnum(ResponseStatus.length_overflow) => error.LengthOverflow,
-            @intFromEnum(ResponseStatus.out_of_memory) => error.OutOfMemory,
-            @intFromEnum(ResponseStatus.consequence_limit) => error.ConsequenceLimit,
-            @intFromEnum(ResponseStatus.resize_rollback_failed) => error.ResizeRollbackFailed,
+            @backingInt(ResponseStatus.wrong_version) => error.WrongVersion,
+            @backingInt(ResponseStatus.input_limit) => error.InputLimit,
+            @backingInt(ResponseStatus.invalid_utf8) => error.InvalidUtf8,
+            @backingInt(ResponseStatus.invalid_text) => error.InvalidText,
+            @backingInt(ResponseStatus.key_text_limit) => error.KeyTextLimit,
+            @backingInt(ResponseStatus.length_overflow) => error.LengthOverflow,
+            @backingInt(ResponseStatus.out_of_memory) => error.OutOfMemory,
+            @backingInt(ResponseStatus.consequence_limit) => error.ConsequenceLimit,
+            @backingInt(ResponseStatus.resize_rollback_failed) => error.ResizeRollbackFailed,
             else => error.RemoteRejected,
         };
     }
@@ -1543,8 +1543,8 @@ fn encodeResponseHeader(
 ) void {
     @memcpy(header[0..4], "QTRS");
     std.mem.writeInt(u16, header[4..6], protocol_version, .big);
-    header[6] = @intFromEnum(status);
-    header[7] = if (operation) |value| @intFromEnum(value) else 0;
+    header[6] = @backingInt(status);
+    header[7] = if (operation) |value| @backingInt(value) else 0;
     @memcpy(header[8..24], &terminal_id.bytes);
     @memset(header[24..40], 0);
     std.mem.writeInt(u32, header[40..44], @intCast(payload_len), .big);
@@ -1607,8 +1607,8 @@ fn connectLinux(io: std.Io, path: []const u8) ClientError!net.Stream {
     const result = linux.connect(fd, @ptrCast(&address), address_len);
     switch (linux.errno(result)) {
         .SUCCESS => {},
-        // Zig 0.16's Unix connector omits ECONNREFUSED and reports a stale
-        // pathname as Unexpected. This seam retains both exact closed meanings.
+        // A stale Unix socket pathname can report either absent or refused;
+        // both mean that this terminal endpoint is closed.
         .NOENT, .CONNREFUSED => return error.TerminalClosed,
         .INPROGRESS, .AGAIN => {
             const started = std.Io.Clock.awake.now(io);
@@ -1647,7 +1647,7 @@ fn socketError(fd: posix.fd_t) !linux.E {
     if (linux.errno(result) != .SUCCESS or length != @sizeOf(c_int)) {
         return error.SocketErrorReadFailed;
     }
-    return @enumFromInt(value);
+    return @fromBackingInt(@intCast(value));
 }
 
 // This process-local classifier preserves timeout across the inferred poll and
@@ -1757,13 +1757,13 @@ pub fn shutdownSocket(fd: posix.fd_t) void {
 }
 
 test "terminal identity and endpoint filename have one canonical representation" {
-    const id = TerminalId{ .bytes = .{0x5a} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x5a) };
     var text: [32]u8 = undefined;
     var filename: [37]u8 = undefined;
     try std.testing.expectEqual(id, try TerminalId.parse(id.format(&text)));
     try std.testing.expectEqual(id, try TerminalId.parseEndpoint(id.formatEndpoint(&filename)));
-    try std.testing.expectError(error.InvalidTerminalId, TerminalId.parse("5A" ** 16));
-    try std.testing.expectError(error.InvalidTerminalId, TerminalId.parse("00" ** 16));
+    try std.testing.expectError(error.InvalidTerminalId, TerminalId.parse(&@as([32]u8, @splat('A'))));
+    try std.testing.expectError(error.InvalidTerminalId, TerminalId.parse(&@as([32]u8, @splat('0'))));
     try std.testing.expectError(error.InvalidTerminalId, TerminalId.parseEndpoint("unrelated.sock"));
 
     var client = try Client.init(std.testing.allocator, std.testing.io, "/run/user/1000", id);
@@ -1775,7 +1775,7 @@ test "terminal identity and endpoint filename have one canonical representation"
 }
 
 test "request framing survives fragmented assembly and rejects bad bounds" {
-    const id = TerminalId{ .bytes = .{0x5a} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x5a) };
     var header: [request_header_bytes]u8 = undefined;
     encodeRequestHeader(&header, .send, id, 3);
     const request = try decodeRequestHeader(&header);
@@ -1853,7 +1853,7 @@ test "binary event batch rejects trailing and reserved mouse bytes" {
 }
 
 test "exact input framing preserves NUL and escape bytes" {
-    const id = TerminalId{ .bytes = .{0xa5} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0xa5) };
     const payload = "a\x00\x1b[b";
     var bytes: [request_header_bytes + payload.len]u8 = undefined;
     encodeRequestHeader(bytes[0..request_header_bytes], .send, id, payload.len);
@@ -1863,7 +1863,7 @@ test "exact input framing preserves NUL and escape bytes" {
 }
 
 test "request framing rejects nonzero reserved bytes" {
-    const id = TerminalId{ .bytes = .{0x31} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x31) };
     var header: [request_header_bytes]u8 = undefined;
     encodeRequestHeader(&header, .status, id, 0);
     header[7] = 1;
@@ -1871,8 +1871,8 @@ test "request framing rejects nonzero reserved bytes" {
 }
 
 test "response framing rejects a different terminal identity" {
-    const expected = TerminalId{ .bytes = .{1} ** 16 };
-    const other = TerminalId{ .bytes = .{2} ** 16 };
+    const expected = TerminalId{ .bytes = @splat(1) };
+    const other = TerminalId{ .bytes = @splat(2) };
     var header: [response_header_bytes]u8 = @splat(0);
     @memcpy(header[0..4], "QTRS");
     std.mem.writeInt(u16, header[4..6], protocol_version, .big);
@@ -1881,10 +1881,10 @@ test "response framing rejects a different terminal identity" {
 }
 
 test "wire status and lifecycle values remain protocol v1 constants" {
-    try std.testing.expectEqual(@as(u8, 0), @intFromEnum(ResponseStatus.ok));
-    try std.testing.expectEqual(@as(u8, 11), @intFromEnum(ResponseStatus.internal_failure));
-    try std.testing.expectEqual(@as(u8, 19), @intFromEnum(ResponseStatus.resize_rollback_failed));
-    try std.testing.expectEqual(@as(u8, 20), @intFromEnum(ResponseStatus.reserved_20));
+    try std.testing.expectEqual(@as(u8, 0), @backingInt(ResponseStatus.ok));
+    try std.testing.expectEqual(@as(u8, 11), @backingInt(ResponseStatus.internal_failure));
+    try std.testing.expectEqual(@as(u8, 19), @backingInt(ResponseStatus.resize_rollback_failed));
+    try std.testing.expectEqual(@as(u8, 20), @backingInt(ResponseStatus.reserved_20));
     try std.testing.expectEqual(@as(u8, 0), encodeWireState(.running));
     try std.testing.expectEqual(@as(u8, 1), encodeWireState(.stopped));
     try std.testing.expectEqual(@as(u8, 2), encodeWireState(.failed));
@@ -1895,12 +1895,12 @@ test "wire status and lifecycle values remain protocol v1 constants" {
 }
 
 test "wire preserves resize rollback failure as an exact remote error" {
-    const id = TerminalId{ .bytes = .{0x19} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x19) };
     var header: [response_header_bytes]u8 = @splat(0);
     @memcpy(header[0..4], "QTRS");
     std.mem.writeInt(u16, header[4..6], protocol_version, .big);
-    header[6] = @intFromEnum(ResponseStatus.resize_rollback_failed);
-    header[7] = @intFromEnum(Operation.resize);
+    header[6] = @backingInt(ResponseStatus.resize_rollback_failed);
+    header[7] = @backingInt(Operation.resize);
     @memcpy(header[8..24], &id.bytes);
     try std.testing.expectError(
         error.ResizeRollbackFailed,
@@ -1909,12 +1909,12 @@ test "wire preserves resize rollback failure as an exact remote error" {
 }
 
 test "unknown remote response status retains established rejection error" {
-    const id = TerminalId{ .bytes = .{0x4a} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x4a) };
     var header: [response_header_bytes]u8 = @splat(0);
     @memcpy(header[0..4], "QTRS");
     std.mem.writeInt(u16, header[4..6], protocol_version, .big);
     header[6] = 0xff;
-    header[7] = @intFromEnum(Operation.status);
+    header[7] = @backingInt(Operation.status);
     @memcpy(header[8..24], &id.bytes);
     try std.testing.expectError(
         error.RemoteRejected,
@@ -1923,7 +1923,7 @@ test "unknown remote response status retains established rejection error" {
 }
 
 test "response framing rejects hostile operation bounds and reserved values" {
-    const id = TerminalId{ .bytes = .{0x72} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x72) };
     var input: [response_header_bytes]u8 = undefined;
     encodeResponseHeader(&input, id, .send, .ok, 0);
 
@@ -1959,7 +1959,7 @@ test "send response rejects impossible event and byte evidence" {
 }
 
 test "hostile status validation releases an already copied cwd" {
-    const id = TerminalId{ .bytes = .{0x42} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x42) };
     const payload = try encodeStatus(std.testing.allocator, .{
         .terminal_id = id,
         .state = .running,
@@ -1988,7 +1988,7 @@ test "hostile status validation releases an already copied cwd" {
 }
 
 test "status wire validates lifecycle and bounded loss evidence" {
-    const id = TerminalId{ .bytes = .{0x43} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x43) };
     const payload = try encodeStatus(std.testing.allocator, .{
         .terminal_id = id,
         .state = .failed,
@@ -2092,7 +2092,7 @@ test "status wire validates lifecycle and bounded loss evidence" {
 }
 
 test "hostile observations reject dimensions outside the owned surface bounds" {
-    const id = TerminalId{ .bytes = .{0x51} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x51) };
     const status_payload = try encodeStatus(std.testing.allocator, .{
         .terminal_id = id,
         .state = .running,
@@ -2217,7 +2217,7 @@ test "client maps a stale endpoint pathname to terminal closed" {
     const runtime_dir = try testRuntimeDir();
     defer std.testing.allocator.free(runtime_dir);
     defer std.Io.Dir.cwd().deleteTree(std.testing.io, runtime_dir) catch {};
-    const id = TerminalId{ .bytes = .{0x6b} ** 16 };
+    const id = TerminalId{ .bytes = @splat(0x6b) };
     var client = try Client.init(std.testing.allocator, std.testing.io, runtime_dir, id);
     defer client.deinit();
     try std.Io.Dir.createDirPath(

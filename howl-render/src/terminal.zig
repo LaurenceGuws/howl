@@ -391,7 +391,7 @@ test "terminal images copy only changed bytes and preflight leaves destinations 
     defer vt.deinit();
     try std.testing.expect((try vt.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).state_changed);
     const source = vt.visualView().images;
-    var pixels = [_]u8{0xaa} ** 4;
+    var pixels = @as([4]u8, @splat(0xaa));
     var uploads: [1]ImageUpload = undefined;
     var removals: [1]u32 = .{99};
     var placements: [1]ImagePlacement = undefined;
@@ -407,7 +407,7 @@ test "terminal images copy only changed bytes and preflight leaves destinations 
     try std.testing.expectEqual(@as(u16, 0), update.placements[0].row);
 
     const retained = [_]ImageIdentity{update.uploads[0].identity};
-    var untouched = [_]u8{0xcc} ** 4;
+    var untouched = @as([4]u8, @splat(0xcc));
     const unchanged = try projectImages(source, .{
         .retained = &retained,
         .pixels = &untouched,
@@ -418,7 +418,7 @@ test "terminal images copy only changed bytes and preflight leaves destinations 
     try std.testing.expectEqual(@as(usize, 0), unchanged.pixels.len);
     try std.testing.expectEqualSlices(u8, &.{ 0xcc, 0xcc, 0xcc, 0xcc }, &untouched);
 
-    var short = [_]u8{0xdd} ** 3;
+    var short = @as([3]u8, @splat(0xdd));
     try std.testing.expectError(error.InsufficientImagePixels, projectImages(source, .{
         .retained = &.{},
         .pixels = &short,

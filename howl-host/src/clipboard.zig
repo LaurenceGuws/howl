@@ -3,14 +3,7 @@
 const std = @import("std");
 const control = @import("howl_control");
 
-const c = @cImport({
-    @cDefine("_FORTIFY_SOURCE", "0");
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("errno.h");
-    @cInclude("fcntl.h");
-    @cInclude("sys/random.h");
-    @cInclude("unistd.h");
-});
+const c = @import("clipboard_c");
 
 /// Bounds clipboard text for both bracketed-paste admission and exact OSC 52 replies.
 pub const max_bytes: usize = @min(control.max_input_bytes - 12, control.clipboard_reply_max_bytes);
@@ -640,7 +633,7 @@ test "Kitty reply construction is allocation-transactional and bounded" {
         kittyReplyAllocation,
         .{},
     );
-    const oversized = [_]u8{'x'} ** (kitty_read_max_bytes + 1);
+    const oversized = @as([(kitty_read_max_bytes + 1)]u8, @splat('x'));
     try std.testing.expectError(
         error.ClipboardLimit,
         kittyReadReply(std.testing.allocator, "", .plain, &oversized),

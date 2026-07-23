@@ -221,7 +221,7 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     try std.testing.expect(decorations.strike_height > 0);
     try std.testing.expect(map.cellMetrics(.{ .slot = 1, .style = .normal }) == null);
     try std.testing.expect(map.decorationMetrics(.{ .slot = 1, .style = .normal }) == null);
-    var cells = [_]terminal.Cell{cell(0)} ** 12;
+    var cells = @as([12]terminal.Cell, @splat(cell(0)));
     cells[8] = cell('f');
     cells[9] = cell('i');
     cells[10] = cell('A');
@@ -440,7 +440,7 @@ fn cell(codepoint: u21) terminal.Cell {
     return .{
         .codepoint = codepoint,
         .combining_len = 0,
-        .combining = .{0} ** terminal.max_combining,
+        .combining = @splat(0),
         .foreground = .{ .r = 0, .g = 0, .b = 0 },
         .background = .{ .r = 0, .g = 0, .b = 0 },
         .underline_color = .{ .r = 0, .g = 0, .b = 0 },
