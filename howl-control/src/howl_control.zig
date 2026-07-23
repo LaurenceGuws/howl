@@ -226,6 +226,8 @@ pub const clipboard_reply_max_bytes = howl_vt.Terminal.clipboard_reply_max_bytes
 pub const clipboard_max_count = howl_vt.Terminal.clipboard_max_count;
 /// Matches the VT owner's bounded ordered window-request capacity.
 pub const window_request_max_count = howl_vt.Terminal.window_request_max_count;
+/// Matches the VT owner's bounded color-preference query capacity.
+pub const color_preference_query_max_count = howl_vt.Terminal.color_preference_query_max_count;
 /// Identifies the host-neutral policy kind of one retained ordered notification.
 pub const NotificationKind = enum {
     message,
@@ -325,6 +327,15 @@ pub const WindowReplyError = std.mem.Allocator.Error || error{
     ConsequenceLimit,
     StaleWindowRequest,
     WindowReplyMismatch,
+};
+/// Selects one host-observed terminal color preference.
+pub const ColorPreference = howl_vt.Terminal.ColorSchemePreference;
+/// Retains exact complete or partial color-preference reply transfer truth.
+pub const ColorPreferenceReplyTransfer = client.InputTransfer;
+/// Reports color-preference reply preparation or exact identity failure.
+pub const ColorPreferenceReplyError = std.mem.Allocator.Error || error{
+    ConsequenceLimit,
+    StaleColorPreferenceQuery,
 };
 
 const ReaderFailure = enum(u8) {
@@ -955,6 +966,48 @@ pub const Terminal = struct {
         }
         self.lock.lockUncancelable(self.io);
         const completed = self.model.completeWindowReply(generation);
+        self.lock.unlock(self.io);
+        try completed;
+        self.notify();
+        return transfer;
+    }
+
+    /// Copies the oldest retained private 996 query identity.
+    pub fn colorPreferenceQueryHead(self: *Terminal) ?u64 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.stateSnapshot().color_preference_query_generation;
+    }
+
+    /// Serializes, flushes, then consumes one exact private 996 query.
+    pub fn replyColorPreferenceQuery(
+        self: *Terminal,
+        generation: u64,
+        preference: ColorPreference,
+    ) ColorPreferenceReplyError!ColorPreferenceReplyTransfer {
+        self.admission_lock.lockUncancelable(self.io);
+        defer self.admission_lock.unlock(self.io);
+        self.lock.lockUncancelable(self.io);
+        const prepared = self.model.prepareColorSchemePreferenceReply(
+            generation,
+            preference,
+            self.allocator,
+        ) catch |failure| {
+            self.lock.unlock(self.io);
+            return failure;
+        };
+        self.lock.unlock(self.io);
+        defer self.allocator.free(prepared);
+        std.debug.assert(prepared.len <= max_transfer_bytes);
+        self.write_lock.lockUncancelable(self.io);
+        const transfer = self.transport.transfer(self.io, prepared, self.transfer_timeout_ms);
+        self.write_lock.unlock(self.io);
+        switch (transfer) {
+            .incomplete => return transfer,
+            .complete => {},
+        }
+        self.lock.lockUncancelable(self.io);
+        const completed = self.model.completeColorSchemePreferenceReply(generation);
         self.lock.unlock(self.io);
         try completed;
         self.notify();
@@ -1863,6 +1916,31 @@ test "host viewport operation retains history and mouse ownership facts" {
     try std.testing.expect(alternate.alternate_scroll);
     try terminal.consume("\x1b[?1007l");
     try std.testing.expect(!terminal.viewportFacts().alternate_scroll);
+}
+
+test "host color-preference query transfer consumes only after complete delivery" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+
+    try terminal.consume("\x1b[?996n");
+    terminal.consumeWake();
+    const generation = terminal.colorPreferenceQueryHead().?;
+    try std.testing.expectError(
+        error.StaleColorPreferenceQuery,
+        terminal.replyColorPreferenceQuery(generation + 1, .dark),
+    );
+    try std.testing.expectEqual(generation, terminal.colorPreferenceQueryHead().?);
+    try std.testing.expectEqual(
+        client.InputTransfer{ .complete = "\x1b[?997;1n".len },
+        try terminal.replyColorPreferenceQuery(generation, .dark),
+    );
+    try std.testing.expectEqual(@as(?u64, null), terminal.colorPreferenceQueryHead());
 }
 
 test "host presentation copies and acknowledges ordered notifications exactly" {

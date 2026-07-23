@@ -915,6 +915,40 @@ test "Kitty color-preference queries retain ordered intent and transactional rep
     try std.testing.expect(publication.color_preference_query_generation == null);
 }
 
+test "Kitty color-preference query preparation separates transfer from consumption" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 2, 4);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[?996n\x1b[?996n")).state_changed);
+    const token = terminal.semanticSequence();
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    try std.testing.expectError(
+        error.OutOfMemory,
+        terminal.prepareColorSchemePreferenceReply(1, .dark, failing.allocator()),
+    );
+    try std.testing.expectEqual(@as(u8, 2), terminal.stateSnapshot().color_preference_query_count);
+    try std.testing.expectEqual(token, terminal.semanticSequence());
+    const prepared = try terminal.prepareColorSchemePreferenceReply(1, .dark, allocator);
+    defer allocator.free(prepared);
+    try std.testing.expectEqualStrings("\x1b[?997;1n", prepared);
+    try std.testing.expectEqual(@as(u8, 2), terminal.stateSnapshot().color_preference_query_count);
+    try std.testing.expectEqual(token, terminal.semanticSequence());
+    try std.testing.expectError(
+        error.StaleColorPreferenceQuery,
+        terminal.completeColorSchemePreferenceReply(2),
+    );
+    try terminal.completeColorSchemePreferenceReply(1);
+    try std.testing.expectEqual(@as(u64, 2), terminal.stateSnapshot().color_preference_query_generation.?);
+    try std.testing.expectEqual(@as(u8, 1), terminal.stateSnapshot().color_preference_query_count);
+
+    try std.testing.expect((try terminal.feed("\x1b G")).state_changed);
+    const eight_bit = try terminal.prepareColorSchemePreferenceReply(2, .light, allocator);
+    defer allocator.free(eight_bit);
+    try std.testing.expectEqualStrings("\x1b[?997;2n", eight_bit);
+    try std.testing.expectEqual(@as(u8, 1), terminal.stateSnapshot().color_preference_query_count);
+}
+
 test "iTerm2 host-coordinated input modes retain reports and terminal lifetime" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);

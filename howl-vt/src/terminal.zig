@@ -13154,6 +13154,44 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
+    /// Serialize one matching color-preference query reply without mutation.
+    ///
+    /// The returned bytes are owned by `allocator` and must be freed by the
+    /// caller. Stale identity, allocation failure, and reply saturation
+    /// preserve the retained FIFO head.
+    pub fn prepareColorSchemePreferenceReply(
+        self: *Terminal,
+        generation: u64,
+        preference: ColorSchemePreference,
+        allocator: std.mem.Allocator,
+    ) ColorPreferenceReplyError![]u8 {
+        const head = self.host.colorPreferenceQueryGeneration() orelse
+            return error.StaleColorPreferenceQuery;
+        if (head != generation) return error.StaleColorPreferenceQuery;
+        var output = PendingOutput.init();
+        output.eight_bit_controls = self.host.pending_output.eight_bit_controls;
+        errdefer output.bytes.deinit(allocator);
+        try appendCsiReply(
+            &output,
+            allocator,
+            .kitty,
+            if (preference == .dark) "?997;1n" else "?997;2n",
+        );
+        return output.bytes.toOwnedSlice(allocator);
+    }
+
+    /// Consume only the exact color-preference query after its prepared reply flush.
+    pub fn completeColorSchemePreferenceReply(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleColorPreferenceQuery}!void {
+        const head = self.host.colorPreferenceQueryGeneration() orelse
+            return error.StaleColorPreferenceQuery;
+        if (head != generation) return error.StaleColorPreferenceQuery;
+        self.host.consumeColorPreferenceQuery();
+        advanceIdentity(&self.semantic_sequence);
+    }
+
     /// Applies RIS while preserving dimensions and owned allocations.
     pub fn hardReset(self: *Terminal) void {
         const visual_before = self.visualMutationState();

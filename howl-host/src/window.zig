@@ -293,7 +293,8 @@ const AxisFrame = struct {
 /// Reports exact executable construction, dispatch, projection, or rendering failure.
 pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitError || control.InputError ||
     control.SelectionError || control.ClipboardSetError || control.ClipboardReplyError ||
-    control.WindowReplyError || control.ResizeError || control.ReaderError ||
+    control.WindowReplyError || control.ColorPreferenceReplyError ||
+    control.ResizeError || control.ReaderError ||
     terminal_render.Error || renderer.Error ||
     error{ StaleNotification, StaleWindowRequest, WindowReplyRequired } || error{
     InvalidSize,
@@ -713,6 +714,7 @@ const Window = struct {
         self.applyTerminalPresentation();
         try self.applyClipboardConsequences();
         try self.applyWindowRequests();
+        try self.applyColorPreferenceQueries();
     }
 
     fn applyTerminalPresentation(self: *Window) void {
@@ -1147,6 +1149,19 @@ const Window = struct {
             if (windowRequestRequestsMinimize(head.request))
                 c.xdg_toplevel_set_minimized(self.toplevel.?);
             try terminal.acknowledgeWindowRequest(head.generation);
+        }
+    }
+
+    fn applyColorPreferenceQueries(self: *Window) Error!void {
+        const terminal = self.terminal.?;
+        var handled: u8 = 0;
+        while (handled < control.color_preference_query_max_count) : (handled += 1) {
+            const generation = terminal.colorPreferenceQueryHead() orelse return;
+            // The first-party palette is a fixed dark presentation policy.
+            switch (try terminal.replyColorPreferenceQuery(generation, .dark)) {
+                .complete => {},
+                .incomplete => return error.InputIncomplete,
+            }
         }
     }
 

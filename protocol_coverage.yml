@@ -2301,11 +2301,11 @@ references:
               proof: {path: howl-vt/test/unit/terminal_test.zig,
                 test: synchronized update DCS shares exact bounded mode state}}}
           - {id: iterm2.mode.dark_mode_dsr, raw: "CSI ? 2031 h|l", effect: toggle unsolicited dark-mode report,
-            conditions: "The host supplies each observed dark or light fact; Howl retains, reports, saves, resets, and
-              transactionally serializes the mode but additionally cancels pending wrap at its boundary",
-            relevance: extension, howl: {support: partial, disposition: delegated, owner: howl-host,
+            conditions: "Howl retains, reports, saves, and resets the mode but uses a fixed dark executable preference,
+              so no unsolicited preference transition occurs; Howl additionally cancels pending wrap at its boundary.",
+            relevance: extension, howl: {support: partial, disposition: excluded,
               rationale: *howl_report_policy_difference,
-              residual: The Wayland host does not yet observe and submit current color-scheme changes.,
+              residual: Howl deliberately uses one fixed dark executable preference rather than observing system theme changes.,
               source: howl-vt/src/terminal.zig,
               symbol: Terminal.reportColorSchemePreference, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -2742,13 +2742,13 @@ references:
             raw: "CSI ? 2031 h|l"
             effect: toggle color-preference notifications
             conditions: >-
-              The embedder supplies each observed dark or light fact; Howl gates and transactionally serializes the
-              fixed Kitty reply, reports mode state, saves and restores it, and clears it on RIS. Howl additionally
-              cancels pending wrap at the DECSET or DECRST boundary.
+              Howl gates and transactionally serializes notifications, reports mode state, saves and restores it, and
+              clears it on RIS. Its executable uses one fixed dark preference, so no unsolicited preference transition
+              occurs. Howl additionally cancels pending wrap at the DECSET or DECRST boundary.
             relevance: extension
-            howl: {support: partial, disposition: delegated, owner: howl-host,
+            howl: {support: partial, disposition: excluded,
               rationale: *howl_input_policy_difference,
-              residual: The Wayland host does not yet observe and submit current color-scheme changes.,
+              residual: Howl deliberately uses one fixed dark executable preference rather than observing system theme changes.,
               source: howl-vt/src/terminal.zig,
               symbol: Terminal.reportColorSchemePreference, proof: {
                 path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -2984,14 +2984,14 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           - {id: kitty.csi.decdsr, raw: "CSI ? [Ps=0] n", effect: report DEC status,
-            conditions: "Howl retains up to 16 ordered private 996 queries for exact host replies and also supports DEC
-              locator statuses 55 and 56, which Kitty ignores",
-            howl: {support: partial, disposition: delegated, owner: howl-host,
+            conditions: "Howl retains up to 16 ordered private 996 queries and its host transactionally replies with
+              its fixed dark preference; Howl also supports DEC locator statuses 55 and 56, which Kitty ignores.",
+            howl: {support: partial, disposition: excluded,
               rationale: *howl_report_policy_difference,
-              residual: The Wayland host does not yet answer retained private 996 color-preference queries.,
-              source: howl-vt/src/terminal.zig, symbol: Terminal.replyColorSchemePreference,
-              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "Kitty color-preference queries retain ordered intent and transactional replies"}}}
+              residual: Howl reports one fixed dark executable preference and additionally implements DEC locator statuses.,
+              source: howl-host/src/window.zig, symbol: Window.applyColorPreferenceQueries,
+              proof: {path: howl-control/src/howl_control.zig,
+                symbol: "host color-preference query transfer consumes only after complete delivery"}}}
           - {id: kitty.csi.save_cursor, raw: "CSI s", effect: save cursor,
             conditions: "Howl additionally retains cursor visibility plus cell-domain protection, hyperlink, font, and
               baseline rendition",
