@@ -195,6 +195,213 @@ pub const Update = struct {
 /// Reports only caller-capacity or explicit reconstruction requirements.
 pub const Error = error{ FullRequired, InsufficientCells, InsufficientPatches };
 
+/// Identifies one decoded terminal image already retained by the caller.
+pub const ImageIdentity = struct {
+    /// Matches the application-selected Kitty image identity.
+    id: u32,
+    /// Distinguishes replacement content under the same identity.
+    generation: u64,
+};
+
+/// Locates one newly required RGBA upload in caller pixel storage.
+pub const ImageUpload = struct {
+    /// Supplies identity and replacement generation.
+    identity: ImageIdentity,
+    /// Supplies decoded pixel width.
+    width: u32,
+    /// Supplies decoded pixel height.
+    height: u32,
+    /// Locates exact RGBA8 bytes in `ImageUpdate.pixels`.
+    pixel_offset: usize,
+    /// Counts exact RGBA8 bytes.
+    pixel_count: usize,
+};
+
+/// Copies one visible ordinary terminal image placement.
+pub const ImagePlacement = struct {
+    /// Resolves retained image content.
+    image_id: u32,
+    /// Distinguishes placement churn independently of image content.
+    generation: u64,
+    /// Identifies the visible viewport row.
+    row: u16,
+    /// Identifies the physical terminal column.
+    col: u16,
+};
+
+/// Supplies caller-owned storage for one image-plane projection.
+pub const ImageBuffers = struct {
+    /// Lists images retained by the caller before this projection.
+    retained: []const ImageIdentity,
+    /// Receives only new or replaced RGBA8 bytes.
+    pixels: []u8,
+    /// Receives only new or replaced image descriptions.
+    uploads: []ImageUpload,
+    /// Receives retained identities absent from the current VT plane.
+    removals: []u32,
+    /// Receives the complete current visible placement list.
+    placements: []ImagePlacement,
+};
+
+/// Borrows initialized image delta prefixes from caller storage.
+pub const ImageUpdate = struct {
+    /// Reports the source plane identity represented by this delta.
+    generation: u64,
+    /// Reports the retained decoded image-content identity.
+    content_generation: u64,
+    /// Borrows packed RGBA8 bytes for `uploads`.
+    pixels: []const u8,
+    /// Borrows new or replaced images.
+    uploads: []const ImageUpload,
+    /// Borrows removed image identities.
+    removals: []const u32,
+    /// Borrows the complete visible placement snapshot.
+    placements: []const ImagePlacement,
+};
+
+/// Reports exact caller image-delta capacity failures.
+pub const ImageError = error{
+    InsufficientImagePixels,
+    InsufficientImageUploads,
+    InsufficientImageRemovals,
+    InsufficientImagePlacements,
+};
+
+/// Projects one immutable VT image plane into caller-owned upload/removal facts.
+///
+/// Unchanged retained image bytes are never copied. All capacities are
+/// preflighted before any destination mutation.
+pub fn projectImages(
+    source: VtTerminal.VisualImages,
+    buffers: ImageBuffers,
+) ImageError!ImageUpdate {
+    var pixel_count: usize = 0;
+    var upload_count: usize = 0;
+    var image_index: usize = 0;
+    while (image_index < source.imageCount()) : (image_index += 1) {
+        const value = source.image(image_index) orelse continue;
+        if (containsImage(buffers.retained, value.id, value.generation)) continue;
+        std.debug.assert(pixel_count <= std.math.maxInt(usize) - value.pixels.len);
+        pixel_count += value.pixels.len;
+        upload_count += 1;
+    }
+    var removal_count: usize = 0;
+    for (buffers.retained) |retained|
+        if (!sourceHasImage(source, retained.id)) {
+            removal_count += 1;
+        };
+    var placement_count: usize = 0;
+    var placement_index: usize = 0;
+    while (placement_index < source.placementCount()) : (placement_index += 1)
+        if (source.placement(placement_index) != null) {
+            placement_count += 1;
+        };
+
+    if (buffers.pixels.len < pixel_count) return error.InsufficientImagePixels;
+    if (buffers.uploads.len < upload_count) return error.InsufficientImageUploads;
+    if (buffers.removals.len < removal_count) return error.InsufficientImageRemovals;
+    if (buffers.placements.len < placement_count) return error.InsufficientImagePlacements;
+
+    var pixel_used: usize = 0;
+    var upload_used: usize = 0;
+    image_index = 0;
+    while (image_index < source.imageCount()) : (image_index += 1) {
+        const value = source.image(image_index) orelse continue;
+        if (containsImage(buffers.retained, value.id, value.generation)) continue;
+        @memcpy(buffers.pixels[pixel_used..][0..value.pixels.len], value.pixels);
+        buffers.uploads[upload_used] = .{
+            .identity = .{ .id = value.id, .generation = value.generation },
+            .width = value.width,
+            .height = value.height,
+            .pixel_offset = pixel_used,
+            .pixel_count = value.pixels.len,
+        };
+        pixel_used += value.pixels.len;
+        upload_used += 1;
+    }
+    var removal_used: usize = 0;
+    for (buffers.retained) |retained| {
+        if (sourceHasImage(source, retained.id)) continue;
+        buffers.removals[removal_used] = retained.id;
+        removal_used += 1;
+    }
+    var placement_used: usize = 0;
+    placement_index = 0;
+    while (placement_index < source.placementCount()) : (placement_index += 1) {
+        const value = source.placement(placement_index) orelse continue;
+        buffers.placements[placement_used] = .{
+            .image_id = value.image_id,
+            .generation = value.generation,
+            .row = value.row,
+            .col = value.col,
+        };
+        placement_used += 1;
+    }
+    return .{
+        .generation = source.generation,
+        .content_generation = source.content_generation,
+        .pixels = buffers.pixels[0..pixel_used],
+        .uploads = buffers.uploads[0..upload_used],
+        .removals = buffers.removals[0..removal_used],
+        .placements = buffers.placements[0..placement_used],
+    };
+}
+
+fn containsImage(values: []const ImageIdentity, id: u32, generation: u64) bool {
+    for (values) |value| if (value.id == id and value.generation == generation) return true;
+    return false;
+}
+
+fn sourceHasImage(source: VtTerminal.VisualImages, id: u32) bool {
+    var index: usize = 0;
+    while (index < source.imageCount()) : (index += 1)
+        if (source.image(index)) |value| if (value.id == id) return true;
+    return false;
+}
+
+test "terminal images copy only changed bytes and preflight leaves destinations exact" {
+    var vt = try VtTerminal.init(std.testing.allocator, 2, 4);
+    defer vt.deinit();
+    try std.testing.expect((try vt.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).state_changed);
+    const source = vt.visualView().images;
+    var pixels = [_]u8{0xaa} ** 4;
+    var uploads: [1]ImageUpload = undefined;
+    var removals: [1]u32 = .{99};
+    var placements: [1]ImagePlacement = undefined;
+    const update = try projectImages(source, .{
+        .retained = &.{},
+        .pixels = &pixels,
+        .uploads = &uploads,
+        .removals = &removals,
+        .placements = &placements,
+    });
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, update.pixels);
+    try std.testing.expectEqual(@as(u32, 7), update.uploads[0].identity.id);
+    try std.testing.expectEqual(@as(u16, 0), update.placements[0].row);
+
+    const retained = [_]ImageIdentity{update.uploads[0].identity};
+    var untouched = [_]u8{0xcc} ** 4;
+    const unchanged = try projectImages(source, .{
+        .retained = &retained,
+        .pixels = &untouched,
+        .uploads = &uploads,
+        .removals = &removals,
+        .placements = &placements,
+    });
+    try std.testing.expectEqual(@as(usize, 0), unchanged.pixels.len);
+    try std.testing.expectEqualSlices(u8, &.{ 0xcc, 0xcc, 0xcc, 0xcc }, &untouched);
+
+    var short = [_]u8{0xdd} ** 3;
+    try std.testing.expectError(error.InsufficientImagePixels, projectImages(source, .{
+        .retained = &.{},
+        .pixels = &short,
+        .uploads = &uploads,
+        .removals = &removals,
+        .placements = &placements,
+    }));
+    try std.testing.expectEqualSlices(u8, &.{ 0xdd, 0xdd, 0xdd }, &short);
+}
+
 const Span = struct { start: u16, end: u16 };
 
 const Work = struct {

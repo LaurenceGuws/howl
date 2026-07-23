@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const parser_mod = @import("parser.zig");
+const graphics_mod = @import("graphics.zig");
 
 const logical_output_line_bytes_max: usize = 1024 * 1024;
 const logical_output_bytes_max: usize = 1024 * 1024;
@@ -12424,12 +12425,26 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         => return applyHostEvent(vt, event),
 
         .line_feed, .next_line => {
+            const active = vt.screen_state.active();
+            const scrolls = active.cursor.row == active.scrollBottom();
+            const history_scroll = !vt.screen_state.alt_active and active.scroll_top == 0 and
+                active.scrollBottom() == active.rows - 1;
             if (!vt.screen_state.alt_active) {
                 try vt.screen_state.primary.finalizeOutputLine(vt.allocator);
             }
-            vt.screen_state.active().applyScreen(
+            active.applyScreen(
                 if (event == .line_feed and vt.modes.newline_mode) .next_line else event,
             );
+            if (scrolls and !history_scroll) {
+                const graphics_changed = vt.graphics.scroll(
+                    graphicsBank(vt),
+                    graphicsScreenOrigin(vt) + active.scroll_top,
+                    graphicsScreenOrigin(vt) + active.scrollBottom(),
+                    1,
+                    true,
+                );
+                std.debug.assert(!graphics_changed or vt.graphics.generation() != 0);
+            }
         },
         .backspace => return vt.screen_state.active().backspace(vt.modes.reverse_wraparound_mode),
         .clear_buffer => return vt.clearBuffer(),
@@ -12448,31 +12463,100 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         },
 
         .erase_display_below => |protected| {
-            return vt.screen_state.active().eraseDisplay(.cursor_to_end, protected);
+            const screen = vt.screen_state.active();
+            const changed = screen.eraseDisplay(.cursor_to_end, protected);
+            const origin = graphicsScreenOrigin(vt);
+            var graphics_changed = vt.graphics.erase(
+                graphicsBank(vt),
+                origin + screen.cursor.row,
+                origin + screen.cursor.row,
+                screen.cursor.col,
+                screen.cols - 1,
+            );
+            if (screen.cursor.row + 1 < screen.rows) graphics_changed =
+                vt.graphics.erase(
+                    graphicsBank(vt),
+                    origin + screen.cursor.row + 1,
+                    origin + screen.rows - 1,
+                    0,
+                    screen.cols - 1,
+                ) or graphics_changed;
+            return graphics_changed or changed;
         },
         .erase_display_above => |protected| {
-            return vt.screen_state.active().eraseDisplay(.start_to_cursor, protected);
+            const screen = vt.screen_state.active();
+            const changed = screen.eraseDisplay(.start_to_cursor, protected);
+            const origin = graphicsScreenOrigin(vt);
+            var graphics_changed = vt.graphics.erase(
+                graphicsBank(vt),
+                origin + screen.cursor.row,
+                origin + screen.cursor.row,
+                0,
+                screen.cursor.col,
+            );
+            if (screen.cursor.row != 0) graphics_changed = vt.graphics.erase(
+                graphicsBank(vt),
+                origin,
+                origin + screen.cursor.row - 1,
+                0,
+                screen.cols - 1,
+            ) or graphics_changed;
+            return graphics_changed or changed;
         },
         .erase_display_complete, .erase_display_scroll_complete => |protected| {
-            return vt.screen_state.active().eraseDisplay(.all, protected);
+            const screen = vt.screen_state.active();
+            const changed = screen.eraseDisplay(.all, protected);
+            const origin = graphicsScreenOrigin(vt);
+            return vt.graphics.erase(
+                graphicsBank(vt),
+                origin,
+                origin + screen.rows - 1,
+                0,
+                screen.cols - 1,
+            ) or changed;
         },
         .erase_display_scrollback => |protected| {
             return vt.screen_state.active().eraseDisplay(.scrollback, protected);
         },
         .erase_line => |mode| {
-            return vt.screen_state.active().eraseLine(mode, false);
+            const screen = vt.screen_state.active();
+            const changed = screen.eraseLine(mode, false);
+            const range = eraseLineColumns(screen, mode);
+            return vt.graphics.erase(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.cursor.row,
+                graphicsScreenOrigin(vt) + screen.cursor.row,
+                range[0],
+                range[1],
+            ) or changed;
         },
         .selective_erase_line => |mode| {
             return vt.screen_state.active().eraseLine(mode, true);
         },
         .erase_chars => |count| {
-            return vt.screen_state.active().eraseChars(count);
+            const screen = vt.screen_state.active();
+            const changed = screen.eraseChars(count);
+            const right = @min(
+                @as(u32, screen.cols - 1),
+                @as(u32, screen.cursor.col) + @max(count, 1) - 1,
+            );
+            return vt.graphics.erase(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.cursor.row,
+                graphicsScreenOrigin(vt) + screen.cursor.row,
+                screen.cursor.col,
+                @intCast(right),
+            ) or changed;
         },
         .rect_erase => |area| {
-            return vt.screen_state.active().eraseRect(area, false);
+            const screen = vt.screen_state.active();
+            const changed = screen.eraseRect(area, false);
+            return eraseGraphicsRect(vt, screen, area) or changed;
         },
         .rect_selective_erase => |area| {
-            return vt.screen_state.active().eraseRect(area, true);
+            const screen = vt.screen_state.active();
+            const changed = screen.eraseRect(area, true);
+            return eraseGraphicsRect(vt, screen, area) or changed;
         },
         .rect_fill => |request| return vt.screen_state.active().fillRect(request.area, request.ch),
         .rect_copy => |request| return vt.screen_state.active().copyRect(request),
@@ -12498,21 +12582,93 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         },
         .insert_chars => |count| return vt.screen_state.active().insertChars(count),
         .delete_chars => |count| return vt.screen_state.active().deleteChars(count),
-        .insert_lines => |count| return vt.screen_state.active().insertLines(count),
-        .delete_lines => |count| return vt.screen_state.active().deleteLines(count),
+        .insert_lines => |count| {
+            const screen = vt.screen_state.active();
+            const changed = screen.insertLines(count);
+            return vt.graphics.scroll(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.cursor.row,
+                graphicsScreenOrigin(vt) + screen.scrollBottom(),
+                @max(count, 1),
+                false,
+            ) or changed;
+        },
+        .delete_lines => |count| {
+            const screen = vt.screen_state.active();
+            const changed = screen.deleteLines(count);
+            return vt.graphics.scroll(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.cursor.row,
+                graphicsScreenOrigin(vt) + screen.scrollBottom(),
+                @max(count, 1),
+                true,
+            ) or changed;
+        },
         .scroll_up_lines => |count| {
             const screen = vt.screen_state.active();
-            return screen.scrollUpRegion(screen.scroll_top, screen.scrollBottom(), count);
+            const changed = screen.scrollUpRegion(screen.scroll_top, screen.scrollBottom(), count);
+            return vt.graphics.scroll(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.scroll_top,
+                graphicsScreenOrigin(vt) + screen.scrollBottom(),
+                count,
+                true,
+            ) or changed;
         },
         .scroll_down_lines => |count| {
             const screen = vt.screen_state.active();
-            return screen.scrollDownRegion(screen.scroll_top, screen.scrollBottom(), count);
+            const changed = screen.scrollDownRegion(screen.scroll_top, screen.scrollBottom(), count);
+            return vt.graphics.scroll(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.scroll_top,
+                graphicsScreenOrigin(vt) + screen.scrollBottom(),
+                count,
+                false,
+            ) or changed;
         },
-        .forward_index => return vt.screen_state.active().forwardIndex(),
-        .back_index => return vt.screen_state.active().backIndex(),
+        .forward_index => {
+            const screen = vt.screen_state.active();
+            const shifts = screen.cursor.col == screen.rightBoundary();
+            const changed = screen.forwardIndex();
+            if (!shifts) return changed;
+            return vt.graphics.shiftColumns(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.cursor.row,
+                screen.leftBoundary(),
+                screen.rightBoundary(),
+                1,
+                true,
+            ) or changed;
+        },
+        .back_index => {
+            const screen = vt.screen_state.active();
+            const shifts = screen.cursor.col == screen.leftBoundary();
+            const changed = screen.backIndex();
+            if (!shifts) return changed;
+            return vt.graphics.shiftColumns(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.cursor.row,
+                screen.leftBoundary(),
+                screen.rightBoundary(),
+                1,
+                false,
+            ) or changed;
+        },
         .shift_left_columns => |count| return vt.screen_state.active().shiftColumnsLeft(count),
         .shift_right_columns => |count| return vt.screen_state.active().shiftColumnsRight(count),
-        .reverse_index => return vt.screen_state.active().reverseIndex(),
+        .reverse_index => {
+            const screen = vt.screen_state.active();
+            const scrolls = screen.cursor.row == screen.scroll_top;
+            const changed = screen.reverseIndex();
+            if (!scrolls) return changed;
+            return vt.graphics.scroll(
+                graphicsBank(vt),
+                graphicsScreenOrigin(vt) + screen.scroll_top,
+                graphicsScreenOrigin(vt) + screen.scrollBottom(),
+                1,
+                false,
+            ) or changed;
+        },
         .scroll_down_from_history => |count| return vt.screen_state.active().scrollDownFromHistory(count),
         .cursor_up,
         .cursor_down,
@@ -12548,6 +12704,40 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         => vt.screen_state.active().applyScreen(event),
     }
     return true;
+}
+
+fn graphicsBank(vt: *const Terminal) graphics_mod.Bank {
+    return if (vt.screen_state.alt_active) .alternate else .primary;
+}
+
+fn graphicsScreenOrigin(vt: *const Terminal) u64 {
+    if (vt.screen_state.alt_active) return 0;
+    const primary = &vt.screen_state.primary;
+    return @as(u64, primary.historyRowBase()) + primary.historyCount();
+}
+
+fn eraseLineColumns(screen: *const Screen, mode: ScreenEraseMode) [2]u16 {
+    return switch (mode) {
+        .cursor_to_end => .{ screen.cursor.col, screen.cols - 1 },
+        .start_to_cursor => .{ 0, screen.cursor.col },
+        .all => .{ 0, screen.cols - 1 },
+        .scrollback => unreachable,
+    };
+}
+
+fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool {
+    if (area.top >= screen.rows or area.left >= screen.cols) return false;
+    const bottom = @min(area.bottom orelse screen.rows - 1, screen.rows - 1);
+    const right = @min(area.right orelse screen.cols - 1, screen.cols - 1);
+    if (bottom < area.top or right < area.left) return false;
+    const origin = graphicsScreenOrigin(vt);
+    return vt.graphics.erase(
+        graphicsBank(vt),
+        origin + area.top,
+        origin + bottom,
+        area.left,
+        right,
+    );
 }
 
 // Reports parser allocation, parser bound, captured DCS bound, or retained-consequence failure.
@@ -12668,7 +12858,11 @@ const StringCapture = struct {
     fn put(self: *StringCapture, byte: u8) error{OutOfMemory}!void {
         std.debug.assert(self.kind != null);
         if (self.overflowed) return;
-        if (self.bytes.items.len >= dcs_payload_max_bytes) {
+        const limit: usize = if (self.kind == .apc and self.bytes.items.len != 0 and self.bytes.items[0] == 'G')
+            graphics_mod.max_command_bytes + 1
+        else
+            dcs_payload_max_bytes;
+        if (self.bytes.items.len >= limit) {
             self.overflowed = true;
             self.bytes.clearRetainingCapacity();
             return;
@@ -12982,8 +13176,17 @@ const TerminalStream = struct {
     fn endString(self: *TerminalStream) FeedError!EventEffect {
         const capture = &self.terminal.stream_state.string;
         if (capture.overflowed) {
+            if (capturedKittyGraphics(capture)) self.terminal.graphics.cancel();
             capture.reset();
             return discardedStringControl();
+        }
+        if (capture.kind == .apc and capture.bytes.items.len != 0 and capture.bytes.items[0] == 'G') {
+            defer capture.reset();
+            return .{
+                .changed = try applyKittyGraphicsPacket(self.terminal, capture.bytes.items[1..]),
+                .title_changed = false,
+                .icon_changed = false,
+            };
         }
         const payload: StringPayload = .{ .kind = capture.kind.?, .payload = capture.bytes.items };
         defer capture.reset();
@@ -12995,7 +13198,9 @@ const TerminalStream = struct {
     }
 
     fn cancelString(self: *TerminalStream) EventEffect {
-        self.terminal.stream_state.string.reset();
+        const capture = &self.terminal.stream_state.string;
+        if (capturedKittyGraphics(capture)) self.terminal.graphics.cancel();
+        capture.reset();
         return discardedStringControl();
     }
 
@@ -13011,12 +13216,60 @@ const TerminalStream = struct {
     }
 };
 
+fn capturedKittyGraphics(capture: *const StringCapture) bool {
+    return capture.kind == .apc and capture.bytes.items.len != 0 and capture.bytes.items[0] == 'G';
+}
+
 fn discardedStringControl() EventEffect {
     return .{
         .changed = false,
         .title_changed = false,
         .icon_changed = false,
     };
+}
+
+fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!bool {
+    const response_reserve: usize = 96;
+    if (terminal.host.pending_output.bytes.items.len >
+        pending_output_max_bytes - response_reserve)
+        return error.ConsequenceLimit;
+    try terminal.host.pending_output.bytes.ensureUnusedCapacity(terminal.allocator, response_reserve);
+    const active = terminal.screen_state.activeConst();
+    const bank: graphics_mod.Bank = if (terminal.screen_state.alt_active) .alternate else .primary;
+    const row: u64 = if (bank == .alternate)
+        active.cursor.row
+    else
+        @as(u64, active.history_row_base) + active.history_count + active.cursor.row;
+    const cell = active.cellPixelSize();
+    const result = try terminal.graphics.command(
+        packet,
+        bank,
+        row,
+        active.cursor.col,
+        if (cell) |value| value.width else 1,
+        if (cell) |value| value.height else 1,
+    );
+    const respond = result.failure != null or result.response_id != null;
+    const suppressed = result.quiet == 2 or (result.quiet == 1 and result.failure == null);
+    if (respond and !suppressed) {
+        try appendOutput(&terminal.host.pending_output, terminal.allocator, "\x1b_G");
+        var metadata: [48]u8 = undefined;
+        if (result.response_id) |id| {
+            const id_bytes = std.fmt.bufPrint(&metadata, "i={d};", .{id}) catch
+                return error.ConsequenceLimit;
+            try appendOutput(&terminal.host.pending_output, terminal.allocator, id_bytes);
+        } else {
+            try appendOutput(&terminal.host.pending_output, terminal.allocator, ";");
+        }
+        try appendOutput(
+            &terminal.host.pending_output,
+            terminal.allocator,
+            if (result.failure) |failure| failure.bytes() else "OK",
+        );
+        try appendOutput(&terminal.host.pending_output, terminal.allocator, "\x1b\\");
+    }
+    if (result.changed) terminal.noteSourceWideVisualChange();
+    return result.changed or (respond and !suppressed);
 }
 
 fn configureCharset(terminal: *Terminal, slot: u8, designation: u8) bool {
@@ -13437,6 +13690,57 @@ pub const Terminal = struct {
     pub const default_presentation = defaultPresentation();
     /// Identifies one exact cumulative visual-dirty observation without exposing its counter.
     pub const DirtyToken = enum(u64) { _ };
+    /// Borrows one immutable decoded terminal image.
+    pub const VisualImage = graphics_mod.ImageView;
+    /// Copies one image placement resolved into the visible viewport.
+    pub const VisualImagePlacement = struct {
+        /// Resolves retained image content.
+        image_id: u32,
+        /// Distinguishes placement churn.
+        generation: u64,
+        /// Identifies the visible viewport row.
+        row: u16,
+        /// Identifies the physical terminal column.
+        col: u16,
+    };
+    /// Borrows coherent image-plane facts until terminal mutation.
+    pub const VisualImages = struct {
+        plane: *const graphics_mod.Plane,
+        bank: graphics_mod.Bank,
+        visible_row_start: u64,
+        rows: u16,
+        generation: u64,
+        content_generation: u64,
+
+        /// Returns the dense retained image count.
+        pub fn imageCount(self: *const VisualImages) usize {
+            return self.plane.image_count;
+        }
+
+        /// Borrows one retained image.
+        pub fn image(self: *const VisualImages, index: usize) ?VisualImage {
+            return self.plane.image(index);
+        }
+
+        /// Returns the dense retained placement count.
+        pub fn placementCount(self: *const VisualImages) usize {
+            return self.plane.placement_count;
+        }
+
+        /// Copies one placement visible in the current bank and viewport.
+        pub fn placement(self: *const VisualImages, index: usize) ?VisualImagePlacement {
+            const value = self.plane.placement(index) orelse return null;
+            if (value.bank != self.bank or value.row < self.visible_row_start or
+                value.row >= self.visible_row_start + self.rows)
+                return null;
+            return .{
+                .image_id = value.image_id,
+                .generation = value.generation,
+                .row = @intCast(value.row - self.visible_row_start),
+                .col = value.col,
+            };
+        }
+    };
     /// Identifies one visible row and its inclusive changed-column span.
     pub const VisualDirtyRow = struct {
         /// Identifies the row in the borrowed visual viewport.
@@ -13513,6 +13817,8 @@ pub const Terminal = struct {
         selected_rows: VisibleSelection,
         /// Copies palette, dynamic defaults, cursor colors, and screen reverse state.
         presentation: Presentation,
+        /// Borrows static terminal image data and visible placements.
+        images: VisualImages,
         /// Identifies the exact visual observation accepted by `ackVisual`.
         dirty_token: DirtyToken,
 
@@ -13609,6 +13915,7 @@ pub const Terminal = struct {
     allocator: std.mem.Allocator,
     stream_state: TerminalStreamState,
     screen_state: ScreenSet,
+    graphics: graphics_mod.Plane,
     modes: ModeState = .{},
     kitty: KittyState = .{},
     sgr_stack: [sgr_stack_capacity]SgrStackEntry = [_]SgrStackEntry{.{}} ** sgr_stack_capacity,
@@ -13646,6 +13953,7 @@ pub const Terminal = struct {
             .allocator = allocator,
             .stream_state = stream_state,
             .screen_state = ScreenSet.init(state, alt_state),
+            .graphics = graphics_mod.Plane.init(allocator),
             .host = HostState.init(allocator),
         };
     }
@@ -13689,6 +13997,7 @@ pub const Terminal = struct {
     /// Release Terminal resources.
     pub fn deinit(self: *Terminal) void {
         const allocator = self.allocator;
+        self.graphics.deinit();
         self.host.deinit();
         self.screen_state.deinit(allocator);
         self.stream_state.deinit();
@@ -13723,6 +14032,7 @@ pub const Terminal = struct {
         alternate: bool,
         reverse_screen: bool,
         source_wide_revision: u64,
+        graphics_generation: u64,
     };
 
     fn visualMutationState(self: *const Terminal) VisualMutationState {
@@ -13751,6 +14061,7 @@ pub const Terminal = struct {
             .alternate = view.is_alternate_screen,
             .reverse_screen = self.modes.reverse_screen_mode,
             .source_wide_revision = self.visual_source_wide_revision,
+            .graphics_generation = self.graphics.generation(),
         };
     }
 
@@ -13788,8 +14099,11 @@ pub const Terminal = struct {
         was_scrolled: bool,
         state_changed: bool,
     ) void {
-        self.postApply(state_changed);
         self.repairScrollbackAfterHistoryChange(history_before, was_scrolled);
+        const graphics_changed = self.graphics.evictBefore(
+            self.screen_state.primary.historyRowBase(),
+        );
+        self.postApply(state_changed or graphics_changed);
         if (!std.meta.eql(selection_before, self.screen_state.activeSelectionConst().state())) {
             self.visual_full = true;
         }
@@ -13815,6 +14129,10 @@ pub const Terminal = struct {
         errdefer restorePendingOutput(&self.host.pending_output, output_before);
         if (self.modes.inband_resize_notifications) try self.appendInbandResizeReport(rows, cols);
         try self.screen_state.resize(self.allocator, rows, cols);
+        const primary_graphics_changed = self.graphics.clearBank(.primary);
+        const alternate_graphics_changed = self.graphics.clearBank(.alternate);
+        std.debug.assert(!primary_graphics_changed or self.graphics.generation() != 0);
+        std.debug.assert(!alternate_graphics_changed or self.graphics.generation() != 0);
         self.screen_state.activeSelection().clearIfInvalidatedByGrid(
             self.screen_state.activeConst(),
         );
@@ -13953,6 +14271,8 @@ pub const Terminal = struct {
         self.host.pending_output.eight_bit_controls = false;
         self.kitty.resetTerminalState();
         self.host.resetTerminalState();
+        const graphics_changed = self.graphics.reset();
+        std.debug.assert(!graphics_changed or self.graphics.generation() != 0);
         self.noteSourceWideVisualChange();
         self.finishVisualMutation(visual_before);
     }
@@ -14197,7 +14517,11 @@ pub const Terminal = struct {
             self.screen_state.alt_active = true;
             self.scrollback_offset = 0;
             self.screen_state.activeSelection().clear();
-            if (clear_alt) self.screen_state.alternate.clearVisibleCells();
+            if (clear_alt) {
+                self.screen_state.alternate.clearVisibleCells();
+                const graphics_changed = self.graphics.clearBank(.alternate);
+                std.debug.assert(!graphics_changed or self.graphics.generation() != 0);
+            }
             self.screen_state.alternate.resetCursorForAltEntry();
             self.screen_state.alternate.markAllRowsDirty();
             self.finishVisualMutation(visual_before);
@@ -14678,6 +15002,17 @@ pub const Terminal = struct {
                 .selection_background = colors.selection_background,
                 .selection_foreground = colors.selection_foreground,
                 .reverse_screen = self.modes.reverse_screen_mode,
+            },
+            .images = .{
+                .plane = &self.graphics,
+                .bank = if (source.view.is_alternate_screen) .alternate else .primary,
+                .visible_row_start = if (source.view.is_alternate_screen)
+                    source.view.start
+                else
+                    @as(u64, source.view.history_row_base) + source.view.start,
+                .rows = source.view.rows,
+                .generation = self.graphics.generation(),
+                .content_generation = self.graphics.imageGeneration(),
             },
             .dirty_token = @enumFromInt(self.visual_generation),
         };

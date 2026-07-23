@@ -27,7 +27,7 @@ accepted:
   howl-render/src/root*.zig: curated roots for selected render capabilities
   howl-render/src/native_text.zig: native font loading, shaping, metrics, and alpha rasterization
   howl-render/src/generated*.zig: generated terminal-glyph classification, geometry, and rasterization
-  howl-render/src/terminal.zig: stateless VT semantic-to-visual projection into caller buffers
+  howl-render/src/terminal.zig: stateless VT cell and static-image semantic projection into caller buffers
   howl-render/src/terminal_test.zig: terminal projection bounds, sparse damage, cursor, and rollback proofs
   howl-render/src/terminal_text*.zig: one-run text preparation, raster identity, and native decoration metrics
   howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs
@@ -37,9 +37,10 @@ accepted:
   howl-host/build.zig: first-party executable build, install, run, and proof ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
   howl-host/manual-fixtures: bounded compositor-visible development receipts, not installed runtime assets
+  howl-host/assets/howl_window_icon.png: exact provenance-tracked logo used by the static graphics manual receipt
   howl-host/src/main.zig: operator shell selection, window entry, serve, and primitive control inspection
   howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, ordered consequence policy, and lifecycle
-  howl-host/src/renderer.zig: one render thread and concrete EGL/GLES cell, DEC geometry, baseline, and decoration owner
+  howl-host/src/renderer.zig: one render thread and concrete EGL/GLES cell, image texture, DEC geometry, baseline, and decoration owner
   howl-host/src/viewport.zig: host scroll intent and exact scrollbar paint/hit geometry
   howl-host/src/clipboard.zig: bounded UTF-8 clipboard transfers plus Kitty paste-event parsing and framing
   howl-host/src/drop.zig: bounded Kitty OSC 72 application intent and opaque Wayland MIME identity

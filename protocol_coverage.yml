@@ -3365,12 +3365,16 @@ references:
               facts and GLES owner.
             howl:
               support: partial
+              disposition: excluded
               residual: >-
                 Howl currently bounds one fixed or natural cluster to four scalars, uses base-plus-combining natural
                 segmentation rather than Kitty's full grapheme/width algorithm, removes clusters at structural and
                 rectangle-attribute mutation boundaries, rejects rectangular copies containing clusters, conservatively
                 removes clusters crossing scroll boundaries, drops clusters on resize, and scales the ordinary raster
                 rather than constructing a separately sized native font.
+              rationale: >-
+                These bounded segmentation, mutation, resize, and raster choices are Howl's settled static text-sizing
+                policy rather than unfinished protocol work.
               source: howl-vt/src/terminal.zig
               symbol: Screen.writeSizedText
               proof: {path: howl-render/src/terminal_test.zig,
@@ -3607,10 +3611,12 @@ references:
         records:
           - {id: kitty.apc.graphics, raw: "APC G Pb ST", effect: Kitty graphics command, relevance: graphics,
             bounds: parser command and payload bounds,
-            conditions: Howl retains the exact bounded APC payload for host policy but does not implement graphics,
-            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics, source: howl-vt/src/terminal.zig, symbol: Terminal.acknowledgeStringPayload,
-              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
+            conditions: Howl routes dedicated bounded Kitty graphics streaming into its static image plane,
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "PNG/zlib/file/shared-memory media, animation, composition, cropping and z-order remain.",
+              source: howl-vt/src/terminal.zig, symbol: applyKittyGraphicsPacket,
+              proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
       - source: vt-parser.c
         symbol: dispatch_pm
         line: 1432
@@ -3760,21 +3766,32 @@ references:
         conditions: APC G control keys precede optional payload after semicolon
         records:
           - {id: kitty.graphics.transmit_default, raw: "APC G [a=]Pm ; Pb ST", effect: transmit image data,
-            relevance: graphics, howl: *howl_missing_deferred_graphics}
+            relevance: graphics, howl: &howl_static_graphics_transmit {support: partial, disposition: deferred,
+              owner: howl-vt, milestone: advanced_graphics,
+              residual: "Howl accepts only bounded direct uncompressed RGB/RGBA payloads with an explicit nonzero image id and dimensions.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
           - {id: kitty.graphics.transmit, raw: "APC G a=t,Pm ; Pb ST", effect: transmit image data, relevance: graphics,
-            howl: *howl_missing_deferred_graphics}
+            howl: *howl_static_graphics_transmit}
           - {id: kitty.graphics.transmit_display, raw: "APC G a=T,Pm ; Pb ST", effect: transmit and display image,
-            relevance: graphics, howl: *howl_missing_deferred_graphics}
+            relevance: graphics, howl: *howl_static_graphics_transmit}
           - {id: kitty.graphics.query, raw: "APC G a=q,Pm ; Pb ST",
-            effect: probe image transmission support then discard probe, relevance: graphics, howl: *howl_missing_deferred_graphics}
+            effect: probe image transmission support then discard probe, relevance: graphics,
+            howl: *howl_static_graphics_transmit}
           - {id: kitty.graphics.animate, raw: "APC G a=a,Pm ST", effect: control image animation, relevance: graphics,
             howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.frame, raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
             relevance: graphics, howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.put, raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
-            howl: *howl_missing_deferred_graphics}
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: "Howl supports ordinary cursor-relative placement by image id; crop, offset, z-order, parent and virtual placement remain.",
+              source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
+                symbol: "static plane admission is transactional across chunks replacement put and delete"}}}
           - {id: kitty.graphics.delete, raw: "APC G a=d,d=selector,Pm ST", effect: delete image placements or data,
-            relevance: graphics, howl: *howl_missing_deferred_graphics}
+            relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
+              milestone: advanced_graphics, residual: Howl implements explicit image-id data deletion only.,
+              source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
+                symbol: "static plane admission is transactional across chunks replacement put and delete"}}}
           - {id: kitty.graphics.compose, raw: "APC G a=c,Pm ST", effect: compose animation frames, relevance: graphics,
             howl: *howl_missing_deferred_graphics}
       - source: graphics.c
@@ -3787,7 +3804,11 @@ references:
             effect: delete all non-cell placements optionally including data, relevance: graphics,
             howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.delete_id, raw: "APC G a=d,d=i|I,i=Ps ST",
-            effect: delete by image id optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
+            effect: delete by image id optionally including data, relevance: graphics,
+            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
+              residual: Howl supports lowercase i as image data plus placement deletion; placement-only uppercase I remains.,
+              source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
+                symbol: "static plane admission is transactional across chunks replacement put and delete"}}}
           - {id: kitty.graphics.delete_range, raw: "APC G a=d,d=r|R,Pm ST",
             effect: delete image id range optionally including data, relevance: graphics, howl: *howl_missing_deferred_graphics}
           - {id: kitty.graphics.delete_point, raw: "APC G a=d,d=p|P,x=Ps,y=Ps ST",

@@ -73,6 +73,16 @@ pub const Submission = struct {
     size: PixelSize,
     /// Copies optional host-owned scrollbar pixels for this visual state.
     scrollbar: ?viewport.Scrollbar = null,
+    /// Identifies the complete retained terminal image state.
+    image_generation: u64 = 0,
+    /// Identifies decoded image content independently of placement churn.
+    image_content_generation: u64 = 0,
+    /// Borrows packed RGBA8 image bytes only through submit.
+    image_pixels: []const u8 = &.{},
+    /// Borrows complete retained image descriptions.
+    images: []const terminal.ImageUpload = &.{},
+    /// Borrows complete visible image placements.
+    image_placements: []const terminal.ImagePlacement = &.{},
 };
 
 /// Reports exact construction, admission, preparation, or device failure.
@@ -105,6 +115,14 @@ const Snapshot = struct {
     cursor: terminal.Cursor = undefined,
     size: PixelSize = undefined,
     scrollbar: ?viewport.Scrollbar = null,
+    image_generation: u64 = 0,
+    image_content_generation: u64 = 0,
+    image_pixels: []u8 = &.{},
+    images: []terminal.ImageUpload = &.{},
+    image_placements: []terminal.ImagePlacement = &.{},
+    image_pixel_count: usize = 0,
+    image_count: usize = 0,
+    image_placement_count: usize = 0,
 
     fn init(allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!Snapshot {
         const cells = try allocator.alloc(terminal.Cell, @as(usize, rows) * cols);
@@ -138,9 +156,46 @@ const Snapshot = struct {
         self.cols = 0;
     }
 
+    fn ensureImageCapacity(
+        self: *Snapshot,
+        pixel_count: usize,
+        image_count: usize,
+        placement_count: usize,
+    ) std.mem.Allocator.Error!void {
+        const pixels = if (pixel_count > self.image_pixels.len)
+            try self.allocator.alloc(u8, pixel_count)
+        else
+            null;
+        errdefer if (pixels) |owned| self.allocator.free(owned);
+        const images = if (image_count > self.images.len)
+            try self.allocator.alloc(terminal.ImageUpload, image_count)
+        else
+            null;
+        errdefer if (images) |owned| self.allocator.free(owned);
+        const placements = if (placement_count > self.image_placements.len)
+            try self.allocator.alloc(terminal.ImagePlacement, placement_count)
+        else
+            null;
+        if (pixels) |owned| {
+            self.allocator.free(self.image_pixels);
+            self.image_pixels = owned;
+        }
+        if (images) |owned| {
+            self.allocator.free(self.images);
+            self.images = owned;
+        }
+        if (placements) |owned| {
+            self.allocator.free(self.image_placements);
+            self.image_placements = owned;
+        }
+    }
+
     fn deinit(self: *Snapshot) void {
         self.allocator.free(self.cells);
         self.allocator.free(self.row_geometry);
+        self.allocator.free(self.image_pixels);
+        self.allocator.free(self.images);
+        self.allocator.free(self.image_placements);
         self.* = undefined;
     }
 
@@ -155,6 +210,24 @@ const Snapshot = struct {
         self.cursor = submission.cursor;
         self.size = submission.size;
         self.scrollbar = submission.scrollbar;
+        if (self.image_content_generation != submission.image_content_generation) {
+            std.debug.assert(submission.image_pixels.len <= self.image_pixels.len);
+            std.debug.assert(submission.images.len <= self.images.len);
+            @memcpy(self.image_pixels[0..submission.image_pixels.len], submission.image_pixels);
+            @memcpy(self.images[0..submission.images.len], submission.images);
+            self.image_pixel_count = submission.image_pixels.len;
+            self.image_count = submission.images.len;
+            self.image_content_generation = submission.image_content_generation;
+        }
+        if (self.image_generation != submission.image_generation) {
+            std.debug.assert(submission.image_placements.len <= self.image_placements.len);
+            @memcpy(
+                self.image_placements[0..submission.image_placements.len],
+                submission.image_placements,
+            );
+            self.image_placement_count = submission.image_placements.len;
+            self.image_generation = submission.image_generation;
+        }
     }
 
     fn view(self: *const Snapshot) Submission {
@@ -168,6 +241,11 @@ const Snapshot = struct {
             .cursor = self.cursor,
             .size = self.size,
             .scrollbar = self.scrollbar,
+            .image_generation = self.image_generation,
+            .image_content_generation = self.image_content_generation,
+            .image_pixels = self.image_pixels[0..self.image_pixel_count],
+            .images = self.images[0..self.image_count],
+            .image_placements = self.image_placements[0..self.image_placement_count],
         };
     }
 };
@@ -201,12 +279,22 @@ const Mailbox = struct {
         if (self.writable()) |slot| {
             errdefer self.release(slot);
             try slot.ensureCapacity(submission.rows, submission.cols);
+            try slot.ensureImageCapacity(
+                submission.image_pixels.len,
+                submission.images.len,
+                submission.image_placements.len,
+            );
             slot.write(submission);
             if (self.admit(slot)) |replaced| self.release(replaced);
             return;
         }
         const slot = self.pending.?;
         try slot.ensureCapacity(submission.rows, submission.cols);
+        try slot.ensureImageCapacity(
+            submission.image_pixels.len,
+            submission.images.len,
+            submission.image_placements.len,
+        );
         slot.write(submission);
     }
 
@@ -242,6 +330,13 @@ const Texture = struct {
     used: u64,
 };
 
+const ImageTexture = struct {
+    identity: terminal.ImageIdentity,
+    name: c.GLuint,
+    width: u32,
+    height: u32,
+};
+
 const PixelRect = struct {
     x: i32,
     y: i32,
@@ -273,6 +368,7 @@ const Device = struct {
     surface: c.EGLSurface,
     window: *c.struct_wl_egl_window,
     program: c.GLuint,
+    texture_color_uniform: c.GLint,
     buffer: c.GLuint,
     white: c.GLuint,
     fonts: text.FontMap,
@@ -280,6 +376,10 @@ const Device = struct {
     textures: [texture_capacity]Texture = undefined,
     texture_count: usize = 0,
     texture_bytes: usize = 0,
+    image_textures: [256]ImageTexture = undefined,
+    image_texture_count: usize = 0,
+    image_texture_bytes: usize = 0,
+    image_generation: u64 = 0,
     size: PixelSize,
 
     fn init(allocator: std.mem.Allocator, values: Init) Error!Device {
@@ -331,6 +431,9 @@ const Device = struct {
         ) != c.EGL_TRUE) @panic("EGL current-context rollback failed");
         const program = try createProgram();
         errdefer c.glDeleteProgram(program);
+        const texture_color_uniform = c.glGetUniformLocation(program, "texture_color");
+        if (texture_color_uniform < 0) return error.Shader;
+        c.glUniform1i(texture_color_uniform, 0);
         var buffer: c.GLuint = 0;
         c.glGenBuffers(1, &buffer);
         if (buffer == 0 or c.glGetError() != c.GL_NO_ERROR) return error.Draw;
@@ -353,6 +456,7 @@ const Device = struct {
             .surface = surface,
             .window = window,
             .program = program,
+            .texture_color_uniform = texture_color_uniform,
             .buffer = buffer,
             .white = white,
             .fonts = fonts,
@@ -363,6 +467,7 @@ const Device = struct {
 
     fn draw(self: *Device, snapshot: *const Snapshot) Error!void {
         const work = snapshot.view();
+        try self.syncImages(work);
         if (!std.meta.eql(self.size, work.size)) {
             try validateSize(work.size);
             c.wl_egl_window_resize(self.window, @intCast(work.size.width), @intCast(work.size.height), 0, 0);
@@ -378,6 +483,7 @@ const Device = struct {
         c.glEnableVertexAttribArray(1);
         c.glEnableVertexAttribArray(2);
         for (0..work.rows) |row| try self.drawRowBackground(work, @intCast(row));
+        try self.drawImages(work);
         for (0..work.rows) |row| try self.drawRowContent(work, @intCast(row));
         try self.drawCursor(work);
         try self.drawScrollbar(work.scrollbar);
@@ -403,6 +509,120 @@ const Device = struct {
             .{ .r = 0x92, .g = 0x83, .b = 0x74 },
             self.white,
         );
+    }
+
+    fn syncImages(self: *Device, work: Submission) Error!void {
+        if (self.image_generation == work.image_content_generation) return;
+        var required_bytes: usize = 0;
+        for (work.images) |image| required_bytes += image.pixel_count;
+        if (required_bytes > 64 * 1024 * 1024 or work.images.len > self.image_textures.len)
+            return error.CacheFull;
+        var admitted: [256]ImageTexture = undefined;
+        var admitted_count: usize = 0;
+        var admitted_owned = true;
+        errdefer if (admitted_owned) for (admitted[0..admitted_count]) |created|
+            c.glDeleteTextures(1, &created.name);
+        for (work.images) |image| {
+            var found = false;
+            for (self.image_textures[0..self.image_texture_count]) |retained| {
+                if (std.meta.eql(retained.identity, image.identity)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+            if (image.pixel_offset > work.image_pixels.len or
+                image.pixel_count > work.image_pixels.len - image.pixel_offset)
+                return error.InvalidSubmission;
+            var name: c.GLuint = 0;
+            c.glGenTextures(1, &name);
+            if (name == 0) return error.Texture;
+            errdefer c.glDeleteTextures(1, &name);
+            configureRgbaTexture(name);
+            c.glTexImage2D(
+                c.GL_TEXTURE_2D,
+                0,
+                c.GL_RGBA,
+                @intCast(image.width),
+                @intCast(image.height),
+                0,
+                c.GL_RGBA,
+                c.GL_UNSIGNED_BYTE,
+                work.image_pixels.ptr + image.pixel_offset,
+            );
+            if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+            admitted[admitted_count] = .{
+                .identity = image.identity,
+                .name = name,
+                .width = image.width,
+                .height = image.height,
+            };
+            admitted_count += 1;
+        }
+        var index: usize = 0;
+        while (index < self.image_texture_count) {
+            const retained = self.image_textures[index];
+            var found = false;
+            for (work.images) |image| {
+                if (std.meta.eql(retained.identity, image.identity)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                index += 1;
+                continue;
+            }
+            c.glDeleteTextures(1, &retained.name);
+            self.image_texture_count -= 1;
+            if (index != self.image_texture_count)
+                self.image_textures[index] = self.image_textures[self.image_texture_count];
+        }
+        @memcpy(
+            self.image_textures[self.image_texture_count..][0..admitted_count],
+            admitted[0..admitted_count],
+        );
+        self.image_texture_count += admitted_count;
+        self.image_texture_bytes = required_bytes;
+        admitted_owned = false;
+        self.image_generation = work.image_content_generation;
+    }
+
+    fn drawImages(self: *Device, work: Submission) Error!void {
+        for (work.image_placements) |placement| {
+            const image = for (self.image_textures[0..self.image_texture_count]) |*candidate| {
+                if (candidate.identity.id == placement.image_id) break candidate;
+            } else continue;
+            const x64 = @as(u64, placement.col) * self.metrics.width_px;
+            const y64 = @as(u64, placement.row) * self.metrics.height_px;
+            if (x64 > std.math.maxInt(i32) or y64 > std.math.maxInt(i32))
+                return error.InvalidSubmission;
+            const clip = clipToSurface(.{
+                .x = @intCast(x64),
+                .y = @intCast(y64),
+                .width = image.width,
+                .height = image.height,
+            }, self.size) orelse continue;
+            c.glEnable(c.GL_SCISSOR_TEST);
+            setScissor(clip, self.size);
+            defer c.glDisable(c.GL_SCISSOR_TEST);
+            c.glUniform1i(self.texture_color_uniform, 1);
+            const vertices = quadVertices(
+                @intCast(x64),
+                @intCast(y64),
+                image.width,
+                image.height,
+                self.size,
+                .{ .r = 255, .g = 255, .b = 255 },
+            );
+            c.glBindTexture(c.GL_TEXTURE_2D, image.name);
+            c.glBufferData(c.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(vertices)), &vertices, c.GL_STREAM_DRAW);
+            c.glVertexAttribPointer(0, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(0));
+            c.glVertexAttribPointer(1, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(2 * @sizeOf(f32)));
+            c.glVertexAttribPointer(2, 4, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(4 * @sizeOf(f32)));
+            c.glDrawArrays(c.GL_TRIANGLES, 0, vertices.len);
+            if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+        }
     }
 
     fn drawRowBackground(self: *Device, work: Submission, row: u16) Error!void {
@@ -797,6 +1017,7 @@ const Device = struct {
     ) Error!void {
         if (width == 0 or height == 0) return;
         const vertices = quadVertices(x, y, width, height, self.size, color);
+        c.glUniform1i(self.texture_color_uniform, 0);
         c.glBindTexture(c.GL_TEXTURE_2D, texture_name);
         c.glBufferData(c.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(vertices)), &vertices, c.GL_STREAM_DRAW);
         c.glVertexAttribPointer(0, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(0));
@@ -807,6 +1028,12 @@ const Device = struct {
     }
 
     fn deinit(self: *Device) Error!void {
+        while (self.image_texture_count != 0) {
+            self.image_texture_count -= 1;
+            self.image_texture_bytes -= @as(usize, self.image_textures[self.image_texture_count].width) *
+                self.image_textures[self.image_texture_count].height * 4;
+            c.glDeleteTextures(1, &self.image_textures[self.image_texture_count].name);
+        }
         while (self.texture_count != 0) self.removeTexture(self.texture_count - 1);
         self.fonts.deinit();
         c.glDeleteTextures(1, &self.white);
@@ -1048,6 +1275,27 @@ fn validateSubmission(value: Submission) error{InvalidSubmission}!void {
             scrollbar.history_count == 0 or scrollbar.offset > scrollbar.history_count)
             return error.InvalidSubmission;
     }
+    if (value.images.len > 256 or value.image_placements.len > 1024 or
+        value.image_pixels.len > 64 * 1024 * 1024)
+        return error.InvalidSubmission;
+    for (value.images) |image| {
+        if (image.identity.id == 0 or image.width == 0 or image.height == 0 or
+            image.width > 4096 or image.height > 4096 or
+            image.pixel_count != @as(usize, image.width) * image.height * 4 or
+            image.pixel_offset > value.image_pixels.len or
+            image.pixel_count > value.image_pixels.len - image.pixel_offset)
+            return error.InvalidSubmission;
+    }
+    for (value.image_placements) |placement| {
+        if (placement.row >= value.rows or placement.col >= value.cols)
+            return error.InvalidSubmission;
+        var found = false;
+        for (value.images) |image| if (image.identity.id == placement.image_id) {
+            found = true;
+            break;
+        };
+        if (!found) return error.InvalidSubmission;
+    }
 }
 
 fn validRect(rect: viewport.Rect, size: PixelSize) bool {
@@ -1099,11 +1347,12 @@ fn createProgram() Error!c.GLuint {
     const fragment_source: [:0]const u8 =
         \\precision mediump float;
         \\uniform sampler2D image;
+        \\uniform bool texture_color;
         \\varying vec2 texture_coordinate_out;
         \\varying vec4 color_out;
         \\void main() {
-        \\  float alpha = texture2D(image, texture_coordinate_out).a;
-        \\  gl_FragColor = vec4(color_out.rgb, color_out.a * alpha);
+        \\  vec4 sample = texture2D(image, texture_coordinate_out);
+        \\  gl_FragColor = texture_color ? sample : vec4(color_out.rgb, color_out.a * sample.a);
         \\}
     ;
     const vertex = try compileShader(c.GL_VERTEX_SHADER, vertex_source);
@@ -1150,6 +1399,14 @@ fn configureTexture(name: c.GLuint) void {
     c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_CLAMP_TO_EDGE);
     c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_CLAMP_TO_EDGE);
     c.glPixelStorei(c.GL_UNPACK_ALIGNMENT, 1);
+}
+
+fn configureRgbaTexture(name: c.GLuint) void {
+    c.glBindTexture(c.GL_TEXTURE_2D, name);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_LINEAR);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_LINEAR);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_CLAMP_TO_EDGE);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_CLAMP_TO_EDGE);
 }
 
 fn pixelToNdc(value: i64, extent: u32) f32 {
@@ -1659,6 +1916,63 @@ test "glyph cache identity includes exact font and generated raster facts" {
 
 test "shaped glyph placement anchors the pen once at the run start" {
     try std.testing.expectEqual(@as(i32, 89), glyphPixelX(8, 10, -1, 10 * 64));
+}
+
+test "snapshot retains complete image state and skips identical generation bytes" {
+    var snapshot = try Snapshot.init(std.testing.allocator, 1, 1);
+    defer snapshot.deinit();
+    const cells = [_]terminal.Cell{testCell(' ')};
+    const geometry = [_]terminal.LineGeometry{.single_width};
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    const images = [_]terminal.ImageUpload{.{
+        .identity = .{ .id = 7, .generation = 1 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    const placements = [_]terminal.ImagePlacement{.{
+        .image_id = 7,
+        .generation = 1,
+        .row = 0,
+        .col = 0,
+    }};
+    try snapshot.ensureImageCapacity(4, 1, 1);
+    snapshot.write(.{
+        .generation = 1,
+        .rows = 1,
+        .cols = 1,
+        .cells = &cells,
+        .row_geometry = &geometry,
+        .cursor = testCursor(),
+        .size = .{ .width = 10, .height = 10 },
+        .image_generation = 1,
+        .image_content_generation = 1,
+        .image_pixels = &pixels,
+        .images = &images,
+        .image_placements = &placements,
+    });
+    {
+        const before = snapshot.image_pixels[0..4].*;
+        const changed_source = [_]u8{ 9, 9, 9, 9 };
+        snapshot.write(.{
+            .generation = 2,
+            .rows = 1,
+            .cols = 1,
+            .cells = &cells,
+            .row_geometry = &geometry,
+            .cursor = testCursor(),
+            .size = .{ .width = 10, .height = 10 },
+            .image_generation = 2,
+            .image_content_generation = 1,
+            .image_pixels = &changed_source,
+            .images = &images,
+            .image_placements = &placements,
+        });
+        try std.testing.expectEqualSlices(u8, &before, snapshot.image_pixels[0..4]);
+    }
+    try std.testing.expectEqual(@as(u64, 2), snapshot.view().image_generation);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.view().image_placements.len);
 }
 
 test "draw colors consume projected cell and cursor facts exactly" {

@@ -415,6 +415,17 @@ const VisualStorage = struct {
     rows: u16,
     cols: u16,
     baseline: ?terminal_render.ProjectionBaseline = null,
+    image_pixels: []u8,
+    image_scratch: []u8,
+    image_pixel_count: usize = 0,
+    images: [256]terminal_render.ImageUpload = undefined,
+    image_uploads: [256]terminal_render.ImageUpload = undefined,
+    image_removals: [256]u32 = undefined,
+    image_count: usize = 0,
+    image_placements: [1024]terminal_render.ImagePlacement = undefined,
+    image_placement_count: usize = 0,
+    image_generation: u64 = 0,
+    image_content_generation: u64 = 0,
 
     fn init(allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!VisualStorage {
         const cell_count = @as(usize, rows) * cols;
@@ -423,6 +434,10 @@ const VisualStorage = struct {
         const geometry = try allocator.alloc(terminal_render.LineGeometry, rows);
         errdefer allocator.free(geometry);
         const patches = try allocator.alloc(terminal_render.RowPatch, rows);
+        errdefer allocator.free(patches);
+        const image_pixels = try allocator.alloc(u8, 0);
+        errdefer allocator.free(image_pixels);
+        const image_scratch = try allocator.alloc(u8, 0);
         return .{
             .allocator = allocator,
             .cells = all_cells[0..cell_count],
@@ -431,6 +446,8 @@ const VisualStorage = struct {
             .patches = patches,
             .rows = rows,
             .cols = cols,
+            .image_pixels = image_pixels,
+            .image_scratch = image_scratch,
         };
     }
 
@@ -438,6 +455,8 @@ const VisualStorage = struct {
         self.allocator.free(self.cells.ptr[0 .. self.cells.len + self.scratch.len]);
         self.allocator.free(self.row_geometry);
         self.allocator.free(self.patches);
+        self.allocator.free(self.image_pixels);
+        self.allocator.free(self.image_scratch);
         self.* = undefined;
     }
 
@@ -457,6 +476,19 @@ const VisualStorage = struct {
             }
             if (inspection == .stale) return error.StaleVisualInspection;
             std.debug.assert(inspection == .declined);
+            if (context.required_image_bytes) |required| {
+                if (required > self.image_pixels.len) {
+                    const pixels = try self.allocator.alloc(u8, required);
+                    errdefer self.allocator.free(pixels);
+                    const scratch = try self.allocator.alloc(u8, required);
+                    @memcpy(pixels[0..self.image_pixel_count], self.image_pixels[0..self.image_pixel_count]);
+                    self.allocator.free(self.image_pixels);
+                    self.allocator.free(self.image_scratch);
+                    self.image_pixels = pixels;
+                    self.image_scratch = scratch;
+                }
+                continue;
+            }
             const required_rows = context.required_rows orelse return error.GeometryUnstable;
             const required_cols = context.required_cols orelse return error.GeometryUnstable;
             var replacement = try VisualStorage.init(self.allocator, required_rows, required_cols);
@@ -512,6 +544,72 @@ const VisualStorage = struct {
         }
         self.baseline = update.next_baseline;
     }
+
+    fn applyImages(self: *VisualStorage, update: terminal_render.ImageUpdate) void {
+        std.debug.assert(update.pixels.len <= self.image_scratch.len);
+        std.debug.assert(self.image_pixel_count <= self.image_pixels.len);
+        std.debug.assert(update.uploads.len <= self.image_uploads.len);
+        std.debug.assert(update.placements.len <= self.image_placements.len);
+        const content_changed = update.content_generation != self.image_content_generation;
+        if (!content_changed) {
+            std.debug.assert(update.uploads.len == 0);
+            std.debug.assert(update.removals.len == 0);
+            const placement_destination = self.image_placements[0..update.placements.len];
+            if (placement_destination.ptr != update.placements.ptr)
+                @memcpy(placement_destination, update.placements);
+            self.image_placement_count = update.placements.len;
+            self.image_generation = update.generation;
+            return;
+        }
+        var next_images: [256]terminal_render.ImageUpload = undefined;
+        var next_count: usize = 0;
+        var next_pixel_count: usize = 0;
+        for (self.images[0..self.image_count]) |retained| {
+            var removed = false;
+            for (update.removals) |id| if (id == retained.identity.id) {
+                removed = true;
+                break;
+            };
+            if (!removed) for (update.uploads) |replacement| {
+                if (replacement.identity.id == retained.identity.id) {
+                    removed = true;
+                    break;
+                }
+            };
+            if (removed) continue;
+            std.debug.assert(retained.pixel_offset <= self.image_pixel_count);
+            std.debug.assert(retained.pixel_count <= self.image_pixel_count - retained.pixel_offset);
+            @memcpy(
+                self.image_scratch[next_pixel_count..][0..retained.pixel_count],
+                self.image_pixels[retained.pixel_offset..][0..retained.pixel_count],
+            );
+            next_images[next_count] = retained;
+            next_images[next_count].pixel_offset = next_pixel_count;
+            next_pixel_count += retained.pixel_count;
+            next_count += 1;
+        }
+        for (update.uploads) |upload| {
+            std.debug.assert(upload.pixel_offset <= update.pixels.len);
+            std.debug.assert(upload.pixel_count <= update.pixels.len - upload.pixel_offset);
+            const destination = self.image_scratch[next_pixel_count..][0..upload.pixel_count];
+            const source = update.pixels[upload.pixel_offset..][0..upload.pixel_count];
+            if (destination.ptr != source.ptr) @memcpy(destination, source);
+            next_images[next_count] = upload;
+            next_images[next_count].pixel_offset = next_pixel_count;
+            next_pixel_count += upload.pixel_count;
+            next_count += 1;
+        }
+        std.mem.swap([]u8, &self.image_pixels, &self.image_scratch);
+        @memcpy(self.images[0..next_count], next_images[0..next_count]);
+        const placement_destination = self.image_placements[0..update.placements.len];
+        if (placement_destination.ptr != update.placements.ptr)
+            @memcpy(placement_destination, update.placements);
+        self.image_pixel_count = next_pixel_count;
+        self.image_count = next_count;
+        self.image_placement_count = update.placements.len;
+        self.image_generation = update.generation;
+        self.image_content_generation = update.content_generation;
+    }
 };
 
 const ProjectionContext = struct {
@@ -521,6 +619,7 @@ const ProjectionContext = struct {
     changed: bool = false,
     required_rows: ?u16 = null,
     required_cols: ?u16 = null,
+    required_image_bytes: ?usize = null,
 };
 
 const Window = struct {
@@ -868,6 +967,11 @@ const Window = struct {
                 self.render.?.metrics().width_px,
                 self.render.?.metrics().height_px,
             ),
+            .image_generation = visual.image_generation,
+            .image_content_generation = visual.image_content_generation,
+            .image_pixels = visual.image_pixels[0..visual.image_pixel_count],
+            .images = visual.images[0..visual.image_count],
+            .image_placements = visual.image_placements[0..visual.image_placement_count],
         });
         self.draw.admit(next);
     }
@@ -1913,9 +2017,54 @@ fn projectVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?cont
             return null;
         };
     };
+    const images_changed = source.images.generation != context.storage.image_generation;
+    if (images_changed) {
+        var required_pixels: usize = 0;
+        var delta_pixels: usize = 0;
+        var index: usize = 0;
+        while (index < source.images.imageCount()) : (index += 1) {
+            const image = source.images.image(index) orelse continue;
+            std.debug.assert(required_pixels <= std.math.maxInt(usize) - image.pixels.len);
+            required_pixels += image.pixels.len;
+            var retained = false;
+            for (context.storage.images[0..context.storage.image_count]) |current| {
+                if (current.identity.id == image.id and
+                    current.identity.generation == image.generation)
+                {
+                    retained = true;
+                    break;
+                }
+            }
+            if (!retained) delta_pixels += image.pixels.len;
+        }
+        if (required_pixels > context.storage.image_pixels.len) {
+            context.required_image_bytes = required_pixels;
+            return null;
+        }
+        var retained: [256]terminal_render.ImageIdentity = undefined;
+        for (context.storage.images[0..context.storage.image_count], 0..) |image, retained_index|
+            retained[retained_index] = image.identity;
+        const image_update = terminal_render.projectImages(source.images, .{
+            .retained = retained[0..context.storage.image_count],
+            .pixels = context.storage.image_scratch[context.storage.image_scratch.len - delta_pixels ..],
+            .uploads = &context.storage.image_uploads,
+            .removals = &context.storage.image_removals,
+            .placements = &context.storage.image_placements,
+        }) catch |failure| {
+            context.failure = switch (failure) {
+                error.InsufficientImagePixels => error.InsufficientCells,
+                error.InsufficientImageUploads,
+                error.InsufficientImageRemovals,
+                error.InsufficientImagePlacements,
+                => error.InsufficientPatches,
+            };
+            return null;
+        };
+        context.storage.applyImages(image_update);
+    }
     context.changed = update.full or update.row_patches.len != 0 or
         context.storage.baseline == null or
-        !std.meta.eql(context.storage.baseline.?, update.next_baseline);
+        !std.meta.eql(context.storage.baseline.?, update.next_baseline) or images_changed;
     context.storage.apply(update);
     context.projected = true;
     return source.dirty_token;
@@ -3201,6 +3350,52 @@ test "window dimensions and grid conversion preserve exact bounds" {
             .baseline_px = 15,
         }),
     );
+}
+
+test "visual storage applies placement churn without recopying retained image source" {
+    var visual = try VisualStorage.init(std.testing.allocator, 1, 1);
+    defer visual.deinit();
+    visual.allocator.free(visual.image_pixels);
+    visual.allocator.free(visual.image_scratch);
+    visual.image_pixels = try visual.allocator.alloc(u8, 4);
+    visual.image_scratch = try visual.allocator.alloc(u8, 4);
+    const initial_pixels = [_]u8{ 1, 2, 3, 4 };
+    @memcpy(visual.image_scratch, &initial_pixels);
+    const upload = [_]terminal_render.ImageUpload{.{
+        .identity = .{ .id = 7, .generation = 1 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    const placement = [_]terminal_render.ImagePlacement{.{
+        .image_id = 7,
+        .generation = 1,
+        .row = 0,
+        .col = 0,
+    }};
+    visual.applyImages(.{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = visual.image_scratch,
+        .uploads = &upload,
+        .removals = &.{},
+        .placements = &placement,
+    });
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, visual.image_pixels);
+
+    @memset(visual.image_scratch, 0xee);
+    visual.applyImages(.{
+        .generation = 2,
+        .content_generation = 1,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = visual.image_placements[0..1],
+    });
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, visual.image_pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 0xee, 0xee, 0xee, 0xee }, visual.image_scratch);
+    try std.testing.expectEqual(@as(usize, 1), visual.image_count);
 }
 
 test "terminal completion waits for the newest admitted draw only" {

@@ -1747,6 +1747,78 @@ test "terminal: OSC cursor colors route into semantic cursor owner" {
     try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 4, .g = 5, .b = 6 }), cursor.cursor_text_color);
 }
 
+test "terminal: fragmented Kitty static graphics retains display and query is probe only" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    const packet = "\x1b_Ga=T,f=32,s=1,v=1,i=7;/wAA/w==\x1b\\";
+    var split: usize = 0;
+    while (split <= packet.len) : (split += 1) {
+        var actual = try Terminal.init(std.testing.allocator, 3, 8);
+        defer actual.deinit();
+        const first = try actual.feed(packet[0..split]);
+        const second = try actual.feed(packet[split..]);
+        try std.testing.expect(first.state_changed or second.state_changed);
+        const view = actual.visualView();
+        try std.testing.expectEqual(@as(usize, 1), view.images.imageCount());
+        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, view.images.image(0).?.pixels);
+        try std.testing.expectEqual(@as(usize, 1), view.images.placementCount());
+        try std.testing.expectEqual(@as(u16, 0), view.images.placement(0).?.row);
+        try std.testing.expectEqualStrings("\x1b_Gi=7;OK\x1b\\", actual.host.pendingOutput());
+    }
+
+    const before = terminal.visualView().images.generation;
+    try std.testing.expect(
+        (try terminal.feed("\x1b_Ga=q,f=32,s=1,v=1,i=9;AQIDBA==\x1b\\")).state_changed,
+    );
+    const queried = terminal.visualView();
+    try std.testing.expectEqual(before, queried.images.generation);
+    try std.testing.expectEqual(@as(usize, 0), queried.images.imageCount());
+    try std.testing.expectEqualStrings("\x1b_Gi=9;OK\x1b\\", terminal.host.pendingOutput());
+}
+
+test "terminal: canceled Kitty continuation releases transfer without retained mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+
+    try std.testing.expect(
+        !(try terminal.feed("\x1b_Ga=t,f=32,s=1,v=1,i=7,m=1;AQ==\x1b\\")).state_changed,
+    );
+    try std.testing.expect(!(try terminal.feed("\x1b_Gm=0;IDBA==\x18")).state_changed);
+    try std.testing.expectEqual(@as(usize, 0), terminal.visualView().images.imageCount());
+
+    try std.testing.expect(
+        (try terminal.feed("\x1b_Ga=t,f=32,s=1,v=1,i=8;AQIDBA==\x1b\\")).state_changed,
+    );
+    try std.testing.expectEqual(@as(u32, 8), terminal.visualView().images.image(0).?.id);
+}
+
+test "terminal: static graphics follow scroll erase resize bank and reset lifetime" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try std.testing.expect(
+        (try terminal.feed("\x1b[3;1H\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).state_changed,
+    );
+    try std.testing.expectEqual(@as(u16, 2), terminal.visualView().images.placement(0).?.row);
+    try std.testing.expect((try terminal.feed("\x1b[S")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.visualView().images.placement(0).?.row);
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[2K")).state_changed);
+    try std.testing.expect(terminal.visualView().images.placement(0) == null);
+    try std.testing.expectEqual(@as(usize, 1), terminal.visualView().images.imageCount());
+
+    try std.testing.expect(
+        (try terminal.feed("\x1b[?1049h\x1b_Ga=p,i=7\x1b\\")).state_changed,
+    );
+    try std.testing.expectEqual(@as(usize, 1), terminal.visualView().images.placementCount());
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect(terminal.visualView().images.placement(0) == null);
+    try terminal.resize(4, 5);
+    try std.testing.expectEqual(@as(usize, 1), terminal.visualView().images.imageCount());
+    terminal.hardReset();
+    try std.testing.expectEqual(@as(usize, 0), terminal.visualView().images.imageCount());
+}
+
 test "terminal: every byte split preserves mixed control framing" {
     const allocator = std.testing.allocator;
     const transcript = "A\x08B\x1b[2;3HC\x1b]0;first\x07\x1bP$qm\x1b\\" ++
