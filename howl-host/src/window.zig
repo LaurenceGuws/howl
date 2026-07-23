@@ -333,7 +333,16 @@ pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitErro
     control.WindowReplyError || control.ColorPreferenceReplyError ||
     control.PointerShapeReplyError ||
     control.ResizeError || control.ReaderError ||
-    terminal_render.Error || renderer.Error || error{ StaleNotification, StalePointerShape, StaleWindowRequest, WindowReplyRequired } || error{
+    terminal_render.Error || renderer.Error || error{
+    StaleDcsPayload,
+    StaleFileTransfer,
+    StaleMediaCopy,
+    StaleNotification,
+    StalePointerShape,
+    StaleStringPayload,
+    StaleWindowRequest,
+    WindowReplyRequired,
+} || error{
     InvalidSize,
     GeometryUnstable,
     WaylandConnect,
@@ -770,6 +779,7 @@ const Window = struct {
         try self.applyWindowRequests();
         try self.applyColorPreferenceQueries();
         try self.applyPointerShapeRequests();
+        try self.discardUnsupportedConsequences();
         self.applyCurrentPointerShape();
     }
 
@@ -1287,6 +1297,32 @@ const Window = struct {
             if (windowRequestRequestsMinimize(head.request))
                 c.xdg_toplevel_set_minimized(self.toplevel.?);
             try terminal.acknowledgeWindowRequest(head.generation);
+        }
+    }
+
+    // Current first-party policy deliberately performs no filesystem,
+    // printer, key-mapping, transport-recursion, or diagnostic-log effects.
+    fn discardUnsupportedConsequences(self: *Window) Error!void {
+        const terminal = self.terminal.?;
+        var handled: u8 = 0;
+        while (handled < control.file_transfer_max_count) : (handled += 1) {
+            const generation = terminal.fileTransferGeneration() orelse break;
+            try terminal.acknowledgeFileTransfer(generation);
+        }
+        handled = 0;
+        while (handled < control.media_copy_max_count) : (handled += 1) {
+            const generation = terminal.mediaCopyGeneration() orelse break;
+            try terminal.acknowledgeMediaCopy(generation);
+        }
+        handled = 0;
+        while (handled < control.dcs_payload_max_count) : (handled += 1) {
+            const generation = terminal.dcsPayloadGeneration() orelse break;
+            try terminal.acknowledgeDcsPayload(generation);
+        }
+        handled = 0;
+        while (handled < control.string_payload_max_count) : (handled += 1) {
+            const generation = terminal.stringPayloadGeneration() orelse break;
+            try terminal.acknowledgeStringPayload(generation);
         }
     }
 

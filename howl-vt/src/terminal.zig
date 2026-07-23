@@ -12661,6 +12661,10 @@ pub const Terminal = struct {
     pub const iterm_file_transfer_max_bytes = parser_mod.max_metadata_control_bytes;
     /// Exposes the fixed pending file-transfer packet capacity.
     pub const file_transfer_max_count = file_transfer_capacity;
+    /// Exposes the fixed pending media-copy command capacity.
+    pub const media_copy_max_count = media_copy_capacity;
+    /// Exposes the fixed pending DCS consequence capacity.
+    pub const dcs_payload_max_count = dcs_payload_capacity;
     /// Bounds aggregate retained APC, PM, and SOS payload bytes.
     pub const string_payload_max_bytes = dcs_payload_max_bytes;
     /// Exposes the fixed pending generic string-control capacity.
@@ -14528,6 +14532,12 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
+    /// Copies the FIFO-head file-transfer packet identity without borrowing its payload.
+    pub fn fileTransferGeneration(self: *const Terminal) ?u64 {
+        const packet = self.host.fileTransferHead() orelse return null;
+        return packet.generation;
+    }
+
     /// Queue one exact reply for the matching FIFO-head query, consuming it only after serialization.
     pub fn replyWindowRequest(
         self: *Terminal,
@@ -14600,6 +14610,12 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
+    /// Copies the FIFO-head media-copy command identity.
+    pub fn mediaCopyGeneration(self: *const Terminal) ?u64 {
+        const occurrence = self.host.mediaCopyHead() orelse return null;
+        return occurrence.generation;
+    }
+
     /// Consume the matching FIFO-head configuration, delegated transport, or host-directed DCS consequence.
     pub fn acknowledgeDcsPayload(self: *Terminal, generation: u64) error{StaleDcsPayload}!void {
         const occurrence = self.host.dcsPayloadHead() orelse return error.StaleDcsPayload;
@@ -14608,12 +14624,24 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
+    /// Copies the FIFO-head DCS consequence identity without borrowing its payload.
+    pub fn dcsPayloadGeneration(self: *const Terminal) ?u64 {
+        const occurrence = self.host.dcsPayloadHead() orelse return null;
+        return occurrence.generation;
+    }
+
     /// Consume the matching FIFO-head APC, PM, or SOS payload after host handling.
     pub fn acknowledgeStringPayload(self: *Terminal, generation: u64) error{StaleStringPayload}!void {
         const occurrence = self.host.stringPayloadHead() orelse return error.StaleStringPayload;
         if (occurrence.generation != generation) return error.StaleStringPayload;
         self.host.consumeStringPayload();
         advanceIdentity(&self.semantic_sequence);
+    }
+
+    /// Copies the FIFO-head APC, PM, or SOS consequence identity without borrowing its payload.
+    pub fn stringPayloadGeneration(self: *const Terminal) ?u64 {
+        const occurrence = self.host.stringPayloadHead() orelse return null;
+        return occurrence.generation;
     }
 
     fn noteSelectionChanged(self: *Terminal, previous_view: View, previous: ?TerminalSelection) void {

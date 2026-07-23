@@ -226,6 +226,14 @@ pub const clipboard_reply_max_bytes = howl_vt.Terminal.clipboard_reply_max_bytes
 pub const kitty_clipboard_packet_max_bytes = howl_vt.Terminal.kitty_clipboard_packet_max_bytes;
 /// Matches the VT owner's bounded ordered clipboard occurrence capacity.
 pub const clipboard_max_count = howl_vt.Terminal.clipboard_max_count;
+/// Matches the VT owner's bounded ordered file-transfer packet capacity.
+pub const file_transfer_max_count = howl_vt.Terminal.file_transfer_max_count;
+/// Matches the VT owner's bounded ordered media-copy command capacity.
+pub const media_copy_max_count = howl_vt.Terminal.media_copy_max_count;
+/// Matches the VT owner's bounded ordered DCS consequence capacity.
+pub const dcs_payload_max_count = howl_vt.Terminal.dcs_payload_max_count;
+/// Matches the VT owner's bounded ordered APC/PM/SOS consequence capacity.
+pub const string_payload_max_count = howl_vt.Terminal.string_payload_max_count;
 /// Matches the VT owner's bounded ordered window-request capacity.
 pub const window_request_max_count = howl_vt.Terminal.window_request_max_count;
 /// Matches the VT owner's bounded color-preference query capacity.
@@ -871,6 +879,82 @@ pub const Terminal = struct {
     ) error{StaleNotification}!void {
         self.lock.lockUncancelable(self.io);
         const result = self.model.acknowledgeNotification(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
+    }
+
+    /// Copies the FIFO-head file-transfer packet identity without retaining its payload.
+    pub fn fileTransferGeneration(self: *Terminal) ?u64 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.fileTransferGeneration();
+    }
+
+    /// Consumes only the matching FIFO-head file-transfer packet after executable policy.
+    pub fn acknowledgeFileTransfer(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleFileTransfer}!void {
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgeFileTransfer(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
+    }
+
+    /// Copies the FIFO-head media-copy command identity.
+    pub fn mediaCopyGeneration(self: *Terminal) ?u64 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.mediaCopyGeneration();
+    }
+
+    /// Consumes only the matching FIFO-head media-copy command after executable policy.
+    pub fn acknowledgeMediaCopy(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleMediaCopy}!void {
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgeMediaCopy(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
+    }
+
+    /// Copies the FIFO-head DCS consequence identity without retaining its payload.
+    pub fn dcsPayloadGeneration(self: *Terminal) ?u64 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.dcsPayloadGeneration();
+    }
+
+    /// Consumes only the matching FIFO-head DCS consequence after executable policy.
+    pub fn acknowledgeDcsPayload(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleDcsPayload}!void {
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgeDcsPayload(generation);
+        self.lock.unlock(self.io);
+        try result;
+        self.notify();
+    }
+
+    /// Copies the FIFO-head APC, PM, or SOS consequence identity without retaining its payload.
+    pub fn stringPayloadGeneration(self: *Terminal) ?u64 {
+        self.lock.lockUncancelable(self.io);
+        defer self.lock.unlock(self.io);
+        return self.model.stringPayloadGeneration();
+    }
+
+    /// Consumes only the matching FIFO-head APC, PM, or SOS consequence after executable policy.
+    pub fn acknowledgeStringPayload(
+        self: *Terminal,
+        generation: u64,
+    ) error{StaleStringPayload}!void {
+        self.lock.lockUncancelable(self.io);
+        const result = self.model.acknowledgeStringPayload(generation);
         self.lock.unlock(self.io);
         try result;
         self.notify();
@@ -2293,6 +2377,48 @@ test "Kitty clipboard packet copy and reply preserve exact FIFO identity" {
     try std.testing.expectEqual(sequence + 1, terminal.status().semantic_sequence);
     try std.testing.expectEqual(wakes + 1, wake_count.load(.acquire));
     try std.testing.expectEqual(ClipboardKind.set, terminal.clipboardHead().?.kind);
+}
+
+test "unsupported ordered consequence identities drain exactly without payload borrows" {
+    var wake_count: std.atomic.Value(u32) = .init(0);
+    const terminal = try Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "sleep 30" },
+        .{ .context = &wake_count, .notify = countTestWake },
+    );
+    defer terminal.deinit();
+    try terminal.consume(
+        "\x1b]1337;FilePart=QQ==\x1b\\" ++
+            "\x1b[5i" ++
+            "\x1bP+p436F=7661\x1b\\" ++
+            "\x1b_APC\x1b\\",
+    );
+    terminal.consumeWake();
+
+    const file = terminal.fileTransferGeneration().?;
+    const media = terminal.mediaCopyGeneration().?;
+    const dcs = terminal.dcsPayloadGeneration().?;
+    const string = terminal.stringPayloadGeneration().?;
+    const sequence = terminal.status().semantic_sequence;
+    const wakes = wake_count.load(.acquire);
+    try std.testing.expectError(error.StaleFileTransfer, terminal.acknowledgeFileTransfer(file + 1));
+    try std.testing.expectError(error.StaleMediaCopy, terminal.acknowledgeMediaCopy(media + 1));
+    try std.testing.expectError(error.StaleDcsPayload, terminal.acknowledgeDcsPayload(dcs + 1));
+    try std.testing.expectError(error.StaleStringPayload, terminal.acknowledgeStringPayload(string + 1));
+    try std.testing.expectEqual(sequence, terminal.status().semantic_sequence);
+    try std.testing.expectEqual(wakes, wake_count.load(.acquire));
+
+    try terminal.acknowledgeFileTransfer(file);
+    try terminal.acknowledgeMediaCopy(media);
+    try terminal.acknowledgeDcsPayload(dcs);
+    try terminal.acknowledgeStringPayload(string);
+    try std.testing.expect(terminal.fileTransferGeneration() == null);
+    try std.testing.expect(terminal.mediaCopyGeneration() == null);
+    try std.testing.expect(terminal.dcsPayloadGeneration() == null);
+    try std.testing.expect(terminal.stringPayloadGeneration() == null);
+    try std.testing.expectEqual(sequence + 4, terminal.status().semantic_sequence);
+    try std.testing.expectEqual(wakes + 1, wake_count.load(.acquire));
 }
 
 test "incomplete clipboard reply transfer preserves the exact query" {

@@ -839,10 +839,13 @@ references:
         recognition: delegated
         records:
           - {id: libvterm.apc.fallback, raw: "APC Pb ST", effect: delegate payload to configured APC fallback,
-            conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-            symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
+            conditions: &howl_string_fallback_condition Howl retains only complete payloads within its 2 KiB aggregate
+              bound and its first-party host consumes them in order without a logging or presentation effect.,
+            howl: &howl_string_fallback_howl {support: partial, disposition: excluded,
+              rationale: Howl deliberately has no generic diagnostic fallback or product logging hook.,
+              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
+              path: howl-control/src/howl_control.zig,
+              symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}}
       - source: state.c
         symbol: on_pm
         line: 1953
@@ -850,10 +853,7 @@ references:
         recognition: delegated
         records:
           - {id: libvterm.pm.fallback, raw: "PM Pb ST", effect: delegate payload to configured PM fallback,
-            conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-            symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
+            conditions: *howl_string_fallback_condition, howl: *howl_string_fallback_howl}
       - source: state.c
         symbol: on_sos
         line: 1965
@@ -861,10 +861,7 @@ references:
         recognition: delegated
         records:
           - {id: libvterm.sos.fallback, raw: "SOS Pb ST", effect: delegate payload to configured SOS fallback,
-            conditions: Howl delegates only complete payloads within its 2 KiB aggregate retention bound,
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-            symbol: Terminal.acknowledgeStringPayload, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
+            conditions: *howl_string_fallback_condition, howl: *howl_string_fallback_howl}
       - source: pen.c
         symbol: vterm_state_setpen
         line: 276
@@ -1366,11 +1363,14 @@ references:
             effect: media copy request
             conditions: >-
               iTerm2 maps 4 to print-and-end capture, 5 to begin capture, and every other scalar to print screen;
-              Howl retains every exact command in an eight-entry FIFO and delegates capture and printing policy.
+              Howl retains every exact command in an eight-entry FIFO and its first-party host consumes each without
+              printer or capture effects.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig,
-              symbol: HostState.retainMediaCopy, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "media-copy commands retain bounded ordered host intent"}}
+            howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately owns no printer or terminal-output capture policy.,
+              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
+                path: howl-control/src/howl_control.zig,
+                symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}
           - {id: iterm2.csi.save_or_margins, raw: "CSI Pm s", effect: save cursor or set horizontal margins,
             conditions: iTerm2 treats parameterless CSI s as DECSLRM under DECLRMM while Howl saves the cursor,
             howl: {support: partial, disposition: excluded,
@@ -1713,11 +1713,12 @@ references:
         records:
           - {id: iterm2.osc1337.file, raw: "OSC 1337 ; File=Pm : base64 (BEL|ST)", effect: transfer or display file,
             conditions: &iterm_file_transfer_condition "Howl retains exact packets up to its 2 KiB iTerm OSC bound
-              in an eight-entry cross-protocol FIFO and delegates decoding trust storage and presentation",
-            relevance: host consequence, howl: &iterm_file_transfer_howl {support: partial, disposition: delegated, owner: howl-host,
-              source: howl-vt/src/terminal.zig, symbol: HostState.retainFileTransfer, proof: {
-                path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "iTerm and Kitty file transfers retain one opaque ordered stream"}}}
+              in an eight-entry cross-protocol FIFO; its first-party host consumes each without filesystem effects",
+            relevance: host consequence, howl: &iterm_file_transfer_howl {support: partial, disposition: excluded,
+              rationale: Howl deliberately excludes application-directed file decoding storage and presentation.,
+              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
+                path: howl-control/src/howl_control.zig,
+                symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}}
           - {id: iterm2.osc1337.multipart_file, raw: "OSC 1337 ; MultipartFile=Pm (BEL|ST)",
             effect: begin multipart file transfer, conditions: *iterm_file_transfer_condition,
             relevance: host consequence, howl: *iterm_file_transfer_howl}
@@ -1742,7 +1743,9 @@ references:
               iTerm2 executes only for a trusted terminal; Howl retains one bounded ordered intent and its Wayland
               host consumes it in order under a deliberate no-focus-steal policy.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig, symbol: applyTerminalPresentation, proof: {
+            howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately never lets child output steal compositor focus.,
+              source: howl-host/src/window.zig, symbol: applyTerminalPresentation, proof: {
               path: howl-host/src/window.zig,
               symbol: "notification policy rings messages and attention without stealing focus"}}
           - id: iterm2.osc1337.clear_scrollback
@@ -1850,7 +1853,9 @@ references:
               Howl retains the raw bounded argument in FIFO order; its Wayland host maps each occurrence to one
               system-bell request while iTerm2 additionally owns start stop once and fireworks policy.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig, symbol: applyTerminalPresentation, proof: {
+            howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately maps attention to one bounded system-bell request without iTerm product effects.,
+              source: howl-host/src/window.zig, symbol: applyTerminalPresentation, proof: {
               path: howl-host/src/window.zig,
               symbol: "notification policy rings messages and attention without stealing focus"}}
           - {id: iterm2.osc1337.background_image, raw: "OSC 1337 ; SetBackgroundImageFile=Pt (BEL|ST)",
@@ -1881,7 +1886,9 @@ references:
             effect: post rich notification,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO and maps each host-consumed message to the
               Wayland system bell while omitting iTerm2 rich notification presentation.,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
+            relevance: host consequence, howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately maps terminal messages to the system bell without desktop notification UI.,
+              source: howl-host/src/window.zig,
               symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
                 symbol: "notification policy rings messages and attention without stealing focus"}}}
           - {id: iterm2.osc1337.capabilities, raw: "OSC 1337 ; Capabilities=Pt (BEL|ST)",
@@ -1969,10 +1976,13 @@ references:
             effect: set termcap or terminfo values
             conditions: >-
               iTerm2 validates names and mutates terminal key mappings; Howl retains each exact command in an
-              16-entry cross-family FIFO sharing a 2 KiB aggregate bound, and delegates terminfo policy.
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainDcsPayload, proof: {
-              path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "DCS configuration commands retain bounded cross-family order"}}
+              16-entry cross-family FIFO sharing a 2 KiB aggregate bound; its first-party host consumes each without
+              mutating key mappings.
+            howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately keeps terminal input mapping fixed instead of accepting child terminfo mutation.,
+              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
+              path: howl-control/src/howl_control.zig,
+              symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}
           - {id: iterm2.dcs.xtgettcap, raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
             conditions: "Howl answers Co, colors, RGB, Tc, and Su without exposing term identity, profile, key mapping,
               or arbitrary terminfo",
@@ -3233,27 +3243,23 @@ references:
           - {id: kitty.osc.notify_9, raw: "OSC 9 ; Pt (BEL|ST)", effect: display notification,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO and maps each host-consumed message to the
               Wayland system bell while omitting Kitty notification parsing and desktop presentation.,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
+            relevance: host consequence, howl: &howl_notification_bell_policy {support: partial, disposition: excluded,
+              rationale: Howl deliberately maps terminal notifications to the system bell without desktop notification UI.,
+              source: howl-host/src/window.zig,
               symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
                 symbol: "notification policy rings messages and attention without stealing focus"}}}
           - {id: kitty.osc.notify_99, raw: "OSC 99 ; Pt (BEL|ST)", effect: display notification,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO and maps each host-consumed message to the
               Wayland system bell while omitting Kitty notification parsing and desktop presentation.,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
-              symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
-                symbol: "notification policy rings messages and attention without stealing focus"}}}
+            relevance: host consequence, howl: *howl_notification_bell_policy}
           - {id: kitty.osc.notify_777, raw: "OSC 777 ; Pt (BEL|ST)", effect: display notification,
             conditions: Howl retains an 8-entry ordered raw-byte FIFO and maps each host-consumed message to the
               Wayland system bell while omitting Kitty notification parsing and desktop presentation.,
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
-              symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
-                symbol: "notification policy rings messages and attention without stealing focus"}}}
+            relevance: host consequence, howl: *howl_notification_bell_policy}
           - {id: kitty.osc.notify_1337, raw: "OSC 1337 ; Pt (BEL|ST)", effect: display notification,
             conditions: "Howl retains only Notification= payloads in an 8-entry ordered raw-byte FIFO and maps each
               host-consumed message to the Wayland system bell while omitting Kitty parsing and desktop presentation",
-            relevance: host consequence, howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-host/src/window.zig,
-              symbol: applyTerminalPresentation, proof: {path: howl-host/src/window.zig,
-                symbol: "notification policy rings messages and attention without stealing focus"}}}
+            relevance: host consequence, howl: *howl_notification_bell_policy}
           - {id: kitty.osc.fg, raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
             conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB fact and exact reply but
               omits Kitty host dirtiness policy and accepts a narrower deterministic color grammar.",
@@ -3368,12 +3374,14 @@ references:
             effect: transfer file
             conditions: >-
               Howl retains exact encoded packets up to 8 KiB in an eight-entry cross-protocol FIFO; command parsing,
-              transfer sessions, authorization, filesystem effects, replies, and Kitty's 4096-decoded-byte rule
-              remain host-owned.
+              transfer sessions, authorization, filesystem effects, and replies are deliberately absent; the
+              first-party host consumes each packet in order.
             relevance: host consequence
-            howl: {support: partial, disposition: delegated, owner: howl-host, source: howl-vt/src/terminal.zig, symbol: HostState.retainFileTransfer, proof: {
-              path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "iTerm and Kitty file transfers retain one opaque ordered stream"}}
+            howl: {support: partial, disposition: excluded,
+              rationale: Howl deliberately excludes child-directed filesystem transfer and authorization policy.,
+              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
+              path: howl-control/src/howl_control.zig,
+              symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}
           - {id: kitty.osc.color_push, raw: "OSC 30001 (BEL|ST)", effect: sequential color-stack push,
             conditions: ten slots, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: pushState, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
